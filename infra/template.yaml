@@ -36,7 +36,7 @@ Parameters:
 
   GitHubRepo:
     Type: String
-    Default: nechama-she/Moving-CRM
+    Default: nechama-she/moving-crm
     Description: GitHub owner/repo
 
   GitHubBranch:
