@@ -234,7 +234,7 @@ Resources:
             Resource: !Sub "${FrontendBucket.Arn}/*"
 
   # ===========================================================================
-  # IAM — CodeBuild role
+  # IAM — CodeBuild + CodePipeline roles
   # ===========================================================================
   CodeBuildRole:
     Type: AWS::IAM::Role
@@ -259,6 +259,15 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+              # Pipeline artifact bucket
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
               # Frontend bucket (deploy built files)
               - Effect: Allow
                 Action:
@@ -283,41 +292,70 @@ Resources:
                   - dynamodb:Query
                 Resource:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/leads"
-              # CodeStar connection (pull source + report build status)
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-pipeline-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PipelinePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: !GetAtt CodeBuildProject.Arn
               - Effect: Allow
                 Action:
                   - codestar-connections:UseConnection
                 Resource: !Ref GitHubConnectionArn
 
   # ===========================================================================
-  # CODEBUILD — Source credential (links CodeStar connection to CodeBuild)
+  # S3 — Pipeline artifacts
   # ===========================================================================
-  CodeBuildSourceCredential:
-    Type: AWS::CodeBuild::SourceCredential
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
     Properties:
-      AuthType: CODECONNECTIONS
-      ServerType: GITHUB
-      Token: !Ref GitHubConnectionArn
+      BucketName: !Sub moving-crm-artifacts-${Environment}-${AWS::AccountId}
+      LifecycleConfiguration:
+        Rules:
+          - Id: CleanupOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
 
   # ===========================================================================
-  # CODEBUILD — Triggered by webhook, reports status back to repo
+  # CODEBUILD — Build project
   # ===========================================================================
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
-    DependsOn: CodeBuildSourceCredential
     Properties:
       Name: !Sub moving-crm-${Environment}
       Description: Build + deploy Moving CRM
       ServiceRole: !GetAtt CodeBuildRole.Arn
       TimeoutInMinutes: 15
       Source:
-        Type: GITHUB
-        Location: !Sub "https://github.com/${GitHubRepo}.git"
+        Type: CODEPIPELINE
         BuildSpec: buildspec.yml
-        ReportBuildStatus: true
-      SourceVersion: !Ref GitHubBranch
       Artifacts:
-        Type: NO_ARTIFACTS
+        Type: CODEPIPELINE
       Environment:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_SMALL
@@ -333,13 +371,65 @@ Resources:
             Value: !Ref FrontendBucket
           - Name: DYNAMO_TABLE_NAME
             Value: leads
+
+  # ===========================================================================
+  # CODEPIPELINE V2 — Source → Build (→ add Test, Approval, Prod stages later)
+  # ===========================================================================
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub moving-crm-${Environment}
+      PipelineType: V2
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
       Triggers:
-        Webhook: true
-        FilterGroups:
-          - - Type: EVENT
-              Pattern: PUSH
-            - Type: HEAD_REF
-              Pattern: !Sub "^refs/heads/${GitHubBranch}$"
+        - ProviderType: CodeStarSourceConnection
+          GitConfiguration:
+            SourceActionName: GitHub
+            Push:
+              - Branches:
+                  Includes:
+                    - !Ref GitHubBranch
+      Stages:
+        # --- Source: pull from GitHub ---
+        - Name: Source
+          Actions:
+            - Name: GitHub
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: "1"
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Ref GitHubRepo
+                BranchName: !Ref GitHubBranch
+                DetectChanges: false
+              OutputArtifacts:
+                - Name: SourceCode
+
+        # --- Build: install, migrate, import leads, build frontend, deploy to S3 ---
+        - Name: Build
+          Actions:
+            - Name: BuildAndDeploy
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceCode
+              OutputArtifacts:
+                - Name: BuildOutput
+
+        # ADD MORE STAGES HERE:
+        # - Name: Test
+        # - Name: Approval (ManualApproval action)
+        # - Name: Production
 
 Outputs:
   FrontendURL:
@@ -358,9 +448,9 @@ Outputs:
     Description: RDS PostgreSQL port
     Value: !GetAtt Database.Endpoint.Port
 
-  CodeBuildProject:
-    Description: CodeBuild project name
-    Value: !Ref CodeBuildProject
+  PipelineName:
+    Description: CodePipeline name
+    Value: !Ref Pipeline
 
   VPCId:
     Description: VPC ID
