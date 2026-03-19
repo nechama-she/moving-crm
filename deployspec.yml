@@ -1,0 +1,31 @@
+version: 0.2
+
+# DEPLOY STAGE — runs after build succeeds, only on merge to main
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+      nodejs: 20
+    commands:
+      - echo "Installing backend dependencies"
+      - cd $CODEBUILD_SRC_DIR/backend && pip install -r requirements.txt
+      - echo "Installing frontend dependencies"
+      - cd $CODEBUILD_SRC_DIR/frontend && npm ci
+
+  pre_build:
+    commands:
+      - echo "Running DB migrations (creates tables if not exist)"
+      - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
+      - echo "Importing new leads from DynamoDB (skips existing)"
+      - cd $CODEBUILD_SRC_DIR/backend && python import_leads.py --commit
+
+  build:
+    commands:
+      - echo "Building frontend"
+      - cd $CODEBUILD_SRC_DIR/frontend && npm run build
+
+  post_build:
+    commands:
+      - echo "Deploying frontend to S3"
+      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --delete
+      - echo "Deploy complete"

@@ -322,7 +322,9 @@ Resources:
                 Action:
                   - codebuild:BatchGetBuilds
                   - codebuild:StartBuild
-                Resource: !GetAtt CodeBuildProject.Arn
+                Resource:
+                  - !GetAtt CodeBuildProject.Arn
+                  - !GetAtt DeployProject.Arn
               - Effect: Allow
                 Action:
                   - codestar-connections:UseConnection
@@ -373,7 +375,7 @@ Resources:
             Value: leads
 
   # ===========================================================================
-  # CODEPIPELINE V2 — Source → Build (→ add Test, Approval, Prod stages later)
+  # CODEPIPELINE V2 — Source → Build → Deploy (triggers on merge to main)
   # ===========================================================================
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -391,9 +393,9 @@ Resources:
             Push:
               - Branches:
                   Includes:
-                    - !Ref GitHubBranch
+                    - main
       Stages:
-        # --- Source: pull from GitHub ---
+        # --- Source: pull from GitHub on merge to main ---
         - Name: Source
           Actions:
             - Name: GitHub
@@ -405,15 +407,15 @@ Resources:
               Configuration:
                 ConnectionArn: !Ref GitHubConnectionArn
                 FullRepositoryId: !Ref GitHubRepo
-                BranchName: !Ref GitHubBranch
+                BranchName: main
                 DetectChanges: false
               OutputArtifacts:
                 - Name: SourceCode
 
-        # --- Build: install, migrate, import leads, build frontend, deploy to S3 ---
+        # --- Build: install deps, run migrations, import leads, build frontend ---
         - Name: Build
           Actions:
-            - Name: BuildAndDeploy
+            - Name: Build
               ActionTypeId:
                 Category: Build
                 Owner: AWS
@@ -426,10 +428,50 @@ Resources:
               OutputArtifacts:
                 - Name: BuildOutput
 
-        # ADD MORE STAGES HERE:
-        # - Name: Test
-        # - Name: Approval (ManualApproval action)
-        # - Name: Production
+        # --- Deploy: sync frontend to S3, run DB updates ---
+        - Name: Deploy
+          Actions:
+            - Name: DeployToProduction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref DeployProject
+              InputArtifacts:
+                - Name: SourceCode
+
+  # ===========================================================================
+  # CODEBUILD — Deploy project (runs after build succeeds)
+  # ===========================================================================
+  DeployProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub moving-crm-deploy-${Environment}
+      Description: Deploy Moving CRM to production
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      TimeoutInMinutes: 10
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: deployspec.yml
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: !Ref Environment
+          - Name: SSM_PREFIX
+            Value: !Sub /moving-crm/${Environment}/
+          - Name: AWS_REGION
+            Value: !Ref AWS::Region
+          - Name: FRONTEND_BUCKET
+            Value: !Ref FrontendBucket
+          - Name: DYNAMO_TABLE_NAME
+            Value: leads
 
 Outputs:
   FrontendURL:
