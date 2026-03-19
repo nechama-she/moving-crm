@@ -86,11 +86,6 @@ def import_leads(commit: bool = False):
         raise
     finally:
         session.close()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 if __name__ == "__main__":
