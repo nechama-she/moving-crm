@@ -32,8 +32,8 @@ class Contact(Base):
     notes = Column(Text)
 
     # Move details (from lead form)
-    pickup_zip = Column(String(20))
-    delivery_zip = Column(String(20))
+    pickup_zip = Column(String(50))
+    delivery_zip = Column(String(50))
     move_size = Column(String(100))
     move_date = Column(String(50))
     move_type = Column(String(50))  # in_state, out_of_state
