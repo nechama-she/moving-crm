@@ -32,11 +32,11 @@ class Contact(Base):
     notes = Column(Text)
 
     # Move details (from lead form)
-    pickup_zip = Column(String(50))
-    delivery_zip = Column(String(50))
-    move_size = Column(String(100))
-    move_date = Column(String(50))
-    move_type = Column(String(50))  # in_state, out_of_state
+    pickup_zip = Column(Text)
+    delivery_zip = Column(Text)
+    move_size = Column(Text)
+    move_date = Column(Text)
+    move_type = Column(Text)
 
     status = Column(String(30), nullable=False, default="new", index=True)
     # new → contacted → quoted → booked → scheduled → completed | lost | cancelled
