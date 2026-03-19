@@ -1,0 +1,442 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Moving CRM — Full stack (VPC, RDS, S3, CodePipeline, CodeBuild)
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+
+  DBName:
+    Type: String
+    Default: moving_crm
+
+  DBMasterUsername:
+    Type: String
+    Default: crm_admin
+    NoEcho: true
+
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+  AllowedCIDR:
+    Type: String
+    Description: Your IP in CIDR notation (e.g. 1.2.3.4/32) for dev access
+    Default: "0.0.0.0/0"
+
+  GitHubConnectionArn:
+    Type: String
+    Description: ARN of the CodeStar Connection to GitHub (create in Console → Developer Tools → Connections)
+
+  GitHubRepo:
+    Type: String
+    Default: nechama-she/Moving-CRM
+    Description: GitHub owner/repo
+
+  GitHubBranch:
+    Type: String
+    Default: main
+
+Resources:
+  # ===========================================================================
+  # NETWORKING
+  # ===========================================================================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub moving-crm-${Environment}
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub moving-crm-public-a-${Environment}
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub moving-crm-public-b-${Environment}
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  # ===========================================================================
+  # SECURITY GROUPS
+  # ===========================================================================
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow PostgreSQL access
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref AllowedCIDR
+          Description: PostgreSQL from allowed IP
+
+  # CodeBuild connects to RDS via public endpoint (no VPC config needed, saves NAT Gateway cost)
+
+  # ===========================================================================
+  # RDS POSTGRESQL
+  # ===========================================================================
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Moving CRM subnets
+      SubnetIds:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub moving-crm-${Environment}
+      Engine: postgres
+      EngineVersion: "17.2"
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: 20
+      StorageType: gp3
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterPassword
+      PubliclyAccessible: true
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt DBSecurityGroup.GroupId
+      BackupRetentionPeriod: 7
+      MultiAZ: false
+      StorageEncrypted: true
+      Tags:
+        - Key: Name
+          Value: !Sub moving-crm-${Environment}
+
+  # ===========================================================================
+  # SSM PARAMETERS — DB connection info for the app + CodeBuild
+  # ===========================================================================
+  SSMDBHost:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /moving-crm/${Environment}/DB_HOST
+      Type: String
+      Value: !GetAtt Database.Endpoint.Address
+
+  SSMDBPort:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /moving-crm/${Environment}/DB_PORT
+      Type: String
+      Value: !GetAtt Database.Endpoint.Port
+
+  SSMDBName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /moving-crm/${Environment}/DB_NAME
+      Type: String
+      Value: !Ref DBName
+
+  SSMDBUser:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /moving-crm/${Environment}/DB_USER
+      Type: String
+      Value: !Ref DBMasterUsername
+
+  SSMDBPassword:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /moving-crm/${Environment}/DB_PASSWORD
+      Type: String
+      Value: !Ref DBMasterPassword
+
+  # ===========================================================================
+  # S3 — Frontend hosting + Pipeline artifacts
+  # ===========================================================================
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub moving-crm-frontend-${Environment}-${AWS::AccountId}
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublicRead
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub moving-crm-artifacts-${Environment}-${AWS::AccountId}
+      LifecycleConfiguration:
+        Rules:
+          - Id: CleanupOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
+
+  # ===========================================================================
+  # IAM — CodeBuild + CodePipeline roles
+  # ===========================================================================
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-codebuild-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # CloudWatch Logs
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+              # Artifacts bucket
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              # Frontend bucket (deploy built files)
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt FrontendBucket.Arn
+                  - !Sub "${FrontendBucket.Arn}/*"
+              # SSM (read DB config)
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/*"
+              # DynamoDB (read leads for import)
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/leads"
+
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-pipeline-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PipelinePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: !GetAtt CodeBuildProject.Arn
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref GitHubConnectionArn
+
+  # ===========================================================================
+  # CODEBUILD — Build, migrate, import, deploy
+  # ===========================================================================
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub moving-crm-${Environment}
+      Description: Build + deploy Moving CRM
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      TimeoutInMinutes: 15
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.yml
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: ENVIRONMENT
+            Value: !Ref Environment
+          - Name: SSM_PREFIX
+            Value: !Sub /moving-crm/${Environment}/
+          - Name: AWS_REGION
+            Value: !Ref AWS::Region
+          - Name: FRONTEND_BUCKET
+            Value: !Ref FrontendBucket
+          - Name: DYNAMO_TABLE_NAME
+            Value: leads
+      # No VPC config — CodeBuild reaches RDS via public endpoint, avoids NAT Gateway cost
+
+  # ===========================================================================
+  # CODEPIPELINE — Source (GitHub) → Build → Deploy
+  # ===========================================================================
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub moving-crm-${Environment}
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        # --- Source: pull from GitHub ---
+        - Name: Source
+          Actions:
+            - Name: GitHub
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: "1"
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Ref GitHubRepo
+                BranchName: !Ref GitHubBranch
+                DetectChanges: true
+              OutputArtifacts:
+                - Name: SourceCode
+
+        # --- Build: install, migrate, import leads, build frontend, deploy to S3 ---
+        - Name: Build
+          Actions:
+            - Name: BuildAndDeploy
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceCode
+              OutputArtifacts:
+                - Name: BuildOutput
+
+Outputs:
+  FrontendURL:
+    Description: Frontend website URL
+    Value: !GetAtt FrontendBucket.WebsiteURL
+
+  FrontendBucketName:
+    Description: S3 bucket for frontend
+    Value: !Ref FrontendBucket
+
+  DBEndpoint:
+    Description: RDS PostgreSQL endpoint
+    Value: !GetAtt Database.Endpoint.Address
+
+  DBPort:
+    Description: RDS PostgreSQL port
+    Value: !GetAtt Database.Endpoint.Port
+
+  PipelineName:
+    Description: CodePipeline name
+    Value: !Ref Pipeline
+
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
