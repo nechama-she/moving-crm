@@ -20,11 +20,6 @@ Parameters:
     Default: crm_admin
     NoEcho: true
 
-  DBMasterPassword:
-    Type: String
-    NoEcho: true
-    MinLength: 8
-
   AllowedCIDR:
     Type: String
     Description: Your IP in CIDR notation (e.g. 1.2.3.4/32) for dev access
@@ -154,7 +149,7 @@ Resources:
       StorageType: gp3
       DBName: !Ref DBName
       MasterUsername: !Ref DBMasterUsername
-      MasterUserPassword: !Ref DBMasterPassword
+      ManageMasterUserPassword: true
       PubliclyAccessible: true
       DBSubnetGroupName: !Ref DBSubnetGroup
       VPCSecurityGroups:
@@ -196,13 +191,6 @@ Resources:
       Name: !Sub /moving-crm/${Environment}/DB_USER
       Type: String
       Value: !Ref DBMasterUsername
-
-  SSMDBPassword:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: !Sub /moving-crm/${Environment}/DB_PASSWORD
-      Type: String
-      Value: !Ref DBMasterPassword
 
   # ===========================================================================
   # S3 — Frontend hosting + Pipeline artifacts
@@ -292,6 +280,11 @@ Resources:
                   - dynamodb:Query
                 Resource:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/leads"
+              # Secrets Manager (RDS managed password)
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !GetAtt Database.MasterUserSecret.SecretArn
 
   CodePipelineRole:
     Type: AWS::IAM::Role
@@ -407,7 +400,7 @@ Resources:
               Configuration:
                 ConnectionArn: !Ref GitHubConnectionArn
                 FullRepositoryId: !Ref GitHubRepo
-                BranchName: main
+                BranchName: !Ref GitHubBranch
                 DetectChanges: false
               OutputArtifacts:
                 - Name: SourceCode
@@ -472,6 +465,11 @@ Resources:
             Value: !Ref FrontendBucket
           - Name: DYNAMO_TABLE_NAME
             Value: leads
+          - Name: DB_PASSWORD
+            Type: SECRETS_MANAGER
+            Value: !Sub
+              - "${SecretArn}:password::"
+              - SecretArn: !GetAtt Database.MasterUserSecret.SecretArn
 
 Outputs:
   FrontendURL:
@@ -493,6 +491,10 @@ Outputs:
   PipelineName:
     Description: CodePipeline name
     Value: !Ref Pipeline
+
+  DBSecretArn:
+    Description: Secrets Manager ARN for RDS password
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
 
   VPCId:
     Description: VPC ID

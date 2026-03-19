@@ -1,0 +1,11 @@
+template-file-path: infra/template.yaml
+parameters:
+  Environment: dev
+  DBInstanceClass: db.t3.micro
+  DBName: moving_crm
+  DBMasterUsername: crm_admin
+  AllowedCIDR: "0.0.0.0/0"
+  GitHubConnectionArn: arn:aws:codeconnections:us-east-1:381492064416:connection/2a92eaa8-6e8c-42b3-822f-46217b13e685
+  GitHubRepo: nechama-she/moving-crm
+  GitHubBranch: main
+tags: {}
