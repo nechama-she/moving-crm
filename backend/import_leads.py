@@ -5,6 +5,7 @@ Creates a Contact for each lead that doesn't already exist (by leadgen_id).
 Usage:
     python import_leads.py              # dry-run (preview)
     python import_leads.py --commit     # actually write to DB
+    python import_leads.py --commit --limit 20   # import only the 20 most recent
 """
 
 import sys
@@ -26,16 +27,20 @@ MOVE_TYPE_MAP = {
 }
 
 
-def import_leads(commit: bool = False):
-    leads = get_all_leads()
+def import_leads(commit: bool = False, limit: int = 0):
+    leads = get_all_leads()  # sorted by created_time desc (newest first)
     logger.info("Found %d leads in DynamoDB", len(leads))
+
+    if limit:
+        leads = leads[:limit]
+        logger.info("Limiting to %d most recent leads", limit)
 
     session = SessionLocal()
     created = 0
     skipped = 0
+    errors = 0
 
     try:
-        # Get existing leadgen_ids to avoid duplicates
         existing_ids = {
             row[0]
             for row in session.query(Contact.leadgen_id).filter(
@@ -53,33 +58,38 @@ def import_leads(commit: bool = False):
                 "are_you_moving_within_the_state_or_out_of_state?", ""
             ).lower().strip()
 
-            contact = Contact(
-                full_name=lead.get("full_name", "Unknown"),
-                email=lead.get("email", ""),
-                phone=lead.get("phone_number", ""),
-                source="facebook_lead",
-                facebook_user_id=lead.get("user_id", ""),
-                leadgen_id=leadgen_id,
-                inbox_url=lead.get("inbox_url", ""),
-                pickup_zip=lead.get("pickup_zip", ""),
-                delivery_zip=lead.get("delivery_zip", ""),
-                move_size=lead.get("move_size", ""),
-                move_date=lead.get("when_is_the_move?", ""),
-                move_type=MOVE_TYPE_MAP.get(raw_move_type, raw_move_type),
-                status="new",
-            )
-            session.add(contact)
-            created += 1
-            existing_ids.add(leadgen_id)
+            try:
+                contact = Contact(
+                    full_name=lead.get("full_name", "Unknown"),
+                    email=lead.get("email", ""),
+                    phone=lead.get("phone_number", ""),
+                    source="facebook_lead",
+                    facebook_user_id=lead.get("user_id", ""),
+                    leadgen_id=leadgen_id,
+                    inbox_url=lead.get("inbox_url", ""),
+                    pickup_zip=lead.get("pickup_zip", ""),
+                    delivery_zip=lead.get("delivery_zip", ""),
+                    move_size=lead.get("move_size", ""),
+                    move_date=lead.get("when_is_the_move?", ""),
+                    move_type=MOVE_TYPE_MAP.get(raw_move_type, raw_move_type),
+                    created_time=lead.get("created_time", ""),
+                    status="new",
+                )
+                session.add(contact)
+                created += 1
+                existing_ids.add(leadgen_id)
+            except Exception as e:
+                errors += 1
+                logger.warning("Skipping lead %s: %s", leadgen_id, e)
 
         if commit:
             session.commit()
-            logger.info("Committed %d new contacts (%d skipped)", created, skipped)
+            logger.info("Committed %d new contacts (%d skipped, %d errors)", created, skipped, errors)
         else:
             session.rollback()
             logger.info(
-                "DRY RUN — would create %d contacts (%d skipped). Run with --commit to save.",
-                created, skipped,
+                "DRY RUN — would create %d contacts (%d skipped, %d errors). Run with --commit to save.",
+                created, skipped, errors,
             )
     except Exception:
         session.rollback()
@@ -90,4 +100,8 @@ def import_leads(commit: bool = False):
 
 if __name__ == "__main__":
     do_commit = "--commit" in sys.argv
-    import_leads(commit=do_commit)
+    do_limit = 0
+    if "--limit" in sys.argv:
+        idx = sys.argv.index("--limit")
+        do_limit = int(sys.argv[idx + 1])
+    import_leads(commit=do_commit, limit=do_limit)

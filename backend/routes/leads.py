@@ -1,9 +1,10 @@
 import logging
 
-from botocore.exceptions import ClientError
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
+from sqlalchemy.orm import Session
 
-from db import leads_table, get_all_leads
+from database import get_db
+from models import Contact
 
 logger = logging.getLogger("moving-crm")
 
@@ -15,35 +16,33 @@ def get_leads(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     search: str = Query(default=""),
+    db: Session = Depends(get_db),
 ):
-    try:
-        items = get_all_leads()
+    query = db.query(Contact).order_by(Contact.created_time.desc())
 
-        if search.strip():
-            q = search.strip().lower()
-            search_fields = ["full_name", "leadgen_id", "phone_number", "email"]
-            items = [
-                item for item in items
-                if any(q in str(item.get(f, "")).lower() for f in search_fields)
-            ]
+    if search.strip():
+        q = f"%{search.strip().lower()}%"
+        query = query.filter(
+            Contact.full_name.ilike(q)
+            | Contact.leadgen_id.ilike(q)
+            | Contact.phone.ilike(q)
+            | Contact.email.ilike(q)
+        )
 
-        page = items[offset : offset + limit]
-        has_more = offset + limit < len(items)
+    total = query.count()
+    items = query.offset(offset).limit(limit).all()
+    has_more = offset + limit < total
 
-        return {"items": page, "total": len(items), "has_more": has_more}
-    except ClientError as e:
-        logger.error("DynamoDB error: %s", e)
-        raise HTTPException(status_code=502, detail="Could not fetch leads")
+    return {
+        "items": [c.to_dict() for c in items],
+        "total": total,
+        "has_more": has_more,
+    }
 
 
 @router.get("/leads/{lead_id}")
-def get_lead(lead_id: str):
-    try:
-        response = leads_table.get_item(Key={"leadgen_id": lead_id})
-        item = response.get("Item")
-        if not item:
-            raise HTTPException(status_code=404, detail="Lead not found")
-        return item
-    except ClientError as e:
-        logger.error("DynamoDB error: %s", e)
-        raise HTTPException(status_code=502, detail="Could not fetch lead")
+def get_lead(lead_id: str, db: Session = Depends(get_db)):
+    contact = db.query(Contact).filter(Contact.leadgen_id == lead_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return contact.to_dict()
