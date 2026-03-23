@@ -1,6 +1,7 @@
 """Import leads from DynamoDB into the CRM PostgreSQL database.
 
-Creates a Contact for each lead that doesn't already exist (by leadgen_id).
+Creates a Lead for each lead that doesn't already exist (by leadgen_id).
+Auto-creates "Gorilla Haulers" company and an admin user on first run.
 
 Usage:
     python import_leads.py              # dry-run (preview)
@@ -12,7 +13,8 @@ import sys
 import logging
 
 from database import SessionLocal
-from models import Contact
+from models import Lead, Company, User, UserCompany
+from auth import hash_password
 from db import get_all_leads
 
 logging.basicConfig(level=logging.INFO)
@@ -25,6 +27,34 @@ MOVE_TYPE_MAP = {
     "out_of_state": "out_of_state",
     "in_state": "in_state",
 }
+
+
+def ensure_seed_data(session) -> str:
+    """Create Gorilla Haulers company and admin user if they don't exist. Returns company_id."""
+    company = session.query(Company).filter(Company.name == "Gorilla Haulers").first()
+    if not company:
+        company = Company(name="Gorilla Haulers")
+        session.add(company)
+        session.flush()
+        logger.info("Created company: Gorilla Haulers")
+
+    admin = session.query(User).filter(User.email == "admin@gorillamove.com").first()
+    if not admin:
+        admin = User(
+            email="admin@gorillamove.com",
+            name="Admin",
+            password_hash=hash_password("admin123"),
+            role="admin",
+        )
+        session.add(admin)
+        session.flush()
+
+        # Assign admin to the company
+        session.add(UserCompany(user_id=admin.id, company_id=company.id))
+        session.flush()
+        logger.info("Created admin user: admin@gorillamove.com / admin123")
+
+    return company.id
 
 
 def import_leads(commit: bool = False, limit: int = 0):
@@ -41,10 +71,12 @@ def import_leads(commit: bool = False, limit: int = 0):
     errors = 0
 
     try:
+        company_id = ensure_seed_data(session)
+
         existing_ids = {
             row[0]
-            for row in session.query(Contact.leadgen_id).filter(
-                Contact.leadgen_id.isnot(None)
+            for row in session.query(Lead.leadgen_id).filter(
+                Lead.leadgen_id.isnot(None)
             ).all()
         }
 
@@ -59,11 +91,12 @@ def import_leads(commit: bool = False, limit: int = 0):
             ).lower().strip()
 
             try:
-                contact = Contact(
+                new_lead = Lead(
+                    company_id=company_id,
                     full_name=lead.get("full_name", "Unknown"),
                     email=lead.get("email", ""),
                     phone=lead.get("phone_number", ""),
-                    source="facebook_lead",
+                    source="facebook",
                     facebook_user_id=lead.get("user_id", ""),
                     leadgen_id=leadgen_id,
                     inbox_url=lead.get("inbox_url", ""),
@@ -75,7 +108,7 @@ def import_leads(commit: bool = False, limit: int = 0):
                     created_time=lead.get("created_time", ""),
                     status="new",
                 )
-                session.add(contact)
+                session.add(new_lead)
                 created += 1
                 existing_ids.add(leadgen_id)
             except Exception as e:
@@ -84,11 +117,11 @@ def import_leads(commit: bool = False, limit: int = 0):
 
         if commit:
             session.commit()
-            logger.info("Committed %d new contacts (%d skipped, %d errors)", created, skipped, errors)
+            logger.info("Committed %d new leads (%d skipped, %d errors)", created, skipped, errors)
         else:
             session.rollback()
             logger.info(
-                "DRY RUN — would create %d contacts (%d skipped, %d errors). Run with --commit to save.",
+                "DRY RUN — would create %d leads (%d skipped, %d errors). Run with --commit to save.",
                 created, skipped, errors,
             )
     except Exception:
