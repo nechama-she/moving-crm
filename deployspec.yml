@@ -13,8 +13,8 @@ phases:
     commands:
       - echo "Recreating tables with latest schema"
       - cd $CODEBUILD_SRC_DIR/backend && python migrate.py --drop
-      - echo "Importing 20 most recent leads from DynamoDB"
-      - cd $CODEBUILD_SRC_DIR/backend && python import_leads.py --commit --limit 20
+      - echo "Importing all leads from DynamoDB"
+      - cd $CODEBUILD_SRC_DIR/backend && python import_leads.py --commit
 
   build:
     commands:
