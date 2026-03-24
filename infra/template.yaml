@@ -683,8 +683,8 @@ Resources:
                 Resource: "*"
               - Effect: Allow
                 Action:
-                  - secretsmanager:GetSecretValue
-                Resource: "*"
+                  - ssm:GetParameter
+                Resource: "arn:aws:ssm:us-east-1:381492064416:parameter/meta-webhook/GOOGLE_SHEETS_CREDENTIALS"
 
   LeadFollowupFunction:
     Condition: ShouldDeployLambda
@@ -703,7 +703,7 @@ Resources:
         Variables:
           SMARTMOVING_API_KEY: !Ref SmartMovingApiKey
           GOOGLE_SHEET_ID: !Ref GoogleSheetId
-          GOOGLE_CREDENTIALS_FILE: /tmp/google-credentials.json
+          GOOGLE_CREDENTIALS_SSM: /meta-webhook/GOOGLE_SHEETS_CREDENTIALS
 
   LeadFollowupSchedule:
     Condition: ShouldDeployLambda
