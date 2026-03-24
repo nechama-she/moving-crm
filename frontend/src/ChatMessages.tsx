@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { API_BASE } from "./apiConfig";
+import { useAuth, authHeaders } from "./AuthContext";
 
 interface Message {
   user_id?: string;
@@ -33,6 +34,7 @@ const TABS = [
 ] as const;
 
 export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl }: Props) {
+  const { token } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [smsMessages, setSmsMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +48,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl }
 
     if (userId) {
       fetches.push(
-        fetch(`${API_BASE}/api/conversations/${encodeURIComponent(userId)}`)
+        fetch(`${API_BASE}/api/conversations/${encodeURIComponent(userId)}`, { headers: authHeaders(token) })
           .then((res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();
@@ -57,7 +59,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl }
 
     if (phoneNumber) {
       fetches.push(
-        fetch(`${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}`)
+        fetch(`${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}`, { headers: authHeaders(token) })
           .then((res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();

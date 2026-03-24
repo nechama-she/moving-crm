@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import ChatMessages from "./ChatMessages";
 import { API_BASE } from "./apiConfig";
+import { useAuth, authHeaders } from "./AuthContext";
 
 const HIDDEN_FIELDS = new Set(["entry_id", "inbox_url"]);
 
@@ -19,12 +20,13 @@ const META_FIELDS = ["leadgen_id", "created_time", "page_id", "form_id", "adgrou
 export default function LeadDetail() {
   const { leadId } = useParams<{ leadId: string }>();
   const navigate = useNavigate();
+  const { token } = useAuth();
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/leads/${leadId}`)
+    fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();

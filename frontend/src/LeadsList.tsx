@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import { API_BASE } from "./apiConfig";
+import { useAuth, authHeaders } from "./AuthContext";
 
 interface Tooltip {
   text: string;
@@ -59,6 +60,7 @@ function cellStyle(key: string): React.CSSProperties {
 
 export default function LeadsList() {
   const navigate = useNavigate();
+  const { token } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -77,7 +79,7 @@ export default function LeadsList() {
     try {
       const params = new URLSearchParams({ limit: "50", offset: String(offset) });
       if (query) params.set("search", query);
-      const res = await fetch(`${API_BASE}/api/leads?${params}`);
+      const res = await fetch(`${API_BASE}/api/leads?${params}`, { headers: authHeaders(token) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setLeads((prev) => (isFirst ? data.items : [...prev, ...data.items]));
@@ -88,7 +90,7 @@ export default function LeadsList() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     fetchLeads(0, search);
