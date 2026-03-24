@@ -18,12 +18,12 @@ phases:
 
   build:
     commands:
-      - echo "Deploying frontend to S3"
-      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --delete
-
-  post_build:
-    commands:
       - echo "Updating Lambda function code"
       - aws lambda update-function-code --function-name moving-crm-lead-followup-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key lead-followup/package.zip
 
+      - echo "Deploying frontend to S3"
+      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --delete --exclude "lead-followup/*"
+
+  post_build:
+    commands:
       - echo "Deploy complete"
