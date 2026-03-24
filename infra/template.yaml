@@ -701,8 +701,8 @@ Resources:
         S3Key: lead-followup/package.zip
       Environment:
         Variables:
-          SMARTMOVING_API_KEY: !Sub "{{resolve:ssm:/moving-crm/${Environment}/SMARTMOVING_API_KEY}}"
-          GOOGLE_SHEET_ID: !Sub "{{resolve:ssm:/moving-crm/${Environment}/GOOGLE_SHEET_ID}}"
+          SMARTMOVING_API_KEY: !Ref SmartMovingApiKey
+          GOOGLE_SHEET_ID: !Ref GoogleSheetId
           GOOGLE_CREDENTIALS_FILE: /tmp/google-credentials.json
 
   LeadFollowupSchedule:
