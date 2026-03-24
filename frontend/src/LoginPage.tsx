@@ -1,8 +1,12 @@
 import { useState, FormEvent } from "react";
 import { useAuth } from "./AuthContext";
+import { Navigate, useNavigate, useLocation } from "react-router-dom";
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, token } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const from = (location.state as { from?: string })?.from || "/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -14,12 +18,15 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await login(email, password);
+      navigate(from, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
       setSubmitting(false);
     }
   };
+
+  if (token) return <Navigate to={from} replace />;
 
   return (
     <div style={{

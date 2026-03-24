@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./AuthContext";
 import LoginPage from "./LoginPage";
 import LeadsList from "./LeadsList";
@@ -6,8 +6,9 @@ import LeadDetail from "./LeadDetail";
 
 function ProtectedRoutes() {
   const { token, loading, logout } = useAuth();
+  const location = useLocation();
   if (loading) return <p style={{ padding: 24 }}>Loading…</p>;
-  if (!token) return <Navigate to="/login" replace />;
+  if (!token) return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   return (
     <>
       <div style={{
