@@ -17,6 +17,16 @@ phases:
       - echo "Building frontend"
       - cd $CODEBUILD_SRC_DIR/frontend && npm run build
 
+      - echo "Packaging lead-followup Lambda"
+      - cd $CODEBUILD_SRC_DIR/lead-followup
+      - pip install -r requirements.txt -t ./package
+      - cp -r libs services handler.py config.py ./package/
+      - cp google-credentials.json ./package/ 2>/dev/null || true
+      - cd package && zip -r9 ../package.zip . && cd ..
+
+      - echo "Uploading Lambda package to S3"
+      - aws s3 cp $CODEBUILD_SRC_DIR/lead-followup/package.zip s3://${FRONTEND_BUCKET}/lead-followup/package.zip
+
 artifacts:
   files:
     - "**/*"

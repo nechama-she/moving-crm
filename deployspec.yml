@@ -1,16 +1,13 @@
 version: 0.2
 
-# DEPLOY STAGE — runs after build succeeds, only on merge to main
+# DEPLOY STAGE — runs after Infrastructure, uses BuildOutput artifact
 phases:
   install:
     runtime-versions:
       python: 3.11
-      nodejs: 20
     commands:
       - echo "Installing backend dependencies"
       - cd $CODEBUILD_SRC_DIR/backend && pip install -r requirements.txt
-      - echo "Installing frontend dependencies"
-      - cd $CODEBUILD_SRC_DIR/frontend && npm ci
 
   pre_build:
     commands:
@@ -21,11 +18,12 @@ phases:
 
   build:
     commands:
-      - echo "Building frontend"
-      - cd $CODEBUILD_SRC_DIR/frontend && npm run build
+      - echo "Deploying frontend to S3"
+      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --delete
 
   post_build:
     commands:
-      - echo "Deploying frontend to S3"
-      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --delete
+      - echo "Updating Lambda function code"
+      - aws lambda update-function-code --function-name moving-crm-lead-followup-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key lead-followup/package.zip
+
       - echo "Deploy complete"

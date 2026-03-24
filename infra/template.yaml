@@ -38,6 +38,15 @@ Parameters:
     Type: String
     Default: main
 
+  DeployLambda:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Set to false for initial bootstrap (Lambda zip not yet in S3)
+
+Conditions:
+  ShouldDeployLambda: !Equals [!Ref DeployLambda, "true"]
+
 Resources:
   # ===========================================================================
   # NETWORKING
@@ -285,6 +294,11 @@ Resources:
                 Action:
                   - secretsmanager:GetSecretValue
                 Resource: !GetAtt Database.MasterUserSecret.SecretArn
+              # Lambda (update function code during deploy)
+              - Effect: Allow
+                Action:
+                  - lambda:UpdateFunctionCode
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-*"
 
   CodePipelineRole:
     Type: AWS::IAM::Role
@@ -322,6 +336,122 @@ Resources:
                 Action:
                   - codestar-connections:UseConnection
                 Resource: !Ref GitHubConnectionArn
+              # CloudFormation (Infrastructure stage)
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:SetStackPolicy
+                Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/moving-crm-${Environment}/*"
+              # Pass execution role to CloudFormation
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt CloudFormationExecutionRole.Arn
+
+  # ===========================================================================
+  # IAM — CloudFormation execution role (for pipeline Infrastructure stage)
+  # ===========================================================================
+  CloudFormationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-cfn-exec-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudFormationExecution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Networking (VPC, subnets, security groups, route tables)
+              - Effect: Allow
+                Action:
+                  - ec2:*
+                Resource: "*"
+              # RDS
+              - Effect: Allow
+                Action:
+                  - rds:*
+                Resource: "*"
+              # S3
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource: "*"
+              # SSM Parameters
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:DeleteParameter
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:AddTagsToResource
+                  - ssm:RemoveTagsFromResource
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/*"
+              # IAM roles (scoped to project prefix)
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PassRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:GetRolePolicy
+                  - iam:UpdateAssumeRolePolicy
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/moving-crm-*"
+              # CodeBuild
+              - Effect: Allow
+                Action:
+                  - codebuild:*
+                Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/moving-crm-*"
+              # CodePipeline
+              - Effect: Allow
+                Action:
+                  - codepipeline:*
+                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:moving-crm-*"
+              # Lambda
+              - Effect: Allow
+                Action:
+                  - lambda:*
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-*"
+              # EventBridge
+              - Effect: Allow
+                Action:
+                  - events:*
+                Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/moving-crm-*"
+              # Secrets Manager (RDS managed passwords)
+              - Effect: Allow
+                Action:
+                  - secretsmanager:*
+                Resource: "*"
+              # CloudWatch Logs
+              - Effect: Allow
+                Action:
+                  - logs:*
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+              # CodeStar Connections (for pipeline source action)
+              - Effect: Allow
+                Action:
+                  - codestar-connections:PassConnection
+                Resource: "*"
 
   # ===========================================================================
   # S3 — Pipeline artifacts
@@ -368,7 +498,7 @@ Resources:
             Value: leads
 
   # ===========================================================================
-  # CODEPIPELINE V2 — Source → Build → Deploy (triggers on merge to main)
+  # CODEPIPELINE V2 — Source → Build → Infrastructure → Deploy
   # ===========================================================================
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -405,7 +535,7 @@ Resources:
               OutputArtifacts:
                 - Name: SourceCode
 
-        # --- Build: install deps, run migrations, import leads, build frontend ---
+        # --- Build: compile frontend, package Lambda, upload Lambda zip ---
         - Name: Build
           Actions:
             - Name: Build
@@ -421,7 +551,34 @@ Resources:
               OutputArtifacts:
                 - Name: BuildOutput
 
-        # --- Deploy: sync frontend to S3, run DB updates ---
+        # --- Infrastructure: deploy CloudFormation template (self-mutating) ---
+        - Name: Infrastructure
+          Actions:
+            - Name: DeployInfra
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub moving-crm-${Environment}
+                TemplatePath: SourceCode::infra/template.yaml
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationExecutionRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "Environment": "${Environment}",
+                    "GitHubConnectionArn": "${GitHubConnectionArn}",
+                    "GitHubRepo": "${GitHubRepo}",
+                    "GitHubBranch": "${GitHubBranch}",
+                    "AllowedCIDR": "${AllowedCIDR}",
+                    "DeployLambda": "true"
+                  }
+              InputArtifacts:
+                - Name: SourceCode
+
+        # --- Deploy: frontend to S3, update Lambda code, run migrations ---
         - Name: Deploy
           Actions:
             - Name: DeployToProduction
@@ -433,7 +590,7 @@ Resources:
               Configuration:
                 ProjectName: !Ref DeployProject
               InputArtifacts:
-                - Name: SourceCode
+                - Name: BuildOutput
 
   # ===========================================================================
   # CODEBUILD — Deploy project (runs after build succeeds)
@@ -471,6 +628,78 @@ Resources:
               - "${SecretArn}:password::"
               - SecretArn: !GetAtt Database.MasterUserSecret.SecretArn
 
+  # ===========================================================================
+  # LEAD FOLLOWUP LAMBDA
+  # ===========================================================================
+  LeadFollowupRole:
+    Condition: ShouldDeployLambda
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-lead-followup-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LeadFollowupPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:GetFunctionConfiguration
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: "*"
+
+  LeadFollowupFunction:
+    Condition: ShouldDeployLambda
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub moving-crm-lead-followup-${Environment}
+      Runtime: python3.11
+      Handler: handler.handler
+      Timeout: 300
+      MemorySize: 256
+      Role: !GetAtt LeadFollowupRole.Arn
+      Code:
+        S3Bucket: !Ref FrontendBucket
+        S3Key: lead-followup/package.zip
+      Environment:
+        Variables:
+          SMARTMOVING_API_KEY: !Sub "{{resolve:ssm:/moving-crm/${Environment}/SMARTMOVING_API_KEY}}"
+          GOOGLE_SHEET_ID: !Sub "{{resolve:ssm:/moving-crm/${Environment}/GOOGLE_SHEET_ID}}"
+          GOOGLE_CREDENTIALS_FILE: /tmp/google-credentials.json
+
+  LeadFollowupSchedule:
+    Condition: ShouldDeployLambda
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub moving-crm-lead-followup-${Environment}
+      Description: Follow up on new leads every morning at 8am ET (12:00 UTC)
+      ScheduleExpression: "cron(0 12 * * ? *)"
+      State: ENABLED
+      Targets:
+        - Id: LeadFollowupLambda
+          Arn: !GetAtt LeadFollowupFunction.Arn
+          Input: '{"days_back": 1}'
+
+  LeadFollowupSchedulePermission:
+    Condition: ShouldDeployLambda
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LeadFollowupFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LeadFollowupSchedule.Arn
+
 Outputs:
   FrontendURL:
     Description: Frontend website URL
@@ -499,3 +728,8 @@ Outputs:
   VPCId:
     Description: VPC ID
     Value: !Ref VPC
+
+  LeadFollowupLambdaArn:
+    Condition: ShouldDeployLambda
+    Description: ARN of the lead followup Lambda
+    Value: !GetAtt LeadFollowupFunction.Arn

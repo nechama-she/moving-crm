@@ -1,0 +1,31 @@
+"""SmartMoving API client — opportunity lookups."""
+
+import logging
+
+import httpx
+
+from config import SMARTMOVING_API_KEY, SMARTMOVING_BASE_URL
+
+logger = logging.getLogger(__name__)
+
+
+def _headers() -> dict:
+    return {"x-api-key": SMARTMOVING_API_KEY, "Cache-Control": "no-cache"}
+
+
+def get_opportunity(opportunity_id: str) -> dict:
+    """Fetch a single opportunity by ID.
+
+    Returns {"data": {...}} or {"error": ...}.
+    """
+    url = f"{SMARTMOVING_BASE_URL}/opportunities/{opportunity_id}"
+    try:
+        resp = httpx.get(url, headers=_headers(), timeout=15)
+        resp.raise_for_status()
+        return {"data": resp.json()}
+    except httpx.HTTPError as e:
+        status = getattr(e.response, "status_code", None)
+        body = getattr(e.response, "text", str(e))
+        return {"error": f"HTTP {status}: {body[:300]}"}
+    except Exception as e:
+        return {"error": str(e)}

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_config
-from routes import auth, leads, conversations, system, sms, companies, users
+from routes import auth, leads, conversations, system, sms, companies, users, smartmoving
 
 cfg = get_config()
 
@@ -22,4 +22,5 @@ app.include_router(companies.router)
 app.include_router(users.router)
 app.include_router(conversations.router)
 app.include_router(sms.router)
+app.include_router(smartmoving.router)
 app.include_router(system.router)

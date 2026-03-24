@@ -1,14 +1,18 @@
 <#
 .SYNOPSIS
-    One-click deploy of the Moving CRM stack.
+    One-time bootstrap of the Moving CRM stack.
 
 .DESCRIPTION
-    Deploys the CloudFormation template that creates:
+    Creates the CloudFormation stack with:
     - VPC + subnets
-    - RDS PostgreSQL (free tier)
+    - RDS PostgreSQL (managed password via Secrets Manager)
     - S3 bucket for frontend
     - CodePipeline + CodeBuild (auto-deploys on git push)
     - SSM parameters for DB config
+    - CloudFormation execution role for self-mutating pipeline
+
+    Lambda resources are deployed by the pipeline on the first git push
+    (DeployLambda=false during bootstrap, pipeline sets it to true).
 
 .NOTES
     Prerequisites:
@@ -20,9 +24,6 @@
 
 param(
     [Parameter(Mandatory=$true)]
-    [string]$DBPassword,
-
-    [Parameter(Mandatory=$true)]
     [string]$GitHubConnectionArn,
 
     [string]$Environment = "dev",
@@ -33,8 +34,9 @@ param(
 
 $StackName = "moving-crm-$Environment"
 
-Write-Host "Deploying stack: $StackName" -ForegroundColor Cyan
+Write-Host "Bootstrapping stack: $StackName" -ForegroundColor Cyan
 Write-Host "This will create: VPC, RDS PostgreSQL, S3, CodePipeline, CodeBuild" -ForegroundColor Yellow
+Write-Host "Lambda resources will be created by the pipeline on the first git push." -ForegroundColor Yellow
 Write-Host ""
 
 aws cloudformation deploy `
@@ -43,11 +45,11 @@ aws cloudformation deploy `
     --capabilities CAPABILITY_NAMED_IAM `
     --parameter-overrides `
         "Environment=$Environment" `
-        "DBMasterPassword=$DBPassword" `
         "GitHubConnectionArn=$GitHubConnectionArn" `
         "GitHubRepo=$GitHubRepo" `
         "GitHubBranch=$GitHubBranch" `
-        "AllowedCIDR=$AllowedCIDR"
+        "AllowedCIDR=$AllowedCIDR" `
+        "DeployLambda=false"
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host ""
