@@ -737,6 +737,7 @@ Resources:
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
+    DependsOn: CloudFormationExecutionRole
     Properties:
       Name: !Sub moving-crm-api-${Environment}
       ProtocolType: HTTP
