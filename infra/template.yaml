@@ -471,11 +471,12 @@ Resources:
               - Effect: Allow
                 Action:
                   - apigateway:*
-                Resource: "*"
-              - Effect: Allow
-                Action:
                   - apigatewayv2:*
-                Resource: "*"
+                  - execute-api:*
+                Resource:
+                  - "*"
+                  - !Sub "arn:aws:apigateway:${AWS::Region}::/apis"
+                  - !Sub "arn:aws:apigateway:${AWS::Region}::/apis/*"
               # Secrets Manager (RDS managed passwords)
               - Effect: Allow
                 Action:
