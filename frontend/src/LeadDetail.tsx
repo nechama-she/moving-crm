@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import ChatMessages from "./ChatMessages";
+import { API_BASE } from "./apiConfig";
 
 const HIDDEN_FIELDS = new Set(["entry_id", "inbox_url"]);
 
@@ -23,7 +24,7 @@ export default function LeadDetail() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch(`/api/leads/${leadId}`)
+    fetch(`${API_BASE}/api/leads/${leadId}`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();

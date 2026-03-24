@@ -18,11 +18,19 @@ phases:
 
   build:
     commands:
-      - echo "Updating Lambda function code"
+      - echo "Updating lead-followup Lambda function code"
       - aws lambda update-function-code --function-name moving-crm-lead-followup-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key lead-followup/package.zip
 
+      - echo "Updating API backend Lambda function code"
+      - aws lambda update-function-code --function-name moving-crm-api-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key api-backend/package.zip
+
       - echo "Deploying frontend to S3"
-      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --delete --exclude "lead-followup/*"
+      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --delete --exclude "lead-followup/*" --exclude "api-backend/*"
+
+      - echo "Injecting API Gateway URL into frontend config"
+      - API_URL=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='ApiURL'].OutputValue" --output text)
+      - echo "window.__API_URL__ = '${API_URL}';" > /tmp/api-config.js
+      - aws s3 cp /tmp/api-config.js s3://${FRONTEND_BUCKET}/api-config.js
 
   post_build:
     commands:

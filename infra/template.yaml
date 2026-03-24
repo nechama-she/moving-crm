@@ -324,6 +324,11 @@ Resources:
                 Action:
                   - lambda:UpdateFunctionCode
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-*"
+              # CloudFormation (read stack outputs during deploy)
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/moving-crm-${Environment}/*"
 
   CodePipelineRole:
     Type: AWS::IAM::Role
@@ -462,6 +467,15 @@ Resources:
                 Action:
                   - events:*
                 Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/moving-crm-*"
+              # API Gateway
+              - Effect: Allow
+                Action:
+                  - apigateway:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - apigatewayv2:*
+                Resource: "*"
               # Secrets Manager (RDS managed passwords)
               - Effect: Allow
                 Action:
@@ -471,7 +485,9 @@ Resources:
               - Effect: Allow
                 Action:
                   - logs:*
-                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
               # CodeStar Connections (for pipeline source action)
               - Effect: Allow
                 Action:
@@ -656,6 +672,105 @@ Resources:
               - SecretArn: !GetAtt Database.MasterUserSecret.SecretArn
 
   # ===========================================================================
+  # API BACKEND LAMBDA + API GATEWAY
+  # ===========================================================================
+  ApiLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-api-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ApiLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !GetAtt Database.MasterUserSecret.SecretArn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/leads"
+
+  ApiLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub moving-crm-api-${Environment}
+      Runtime: python3.11
+      Handler: lambda_handler.handler
+      Timeout: 30
+      MemorySize: 512
+      Role: !GetAtt ApiLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref FrontendBucket
+        S3Key: api-backend/package.zip
+      Environment:
+        Variables:
+          SSM_PREFIX: !Sub /moving-crm/${Environment}/
+          AWS_REGION_NAME: !Ref AWS::Region
+          CORS_ORIGINS: !Join
+            - ","
+            - - !GetAtt FrontendBucket.WebsiteURL
+              - "http://localhost:5173"
+          DB_PASSWORD: !Sub
+            - "{{resolve:secretsmanager:${SecretArn}:SecretString:password}}"
+            - SecretArn: !GetAtt Database.MasterUserSecret.SecretArn
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub moving-crm-api-${Environment}
+      ProtocolType: HTTP
+
+  HttpApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApiLambdaFunction.Arn
+      PayloadFormatVersion: "2.0"
+
+  HttpApiDefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "$default"
+      Target: !Sub "integrations/${HttpApiIntegration}"
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: "$default"
+      AutoDeploy: true
+
+  ApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ApiLambdaFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*"
+
+  # ===========================================================================
   # LEAD FOLLOWUP LAMBDA
   # ===========================================================================
   LeadFollowupRole:
@@ -760,3 +875,7 @@ Outputs:
     Condition: ShouldDeployLambda
     Description: ARN of the lead followup Lambda
     Value: !GetAtt LeadFollowupFunction.Arn
+
+  ApiURL:
+    Description: API Gateway URL for the backend
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"

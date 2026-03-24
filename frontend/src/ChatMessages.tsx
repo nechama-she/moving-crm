@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { API_BASE } from "./apiConfig";
 
 interface Message {
   user_id?: string;
@@ -45,7 +46,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl }
 
     if (userId) {
       fetches.push(
-        fetch(`/api/conversations/${encodeURIComponent(userId)}`)
+        fetch(`${API_BASE}/api/conversations/${encodeURIComponent(userId)}`)
           .then((res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();
@@ -56,7 +57,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl }
 
     if (phoneNumber) {
       fetches.push(
-        fetch(`/api/sms/${encodeURIComponent(phoneNumber)}`)
+        fetch(`${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}`)
           .then((res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
+import { API_BASE } from "./apiConfig";
 
 interface Tooltip {
   text: string;
@@ -76,7 +77,7 @@ export default function LeadsList() {
     try {
       const params = new URLSearchParams({ limit: "50", offset: String(offset) });
       if (query) params.set("search", query);
-      const res = await fetch(`/api/leads?${params}`);
+      const res = await fetch(`${API_BASE}/api/leads?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setLeads((prev) => (isFirst ? data.items : [...prev, ...data.items]));

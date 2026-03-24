@@ -27,6 +27,16 @@ phases:
       - echo "Uploading Lambda package to S3"
       - aws s3 cp $CODEBUILD_SRC_DIR/lead-followup/package.zip s3://${FRONTEND_BUCKET}/lead-followup/package.zip
 
+      - echo "Packaging API backend Lambda"
+      - cd $CODEBUILD_SRC_DIR/backend
+      - "pip install -r requirements.txt -t ./package --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.11 --implementation cp"
+      - cp *.py ./package/
+      - cp -r routes ./package/
+      - cd package && zip -r9 ../api-package.zip . && cd ..
+
+      - echo "Uploading API backend package to S3"
+      - aws s3 cp $CODEBUILD_SRC_DIR/backend/api-package.zip s3://${FRONTEND_BUCKET}/api-backend/package.zip
+
 artifacts:
   files:
     - "**/*"
