@@ -785,7 +785,6 @@ Resources:
           CORS_ORIGINS: !Join
             - ","
             - - !Sub "https://${CloudFrontDistribution.DomainName}"
-              - !GetAtt FrontendBucket.WebsiteURL
               - "http://localhost:5173"
           DB_PASSWORD: !Sub
             - "{{resolve:secretsmanager:${SecretArn}:SecretString:password}}"
@@ -902,8 +901,8 @@ Resources:
 
 Outputs:
   FrontendURL:
-    Description: Frontend website URL
-    Value: !GetAtt FrontendBucket.WebsiteURL
+    Description: Frontend URL (CloudFront)
+    Value: !Sub "https://${CloudFrontDistribution.DomainName}"
 
   FrontendBucketName:
     Description: S3 bucket for frontend
