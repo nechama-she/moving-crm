@@ -104,6 +104,8 @@ class Lead(Base):
     move_size = Column(Text)
     move_date = Column(Text)
     move_type = Column(Text)
+    service_type = Column(String(50))
+    referral_source = Column(String(100))
 
     status = Column(String(30), nullable=False, default="new", index=True)
     # new → contacted → quoted → booked → scheduled → completed | lost | cancelled
@@ -136,6 +138,8 @@ class Lead(Base):
             "inbox_url": self.inbox_url or "",
             "user_id": self.facebook_user_id or "",
             "source": self.source or "",
+            "referral_source": self.referral_source or "",
+            "service_type": self.service_type or "",
             "status": self.status or "new",
             "priority": self.priority or 0,
             "notes": self.notes or "",

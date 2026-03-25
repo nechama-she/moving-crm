@@ -13,6 +13,25 @@ phases:
     commands:
       - echo "Ensuring tables exist (safe — no data loss)"
       - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
+      - echo "Adding new columns to leads table"
+      - cd $CODEBUILD_SRC_DIR/backend && python -c "
+        from database import engine;
+        from sqlalchemy import text;
+        conn = engine.connect();
+        [conn.execute(text(f'ALTER TABLE leads ADD COLUMN IF NOT EXISTS {c[0]} {c[1]}')) or conn.commit() for c in [('referral_source','VARCHAR(100)'),('service_type','VARCHAR(50)')]];
+        conn.close();
+        print('Done')
+        "
+      - echo "Generating API secret if not exists"
+      - |
+        SSM_KEY="/moving-crm/${ENVIRONMENT:-dev}/API_SECRET"
+        if ! aws ssm get-parameter --name "$SSM_KEY" --with-decryption > /dev/null 2>&1; then
+          SECRET=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+          aws ssm put-parameter --name "$SSM_KEY" --value "$SECRET" --type SecureString --overwrite
+          echo "API_SECRET generated and stored in SSM"
+        else
+          echo "API_SECRET already exists in SSM"
+        fi
       - echo "Ensuring admin user + importing new leads (skips existing)"
       - cd $CODEBUILD_SRC_DIR/backend && python import_leads.py --commit
 

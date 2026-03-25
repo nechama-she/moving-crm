@@ -1,12 +1,14 @@
 import logging
+import os
 
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
+from config import get_config
 from database import get_db
-from models import Lead, User, UserCompany
+from models import Lead, User, UserCompany, Company
 
 logger = logging.getLogger("moving-crm")
 
@@ -122,3 +124,85 @@ def update_lead(
     db.commit()
     db.refresh(lead)
     return lead.to_dict()
+
+
+# ---- POST /api/leads — create a new lead from Zapier / external source ----
+
+MOVE_TYPE_MAP = {
+    "out of state": "interstate",
+    "within the state": "local",
+    "out_of_state": "interstate",
+    "in_state": "local",
+    "interstate": "interstate",
+    "local": "local",
+}
+
+
+class NewLead(BaseModel):
+    full_name: str = ""
+    email: str = ""
+    phone_number: str = ""
+    pickup_zip: str = ""
+    delivery_zip: str = ""
+    move_size: str = ""
+    move_date: str = ""
+    move_type: str = ""
+    created_time: str = ""
+    leadgen_id: str = ""
+    notes: str = ""
+    referral_source: str = ""
+    service_type: str = ""
+    source: str = "zapier"
+
+
+@router.post("/leads")
+def create_lead(
+    body: NewLead,
+    x_api_secret: str = Header(...),
+    db: Session = Depends(get_db),
+):
+    cfg = get_config()
+    secret = cfg.get("API_SECRET", os.getenv("API_SECRET", ""))
+    if not secret:
+        raise HTTPException(status_code=500, detail="API secret not configured")
+    if x_api_secret != secret:
+        raise HTTPException(status_code=401, detail="Invalid API secret")
+
+    if not body.full_name.strip():
+        raise HTTPException(status_code=400, detail="full_name is required")
+
+    # Deduplicate by leadgen_id
+    if body.leadgen_id.strip():
+        existing = db.query(Lead).filter(Lead.leadgen_id == body.leadgen_id.strip()).first()
+        if existing:
+            return {"status": "skipped", "reason": "duplicate", "leadgen_id": body.leadgen_id}
+
+    company = db.query(Company).filter(Company.name == "Gorilla Haulers").first()
+    if not company:
+        raise HTTPException(status_code=500, detail="Company not found")
+
+    raw_move_type = body.move_type.lower().strip()
+
+    lead = Lead(
+        company_id=company.id,
+        full_name=body.full_name.strip(),
+        email=body.email.strip(),
+        phone=body.phone_number.strip(),
+        source=body.source or "zapier",
+        leadgen_id=body.leadgen_id.strip() or None,
+        pickup_zip=body.pickup_zip.strip(),
+        delivery_zip=body.delivery_zip.strip(),
+        move_size=body.move_size.strip(),
+        move_date=body.move_date.strip(),
+        move_type=MOVE_TYPE_MAP.get(raw_move_type, raw_move_type),
+        created_time=body.created_time.strip(),
+        notes=body.notes.strip() or None,
+        referral_source=body.referral_source.strip() or None,
+        service_type=body.service_type.strip() or None,
+        status="new",
+    )
+    db.add(lead)
+    db.commit()
+    db.refresh(lead)
+    logger.info("Created lead: %s (%s)", lead.full_name, lead.id)
+    return {"status": "created", "lead_id": lead.id, "full_name": lead.full_name}
