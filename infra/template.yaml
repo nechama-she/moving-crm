@@ -226,14 +226,6 @@ Resources:
       Type: String
       Value: !Ref GoogleSheetId
 
-  SSMJwtSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: !Sub /moving-crm/${Environment}/jwt-secret
-      GenerateSecretString:
-        PasswordLength: 64
-        ExcludePunctuation: true
-
   # ===========================================================================
   # S3 — Frontend hosting + Pipeline artifacts
   # ===========================================================================
@@ -307,12 +299,13 @@ Resources:
                 Resource:
                   - !GetAtt FrontendBucket.Arn
                   - !Sub "${FrontendBucket.Arn}/*"
-              # SSM (read DB config)
+              # SSM (read DB config + write admin password)
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
                   - ssm:GetParameters
                   - ssm:GetParametersByPath
+                  - ssm:PutParameter
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/*"
               # DynamoDB (read leads for import)
               - Effect: Allow
@@ -710,9 +703,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
-                Resource:
-                  - !GetAtt Database.MasterUserSecret.SecretArn
-                  - !Ref SSMJwtSecret
+                Resource: !GetAtt Database.MasterUserSecret.SecretArn
               - Effect: Allow
                 Action:
                   - dynamodb:Scan
@@ -746,9 +737,6 @@ Resources:
           DB_PASSWORD: !Sub
             - "{{resolve:secretsmanager:${SecretArn}:SecretString:password}}"
             - SecretArn: !GetAtt Database.MasterUserSecret.SecretArn
-          JWT_SECRET: !Sub
-            - "{{resolve:secretsmanager:${SecretArn}:SecretString}}"
-            - SecretArn: !Ref SSMJwtSecret
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api

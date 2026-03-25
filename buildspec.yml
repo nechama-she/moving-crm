@@ -7,8 +7,6 @@ phases:
       python: 3.11
       nodejs: 20
     commands:
-      - echo "Installing backend dependencies"
-      - cd $CODEBUILD_SRC_DIR/backend && pip install -r requirements.txt
       - echo "Installing frontend dependencies"
       - cd $CODEBUILD_SRC_DIR/frontend && npm ci
 

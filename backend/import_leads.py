@@ -23,6 +23,23 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("import-leads")
 
 
+def _store_admin_password(password: str):
+    """Store the admin password in SSM Parameter Store for secure retrieval."""
+    try:
+        import boto3
+        ssm_prefix = os.environ.get("SSM_PREFIX", "/moving-crm/dev/")
+        ssm = boto3.client("ssm", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+        ssm.put_parameter(
+            Name=f"{ssm_prefix}ADMIN_PASSWORD",
+            Value=password,
+            Type="SecureString",
+            Overwrite=True,
+        )
+        logger.info("Admin password stored in SSM: %sADMIN_PASSWORD", ssm_prefix)
+    except Exception as e:
+        logger.warning("Could not store password in SSM: %s — check CodeBuild logs", e)
+
+
 MOVE_TYPE_MAP = {
     "out of state": "out_of_state",
     "within the state": "in_state",
@@ -42,12 +59,7 @@ def ensure_seed_data(session) -> str:
 
     admin = session.query(User).filter(User.email == "admin@gorillamove.com").first()
     if not admin:
-        # Read password from env var; generate a random one if not set
-        admin_password = os.environ.get("ADMIN_SEED_PASSWORD")
-        if not admin_password:
-            admin_password = secrets.token_urlsafe(16)
-            logger.warning("No ADMIN_SEED_PASSWORD set — generated: %s", admin_password)
-            logger.warning("Change this password immediately via the /api/auth/change-password endpoint!")
+        admin_password = os.environ.get("ADMIN_SEED_PASSWORD") or secrets.token_urlsafe(16)
 
         admin = User(
             email="admin@gorillamove.com",
@@ -61,7 +73,10 @@ def ensure_seed_data(session) -> str:
         # Assign admin to the company
         session.add(UserCompany(user_id=admin.id, company_id=company.id))
         session.flush()
-        logger.info("Created admin user: admin@gorillamove.com")
+
+        # Store password in SSM so it can be retrieved securely
+        _store_admin_password(admin_password)
+        logger.info("Created admin user: admin@gorillamove.com (password stored in SSM)")
 
     return company.id
 

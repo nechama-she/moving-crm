@@ -12,22 +12,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import User
 
-def _get_jwt_secret() -> str:
-    """Load JWT secret from SSM config, env var, or generate a per-instance fallback."""
-    from config import get_config
-    cfg = get_config()
-    secret = cfg.get("JWT_SECRET") or os.getenv("JWT_SECRET")
-    if not secret:
-        import logging
-        logging.getLogger("moving-crm").warning(
-            "JWT_SECRET not configured — using random secret (tokens won't survive restarts)"
-        )
-        import secrets as _s
-        secret = _s.token_urlsafe(32)
-    return secret
-
-
-SECRET_KEY = _get_jwt_secret()
+SECRET_KEY = os.getenv("JWT_SECRET", "dev-secret-change-in-prod")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 

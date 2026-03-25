@@ -6,14 +6,14 @@ phases:
     runtime-versions:
       python: 3.11
     commands:
-      - echo "Installing backend dependencies"
+      - echo "Installing backend dependencies for migrations"
       - cd $CODEBUILD_SRC_DIR/backend && pip install -r requirements.txt
 
   pre_build:
     commands:
-      - echo "Recreating tables with latest schema"
-      - cd $CODEBUILD_SRC_DIR/backend && python migrate.py --drop
-      - echo "Importing all leads from DynamoDB"
+      - echo "Ensuring tables exist (safe — no data loss)"
+      - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
+      - echo "Ensuring admin user + importing new leads (skips existing)"
       - cd $CODEBUILD_SRC_DIR/backend && python import_leads.py --commit
 
   build:
