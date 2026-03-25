@@ -256,35 +256,35 @@ Resources:
             Resource: !Sub "${FrontendBucket.Arn}/*"
 
   # ===========================================================================
-  # CLOUDFRONT — HTTPS for frontend (added after IAM permissions deployed)
+  # CLOUDFRONT — HTTPS for frontend
   # ===========================================================================
-  # CloudFrontDistribution:
-  #   Type: AWS::CloudFront::Distribution
-  #   Properties:
-  #     DistributionConfig:
-  #       Enabled: true
-  #       Comment: !Sub moving-crm-${Environment}
-  #       DefaultRootObject: index.html
-  #       Origins:
-  #         - Id: S3WebsiteOrigin
-  #           DomainName: !Select [1, !Split ["//", !GetAtt FrontendBucket.WebsiteURL]]
-  #           CustomOriginConfig:
-  #             OriginProtocolPolicy: http-only
-  #       DefaultCacheBehavior:
-  #         TargetOriginId: S3WebsiteOrigin
-  #         ViewerProtocolPolicy: redirect-to-https
-  #         AllowedMethods: [GET, HEAD]
-  #         CachedMethods: [GET, HEAD]
-  #         ForwardedValues:
-  #           QueryString: false
-  #         Compress: true
-  #       CustomErrorResponses:
-  #         - ErrorCode: 404
-  #           ResponseCode: 200
-  #           ResponsePagePath: /index.html
-  #         - ErrorCode: 403
-  #           ResponseCode: 200
-  #           ResponsePagePath: /index.html
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub moving-crm-${Environment}
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3WebsiteOrigin
+            DomainName: !Select [1, !Split ["//", !GetAtt FrontendBucket.WebsiteURL]]
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+        DefaultCacheBehavior:
+          TargetOriginId: S3WebsiteOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues:
+            QueryString: false
+          Compress: true
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
 
   # ===========================================================================
   # IAM — CodeBuild + CodePipeline roles
@@ -773,7 +773,8 @@ Resources:
           AWS_REGION_NAME: !Ref AWS::Region
           CORS_ORIGINS: !Join
             - ","
-            - - !GetAtt FrontendBucket.WebsiteURL
+            - - !Sub "https://${CloudFrontDistribution.DomainName}"
+              - !GetAtt FrontendBucket.WebsiteURL
               - "http://localhost:5173"
           DB_PASSWORD: !Sub
             - "{{resolve:secretsmanager:${SecretArn}:SecretString:password}}"
@@ -926,10 +927,10 @@ Outputs:
     Description: API Gateway URL for the backend
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
 
-  # CloudFrontDistributionId:
-  #   Description: CloudFront distribution ID
-  #   Value: !Ref CloudFrontDistribution
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID
+    Value: !Ref CloudFrontDistribution
 
-  # CloudFrontURL:
-  #   Description: HTTPS frontend URL
-  #   Value: !Sub "https://${CloudFrontDistribution.DomainName}"
+  CloudFrontURL:
+    Description: HTTPS frontend URL
+    Value: !Sub "https://${CloudFrontDistribution.DomainName}"
