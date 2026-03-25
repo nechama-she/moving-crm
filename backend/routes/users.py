@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from auth import hash_password, require_admin
 from database import get_db
 from models import User, Company, UserCompany
+from routes.auth import validate_password_strength
 
 logger = logging.getLogger("moving-crm")
 
@@ -34,6 +35,8 @@ def list_users(admin: User = Depends(require_admin), db: Session = Depends(get_d
 def create_user(body: UserCreate, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     if body.role not in ("admin", "sales_rep", "dispatch"):
         raise HTTPException(status_code=400, detail="Invalid role")
+
+    validate_password_strength(body.password)
 
     existing = db.query(User).filter(User.email == body.email).first()
     if existing:

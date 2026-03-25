@@ -9,6 +9,8 @@ Usage:
     python import_leads.py --commit --limit 20   # import only the 20 most recent
 """
 
+import os
+import secrets
 import sys
 import logging
 
@@ -40,10 +42,17 @@ def ensure_seed_data(session) -> str:
 
     admin = session.query(User).filter(User.email == "admin@gorillamove.com").first()
     if not admin:
+        # Read password from env var; generate a random one if not set
+        admin_password = os.environ.get("ADMIN_SEED_PASSWORD")
+        if not admin_password:
+            admin_password = secrets.token_urlsafe(16)
+            logger.warning("No ADMIN_SEED_PASSWORD set — generated: %s", admin_password)
+            logger.warning("Change this password immediately via the /api/auth/change-password endpoint!")
+
         admin = User(
             email="admin@gorillamove.com",
             name="Admin",
-            password_hash=hash_password("admin123"),
+            password_hash=hash_password(admin_password),
             role="admin",
         )
         session.add(admin)
@@ -52,7 +61,7 @@ def ensure_seed_data(session) -> str:
         # Assign admin to the company
         session.add(UserCompany(user_id=admin.id, company_id=company.id))
         session.flush()
-        logger.info("Created admin user: admin@gorillamove.com / admin123")
+        logger.info("Created admin user: admin@gorillamove.com")
 
     return company.id
 

@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./AuthContext";
 import LoginPage from "./LoginPage";
+import ChangePasswordPage from "./ChangePasswordPage";
 import LeadsList from "./LeadsList";
 import LeadDetail from "./LeadDetail";
 
@@ -12,9 +13,15 @@ function ProtectedRoutes() {
   return (
     <>
       <div style={{
-        display: "flex", justifyContent: "flex-end", padding: "8px 24px",
+        display: "flex", justifyContent: "flex-end", gap: 8, padding: "8px 24px",
         borderBottom: "1px solid #eee", background: "#fafafa",
       }}>
+        <a href="/change-password" style={{
+          fontSize: 13, color: "#2563eb", textDecoration: "none",
+          alignSelf: "center",
+        }}>
+          Change Password
+        </a>
         <button onClick={logout} style={{
           background: "none", border: "1px solid #ccc", borderRadius: 4,
           padding: "4px 12px", cursor: "pointer", fontSize: 13,
@@ -25,6 +32,7 @@ function ProtectedRoutes() {
       <Routes>
         <Route path="/" element={<LeadsList />} />
         <Route path="/leads/:leadId" element={<LeadDetail />} />
+        <Route path="/change-password" element={<ChangePasswordPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>
