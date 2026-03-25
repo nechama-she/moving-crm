@@ -4,7 +4,7 @@ import { API_BASE } from "./apiConfig";
 import { useNavigate } from "react-router-dom";
 
 export default function ChangePasswordPage() {
-  const { token } = useAuth();
+  const { token, logout } = useAuth();
   const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -34,10 +34,11 @@ export default function ChangePasswordPage() {
         const data = await res.json().catch(() => null);
         throw new Error(data?.detail || "Failed to change password");
       }
-      setSuccess("Password changed successfully!");
+      setSuccess("Password changed! Redirecting to login…");
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
+      setTimeout(() => { logout(); navigate("/login"); }, 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
