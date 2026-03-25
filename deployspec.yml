@@ -14,14 +14,7 @@ phases:
       - echo "Ensuring tables exist (safe — no data loss)"
       - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
       - echo "Adding new columns to leads table"
-      - cd $CODEBUILD_SRC_DIR/backend && python -c "
-        from database import engine;
-        from sqlalchemy import text;
-        conn = engine.connect();
-        [conn.execute(text(f'ALTER TABLE leads ADD COLUMN IF NOT EXISTS {c[0]} {c[1]}')) or conn.commit() for c in [('referral_source','VARCHAR(100)'),('service_type','VARCHAR(50)')]];
-        conn.close();
-        print('Done')
-        "
+      - cd $CODEBUILD_SRC_DIR/backend && python add_columns.py
       - echo "Generating API secret if not exists"
       - |
         SSM_KEY="/moving-crm/${ENVIRONMENT:-dev}/API_SECRET"
