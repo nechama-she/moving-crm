@@ -32,6 +32,10 @@ phases:
       - echo "window.__API_URL__ = '${API_URL}';" > /tmp/api-config.js
       - aws s3 cp /tmp/api-config.js s3://${FRONTEND_BUCKET}/api-config.js
 
+      - echo "Invalidating CloudFront cache"
+      - DIST_ID=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)
+      - aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*"
+
   post_build:
     commands:
       - echo "Deploy complete"

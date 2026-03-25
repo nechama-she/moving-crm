@@ -256,6 +256,37 @@ Resources:
             Resource: !Sub "${FrontendBucket.Arn}/*"
 
   # ===========================================================================
+  # CLOUDFRONT — HTTPS for frontend
+  # ===========================================================================
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub moving-crm-${Environment}
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3WebsiteOrigin
+            DomainName: !Select [1, !Split ["//", !GetAtt FrontendBucket.WebsiteURL]]
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+        DefaultCacheBehavior:
+          TargetOriginId: S3WebsiteOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues:
+            QueryString: false
+          Compress: true
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  # ===========================================================================
   # IAM — CodeBuild + CodePipeline roles
   # ===========================================================================
   CodeBuildRole:
@@ -330,6 +361,11 @@ Resources:
                 Action:
                   - cloudformation:DescribeStacks
                 Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/moving-crm-${Environment}/*"
+              # CloudFront (cache invalidation during deploy)
+              - Effect: Allow
+                Action:
+                  - cloudfront:CreateInvalidation
+                Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
 
   CodePipelineRole:
     Type: AWS::IAM::Role
@@ -482,6 +518,11 @@ Resources:
               - Effect: Allow
                 Action:
                   - secretsmanager:*
+                Resource: "*"
+              # CloudFront
+              - Effect: Allow
+                Action:
+                  - cloudfront:*
                 Resource: "*"
               # CloudWatch Logs
               - Effect: Allow
@@ -732,7 +773,8 @@ Resources:
           AWS_REGION_NAME: !Ref AWS::Region
           CORS_ORIGINS: !Join
             - ","
-            - - !GetAtt FrontendBucket.WebsiteURL
+            - - !Sub "https://${CloudFrontDistribution.DomainName}"
+              - !GetAtt FrontendBucket.WebsiteURL
               - "http://localhost:5173"
           DB_PASSWORD: !Sub
             - "{{resolve:secretsmanager:${SecretArn}:SecretString:password}}"
@@ -884,3 +926,11 @@ Outputs:
   ApiURL:
     Description: API Gateway URL for the backend
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID
+    Value: !Ref CloudFrontDistribution
+
+  CloudFrontURL:
+    Description: HTTPS frontend URL
+    Value: !Sub "https://${CloudFrontDistribution.DomainName}"
