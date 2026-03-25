@@ -95,6 +95,7 @@ class Lead(Base):
     # sources: facebook, website, referral, manual
     facebook_user_id = Column(String(100), index=True)
     leadgen_id = Column(String(100), unique=True, index=True)
+    smartmoving_id = Column(String(100), index=True)
     inbox_url = Column(Text)
     notes = Column(Text)
 
@@ -126,6 +127,7 @@ class Lead(Base):
             "assigned_to": self.assigned_to or "",
             "assigned_to_name": self.assignee.name if self.assignee else "",
             "leadgen_id": self.leadgen_id or "",
+            "smartmoving_id": self.smartmoving_id or "",
             "full_name": self.full_name or "",
             "email": self.email or "",
             "phone_number": self.phone or "",

@@ -149,6 +149,7 @@ class NewLead(BaseModel):
     move_type: str = ""
     created_time: str = ""
     leadgen_id: str = ""
+    smartmoving_id: str = ""
     notes: str = ""
     referral_source: str = ""
     service_type: str = ""
@@ -190,6 +191,7 @@ def create_lead(
         phone=body.phone_number.strip(),
         source=body.source or "zapier",
         leadgen_id=body.leadgen_id.strip() or None,
+        smartmoving_id=body.smartmoving_id.strip() or None,
         pickup_zip=body.pickup_zip.strip(),
         delivery_zip=body.delivery_zip.strip(),
         move_size=body.move_size.strip(),

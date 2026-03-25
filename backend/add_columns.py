@@ -5,6 +5,7 @@ from sqlalchemy import text
 COLUMNS = [
     ("leads", "referral_source", "VARCHAR(100)"),
     ("leads", "service_type", "VARCHAR(50)"),
+    ("leads", "smartmoving_id", "VARCHAR(100)"),
 ]
 
 with engine.connect() as conn:
