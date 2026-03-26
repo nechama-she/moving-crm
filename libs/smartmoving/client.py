@@ -1,10 +1,12 @@
 """SmartMoving API client — opportunity lookups."""
 
 import logging
+import os
 
 import httpx
 
-from config import SMARTMOVING_API_KEY, SMARTMOVING_BASE_URL
+SMARTMOVING_API_KEY = os.getenv("SMARTMOVING_API_KEY", "")
+SMARTMOVING_BASE_URL = os.getenv("SMARTMOVING_BASE_URL", "https://api-public.smartmoving.com/v1/api")
 
 logger = logging.getLogger(__name__)
 

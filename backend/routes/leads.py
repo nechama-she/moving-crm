@@ -153,7 +153,22 @@ class NewLead(BaseModel):
     notes: str = ""
     referral_source: str = ""
     service_type: str = ""
-    source: str = "zapier"
+    company_name: str
+    source: str
+
+
+SMS_TEMPLATE = """Hi {first_name},
+Thank you for reaching out to {company_name} regarding your upcoming move.
+
+To provide an accurate quote, we can schedule a free in-home estimate, a virtual in-home estimate, or complete the estimate over the phone with one of our estimators.
+
+You can also submit your inventory here for a quick estimate:
+https://portal.smartmoving.com/home/inventory/{smartmoving_id}/welcome
+
+Please let us know the best time to discuss your move.
+You can also call us anytime at {company_phone}.
+
+{company_name}"""
 
 
 @router.post("/leads")
@@ -178,9 +193,9 @@ def create_lead(
         if existing:
             return {"status": "skipped", "reason": "duplicate", "smartmoving_id": body.smartmoving_id}
 
-    company = db.query(Company).filter(Company.name == "Gorilla Haulers").first()
+    company = db.query(Company).filter(Company.name == body.company_name.strip()).first()
     if not company:
-        raise HTTPException(status_code=500, detail="Company not found")
+        raise HTTPException(status_code=400, detail=f"Company '{body.company_name}' not found")
 
     raw_move_type = body.move_type.lower().strip()
 
@@ -207,4 +222,19 @@ def create_lead(
     db.commit()
     db.refresh(lead)
     logger.info("Created lead: %s (%s)", lead.full_name, lead.id)
-    return {"status": "created", "lead_id": lead.id, "full_name": lead.full_name}
+
+    # Send welcome SMS if phone and smartmoving_id are present
+    sms_result = None
+    if lead.phone and lead.smartmoving_id:
+        from libs.aircall import send_sms
+        first_name = lead.full_name.split()[0] if lead.full_name.strip() else ""
+        message = SMS_TEMPLATE.format(
+            first_name=first_name,
+            company_name=company.name,
+            smartmoving_id=lead.smartmoving_id,
+            company_phone=company.phone or "",
+        )
+        sms_result = send_sms(to=lead.phone, text=message)
+        logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
+
+    return {"status": "created", "lead_id": lead.id, "full_name": lead.full_name, "sms": sms_result}

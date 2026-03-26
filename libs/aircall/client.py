@@ -10,18 +10,31 @@ import boto3
 import httpx
 from botocore.exceptions import ClientError
 
-from config import AIRCALL_BASE_URL, AIRCALL_LAMBDA_SOURCE
+AIRCALL_BASE_URL = os.getenv("AIRCALL_BASE_URL", "https://api.aircall.io/v1")
+AIRCALL_LAMBDA_SOURCE = os.getenv("AIRCALL_LAMBDA_SOURCE", "meta_webhook")
 
 logger = logging.getLogger(__name__)
 
 
 @lru_cache()
 def _get_creds() -> tuple[str, str, str]:
-    """Read Aircall creds from env vars, falling back to meta_webhook Lambda."""
+    """Read Aircall creds from env vars, SSM config, or meta_webhook Lambda."""
     api_id = os.getenv("AIRCALL_API_ID", "")
     api_token = os.getenv("AIRCALL_API_TOKEN", "")
     number_id = os.getenv("AIRCALL_NUMBER_ID", "")
 
+    # Try SSM-backed config (backend)
+    if not api_id or not api_token:
+        try:
+            from config import get_config
+            cfg = get_config()
+            api_id = api_id or cfg.get("AIRCALL_API_ID", "")
+            api_token = api_token or cfg.get("AIRCALL_API_TOKEN", "")
+            number_id = number_id or cfg.get("AIRCALL_NUMBER_ID", "")
+        except (ImportError, Exception):
+            pass
+
+    # Fallback: read from meta_webhook Lambda env vars (lead-followup)
     if not api_id or not api_token:
         try:
             lam = boto3.client("lambda", region_name=os.getenv("AWS_REGION", "us-east-1"))

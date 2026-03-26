@@ -3,11 +3,13 @@
 import logging
 import os
 import tempfile
+from pathlib import Path
 
 import boto3
 import gspread
 
-from config import GOOGLE_CREDENTIALS_FILE, GOOGLE_SHEET_ID
+GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", str(Path(__file__).parent.parent.parent / "google-credentials.json"))
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1cftSB2c_kyjR0ADdxJ_2RrJbJv8XdnUQ73PgHeztr6s")
 
 logger = logging.getLogger(__name__)
 
