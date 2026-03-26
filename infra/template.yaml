@@ -212,6 +212,15 @@ Resources:
       Type: String
       Value: !Ref DBMasterUsername
 
+  SSMDBPassword:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /moving-crm/${Environment}/DB_PASSWORD
+      Type: String
+      Value: !Sub
+        - "{{resolve:secretsmanager:${SecretArn}:SecretString:password}}"
+        - SecretArn: !GetAtt Database.MasterUserSecret.SecretArn
+
   SSMSmartMovingApiKey:
     Type: AWS::SSM::Parameter
     Properties:
@@ -787,9 +796,6 @@ Resources:
             - ","
             - - !Sub "https://${CloudFrontDistribution.DomainName}"
               - "http://localhost:5173"
-          DB_PASSWORD: !Sub
-            - "{{resolve:secretsmanager:${SecretArn}:SecretString:password}}"
-            - SecretArn: !GetAtt Database.MasterUserSecret.SecretArn
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api

@@ -1,4 +1,5 @@
 import os
+from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -14,7 +15,7 @@ def get_database_url() -> str:
     name = cfg.get("DB_NAME") or os.getenv("DB_NAME", "moving_crm")
     user = cfg.get("DB_USER") or os.getenv("DB_USER", "crm_admin")
     password = cfg.get("DB_PASSWORD") or os.getenv("DB_PASSWORD", "")
-    return f"postgresql://{user}:{password}@{host}:{port}/{name}"
+    return f"postgresql://{user}:{quote_plus(password)}@{host}:{port}/{name}"
 
 
 engine = create_engine(get_database_url(), pool_pre_ping=True, pool_size=5)
