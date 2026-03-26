@@ -172,11 +172,11 @@ def create_lead(
     if not body.full_name.strip():
         raise HTTPException(status_code=400, detail="full_name is required")
 
-    # Deduplicate by leadgen_id
-    if body.leadgen_id.strip():
-        existing = db.query(Lead).filter(Lead.leadgen_id == body.leadgen_id.strip()).first()
+    # Deduplicate by smartmoving_id
+    if body.smartmoving_id.strip():
+        existing = db.query(Lead).filter(Lead.smartmoving_id == body.smartmoving_id.strip()).first()
         if existing:
-            return {"status": "skipped", "reason": "duplicate", "leadgen_id": body.leadgen_id}
+            return {"status": "skipped", "reason": "duplicate", "smartmoving_id": body.smartmoving_id}
 
     company = db.query(Company).filter(Company.name == "Gorilla Haulers").first()
     if not company:
