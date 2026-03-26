@@ -18,12 +18,12 @@ logger = logging.getLogger(__name__)
 
 @lru_cache()
 def _get_creds() -> tuple[str, str, str]:
-    """Read Aircall creds from env vars, SSM config, or meta_webhook Lambda."""
+    """Read Aircall creds from env vars, SSM, or meta_webhook Lambda."""
     api_id = os.getenv("AIRCALL_API_ID", "")
     api_token = os.getenv("AIRCALL_API_TOKEN", "")
     number_id = os.getenv("AIRCALL_NUMBER_ID", "")
 
-    # Try SSM-backed config (backend)
+    # Try SSM — first app-specific prefix, then /meta-webhook/
     if not api_id or not api_token:
         try:
             from config import get_config
@@ -34,18 +34,17 @@ def _get_creds() -> tuple[str, str, str]:
         except (ImportError, Exception):
             pass
 
-    # Fallback: read from meta_webhook Lambda env vars (lead-followup)
     if not api_id or not api_token:
         try:
-            lam = boto3.client("lambda", region_name=os.getenv("AWS_REGION", "us-east-1"))
-            cfg = lam.get_function_configuration(FunctionName=AIRCALL_LAMBDA_SOURCE)
-            env = cfg.get("Environment", {}).get("Variables", {})
-            api_id = api_id or env.get("AIRCALL_API_ID", "")
-            api_token = api_token or env.get("AIRCALL_API_TOKEN", "")
-            number_id = number_id or env.get("AIRCALL_NUMBER_ID", "")
-            logger.info("Loaded Aircall creds from Lambda %s", AIRCALL_LAMBDA_SOURCE)
+            ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
+            resp = ssm.get_parameters_by_path(Path="/meta-webhook/", WithDecryption=True)
+            params = {p["Name"].split("/")[-1]: p["Value"] for p in resp.get("Parameters", [])}
+            api_id = api_id or params.get("AIRCALL_API_ID", "")
+            api_token = api_token or params.get("AIRCALL_API_TOKEN", "")
+            number_id = number_id or params.get("AIRCALL_NUMBER_ID", "")
+            logger.info("Loaded Aircall creds from SSM /meta-webhook/")
         except ClientError as e:
-            logger.warning("Could not read Aircall creds from Lambda: %s", e)
+            logger.warning("Could not read Aircall creds from SSM: %s", e)
 
     return api_id, api_token, number_id
 
