@@ -226,7 +226,7 @@ def create_lead(
     # Send welcome SMS if phone and smartmoving_id are present
     sms_result = None
     if lead.phone and lead.smartmoving_id:
-        from libs.aircall import send_sms
+        from libs.aircall import send_sms, find_number_id
         first_name = lead.full_name.split()[0] if lead.full_name.strip() else ""
         message = SMS_TEMPLATE.format(
             first_name=first_name,
@@ -234,7 +234,17 @@ def create_lead(
             smartmoving_id=lead.smartmoving_id,
             company_phone=company.phone or "",
         )
-        sms_result = send_sms(to=lead.phone, text=message)
+
+        # Resolve Aircall number_id: use cached value or look up and store
+        nid = company.aircall_number_id
+        if not nid and company.phone:
+            nid = find_number_id(company.phone)
+            if nid:
+                company.aircall_number_id = nid
+                db.commit()
+                logger.info("Stored aircall_number_id=%s for company %s", nid, company.name)
+
+        sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
         logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
 
     return {"status": "created", "lead_id": lead.id, "full_name": lead.full_name, "sms": sms_result}

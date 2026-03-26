@@ -24,6 +24,7 @@ class Company(Base):
     id = Column(String(36), primary_key=True, default=_uuid)
     name = Column(String(255), nullable=False, unique=True)
     phone = Column(String(30))
+    aircall_number_id = Column(String(50))
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     users = relationship("UserCompany", back_populates="company")
@@ -34,6 +35,7 @@ class Company(Base):
             "id": self.id,
             "name": self.name,
             "phone": self.phone or "",
+            "aircall_number_id": self.aircall_number_id or "",
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }
 

@@ -38,6 +38,7 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
 
 class CompanyUpdate(BaseModel):
     phone: str = ""
+    aircall_number_id: str = ""
 
 
 @router.put("/{company_id}")
@@ -46,6 +47,7 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
     company.phone = body.phone
+    company.aircall_number_id = body.aircall_number_id
     db.commit()
     db.refresh(company)
     return company.to_dict()
