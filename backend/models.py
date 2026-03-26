@@ -94,7 +94,7 @@ class Lead(Base):
     source = Column(String(50), default="facebook")
     # sources: facebook, website, referral, manual
     facebook_user_id = Column(String(100), index=True)
-    leadgen_id = Column(String(100), unique=True, index=True)
+    leadgen_id = Column(String(100), index=True)
     smartmoving_id = Column(String(100), index=True)
     inbox_url = Column(Text)
     notes = Column(Text)
