@@ -332,9 +332,10 @@ Resources:
                 Resource:
                   - !GetAtt ArtifactBucket.Arn
                   - !Sub "${ArtifactBucket.Arn}/*"
-              # Frontend bucket (deploy built files)
+              # Frontend bucket (deploy built files + read Lambda zips for update-function-code)
               - Effect: Allow
                 Action:
+                  - s3:GetObject
                   - s3:PutObject
                   - s3:DeleteObject
                   - s3:ListBucket
