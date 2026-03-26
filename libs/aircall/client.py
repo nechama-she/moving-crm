@@ -37,15 +37,20 @@ def _get_creds() -> tuple[str, str, str]:
     if not api_id or not api_token:
         try:
             ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
-            resp = ssm.get_parameters_by_path(Path="/meta-webhook/", WithDecryption=True)
+            names = ["/meta-webhook/AIRCALL_API_ID", "/meta-webhook/AIRCALL_API_TOKEN", "/meta-webhook/AIRCALL_NUMBER_ID"]
+            resp = ssm.get_parameters(Names=names, WithDecryption=True)
             params = {p["Name"].split("/")[-1]: p["Value"] for p in resp.get("Parameters", [])}
             api_id = api_id or params.get("AIRCALL_API_ID", "")
             api_token = api_token or params.get("AIRCALL_API_TOKEN", "")
             number_id = number_id or params.get("AIRCALL_NUMBER_ID", "")
-            logger.info("Loaded Aircall creds from SSM /meta-webhook/")
+            logger.info("Loaded Aircall creds from SSM /meta-webhook/ (%d params)", len(params))
         except ClientError as e:
             logger.warning("Could not read Aircall creds from SSM: %s", e)
 
+    logger.info("Aircall creds resolved: api_id=%s, api_token=%s, number_id=%s",
+                api_id[:4] + "***" if api_id else "(empty)",
+                api_token[:4] + "***" if api_token else "(empty)",
+                number_id or "(empty)")
     return api_id, api_token, number_id
 
 
