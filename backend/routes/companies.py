@@ -34,3 +34,18 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
     db.commit()
     db.refresh(company)
     return company.to_dict()
+
+
+class CompanyUpdate(BaseModel):
+    phone: str = ""
+
+
+@router.put("/{company_id}")
+def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    company.phone = body.phone
+    db.commit()
+    db.refresh(company)
+    return company.to_dict()
