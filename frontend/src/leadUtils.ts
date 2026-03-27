@@ -1,4 +1,5 @@
 export interface Lead {
+  id: string;
   leadgen_id: string;
   [key: string]: unknown;
 }

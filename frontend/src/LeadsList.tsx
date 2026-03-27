@@ -178,7 +178,7 @@ export default function LeadsList() {
             {leads.map((lead, i) => (
               <tr
                 key={lead.leadgen_id ?? i}
-                onClick={() => navigate(`/leads/${lead.leadgen_id}`)}
+                onClick={() => navigate(`/leads/${lead.id}`)}
                 style={{ cursor: "pointer" }}
                 onMouseOver={(e) =>
                   (e.currentTarget.style.background = "#f5f5f5")
