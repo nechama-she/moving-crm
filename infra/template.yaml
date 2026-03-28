@@ -860,12 +860,10 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
-                  - lambda:GetFunctionConfiguration
-                Resource: "*"
-              - Effect: Allow
-                Action:
                   - ssm:GetParameter
-                Resource: "arn:aws:ssm:us-east-1:381492064416:parameter/meta-webhook/GOOGLE_SHEETS_CREDENTIALS"
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: "arn:aws:ssm:us-east-1:381492064416:parameter/meta-webhook/*"
 
   LeadFollowupFunction:
     Condition: ShouldDeployLambda

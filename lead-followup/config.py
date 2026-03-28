@@ -14,7 +14,6 @@ GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1cftSB2c_kyjR0ADdxJ_2RrJbJv8XdnU
 
 # Aircall
 AIRCALL_BASE_URL = os.getenv("AIRCALL_BASE_URL", "https://api.aircall.io/v1")
-AIRCALL_LAMBDA_SOURCE = os.getenv("AIRCALL_LAMBDA_SOURCE", "meta_webhook")
 
 # SMS
 SMS_MESSAGE_TEMPLATE = os.getenv(
