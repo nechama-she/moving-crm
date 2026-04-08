@@ -12,7 +12,7 @@ cfg = get_config()
 
 
 def _get_db_password() -> str:
-    """Read DB password from Secrets Manager (always current), falling back to SSM/env."""
+    """Read DB password from Secrets Manager (always current), falling back to env/SSM."""
     secret_arn = os.getenv("DB_SECRET_ARN", "")
     if secret_arn:
         try:
@@ -22,7 +22,8 @@ def _get_db_password() -> str:
             return secret.get("password", "")
         except (ClientError, Exception):
             pass
-    return cfg.get("DB_PASSWORD") or os.getenv("DB_PASSWORD", "")
+    # Env var (set by CodeBuild from Secrets Manager) takes priority over SSM
+    return os.getenv("DB_PASSWORD") or cfg.get("DB_PASSWORD", "")
 
 
 def get_database_url() -> str:

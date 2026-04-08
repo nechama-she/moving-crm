@@ -19,7 +19,7 @@ phases:
       - cd $CODEBUILD_SRC_DIR/lead-followup
       - "pip install -r requirements.txt -t ./package --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.11 --implementation cp"
       - cp -r $CODEBUILD_SRC_DIR/libs ./package/libs
-      - cp -r services handler.py config.py ./package/
+      - cp -r services handler.py config.py database.py ./package/
       - cp google-credentials.json ./package/ 2>/dev/null || true
       - cd package && zip -r9 ../package.zip . && cd ..
 
