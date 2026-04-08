@@ -18,11 +18,8 @@ phases:
       - echo "Packaging lead-followup Lambda"
       - cd $CODEBUILD_SRC_DIR/lead-followup
       - "pip install --root-user-action=ignore -r requirements.txt -t ./package --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.11 --implementation cp"
-      - rm -rf ./package/boto3* ./package/botocore* ./package/s3transfer* ./package/jmespath*
-      - find ./package -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-      - find ./package -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
-      - find ./package -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.pyx" | xargs rm -f 2>/dev/null || true
-      - rm -rf ./package/sqlalchemy/dialects/mssql ./package/sqlalchemy/dialects/mysql ./package/sqlalchemy/dialects/oracle ./package/sqlalchemy/dialects/sqlite
+      - rm -rf ./package/boto3* ./package/botocore* ./package/s3transfer* ./package/jmespath* ./package/sqlalchemy/dialects/mssql ./package/sqlalchemy/dialects/mysql ./package/sqlalchemy/dialects/oracle ./package/sqlalchemy/dialects/sqlite
+      - find ./package \( -type d \( -name __pycache__ -o -name tests \) -exec rm -rf {} + \) -o \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.pyx' \) -delete 2>/dev/null || true
       - cp -r $CODEBUILD_SRC_DIR/libs ./package/libs
       - cp -r services handler.py config.py database.py ./package/
       - cd package && zip -qr9 ../package.zip . && cd ..
@@ -34,11 +31,8 @@ phases:
       - echo "Packaging API backend Lambda"
       - cd $CODEBUILD_SRC_DIR/backend
       - "pip install --root-user-action=ignore -r requirements.txt -t ./package --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.11 --implementation cp"
-      - rm -rf ./package/boto3* ./package/botocore* ./package/s3transfer* ./package/jmespath*
-      - find ./package -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-      - find ./package -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
-      - find ./package -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.pyx" | xargs rm -f 2>/dev/null || true
-      - rm -rf ./package/sqlalchemy/dialects/mssql ./package/sqlalchemy/dialects/mysql ./package/sqlalchemy/dialects/oracle ./package/sqlalchemy/dialects/sqlite
+      - rm -rf ./package/boto3* ./package/botocore* ./package/s3transfer* ./package/jmespath* ./package/sqlalchemy/dialects/mssql ./package/sqlalchemy/dialects/mysql ./package/sqlalchemy/dialects/oracle ./package/sqlalchemy/dialects/sqlite
+      - find ./package \( -type d \( -name __pycache__ -o -name tests \) -exec rm -rf {} + \) -o \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.pyx' \) -delete 2>/dev/null || true
       - cp *.py ./package/
       - cp -r routes ./package/
       - cp -r $CODEBUILD_SRC_DIR/libs ./package/libs
