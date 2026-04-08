@@ -49,3 +49,7 @@ phases:
   post_build:
     commands:
       - echo "Deploy complete"
+
+cache:
+  paths:
+    - '/root/.cache/pip/**/*'
