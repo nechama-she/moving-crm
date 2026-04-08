@@ -794,6 +794,7 @@ Resources:
         Variables:
           SSM_PREFIX: !Sub /moving-crm/${Environment}/
           AWS_REGION_NAME: !Ref AWS::Region
+          DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
           CORS_ORIGINS: !Join
             - ","
             - - !Sub "https://${CloudFrontDistribution.DomainName}"
