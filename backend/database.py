@@ -32,7 +32,10 @@ def get_database_url() -> str:
     name = cfg.get("DB_NAME") or os.getenv("DB_NAME", "moving_crm")
     user = cfg.get("DB_USER") or os.getenv("DB_USER", "crm_admin")
     password = _get_db_password()
-    return f"postgresql://{user}:{quote_plus(password)}@{host}:{port}/{name}"
+    url = f"postgresql://{user}:{quote_plus(password)}@{host}:{port}/{name}"
+    if host != "localhost":
+        url += "?sslmode=require"
+    return url
 
 
 engine = create_engine(get_database_url(), pool_pre_ping=True, pool_size=5)
