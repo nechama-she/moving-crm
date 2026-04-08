@@ -7,15 +7,15 @@ phases:
       python: 3.11
     commands:
       - echo "Installing backend dependencies for migrations"
-      - cd $CODEBUILD_SRC_DIR/backend && pip install -r requirements.txt
+      - cd $CODEBUILD_SRC_DIR/backend && pip install -r requirements.txt --quiet
 
   pre_build:
     commands:
-      - echo "Ensuring tables exist (safe — no data loss)"
+      - echo "Running database migrations"
       - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
-      - echo "Adding new columns to leads table"
       - cd $CODEBUILD_SRC_DIR/backend && python add_columns.py
-      - echo "Generating API secret if not exists"
+      - echo "Ensuring seed data (admin user + company)"
+      - cd $CODEBUILD_SRC_DIR/backend && python -c "from import_leads import ensure_seed_data; from database import SessionLocal; s=SessionLocal(); ensure_seed_data(s); s.commit(); s.close(); print('Seed data OK')"
       - |
         SSM_KEY="/moving-crm/${ENVIRONMENT:-dev}/API_SECRET"
         if ! aws ssm get-parameter --name "$SSM_KEY" --with-decryption > /dev/null 2>&1; then
@@ -25,8 +25,6 @@ phases:
         else
           echo "API_SECRET already exists in SSM"
         fi
-      - echo "Ensuring admin user + importing new leads (skips existing)"
-      - cd $CODEBUILD_SRC_DIR/backend && python import_leads.py --commit
 
   build:
     commands:
