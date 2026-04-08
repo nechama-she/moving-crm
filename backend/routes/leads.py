@@ -246,7 +246,7 @@ def create_lead(
                 db.commit()
                 logger.info("Stored aircall_number_id=%s for company %s", nid, company.name)
 
-        sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
+        # sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
         logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
 
     return {"status": "created", "lead_id": lead.id, "full_name": lead.full_name, "sms": sms_result}
