@@ -20,7 +20,6 @@ phases:
       - "pip install --root-user-action=ignore -r requirements.txt -t ./package --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.11 --implementation cp"
       - rm -rf ./package/boto3* ./package/botocore* ./package/s3transfer* ./package/jmespath*
       - find ./package -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-      - find ./package -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
       - find ./package -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
       - find ./package -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.pyx" | xargs rm -f 2>/dev/null || true
       - rm -rf ./package/sqlalchemy/dialects/mssql ./package/sqlalchemy/dialects/mysql ./package/sqlalchemy/dialects/oracle ./package/sqlalchemy/dialects/sqlite
@@ -37,7 +36,6 @@ phases:
       - "pip install --root-user-action=ignore -r requirements.txt -t ./package --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.11 --implementation cp"
       - rm -rf ./package/boto3* ./package/botocore* ./package/s3transfer* ./package/jmespath*
       - find ./package -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-      - find ./package -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
       - find ./package -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
       - find ./package -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.pyx" | xargs rm -f 2>/dev/null || true
       - rm -rf ./package/sqlalchemy/dialects/mssql ./package/sqlalchemy/dialects/mysql ./package/sqlalchemy/dialects/oracle ./package/sqlalchemy/dialects/sqlite
