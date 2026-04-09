@@ -1,6 +1,6 @@
 """Lambda entry point — lead followup system.
 
-Triggered by EventBridge schedule. Reads new leads from Google Sheet,
+Triggered by EventBridge schedule. Reads new leads from CRM database,
 checks their SmartMoving status, and sends followup SMS via Aircall.
 """
 

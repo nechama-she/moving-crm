@@ -44,11 +44,6 @@ Parameters:
     NoEcho: true
     Description: SmartMoving API key
 
-  GoogleSheetId:
-    Type: String
-    Default: 1cftSB2c_kyjR0ADdxJ_2RrJbJv8XdnUQ73PgHeztr6s
-    Description: Google Sheet ID for lead data
-
   DeployLambda:
     Type: String
     Default: "true"
@@ -227,13 +222,6 @@ Resources:
       Name: !Sub /moving-crm/${Environment}/SMARTMOVING_API_KEY
       Type: String
       Value: !Ref SmartMovingApiKey
-
-  SSMGoogleSheetId:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: !Sub /moving-crm/${Environment}/GOOGLE_SHEET_ID
-      Type: String
-      Value: !Ref GoogleSheetId
 
   # ===========================================================================
   # S3 — Frontend hosting + Pipeline artifacts
@@ -683,7 +671,6 @@ Resources:
                     "GitHubBranch": "${GitHubBranch}",
                     "AllowedCIDR": "${AllowedCIDR}",
                     "SmartMovingApiKey": "${SmartMovingApiKey}",
-                    "GoogleSheetId": "${GoogleSheetId}",
                     "DeployLambda": "true"
                   }
               InputArtifacts:
