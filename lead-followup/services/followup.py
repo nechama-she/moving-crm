@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timedelta
 
-from config import SMS_MESSAGE_TEMPLATE
+from config import SMS_MESSAGE_TEMPLATE, SMS_DAY3_TEMPLATE
 from database import get_leads_for_followup
 from libs.aircall import send_sms, find_number_id
 from libs.smartmoving import get_opportunity
@@ -16,12 +16,12 @@ def _should_send_sms(lead_status: str, status_val) -> bool:
     return (lead_status == "Priority 0" or not lead_status) and status_val in (0, 1, 3)
 
 
-def _send_followup_sms(name: str, phone: str, company_name: str, company_phone: str, aircall_number_id: str | None) -> dict:
+def _send_followup_sms(name: str, phone: str, company_name: str, company_phone: str, aircall_number_id: str | None, template: str = None) -> dict:
     """Send a followup SMS to a lead. Returns result dict."""
     if not phone:
         return {"sent": False, "error": "no_phone_number"}
 
-    msg_text = SMS_MESSAGE_TEMPLATE.format(name=name, company=company_name)
+    msg_text = (template or SMS_MESSAGE_TEMPLATE).format(name=name, company=company_name)
 
     # Use stored aircall_number_id, or find it from company phone
     nid = aircall_number_id
@@ -46,8 +46,9 @@ def run(days_back: int = 1, limit: int = 0) -> dict:
     window_start = window_end - timedelta(days=1)
     logger.info("Filter window: %s → %s", window_start, window_end)
 
+    template = SMS_DAY3_TEMPLATE if days_back >= 2 else SMS_MESSAGE_TEMPLATE
+
     rows = get_leads_for_followup(window_start, window_end, limit=limit)
-    logger.info("Found %d leads in window", len(rows))
 
     stats = {"total": len(rows), "matched": 0, "errors": 0, "skipped": 0, "sms_sent": 0, "sms_failed": 0}
     results = []
@@ -78,7 +79,7 @@ def run(days_back: int = 1, limit: int = 0) -> dict:
             company_name = row.get("company_name", "")
             company_phone = row.get("company_phone", "")
             aircall_number_id = row.get("aircall_number_id")
-            sms_result = _send_followup_sms(name, phone, company_name, company_phone, aircall_number_id)
+            sms_result = _send_followup_sms(name, phone, company_name, company_phone, aircall_number_id, template=template)
             if sms_result["sent"]:
                 stats["sms_sent"] += 1
             else:

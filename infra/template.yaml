@@ -899,13 +899,12 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: !Sub moving-crm-lead-followup-${Environment}
-      Description: Follow up on new leads every morning at 8am ET (12:00 UTC)
+      Description: Lead followup (day 2 & day 3) every morning at 8am ET (12:00 UTC)
       ScheduleExpression: "cron(0 12 * * ? *)"
       State: ENABLED
       Targets:
         - Id: LeadFollowupLambda
           Arn: !GetAtt LeadFollowupFunction.Arn
-          Input: '{"days_back": 1}'
 
   LeadFollowupSchedulePermission:
     Condition: ShouldDeployLambda

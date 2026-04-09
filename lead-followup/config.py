@@ -15,3 +15,8 @@ SMS_MESSAGE_TEMPLATE = os.getenv(
     "SMS_MESSAGE_TEMPLATE",
     "Hi {name}, thanks for your interest in {company}! We'd love to help with your move. Reply to this message or call us anytime.",
 )
+
+SMS_DAY3_TEMPLATE = os.getenv(
+    "SMS_DAY3_TEMPLATE",
+    "Hi {name}, I just wanted to check in and see if you're still planning your move. If you received another estimate, feel free to send it over. We have a match or beat policy and can beat a written quote from a reputable company by up to 10%.",
+)
