@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer
 from sqlalchemy.orm import declarative_base, relationship
@@ -11,8 +11,8 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+def _now() -> datetime:
+    return datetime.now()
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +25,7 @@ class Company(Base):
     name = Column(String(255), nullable=False, unique=True)
     phone = Column(String(30))
     aircall_number_id = Column(String(50))
-    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_now)
 
     users = relationship("UserCompany", back_populates="company")
     leads = relationship("Lead", back_populates="company")
@@ -52,7 +52,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False, default="sales_rep")
     # roles: admin, sales_rep, dispatch
-    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_now)
 
     companies = relationship("UserCompany", back_populates="user")
 
@@ -116,8 +116,8 @@ class Lead(Base):
     # 0=normal, 1=high, 2=urgent
 
     created_time = Column(Text)
-    created_at = Column(DateTime(timezone=True), default=_utcnow)
-    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
     company = relationship("Company", back_populates="leads")
     assignee = relationship("User", foreign_keys=[assigned_to])
