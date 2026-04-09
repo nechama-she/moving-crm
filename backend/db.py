@@ -14,6 +14,7 @@ dynamodb = boto3.resource("dynamodb", region_name=cfg["AWS_REGION"])
 leads_table = dynamodb.Table(cfg["DYNAMO_TABLE_NAME"])
 conversations_table = dynamodb.Table("conversations")
 sms_messages_table = dynamodb.Table("sms_messages")
+sender_info_table = dynamodb.Table("sender_info")
 
 # ---------------------------------------------------------------------------
 # Leads cache — avoid rescanning DynamoDB on every request

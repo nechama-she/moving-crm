@@ -24,6 +24,35 @@ def _get_user_company_ids(user: User, db: Session) -> list[str]:
     return [r[0] for r in rows]
 
 
+def _lookup_sender_id(lead: Lead) -> str | None:
+    """Try to find a matching sender_id from DynamoDB sender_info table."""
+    from boto3.dynamodb.conditions import Attr
+    from db import sender_info_table
+
+    filters = []
+    if lead.phone:
+        filters.append(Attr("phone").eq(lead.phone))
+    if lead.email:
+        filters.append(Attr("email").eq(lead.email))
+    if lead.full_name:
+        filters.append(Attr("name").eq(lead.full_name))
+
+    if not filters:
+        return None
+
+    try:
+        combined = filters[0]
+        for f in filters[1:]:
+            combined = combined & f
+        resp = sender_info_table.scan(FilterExpression=combined)
+        items = resp.get("Items", [])
+        if items:
+            return items[0].get("sender_id")
+    except Exception as e:
+        logger.warning("sender_info lookup failed for lead %s: %s", lead.id, e)
+    return None
+
+
 @router.get("/leads")
 def get_leads(
     limit: int = Query(default=50, ge=1, le=200),
@@ -86,6 +115,15 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
         lead = db.query(Lead).filter(Lead.leadgen_id == lead_id, Lead.company_id.in_(company_ids)).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+
+    # If facebook_user_id is missing, try to find it from sender_info
+    if not lead.facebook_user_id:
+        sender_id = _lookup_sender_id(lead)
+        if sender_id:
+            lead.facebook_user_id = sender_id
+            db.commit()
+            logger.info("Matched sender_id %s for lead %s", sender_id, lead.id)
+
     return lead.to_dict()
 
 
