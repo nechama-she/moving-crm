@@ -53,7 +53,7 @@ def get_leads_for_followup(window_start, window_end, limit=0, company_id=None):
     engine = get_engine()
     sql = """
         SELECT l.id, l.full_name, l.phone, l.email, l.smartmoving_id,
-               l.created_time, l.status, c.name as company_name, c.phone as company_phone,
+               l.created_at, l.created_time, l.status, c.name as company_name, c.phone as company_phone,
                c.aircall_number_id, c.timezone as company_timezone
         FROM leads l
         JOIN companies c ON l.company_id = c.id
