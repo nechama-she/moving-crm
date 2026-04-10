@@ -126,6 +126,7 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
             "email": row.get("email", ""),
             "phone": row.get("phone", ""),
             "created_at": row.get("created_at", ""),
+            "company_timezone": row.get("company_timezone", ""),
             "opportunity_id": opp_id,
             "smartmoving_status": opp.get("status") or opp.get("opportunityStatus") or "",
             "lead_status": lead_status,
