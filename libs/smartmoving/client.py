@@ -26,8 +26,9 @@ def get_opportunity(opportunity_id: str) -> dict:
         resp.raise_for_status()
         return {"data": resp.json()}
     except httpx.HTTPError as e:
-        status = getattr(e.response, "status_code", None)
-        body = getattr(e.response, "text", str(e))
+        resp = getattr(e, "response", None)
+        status = getattr(resp, "status_code", None) if resp is not None else None
+        body = getattr(resp, "text", str(e)) if resp is not None else str(e)
         return {"error": f"HTTP {status}: {body[:300]}"}
     except Exception as e:
         return {"error": str(e)}

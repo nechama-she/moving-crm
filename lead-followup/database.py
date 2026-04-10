@@ -39,26 +39,38 @@ def get_engine():
     return _engine
 
 
-def get_leads_for_followup(window_start, window_end, limit=0):
+def get_company_timezones():
+    """Get all companies with their timezone."""
+    engine = get_engine()
+    query = text("SELECT id, name, timezone FROM companies")
+    with engine.connect() as conn:
+        rows = conn.execute(query).fetchall()
+        return [dict(r._mapping) for r in rows]
+
+
+def get_leads_for_followup(window_start, window_end, limit=0, company_id=None):
     """Query leads from Postgres that were created in the given time window and have a smartmoving_id."""
     engine = get_engine()
-    query = text("""
+    sql = """
         SELECT l.id, l.full_name, l.phone, l.email, l.smartmoving_id,
                l.created_time, l.status, c.name as company_name, c.phone as company_phone,
-               c.aircall_number_id
+               c.aircall_number_id, c.timezone as company_timezone
         FROM leads l
         JOIN companies c ON l.company_id = c.id
         WHERE l.smartmoving_id IS NOT NULL
           AND l.created_time IS NOT NULL
           AND l.created_at >= :window_start
           AND l.created_at < :window_end
-        ORDER BY l.created_at DESC
-    """)
+    """
     params = {"window_start": window_start, "window_end": window_end}
+    if company_id:
+        sql += " AND l.company_id = :company_id"
+        params["company_id"] = company_id
+    sql += " ORDER BY l.created_at DESC"
     if limit:
-        query = text(str(query) + " LIMIT :limit")
+        sql += " LIMIT :limit"
         params["limit"] = limit
 
     with engine.connect() as conn:
-        rows = conn.execute(query, params).fetchall()
+        rows = conn.execute(text(sql), params).fetchall()
         return [dict(r._mapping) for r in rows]

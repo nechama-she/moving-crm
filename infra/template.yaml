@@ -905,6 +905,8 @@ Resources:
       Targets:
         - Id: LeadFollowupLambda
           Arn: !GetAtt LeadFollowupFunction.Arn
+          RetryPolicy:
+            MaximumRetryAttempts: 0
 
   LeadFollowupSchedulePermission:
     Condition: ShouldDeployLambda

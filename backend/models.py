@@ -25,6 +25,7 @@ class Company(Base):
     name = Column(String(255), nullable=False, unique=True)
     phone = Column(String(30))
     aircall_number_id = Column(String(50))
+    timezone = Column(String(50), default="America/New_York")
     created_at = Column(DateTime(timezone=True), default=_now)
 
     users = relationship("UserCompany", back_populates="company")
