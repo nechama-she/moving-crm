@@ -64,9 +64,15 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
     companies = get_company_timezones()
 
     all_rows = []
+    windows = []
     for company in companies:
         ws_utc, we_utc = compute_utc_window(company["timezone"], days_back)
-        logger.info("Company %s (tz=%s): %s → %s UTC", company["name"], company["timezone"], ws_utc, we_utc)
+        tz_name = company["timezone"] or "America/New_York"
+        tz = ZoneInfo(tz_name)
+        ws_local = ws_utc.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz).strftime("%Y-%m-%d %H:%M")
+        we_local = we_utc.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz).strftime("%Y-%m-%d %H:%M")
+        logger.info("Company %s (tz=%s): %s → %s UTC (%s → %s local)", company["name"], tz_name, ws_utc, we_utc, ws_local, we_local)
+        windows.append({"company": company["name"], "timezone": tz_name, "window_start": str(ws_utc), "window_end": str(we_utc), "local_start": ws_local, "local_end": we_local})
         rows = get_leads_for_followup(ws_utc, we_utc, limit=limit, company_id=company["id"])
         all_rows.extend(rows)
 
@@ -97,8 +103,9 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
         status_val = opp.get("status")
         stats["matched"] += 1
 
+        qualifies = _should_send_sms(lead_status, status_val)
         sms_result = None
-        if _should_send_sms(lead_status, status_val):
+        if qualifies:
             phone = str(row.get("phone", "")).strip()
             company_name = row.get("company_name", "")
             company_phone = row.get("company_phone", "")
@@ -118,10 +125,12 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
             "name": name,
             "email": row.get("email", ""),
             "phone": row.get("phone", ""),
+            "created_at": row.get("created_at", ""),
             "opportunity_id": opp_id,
             "smartmoving_status": opp.get("status") or opp.get("opportunityStatus") or "",
             "lead_status": lead_status,
+            "qualifies": qualifies,
             "sms": sms_result,
         })
 
-    return {"stats": stats, "results": results}
+    return {"stats": stats, "results": results, "windows": windows}
