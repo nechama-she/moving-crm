@@ -1,9 +1,15 @@
 import re
+import json
 import logging
+import urllib.request
+import urllib.error
+import base64
 
+import boto3
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from db import sms_messages_table
 
@@ -86,3 +92,63 @@ def get_sms_messages(phone: str):
     except ClientError as e:
         logger.error("DynamoDB sms_messages error: %s", e)
         raise HTTPException(status_code=502, detail="Could not fetch SMS messages")
+
+
+# ---------------------------------------------------------------------------
+# SSM helper
+# ---------------------------------------------------------------------------
+
+_ssm_cache: dict[str, str] = {}
+
+
+def _get_ssm(key: str) -> str:
+    if key in _ssm_cache:
+        return _ssm_cache[key]
+    try:
+        ssm = boto3.client("ssm", region_name="us-east-1")
+        resp = ssm.get_parameter(Name=key, WithDecryption=True)
+        val = resp["Parameter"]["Value"]
+        _ssm_cache[key] = val
+        return val
+    except ClientError:
+        logger.exception("Failed to get SSM param %s", key)
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# POST /sms/{phone}  — send SMS via Aircall
+# ---------------------------------------------------------------------------
+
+class SmsSendRequest(BaseModel):
+    message: str
+    aircall_number_id: str
+
+
+@router.post("/sms/{phone}")
+def send_sms(phone: str, req: SmsSendRequest):
+    """Send an SMS message via Aircall."""
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    api_id = _get_ssm("/meta-webhook/AIRCALL_API_ID")
+    api_token = _get_ssm("/meta-webhook/AIRCALL_API_TOKEN")
+    if not api_id or not api_token:
+        raise HTTPException(status_code=500, detail="Missing Aircall credentials")
+    creds = base64.b64encode(f"{api_id}:{api_token}".encode()).decode()
+    url = f"https://api.aircall.io/v1/numbers/{req.aircall_number_id}/messages/native/send"
+    body = json.dumps({"to": phone, "body": req.message.strip()}).encode("utf-8")
+    http_req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Authorization": f"Basic {creds}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(http_req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            msg_id = str(data.get("id", ""))
+            logger.info("Aircall SMS sent to %s: id=%s", phone, msg_id)
+            return {"ok": True, "message_id": msg_id}
+    except urllib.error.HTTPError as exc:
+        body_text = exc.read().decode("utf-8", errors="replace")
+        logger.error("Aircall SMS error %s: %s", exc.code, body_text)
+        raise HTTPException(status_code=502, detail=f"Aircall error: {body_text}") from exc

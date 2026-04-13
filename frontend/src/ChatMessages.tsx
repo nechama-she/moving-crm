@@ -23,6 +23,8 @@ interface Props {
   userName: string;
   phoneNumber: string;
   inboxUrl: string;
+  aircallNumberId: string;
+  companyName: string;
 }
 
 const TABS = [
@@ -33,13 +35,15 @@ const TABS = [
   { key: "calls", label: "Calls" },
 ] as const;
 
-export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl }: Props) {
+export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, aircallNumberId, companyName }: Props) {
   const { token } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [smsMessages, setSmsMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<string>("");
+  const [replyText, setReplyText] = useState("");
+  const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const tabPickedRef = useRef(false);
 
@@ -48,12 +52,20 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl }
 
     if (userId) {
       fetches.push(
-        fetch(`${API_BASE}/api/conversations/${encodeURIComponent(userId)}`, { headers: authHeaders(token) })
+        fetch(`${API_BASE}/api/meta/messenger/${encodeURIComponent(userId)}`, { headers: authHeaders(token) })
           .then((res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();
           })
-          .then((data) => setMessages(data.messages || []))
+          .then((data) => setMessages((prev) => [...prev, ...(data.messages || [])]))
+      );
+      fetches.push(
+        fetch(`${API_BASE}/api/meta/instagram/${encodeURIComponent(userId)}`, { headers: authHeaders(token) })
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+          })
+          .then((data) => setMessages((prev) => [...prev, ...(data.messages || [])]))
       );
     }
 
@@ -121,6 +133,65 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl }
     const p = m.platform?.toLowerCase() || "";
     counts[p] = (counts[p] || 0) + 1;
   }
+
+  // Determine if reply is possible on the active tab
+  const canReply =
+    (activeTab === "messenger" && !!userId) ||
+    (activeTab === "messages" && !!phoneNumber && !!aircallNumberId);
+
+  // Extract page_id from the first messenger message (needed for Messenger replies)
+  const messengerPageId = messages.find((m) => m.page_id)?.page_id || "";
+
+  const handleSendReply = async () => {
+    if (!replyText.trim() || sending) return;
+    setSending(true);
+    try {
+      const body: Record<string, string> = { message: replyText.trim() };
+      if (activeTab === "messages") {
+        body.aircall_number_id = aircallNumberId;
+      } else {
+        body.page_id = messengerPageId;
+      }
+      const endpoint = activeTab === "messages"
+        ? `${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}`
+        : `${API_BASE}/api/meta/messenger/${encodeURIComponent(userId)}`;
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { ...authHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      // Add the sent message to the local list immediately
+      const now = Date.now() / 1000;
+      if (activeTab === "messages") {
+        setSmsMessages((prev) => [...prev, {
+          message_id: `local-${now}`,
+          timestamp: now,
+          text: replyText.trim(),
+          direction: "sent",
+          company_name: companyName,
+        }]);
+      } else {
+        setMessages((prev) => [...prev, {
+          message_id: `local-${now}`,
+          timestamp: now,
+          text: replyText.trim(),
+          role: "agent",
+          platform: "messenger",
+          page_id: messengerPageId,
+        }]);
+      }
+      setReplyText("");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Send failed";
+      alert(`Failed to send: ${message}`);
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
     <div>
@@ -247,6 +318,44 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl }
         )}
         <div ref={bottomRef} />
       </div>
+
+      {/* Reply input */}
+      {canReply && (
+        <div style={{ display: "flex", gap: 8, padding: "12px 0", borderTop: "1px solid #e0e0e0" }}>
+          <input
+            type="text"
+            value={replyText}
+            onChange={(e) => setReplyText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendReply(); } }}
+            placeholder={`Reply via ${activeTab === "messages" ? "SMS" : "Messenger"}…`}
+            disabled={sending}
+            style={{
+              flex: 1,
+              padding: "10px 14px",
+              borderRadius: 8,
+              border: "1px solid #ccc",
+              fontSize: 14,
+              outline: "none",
+            }}
+          />
+          <button
+            onClick={handleSendReply}
+            disabled={sending || !replyText.trim()}
+            style={{
+              padding: "10px 20px",
+              borderRadius: 8,
+              border: "none",
+              background: sending || !replyText.trim() ? "#ccc" : "#1976d2",
+              color: "#fff",
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: sending || !replyText.trim() ? "default" : "pointer",
+            }}
+          >
+            {sending ? "Sending…" : "Send"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

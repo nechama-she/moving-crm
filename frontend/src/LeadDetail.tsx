@@ -159,7 +159,14 @@ export default function LeadDetail() {
       {chatUserId || lead.phone_number ? (
         <div style={{ marginTop: 32 }}>
           <h2 style={{ marginBottom: 12 }}>Conversations</h2>
-          <ChatMessages userId={chatUserId} userName={String(lead.full_name || "Client")} phoneNumber={lead.phone_number ? String(lead.phone_number) : ""} inboxUrl={inboxUrl} />
+          <ChatMessages
+            userId={chatUserId}
+            userName={String(lead.full_name || "Client")}
+            phoneNumber={lead.phone_number ? String(lead.phone_number) : ""}
+            inboxUrl={inboxUrl}
+            aircallNumberId={lead.aircall_number_id ? String(lead.aircall_number_id) : ""}
+            companyName={lead.company_name ? String(lead.company_name) : ""}
+          />
         </div>
       ) : null}
     </div>
