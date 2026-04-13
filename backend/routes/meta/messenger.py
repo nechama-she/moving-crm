@@ -15,6 +15,10 @@ logger = logging.getLogger("moving-crm")
 
 router = APIRouter(prefix="/api/meta/messenger", tags=["Messenger"])
 
+GRAPH_API_VERSION = "v18.0"
+ACCOUNTS_API_VERSION = "v24.0"
+GRAPH_API_URL = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
+
 # ---------------------------------------------------------------------------
 # SSM / page-token helpers
 # ---------------------------------------------------------------------------
@@ -45,7 +49,7 @@ def _get_page_token(page_id: str) -> str:
     user_token = _get_ssm("/meta-webhook/COMMENTS_DETECTION_USER_TOKEN")
     if not user_token:
         raise HTTPException(status_code=500, detail="Missing Meta user token")
-    url = f"https://graph.facebook.com/v18.0/me/accounts?access_token={user_token}"
+    url = f"https://graph.facebook.com/{ACCOUNTS_API_VERSION}/me/accounts?access_token={user_token}"
     req = urllib.request.Request(url, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -105,7 +109,7 @@ def send_messenger_message(user_id: str, req: MessengerSendRequest):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     token = _get_page_token(req.page_id)
-    url = f"https://graph.facebook.com/v18.0/me/messages?access_token={token}"
+    url = f"{GRAPH_API_URL}/me/messages?access_token={token}"
     payload = {"recipient": {"id": user_id}, "message": {"text": req.message.strip()}}
     data = json.dumps(payload).encode("utf-8")
     http_req = urllib.request.Request(
@@ -122,7 +126,7 @@ def send_messenger_message(user_id: str, req: MessengerSendRequest):
         # Retry once with fresh token
         _page_token_cache.pop(req.page_id, None)
         token = _get_page_token(req.page_id)
-        url = f"https://graph.facebook.com/v18.0/me/messages?access_token={token}"
+        url = f"{GRAPH_API_URL}/me/messages?access_token={token}"
         http_req2 = urllib.request.Request(
             url, data=data,
             headers={"Content-Type": "application/json"},
