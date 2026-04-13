@@ -129,13 +129,18 @@ def send_sms(phone: str, req: SmsSendRequest):
     """Send an SMS message via Aircall."""
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
+    # Normalize phone to E.164 format for Aircall
+    digits = _normalize_digits(phone)
+    if len(digits) == 10:
+        digits = "1" + digits
+    to_number = f"+{digits}"
     api_id = _get_ssm("/meta-webhook/AIRCALL_API_ID")
     api_token = _get_ssm("/meta-webhook/AIRCALL_API_TOKEN")
     if not api_id or not api_token:
         raise HTTPException(status_code=500, detail="Missing Aircall credentials")
     creds = base64.b64encode(f"{api_id}:{api_token}".encode()).decode()
     url = f"https://api.aircall.io/v1/numbers/{req.aircall_number_id}/messages/native/send"
-    body = json.dumps({"to": phone, "body": req.message.strip()}).encode("utf-8")
+    body = json.dumps({"to": to_number, "body": req.message.strip()}).encode("utf-8")
     http_req = urllib.request.Request(
         url,
         data=body,
@@ -146,7 +151,7 @@ def send_sms(phone: str, req: SmsSendRequest):
         with urllib.request.urlopen(http_req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             msg_id = str(data.get("id", ""))
-            logger.info("Aircall SMS sent to %s: id=%s", phone, msg_id)
+            logger.info("Aircall SMS sent to %s: id=%s", to_number, msg_id)
             return {"ok": True, "message_id": msg_id}
     except urllib.error.HTTPError as exc:
         body_text = exc.read().decode("utf-8", errors="replace")
