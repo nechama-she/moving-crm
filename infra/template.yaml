@@ -796,6 +796,7 @@ Resources:
           SSM_PREFIX: !Sub /moving-crm/${Environment}/
           AWS_REGION_NAME: !Ref AWS::Region
           DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
+          COMMENTS_DETECTION_USER_TOKEN: !Sub "{{resolve:ssm:/meta-webhook/COMMENTS_DETECTION_USER_TOKEN}}"
           CORS_ORIGINS: !Join
             - ","
             - - !Sub "https://${CloudFrontDistribution.DomainName}"
