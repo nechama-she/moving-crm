@@ -46,34 +46,34 @@ _page_token_cache: dict[str, str] = {}
 
 def _get_page_token(page_id: str) -> str:
     if page_id in _page_token_cache:
-        logger.info("Page token for %s found in cache", page_id)
+        print(f"Page token for {page_id} found in cache")
         return _page_token_cache[page_id]
     user_token = os.environ.get("COMMENTS_DETECTION_USER_TOKEN") or _get_ssm("/meta-webhook/COMMENTS_DETECTION_USER_TOKEN")
     token_source = "env" if os.environ.get("COMMENTS_DETECTION_USER_TOKEN") else "ssm"
-    logger.info("Using user token from %s (length=%d, starts=%s)", token_source, len(user_token) if user_token else 0, user_token[:10] if user_token else "N/A")
+    print(f"Using user token from {token_source} (length={len(user_token) if user_token else 0}, starts={user_token[:10] if user_token else 'N/A'})")
     if not user_token:
         raise HTTPException(status_code=500, detail="Missing Meta user token")
     url = f"https://graph.facebook.com/{ACCOUNTS_API_VERSION}/me/accounts?access_token={user_token}"
-    logger.info("Fetching page token for page_id=%s from %s/me/accounts", page_id, ACCOUNTS_API_VERSION)
+    print(f"Fetching page token for page_id={page_id} from {ACCOUNTS_API_VERSION}/me/accounts")
     req = urllib.request.Request(url, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             raw = resp.read().decode("utf-8")
-            logger.info("Meta /me/accounts response length=%d", len(raw))
+            print(f"Meta /me/accounts response length={len(raw)}")
             data = json.loads(raw)
     except Exception as exc:
-        logger.exception("Failed to fetch page tokens from Meta")
+        print(f"Failed to fetch page tokens from Meta: {exc}")
         raise HTTPException(status_code=502, detail="Failed to fetch page token") from exc
     pages = data.get("data", [])
-    logger.info("Meta /me/accounts returned %d pages", len(pages))
+    print(f"Meta /me/accounts returned {len(pages)} pages")
     for page in pages:
-        logger.info("  page: id=%s name=%s", page.get("id"), page.get("name"))
+        print(f"  page: id={page.get('id')} name={page.get('name')}")
         if page.get("id") == page_id:
             token = page["access_token"]
             _page_token_cache[page_id] = token
-            logger.info("Found matching page token for %s", page_id)
+            print(f"Found matching page token for {page_id}")
             return token
-    logger.error("Page %s not found. Available page IDs: %s", page_id, [p.get("id") for p in pages])
+    print(f"Page {page_id} not found. Available page IDs: {[p.get('id') for p in pages]}")
     raise HTTPException(status_code=400, detail=f"Page {page_id} not found for this Meta user")
 
 
