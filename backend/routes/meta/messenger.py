@@ -128,7 +128,12 @@ def send_messenger_message(user_id: str, req: MessengerSendRequest):
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     token = _get_page_token(req.page_id)
     url = f"{GRAPH_API_URL}/me/messages?access_token={token}"
-    payload = {"recipient": {"id": user_id}, "message": {"text": req.message.strip()}}
+    payload = {
+        "recipient": {"id": user_id},
+        "messaging_type": "MESSAGE_TAG",
+        "tag": "HUMAN_AGENT",
+        "message": {"text": req.message.strip()},
+    }
     data = json.dumps(payload).encode("utf-8")
     http_req = urllib.request.Request(
         url, data=data,
