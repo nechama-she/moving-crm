@@ -42,38 +42,44 @@ def _get_ssm(key: str) -> str:
 
 
 _page_token_cache: dict[str, str] = {}
+_dynamo = boto3.resource("dynamodb", region_name="us-east-1")
+_cache_table = _dynamo.Table("cache")
 
 
 def _get_page_token(page_id: str) -> str:
+    """Get page token from memory, DynamoDB cache (shared with meta-webhook), or /me/accounts."""
     if page_id in _page_token_cache:
-        print(f"Page token for {page_id} found in cache")
         return _page_token_cache[page_id]
-    user_token = os.environ.get("COMMENTS_DETECTION_USER_TOKEN") or _get_ssm("/meta-webhook/COMMENTS_DETECTION_USER_TOKEN")
-    token_source = "env" if os.environ.get("COMMENTS_DETECTION_USER_TOKEN") else "ssm"
-    print(f"Using user token from {token_source} (length={len(user_token) if user_token else 0}, starts={user_token[:10] if user_token else 'N/A'})")
+
+    # Try DynamoDB cache first (meta-webhook stores tokens here)
+    try:
+        resp = _cache_table.get_item(Key={"cache_key": f"page_token:{page_id}"})
+        item = resp.get("Item")
+        if item and item.get("value"):
+            _page_token_cache[page_id] = item["value"]
+            print(f"Page token for {page_id} found in DynamoDB cache")
+            return item["value"]
+    except Exception as exc:
+        print(f"DynamoDB cache lookup failed: {exc}")
+
+    # Fallback to /me/accounts
+    user_token = (os.environ.get("COMMENTS_DETECTION_USER_TOKEN") or _get_ssm("/meta-webhook/COMMENTS_DETECTION_USER_TOKEN")).strip()
     if not user_token:
         raise HTTPException(status_code=500, detail="Missing Meta user token")
     url = f"https://graph.facebook.com/{ACCOUNTS_API_VERSION}/me/accounts?access_token={user_token}"
-    print(f"Fetching page token for page_id={page_id} from {ACCOUNTS_API_VERSION}/me/accounts")
+    print(f"Fetching page token from /me/accounts for page_id={page_id}")
     req = urllib.request.Request(url, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            raw = resp.read().decode("utf-8")
-            print(f"Meta /me/accounts response length={len(raw)}")
-            data = json.loads(raw)
+            data = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
         print(f"Failed to fetch page tokens from Meta: {exc}")
         raise HTTPException(status_code=502, detail="Failed to fetch page token") from exc
-    pages = data.get("data", [])
-    print(f"Meta /me/accounts returned {len(pages)} pages")
-    for page in pages:
-        print(f"  page: id={page.get('id')} name={page.get('name')}")
+    for page in data.get("data", []):
         if page.get("id") == page_id:
             token = page["access_token"]
             _page_token_cache[page_id] = token
-            print(f"Found matching page token for {page_id}")
             return token
-    print(f"Page {page_id} not found. Available page IDs: {[p.get('id') for p in pages]}")
     raise HTTPException(status_code=400, detail=f"Page {page_id} not found for this Meta user")
 
 
