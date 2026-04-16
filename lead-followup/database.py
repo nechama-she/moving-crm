@@ -74,3 +74,31 @@ def get_leads_for_followup(window_start, window_end, limit=0, company_id=None):
     with engine.connect() as conn:
         rows = conn.execute(text(sql), params).fetchall()
         return [dict(r._mapping) for r in rows]
+
+
+def get_due_followups():
+    """Get followups that are due (not completed, due_date_time <= now) joined with lead info."""
+    engine = get_engine()
+    sql = """
+        SELECT f.note_id, f.smartmoving_id, f.type, f.title, f.assigned_to_id,
+               f.due_date_time, f.notes, f.completed,
+               l.id as lead_id, l.full_name, l.phone, l.facebook_user_id,
+               l.email, c.name as company_name, c.phone as company_phone,
+               c.aircall_number_id, c.timezone as company_timezone
+        FROM followups f
+        JOIN leads l ON l.smartmoving_id = f.smartmoving_id
+        JOIN companies c ON l.company_id = c.id
+        WHERE f.completed = false
+          AND f.due_date_time::date = CURRENT_DATE
+        ORDER BY f.due_date_time DESC
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(text(sql)).fetchall()
+        # Group by smartmoving_id and return only the latest followup per lead
+        seen = {}
+        for r in rows:
+            row = dict(r._mapping)
+            sm_id = row["smartmoving_id"]
+            if sm_id not in seen:
+                seen[sm_id] = row
+        return list(seen.values())

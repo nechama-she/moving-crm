@@ -1,1 +1,1 @@
-from .client import get_opportunity
+from .client import get_opportunity, update_followup
