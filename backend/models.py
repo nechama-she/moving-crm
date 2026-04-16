@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer, Boolean
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -151,4 +151,36 @@ class Lead(Base):
             "status": self.status or "new",
             "priority": self.priority or 0,
             "notes": self.notes or "",
+        }
+
+
+# ---------------------------------------------------------------------------
+# Followups
+# ---------------------------------------------------------------------------
+class Followup(Base):
+    __tablename__ = "followups"
+
+    note_id = Column(String(36), primary_key=True)
+    smartmoving_id = Column(String(36), nullable=False, index=True)
+    type = Column(Integer)
+    title = Column(Text)
+    assigned_to_id = Column(String(36))
+    due_date_time = Column(DateTime(timezone=True))
+    completed_at_utc = Column(DateTime(timezone=True))
+    notes = Column(Text)
+    completed = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=_now)
+
+    def to_dict(self):
+        return {
+            "note_id": self.note_id,
+            "smartmoving_id": self.smartmoving_id,
+            "type": self.type,
+            "title": self.title or "",
+            "assigned_to_id": self.assigned_to_id or "",
+            "due_date_time": self.due_date_time.isoformat() if self.due_date_time else "",
+            "completed_at_utc": self.completed_at_utc.isoformat() if self.completed_at_utc else "",
+            "notes": self.notes or "",
+            "completed": self.completed or False,
+            "created_at": self.created_at.isoformat() if self.created_at else "",
         }

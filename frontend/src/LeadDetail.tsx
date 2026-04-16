@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import ChatMessages from "./ChatMessages";
+import FollowupPanel from "./FollowupPanel";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
 
@@ -115,7 +116,7 @@ export default function LeadDetail() {
   }
 
   return (
-    <div style={{ padding: 24, fontFamily: "sans-serif", maxWidth: 700 }}>
+    <div style={{ padding: 24, fontFamily: "sans-serif", maxWidth: 900 }}>
       <button
         onClick={() => navigate("/")}
         style={{
@@ -131,9 +132,14 @@ export default function LeadDetail() {
         ← Back to Leads
       </button>
 
-      <h1 style={{ marginBottom: 24 }}>
-        {String(lead.full_name || "Lead Details")}
-      </h1>
+      <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
+        <h1 style={{ marginBottom: 24, flex: 1 }}>
+          {String(lead.full_name || "Lead Details")}
+        </h1>
+        <div style={{ width: 320, flexShrink: 0 }}>
+          <FollowupPanel leadId={leadId!} />
+        </div>
+      </div>
 
       {renderSection("User Details", USER_FIELDS)}
 
