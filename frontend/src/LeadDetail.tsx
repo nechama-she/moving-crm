@@ -45,6 +45,7 @@ export default function LeadDetail() {
   const inboxUrl = lead.inbox_url ? String(lead.inbox_url) : "";
   const urlMatch = inboxUrl.match(/\/latest\/(\d+)/);
   const chatUserId = urlMatch ? urlMatch[1] : (lead.user_id ? String(lead.user_id) : "");
+  const messengerInboxUrl = inboxUrl || (chatUserId ? `https://www.facebook.com/latest/${chatUserId}` : "");
 
   const allKeys = Object.keys(lead).filter((k) => !HIDDEN_FIELDS.has(k));
   const categorized = new Set([...USER_FIELDS, ...MOVE_FIELDS, ...META_FIELDS]);
@@ -163,7 +164,7 @@ export default function LeadDetail() {
             userId={chatUserId}
             userName={String(lead.full_name || "Client")}
             phoneNumber={lead.phone_number ? String(lead.phone_number) : ""}
-            inboxUrl={inboxUrl}
+            inboxUrl={messengerInboxUrl}
             aircallNumberId={lead.aircall_number_id ? String(lead.aircall_number_id) : ""}
             companyName={lead.company_name ? String(lead.company_name) : ""}
           />
