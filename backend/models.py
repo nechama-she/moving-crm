@@ -164,7 +164,6 @@ class Followup(Base):
     smartmoving_id = Column(String(36), nullable=False, index=True)
     type = Column(Integer)
     title = Column(Text)
-    assigned_to_id = Column(String(36))
     due_date_time = Column(DateTime(timezone=True))
     completed_at_utc = Column(DateTime(timezone=True))
     notes = Column(Text)
@@ -177,7 +176,6 @@ class Followup(Base):
             "smartmoving_id": self.smartmoving_id,
             "type": self.type,
             "title": self.title or "",
-            "assigned_to_id": self.assigned_to_id or "",
             "due_date_time": self.due_date_time.isoformat() if self.due_date_time else "",
             "completed_at_utc": self.completed_at_utc.isoformat() if self.completed_at_utc else "",
             "notes": self.notes or "",
