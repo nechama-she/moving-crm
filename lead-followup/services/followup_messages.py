@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timezone
 
-from database import get_due_followups
+from database import get_due_followups, was_already_sent, record_sent_message
 from libs.aircall import send_sms, find_number_id
 from libs.smartmoving import update_followup
 
@@ -97,6 +97,8 @@ def run_followup_messages(dry_run: bool = True) -> dict:
     for row in rows:
         name = row.get("full_name", "").strip()
         note_id = row["note_id"]
+        sm_id = str(row["smartmoving_id"])
+        msg_type = f"followup_{note_id}"
         channels = _build_channels(row)
 
         if not channels:
@@ -104,19 +106,36 @@ def run_followup_messages(dry_run: bool = True) -> dict:
             results.append({"note_id": note_id, "name": name, "result": "no_channels"})
             continue
 
+        # Dedup: skip entirely if SmartMoving note already updated for this followup
+        if was_already_sent(sm_id, msg_type, "smartmoving_note"):
+            logger.info("SKIP %s (%s): followup %s already processed", name, sm_id, note_id)
+            results.append({"note_id": note_id, "name": name, "result": "already_sent"})
+            continue
+
         message = DRY_RUN_MESSAGE
         channels_results = []
 
         for ch in channels:
+            if was_already_sent(sm_id, msg_type, ch):
+                logger.info("SKIP %s channel %s for followup %s: already sent", name, ch, note_id)
+                channels_results.append({"channel": ch, "sent": False, "skipped": True, "reason": "already_sent"})
+                continue
             if ch == "aircall":
-                channels_results.append(_send_aircall(row, message, dry_run))
+                result = _send_aircall(row, message, dry_run)
+                channels_results.append(result)
+                if result.get("sent"):
+                    record_sent_message(sm_id, msg_type, "aircall")
             elif ch == "messenger":
-                channels_results.append(_send_messenger(row, message, dry_run))
+                result = _send_messenger(row, message, dry_run)
+                channels_results.append(result)
+                if result.get("sent"):
+                    record_sent_message(sm_id, msg_type, "messenger")
 
         # Always update SmartMoving note (not dry run)
         note_result = _update_smartmoving_note(row, message, channels_results)
         if note_result.get("ok"):
             stats["note_updated"] += 1
+            record_sent_message(sm_id, msg_type, "smartmoving_note")
         else:
             stats["note_failed"] += 1
 
@@ -124,7 +143,7 @@ def run_followup_messages(dry_run: bool = True) -> dict:
         results.append({
             "note_id": note_id,
             "name": name,
-            "smartmoving_id": row["smartmoving_id"],
+            "smartmoving_id": sm_id,
             "channels": channels_results,
             "note_update": note_result,
         })

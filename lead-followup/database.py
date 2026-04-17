@@ -103,3 +103,31 @@ def get_due_followups():
             if sm_id not in seen:
                 seen[sm_id] = row
         return list(seen.values())
+
+
+def was_already_sent(smartmoving_id: str, message_type: str, channel: str) -> bool:
+    """Check if a message was already sent (dedup)."""
+    engine = get_engine()
+    sql = text("""
+        SELECT 1 FROM sent_messages
+        WHERE smartmoving_id = :smartmoving_id
+          AND message_type = :message_type
+          AND channel = :channel
+        LIMIT 1
+    """)
+    with engine.connect() as conn:
+        row = conn.execute(sql, {"smartmoving_id": smartmoving_id, "message_type": message_type, "channel": channel}).fetchone()
+        return row is not None
+
+
+def record_sent_message(smartmoving_id: str, message_type: str, channel: str):
+    """Record that a message was sent (for dedup). Ignores duplicates."""
+    engine = get_engine()
+    sql = text("""
+        INSERT INTO sent_messages (smartmoving_id, message_type, channel)
+        VALUES (:smartmoving_id, :message_type, :channel)
+        ON CONFLICT ON CONSTRAINT uq_sent_messages_dedup DO NOTHING
+    """)
+    with engine.connect() as conn:
+        conn.execute(sql, {"smartmoving_id": smartmoving_id, "message_type": message_type, "channel": channel})
+        conn.commit()

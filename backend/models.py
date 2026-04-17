@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer, Boolean
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer, Boolean, UniqueConstraint
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -184,3 +184,20 @@ class Followup(Base):
             "completed": self.completed or False,
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }
+
+
+# ---------------------------------------------------------------------------
+# Sent Messages (deduplication log)
+# ---------------------------------------------------------------------------
+class SentMessage(Base):
+    __tablename__ = "sent_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    smartmoving_id = Column(String(36), nullable=False)
+    message_type = Column(String(50), nullable=False)  # e.g. day_2, day_3, followup_{note_id}
+    channel = Column(String(20), nullable=False)        # e.g. aircall, messenger, smartmoving_note
+    sent_at = Column(DateTime(timezone=True), default=_now)
+
+    __table_args__ = (
+        UniqueConstraint("smartmoving_id", "message_type", "channel", name="uq_sent_messages_dedup"),
+    )

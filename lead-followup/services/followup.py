@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from config import SMS_MESSAGE_TEMPLATE, SMS_DAY3_TEMPLATE
-from database import get_leads_for_followup
+from database import get_leads_for_followup, was_already_sent, record_sent_message
 from libs.aircall import send_sms, find_number_id
 from libs.smartmoving import get_opportunity
 
@@ -110,12 +110,20 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
             company_name = row.get("company_name", "")
             company_phone = row.get("company_phone", "")
             aircall_number_id = row.get("aircall_number_id")
-            if dry_run:
+            day_label = f"day_{days_back + 1}"  # days_back=1 → day_2, days_back=2 → day_3
+
+            # Dedup: skip if already sent for this lead + day
+            if was_already_sent(opp_id, day_label, "aircall"):
+                logger.info("SKIP %s (%s): %s already sent", name, opp_id, day_label)
+                sms_result = {"sent": False, "skipped": True, "reason": "already_sent"}
+            elif dry_run:
                 msg_text = (template or SMS_MESSAGE_TEMPLATE).format(name=name, company=company_name)
                 sms_result = {"sent": False, "dry_run": True, "would_send_to": phone, "message": msg_text}
                 logger.info("DRY RUN — would send to %s: %s", phone, msg_text)
             else:
                 sms_result = _send_followup_sms(name, phone, company_name, company_phone, aircall_number_id, template=template)
+                if sms_result.get("sent"):
+                    record_sent_message(opp_id, day_label, "aircall")
             if sms_result.get("sent"):
                 stats["sms_sent"] += 1
             elif not sms_result.get("dry_run"):
