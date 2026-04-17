@@ -87,7 +87,7 @@ def _update_smartmoving_note(row: dict, message: str, channels_results: list[dic
     payload = {
         "type": row["type"],
         "title": row["title"],
-        "assignedToId": row["assigned_to_id"],
+        "assignedToId": str(row["assigned_to_id"]),
         "dueDateTime": row["due_date_time"].isoformat(),
         "notes": updated_notes,
         "completed": row["completed"],
