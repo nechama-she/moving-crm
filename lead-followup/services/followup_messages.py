@@ -66,9 +66,13 @@ def _update_smartmoving_note(row: dict, message: str, channels_results: list[dic
     updated_notes = f"{existing_notes}\n{new_note}".strip() if existing_notes else new_note
 
     payload = {
+        "type": row.get("type"),
         "title": row.get("title") or "",
         "assignedToId": row.get("assigned_to_id") or "",
+        "dueDateTime": row["due_date_time"].isoformat() if row.get("due_date_time") else "",
+        "completedAtUtc": row["completed_at_utc"].isoformat() if row.get("completed_at_utc") else None,
         "notes": updated_notes,
+        "completed": row.get("completed") or False,
     }
 
     result = update_followup(

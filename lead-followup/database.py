@@ -81,7 +81,7 @@ def get_due_followups():
     engine = get_engine()
     sql = """
         SELECT f.note_id, f.smartmoving_id, f.type, f.title, f.assigned_to_id,
-               f.due_date_time, f.notes, f.completed,
+               f.due_date_time, f.completed_at_utc, f.notes, f.completed,
                l.id as lead_id, l.full_name, l.phone, l.facebook_user_id,
                l.email, c.name as company_name, c.phone as company_phone,
                c.aircall_number_id, c.timezone as company_timezone
