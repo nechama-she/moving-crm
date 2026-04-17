@@ -41,8 +41,10 @@ def update_followup(opportunity_id: str, followup_id: str, payload: dict) -> dic
     """
     url = f"{SMARTMOVING_BASE_URL}/premium/opportunities/{opportunity_id}/followups/{followup_id}"
     headers = {**_headers(), "Content-Type": "application/json-patch+json"}
+    logger.info("SmartMoving PUT %s payload=%s", url, payload)
     try:
         resp = httpx.put(url, headers=headers, json=payload, timeout=15)
+        logger.info("SmartMoving PUT response: status=%s body=%s", resp.status_code, resp.text[:500] if resp.text else "(empty)")
         resp.raise_for_status()
         return {"ok": True}
     except httpx.HTTPError as e:

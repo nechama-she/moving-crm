@@ -28,13 +28,16 @@ def _send_aircall(row: dict, message: str, dry_run: bool) -> dict:
     company_phone = row.get("company_phone", "")
 
     if dry_run:
+        logger.info("Aircall DRY_RUN: would send to %s, message=%s", phone, message)
         return {"channel": "aircall", "sent": False, "dry_run": True, "would_send_to": phone, "message": message}
 
     nid = aircall_number_id
     if not nid and company_phone:
         nid = find_number_id(company_phone)
 
+    logger.info("Aircall API request: send_sms(to=%s, number_id=%s, message=%s)", phone, nid, message)
     result = send_sms(to=phone, text=message, number_id=nid)
+    logger.info("Aircall API response: %s", result)
     if result["ok"]:
         return {"channel": "aircall", "sent": True, "to": phone, "message": message}
     return {"channel": "aircall", "sent": False, "error": result.get("error"), "message": message}
@@ -44,11 +47,12 @@ def _send_messenger(row: dict, message: str, dry_run: bool) -> dict:
     user_id = str(row["facebook_user_id"]).strip()
 
     if dry_run:
+        logger.info("Messenger DRY_RUN: would send to %s, message=%s", user_id, message)
         return {"channel": "messenger", "sent": False, "dry_run": True, "would_send_to": user_id, "message": message}
 
-    # Import here to avoid circular / missing dependency issues
     # Messenger sending is handled by the CRM backend, not this Lambda
     # For now, dry_run only
+    logger.info("Messenger: not yet implemented, skipping user_id=%s", user_id)
     return {"channel": "messenger", "sent": False, "dry_run": True, "would_send_to": user_id, "message": message}
 
 
@@ -65,21 +69,39 @@ def _update_smartmoving_note(row: dict, message: str, channels_results: list[dic
     new_note = f"[Followup {timestamp}] ({', '.join(channels_summary)}) {message}"
     updated_notes = f"{existing_notes}\n{new_note}".strip() if existing_notes else new_note
 
-    payload = {
+    # Only update SmartMoving if all required fields have data
+    required_fields = {
         "type": row.get("type"),
-        "title": row.get("title") or "",
-        "assignedToId": row.get("assigned_to_id") or "",
-        "dueDateTime": row["due_date_time"].isoformat() if row.get("due_date_time") else "",
-        "completedAtUtc": row["completed_at_utc"].isoformat() if row.get("completed_at_utc") else None,
+        "title": row.get("title"),
+        "assignedToId": row.get("assigned_to_id"),
+        "dueDateTime": row.get("due_date_time"),
         "notes": updated_notes,
-        "completed": row.get("completed") or False,
+        "completed": row.get("completed"),
     }
+    missing = [k for k, v in required_fields.items() if v is None or v == ""]
+    if missing:
+        logger.warning("SKIP SmartMoving update for %s/%s: missing fields: %s",
+            row["smartmoving_id"], row["note_id"], missing)
+        return {"ok": False, "error": f"missing_required_fields: {missing}"}
+
+    payload = {
+        "type": row["type"],
+        "title": row["title"],
+        "assignedToId": row["assigned_to_id"],
+        "dueDateTime": row["due_date_time"].isoformat(),
+        "notes": updated_notes,
+        "completed": row["completed"],
+    }
+
+    logger.info("SmartMoving update payload for %s/%s: %s", row["smartmoving_id"], row["note_id"], payload)
 
     result = update_followup(
         opportunity_id=row["smartmoving_id"],
         followup_id=row["note_id"],
         payload=payload,
     )
+
+    logger.info("SmartMoving update response for %s/%s: %s", row["smartmoving_id"], row["note_id"], result)
     return result
 
 
@@ -90,6 +112,12 @@ def run_followup_messages(dry_run: bool = True) -> dict:
 
     rows = get_due_followups()
     logger.info("Found %d due followups", len(rows))
+    for i, row in enumerate(rows):
+        logger.info(
+            "  Followup %d: name=%s, smartmoving_id=%s, note_id=%s, phone=%s, fb=%s, due=%s",
+            i + 1, row.get("full_name"), row.get("smartmoving_id"), row.get("note_id"),
+            row.get("phone"), row.get("facebook_user_id"), row.get("due_date_time"),
+        )
 
     results = []
     stats = {"total": len(rows), "processed": 0, "note_updated": 0, "note_failed": 0}

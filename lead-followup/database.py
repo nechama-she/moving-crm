@@ -1,12 +1,15 @@
 """Database connection for lead-followup Lambda."""
 
 import json
+import logging
 import os
 from urllib.parse import quote_plus
 
 import boto3
 from botocore.exceptions import ClientError
 from sqlalchemy import create_engine, text
+
+logger = logging.getLogger(__name__)
 
 _engine = None
 
@@ -80,7 +83,7 @@ def get_due_followups():
     """Get followups that are due (not completed, due today) joined with lead info."""
     engine = get_engine()
     sql = """
-        SELECT f.note_id, f.smartmoving_id, f.type, f.title,
+        SELECT f.note_id, f.smartmoving_id, f.type, f.title, f.assigned_to_id,
                f.due_date_time, f.completed_at_utc, f.notes, f.completed,
                l.id as lead_id, l.full_name, l.phone, l.facebook_user_id,
                l.email, c.name as company_name, c.phone as company_phone,
@@ -93,12 +96,16 @@ def get_due_followups():
           AND f.smartmoving_id = '04965da2-2647-43f7-8128-b4260137b7b2'
         ORDER BY f.due_date_time DESC
     """
+    logger.info("SQL get_due_followups: %s", sql.strip())
     with engine.connect() as conn:
         rows = conn.execute(text(sql)).fetchall()
+        all_rows = [dict(r._mapping) for r in rows]
+        logger.info("SQL get_due_followups response: %d rows", len(all_rows))
+        for i, r in enumerate(all_rows):
+            logger.info("  row %d: %s", i, r)
         # Group by smartmoving_id and return only the latest followup per lead
         seen = {}
-        for r in rows:
-            row = dict(r._mapping)
+        for row in all_rows:
             sm_id = row["smartmoving_id"]
             if sm_id not in seen:
                 seen[sm_id] = row
@@ -115,9 +122,12 @@ def was_already_sent(smartmoving_id: str, message_type: str, channel: str) -> bo
           AND channel = :channel
         LIMIT 1
     """)
+    params = {"smartmoving_id": smartmoving_id, "message_type": message_type, "channel": channel}
     with engine.connect() as conn:
-        row = conn.execute(sql, {"smartmoving_id": smartmoving_id, "message_type": message_type, "channel": channel}).fetchone()
-        return row is not None
+        row = conn.execute(sql, params).fetchone()
+        found = row is not None
+        logger.info("SQL was_already_sent(%s, %s, %s) => %s", smartmoving_id, message_type, channel, found)
+        return found
 
 
 def record_sent_message(smartmoving_id: str, message_type: str, channel: str):
@@ -128,6 +138,9 @@ def record_sent_message(smartmoving_id: str, message_type: str, channel: str):
         VALUES (:smartmoving_id, :message_type, :channel)
         ON CONFLICT ON CONSTRAINT uq_sent_messages_dedup DO NOTHING
     """)
+    params = {"smartmoving_id": smartmoving_id, "message_type": message_type, "channel": channel}
+    logger.info("SQL record_sent_message(%s, %s, %s)", smartmoving_id, message_type, channel)
     with engine.connect() as conn:
-        conn.execute(sql, {"smartmoving_id": smartmoving_id, "message_type": message_type, "channel": channel})
+        conn.execute(sql, params)
         conn.commit()
+        logger.info("SQL record_sent_message: committed")
