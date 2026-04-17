@@ -86,7 +86,7 @@ def get_due_followups():
                l.email, c.name as company_name, c.phone as company_phone,
                c.aircall_number_id, c.timezone as company_timezone
         FROM followups f
-        JOIN leads l ON l.smartmoving_id = f.smartmoving_id
+        JOIN leads l ON l.smartmoving_id = f.smartmoving_id::text
         JOIN companies c ON l.company_id = c.id
         WHERE f.completed = false
           AND f.due_date_time::date = CURRENT_DATE
