@@ -77,7 +77,7 @@ def get_leads_for_followup(window_start, window_end, limit=0, company_id=None):
 
 
 def get_due_followups():
-    """Get followups that are due (not completed, due_date_time <= now) joined with lead info."""
+    """Get followups that are due (not completed, due today) joined with lead info."""
     engine = get_engine()
     sql = """
         SELECT f.note_id, f.smartmoving_id, f.type, f.title, f.assigned_to_id,
@@ -90,6 +90,7 @@ def get_due_followups():
         JOIN companies c ON l.company_id = c.id
         WHERE f.completed = false
           AND f.due_date_time::date = CURRENT_DATE
+          AND f.smartmoving_id = '04965da2-2647-43f7-8128-b4260137b7b2'
         ORDER BY f.due_date_time DESC
     """
     with engine.connect() as conn:
