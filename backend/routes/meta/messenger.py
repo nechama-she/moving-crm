@@ -130,8 +130,7 @@ def send_messenger_message(user_id: str, req: MessengerSendRequest):
     url = f"{GRAPH_API_URL}/me/messages?access_token={token}"
     payload = {
         "recipient": {"id": user_id},
-        "messaging_type": "MESSAGE_TAG",
-        "tag": "HUMAN_AGENT",
+        "messaging_type": "RESPONSE",
         "message": {"text": req.message.strip()},
     }
     data = json.dumps(payload).encode("utf-8")
