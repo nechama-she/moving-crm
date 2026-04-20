@@ -187,6 +187,18 @@ class Followup(Base):
 
 
 # ---------------------------------------------------------------------------
+# Sales Reps (maps SmartMoving assignee name → Aircall number)
+# ---------------------------------------------------------------------------
+class SalesRep(Base):
+    __tablename__ = "sales_reps"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, unique=True)
+    aircall_number_id = Column(String(50))
+    created_at = Column(DateTime(timezone=True), default=_now)
+
+
+# ---------------------------------------------------------------------------
 # Sent Messages (deduplication log)
 # ---------------------------------------------------------------------------
 class SentMessage(Base):

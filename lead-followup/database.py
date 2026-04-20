@@ -144,3 +144,16 @@ def record_sent_message(smartmoving_id: str, message_type: str, channel: str):
         conn.execute(sql, params)
         conn.commit()
         logger.info("SQL record_sent_message: committed")
+
+
+def get_sales_rep_number(name: str) -> str | None:
+    """Look up a sales rep's Aircall number ID by name. Returns None if not found."""
+    if not name:
+        return None
+    engine = get_engine()
+    sql = text("SELECT aircall_number_id FROM sales_reps WHERE LOWER(TRIM(name)) = LOWER(TRIM(:name)) LIMIT 1")
+    with engine.connect() as conn:
+        row = conn.execute(sql, {"name": name}).fetchone()
+        result = row[0] if row else None
+        logger.info("SQL get_sales_rep_number(%s) => %s", name, result)
+        return result

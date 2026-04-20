@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from config import SMS_MESSAGE_TEMPLATE, SMS_DAY3_TEMPLATE
-from database import get_leads_for_followup, was_already_sent, record_sent_message
+from database import get_leads_for_followup, was_already_sent, record_sent_message, get_sales_rep_number
 from libs.aircall import send_sms, find_number_id
 from libs.smartmoving import get_opportunity
 
@@ -111,6 +111,14 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
             company_phone = row.get("company_phone", "")
             aircall_number_id = row.get("aircall_number_id")
             day_label = f"day_{days_back + 1}"  # days_back=1 → day_2, days_back=2 → day_3
+
+            # Use sales rep's Aircall number if they have one, otherwise company fallback
+            sales_assignee = opp.get("salesAssignee") or {}
+            rep_name = (sales_assignee.get("name") or "").strip()
+            rep_number = get_sales_rep_number(rep_name) if rep_name else None
+            if rep_number:
+                logger.info("Using sales rep %s Aircall number %s", rep_name, rep_number)
+                aircall_number_id = rep_number
 
             # Dedup: skip if already sent for this lead + day
             if was_already_sent(opp_id, day_label, "aircall"):
