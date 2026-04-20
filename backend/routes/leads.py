@@ -199,7 +199,7 @@ class NewLead(BaseModel):
 SMS_TEMPLATE = """Hi {first_name},
 Thank you for reaching out to {company_name} regarding your upcoming move.
 
-To provide an accurate quote, we can schedule a free in-home estimate, a virtual in-home estimate, or complete the estimate over the phone with one of our estimators.
+To provide an accurate quote, we can schedule a virtual in-home estimate, complete the estimate over the phone with one of our estimators, or schedule a free in-home estimate.
 
 You can also submit your inventory here for a quick estimate:
 https://portal.smartmoving.com/home/inventory/{smartmoving_id}/welcome
@@ -284,7 +284,7 @@ def create_lead(
                 db.commit()
                 logger.info("Stored aircall_number_id=%s for company %s", nid, company.name)
 
-        # sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
+        sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
         logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
 
     return {"status": "created", "lead_id": lead.id, "full_name": lead.full_name, "sms": sms_result}
