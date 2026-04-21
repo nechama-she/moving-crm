@@ -26,6 +26,14 @@ def list_companies(user: User = Depends(require_admin), db: Session = Depends(ge
     return [c.to_dict() for c in companies]
 
 
+@router.get("/{company_id}")
+def get_company(company_id: str, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return company.to_dict()
+
+
 @router.post("")
 def create_company(body: CompanyCreate, user: User = Depends(require_admin), db: Session = Depends(get_db)):
     existing = db.query(Company).filter(Company.name == body.name).first()
