@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -16,6 +17,7 @@ router = APIRouter(prefix="/api/companies", tags=["Companies"])
 class CompanyCreate(BaseModel):
     name: str
     phone: str = ""
+    facebook_page_id: Optional[str] = None
 
 
 @router.get("")
@@ -29,7 +31,8 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
     existing = db.query(Company).filter(Company.name == body.name).first()
     if existing:
         raise HTTPException(status_code=409, detail="Company already exists")
-    company = Company(name=body.name, phone=body.phone)
+    page_id = (body.facebook_page_id or "").strip() or None
+    company = Company(name=body.name, phone=body.phone, facebook_page_id=page_id)
     db.add(company)
     db.commit()
     db.refresh(company)
@@ -38,6 +41,7 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
 
 class CompanyUpdate(BaseModel):
     phone: str = ""
+    facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
 
 
@@ -47,6 +51,7 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
     company.phone = body.phone
+    company.facebook_page_id = (body.facebook_page_id or "").strip() or None
     company.aircall_number_id = body.aircall_number_id
     db.commit()
     db.refresh(company)

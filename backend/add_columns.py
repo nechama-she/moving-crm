@@ -6,6 +6,7 @@ COLUMNS = [
     ("leads", "referral_source", "VARCHAR(100)"),
     ("leads", "service_type", "VARCHAR(50)"),
     ("leads", "smartmoving_id", "VARCHAR(100)"),
+    ("companies", "facebook_page_id", "VARCHAR(100)"),
     ("companies", "aircall_number_id", "VARCHAR(50)"),
     ("companies", "timezone", "VARCHAR(50) DEFAULT 'America/New_York'"),
 ]

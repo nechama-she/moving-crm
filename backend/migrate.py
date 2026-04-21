@@ -8,6 +8,8 @@ Usage:
 import sys
 import logging
 
+from sqlalchemy import text
+
 from database import engine
 from models import Base
 
@@ -22,6 +24,13 @@ def migrate(drop_first: bool = False):
 
     logger.info("Creating tables...")
     Base.metadata.create_all(engine)
+
+    # Keep existing databases in sync for new columns not handled by create_all.
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS facebook_page_id VARCHAR(100)"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_companies_facebook_page_id ON companies (facebook_page_id)"))
+        conn.commit()
+
     logger.info("Done — tables: %s", list(Base.metadata.tables.keys()))
 
 
