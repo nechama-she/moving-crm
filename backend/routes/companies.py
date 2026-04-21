@@ -34,6 +34,19 @@ def get_company(company_id: str, user: User = Depends(require_admin), db: Sessio
     return company.to_dict()
 
 
+@router.get("/by-facebook-page/{facebook_page_id}")
+def get_company_by_facebook_page_id(
+    facebook_page_id: str,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    page_id = facebook_page_id.strip()
+    company = db.query(Company).filter(Company.facebook_page_id == page_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return company.to_dict()
+
+
 @router.post("")
 def create_company(body: CompanyCreate, user: User = Depends(require_admin), db: Session = Depends(get_db)):
     existing = db.query(Company).filter(Company.name == body.name).first()
