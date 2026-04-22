@@ -163,7 +163,8 @@ def _build_followup_message_type(note_id: str, due_date_time_val) -> str:
         due_key = re.sub(r"[^0-9]", "", due_str)[:14]
     if not due_key:
         due_key = "nodue"
-    return f"followup_{note_id}_{due_key}"
+    note_key = str(note_id or "nonote")
+    return f"followup_{note_key}_{due_key}"
 
 
 def _normalize_status(status_val) -> int | None:

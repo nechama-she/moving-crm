@@ -29,6 +29,7 @@ def migrate(drop_first: bool = False):
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS facebook_page_id VARCHAR(100)"))
         conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_companies_facebook_page_id ON companies (facebook_page_id)"))
+        conn.execute(text("ALTER TABLE sent_messages ALTER COLUMN message_type TYPE VARCHAR(100)"))
         conn.commit()
 
     logger.info("Done — tables: %s", list(Base.metadata.tables.keys()))

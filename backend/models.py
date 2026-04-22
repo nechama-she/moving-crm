@@ -208,7 +208,7 @@ class SentMessage(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     smartmoving_id = Column(String(36), nullable=False)
-    message_type = Column(String(50), nullable=False)  # e.g. day_2, day_3, followup_{note_id}
+    message_type = Column(String(100), nullable=False)  # e.g. day_2, day_3, followup_{note_id}_{due}
     channel = Column(String(20), nullable=False)        # e.g. aircall, messenger, smartmoving_note
     sent_at = Column(DateTime(timezone=True), default=_now)
 
