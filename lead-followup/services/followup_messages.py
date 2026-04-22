@@ -247,6 +247,8 @@ def run_followup_messages(dry_run: bool = True) -> dict:
 
     results = []
     stats = {"total": len(rows), "processed": 0, "note_updated": 0, "note_failed": 0}
+    updated_jobs = []
+    failed_jobs = []
 
     for row in rows:
         name = row.get("full_name", "").strip()
@@ -314,8 +316,22 @@ def run_followup_messages(dry_run: bool = True) -> dict:
         if note_result.get("ok"):
             stats["note_updated"] += 1
             record_sent_message(sm_id, msg_type, "smartmoving_note")
+            updated_jobs.append({
+                "name": name,
+                "smartmoving_id": sm_id,
+                "note_id": str(note_id),
+                "due_date_time": str(live_followup.get("dueDateTime") or ""),
+                "dedup_key": msg_type,
+            })
         else:
             stats["note_failed"] += 1
+            failed_jobs.append({
+                "name": name,
+                "smartmoving_id": sm_id,
+                "note_id": str(note_id),
+                "error": note_result.get("error", "failed"),
+                "dedup_key": msg_type,
+            })
 
         stats["processed"] += 1
         results.append({
@@ -333,5 +349,10 @@ def run_followup_messages(dry_run: bool = True) -> dict:
             note_id, name, message_source,
             "ok" if note_result.get("ok") else note_result.get("error", "failed"),
         )
+
+    if updated_jobs:
+        logger.info("Updated followups list (%d): %s", len(updated_jobs), updated_jobs)
+    if failed_jobs:
+        logger.info("Failed followups list (%d): %s", len(failed_jobs), failed_jobs)
 
     return {"stats": stats, "results": results}
