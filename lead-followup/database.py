@@ -146,6 +146,50 @@ def record_sent_message(smartmoving_id: str, message_type: str, channel: str):
         logger.info("SQL record_sent_message: committed")
 
 
+def sync_followup_from_smartmoving(
+    smartmoving_id: str,
+    note_id: str,
+    followup_type: str,
+    title: str,
+    assigned_to_id: str,
+    due_date_time_iso: str,
+    notes: str,
+    completed: bool,
+) -> dict:
+    """Sync refreshed followup data back to the local followups table."""
+    engine = get_engine()
+    sql = text(
+        """
+        UPDATE followups
+        SET type = :followup_type,
+            title = :title,
+            assigned_to_id = :assigned_to_id,
+            due_date_time = CAST(:due_date_time_iso AS timestamptz),
+            notes = :notes,
+            completed = :completed
+        WHERE smartmoving_id::text = :smartmoving_id
+          AND note_id = :note_id
+        """
+    )
+    params = {
+        "smartmoving_id": smartmoving_id,
+        "note_id": str(note_id),
+        "followup_type": followup_type,
+        "title": title,
+        "assigned_to_id": str(assigned_to_id),
+        "due_date_time_iso": due_date_time_iso,
+        "notes": notes,
+        "completed": bool(completed),
+    }
+    logger.info("SQL sync_followup_from_smartmoving(%s, %s)", smartmoving_id, note_id)
+    with engine.connect() as conn:
+        result = conn.execute(sql, params)
+        conn.commit()
+        if result.rowcount == 0:
+            return {"ok": False, "error": "followup_row_not_found"}
+        return {"ok": True}
+
+
 def get_sales_rep_number(name: str) -> str | None:
     """Look up a sales rep's Aircall number ID by name. Returns None if not found."""
     if not name:

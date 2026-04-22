@@ -5,13 +5,13 @@ import urllib.request
 import urllib.error
 import base64
 
-import boto3
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from db import sms_messages_table
+from libs.common.ssm import get_ssm_cached
 
 logger = logging.getLogger("moving-crm")
 
@@ -95,27 +95,6 @@ def get_sms_messages(phone: str):
 
 
 # ---------------------------------------------------------------------------
-# SSM helper
-# ---------------------------------------------------------------------------
-
-_ssm_cache: dict[str, str] = {}
-
-
-def _get_ssm(key: str) -> str:
-    if key in _ssm_cache:
-        return _ssm_cache[key]
-    try:
-        ssm = boto3.client("ssm", region_name="us-east-1")
-        resp = ssm.get_parameter(Name=key, WithDecryption=True)
-        val = resp["Parameter"]["Value"]
-        _ssm_cache[key] = val
-        return val
-    except ClientError:
-        logger.exception("Failed to get SSM param %s", key)
-        return ""
-
-
-# ---------------------------------------------------------------------------
 # POST /sms/{phone}  — send SMS via Aircall
 # ---------------------------------------------------------------------------
 
@@ -134,8 +113,8 @@ def send_sms(phone: str, req: SmsSendRequest):
     if len(digits) == 10:
         digits = "1" + digits
     to_number = f"+{digits}"
-    api_id = _get_ssm("/meta-webhook/AIRCALL_API_ID")
-    api_token = _get_ssm("/meta-webhook/AIRCALL_API_TOKEN")
+    api_id = get_ssm_cached("/meta-webhook/AIRCALL_API_ID")
+    api_token = get_ssm_cached("/meta-webhook/AIRCALL_API_TOKEN")
     if not api_id or not api_token:
         raise HTTPException(status_code=500, detail="Missing Aircall credentials")
     creds = base64.b64encode(f"{api_id}:{api_token}".encode()).decode()

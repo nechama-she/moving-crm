@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from db import conversations_table
+from libs.common.ssm import get_ssm_cached
 
 logger = logging.getLogger("moving-crm")
 
@@ -21,24 +22,8 @@ ACCOUNTS_API_VERSION = "v24.0"
 GRAPH_API_URL = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
 
 # ---------------------------------------------------------------------------
-# SSM / page-token helpers
+# Page-token helpers
 # ---------------------------------------------------------------------------
-
-_ssm_cache: dict[str, str] = {}
-
-
-def _get_ssm(key: str) -> str:
-    if key in _ssm_cache:
-        return _ssm_cache[key]
-    try:
-        ssm = boto3.client("ssm", region_name="us-east-1")
-        resp = ssm.get_parameter(Name=key, WithDecryption=True)
-        val = resp["Parameter"]["Value"]
-        _ssm_cache[key] = val
-        return val
-    except ClientError:
-        logger.exception("Failed to get SSM param %s", key)
-        return ""
 
 
 _page_token_cache: dict[str, str] = {}
@@ -63,7 +48,7 @@ def _get_page_token(page_id: str) -> str:
         print(f"DynamoDB cache lookup failed: {exc}")
 
     # Fallback to /me/accounts
-    user_token = (os.environ.get("COMMENTS_DETECTION_USER_TOKEN") or _get_ssm("/meta-webhook/COMMENTS_DETECTION_USER_TOKEN")).strip()
+    user_token = (os.environ.get("COMMENTS_DETECTION_USER_TOKEN") or get_ssm_cached("/meta-webhook/COMMENTS_DETECTION_USER_TOKEN")).strip()
     if not user_token:
         raise HTTPException(status_code=500, detail="Missing Meta user token")
     url = f"https://graph.facebook.com/{ACCOUNTS_API_VERSION}/me/accounts?access_token={user_token}"

@@ -34,6 +34,25 @@ def get_opportunity(opportunity_id: str) -> dict:
         return {"error": str(e)}
 
 
+def get_followup(opportunity_id: str, followup_id: str) -> dict:
+    """Fetch one followup from SmartMoving.
+
+    Returns {"data": {...}} or {"error": ...}.
+    """
+    url = f"{SMARTMOVING_BASE_URL}/premium/opportunities/{opportunity_id}/followups/{followup_id}"
+    try:
+        resp = httpx.get(url, headers=_headers(), timeout=15)
+        resp.raise_for_status()
+        return {"data": resp.json()}
+    except httpx.HTTPError as e:
+        r = getattr(e, "response", None)
+        status = getattr(r, "status_code", None) if r is not None else None
+        body = getattr(r, "text", str(e)) if r is not None else str(e)
+        return {"error": f"HTTP {status}: {body[:300]}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def update_followup(opportunity_id: str, followup_id: str, payload: dict) -> dict:
     """Update a followup note via SmartMoving API.
 
