@@ -10,7 +10,7 @@ import httpx
 from database import get_due_followups, was_already_sent, record_sent_message, sync_followup_from_smartmoving
 from libs.aircall import send_sms, find_number_id
 from libs.common.ssm import get_ssm_cached
-from libs.smartmoving import get_followup, update_followup
+from libs.smartmoving import get_followup, get_opportunity, update_followup
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,8 @@ OPTION_1 = (
     "or would you like to go ahead and schedule the move?"
 )
 OPTION_2 = "Hi {name}, are you still looking for a mover for your upcoming move?"
+ALLOWED_OPPORTUNITY_STATUSES = {0, 1, 3}
+ALLOWED_LEAD_PRIORITIES = {1, 2, 3, 4, 6, 7}
 
 
 def _first_name(full_name: str) -> str:
@@ -164,6 +166,54 @@ def _build_followup_message_type(note_id: str, due_date_time_val) -> str:
     return f"followup_{note_id}_{due_key}"
 
 
+def _normalize_status(status_val) -> int | None:
+    if status_val is None:
+        return None
+    try:
+        return int(status_val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_lead_priority(lead_status_val) -> int | None:
+    """Parse leadStatus like 'Priority 1' (case-insensitive) into an int."""
+    if lead_status_val is None:
+        return None
+    text = str(lead_status_val).strip().lower()
+    match = re.search(r"priority\s*(\d+)", text)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def _should_process_opportunity(opportunity: dict) -> tuple[bool, str]:
+    status_raw = opportunity.get("status")
+    lead_status_raw = opportunity.get("leadStatus")
+
+    # Safety-first: if status is missing, do nothing.
+    if status_raw is None:
+        return False, "missing_status_data"
+    if lead_status_raw is None:
+        return False, "missing_lead_status_data"
+
+    status_num = _normalize_status(status_raw)
+    if status_num is None:
+        return False, "invalid_status_data"
+    if status_num not in ALLOWED_OPPORTUNITY_STATUSES:
+        return False, f"status_{status_num}_not_allowed"
+
+    lead_priority = _parse_lead_priority(lead_status_raw)
+    if lead_priority is None:
+        return False, "invalid_lead_status_data"
+    if lead_priority not in ALLOWED_LEAD_PRIORITIES:
+        return False, f"priority_{lead_priority}_not_allowed"
+
+    return True, "ok"
+
+
 def _update_smartmoving_note(row: dict, live_followup: dict, message: str, channels_results: list[dict]) -> dict:
     """Update the followup note in SmartMoving with the message that was (or would be) sent."""
     sm_id = str(row["smartmoving_id"])
@@ -277,6 +327,34 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
 
         live_followup = live_followup_resp.get("data") or {}
         msg_type = _build_followup_message_type(note_id, live_followup.get("dueDateTime"))
+
+        opp_resp = get_opportunity(sm_id)
+        if "error" in opp_resp:
+            logger.info("SKIP %s (%s): failed to fetch opportunity (%s)", name, sm_id, opp_resp["error"])
+            results.append({
+                "note_id": note_id,
+                "name": name,
+                "smartmoving_id": sm_id,
+                "result": "opportunity_fetch_failed",
+                "error": opp_resp["error"],
+            })
+            continue
+
+        opportunity = opp_resp.get("data") or {}
+        should_process, status_reason = _should_process_opportunity(opportunity)
+        if not should_process:
+            logger.info("SKIP %s (%s): %s", name, sm_id, status_reason)
+            results.append({
+                "note_id": note_id,
+                "name": name,
+                "smartmoving_id": sm_id,
+                "result": "skipped_status",
+                "reason": status_reason,
+                "smartmoving_status": opportunity.get("status"),
+                "lead_status": opportunity.get("leadStatus"),
+                "opportunity_status": opportunity.get("opportunityStatus"),
+            })
+            continue
 
         # Dedup: skip entirely if SmartMoving note already updated for this followup
         if was_already_sent(sm_id, msg_type, "smartmoving_note"):
