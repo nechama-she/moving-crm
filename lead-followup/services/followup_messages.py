@@ -231,12 +231,14 @@ def _update_smartmoving_note(row: dict, live_followup: dict, message: str, chann
     return result
 
 
-def run_followup_messages(dry_run: bool = True) -> dict:
+def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = None) -> dict:
     """Main entry: find due followups, generate message, update SmartMoving notes."""
     if dry_run:
         logger.info("*** DRY RUN — messages will NOT be sent ***")
+    if smartmoving_id:
+        logger.info("*** Filtering to single smartmoving_id: %s ***", smartmoving_id)
 
-    rows = get_due_followups()
+    rows = get_due_followups(smartmoving_id=smartmoving_id)
     logger.info("Found %d due followups", len(rows))
     for i, row in enumerate(rows):
         logger.info(

@@ -78,7 +78,8 @@ def handler(event, context):
     if mode in ("all", "followup_messages"):
         from services.followup_messages import run_followup_messages
         followup_msg_dry_run = event.get("followup_messages_dry_run", True)
-        followup_msg_result = run_followup_messages(dry_run=followup_msg_dry_run)
+        followup_msg_smartmoving_id = event.get("followup_messages_smartmoving_id") or None
+        followup_msg_result = run_followup_messages(dry_run=followup_msg_dry_run, smartmoving_id=followup_msg_smartmoving_id)
         all_results["followup_messages"] = followup_msg_result
 
         run_mode = "DRY RUN" if followup_msg_dry_run else "LIVE"

@@ -79,7 +79,7 @@ def get_leads_for_followup(window_start, window_end, limit=0, company_id=None):
         return [dict(r._mapping) for r in rows]
 
 
-def get_due_followups():
+def get_due_followups(smartmoving_id: str | None = None):
     """Get followups that are due (not completed, due today) joined with lead info."""
     engine = get_engine()
     sql = """
@@ -93,12 +93,15 @@ def get_due_followups():
         JOIN companies c ON l.company_id = c.id
         WHERE f.completed = false
           AND f.due_date_time::date = CURRENT_DATE
-          AND f.smartmoving_id = '04965da2-2647-43f7-8128-b4260137b7b2'
-        ORDER BY f.due_date_time DESC
     """
-    logger.info("SQL get_due_followups: %s", sql.strip())
+    params = {}
+    if smartmoving_id:
+        sql += "          AND f.smartmoving_id = :smartmoving_id\n"
+        params["smartmoving_id"] = smartmoving_id
+    sql += "        ORDER BY f.due_date_time DESC"
+    logger.info("SQL get_due_followups (smartmoving_id=%s): %s", smartmoving_id, sql.strip())
     with engine.connect() as conn:
-        rows = conn.execute(text(sql)).fetchall()
+        rows = conn.execute(text(sql), params).fetchall()
         all_rows = [dict(r._mapping) for r in rows]
         logger.info("SQL get_due_followups response: %d rows", len(all_rows))
         for i, r in enumerate(all_rows):
