@@ -7,7 +7,13 @@ from datetime import datetime, timezone
 
 import httpx
 
-from database import get_due_followups, was_already_sent, record_sent_message, sync_followup_from_smartmoving
+from database import (
+    get_due_followups,
+    was_already_sent,
+    record_sent_message,
+    sync_followup_from_smartmoving,
+    get_sales_rep_number,
+)
 from libs.aircall import send_sms, find_number_id
 from libs.common.ssm import get_ssm_cached
 from libs.smartmoving import get_followup, get_opportunity, update_followup
@@ -31,7 +37,7 @@ def _first_name(full_name: str) -> str:
     return name.split()[0] if name else "there"
 
 
-def _build_signature(row: dict) -> str:
+def _build_company_signature(row: dict) -> str:
     company = (row.get("company_name") or "").strip()
     phone = (row.get("company_phone") or "").strip()
     parts = ["Thanks,"]
@@ -42,7 +48,31 @@ def _build_signature(row: dict) -> str:
     return "\n".join(parts)
 
 
-def _generate_message_from_note(row: dict) -> tuple[str | None, str]:
+def _build_signature(row: dict, opportunity: dict | None = None) -> str:
+    """Use rep signature only when rep exists in sales_reps; otherwise company fallback."""
+    sales_assignee = (opportunity or {}).get("salesAssignee") or {}
+    rep_name = (sales_assignee.get("name") or "").strip()
+    if rep_name:
+        rep_number_id = get_sales_rep_number(rep_name)
+        if rep_number_id:
+            rep_phone = (sales_assignee.get("phone") or "").strip()
+            if rep_phone:
+                return f"Thanks, {rep_name}\n{rep_phone}"
+            logger.info("Sales rep %s is mapped but phone was not resolved; using company signature", rep_name)
+    return _build_company_signature(row)
+
+
+def _ensure_signature(message: str, signature: str) -> str:
+    clean_message = (message or "").strip()
+    clean_signature = (signature or "").strip()
+    if not clean_signature:
+        return clean_message
+    if clean_signature in clean_message:
+        return clean_message
+    return f"{clean_message}\n\n{clean_signature}".strip()
+
+
+def _generate_message_from_note(row: dict, opportunity: dict | None = None) -> tuple[str | None, str]:
     api_key = os.getenv("OPENAI_API_KEY", "") or get_ssm_cached(OPENAI_KEY_SSM_PATH)
     if not api_key:
         return None, "no_openai_key"
@@ -50,7 +80,7 @@ def _generate_message_from_note(row: dict) -> tuple[str | None, str]:
     name = _first_name(row.get("full_name", ""))
     option_1 = OPTION_1.format(name=name)
     option_2 = OPTION_2.format(name=name)
-    signature = _build_signature(row)
+    signature = _build_signature(row, opportunity=opportunity)
     notes = (row.get("notes") or "").strip()
 
     system_prompt = (
@@ -101,6 +131,7 @@ def _generate_message_from_note(row: dict) -> tuple[str | None, str]:
             content = data["choices"][0]["message"]["content"].strip()
             if not content:
                 raise ValueError("empty_response")
+            content = _ensure_signature(content, signature)
             return content, "openai"
     except Exception as exc:
         logger.warning("OpenAI generation failed: %s", exc)
@@ -363,7 +394,7 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
             results.append({"note_id": note_id, "name": name, "result": "already_sent"})
             continue
 
-        message, message_source = _generate_message_from_note(row)
+        message, message_source = _generate_message_from_note(row, opportunity=opportunity)
         if not message:
             logger.info("SKIP %s (%s): no AI message generated (%s)", name, sm_id, message_source)
             results.append({
