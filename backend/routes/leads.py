@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from config import get_config
 from database import get_db
-from models import Lead, User, UserCompany, Company
+from models import Lead, User, UserCompany, Company, OutreachEvent
 
 logger = logging.getLogger("moving-crm")
 
@@ -286,5 +286,26 @@ def create_lead(
 
         sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
         logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
+
+    try:
+        outreach_event = OutreachEvent(
+            lead_id=lead.id,
+            company_id=company.id,
+            smartmoving_id=lead.smartmoving_id or "",
+            note_id="",
+            outreach_type="new_lead",
+            job_id=lead.smartmoving_id or "",
+            qualified=bool(lead.phone and lead.smartmoving_id),
+            qualification_reason="ok" if lead.phone and lead.smartmoving_id else "missing_phone_or_job_id",
+            message=message if lead.phone and lead.smartmoving_id else "",
+            messenger=False,
+            aircall=bool(lead.phone),
+            dry_run=False,
+        )
+        db.add(outreach_event)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("Non-fatal outreach event write failure for lead %s: %s", lead.id, exc)
 
     return {"status": "created", "lead_id": lead.id, "full_name": lead.full_name, "sms": sms_result}

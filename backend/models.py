@@ -215,3 +215,43 @@ class SentMessage(Base):
     __table_args__ = (
         UniqueConstraint("smartmoving_id", "message_type", "channel", name="uq_sent_messages_dedup"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Outreach Events (frontend audit trail)
+# ---------------------------------------------------------------------------
+class OutreachEvent(Base):
+    __tablename__ = "outreach_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lead_id = Column(String(36), index=True)
+    company_id = Column(String(36), index=True)
+    smartmoving_id = Column(String(100), index=True)
+    note_id = Column(String(36), index=True)
+    outreach_type = Column(String(30), nullable=False, index=True)  # due, day_2, day_3, new_lead
+    job_id = Column(String(100), index=True)
+    qualified = Column(Boolean, nullable=False, default=False)
+    qualification_reason = Column(String(100), nullable=False, default="")
+    message = Column(Text)
+    messenger = Column(Boolean, nullable=False, default=False)
+    aircall = Column(Boolean, nullable=False, default=False)
+    dry_run = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "lead_id": self.lead_id or "",
+            "company_id": self.company_id or "",
+            "smartmoving_id": self.smartmoving_id or "",
+            "note_id": self.note_id or "",
+            "outreach_type": self.outreach_type,
+            "job_id": self.job_id or "",
+            "qualified": bool(self.qualified),
+            "qualification_reason": self.qualification_reason or "",
+            "message": self.message or "",
+            "messenger": bool(self.messenger),
+            "aircall": bool(self.aircall),
+            "dry_run": bool(self.dry_run),
+            "created_at": self.created_at.isoformat() if self.created_at else "",
+        }

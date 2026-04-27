@@ -55,7 +55,7 @@ def get_leads_for_followup(window_start, window_end, limit=0, company_id=None):
     """Query leads from Postgres that were created in the given time window and have a smartmoving_id."""
     engine = get_engine()
     sql = """
-        SELECT l.id, l.full_name, l.phone, l.email, l.smartmoving_id,
+        SELECT l.id, l.company_id, l.full_name, l.phone, l.email, l.smartmoving_id,
                l.created_at, l.created_time, l.status, c.name as company_name, c.phone as company_phone,
                c.aircall_number_id, c.timezone as company_timezone
         FROM leads l
@@ -85,7 +85,7 @@ def get_due_followups(smartmoving_id: str | None = None):
     sql = """
         SELECT f.note_id, f.smartmoving_id, f.type, f.title, f.assigned_to_id,
                f.due_date_time, f.completed_at_utc, f.notes, f.completed,
-               l.id as lead_id, l.full_name, l.phone, l.facebook_user_id,
+               l.id as lead_id, l.company_id, l.full_name, l.phone, l.facebook_user_id,
                l.email, c.name as company_name, c.phone as company_phone,
                c.aircall_number_id, c.timezone as company_timezone
         FROM followups f
@@ -147,6 +147,69 @@ def record_sent_message(smartmoving_id: str, message_type: str, channel: str):
         conn.execute(sql, params)
         conn.commit()
         logger.info("SQL record_sent_message: committed")
+
+
+def record_outreach_event(
+    lead_id: str | None,
+    company_id: str | None,
+    smartmoving_id: str | None,
+    note_id: str | None,
+    outreach_type: str,
+    job_id: str | None,
+    qualified: bool,
+    qualification_reason: str,
+    message: str | None,
+    messenger: bool,
+    aircall: bool,
+    dry_run: bool,
+):
+    """Persist a structured outreach event for frontend audit views.
+
+    Best-effort only: failures are logged and swallowed so messaging flows keep running.
+    """
+    engine = get_engine()
+    sql = text("""
+        INSERT INTO outreach_events (
+            lead_id, company_id, smartmoving_id, note_id, outreach_type, job_id,
+            qualified, qualification_reason, message, messenger, aircall, dry_run
+        )
+        VALUES (
+            :lead_id, :company_id, :smartmoving_id, :note_id, :outreach_type, :job_id,
+            :qualified, :qualification_reason, :message, :messenger, :aircall, :dry_run
+        )
+    """)
+    params = {
+        "lead_id": lead_id,
+        "company_id": company_id,
+        "smartmoving_id": smartmoving_id,
+        "note_id": note_id,
+        "outreach_type": outreach_type,
+        "job_id": job_id,
+        "qualified": bool(qualified),
+        "qualification_reason": qualification_reason or "",
+        "message": message or "",
+        "messenger": bool(messenger),
+        "aircall": bool(aircall),
+        "dry_run": bool(dry_run),
+    }
+    logger.info(
+        "SQL record_outreach_event(lead_id=%s, type=%s, qualified=%s, dry_run=%s)",
+        lead_id,
+        outreach_type,
+        qualified,
+        dry_run,
+    )
+    try:
+        with engine.connect() as conn:
+            conn.execute(sql, params)
+            conn.commit()
+    except Exception as exc:
+        logger.warning(
+            "Non-fatal outreach event write failure: lead_id=%s type=%s error=%s",
+            lead_id,
+            outreach_type,
+            exc,
+        )
 
 
 def sync_followup_from_smartmoving(

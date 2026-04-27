@@ -11,6 +11,7 @@ from database import (
     get_due_followups,
     was_already_sent,
     record_sent_message,
+    record_outreach_event,
     sync_followup_from_smartmoving,
     get_sales_rep_number,
 )
@@ -339,15 +340,48 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
         note_id = row["note_id"]
         sm_id = str(row["smartmoving_id"])
         channels = _build_channels(row)
+        qualified = False
+        qualification_reason = "ok"
+        message_preview = ""
 
         if not channels:
             logger.info("Followup %s (%s): no channels available, skipping", note_id, name)
+            qualification_reason = "no_channels"
+            record_outreach_event(
+                lead_id=str(row.get("lead_id") or "") or None,
+                company_id=str(row.get("company_id") or "") or None,
+                smartmoving_id=sm_id,
+                note_id=str(note_id),
+                outreach_type="due",
+                job_id=sm_id,
+                qualified=False,
+                qualification_reason=qualification_reason,
+                message="",
+                messenger=False,
+                aircall=False,
+                dry_run=dry_run,
+            )
             results.append({"note_id": note_id, "name": name, "result": "no_channels"})
             continue
 
         live_followup_resp = get_followup(sm_id, note_id)
         if "error" in live_followup_resp:
             logger.info("SKIP %s (%s): failed to fetch live followup (%s)", name, sm_id, live_followup_resp["error"])
+            qualification_reason = "live_fetch_failed"
+            record_outreach_event(
+                lead_id=str(row.get("lead_id") or "") or None,
+                company_id=str(row.get("company_id") or "") or None,
+                smartmoving_id=sm_id,
+                note_id=str(note_id),
+                outreach_type="due",
+                job_id=sm_id,
+                qualified=False,
+                qualification_reason=qualification_reason,
+                message="",
+                messenger=bool(row.get("facebook_user_id")),
+                aircall=bool(row.get("phone")),
+                dry_run=dry_run,
+            )
             results.append({
                 "note_id": note_id,
                 "name": name,
@@ -363,6 +397,21 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
         opp_resp = get_opportunity(sm_id)
         if "error" in opp_resp:
             logger.info("SKIP %s (%s): failed to fetch opportunity (%s)", name, sm_id, opp_resp["error"])
+            qualification_reason = "opportunity_fetch_failed"
+            record_outreach_event(
+                lead_id=str(row.get("lead_id") or "") or None,
+                company_id=str(row.get("company_id") or "") or None,
+                smartmoving_id=sm_id,
+                note_id=str(note_id),
+                outreach_type="due",
+                job_id=sm_id,
+                qualified=False,
+                qualification_reason=qualification_reason,
+                message="",
+                messenger=bool(row.get("facebook_user_id")),
+                aircall=bool(row.get("phone")),
+                dry_run=dry_run,
+            )
             results.append({
                 "note_id": note_id,
                 "name": name,
@@ -376,6 +425,21 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
         should_process, status_reason = _should_process_opportunity(opportunity)
         if not should_process:
             logger.info("SKIP %s (%s): %s", name, sm_id, status_reason)
+            qualification_reason = status_reason
+            record_outreach_event(
+                lead_id=str(row.get("lead_id") or "") or None,
+                company_id=str(row.get("company_id") or "") or None,
+                smartmoving_id=sm_id,
+                note_id=str(note_id),
+                outreach_type="due",
+                job_id=sm_id,
+                qualified=False,
+                qualification_reason=qualification_reason,
+                message="",
+                messenger=bool(row.get("facebook_user_id")),
+                aircall=bool(row.get("phone")),
+                dry_run=dry_run,
+            )
             results.append({
                 "note_id": note_id,
                 "name": name,
@@ -391,12 +455,41 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
         # Dedup: skip entirely if SmartMoving note already updated for this followup
         if was_already_sent(sm_id, msg_type, "smartmoving_note"):
             logger.info("SKIP %s (%s): followup %s already processed", name, sm_id, note_id)
+            record_outreach_event(
+                lead_id=str(row.get("lead_id") or "") or None,
+                company_id=str(row.get("company_id") or "") or None,
+                smartmoving_id=sm_id,
+                note_id=str(note_id),
+                outreach_type="due",
+                job_id=sm_id,
+                qualified=True,
+                qualification_reason="already_sent",
+                message="",
+                messenger=bool(row.get("facebook_user_id")),
+                aircall=bool(row.get("phone")),
+                dry_run=dry_run,
+            )
             results.append({"note_id": note_id, "name": name, "result": "already_sent"})
             continue
 
         message, message_source = _generate_message_from_note(row, opportunity=opportunity)
         if not message:
             logger.info("SKIP %s (%s): no AI message generated (%s)", name, sm_id, message_source)
+            qualification_reason = "no_ai_message"
+            record_outreach_event(
+                lead_id=str(row.get("lead_id") or "") or None,
+                company_id=str(row.get("company_id") or "") or None,
+                smartmoving_id=sm_id,
+                note_id=str(note_id),
+                outreach_type="due",
+                job_id=sm_id,
+                qualified=True,
+                qualification_reason=qualification_reason,
+                message="",
+                messenger=bool(row.get("facebook_user_id")),
+                aircall=bool(row.get("phone")),
+                dry_run=dry_run,
+            )
             results.append({
                 "note_id": note_id,
                 "name": name,
@@ -405,6 +498,8 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
                 "message_source": message_source,
             })
             continue
+        qualified = True
+        message_preview = message
         channels_results = []
 
         for ch in channels:
@@ -460,6 +555,20 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
             "Followup %s (%s): source=%s, note_update=%s",
             note_id, name, message_source,
             "ok" if note_result.get("ok") else note_result.get("error", "failed"),
+        )
+        record_outreach_event(
+            lead_id=str(row.get("lead_id") or "") or None,
+            company_id=str(row.get("company_id") or "") or None,
+            smartmoving_id=sm_id,
+            note_id=str(note_id),
+            outreach_type="due",
+            job_id=sm_id,
+            qualified=qualified,
+            qualification_reason="ok" if note_result.get("ok") else note_result.get("error", "note_update_failed"),
+            message=message_preview,
+            messenger=bool(row.get("facebook_user_id")),
+            aircall=bool(row.get("phone")),
+            dry_run=dry_run,
         )
 
     if updated_jobs:
