@@ -12,6 +12,7 @@ export const LABEL_MAP: Record<string, string> = {
   inbox_url: "Inbox",
   phone_number: "Phone Number",
   full_name: "Full Name",
+  company_name: "Company",
   pickup_zip: "Pickup Zip",
   delivery_zip: "Delivery Zip",
   move_size: "Move Size",

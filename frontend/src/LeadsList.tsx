@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
@@ -60,6 +60,7 @@ function cellStyle(key: string): React.CSSProperties {
 
 export default function LeadsList() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { token } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,6 +73,8 @@ export default function LeadsList() {
   const observerRef = useRef<IntersectionObserver | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const companyIdFilter = searchParams.get("company_id") || "";
+  const companyNameFilter = searchParams.get("company_name") || "";
 
   const fetchLeads = useCallback(async (offset: number = 0, query: string = "") => {
     const isFirst = offset === 0;
@@ -79,6 +82,7 @@ export default function LeadsList() {
     try {
       const params = new URLSearchParams({ limit: "50", offset: String(offset) });
       if (query) params.set("search", query);
+      if (companyIdFilter) params.set("company_id", companyIdFilter);
       const res = await fetch(`${API_BASE}/api/leads?${params}`, { headers: authHeaders(token) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -90,11 +94,11 @@ export default function LeadsList() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [token]);
+  }, [token, companyIdFilter]);
 
   useEffect(() => {
     fetchLeads(0, search);
-  }, [fetchLeads, search]);
+  }, [fetchLeads, search, companyIdFilter]);
 
   const handleSearchChange = (value: string) => {
     setSearchInput(value);
@@ -137,7 +141,31 @@ export default function LeadsList() {
 
   return (
     <div style={{ padding: 24, fontFamily: "sans-serif" }}>
-      <h1>Leads</h1>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 6, flexWrap: "wrap" }}>
+        <h1 style={{ margin: 0 }}>Leads</h1>
+        <Link to="/outreach" style={{ color: "#2563eb", textDecoration: "none", fontSize: 14 }}>
+          Outreach Activity
+        </Link>
+      </div>
+      {companyIdFilter ? (
+        <div style={{ marginBottom: 12, fontSize: 13, color: "#334155", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <span>
+            Showing company: <strong>{companyNameFilter || companyIdFilter}</strong>
+          </span>
+          <button
+            type="button"
+            onClick={() => setSearchParams((prev) => {
+              const next = new URLSearchParams(prev);
+              next.delete("company_id");
+              next.delete("company_name");
+              return next;
+            })}
+            style={{ border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", padding: "4px 10px", cursor: "pointer" }}
+          >
+            Show All Companies
+          </button>
+        </div>
+      ) : null}
       <input
         type="text"
         placeholder="Search by name, ID, phone, or email…"
@@ -189,6 +217,7 @@ export default function LeadsList() {
               >
                 {columns.map((col) => {
                   const text = formatValue(col, lead[col]);
+                  const isCompanyCell = col === "company_name" && lead.company_id;
                   return (
                     <td
                       key={col}
@@ -209,7 +238,17 @@ export default function LeadsList() {
                         setTooltip(null);
                       }}
                     >
-                      {text}
+                      {isCompanyCell ? (
+                        <Link
+                          to={`/?company_id=${encodeURIComponent(String(lead.company_id))}&company_name=${encodeURIComponent(String(lead.company_name || ""))}`}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ color: "#2563eb", textDecoration: "underline" }}
+                        >
+                          {text}
+                        </Link>
+                      ) : (
+                        text
+                      )}
                     </td>
                   );
                 })}

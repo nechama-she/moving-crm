@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
 
-type OutreachType = "" | "due" | "day_2" | "day_3" | "new_lead";
+type OutreachType = "due" | "day_2" | "new_lead";
 
 interface OutreachEvent {
   id: number;
@@ -23,12 +23,10 @@ interface OutreachEvent {
   created_at: string;
 }
 
-const typeOptions: Array<{ value: OutreachType; label: string }> = [
-  { value: "", label: "All" },
+const tabs: Array<{ value: OutreachType; label: string }> = [
   { value: "due", label: "Due" },
   { value: "day_2", label: "Day 2" },
-  { value: "day_3", label: "Day 3" },
-  { value: "new_lead", label: "New Lead" },
+  { value: "new_lead", label: "New Leads" },
 ];
 
 function yesNo(value: boolean): string {
@@ -55,11 +53,12 @@ export default function OutreachEventsPage() {
   const [items, setItems] = useState<OutreachEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [typeFilter, setTypeFilter] = useState<OutreachType>("");
+  const [typeFilter, setTypeFilter] = useState<OutreachType>("due");
+  const [selected, setSelected] = useState<OutreachEvent | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams({ limit: "200" });
-    if (typeFilter) params.set("outreach_type", typeFilter);
+    params.set("outreach_type", typeFilter);
 
     setLoading(true);
     setError("");
@@ -79,23 +78,32 @@ export default function OutreachEventsPage() {
         <div>
           <h1 style={{ margin: 0 }}>Outreach Activity</h1>
           <p style={{ margin: "6px 0 0", color: "#666", fontSize: 14 }}>
-            Clear view of due followups, day 2, day 3, and new-lead messages.
+            Split by tab to avoid one big dump.
           </p>
         </div>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-          Type
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value as OutreachType)}
-            style={{ padding: "8px 10px", borderRadius: 6, border: "1px solid #ccc", background: "#fff" }}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        {tabs.map((tab) => (
+          <button
+            key={tab.value}
+            onClick={() => {
+              setTypeFilter(tab.value);
+              setSelected(null);
+            }}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 999,
+              border: typeFilter === tab.value ? "1px solid #1d4ed8" : "1px solid #cbd5e1",
+              background: typeFilter === tab.value ? "#dbeafe" : "#fff",
+              color: typeFilter === tab.value ? "#1e3a8a" : "#334155",
+              fontSize: 13,
+              cursor: "pointer",
+            }}
           >
-            {typeOptions.map((option) => (
-              <option key={option.value || "all"} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {loading ? <p>Loading…</p> : null}
@@ -112,8 +120,7 @@ export default function OutreachEventsPage() {
                 <th style={thStyle}>Lead</th>
                 <th style={thStyle}>Type</th>
                 <th style={thStyle}>Qualified</th>
-                <th style={thStyle}>Reason</th>
-                <th style={thStyle}>Message</th>
+                <th style={thStyle}>Details</th>
                 <th style={thStyle}>Messenger</th>
                 <th style={thStyle}>Aircall</th>
                 <th style={thStyle}>Dry Run</th>
@@ -135,9 +142,22 @@ export default function OutreachEventsPage() {
                   <td style={tdStyle}>{item.lead_name || ""}</td>
                   <td style={tdStyle}>{formatType(item.outreach_type)}</td>
                   <td style={tdStyle}>{yesNo(item.qualified)}</td>
-                  <td style={tdStyle}>{item.qualification_reason || ""}</td>
-                  <td style={{ ...tdStyle, maxWidth: 420 }}>
-                    <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{item.message || ""}</div>
+                  <td style={tdStyle}>
+                    <button
+                      type="button"
+                      onClick={() => setSelected(item)}
+                      style={{
+                        border: "none",
+                        background: "none",
+                        color: "#2563eb",
+                        cursor: "pointer",
+                        padding: 0,
+                        textDecoration: "underline",
+                        fontSize: 13,
+                      }}
+                    >
+                      View
+                    </button>
                   </td>
                   <td style={tdStyle}>{yesNo(item.messenger)}</td>
                   <td style={tdStyle}>{yesNo(item.aircall)}</td>
@@ -146,6 +166,28 @@ export default function OutreachEventsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      ) : null}
+
+      {selected ? (
+        <div style={{ marginTop: 16, border: "1px solid #e5e7eb", borderRadius: 10, padding: 14, background: "#fff" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+            <h2 style={{ margin: 0, fontSize: 16 }}>Outreach Details</h2>
+            <button
+              type="button"
+              onClick={() => setSelected(null)}
+              style={{ border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", padding: "4px 10px", cursor: "pointer" }}
+            >
+              Close
+            </button>
+          </div>
+          <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+            <div><strong>Reason:</strong> {selected.qualification_reason || ""}</div>
+            <div><strong>Message:</strong></div>
+            <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.4, border: "1px solid #e5e7eb", borderRadius: 6, padding: 10 }}>
+              {selected.message || ""}
+            </div>
+          </div>
         </div>
       ) : null}
     </div>

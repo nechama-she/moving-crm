@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from database import get_db
-from models import Lead, OutreachEvent, User, UserCompany
+from models import Company, Lead, OutreachEvent, User, UserCompany
 
 logger = logging.getLogger("moving-crm")
 
@@ -13,6 +13,8 @@ router = APIRouter(prefix="/api", tags=["Outreach"])
 
 
 def _get_user_company_ids(user: User, db: Session) -> list[str]:
+    if user.role == "admin":
+        return [row[0] for row in db.query(Company.id).all()]
     rows = db.query(UserCompany.company_id).filter(UserCompany.user_id == user.id).all()
     return [r[0] for r in rows]
 
