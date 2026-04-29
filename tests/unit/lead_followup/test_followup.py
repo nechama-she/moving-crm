@@ -8,7 +8,6 @@ from zoneinfo import ZoneInfo
 
 # Mock heavy dependencies before importing followup
 sys.modules["database"] = MagicMock()
-sys.modules["libs"] = MagicMock()
 sys.modules["libs.aircall"] = MagicMock()
 sys.modules["libs.smartmoving"] = MagicMock()
 

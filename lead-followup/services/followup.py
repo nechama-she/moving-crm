@@ -7,9 +7,77 @@ from zoneinfo import ZoneInfo
 from config import SMS_MESSAGE_TEMPLATE, SMS_DAY3_TEMPLATE
 from database import get_leads_for_followup, was_already_sent, record_sent_message, get_sales_rep_number, record_outreach_event
 from libs.aircall import send_sms, find_number_id
-from libs.smartmoving import get_opportunity
+from libs.common.phone import phone_variants
+from libs.smartmoving import get_opportunity, add_opportunity_note
 
 logger = logging.getLogger(__name__)
+
+
+def _is_client_message(item: dict) -> bool:
+    direction = str(item.get("direction") or "").strip().lower()
+    if direction in {"received", "incoming", "inbound", "from_client"}:
+        return True
+    if direction in {"sent", "outgoing", "outbound", "from_company"}:
+        return False
+
+    if bool(item.get("is_outbound")) or bool(item.get("from_me")):
+        return False
+
+    sender_type = str(item.get("sender_type") or item.get("sender") or "").strip().lower()
+    if sender_type in {"client", "customer", "lead", "user"}:
+        return True
+    if sender_type in {"agent", "company", "rep", "system", "page"}:
+        return False
+
+    return False
+
+
+def _has_client_messages(phone: str, facebook_user_id: str) -> bool:
+    """Best-effort inbound message check from SMS/Messenger history."""
+    try:
+        import boto3
+        from boto3.dynamodb.conditions import Key, Attr
+    except Exception:
+        logger.warning("boto3 not available; skipping client-message check")
+        return False
+
+    region = "us-east-1"
+    try:
+        dynamodb = boto3.resource("dynamodb", region_name=region)
+
+        if phone:
+            sms_table = dynamodb.Table("sms_messages")
+            for variant in phone_variants(phone):
+                try:
+                    resp = sms_table.query(
+                        KeyConditionExpression=Key("phone_number").eq(variant),
+                        ScanIndexForward=False,
+                        Limit=30,
+                    )
+                    for item in resp.get("Items", []):
+                        if _is_client_message(item):
+                            return True
+                except Exception:
+                    continue
+
+        if facebook_user_id:
+            conv_table = dynamodb.Table("conversations")
+            try:
+                resp = conv_table.query(
+                    KeyConditionExpression=Key("user_id").eq(facebook_user_id),
+                    FilterExpression=Attr("platform").eq("messenger"),
+                    ScanIndexForward=False,
+                    Limit=50,
+                )
+                for item in resp.get("Items", []):
+                    if _is_client_message(item):
+                        return True
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning("Non-fatal client message check failure: %s", exc)
+
+    return False
 
 
 def compute_utc_window(timezone_str: str, days_back: int = 1) -> tuple:
@@ -107,12 +175,27 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
         status_val = opp.get("status")
         stats["matched"] += 1
 
+        phone = str(row.get("phone", "")).strip()
+        facebook_user_id = str(row.get("facebook_user_id", "") or "").strip()
+        has_client_contact = _has_client_messages(phone=phone, facebook_user_id=facebook_user_id)
+
         qualifies = _should_send_sms(lead_status, status_val)
         sms_result = None
         qualification_reason = "ok" if qualifies else "status_not_allowed"
+
+        if has_client_contact:
+            qualifies = False
+            qualification_reason = "client_already_contacted"
+
+            # If SmartMoving status is 0 and client has already contacted us, leave a note for the rep.
+            if status_val == 0:
+                note_text = "CRM note: client already made contact. Day 2/3 auto-followup was skipped. SmartMoving status should be changed."
+                note_resp = add_opportunity_note(opp_id, note_text)
+                if not note_resp.get("ok"):
+                    logger.warning("Failed to add SmartMoving note for %s: %s", opp_id, note_resp.get("error"))
+
         preview_message = _render_followup_message(name, row.get("company_name", ""), template=template) if qualifies else ""
         if qualifies:
-            phone = str(row.get("phone", "")).strip()
             company_name = row.get("company_name", "")
             company_phone = row.get("company_phone", "")
             aircall_number_id = row.get("aircall_number_id")

@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 
 sys.modules["database"] = MagicMock()
 sys.modules["config"] = MagicMock()
-sys.modules["libs"] = MagicMock()
 sys.modules["libs.aircall"] = MagicMock()
 sys.modules["libs.smartmoving"] = MagicMock()
 

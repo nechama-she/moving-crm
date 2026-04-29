@@ -75,3 +75,27 @@ def update_followup(opportunity_id: str, followup_id: str, payload: dict) -> dic
     except Exception as e:
         logger.error("SmartMoving update_followup exception: %r", e)
         return {"ok": False, "error": str(e)}
+
+
+def add_opportunity_note(opportunity_id: str, note: str) -> dict:
+    """Attempt to add a note to an opportunity.
+
+    This is best-effort because SmartMoving note endpoints vary by account setup.
+    Returns {"ok": True} or {"ok": False, "error": ...}.
+    """
+    url = f"{SMARTMOVING_BASE_URL}/premium/opportunities/{opportunity_id}/notes"
+    headers = {**_headers(), "Content-Type": "application/json"}
+    payload = {"notes": note}
+    logger.info("SmartMoving POST %s payload=%s", url, payload)
+    try:
+        resp = httpx.post(url, headers=headers, json=payload, timeout=15)
+        logger.info("SmartMoving add_opportunity_note: status=%s body=%s", resp.status_code, resp.text[:300] if resp.text else "(empty)")
+        resp.raise_for_status()
+        return {"ok": True}
+    except httpx.HTTPError as e:
+        r = getattr(e, "response", None)
+        code = getattr(r, "status_code", None) if r is not None else None
+        body = getattr(r, "text", str(e)) if r is not None else str(e)
+        return {"ok": False, "error": f"HTTP {code}: {body[:300]}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}

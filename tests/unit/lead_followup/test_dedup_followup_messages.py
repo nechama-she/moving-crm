@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 
 # Mock heavy dependencies before importing
 sys.modules["database"] = MagicMock()
-sys.modules["libs"] = MagicMock()
 sys.modules["libs.aircall"] = MagicMock()
 sys.modules["libs.smartmoving"] = MagicMock()
 
