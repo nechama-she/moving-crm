@@ -8,6 +8,7 @@ COLUMNS = [
     ("leads", "smartmoving_id", "VARCHAR(100)"),
     ("companies", "facebook_page_id", "VARCHAR(100)"),
     ("companies", "aircall_number_id", "VARCHAR(50)"),
+    ("companies", "samrtmoving_branch_id", "VARCHAR(100)"),
     ("companies", "timezone", "VARCHAR(50) DEFAULT 'America/New_York'"),
 ]
 

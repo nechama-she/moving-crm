@@ -28,6 +28,7 @@ def migrate(drop_first: bool = False):
     # Keep existing databases in sync for new columns not handled by create_all.
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS facebook_page_id VARCHAR(100)"))
+        conn.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS samrtmoving_branch_id VARCHAR(100)"))
         conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_companies_facebook_page_id ON companies (facebook_page_id)"))
         conn.execute(text("ALTER TABLE sent_messages ALTER COLUMN message_type TYPE VARCHAR(100)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_outreach_events_created_at ON outreach_events (created_at)"))

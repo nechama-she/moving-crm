@@ -18,6 +18,7 @@ class CompanyCreate(BaseModel):
     name: str
     phone: str = ""
     facebook_page_id: Optional[str] = None
+    samrtmoving_branch_id: str = ""
 
 
 @router.get("")
@@ -53,7 +54,12 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
     if existing:
         raise HTTPException(status_code=409, detail="Company already exists")
     page_id = (body.facebook_page_id or "").strip() or None
-    company = Company(name=body.name, phone=body.phone, facebook_page_id=page_id)
+    company = Company(
+        name=body.name,
+        phone=body.phone,
+        facebook_page_id=page_id,
+        samrtmoving_branch_id=body.samrtmoving_branch_id,
+    )
     db.add(company)
     db.commit()
     db.refresh(company)
@@ -64,6 +70,7 @@ class CompanyUpdate(BaseModel):
     phone: str = ""
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
+    samrtmoving_branch_id: str = ""
 
 
 @router.put("/{company_id}")
@@ -74,6 +81,7 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     company.phone = body.phone
     company.facebook_page_id = (body.facebook_page_id or "").strip() or None
     company.aircall_number_id = body.aircall_number_id
+    company.samrtmoving_branch_id = body.samrtmoving_branch_id
     db.commit()
     db.refresh(company)
     return company.to_dict()

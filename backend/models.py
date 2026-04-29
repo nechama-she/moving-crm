@@ -26,6 +26,7 @@ class Company(Base):
     phone = Column(String(30))
     facebook_page_id = Column(String(100), unique=True, index=True)
     aircall_number_id = Column(String(50))
+    samrtmoving_branch_id = Column(String(100))
     timezone = Column(String(50), default="America/New_York")
     created_at = Column(DateTime(timezone=True), default=_now)
 
@@ -39,6 +40,7 @@ class Company(Base):
             "phone": self.phone or "",
             "facebook_page_id": self.facebook_page_id or "",
             "aircall_number_id": self.aircall_number_id or "",
+            "samrtmoving_branch_id": self.samrtmoving_branch_id or "",
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }
 
