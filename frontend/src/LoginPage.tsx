@@ -28,70 +28,88 @@ export default function LoginPage() {
 
   if (token) return <Navigate to={from} replace />;
 
+  const inputStyle: React.CSSProperties = {
+    width: "100%", padding: "9px 12px", border: "1px solid #dddbda",
+    borderRadius: 4, fontSize: 14, outline: "none", background: "#fff",
+    boxSizing: "border-box",
+  };
+  const labelStyle: React.CSSProperties = {
+    display: "block", marginBottom: 16,
+  };
+  const labelText: React.CSSProperties = {
+    display: "block", marginBottom: 5, fontSize: 13, fontWeight: 600, color: "#3e3e3c",
+  };
+
   return (
     <div style={{
       minHeight: "100vh",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      background: "#f0f2f5",
-      fontFamily: "sans-serif",
+      background: "#f3f2f2",
     }}>
-      <form onSubmit={handleSubmit} style={{
-        background: "#fff",
-        padding: "40px 32px",
-        borderRadius: 12,
-        boxShadow: "0 2px 16px rgba(0,0,0,0.1)",
-        width: 360,
-      }}>
-        <h1 style={{ margin: "0 0 8px", fontSize: 24, color: "#333" }}>Moving CRM</h1>
-        <p style={{ margin: "0 0 24px", color: "#666", fontSize: 14 }}>Sign in to your account</p>
-
-        {error && (
+      <div style={{ width: 380 }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
           <div style={{
-            background: "#fee", border: "1px solid #fcc", color: "#c33",
-            padding: "8px 12px", borderRadius: 6, marginBottom: 16, fontSize: 13,
+            width: 48, height: 48, background: "#032d60", borderRadius: 12,
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            marginBottom: 12,
           }}>
-            {error}
+            <span style={{ color: "#fff", fontWeight: 800, fontSize: 18 }}>M</span>
           </div>
-        )}
+          <h1 style={{ fontSize: 22, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Moving CRM</h1>
+          <p style={{ margin: 0, color: "#706e6b", fontSize: 14 }}>Sign in to your account</p>
+        </div>
 
-        <label style={{ display: "block", marginBottom: 12 }}>
-          <span style={{ display: "block", marginBottom: 4, fontSize: 13, fontWeight: 600, color: "#444" }}>Email</span>
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{
-              width: "100%", padding: "10px 12px", border: "1px solid #ccc",
-              borderRadius: 6, fontSize: 14, boxSizing: "border-box",
-            }}
-          />
-        </label>
-
-        <label style={{ display: "block", marginBottom: 20 }}>
-          <span style={{ display: "block", marginBottom: 4, fontSize: 13, fontWeight: 600, color: "#444" }}>Password</span>
-          <input
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={{
-              width: "100%", padding: "10px 12px", border: "1px solid #ccc",
-              borderRadius: 6, fontSize: 14, boxSizing: "border-box",
-            }}
-          />
-        </label>
-
-        <button type="submit" disabled={submitting} style={{
-          width: "100%", padding: "10px 0", background: submitting ? "#999" : "#1a73e8",
-          color: "#fff", border: "none", borderRadius: 6, fontSize: 15, fontWeight: 600,
-          cursor: submitting ? "default" : "pointer",
+        <form onSubmit={handleSubmit} style={{
+          background: "#fff",
+          padding: "28px 28px 24px",
+          borderRadius: 8,
+          boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+          border: "1px solid #dddbda",
         }}>
-          {submitting ? "Signing in…" : "Sign In"}
-        </button>
-      </form>
+          {error && (
+            <div style={{
+              background: "#fef3f2", border: "1px solid #f9b9b5", color: "#ba0517",
+              padding: "8px 12px", borderRadius: 4, marginBottom: 16, fontSize: 13,
+            }}>
+              {error}
+            </div>
+          )}
+
+          <label style={labelStyle}>
+            <span style={labelText}>Email</span>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={inputStyle}
+            />
+          </label>
+
+          <label style={{ ...labelStyle, marginBottom: 20 }}>
+            <span style={labelText}>Password</span>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={inputStyle}
+            />
+          </label>
+
+          <button type="submit" disabled={submitting} style={{
+            width: "100%", padding: "10px 0",
+            background: submitting ? "#5a9fd4" : "#0176d3",
+            color: "#fff", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 600,
+            cursor: submitting ? "default" : "pointer",
+            transition: "background .15s",
+          }}>
+            {submitting ? "Signing in…" : "Sign In"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

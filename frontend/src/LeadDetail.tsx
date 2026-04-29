@@ -39,7 +39,7 @@ export default function LeadDetail() {
 
   if (loading) return <p style={{ padding: 24 }}>Loading…</p>;
   if (error)
-    return <p style={{ padding: 24, color: "red" }}>Error: {error}</p>;
+    return <p style={{ padding: 24, color: "#ba0517" }}>Error: {error}</p>;
   if (!lead) return <p style={{ padding: 24 }}>Lead not found.</p>;
 
   // Extract user_id from inbox_url for chat lookup
@@ -53,32 +53,39 @@ export default function LeadDetail() {
   const otherFields = allKeys.filter((k) => !categorized.has(k));
 
   const sectionStyle: React.CSSProperties = {
-    marginBottom: 28,
-    border: "1px solid #e0e0e0",
-    borderRadius: 8,
+    marginBottom: 16,
+    border: "1px solid #dddbda",
+    borderRadius: 4,
     overflow: "hidden",
+    background: "#fff",
+    boxShadow: "0 1px 2px rgba(0,0,0,.06)",
   };
   const sectionHeader: React.CSSProperties = {
     padding: "10px 16px",
-    background: "#f5f5f5",
+    background: "#f3f2f2",
     fontWeight: 700,
-    fontSize: 15,
-    borderBottom: "1px solid #e0e0e0",
-    color: "#333",
+    fontSize: 12,
+    borderBottom: "1px solid #dddbda",
+    color: "#3e3e3c",
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
   };
   const cellLabel: React.CSSProperties = {
-    padding: "10px 16px",
-    borderBottom: "1px solid #eee",
+    padding: "9px 16px",
+    borderBottom: "1px solid #f3f2f2",
     fontWeight: 600,
-    width: 180,
-    color: "#555",
+    width: 190,
+    color: "#706e6b",
     verticalAlign: "top",
+    fontSize: 13,
   };
   const cellValue: React.CSSProperties = {
-    padding: "10px 16px",
-    borderBottom: "1px solid #eee",
+    padding: "9px 16px",
+    borderBottom: "1px solid #f3f2f2",
     wordBreak: "break-word",
     userSelect: "text",
+    fontSize: 13,
+    color: "#181818",
   };
 
   function renderRow(key: string) {
@@ -116,24 +123,26 @@ export default function LeadDetail() {
   }
 
   return (
-    <div style={{ padding: 24, fontFamily: "sans-serif", maxWidth: 900 }}>
+    <div style={{ padding: 20, fontFamily: "inherit", maxWidth: 960, overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <button
         onClick={() => navigate("/")}
         style={{
-          marginBottom: 16,
-          padding: "6px 16px",
+          marginBottom: 14,
+          padding: "5px 14px",
           cursor: "pointer",
-          border: "1px solid #ccc",
+          border: "1px solid #dddbda",
           borderRadius: 4,
           background: "#fff",
-          fontSize: 14,
+          fontSize: 13,
+          color: "#0176d3",
+          fontWeight: 500,
         }}
       >
         ← Back to Leads
       </button>
 
-      <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
-        <h1 style={{ marginBottom: 24, flex: 1 }}>
+      <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
+        <h1 style={{ marginBottom: 16, flex: 1, fontSize: 20, color: "#032d60" }}>
           {String(lead.full_name || "Lead Details")}
         </h1>
         <div style={{ width: 320, flexShrink: 0 }}>

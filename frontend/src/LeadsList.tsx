@@ -140,12 +140,9 @@ export default function LeadsList() {
   const columns = getColumns(leads);
 
   return (
-    <div style={{ padding: 24, fontFamily: "sans-serif" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 6, flexWrap: "wrap" }}>
-        <h1 style={{ margin: 0 }}>Leads</h1>
-        <Link to="/outreach" style={{ color: "#2563eb", textDecoration: "none", fontSize: 14 }}>
-          Outreach Activity
-        </Link>
+    <div style={{ padding: "20px 24px", fontFamily: "inherit", display: "flex", flexDirection: "column", height: "calc(100vh - 52px)", boxSizing: "border-box", overflow: "hidden" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+        <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700 }}>Leads</h1>
       </div>
       {companyIdFilter ? (
         <div style={{ marginBottom: 12, fontSize: 13, color: "#334155", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -173,19 +170,21 @@ export default function LeadsList() {
         onChange={(e) => handleSearchChange(e.target.value)}
         style={{
           width: "100%",
-          maxWidth: 400,
-          padding: "10px 14px",
-          marginBottom: 16,
-          border: "1px solid #ccc",
-          borderRadius: 6,
+          maxWidth: 380,
+          padding: "8px 12px",
+          marginBottom: 12,
+          border: "1px solid #dddbda",
+          borderRadius: 4,
           fontSize: 14,
           outline: "none",
+          background: "#fff",
         }}
       />
       {leads.length === 0 ? (
         <p>No leads found.</p>
       ) : (
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <div style={{ flex: 1, overflow: "auto", background: "#fff", border: "1px solid #dddbda", borderRadius: 4, boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
+        <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
               {columns.map((col) => (
@@ -194,7 +193,16 @@ export default function LeadsList() {
                   style={{
                     ...cellStyle(col),
                     textAlign: "left",
-                    borderBottom: "2px solid #ccc",
+                    borderBottom: "2px solid #dddbda",
+                    position: "sticky",
+                    top: 0,
+                    background: "#f3f2f2",
+                    zIndex: 1,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: "#3e3e3c",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.04em",
                   }}
                 >
                   {formatLabel(col)}
@@ -209,7 +217,7 @@ export default function LeadsList() {
                 onClick={() => navigate(`/leads/${lead.id}`)}
                 style={{ cursor: "pointer" }}
                 onMouseOver={(e) =>
-                  (e.currentTarget.style.background = "#f5f5f5")
+                  (e.currentTarget.style.background = "#f0f9ff")
                 }
                 onMouseOut={(e) =>
                   (e.currentTarget.style.background = "transparent")
@@ -256,6 +264,9 @@ export default function LeadsList() {
             ))}
           </tbody>
         </table>
+        <div ref={sentinelRef} style={{ height: 1 }} />
+        {loadingMore && <p style={{ padding: "8px 12px", margin: 0 }}>Loading more…</p>}
+        </div>
       )}
 
       {tooltip && (
@@ -285,8 +296,6 @@ export default function LeadsList() {
         </div>
       )}
 
-      <div ref={sentinelRef} style={{ height: 1 }} />
-      {loadingMore && <p>Loading more…</p>}
     </div>
   );
 }
