@@ -43,6 +43,20 @@ class RepAvailabilityCreate(BaseModel):
     reason: str = ""
 
 
+class AdminUnavailabilityUpdate(BaseModel):
+    start_at: str
+    end_at: str
+    reason: str = ""
+    rep_user_ids: List[str] = []
+
+
+class RepAvailabilityUpdate(BaseModel):
+    rep_user_id: str
+    start_at: str
+    end_at: str
+    reason: str = ""
+
+
 def _parse_iso_datetime(value: str) -> datetime:
     # Accepts either 2026-04-29T12:00:00 or 2026-04-29T12:00:00Z
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -259,6 +273,61 @@ def delete_admin_unavailability(
     return {"ok": True}
 
 
+@router.put("/admin-unavailability/{window_id}")
+def update_admin_unavailability(
+    window_id: str,
+    body: AdminUnavailabilityUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    row = db.query(AdminUnavailability).filter(AdminUnavailability.id == window_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Window not found")
+
+    try:
+        start_at = _parse_iso_datetime(body.start_at)
+        end_at = _parse_iso_datetime(body.end_at)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid datetime format")
+
+    if end_at <= start_at:
+        raise HTTPException(status_code=400, detail="end_at must be after start_at")
+
+    rep_user_ids = [r for r in (body.rep_user_ids or []) if r]
+    if rep_user_ids:
+        rep_count = (
+            db.query(User)
+            .filter(User.id.in_(rep_user_ids), User.role == "sales_rep")
+            .count()
+        )
+        if rep_count != len(set(rep_user_ids)):
+            raise HTTPException(status_code=400, detail="All rep_user_ids must belong to sales reps")
+
+    row.start_at = start_at
+    row.end_at = end_at
+    row.reason = (body.reason or "").strip() or None
+
+    db.query(AdminUnavailabilityRep).filter(AdminUnavailabilityRep.window_id == row.id).delete(synchronize_session=False)
+    for rep_id in sorted(set(rep_user_ids)):
+        db.add(AdminUnavailabilityRep(window_id=row.id, rep_user_id=rep_id))
+
+    db.commit()
+    db.refresh(row)
+
+    window_data = row.to_dict()
+    if rep_user_ids:
+        reps = db.query(User).filter(User.id.in_(rep_user_ids)).order_by(User.name.asc()).all()
+        window_data["available_reps"] = [
+            {"id": r.id, "name": r.name, "email": r.email or "", "phone": r.phone or ""}
+            for r in reps
+        ]
+        window_data["available_rep_ids"] = [r.id for r in reps]
+    else:
+        window_data["available_reps"] = []
+        window_data["available_rep_ids"] = []
+    return window_data
+
+
 @router.get("/rep-availability")
 def list_rep_availability(
     rep_id: str = "",
@@ -316,3 +385,36 @@ def delete_rep_availability(
     db.delete(row)
     db.commit()
     return {"ok": True}
+
+
+@router.put("/rep-availability/{window_id}")
+def update_rep_availability(
+    window_id: str,
+    body: RepAvailabilityUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    row = db.query(RepAvailabilityWindow).filter(RepAvailabilityWindow.id == window_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Window not found")
+
+    rep = db.query(User).filter(User.id == body.rep_user_id).first()
+    if not rep or rep.role != "sales_rep":
+        raise HTTPException(status_code=400, detail="Target user must be a sales rep")
+
+    try:
+        start_at = _parse_iso_datetime(body.start_at)
+        end_at = _parse_iso_datetime(body.end_at)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid datetime format")
+
+    if end_at <= start_at:
+        raise HTTPException(status_code=400, detail="end_at must be after start_at")
+
+    row.rep_user_id = body.rep_user_id
+    row.start_at = start_at
+    row.end_at = end_at
+    row.reason = (body.reason or "").strip() or None
+    db.commit()
+    db.refresh(row)
+    return row.to_dict()
