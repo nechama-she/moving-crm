@@ -108,8 +108,6 @@ export default function PeriodAssignPage() {
     loadAllWindows(adminId);
   }, [adminId]);
 
-  const repsById = useMemo(() => new Map(reps.map((r) => [r.id, r])), [reps]);
-
   async function loadAdminWindows(targetAdminId: string) {
     setLoadingWindows(true);
     setWindowError("");
