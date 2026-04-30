@@ -124,6 +124,29 @@ class AdminUnavailabilityRep(Base):
     created_at = Column(DateTime(timezone=True), default=_now)
 
 
+class RepAvailabilityWindow(Base):
+    __tablename__ = "rep_availability_windows"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    rep_user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    start_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    end_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    reason = Column(Text)
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "rep_user_id": self.rep_user_id,
+            "start_at": self.start_at.isoformat() if self.start_at else "",
+            "end_at": self.end_at.isoformat() if self.end_at else "",
+            "reason": self.reason or "",
+            "created_by": self.created_by,
+            "created_at": self.created_at.isoformat() if self.created_at else "",
+        }
+
+
 # ---------------------------------------------------------------------------
 # Leads
 # ---------------------------------------------------------------------------

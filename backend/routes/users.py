@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from auth import hash_password, require_admin
 from database import get_db
-from models import User, Company, UserCompany, AdminUnavailability, AdminUnavailabilityRep, Lead
+from models import User, Company, UserCompany, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, Lead
 from routes.auth import validate_password_strength
 
 logger = logging.getLogger("moving-crm")
@@ -34,6 +34,13 @@ class AdminUnavailabilityCreate(BaseModel):
     end_at: str
     reason: str = ""
     rep_user_ids: List[str] = []
+
+
+class RepAvailabilityCreate(BaseModel):
+    rep_user_id: str
+    start_at: str
+    end_at: str
+    reason: str = ""
 
 
 def _parse_iso_datetime(value: str) -> datetime:
@@ -247,6 +254,65 @@ def delete_admin_unavailability(
     if not row:
         raise HTTPException(status_code=404, detail="Window not found")
     db.query(AdminUnavailabilityRep).filter(AdminUnavailabilityRep.window_id == row.id).delete(synchronize_session=False)
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/rep-availability")
+def list_rep_availability(
+    rep_id: str = "",
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    query = db.query(RepAvailabilityWindow)
+    if rep_id:
+        query = query.filter(RepAvailabilityWindow.rep_user_id == rep_id)
+    rows = query.order_by(RepAvailabilityWindow.start_at.asc()).all()
+    return [row.to_dict() for row in rows]
+
+
+@router.post("/rep-availability")
+def create_rep_availability(
+    body: RepAvailabilityCreate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    rep = db.query(User).filter(User.id == body.rep_user_id).first()
+    if not rep or rep.role != "sales_rep":
+        raise HTTPException(status_code=400, detail="Target user must be a sales rep")
+
+    try:
+        start_at = _parse_iso_datetime(body.start_at)
+        end_at = _parse_iso_datetime(body.end_at)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid datetime format")
+
+    if end_at <= start_at:
+        raise HTTPException(status_code=400, detail="end_at must be after start_at")
+
+    window = RepAvailabilityWindow(
+        rep_user_id=body.rep_user_id,
+        start_at=start_at,
+        end_at=end_at,
+        reason=(body.reason or "").strip() or None,
+        created_by=admin.id,
+    )
+    db.add(window)
+    db.commit()
+    db.refresh(window)
+    return window.to_dict()
+
+
+@router.delete("/rep-availability/{window_id}")
+def delete_rep_availability(
+    window_id: str,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    row = db.query(RepAvailabilityWindow).filter(RepAvailabilityWindow.id == window_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Window not found")
     db.delete(row)
     db.commit()
     return {"ok": True}

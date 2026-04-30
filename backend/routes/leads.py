@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from config import get_config
 from database import get_db
-from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep
+from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow
 
 logger = logging.getLogger("moving-crm")
 
@@ -65,6 +65,35 @@ def _active_available_rep_ids(db: Session, now: datetime | None = None) -> set[s
     return {r[0] for r in rep_rows if r[0]}
 
 
+def _filter_by_rep_availability(rep_ids: list[str], db: Session, now: datetime | None = None) -> set[str]:
+    if not rep_ids:
+        return set()
+
+    ts = now or _utcnow()
+    configured_rows = (
+        db.query(RepAvailabilityWindow.rep_user_id)
+        .filter(RepAvailabilityWindow.rep_user_id.in_(rep_ids))
+        .distinct()
+        .all()
+    )
+    configured_rep_ids = {r[0] for r in configured_rows if r[0]}
+
+    active_rows = (
+        db.query(RepAvailabilityWindow.rep_user_id)
+        .filter(
+            RepAvailabilityWindow.rep_user_id.in_(rep_ids),
+            RepAvailabilityWindow.start_at <= ts,
+            RepAvailabilityWindow.end_at > ts,
+        )
+        .distinct()
+        .all()
+    )
+    active_rep_ids = {r[0] for r in active_rows if r[0]}
+
+    # If a rep has no configured windows, keep backward-compatible default: available.
+    return {rid for rid in rep_ids if (rid not in configured_rep_ids or rid in active_rep_ids)}
+
+
 def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_ids: set[str] | None = None) -> User | None:
     rep_rows = (
         db.query(User)
@@ -75,6 +104,8 @@ def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_id
     )
     if allowed_rep_ids is not None:
         rep_rows = [u for u in rep_rows if u.id in allowed_rep_ids]
+
+    rep_rows = [u for u in rep_rows if u.id in _filter_by_rep_availability([r.id for r in rep_rows], db)]
     if not rep_rows:
         return None
 
