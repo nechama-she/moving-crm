@@ -1,14 +1,16 @@
 import logging
 import os
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Header
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from config import get_config
 from database import get_db
-from models import Lead, User, UserCompany, Company, OutreachEvent
+from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability
 
 logger = logging.getLogger("moving-crm")
 
@@ -16,6 +18,58 @@ router = APIRouter(prefix="/api", tags=["Leads"])
 
 # Statuses that dispatch can see (booked and beyond)
 DISPATCH_STATUSES = {"booked", "scheduled", "completed"}
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _is_admin_unavailable_now(admin_user_id: str, db: Session, now: datetime | None = None) -> bool:
+    ts = now or _utcnow()
+    return (
+        db.query(AdminUnavailability)
+        .filter(
+            AdminUnavailability.admin_user_id == admin_user_id,
+            AdminUnavailability.start_at <= ts,
+            AdminUnavailability.end_at > ts,
+        )
+        .first()
+        is not None
+    )
+
+
+def _any_admin_available_now(db: Session, now: datetime | None = None) -> bool:
+    ts = now or _utcnow()
+    admins = db.query(User).filter(User.role == "admin").all()
+    if not admins:
+        return False
+    for admin in admins:
+        if not _is_admin_unavailable_now(admin.id, db, ts):
+            return True
+    return False
+
+
+def _pick_available_rep_for_company(company_id: str, db: Session) -> User | None:
+    rep_rows = (
+        db.query(User)
+        .join(UserCompany, UserCompany.user_id == User.id)
+        .filter(User.role == "sales_rep", UserCompany.company_id == company_id)
+        .order_by(User.name.asc())
+        .all()
+    )
+    if not rep_rows:
+        return None
+
+    rep_ids = [u.id for u in rep_rows]
+    counts = dict(
+        db.query(Lead.assigned_to, func.count(Lead.id))
+        .filter(Lead.company_id == company_id, Lead.assigned_to.in_(rep_ids))
+        .group_by(Lead.assigned_to)
+        .all()
+    )
+
+    # Pick least-loaded rep for this company; ties resolved by alphabetical name.
+    return min(rep_rows, key=lambda u: (counts.get(u.id, 0), u.name.lower()))
 
 
 def _get_user_company_ids(user: User, db: Session) -> list[str]:
@@ -238,10 +292,26 @@ def create_lead(
     if not company:
         raise HTTPException(status_code=400, detail=f"Company '{body.company_name}' not found")
 
+    assigned_to_user_id = None
+    assignment_mode = "manual"
+    assignment_reason = "admin_available"
+
+    # Auto-assign only while all admins are unavailable.
+    if not _any_admin_available_now(db):
+        rep = _pick_available_rep_for_company(company.id, db)
+        if rep:
+            assigned_to_user_id = rep.id
+            assignment_mode = "auto"
+            assignment_reason = "all_admins_unavailable"
+        else:
+            assignment_mode = "queued"
+            assignment_reason = "all_admins_unavailable_no_rep"
+
     raw_move_type = body.move_type.lower().strip()
 
     lead = Lead(
         company_id=company.id,
+        assigned_to=assigned_to_user_id,
         full_name=body.full_name.strip(),
         email=body.email.strip(),
         phone=body.phone_number.strip(),
@@ -264,6 +334,8 @@ def create_lead(
     db.commit()
     db.refresh(lead)
     logger.info("Created lead: %s (%s)", lead.full_name, lead.id)
+    if assigned_to_user_id:
+        logger.info("Auto-assigned lead %s to rep %s (%s)", lead.id, assigned_to_user_id, assignment_reason)
 
     # Send welcome SMS if phone and smartmoving_id are present
     sms_result = None
@@ -310,4 +382,12 @@ def create_lead(
         db.rollback()
         logger.warning("Non-fatal outreach event write failure for lead %s: %s", lead.id, exc)
 
-    return {"status": "created", "lead_id": lead.id, "full_name": lead.full_name, "sms": sms_result}
+    return {
+        "status": "created",
+        "lead_id": lead.id,
+        "full_name": lead.full_name,
+        "sms": sms_result,
+        "assigned_to": lead.assigned_to or "",
+        "assignment_mode": assignment_mode,
+        "assignment_reason": assignment_reason,
+    }

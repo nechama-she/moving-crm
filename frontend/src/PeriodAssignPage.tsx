@@ -16,6 +16,14 @@ type LeadRow = {
   created_time?: string;
 };
 
+type AdminUnavailabilityWindow = {
+  id: string;
+  admin_user_id: string;
+  start_at: string;
+  end_at: string;
+  reason?: string;
+};
+
 const PAGE_SIZE = 200;
 const MAX_LEADS_SCAN = 5000;
 
@@ -37,12 +45,22 @@ export default function PeriodAssignPage() {
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [reps, setReps] = useState<Rep[]>([]);
+  const [admins, setAdmins] = useState<Rep[]>([]);
   const [repId, setRepId] = useState("");
   const [previewLeads, setPreviewLeads] = useState<LeadRow[]>([]);
   const [loadingReps, setLoadingReps] = useState(true);
   const [loadingPreview, setLoadingPreview] = useState(false);
+  const [loadingWindows, setLoadingWindows] = useState(false);
+  const [savingWindow, setSavingWindow] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  const [windowError, setWindowError] = useState("");
+  const [windowInfo, setWindowInfo] = useState("");
+  const [adminId, setAdminId] = useState("");
+  const [unavailableStart, setUnavailableStart] = useState("");
+  const [unavailableEnd, setUnavailableEnd] = useState("");
+  const [unavailableReason, setUnavailableReason] = useState("");
+  const [windows, setWindows] = useState<AdminUnavailabilityWindow[]>([]);
 
   useEffect(() => {
     setLoadingReps(true);
@@ -54,11 +72,21 @@ export default function PeriodAssignPage() {
       })
       .then((rows: Rep[]) => {
         const salesReps = (rows || []).filter((u) => u.role === "sales_rep");
+        const adminUsers = (rows || []).filter((u) => u.role === "admin");
         setReps(salesReps);
+        setAdmins(adminUsers);
+        if (!adminId && adminUsers.length) {
+          setAdminId(adminUsers[0].id);
+        }
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load reps"))
       .finally(() => setLoadingReps(false));
-  }, [token]);
+  }, [token, adminId]);
+
+  useEffect(() => {
+    if (!adminId) return;
+    loadAdminWindows(adminId);
+  }, [adminId]);
 
   const selectedRep = useMemo(() => reps.find((r) => r.id === repId), [reps, repId]);
 
@@ -122,6 +150,86 @@ export default function PeriodAssignPage() {
     period_end: endAt,
     lead_ids: previewLeads.map((l) => l.id),
   };
+
+  async function loadAdminWindows(targetAdminId: string) {
+    setLoadingWindows(true);
+    setWindowError("");
+    try {
+      const params = new URLSearchParams({ admin_id: targetAdminId });
+      const res = await fetch(`${API_BASE}/api/users/admin-unavailability?${params.toString()}`, {
+        headers: authHeaders(token),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as AdminUnavailabilityWindow[];
+      setWindows(data || []);
+    } catch (err: unknown) {
+      setWindowError(err instanceof Error ? err.message : "Failed to load admin unavailable windows");
+    } finally {
+      setLoadingWindows(false);
+    }
+  }
+
+  async function createAdminWindow() {
+    setWindowError("");
+    setWindowInfo("");
+    if (!adminId) {
+      setWindowError("Select an admin.");
+      return;
+    }
+    if (!unavailableStart || !unavailableEnd) {
+      setWindowError("Select start and end date/time.");
+      return;
+    }
+    const startMs = toMs(unavailableStart);
+    const endMs = toMs(unavailableEnd);
+    if (!startMs || !endMs || endMs <= startMs) {
+      setWindowError("End must be after start.");
+      return;
+    }
+
+    setSavingWindow(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/users/admin-unavailability`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({
+          admin_user_id: adminId,
+          start_at: new Date(unavailableStart).toISOString(),
+          end_at: new Date(unavailableEnd).toISOString(),
+          reason: unavailableReason,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Failed to save" }));
+        throw new Error(err.detail || "Failed to save");
+      }
+      setUnavailableStart("");
+      setUnavailableEnd("");
+      setUnavailableReason("");
+      setWindowInfo("Admin unavailable window saved.");
+      await loadAdminWindows(adminId);
+    } catch (err: unknown) {
+      setWindowError(err instanceof Error ? err.message : "Failed to save admin unavailable window");
+    } finally {
+      setSavingWindow(false);
+    }
+  }
+
+  async function deleteAdminWindow(windowId: string) {
+    setWindowError("");
+    setWindowInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/users/admin-unavailability/${windowId}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setWindowInfo("Unavailable window removed.");
+      await loadAdminWindows(adminId);
+    } catch (err: unknown) {
+      setWindowError(err instanceof Error ? err.message : "Failed to delete window");
+    }
+  }
 
   return (
     <div style={{ padding: "20px 24px", fontFamily: "inherit", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
@@ -195,6 +303,120 @@ export default function PeriodAssignPage() {
           <div>Period: {startAt || "-"} to {endAt || "-"}</div>
           <div>Leads matched: {previewLeads.length}</div>
           <div>API execution: pending (waiting for your endpoint contract)</div>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 14, border: "1px solid #dddbda", borderRadius: 4, padding: 14, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
+        <h2 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#3e3e3c" }}>
+          Admin Unavailable Schedule
+        </h2>
+
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", marginBottom: 10 }}>
+          <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 600, color: "#3e3e3c" }}>
+            Admin
+            <select
+              value={adminId}
+              onChange={(e) => setAdminId(e.target.value)}
+              style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "8px 10px", background: "#fff", fontSize: 13 }}
+              disabled={loadingReps}
+            >
+              <option value="">Select admin...</option>
+              {admins.map((admin) => (
+                <option key={admin.id} value={admin.id}>
+                  {admin.name} ({admin.email})
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 600, color: "#3e3e3c" }}>
+            Unavailable From
+            <input
+              type="datetime-local"
+              value={unavailableStart}
+              onChange={(e) => setUnavailableStart(e.target.value)}
+              style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "8px 10px", background: "#fff", fontSize: 13 }}
+            />
+          </label>
+
+          <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 600, color: "#3e3e3c" }}>
+            Unavailable Until
+            <input
+              type="datetime-local"
+              value={unavailableEnd}
+              onChange={(e) => setUnavailableEnd(e.target.value)}
+              style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "8px 10px", background: "#fff", fontSize: 13 }}
+            />
+          </label>
+        </div>
+
+        <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 600, color: "#3e3e3c", marginBottom: 10 }}>
+          Reason (optional)
+          <input
+            type="text"
+            value={unavailableReason}
+            onChange={(e) => setUnavailableReason(e.target.value)}
+            placeholder="Vacation, sick day, after-hours, etc."
+            style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "8px 10px", background: "#fff", fontSize: 13 }}
+          />
+        </label>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <button
+            type="button"
+            onClick={createAdminWindow}
+            disabled={savingWindow || !adminId}
+            style={{ border: "none", background: savingWindow ? "#5a9fd4" : "#0176d3", color: "#fff", borderRadius: 4, padding: "8px 14px", fontWeight: 600 }}
+          >
+            {savingWindow ? "Saving..." : "Mark Admin Unavailable"}
+          </button>
+          <button
+            type="button"
+            onClick={() => loadAdminWindows(adminId)}
+            disabled={!adminId || loadingWindows}
+            style={{ border: "1px solid #dddbda", background: "#fff", borderRadius: 4, padding: "8px 14px", color: "#3e3e3c" }}
+          >
+            Refresh
+          </button>
+        </div>
+
+        {windowError ? <p style={{ marginBottom: 8, color: "#ba0517", fontSize: 13 }}>{windowError}</p> : null}
+        {windowInfo ? <p style={{ marginBottom: 8, color: "#2e844a", fontSize: 13 }}>{windowInfo}</p> : null}
+
+        <div style={{ border: "1px solid #dddbda", borderRadius: 4, overflow: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
+            <thead>
+              <tr>
+                <th style={th}>From</th>
+                <th style={th}>Until</th>
+                <th style={th}>Reason</th>
+                <th style={th}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!loadingWindows && windows.length === 0 ? (
+                <tr>
+                  <td style={td} colSpan={4}>No unavailable windows set.</td>
+                </tr>
+              ) : null}
+              {windows.map((w) => (
+                <tr key={w.id} style={{ borderTop: "1px solid #e5e7eb" }}>
+                  <td style={td}>{prettyDate(w.start_at)}</td>
+                  <td style={td}>{prettyDate(w.end_at)}</td>
+                  <td style={td}>{w.reason || ""}</td>
+                  <td style={td}>
+                    <button
+                      type="button"
+                      onClick={() => deleteAdminWindow(w.id)}
+                      style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "5px 10px", fontSize: 12 }}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 

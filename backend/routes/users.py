@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -6,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from auth import hash_password, require_admin
 from database import get_db
-from models import User, Company, UserCompany
+from models import User, Company, UserCompany, AdminUnavailability
 from routes.auth import validate_password_strength
 
 logger = logging.getLogger("moving-crm")
@@ -23,6 +24,18 @@ class UserCreate(BaseModel):
 
 class AssignCompany(BaseModel):
     company_id: str
+
+
+class AdminUnavailabilityCreate(BaseModel):
+    admin_user_id: str
+    start_at: str
+    end_at: str
+    reason: str = ""
+
+
+def _parse_iso_datetime(value: str) -> datetime:
+    # Accepts either 2026-04-29T12:00:00 or 2026-04-29T12:00:00Z
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 @router.get("")
@@ -93,5 +106,64 @@ def remove_company(
     if not uc:
         raise HTTPException(status_code=404, detail="Assignment not found")
     db.delete(uc)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/admin-unavailability")
+def list_admin_unavailability(
+    admin_id: str = "",
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    query = db.query(AdminUnavailability)
+    if admin_id:
+        query = query.filter(AdminUnavailability.admin_user_id == admin_id)
+    rows = query.order_by(AdminUnavailability.start_at.asc()).all()
+    return [row.to_dict() for row in rows]
+
+
+@router.post("/admin-unavailability")
+def create_admin_unavailability(
+    body: AdminUnavailabilityCreate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    target_admin = db.query(User).filter(User.id == body.admin_user_id).first()
+    if not target_admin or target_admin.role != "admin":
+        raise HTTPException(status_code=400, detail="Target user must be an admin")
+
+    try:
+        start_at = _parse_iso_datetime(body.start_at)
+        end_at = _parse_iso_datetime(body.end_at)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid datetime format")
+
+    if end_at <= start_at:
+        raise HTTPException(status_code=400, detail="end_at must be after start_at")
+
+    window = AdminUnavailability(
+        admin_user_id=body.admin_user_id,
+        start_at=start_at,
+        end_at=end_at,
+        reason=(body.reason or "").strip() or None,
+        created_by=admin.id,
+    )
+    db.add(window)
+    db.commit()
+    db.refresh(window)
+    return window.to_dict()
+
+
+@router.delete("/admin-unavailability/{window_id}")
+def delete_admin_unavailability(
+    window_id: str,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    row = db.query(AdminUnavailability).filter(AdminUnavailability.id == window_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Window not found")
+    db.delete(row)
     db.commit()
     return {"ok": True}

@@ -6,6 +6,8 @@ import LeadsList from "./LeadsList";
 import LeadDetail from "./LeadDetail";
 import OutreachEventsPage from "./OutreachEventsPage";
 import PeriodAssignPage from "./PeriodAssignPage";
+import SalesRepsPage from "./SalesRepsPage";
+import SettingsPage from "./SettingsPage";
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -43,6 +45,8 @@ function ProtectedRoutes() {
           <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
           <NavLink to="/outreach" style={navLinkStyle}>Outreach</NavLink>
           <NavLink to="/assign-period" style={navLinkStyle}>Assign By Period</NavLink>
+          {user?.role === "admin" ? <NavLink to="/sales-reps" style={navLinkStyle}>Sales Reps</NavLink> : null}
+          <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {user && <span style={{ color: "#9dc9e8", fontSize: 13 }}>{user.name}</span>}
@@ -66,6 +70,8 @@ function ProtectedRoutes() {
           <Route path="/" element={<LeadsList />} />
           <Route path="/outreach" element={<OutreachEventsPage />} />
           <Route path="/assign-period" element={<PeriodAssignPage />} />
+          <Route path="/sales-reps" element={<SalesRepsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="/leads/:leadId" element={<LeadDetail />} />
           <Route path="/change-password" element={<ChangePasswordPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

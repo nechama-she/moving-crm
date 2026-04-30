@@ -33,6 +33,20 @@ def migrate(drop_first: bool = False):
         conn.execute(text("ALTER TABLE sent_messages ALTER COLUMN message_type TYPE VARCHAR(100)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_outreach_events_created_at ON outreach_events (created_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_outreach_events_outreach_type ON outreach_events (outreach_type)"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS admin_unavailability (
+                id VARCHAR(36) PRIMARY KEY,
+                admin_user_id VARCHAR(36) NOT NULL REFERENCES users(id),
+                start_at TIMESTAMPTZ NOT NULL,
+                end_at TIMESTAMPTZ NOT NULL,
+                reason TEXT,
+                created_by VARCHAR(36) NOT NULL REFERENCES users(id),
+                created_at TIMESTAMPTZ
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_admin_unavailability_admin_user_id ON admin_unavailability (admin_user_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_admin_unavailability_start_at ON admin_unavailability (start_at)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_admin_unavailability_end_at ON admin_unavailability (end_at)"))
         conn.commit()
 
     logger.info("Done — tables: %s", list(Base.metadata.tables.keys()))
