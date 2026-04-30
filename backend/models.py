@@ -54,6 +54,7 @@ class User(Base):
     id = Column(String(36), primary_key=True, default=_uuid)
     email = Column(String(255), nullable=False, unique=True, index=True)
     name = Column(String(255), nullable=False)
+    phone = Column(String(30), nullable=False, default="")
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False, default="sales_rep")
     must_change_password = Column(Boolean, nullable=False, default=False)
@@ -67,6 +68,7 @@ class User(Base):
             "id": self.id,
             "email": self.email,
             "name": self.name,
+            "phone": self.phone or "",
             "role": self.role,
             "must_change_password": bool(self.must_change_password),
             "companies": [uc.company.to_dict() for uc in self.companies],
@@ -111,6 +113,15 @@ class AdminUnavailability(Base):
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }
+
+
+class AdminUnavailabilityRep(Base):
+    __tablename__ = "admin_unavailability_reps"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    window_id = Column(String(36), ForeignKey("admin_unavailability.id"), nullable=False, index=True)
+    rep_user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), default=_now)
 
 
 # ---------------------------------------------------------------------------

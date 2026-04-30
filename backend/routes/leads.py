@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from config import get_config
 from database import get_db
-from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability
+from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep
 
 logger = logging.getLogger("moving-crm")
 
@@ -49,7 +49,23 @@ def _any_admin_available_now(db: Session, now: datetime | None = None) -> bool:
     return False
 
 
-def _pick_available_rep_for_company(company_id: str, db: Session) -> User | None:
+def _active_available_rep_ids(db: Session, now: datetime | None = None) -> set[str]:
+    ts = now or _utcnow()
+    window_ids = [
+        row[0]
+        for row in (
+            db.query(AdminUnavailability.id)
+            .filter(AdminUnavailability.start_at <= ts, AdminUnavailability.end_at > ts)
+            .all()
+        )
+    ]
+    if not window_ids:
+        return set()
+    rep_rows = db.query(AdminUnavailabilityRep.rep_user_id).filter(AdminUnavailabilityRep.window_id.in_(window_ids)).all()
+    return {r[0] for r in rep_rows if r[0]}
+
+
+def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_ids: set[str] | None = None) -> User | None:
     rep_rows = (
         db.query(User)
         .join(UserCompany, UserCompany.user_id == User.id)
@@ -57,6 +73,8 @@ def _pick_available_rep_for_company(company_id: str, db: Session) -> User | None
         .order_by(User.name.asc())
         .all()
     )
+    if allowed_rep_ids is not None:
+        rep_rows = [u for u in rep_rows if u.id in allowed_rep_ids]
     if not rep_rows:
         return None
 
@@ -298,14 +316,15 @@ def create_lead(
 
     # Auto-assign only while all admins are unavailable.
     if not _any_admin_available_now(db):
-        rep = _pick_available_rep_for_company(company.id, db)
+        available_rep_ids = _active_available_rep_ids(db)
+        rep = _pick_available_rep_for_company(company.id, db, available_rep_ids)
         if rep:
             assigned_to_user_id = rep.id
             assignment_mode = "auto"
             assignment_reason = "all_admins_unavailable"
         else:
             assignment_mode = "queued"
-            assignment_reason = "all_admins_unavailable_no_rep"
+            assignment_reason = "all_admins_unavailable_no_available_rep"
 
     raw_move_type = body.move_type.lower().strip()
 

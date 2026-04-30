@@ -23,9 +23,9 @@ export default function SettingsPage() {
 
         <section style={card}>
           <h2 style={sectionHeader}>Lead Assignment</h2>
-          <p style={desc}>Configure manual period assignment and admin unavailable windows.</p>
+          <p style={desc}>Configure admin unavailability windows and which reps are available during those windows.</p>
           <div style={actionsRow}>
-            <Link to="/assign-period" style={primaryLink}>Open Assignment Setup</Link>
+            <Link to="/assign-period" style={primaryLink}>Open Assignment Rules</Link>
           </div>
         </section>
 

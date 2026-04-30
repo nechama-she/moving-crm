@@ -47,7 +47,18 @@ def migrate(drop_first: bool = False):
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_admin_unavailability_admin_user_id ON admin_unavailability (admin_user_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_admin_unavailability_start_at ON admin_unavailability (start_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_admin_unavailability_end_at ON admin_unavailability (end_at)"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS admin_unavailability_reps (
+                id VARCHAR(36) PRIMARY KEY,
+                window_id VARCHAR(36) NOT NULL REFERENCES admin_unavailability(id),
+                rep_user_id VARCHAR(36) NOT NULL REFERENCES users(id),
+                created_at TIMESTAMPTZ
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_admin_unavailability_reps_window_id ON admin_unavailability_reps (window_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_admin_unavailability_reps_rep_user_id ON admin_unavailability_reps (rep_user_id)"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(30) NOT NULL DEFAULT ''"))
         conn.commit()
 
     logger.info("Done — tables: %s", list(Base.metadata.tables.keys()))

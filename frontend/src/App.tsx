@@ -47,7 +47,7 @@ function ProtectedRoutes() {
         <div style={{ display: "flex", flex: 1 }}>
           <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
           <NavLink to="/outreach" style={navLinkStyle}>Outreach</NavLink>
-          <NavLink to="/assign-period" style={navLinkStyle}>Assign By Period</NavLink>
+          <NavLink to="/assign-period" style={navLinkStyle}>Assignment Rules</NavLink>
           {user?.role === "admin" ? <NavLink to="/sales-reps" style={navLinkStyle}>Sales Reps</NavLink> : null}
           <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
         </div>

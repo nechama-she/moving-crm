@@ -7,13 +7,7 @@ type Rep = {
   name: string;
   email: string;
   role: string;
-};
-
-type LeadRow = {
-  id: string;
-  full_name?: string;
-  company_name?: string;
-  created_time?: string;
+  phone?: string;
 };
 
 type AdminUnavailabilityWindow = {
@@ -22,10 +16,14 @@ type AdminUnavailabilityWindow = {
   start_at: string;
   end_at: string;
   reason?: string;
+  available_rep_ids?: string[];
+  available_reps?: Array<{
+    id: string;
+    name: string;
+    email: string;
+    phone?: string;
+  }>;
 };
-
-const PAGE_SIZE = 200;
-const MAX_LEADS_SCAN = 5000;
 
 function toMs(value: string | undefined): number {
   if (!value) return 0;
@@ -42,29 +40,22 @@ function prettyDate(value: string | undefined): string {
 
 export default function PeriodAssignPage() {
   const { token } = useAuth();
-  const [startAt, setStartAt] = useState("");
-  const [endAt, setEndAt] = useState("");
   const [reps, setReps] = useState<Rep[]>([]);
   const [admins, setAdmins] = useState<Rep[]>([]);
-  const [repId, setRepId] = useState("");
-  const [previewLeads, setPreviewLeads] = useState<LeadRow[]>([]);
   const [loadingReps, setLoadingReps] = useState(true);
-  const [loadingPreview, setLoadingPreview] = useState(false);
   const [loadingWindows, setLoadingWindows] = useState(false);
   const [savingWindow, setSavingWindow] = useState(false);
-  const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
   const [windowError, setWindowError] = useState("");
   const [windowInfo, setWindowInfo] = useState("");
   const [adminId, setAdminId] = useState("");
   const [unavailableStart, setUnavailableStart] = useState("");
   const [unavailableEnd, setUnavailableEnd] = useState("");
   const [unavailableReason, setUnavailableReason] = useState("");
+  const [selectedRepIds, setSelectedRepIds] = useState<string[]>([]);
   const [windows, setWindows] = useState<AdminUnavailabilityWindow[]>([]);
 
   useEffect(() => {
     setLoadingReps(true);
-    setError("");
     fetch(`${API_BASE}/api/users`, { headers: authHeaders(token) })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -79,7 +70,7 @@ export default function PeriodAssignPage() {
           setAdminId(adminUsers[0].id);
         }
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load reps"))
+      .catch((err: unknown) => setWindowError(err instanceof Error ? err.message : "Failed to load users"))
       .finally(() => setLoadingReps(false));
   }, [token, adminId]);
 
@@ -88,68 +79,7 @@ export default function PeriodAssignPage() {
     loadAdminWindows(adminId);
   }, [adminId]);
 
-  const selectedRep = useMemo(() => reps.find((r) => r.id === repId), [reps, repId]);
-
-  async function loadPreview() {
-    setError("");
-    setInfo("");
-    setPreviewLeads([]);
-
-    const startMs = toMs(startAt);
-    const endMs = toMs(endAt);
-    if (!startMs || !endMs || endMs <= startMs) {
-      setError("Choose a valid start and end period.");
-      return;
-    }
-
-    setLoadingPreview(true);
-    try {
-      let offset = 0;
-      let hasMore = true;
-      const all: LeadRow[] = [];
-
-      while (hasMore && all.length < MAX_LEADS_SCAN) {
-        const params = new URLSearchParams({
-          limit: String(PAGE_SIZE),
-          offset: String(offset),
-        });
-        const res = await fetch(`${API_BASE}/api/leads?${params.toString()}`, { headers: authHeaders(token) });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const items = (data.items || []) as LeadRow[];
-
-        for (const lead of items) {
-          const createdMs = toMs(lead.created_time);
-          if (createdMs >= startMs && createdMs <= endMs) {
-            all.push(lead);
-          }
-        }
-
-        hasMore = Boolean(data.has_more);
-        offset += PAGE_SIZE;
-      }
-
-      if (hasMore) {
-        setInfo(`Preview capped at ${MAX_LEADS_SCAN} scanned leads. Narrow period if needed.`);
-      }
-
-      setPreviewLeads(all);
-      if (!all.length) {
-        setInfo("No leads found in this period.");
-      }
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load leads preview");
-    } finally {
-      setLoadingPreview(false);
-    }
-  }
-
-  const preparedPayload = {
-    rep_id: repId,
-    period_start: startAt,
-    period_end: endAt,
-    lead_ids: previewLeads.map((l) => l.id),
-  };
+  const repsById = useMemo(() => new Map(reps.map((r) => [r.id, r])), [reps]);
 
   async function loadAdminWindows(targetAdminId: string) {
     setLoadingWindows(true);
@@ -167,6 +97,10 @@ export default function PeriodAssignPage() {
     } finally {
       setLoadingWindows(false);
     }
+  }
+
+  function toggleSelectedRep(repId: string) {
+    setSelectedRepIds((prev) => (prev.includes(repId) ? prev.filter((id) => id !== repId) : [...prev, repId]));
   }
 
   async function createAdminWindow() {
@@ -197,6 +131,7 @@ export default function PeriodAssignPage() {
           start_at: new Date(unavailableStart).toISOString(),
           end_at: new Date(unavailableEnd).toISOString(),
           reason: unavailableReason,
+          rep_user_ids: selectedRepIds,
         }),
       });
       if (!res.ok) {
@@ -206,6 +141,7 @@ export default function PeriodAssignPage() {
       setUnavailableStart("");
       setUnavailableEnd("");
       setUnavailableReason("");
+      setSelectedRepIds([]);
       setWindowInfo("Admin unavailable window saved.");
       await loadAdminWindows(adminId);
     } catch (err: unknown) {
@@ -233,82 +169,14 @@ export default function PeriodAssignPage() {
 
   return (
     <div style={{ padding: "20px 24px", fontFamily: "inherit", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
-      <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Assign Leads By Period</h1>
+      <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Assignment Availability Rules</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
-        Pick a time period and a sales rep. This screen prepares everything except the actual assign call.
+        Configure when admins are unavailable and which reps are available to receive auto-assignment during that time.
       </p>
-
-      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", marginBottom: 14, background: "#fff", border: "1px solid #dddbda", borderRadius: 4, padding: 16, boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
-        <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 600, color: "#3e3e3c" }}>
-          Start
-          <input
-            type="datetime-local"
-            value={startAt}
-            onChange={(e) => setStartAt(e.target.value)}
-            style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "8px 10px", background: "#fff", fontSize: 13 }}
-          />
-        </label>
-
-        <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 600, color: "#3e3e3c" }}>
-          End
-          <input
-            type="datetime-local"
-            value={endAt}
-            onChange={(e) => setEndAt(e.target.value)}
-            style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "8px 10px", background: "#fff", fontSize: 13 }}
-          />
-        </label>
-
-        <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 600, color: "#3e3e3c" }}>
-          Sales Rep
-          <select
-            value={repId}
-            onChange={(e) => setRepId(e.target.value)}
-            style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "8px 10px", background: "#fff", fontSize: 13 }}
-            disabled={loadingReps}
-          >
-            <option value="">Select rep...</option>
-            {reps.map((rep) => (
-              <option key={rep.id} value={rep.id}>
-                {rep.name} ({rep.email})
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-        <button
-          onClick={loadPreview}
-          disabled={loadingPreview}
-          style={{ border: "none", background: loadingPreview ? "#5a9fd4" : "#0176d3", color: "#fff", borderRadius: 4, padding: "8px 16px", fontWeight: 600 }}
-        >
-          {loadingPreview ? "Loading Preview..." : "Load Leads In Period"}
-        </button>
-        <button
-          onClick={() => { setPreviewLeads([]); setInfo(""); setError(""); }}
-          style={{ border: "1px solid #dddbda", background: "#fff", borderRadius: 4, padding: "8px 14px", color: "#3e3e3c" }}
-        >
-          Clear
-        </button>
-      </div>
-
-      {error ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{error}</p> : null}
-      {info ? <p style={{ marginBottom: 10, color: "#2e844a", fontSize: 13 }}>{info}</p> : null}
-
-      <div style={{ marginBottom: 14, border: "1px solid #dddbda", borderRadius: 4, padding: 14, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
-        <h2 style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#3e3e3c" }}>Prepared Assignment</h2>
-        <div style={{ fontSize: 13, color: "#3e3e3c", display: "grid", gap: 4 }}>
-          <div>Rep: {selectedRep ? `${selectedRep.name} (${selectedRep.email})` : "Not selected"}</div>
-          <div>Period: {startAt || "-"} to {endAt || "-"}</div>
-          <div>Leads matched: {previewLeads.length}</div>
-          <div>API execution: pending (waiting for your endpoint contract)</div>
-        </div>
-      </div>
 
       <div style={{ marginBottom: 14, border: "1px solid #dddbda", borderRadius: 4, padding: 14, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
         <h2 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#3e3e3c" }}>
-          Admin Unavailable Schedule
+          Admin Unavailability + Available Reps
         </h2>
 
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", marginBottom: 10 }}>
@@ -361,6 +229,34 @@ export default function PeriodAssignPage() {
           />
         </label>
 
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#3e3e3c", marginBottom: 6 }}>
+            Reps Available In This Window
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {reps.map((rep) => {
+              const checked = selectedRepIds.includes(rep.id);
+              return (
+                <button
+                  key={rep.id}
+                  type="button"
+                  onClick={() => toggleSelectedRep(rep.id)}
+                  style={{
+                    border: checked ? "1px solid #0176d3" : "1px solid #c9c7c5",
+                    background: checked ? "#eaf5fe" : "#fff",
+                    color: checked ? "#014486" : "#3e3e3c",
+                    borderRadius: 16,
+                    padding: "5px 10px",
+                    fontSize: 12,
+                  }}
+                >
+                  {rep.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
           <button
             type="button"
@@ -390,13 +286,14 @@ export default function PeriodAssignPage() {
                 <th style={th}>From</th>
                 <th style={th}>Until</th>
                 <th style={th}>Reason</th>
+                <th style={th}>Available Reps</th>
                 <th style={th}>Action</th>
               </tr>
             </thead>
             <tbody>
               {!loadingWindows && windows.length === 0 ? (
                 <tr>
-                  <td style={td} colSpan={4}>No unavailable windows set.</td>
+                  <td style={td} colSpan={5}>No unavailable windows set.</td>
                 </tr>
               ) : null}
               {windows.map((w) => (
@@ -404,6 +301,13 @@ export default function PeriodAssignPage() {
                   <td style={td}>{prettyDate(w.start_at)}</td>
                   <td style={td}>{prettyDate(w.end_at)}</td>
                   <td style={td}>{w.reason || ""}</td>
+                  <td style={td}>
+                    {w.available_rep_ids && w.available_rep_ids.length > 0
+                      ? w.available_rep_ids
+                          .map((id) => repsById.get(id)?.name || id)
+                          .join(", ")
+                      : "None"}
+                  </td>
                   <td style={td}>
                     <button
                       type="button"
@@ -419,38 +323,6 @@ export default function PeriodAssignPage() {
           </table>
         </div>
       </div>
-
-      {previewLeads.length > 0 ? (
-        <div style={{ border: "1px solid #dddbda", borderRadius: 4, overflow: "auto", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
-            <thead>
-              <tr style={{ background: "#f8fafc" }}>
-                <th style={th}>Lead</th>
-                <th style={th}>Company</th>
-                <th style={th}>Created</th>
-                <th style={th}>Lead ID</th>
-              </tr>
-            </thead>
-            <tbody>
-              {previewLeads.slice(0, 300).map((lead) => (
-                <tr key={lead.id} style={{ borderTop: "1px solid #e5e7eb" }}>
-                  <td style={td}>{lead.full_name || ""}</td>
-                  <td style={td}>{lead.company_name || ""}</td>
-                  <td style={td}>{prettyDate(lead.created_time)}</td>
-                  <td style={td}>{lead.id}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-
-      <details style={{ marginTop: 14 }}>
-        <summary style={{ cursor: "pointer", color: "#2563eb" }}>Show payload preview</summary>
-        <pre style={{ marginTop: 10, background: "#0f172a", color: "#e2e8f0", padding: 12, borderRadius: 8, overflow: "auto" }}>
-{JSON.stringify(preparedPayload, null, 2)}
-        </pre>
-      </details>
     </div>
   );
 }
