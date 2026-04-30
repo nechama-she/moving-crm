@@ -63,6 +63,7 @@ def change_password(
     validate_password_strength(body.new_password)
 
     user.password_hash = hash_password(body.new_password)
+    user.must_change_password = False
     db.commit()
     return {"message": "Password changed successfully"}
 

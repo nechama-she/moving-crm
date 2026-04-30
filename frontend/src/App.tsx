@@ -27,6 +27,9 @@ function ProtectedRoutes() {
   const location = useLocation();
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
   if (!token) return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+  if (user?.must_change_password && location.pathname !== "/change-password") {
+    return <Navigate to="/change-password" replace />;
+  }
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
       <nav style={{

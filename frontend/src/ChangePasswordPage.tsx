@@ -4,7 +4,7 @@ import { API_BASE } from "./apiConfig";
 import { useNavigate } from "react-router-dom";
 
 export default function ChangePasswordPage() {
-  const { token, logout } = useAuth();
+  const { token, logout, user } = useAuth();
   const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -63,6 +63,15 @@ export default function ChangePasswordPage() {
         boxShadow: "0 2px 4px rgba(0,0,0,0.1)", border: "1px solid #dddbda",
       }}>
         <h2 style={{ margin: "0 0 20px", fontSize: 18, color: "#032d60" }}>Change Password</h2>
+
+        {user?.must_change_password ? (
+          <div style={{
+            background: "#eef4ff", border: "1px solid #bfd6ff", color: "#032d60",
+            padding: "8px 12px", borderRadius: 4, marginBottom: 16, fontSize: 13,
+          }}>
+            You must change your temporary password before using the CRM.
+          </div>
+        ) : null}
 
         {error && (
           <div style={{

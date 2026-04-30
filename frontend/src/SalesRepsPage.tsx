@@ -32,6 +32,7 @@ export default function SalesRepsPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
 
   const salesReps = useMemo(
@@ -74,6 +75,16 @@ export default function SalesRepsPage() {
     setSelectedCompanyIds((prev) =>
       prev.includes(companyId) ? prev.filter((id) => id !== companyId) : [...prev, companyId]
     );
+  }
+
+  async function copyPassword() {
+    if (!password) return;
+    try {
+      await navigator.clipboard.writeText(password);
+      setInfo("Temporary password copied.");
+    } catch {
+      setError("Could not copy password. Please copy manually.");
+    }
   }
 
   async function createSalesRep() {
@@ -119,6 +130,7 @@ export default function SalesRepsPage() {
       setName("");
       setEmail("");
       setPassword("");
+      setShowPassword(false);
       setSelectedCompanyIds([]);
       await loadData();
     } catch (err: unknown) {
@@ -168,6 +180,28 @@ export default function SalesRepsPage() {
     }
   }
 
+  async function deleteRep(userId: string, repName: string) {
+    const ok = window.confirm(`Delete rep ${repName}? This will unassign their leads.`);
+    if (!ok) return;
+
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/users/${userId}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Failed to delete rep" }));
+        throw new Error(err.detail || "Failed to delete rep");
+      }
+      setInfo("Rep deleted.");
+      await loadData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to delete rep");
+    }
+  }
+
   if (!canUse) {
     return (
       <div style={{ padding: "20px 24px" }}>
@@ -197,7 +231,32 @@ export default function SalesRepsPage() {
           </label>
           <label style={fieldLabel}>
             Temporary Password
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{ ...inputStyle, flex: 1 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                style={{ border: "1px solid #dddbda", background: "#fff", borderRadius: 4, padding: "0 10px", fontSize: 12 }}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void copyPassword()}
+                disabled={!password}
+                style={{ border: "1px solid #dddbda", background: "#fff", borderRadius: 4, padding: "0 10px", fontSize: 12 }}
+              >
+                Copy
+              </button>
+            </div>
+            <span style={{ marginTop: 4, fontSize: 11, color: "#706e6b" }}>
+              This is the password the rep will use for first login.
+            </span>
           </label>
         </div>
 
@@ -250,17 +309,18 @@ export default function SalesRepsPage() {
               <th style={th}>Email</th>
               <th style={th}>Companies</th>
               <th style={th}>Assign Company</th>
+              <th style={th}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={4}>Loading...</td>
+                <td style={td} colSpan={5}>Loading...</td>
               </tr>
             ) : null}
             {!loading && salesReps.length === 0 ? (
               <tr>
-                <td style={td} colSpan={4}>No sales reps yet.</td>
+                <td style={td} colSpan={5}>No sales reps yet.</td>
               </tr>
             ) : null}
 
@@ -271,6 +331,7 @@ export default function SalesRepsPage() {
                 companies={companies}
                 onAssign={assignCompany}
                 onUnassign={unassignCompany}
+                onDelete={deleteRep}
               />
             ))}
           </tbody>
@@ -285,11 +346,13 @@ function RepRow({
   companies,
   onAssign,
   onUnassign,
+  onDelete,
 }: {
   rep: AppUser;
   companies: Company[];
   onAssign: (userId: string, companyId: string) => Promise<void>;
   onUnassign: (userId: string, companyId: string) => Promise<void>;
+  onDelete: (userId: string, repName: string) => Promise<void>;
 }) {
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const assigned = rep.companies || [];
@@ -335,6 +398,15 @@ function RepRow({
             Assign
           </button>
         </div>
+      </td>
+      <td style={td}>
+        <button
+          type="button"
+          onClick={() => void onDelete(rep.id, rep.name)}
+          style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
+        >
+          Delete Rep
+        </button>
       </td>
     </tr>
   );

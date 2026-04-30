@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from auth import hash_password, require_admin
 from database import get_db
-from models import User, Company, UserCompany, AdminUnavailability
+from models import User, Company, UserCompany, AdminUnavailability, Lead
 from routes.auth import validate_password_strength
 
 logger = logging.getLogger("moving-crm")
@@ -60,6 +60,7 @@ def create_user(body: UserCreate, admin: User = Depends(require_admin), db: Sess
         name=body.name,
         password_hash=hash_password(body.password),
         role=body.role,
+        must_change_password=True,
     )
     db.add(user)
     db.commit()
@@ -106,6 +107,28 @@ def remove_company(
     if not uc:
         raise HTTPException(status_code=404, detail="Assignment not found")
     db.delete(uc)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{user_id}")
+def delete_user(
+    user_id: str,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.role != "sales_rep":
+        raise HTTPException(status_code=400, detail="Only sales reps can be deleted here")
+
+    # Leave historical leads intact but clear current assignee before deleting rep.
+    db.query(Lead).filter(Lead.assigned_to == user.id).update({Lead.assigned_to: None}, synchronize_session=False)
+
+    db.query(UserCompany).filter(UserCompany.user_id == user.id).delete(synchronize_session=False)
+    db.delete(user)
     db.commit()
     return {"ok": True}
 

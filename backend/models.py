@@ -56,6 +56,7 @@ class User(Base):
     name = Column(String(255), nullable=False)
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False, default="sales_rep")
+    must_change_password = Column(Boolean, nullable=False, default=False)
     # roles: admin, sales_rep, dispatch
     created_at = Column(DateTime(timezone=True), default=_now)
 
@@ -67,6 +68,7 @@ class User(Base):
             "email": self.email,
             "name": self.name,
             "role": self.role,
+            "must_change_password": bool(self.must_change_password),
             "companies": [uc.company.to_dict() for uc in self.companies],
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }
