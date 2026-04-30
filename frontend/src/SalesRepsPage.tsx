@@ -21,22 +21,12 @@ type AppUser = {
   companies?: UserCompany[];
 };
 
-type RepAvailabilityWindow = {
-  id: string;
-  rep_user_id: string;
-  start_at: string;
-  end_at: string;
-  reason?: string;
-};
-
 export default function SalesRepsPage() {
   const { token, user } = useAuth();
   const [users, setUsers] = useState<AppUser[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [savingAvailability, setSavingAvailability] = useState(false);
-  const [loadingAvailability, setLoadingAvailability] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
@@ -46,15 +36,6 @@ export default function SalesRepsPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
-  const [availabilityRepId, setAvailabilityRepId] = useState("");
-  const [availabilityStartDate, setAvailabilityStartDate] = useState("");
-  const [availabilityStartHour, setAvailabilityStartHour] = useState("09");
-  const [availabilityStartMinute, setAvailabilityStartMinute] = useState("00");
-  const [availabilityEndDate, setAvailabilityEndDate] = useState("");
-  const [availabilityEndHour, setAvailabilityEndHour] = useState("17");
-  const [availabilityEndMinute, setAvailabilityEndMinute] = useState("00");
-  const [availabilityReason, setAvailabilityReason] = useState("");
-  const [availabilityWindows, setAvailabilityWindows] = useState<RepAvailabilityWindow[]>([]);
 
   const salesReps = useMemo(
     () => users.filter((u) => u.role === "sales_rep").sort((a, b) => a.name.localeCompare(b.name)),
@@ -71,11 +52,6 @@ export default function SalesRepsPage() {
     void loadData();
   }, [token, canUse]);
 
-  useEffect(() => {
-    if (!availabilityRepId) return;
-    void loadRepAvailability(availabilityRepId);
-  }, [availabilityRepId]);
-
   async function loadData() {
     setLoading(true);
     setError("");
@@ -90,105 +66,11 @@ export default function SalesRepsPage() {
       const companiesData = (await companiesRes.json()) as Company[];
       setUsers(usersData || []);
       setCompanies((companiesData || []).sort((a, b) => a.name.localeCompare(b.name)));
-      const firstRep = (usersData || []).find((u) => u.role === "sales_rep");
-      if (!availabilityRepId && firstRep) setAvailabilityRepId(firstRep.id);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load reps and companies");
     } finally {
       setLoading(false);
     }
-  }
-
-  async function loadRepAvailability(repId: string) {
-    setLoadingAvailability(true);
-    setError("");
-    try {
-      const params = new URLSearchParams({ rep_id: repId });
-      const res = await fetch(`${API_BASE}/api/users/rep-availability?${params.toString()}`, {
-        headers: authHeaders(token),
-      });
-      if (!res.ok) throw new Error(`Rep availability HTTP ${res.status}`);
-      const data = (await res.json()) as RepAvailabilityWindow[];
-      setAvailabilityWindows(data || []);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load rep availability");
-    } finally {
-      setLoadingAvailability(false);
-    }
-  }
-
-  async function saveRepAvailability() {
-    setError("");
-    setInfo("");
-    if (!availabilityRepId || !availabilityStartDate || !availabilityEndDate) {
-      setError("Rep, start, and end are required for availability.");
-      return;
-    }
-    const startLocal = `${availabilityStartDate}T${availabilityStartHour}:${availabilityStartMinute}:00`;
-    const endLocal = `${availabilityEndDate}T${availabilityEndHour}:${availabilityEndMinute}:00`;
-    const startMs = new Date(startLocal).getTime();
-    const endMs = new Date(endLocal).getTime();
-    if (!startMs || !endMs || endMs <= startMs) {
-      setError("Availability end must be after start.");
-      return;
-    }
-
-    setSavingAvailability(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/users/rep-availability`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders(token) },
-        body: JSON.stringify({
-          rep_user_id: availabilityRepId,
-          start_at: new Date(startLocal).toISOString(),
-          end_at: new Date(endLocal).toISOString(),
-          reason: availabilityReason,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "Failed to save availability" }));
-        throw new Error(err.detail || "Failed to save availability");
-      }
-      setInfo("Rep availability saved.");
-      setAvailabilityStartDate("");
-      setAvailabilityStartHour("09");
-      setAvailabilityStartMinute("00");
-      setAvailabilityEndDate("");
-      setAvailabilityEndHour("17");
-      setAvailabilityEndMinute("00");
-      setAvailabilityReason("");
-      await loadRepAvailability(availabilityRepId);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to save availability");
-    } finally {
-      setSavingAvailability(false);
-    }
-  }
-
-  async function deleteRepAvailability(windowId: string) {
-    setError("");
-    setInfo("");
-    try {
-      const res = await fetch(`${API_BASE}/api/users/rep-availability/${windowId}`, {
-        method: "DELETE",
-        headers: authHeaders(token),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "Failed to delete availability" }));
-        throw new Error(err.detail || "Failed to delete availability");
-      }
-      setInfo("Rep availability removed.");
-      if (availabilityRepId) await loadRepAvailability(availabilityRepId);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to delete availability");
-    }
-  }
-
-  function prettyDate(value: string | undefined): string {
-    if (!value) return "";
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return value;
-    return d.toLocaleString();
   }
 
   function toggleCompany(companyId: string) {
@@ -381,7 +263,7 @@ export default function SalesRepsPage() {
                 Copy
               </button>
               </div>
-              <span style={{ marginTop: 0, fontSize: 11, color: "#706e6b", paddingLeft: 10 }}>
+              <span style={{ display: "block", width: "100%", marginTop: 0, fontSize: 11, lineHeight: 1.35, color: "#706e6b", paddingLeft: 10 }}>
                 This is the password the rep will use for first login.
               </span>
             </div>
@@ -423,108 +305,6 @@ export default function SalesRepsPage() {
           >
             {saving ? "Creating..." : "Create Rep"}
           </button>
-        </div>
-      </div>
-
-      <div style={{ border: "1px solid #dddbda", borderRadius: 4, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
-        <h2 style={sectionHeader}>Rep Availability Hours</h2>
-        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", marginBottom: 10 }}>
-          <label style={fieldLabel}>
-            Sales Rep
-            <select value={availabilityRepId} onChange={(e) => setAvailabilityRepId(e.target.value)} style={inputStyle}>
-              <option value="">Select rep...</option>
-              {salesReps.map((rep) => (
-                <option key={rep.id} value={rep.id}>{rep.name} ({rep.email})</option>
-              ))}
-            </select>
-          </label>
-          <label style={fieldLabel}>
-            Available From
-            <div style={{ display: "grid", gap: 6 }}>
-              <input type="date" value={availabilityStartDate} onChange={(e) => setAvailabilityStartDate(e.target.value)} style={inputStyle} />
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(70px, 1fr))", gap: 6 }}>
-                <select value={availabilityStartHour} onChange={(e) => setAvailabilityStartHour(e.target.value)} style={inputStyle}>
-                  {orderedOptions(availabilityStartHour, 23).map((v) => <option key={`sh-${v}`} value={v}>{v}</option>)}
-                </select>
-                <select value={availabilityStartMinute} onChange={(e) => setAvailabilityStartMinute(e.target.value)} style={inputStyle}>
-                  {orderedOptions(availabilityStartMinute, 59).map((v) => <option key={`sm-${v}`} value={v}>{v}</option>)}
-                </select>
-              </div>
-            </div>
-          </label>
-          <label style={fieldLabel}>
-            Available Until
-            <div style={{ display: "grid", gap: 6 }}>
-              <input type="date" value={availabilityEndDate} onChange={(e) => setAvailabilityEndDate(e.target.value)} style={inputStyle} />
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(70px, 1fr))", gap: 6 }}>
-                <select value={availabilityEndHour} onChange={(e) => setAvailabilityEndHour(e.target.value)} style={inputStyle}>
-                  {orderedOptions(availabilityEndHour, 23).map((v) => <option key={`eh-${v}`} value={v}>{v}</option>)}
-                </select>
-                <select value={availabilityEndMinute} onChange={(e) => setAvailabilityEndMinute(e.target.value)} style={inputStyle}>
-                  {orderedOptions(availabilityEndMinute, 59).map((v) => <option key={`em-${v}`} value={v}>{v}</option>)}
-                </select>
-              </div>
-            </div>
-          </label>
-          <label style={fieldLabel}>
-            Reason (optional)
-            <input value={availabilityReason} onChange={(e) => setAvailabilityReason(e.target.value)} style={inputStyle} />
-          </label>
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-          <button
-            type="button"
-            onClick={saveRepAvailability}
-            disabled={savingAvailability}
-            style={{ border: "none", background: savingAvailability ? "#5a9fd4" : "#0176d3", color: "#fff", borderRadius: 4, padding: "8px 14px", fontWeight: 600 }}
-          >
-            {savingAvailability ? "Saving..." : "Add Availability Window"}
-          </button>
-          <button
-            type="button"
-            onClick={() => availabilityRepId && void loadRepAvailability(availabilityRepId)}
-            disabled={!availabilityRepId || loadingAvailability}
-            style={{ border: "1px solid #dddbda", background: "#fff", borderRadius: 4, padding: "8px 14px", color: "#3e3e3c" }}
-          >
-            Refresh
-          </button>
-        </div>
-
-        <div style={{ border: "1px solid #dddbda", borderRadius: 4, overflow: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
-            <thead>
-              <tr>
-                <th style={th}>From</th>
-                <th style={th}>Until</th>
-                <th style={th}>Reason</th>
-                <th style={th}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loadingAvailability ? (
-                <tr><td style={td} colSpan={4}>Loading...</td></tr>
-              ) : null}
-              {!loadingAvailability && availabilityWindows.length === 0 ? (
-                <tr><td style={td} colSpan={4}>No availability windows set for this rep.</td></tr>
-              ) : null}
-              {!loadingAvailability && availabilityWindows.map((w) => (
-                <tr key={w.id} style={{ borderTop: "1px solid #e5e7eb" }}>
-                  <td style={td}>{prettyDate(w.start_at)}</td>
-                  <td style={td}>{prettyDate(w.end_at)}</td>
-                  <td style={td}>{w.reason || ""}</td>
-                  <td style={td}>
-                    <button
-                      type="button"
-                      onClick={() => void deleteRepAvailability(w.id)}
-                      style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       </div>
 
@@ -688,9 +468,3 @@ const td: React.CSSProperties = {
   color: "#111827",
   verticalAlign: "top",
 };
-
-function orderedOptions(selected: string, max: number): string[] {
-  const all = Array.from({ length: max + 1 }, (_, i) => String(i).padStart(2, "0"));
-  const cleanSelected = all.includes(selected) ? selected : "00";
-  return [cleanSelected, ...all.filter((v) => v !== cleanSelected)];
-}

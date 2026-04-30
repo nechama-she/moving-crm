@@ -25,6 +25,11 @@ type AdminUnavailabilityWindow = {
   }>;
 };
 
+type RepHours = {
+  start: string;
+  end: string;
+};
+
 function toMs(value: string | undefined): number {
   if (!value) return 0;
   const d = new Date(value);
@@ -52,6 +57,7 @@ export default function PeriodAssignPage() {
   const [unavailableEnd, setUnavailableEnd] = useState("");
   const [unavailableReason, setUnavailableReason] = useState("");
   const [selectedRepIds, setSelectedRepIds] = useState<string[]>([]);
+  const [repHours, setRepHours] = useState<Record<string, RepHours>>({});
   const [windows, setWindows] = useState<AdminUnavailabilityWindow[]>([]);
 
   useEffect(() => {
@@ -100,7 +106,33 @@ export default function PeriodAssignPage() {
   }
 
   function toggleSelectedRep(repId: string) {
-    setSelectedRepIds((prev) => (prev.includes(repId) ? prev.filter((id) => id !== repId) : [...prev, repId]));
+    setSelectedRepIds((prev) => {
+      if (prev.includes(repId)) {
+        return prev.filter((id) => id !== repId);
+      }
+      return [...prev, repId];
+    });
+    setRepHours((prev) => {
+      if (prev[repId]) return prev;
+      return {
+        ...prev,
+        [repId]: {
+          start: unavailableStart || "",
+          end: unavailableEnd || "",
+        },
+      };
+    });
+  }
+
+  function updateRepHours(repId: string, patch: Partial<RepHours>) {
+    setRepHours((prev) => ({
+      ...prev,
+      [repId]: {
+        start: prev[repId]?.start || unavailableStart || "",
+        end: prev[repId]?.end || unavailableEnd || "",
+        ...patch,
+      },
+    }));
   }
 
   async function createAdminWindow() {
@@ -138,10 +170,36 @@ export default function PeriodAssignPage() {
         const err = await res.json().catch(() => ({ detail: "Failed to save" }));
         throw new Error(err.detail || "Failed to save");
       }
+
+      // Persist per-rep availability windows tied to this rule setup.
+      const repTasks = selectedRepIds.map(async (repId) => {
+        const hours = repHours[repId];
+        const startVal = hours?.start || unavailableStart;
+        const endVal = hours?.end || unavailableEnd;
+        if (!startVal || !endVal) return;
+
+        const startMs = toMs(startVal);
+        const endMs = toMs(endVal);
+        if (!startMs || !endMs || endMs <= startMs) return;
+
+        await fetch(`${API_BASE}/api/users/rep-availability`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders(token) },
+          body: JSON.stringify({
+            rep_user_id: repId,
+            start_at: new Date(startVal).toISOString(),
+            end_at: new Date(endVal).toISOString(),
+            reason: `Window linked to admin unavailability (${new Date(unavailableStart).toLocaleString()} - ${new Date(unavailableEnd).toLocaleString()})`,
+          }),
+        });
+      });
+      await Promise.all(repTasks);
+
       setUnavailableStart("");
       setUnavailableEnd("");
       setUnavailableReason("");
       setSelectedRepIds([]);
+      setRepHours({});
       setWindowInfo("Admin unavailable window saved.");
       await loadAdminWindows(adminId);
     } catch (err: unknown) {
@@ -233,25 +291,39 @@ export default function PeriodAssignPage() {
           <div style={{ fontSize: 13, fontWeight: 600, color: "#3e3e3c", marginBottom: 6 }}>
             Reps Available In This Window
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <div style={{ display: "grid", gap: 8 }}>
             {reps.map((rep) => {
               const checked = selectedRepIds.includes(rep.id);
+              const hours = repHours[rep.id] || { start: unavailableStart || "", end: unavailableEnd || "" };
               return (
-                <button
-                  key={rep.id}
-                  type="button"
-                  onClick={() => toggleSelectedRep(rep.id)}
-                  style={{
-                    border: checked ? "1px solid #0176d3" : "1px solid #c9c7c5",
-                    background: checked ? "#eaf5fe" : "#fff",
-                    color: checked ? "#014486" : "#3e3e3c",
-                    borderRadius: 16,
-                    padding: "5px 10px",
-                    fontSize: 12,
-                  }}
-                >
-                  {rep.name}
-                </button>
+                <div key={rep.id} style={{ border: checked ? "1px solid #0176d3" : "1px solid #d9d9d9", borderRadius: 8, padding: 10, background: checked ? "#f0f8ff" : "#fff" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "#3e3e3c", marginBottom: checked ? 8 : 0 }}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleSelectedRep(rep.id)} />
+                    {rep.name}
+                  </label>
+                  {checked ? (
+                    <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                      <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
+                        Availability Start
+                        <input
+                          type="datetime-local"
+                          value={hours.start}
+                          onChange={(e) => updateRepHours(rep.id, { start: e.target.value })}
+                          style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "7px 10px", fontSize: 13 }}
+                        />
+                      </label>
+                      <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
+                        Availability End
+                        <input
+                          type="datetime-local"
+                          value={hours.end}
+                          onChange={(e) => updateRepHours(rep.id, { end: e.target.value })}
+                          style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "7px 10px", fontSize: 13 }}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                </div>
               );
             })}
           </div>

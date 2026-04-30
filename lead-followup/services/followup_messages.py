@@ -105,8 +105,7 @@ def _generate_message_from_note(row: dict, opportunity: dict | None = None) -> t
         f"Followup note:\n{notes}\n\n"
         f"Option 1:\n{option_1}\n\n"
         f"Option 2:\n{option_2}\n\n"
-        f"Signature:\n{signature}\n\n"
-        "Write one final SMS including the signature."
+        "Write the SMS message body only, without a signature."
     )
 
     try:

@@ -178,15 +178,15 @@ export default function OutreachEventsPage() {
         ))}
       </div>
 
-      <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", marginBottom: 16 }}>
-        <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
-          Date From
-          <input type="date" value={startDateFilter} onChange={(e) => setStartDateFilter(e.target.value)} style={filterInput} />
-        </label>
-        <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
-          Date To
-          <input type="date" value={endDateFilter} onChange={(e) => setEndDateFilter(e.target.value)} style={filterInput} />
-        </label>
+      <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
+          Date Range
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="date" value={startDateFilter} onChange={(e) => setStartDateFilter(e.target.value)} style={filterInput} />
+            <span style={{ color: "#94a3b8", fontSize: 13 }}>→</span>
+            <input type="date" value={endDateFilter} onChange={(e) => setEndDateFilter(e.target.value)} style={filterInput} />
+          </div>
+        </div>
         <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
           Company
           <select value={companyIdFilter} onChange={(e) => setCompanyIdFilter(e.target.value)} style={filterInput}>
@@ -205,13 +205,6 @@ export default function OutreachEventsPage() {
             ))}
           </select>
         </label>
-        <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
-          Sort By Created
-          <select value={sortDir} onChange={(e) => setSortDir(e.target.value as "asc" | "desc")} style={filterInput}>
-            <option value="desc">Newest first</option>
-            <option value="asc">Oldest first</option>
-          </select>
-        </label>
       </div>
 
       {loading ? <p>Loading…</p> : null}
@@ -224,7 +217,12 @@ export default function OutreachEventsPage() {
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1200 }}>
             <thead>
               <tr style={{ background: "#f8fafc" }}>
-                <th style={thStyle}>Created</th>
+                <th
+                  style={{ ...thStyle, cursor: "pointer", userSelect: "none" }}
+                  onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
+                >
+                  Created {sortDir === "desc" ? "↓" : "↑"}
+                </th>
                 <th style={thStyle}>Job ID</th>
                 <th style={thStyle}>Lead</th>
                 <th style={thStyle}>Company</th>
