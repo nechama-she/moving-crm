@@ -33,6 +33,8 @@ def migrate(drop_first: bool = False):
         conn.execute(text("ALTER TABLE sent_messages ALTER COLUMN message_type TYPE VARCHAR(100)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_outreach_events_created_at ON outreach_events (created_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_outreach_events_outreach_type ON outreach_events (outreach_type)"))
+        conn.execute(text("ALTER TABLE outreach_events ALTER COLUMN created_at SET DEFAULT NOW()"))
+        conn.execute(text("UPDATE outreach_events SET created_at = NOW() WHERE created_at IS NULL"))
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS admin_unavailability (
                 id VARCHAR(36) PRIMARY KEY,

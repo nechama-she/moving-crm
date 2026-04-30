@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from urllib.parse import quote_plus
 
 import boto3
@@ -171,11 +172,11 @@ def record_outreach_event(
     sql = text("""
         INSERT INTO outreach_events (
             lead_id, company_id, smartmoving_id, note_id, outreach_type, job_id,
-            qualified, qualification_reason, message, messenger, aircall, dry_run
+            qualified, qualification_reason, message, messenger, aircall, dry_run, created_at
         )
         VALUES (
             :lead_id, :company_id, :smartmoving_id, :note_id, :outreach_type, :job_id,
-            :qualified, :qualification_reason, :message, :messenger, :aircall, :dry_run
+            :qualified, :qualification_reason, :message, :messenger, :aircall, :dry_run, :created_at
         )
     """)
     params = {
@@ -191,6 +192,7 @@ def record_outreach_event(
         "messenger": bool(messenger),
         "aircall": bool(aircall),
         "dry_run": bool(dry_run),
+        "created_at": datetime.now(timezone.utc),
     }
     logger.info(
         "SQL record_outreach_event(lead_id=%s, type=%s, qualified=%s, dry_run=%s)",
