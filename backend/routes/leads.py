@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from config import get_config
 from database import get_db
-from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow
+from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent
 
 logger = logging.getLogger("moving-crm")
 
@@ -94,6 +94,58 @@ def _filter_by_rep_availability(rep_ids: list[str], db: Session, now: datetime |
     return {rid for rid in rep_ids if (rid not in configured_rep_ids or rid in active_rep_ids)}
 
 
+def _active_reps_for_company(
+    company_id: str,
+    db: Session,
+    allowed_rep_ids: set[str] | None = None,
+    now: datetime | None = None,
+) -> list[User]:
+    rep_rows = (
+        db.query(User)
+        .join(UserCompany, UserCompany.user_id == User.id)
+        .filter(User.role == "sales_rep", UserCompany.company_id == company_id)
+        .order_by(User.name.asc())
+        .all()
+    )
+    if allowed_rep_ids is not None:
+        rep_rows = [u for u in rep_rows if u.id in allowed_rep_ids]
+
+    active_ids = _filter_by_rep_availability([r.id for r in rep_rows], db, now=now)
+    return [u for u in rep_rows if u.id in active_ids]
+
+
+def _pick_round_robin_rep_for_company(
+    company_id: str,
+    db: Session,
+    allowed_rep_ids: set[str] | None = None,
+    now: datetime | None = None,
+) -> User | None:
+    active_reps = _active_reps_for_company(company_id, db, allowed_rep_ids=allowed_rep_ids, now=now)
+    if not active_reps:
+        return None
+
+    rep_ids = [r.id for r in active_reps]
+    last_event = (
+        db.query(AutoAssignEvent)
+        .filter(
+            AutoAssignEvent.company_id == company_id,
+            AutoAssignEvent.assignment_mode == "auto",
+            AutoAssignEvent.assigned_to.in_(rep_ids),
+        )
+        .order_by(AutoAssignEvent.created_at.desc(), AutoAssignEvent.id.desc())
+        .first()
+    )
+    if not last_event or not last_event.assigned_to:
+        return active_reps[0]
+
+    id_to_index = {rep.id: idx for idx, rep in enumerate(active_reps)}
+    if last_event.assigned_to not in id_to_index:
+        return active_reps[0]
+
+    next_idx = (id_to_index[last_event.assigned_to] + 1) % len(active_reps)
+    return active_reps[next_idx]
+
+
 def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_ids: set[str] | None = None) -> User | None:
     rep_rows = (
         db.query(User)
@@ -119,6 +171,13 @@ def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_id
 
     # Pick least-loaded rep for this company; ties resolved by alphabetical name.
     return min(rep_rows, key=lambda u: (counts.get(u.id, 0), u.name.lower()))
+
+
+def _send_assignment_webhook_todo(lead: Lead, rep: User | None):
+    if not rep:
+        return
+    # TODO: Call external assignment webhook/API here to mirror CRM assignment downstream.
+    logger.info("TODO assignment webhook: lead=%s rep=%s(%s)", lead.id, rep.id, rep.name)
 
 
 def _get_user_company_ids(user: User, db: Session) -> list[str]:
@@ -348,11 +407,11 @@ def create_lead(
     # Auto-assign only while all admins are unavailable.
     if not _any_admin_available_now(db):
         available_rep_ids = _active_available_rep_ids(db)
-        rep = _pick_available_rep_for_company(company.id, db, available_rep_ids)
+        rep = _pick_round_robin_rep_for_company(company.id, db, available_rep_ids)
         if rep:
             assigned_to_user_id = rep.id
             assignment_mode = "auto"
-            assignment_reason = "all_admins_unavailable"
+            assignment_reason = "all_admins_unavailable_round_robin"
         else:
             assignment_mode = "queued"
             assignment_reason = "all_admins_unavailable_no_available_rep"
@@ -386,6 +445,8 @@ def create_lead(
     logger.info("Created lead: %s (%s)", lead.full_name, lead.id)
     if assigned_to_user_id:
         logger.info("Auto-assigned lead %s to rep %s (%s)", lead.id, assigned_to_user_id, assignment_reason)
+        assigned_rep = db.query(User).filter(User.id == assigned_to_user_id).first()
+        _send_assignment_webhook_todo(lead, assigned_rep)
 
     # Send welcome SMS if phone and smartmoving_id are present
     sms_result = None
@@ -412,6 +473,20 @@ def create_lead(
         logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
 
     try:
+        assign_event = AutoAssignEvent(
+            lead_id=lead.id,
+            company_id=company.id,
+            assigned_to=lead.assigned_to,
+            assignment_mode=assignment_mode,
+            assignment_reason=assignment_reason,
+            note=(
+                "Auto assigned while admins unavailable"
+                if assignment_mode == "auto"
+                else "Queued because no active rep slot" if assignment_mode == "queued" else "Admins available; no auto assignment"
+            ),
+        )
+        db.add(assign_event)
+
         outreach_event = OutreachEvent(
             lead_id=lead.id,
             company_id=company.id,

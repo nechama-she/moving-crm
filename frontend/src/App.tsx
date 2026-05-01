@@ -8,6 +8,7 @@ import OutreachEventsPage from "./OutreachEventsPage";
 import PeriodAssignPage from "./PeriodAssignPage";
 import SalesRepsPage from "./SalesRepsPage";
 import SettingsPage from "./SettingsPage";
+import AutoAssignTrackerPage from "./AutoAssignTrackerPage";
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -73,6 +74,7 @@ function ProtectedRoutes() {
           <Route path="/assign-period" element={<PeriodAssignPage />} />
           <Route path="/sales-reps" element={<SalesRepsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />
           <Route path="/leads/:leadId" element={<LeadDetail />} />
           <Route path="/change-password" element={<ChangePasswordPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

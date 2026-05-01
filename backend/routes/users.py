@@ -20,6 +20,7 @@ class UserCreate(BaseModel):
     email: str
     name: str
     phone: str = ""
+    smartmoving_rep_id: str = ""
     password: str
     role: str = "sales_rep"  # admin, sales_rep, dispatch
 
@@ -86,6 +87,7 @@ def create_user(body: UserCreate, admin: User = Depends(require_admin), db: Sess
         email=body.email,
         name=body.name,
         phone=(body.phone or "").strip(),
+        smartmoving_rep_id=(body.smartmoving_rep_id or "").strip() or None,
         password_hash=hash_password(body.password),
         role=body.role,
         must_change_password=True,

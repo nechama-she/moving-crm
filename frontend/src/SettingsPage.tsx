@@ -26,6 +26,7 @@ export default function SettingsPage() {
           <p style={desc}>Configure admin unavailability windows and which reps are available during those windows.</p>
           <div style={actionsRow}>
             <Link to="/assign-period" style={primaryLink}>Open Assignment Rules</Link>
+            <Link to="/auto-assign-tracker" style={ghostLink}>Open Assignment Tracker</Link>
           </div>
         </section>
 

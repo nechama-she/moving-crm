@@ -73,8 +73,29 @@ def migrate(drop_first: bool = False):
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_rep_availability_windows_rep_user_id ON rep_availability_windows (rep_user_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_rep_availability_windows_start_at ON rep_availability_windows (start_at)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_rep_availability_windows_end_at ON rep_availability_windows (end_at)"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS auto_assign_events (
+                id SERIAL PRIMARY KEY,
+                lead_id VARCHAR(36),
+                company_id VARCHAR(36),
+                assigned_to VARCHAR(36),
+                assignment_mode VARCHAR(30) NOT NULL,
+                assignment_reason VARCHAR(120) NOT NULL DEFAULT '',
+                note TEXT,
+                created_at TIMESTAMPTZ
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_auto_assign_events_lead_id ON auto_assign_events (lead_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_auto_assign_events_company_id ON auto_assign_events (company_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_auto_assign_events_assigned_to ON auto_assign_events (assigned_to)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_auto_assign_events_assignment_mode ON auto_assign_events (assignment_mode)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_auto_assign_events_assignment_reason ON auto_assign_events (assignment_reason)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_auto_assign_events_created_at ON auto_assign_events (created_at)"))
+        conn.execute(text("ALTER TABLE auto_assign_events ALTER COLUMN created_at SET DEFAULT NOW()"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(30) NOT NULL DEFAULT ''"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS smartmoving_rep_id VARCHAR(100)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_smartmoving_rep_id ON users (smartmoving_rep_id)"))
         conn.commit()
 
     logger.info("Done — tables: %s", list(Base.metadata.tables.keys()))

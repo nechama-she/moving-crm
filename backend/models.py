@@ -55,6 +55,7 @@ class User(Base):
     email = Column(String(255), nullable=False, unique=True, index=True)
     name = Column(String(255), nullable=False)
     phone = Column(String(30), nullable=False, default="")
+    smartmoving_rep_id = Column(String(100), index=True)
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False, default="sales_rep")
     must_change_password = Column(Boolean, nullable=False, default=False)
@@ -69,6 +70,7 @@ class User(Base):
             "email": self.email,
             "name": self.name,
             "phone": self.phone or "",
+            "smartmoving_rep_id": self.smartmoving_rep_id or "",
             "role": self.role,
             "must_change_password": bool(self.must_change_password),
             "companies": [uc.company.to_dict() for uc in self.companies],
@@ -317,5 +319,33 @@ class OutreachEvent(Base):
             "messenger": bool(self.messenger),
             "aircall": bool(self.aircall),
             "dry_run": bool(self.dry_run),
+            "created_at": self.created_at.isoformat() if self.created_at else "",
+        }
+
+
+# ---------------------------------------------------------------------------
+# Auto Assignment Events (assignment audit trail)
+# ---------------------------------------------------------------------------
+class AutoAssignEvent(Base):
+    __tablename__ = "auto_assign_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lead_id = Column(String(36), index=True)
+    company_id = Column(String(36), index=True)
+    assigned_to = Column(String(36), index=True)
+    assignment_mode = Column(String(30), nullable=False, index=True)  # auto, queued, manual
+    assignment_reason = Column(String(120), nullable=False, default="", index=True)
+    note = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "lead_id": self.lead_id or "",
+            "company_id": self.company_id or "",
+            "assigned_to": self.assigned_to or "",
+            "assignment_mode": self.assignment_mode or "",
+            "assignment_reason": self.assignment_reason or "",
+            "note": self.note or "",
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }

@@ -17,6 +17,7 @@ type AppUser = {
   name: string;
   email: string;
   phone?: string;
+  smartmoving_rep_id?: string;
   role: string;
   companies?: UserCompany[];
 };
@@ -33,6 +34,7 @@ export default function SalesRepsPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [smartmovingRepId, setSmartmovingRepId] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
@@ -106,6 +108,7 @@ export default function SalesRepsPage() {
           name: name.trim(),
           email: email.trim(),
           phone: phone.trim(),
+          smartmoving_rep_id: smartmovingRepId.trim(),
           password,
           role: "sales_rep",
         }),
@@ -133,6 +136,7 @@ export default function SalesRepsPage() {
       setName("");
       setEmail("");
       setPhone("");
+      setSmartmovingRepId("");
       setPassword("");
       setShowPassword(false);
       setSelectedCompanyIds([]);
@@ -238,6 +242,10 @@ export default function SalesRepsPage() {
             <input value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} />
           </label>
           <label style={fieldLabel}>
+            SmartMoving Rep ID
+            <input value={smartmovingRepId} onChange={(e) => setSmartmovingRepId(e.target.value)} style={inputStyle} />
+          </label>
+          <label style={fieldLabel}>
             Temporary Password
             <div style={{ display: "grid", gap: 4 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -318,6 +326,7 @@ export default function SalesRepsPage() {
               <th style={th}>Rep</th>
               <th style={th}>Email</th>
               <th style={th}>Phone</th>
+              <th style={th}>SmartMoving Rep ID</th>
               <th style={th}>Companies</th>
               <th style={th}>Assign Company</th>
               <th style={th}>Actions</th>
@@ -326,12 +335,12 @@ export default function SalesRepsPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={6}>Loading...</td>
+                <td style={td} colSpan={7}>Loading...</td>
               </tr>
             ) : null}
             {!loading && salesReps.length === 0 ? (
               <tr>
-                <td style={td} colSpan={6}>No sales reps yet.</td>
+                <td style={td} colSpan={7}>No sales reps yet.</td>
               </tr>
             ) : null}
 
@@ -375,6 +384,7 @@ function RepRow({
       <td style={td}>{rep.name}</td>
       <td style={td}>{rep.email}</td>
       <td style={td}>{rep.phone || ""}</td>
+      <td style={td}>{rep.smartmoving_rep_id || ""}</td>
       <td style={td}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {assigned.length === 0 ? <span style={{ color: "#706e6b", fontSize: 12 }}>No companies</span> : null}
