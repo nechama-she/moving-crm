@@ -873,25 +873,7 @@ Resources:
       Target:
         Arn: !GetAtt ApiLambdaFunction.Arn
         RoleArn: !GetAtt AutoAssignSchedulerRole.Arn
-        Input: !Sub |
-          {
-            "version": "2.0",
-            "routeKey": "POST /api/auto-assign-run",
-            "rawPath": "/api/auto-assign-run",
-            "rawQueryString": "dry_run=false",
-            "headers": {
-              "x-api-secret": "{{resolve:ssm:/moving-crm/${Environment}/API_SECRET}}"
-            },
-            "requestContext": {
-              "http": {
-                "method": "POST",
-                "path": "/api/auto-assign-run"
-              },
-              "stage": "$default"
-            },
-            "body": null,
-            "isBase64Encoded": false
-          }
+        Input: "{}"
 
   # ===========================================================================
   # LEAD FOLLOWUP LAMBDA
