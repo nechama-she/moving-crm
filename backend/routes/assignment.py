@@ -12,6 +12,10 @@ from database import get_db
 from models import AutoAssignEvent, Company, Lead, User, UserCompany, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow
 
 logger = logging.getLogger("moving-crm")
+QUEUE_REASONS_MANAGED_BY_BACKLOG = {
+    "active_window_no_mapped_rep",
+    "active_window_no_active_rep",
+}
 
 router = APIRouter(prefix="/api", tags=["Assignment"])
 
@@ -190,6 +194,28 @@ def _queue_backlog_leads(
     return queued_count
 
 
+def _clear_stale_queued_events_for_window(active_window_start: datetime, db: Session) -> int:
+    stale_ids = [
+        row[0]
+        for row in (
+            db.query(AutoAssignEvent.id)
+            .join(Lead, Lead.id == AutoAssignEvent.lead_id)
+            .filter(
+                AutoAssignEvent.assignment_mode == "queued",
+                AutoAssignEvent.assignment_reason.in_(QUEUE_REASONS_MANAGED_BY_BACKLOG),
+                Lead.assigned_to.is_(None),
+                Lead.created_at < active_window_start,
+            )
+            .all()
+        )
+    ]
+    if not stale_ids:
+        return 0
+
+    db.query(AutoAssignEvent).filter(AutoAssignEvent.id.in_(stale_ids)).delete(synchronize_session=False)
+    return len(stale_ids)
+
+
 def _send_assignment_webhook_todo(lead: Lead, rep: User | None):
     if not rep:
         return
@@ -289,6 +315,7 @@ def get_auto_assign_events(
             item = row.to_dict()
             lead = lead_map.get(row.lead_id)
             item["lead_name"] = lead.full_name if lead else ""
+            item["lead_created_at"] = lead.created_at.isoformat() if lead and lead.created_at else ""
             item["lead_url"] = f"/leads/{row.lead_id}" if row.lead_id else ""
             item["company_name"] = company_map.get(row.company_id, "")
             item["rep_name"] = rep_map.get(row.assigned_to, "") if row.assigned_to else ""
@@ -350,6 +377,13 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             "stats": {"queued_found": 0, "assigned": 0, "companies_touched": 0},
         }
     logger.info("Backlog active window start: %s", active_window_start.isoformat())
+
+    cleared_stale_queued = _clear_stale_queued_events_for_window(active_window_start, db)
+    if cleared_stale_queued:
+        logger.info(
+            "Backlog cleared stale queued events outside active window: %s",
+            cleared_stale_queued,
+        )
 
     # Backlog scope is constrained to the active unavailability window.
     queued_leads = (

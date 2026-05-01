@@ -20,6 +20,7 @@ type AutoAssignEvent = {
   id: number;
   lead_id: string;
   lead_name: string;
+  lead_created_at: string;
   lead_url: string;
   company_id: string;
   company_name: string;
@@ -199,6 +200,7 @@ export default function AutoAssignTrackerPage() {
             <thead>
               <tr style={{ background: "#f8fafc" }}>
                 <th style={thStyle}>Created</th>
+                <th style={thStyle}>Lead Created</th>
                 <th style={thStyle}>Lead</th>
                 <th style={thStyle}>Company</th>
                 <th style={thStyle}>Mode</th>
@@ -210,12 +212,13 @@ export default function AutoAssignTrackerPage() {
             <tbody>
               {items.length === 0 ? (
                 <tr>
-                  <td style={tdStyle} colSpan={7}>No assignment events found.</td>
+                  <td style={tdStyle} colSpan={8}>No assignment events found.</td>
                 </tr>
               ) : null}
               {items.map((item) => (
                 <tr key={item.id} style={{ borderTop: "1px solid #e5e7eb", background: item.assignment_mode === "queued" ? "#fff7f7" : "#fff" }}>
                   <td style={tdStyle}>{formatDate(item.created_at)}</td>
+                  <td style={tdStyle}>{formatDate(item.lead_created_at)}</td>
                   <td style={tdStyle}>
                     {item.lead_url ? (
                       <Link to={item.lead_url} style={{ color: "#2563eb", textDecoration: "none" }}>
