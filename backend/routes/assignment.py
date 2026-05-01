@@ -12,6 +12,7 @@ from database import get_db
 from models import AutoAssignEvent, Company, Lead, User, UserCompany, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow
 
 logger = logging.getLogger("moving-crm")
+DRY_RUN_BACKLOG_REASON = "dry_run_queued_backlog_round_robin"
 QUEUE_REASONS_MANAGED_BY_BACKLOG = {
     "active_window_no_mapped_rep",
     "active_window_no_active_rep",
@@ -166,6 +167,13 @@ def _queue_backlog_leads(
     queued_count = 0
     for lead in leads:
         latest_event = latest_events_by_lead.get(lead.id)
+        if latest_event and latest_event.assignment_mode == "auto" and latest_event.assignment_reason == DRY_RUN_BACKLOG_REASON:
+            logger.info(
+                "Backlog lead queue skipped (already dry-run simulated): lead_id=%s company_id=%s",
+                lead.id,
+                lead.company_id,
+            )
+            continue
         if latest_event and latest_event.assignment_mode == "queued" and latest_event.assignment_reason == assignment_reason:
             logger.info(
                 "Backlog lead queued (unchanged): lead_id=%s company_id=%s reason=%s",
@@ -498,7 +506,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
 
         for idx, lead in enumerate(company_leads):
             rep = active_reps[(start_idx + idx) % len(active_reps)]
-            dry_run_reason = "dry_run_queued_backlog_round_robin"
+            dry_run_reason = DRY_RUN_BACKLOG_REASON
             if dry_run:
                 latest_event = latest_events_by_lead.get(lead.id)
                 if (
