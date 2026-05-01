@@ -272,37 +272,18 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             "stats": {"queued_found": 0, "assigned": 0, "companies_touched": 0},
         }
 
-    queued_lead_ids = [
-        row[0]
-        for row in (
-            db.query(AutoAssignEvent.lead_id)
-            .filter(
-                AutoAssignEvent.assignment_mode == "queued",
-                AutoAssignEvent.lead_id.isnot(None),
-            )
-            .distinct()
-            .all()
-        )
-        if row[0]
-    ]
-    if not queued_lead_ids:
-        return {
-            "ok": True,
-            "message": "No queued leads found.",
-            "dry_run": dry_run,
-            "stats": {"queued_found": 0, "assigned": 0, "companies_touched": 0},
-        }
-
+    # Find ALL unassigned leads — both ones with a queued event and older leads
+    # that predate the assignment engine (they never got an event row).
     queued_leads = (
         db.query(Lead)
-        .filter(Lead.id.in_(queued_lead_ids), Lead.assigned_to.is_(None))
+        .filter(Lead.assigned_to.is_(None))
         .order_by(Lead.created_at.asc())
         .all()
     )
     if not queued_leads:
         return {
             "ok": True,
-            "message": "No currently unassigned queued leads found.",
+            "message": "No unassigned leads found.",
             "dry_run": dry_run,
             "stats": {"queued_found": 0, "assigned": 0, "companies_touched": 0},
         }
