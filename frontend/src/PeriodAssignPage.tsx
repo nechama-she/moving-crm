@@ -25,7 +25,8 @@ type AdminUnavailabilityWindow = {
   }>;
 };
 
-type RepHours = {
+type RepSlot = {
+  id?: string;
   start: string;
   end: string;
 };
@@ -73,7 +74,7 @@ export default function PeriodAssignPage() {
   const [unavailableEnd, setUnavailableEnd] = useState("");
   const [unavailableReason, setUnavailableReason] = useState("");
   const [selectedRepIds, setSelectedRepIds] = useState<string[]>([]);
-  const [repHours, setRepHours] = useState<Record<string, RepHours>>({});
+  const [repSlotsByRep, setRepSlotsByRep] = useState<Record<string, RepSlot[]>>({});
   const [windows, setWindows] = useState<AdminUnavailabilityWindow[]>([]);
   const [repWindows, setRepWindows] = useState<RepAvailabilityWindow[]>([]);
   const [editingWindowId, setEditingWindowId] = useState("");
@@ -81,7 +82,11 @@ export default function PeriodAssignPage() {
   const [editEnd, setEditEnd] = useState("");
   const [editReason, setEditReason] = useState("");
   const [editSelectedRepIds, setEditSelectedRepIds] = useState<string[]>([]);
-  const [editRepHours, setEditRepHours] = useState<Record<string, RepHours>>({});
+  const [editRepSlotsByRep, setEditRepSlotsByRep] = useState<Record<string, RepSlot[]>>({});
+
+  function defaultSlot(start: string, end: string): RepSlot {
+    return { start: start || "", end: end || "" };
+  }
 
   useEffect(() => {
     setLoadingReps(true);
@@ -146,38 +151,65 @@ export default function PeriodAssignPage() {
       }
       return [...prev, repId];
     });
-    setRepHours((prev) => {
+    setRepSlotsByRep((prev) => {
       if (prev[repId]) return prev;
       return {
         ...prev,
-        [repId]: {
-          start: unavailableStart || "",
-          end: unavailableEnd || "",
-        },
+        [repId]: [defaultSlot(unavailableStart, unavailableEnd)],
       };
     });
   }
 
-  function updateRepHours(repId: string, patch: Partial<RepHours>) {
-    setRepHours((prev) => ({
-      ...prev,
-      [repId]: {
-        start: prev[repId]?.start || unavailableStart || "",
-        end: prev[repId]?.end || unavailableEnd || "",
-        ...patch,
-      },
-    }));
+  function addRepSlot(repId: string) {
+    setRepSlotsByRep((prev) => {
+      const existing = prev[repId] || [defaultSlot(unavailableStart, unavailableEnd)];
+      return {
+        ...prev,
+        [repId]: [...existing, defaultSlot(unavailableStart, unavailableEnd)],
+      };
+    });
   }
 
-  function updateEditRepHours(repId: string, patch: Partial<RepHours>) {
-    setEditRepHours((prev) => ({
-      ...prev,
-      [repId]: {
-        start: prev[repId]?.start || editStart || "",
-        end: prev[repId]?.end || editEnd || "",
-        ...patch,
-      },
-    }));
+  function removeRepSlot(repId: string, slotIndex: number) {
+    setRepSlotsByRep((prev) => {
+      const existing = prev[repId] || [];
+      const next = existing.filter((_, idx) => idx !== slotIndex);
+      return { ...prev, [repId]: next.length ? next : [defaultSlot(unavailableStart, unavailableEnd)] };
+    });
+  }
+
+  function updateRepSlot(repId: string, slotIndex: number, patch: Partial<RepSlot>) {
+    setRepSlotsByRep((prev) => {
+      const existing = prev[repId] || [defaultSlot(unavailableStart, unavailableEnd)];
+      const next = existing.map((slot, idx) => (idx === slotIndex ? { ...slot, ...patch } : slot));
+      return { ...prev, [repId]: next };
+    });
+  }
+
+  function addEditRepSlot(repId: string) {
+    setEditRepSlotsByRep((prev) => {
+      const existing = prev[repId] || [defaultSlot(editStart, editEnd)];
+      return {
+        ...prev,
+        [repId]: [...existing, defaultSlot(editStart, editEnd)],
+      };
+    });
+  }
+
+  function removeEditRepSlot(repId: string, slotIndex: number) {
+    setEditRepSlotsByRep((prev) => {
+      const existing = prev[repId] || [];
+      const next = existing.filter((_, idx) => idx !== slotIndex);
+      return { ...prev, [repId]: next.length ? next : [defaultSlot(editStart, editEnd)] };
+    });
+  }
+
+  function updateEditRepSlot(repId: string, slotIndex: number, patch: Partial<RepSlot>) {
+    setEditRepSlotsByRep((prev) => {
+      const existing = prev[repId] || [defaultSlot(editStart, editEnd)];
+      const next = existing.map((slot, idx) => (idx === slotIndex ? { ...slot, ...patch } : slot));
+      return { ...prev, [repId]: next };
+    });
   }
 
   function toggleEditSelectedRep(repId: string) {
@@ -185,14 +217,11 @@ export default function PeriodAssignPage() {
       if (prev.includes(repId)) return prev.filter((id) => id !== repId);
       return [...prev, repId];
     });
-    setEditRepHours((prev) => {
+    setEditRepSlotsByRep((prev) => {
       if (prev[repId]) return prev;
       return {
         ...prev,
-        [repId]: {
-          start: editStart || "",
-          end: editEnd || "",
-        },
+        [repId]: [defaultSlot(editStart, editEnd)],
       };
     });
   }
@@ -206,31 +235,36 @@ export default function PeriodAssignPage() {
     return a1 < b2 && b1 < a2;
   }
 
-  function getRepWindowForAdminWindow(window: AdminUnavailabilityWindow, repId: string): RepAvailabilityWindow | undefined {
+  function getRepWindowsForAdminWindow(window: AdminUnavailabilityWindow, repId: string): RepAvailabilityWindow[] {
     const token = `[admin_window:${window.id}]`;
-    const byReason = repWindows.find((rw) => rw.rep_user_id === repId && (rw.reason || "").includes(token));
-    if (byReason) return byReason;
-    return repWindows.find(
-      (rw) => rw.rep_user_id === repId && overlaps(rw.start_at, rw.end_at, window.start_at, window.end_at),
+    const tokenMatches = repWindows.filter((rw) => rw.rep_user_id === repId && (rw.reason || "").includes(token));
+    if (tokenMatches.length > 0) {
+      return tokenMatches.sort((a, b) => toMs(a.start_at) - toMs(b.start_at));
+    }
+    const legacyMatches = repWindows.filter(
+      (rw) =>
+        rw.rep_user_id === repId &&
+        overlaps(rw.start_at, rw.end_at, window.start_at, window.end_at) &&
+        (rw.reason || "").toLowerCase().includes("linked to admin unavailability"),
     );
+    return legacyMatches.sort((a, b) => toMs(a.start_at) - toMs(b.start_at));
   }
 
   function startEditWindow(window: AdminUnavailabilityWindow) {
     const selected = window.available_rep_ids || [];
-    const nextHours: Record<string, RepHours> = {};
+    const nextSlotsByRep: Record<string, RepSlot[]> = {};
     selected.forEach((repId) => {
-      const linked = getRepWindowForAdminWindow(window, repId);
-      nextHours[repId] = {
-        start: toLocalInputValue(linked?.start_at || window.start_at),
-        end: toLocalInputValue(linked?.end_at || window.end_at),
-      };
+      const linked = getRepWindowsForAdminWindow(window, repId);
+      nextSlotsByRep[repId] = linked.length
+        ? linked.map((slot) => ({ id: slot.id, start: toLocalInputValue(slot.start_at), end: toLocalInputValue(slot.end_at) }))
+        : [defaultSlot(toLocalInputValue(window.start_at), toLocalInputValue(window.end_at))];
     });
     setEditingWindowId(window.id);
     setEditStart(toLocalInputValue(window.start_at));
     setEditEnd(toLocalInputValue(window.end_at));
     setEditReason(window.reason || "");
     setEditSelectedRepIds(selected);
-    setEditRepHours(nextHours);
+    setEditRepSlotsByRep(nextSlotsByRep);
     setWindowError("");
     setWindowInfo("");
   }
@@ -264,36 +298,39 @@ export default function PeriodAssignPage() {
       }
 
       const windowToken = `[admin_window:${window.id}]`;
-      const syncTasks = editSelectedRepIds.map(async (repId) => {
-        const hours = editRepHours[repId];
-        const startVal = hours?.start || editStart;
-        const endVal = hours?.end || editEnd;
-        if (!startVal || !endVal) return;
+      const syncTasks = reps.map(async (rep) => {
+        const repId = rep.id;
+        const existing = getRepWindowsForAdminWindow(window, repId);
 
-        const s = toMs(startVal);
-        const e = toMs(endVal);
-        if (!s || !e || e <= s) return;
-
-        const existing = getRepWindowForAdminWindow(window, repId);
-        const payload = {
-          rep_user_id: repId,
-          start_at: new Date(startVal).toISOString(),
-          end_at: new Date(endVal).toISOString(),
-          reason: `${windowToken} Linked to admin unavailability (${new Date(editStart).toLocaleString()} - ${new Date(editEnd).toLocaleString()})`,
-        };
-
-        if (existing?.id) {
-          await fetch(`${API_BASE}/api/users/rep-availability/${existing.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json", ...authHeaders(token) },
-            body: JSON.stringify(payload),
+        for (const slot of existing) {
+          const delRes = await fetch(`${API_BASE}/api/users/rep-availability/${slot.id}`, {
+            method: "DELETE",
+            headers: authHeaders(token),
           });
-        } else {
-          await fetch(`${API_BASE}/api/users/rep-availability`, {
+          if (!delRes.ok) throw new Error("Failed to sync rep slots");
+        }
+
+        if (!editSelectedRepIds.includes(repId)) return;
+
+        const sourceSlots = editRepSlotsByRep[repId] || [defaultSlot(editStart, editEnd)];
+        const validSlots = sourceSlots.filter((slot) => {
+          const s = toMs(slot.start);
+          const e = toMs(slot.end);
+          return Boolean(s && e && e > s);
+        });
+
+        for (const slot of validSlots) {
+          const createRes = await fetch(`${API_BASE}/api/users/rep-availability`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...authHeaders(token) },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({
+              rep_user_id: repId,
+              start_at: new Date(slot.start).toISOString(),
+              end_at: new Date(slot.end).toISOString(),
+              reason: `${windowToken} Linked to admin unavailability (${new Date(editStart).toLocaleString()} - ${new Date(editEnd).toLocaleString()})`,
+            }),
           });
+          if (!createRes.ok) throw new Error("Failed to sync rep slots");
         }
       });
 
@@ -348,25 +385,26 @@ export default function PeriodAssignPage() {
 
       // Persist per-rep availability windows tied to this rule setup.
       const repTasks = selectedRepIds.map(async (repId) => {
-        const hours = repHours[repId];
-        const startVal = hours?.start || unavailableStart;
-        const endVal = hours?.end || unavailableEnd;
-        if (!startVal || !endVal) return;
-
-        const startMs = toMs(startVal);
-        const endMs = toMs(endVal);
-        if (!startMs || !endMs || endMs <= startMs) return;
-
-        await fetch(`${API_BASE}/api/users/rep-availability`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders(token) },
-          body: JSON.stringify({
-            rep_user_id: repId,
-            start_at: new Date(startVal).toISOString(),
-            end_at: new Date(endVal).toISOString(),
-            reason: `${windowToken} Linked to admin unavailability (${new Date(unavailableStart).toLocaleString()} - ${new Date(unavailableEnd).toLocaleString()})`,
-          }),
+        const sourceSlots = repSlotsByRep[repId] || [defaultSlot(unavailableStart, unavailableEnd)];
+        const validSlots = sourceSlots.filter((slot) => {
+          const s = toMs(slot.start);
+          const e = toMs(slot.end);
+          return Boolean(s && e && e > s);
         });
+
+        for (const slot of validSlots) {
+          const createRes = await fetch(`${API_BASE}/api/users/rep-availability`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders(token) },
+            body: JSON.stringify({
+              rep_user_id: repId,
+              start_at: new Date(slot.start).toISOString(),
+              end_at: new Date(slot.end).toISOString(),
+              reason: `${windowToken} Linked to admin unavailability (${new Date(unavailableStart).toLocaleString()} - ${new Date(unavailableEnd).toLocaleString()})`,
+            }),
+          });
+          if (!createRes.ok) throw new Error("Failed to save rep availability slot");
+        }
       });
       await Promise.all(repTasks);
 
@@ -374,7 +412,7 @@ export default function PeriodAssignPage() {
       setUnavailableEnd("");
       setUnavailableReason("");
       setSelectedRepIds([]);
-      setRepHours({});
+      setRepSlotsByRep({});
       setWindowInfo("Admin unavailable window saved.");
       await loadAllWindows(adminId);
     } catch (err: unknown) {
@@ -469,7 +507,7 @@ export default function PeriodAssignPage() {
           <div style={{ display: "grid", gap: 8 }}>
             {reps.map((rep) => {
               const checked = selectedRepIds.includes(rep.id);
-              const hours = repHours[rep.id] || { start: unavailableStart || "", end: unavailableEnd || "" };
+              const slots = repSlotsByRep[rep.id] || [defaultSlot(unavailableStart, unavailableEnd)];
               return (
                 <div key={rep.id} style={{ border: checked ? "1px solid #0176d3" : "1px solid #d9d9d9", borderRadius: 8, padding: 10, background: checked ? "#f0f8ff" : "#fff" }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "#3e3e3c", marginBottom: checked ? 8 : 0 }}>
@@ -477,25 +515,48 @@ export default function PeriodAssignPage() {
                     {rep.name}
                   </label>
                   {checked ? (
-                    <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-                      <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
-                        Availability Start
-                        <input
-                          type="datetime-local"
-                          value={hours.start}
-                          onChange={(e) => updateRepHours(rep.id, { start: e.target.value })}
-                          style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "7px 10px", fontSize: 13 }}
-                        />
-                      </label>
-                      <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
-                        Availability End
-                        <input
-                          type="datetime-local"
-                          value={hours.end}
-                          onChange={(e) => updateRepHours(rep.id, { end: e.target.value })}
-                          style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "7px 10px", fontSize: 13 }}
-                        />
-                      </label>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {slots.map((slot, slotIndex) => (
+                        <div key={`${rep.id}-slot-${slotIndex}`} style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", alignItems: "end" }}>
+                          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
+                            Availability Start
+                            <input
+                              type="datetime-local"
+                              value={slot.start}
+                              onChange={(e) => updateRepSlot(rep.id, slotIndex, { start: e.target.value })}
+                              style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "7px 10px", fontSize: 13 }}
+                            />
+                          </label>
+                          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
+                            Availability End
+                            <input
+                              type="datetime-local"
+                              value={slot.end}
+                              onChange={(e) => updateRepSlot(rep.id, slotIndex, { end: e.target.value })}
+                              style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "7px 10px", fontSize: 13 }}
+                            />
+                          </label>
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => removeRepSlot(rep.id, slotIndex)}
+                              disabled={slots.length <= 1}
+                              style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "6px 10px", fontSize: 12 }}
+                            >
+                              Remove Slot
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => addRepSlot(rep.id)}
+                          style={{ border: "1px solid #91c8f6", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
+                        >
+                          + Add Slot
+                        </button>
+                      </div>
                     </div>
                   ) : null}
                 </div>
@@ -623,13 +684,10 @@ export default function PeriodAssignPage() {
                   <div style={{ display: "grid", gap: 8 }}>
                     {reps.map((rep) => {
                       const selected = selectedIds.includes(rep.id);
-                      const linked = getRepWindowForAdminWindow(w, rep.id);
-                      const hours = isEditing
-                        ? (editRepHours[rep.id] || { start: editStart || "", end: editEnd || "" })
-                        : {
-                            start: linked ? toLocalInputValue(linked.start_at) : "",
-                            end: linked ? toLocalInputValue(linked.end_at) : "",
-                          };
+                      const linked = getRepWindowsForAdminWindow(w, rep.id);
+                      const slots = isEditing
+                        ? (editRepSlotsByRep[rep.id] || [defaultSlot(editStart, editEnd)])
+                        : linked.map((slot) => ({ start: toLocalInputValue(slot.start_at), end: toLocalInputValue(slot.end_at) }));
                       return (
                         <div key={`${w.id}-${rep.id}`} style={{ border: selected ? "1px solid #91c8f6" : "1px solid #e5e7eb", borderRadius: 6, padding: 8, background: selected ? "#f8fbff" : "#fff" }}>
                           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "#334155" }}>
@@ -643,29 +701,58 @@ export default function PeriodAssignPage() {
                           </label>
                           {selected ? (
                             isEditing ? (
-                              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", marginTop: 8 }}>
-                                <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
-                                  Start
-                                  <input
-                                    type="datetime-local"
-                                    value={hours.start}
-                                    onChange={(e) => updateEditRepHours(rep.id, { start: e.target.value })}
-                                    style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "7px 10px", fontSize: 13 }}
-                                  />
-                                </label>
-                                <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
-                                  End
-                                  <input
-                                    type="datetime-local"
-                                    value={hours.end}
-                                    onChange={(e) => updateEditRepHours(rep.id, { end: e.target.value })}
-                                    style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "7px 10px", fontSize: 13 }}
-                                  />
-                                </label>
+                              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                                {slots.map((slot, slotIndex) => (
+                                  <div key={`${w.id}-${rep.id}-edit-slot-${slotIndex}`} style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", alignItems: "end" }}>
+                                    <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
+                                      Start
+                                      <input
+                                        type="datetime-local"
+                                        value={slot.start}
+                                        onChange={(e) => updateEditRepSlot(rep.id, slotIndex, { start: e.target.value })}
+                                        style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "7px 10px", fontSize: 13 }}
+                                      />
+                                    </label>
+                                    <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569" }}>
+                                      End
+                                      <input
+                                        type="datetime-local"
+                                        value={slot.end}
+                                        onChange={(e) => updateEditRepSlot(rep.id, slotIndex, { end: e.target.value })}
+                                        style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "7px 10px", fontSize: 13 }}
+                                      />
+                                    </label>
+                                    <div>
+                                      <button
+                                        type="button"
+                                        onClick={() => removeEditRepSlot(rep.id, slotIndex)}
+                                        disabled={slots.length <= 1}
+                                        style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "6px 10px", fontSize: 12 }}
+                                      >
+                                        Remove Slot
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                                <div>
+                                  <button
+                                    type="button"
+                                    onClick={() => addEditRepSlot(rep.id)}
+                                    style={{ border: "1px solid #91c8f6", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
+                                  >
+                                    + Add Slot
+                                  </button>
+                                </div>
                               </div>
                             ) : (
-                              <div style={{ marginTop: 6, fontSize: 12, color: "#475569" }}>
-                                {hours.start && hours.end ? `${prettyDate(hours.start)} - ${prettyDate(hours.end)}` : "No specific rep slot"}
+                              <div style={{ marginTop: 6, fontSize: 12, color: "#475569", display: "grid", gap: 4 }}>
+                                {slots.length > 0
+                                  ? slots.map((slot, idx) => (
+                                    <div key={`${w.id}-${rep.id}-view-slot-${idx}`}>
+                                      {slot.start && slot.end ? `${prettyDate(slot.start)} - ${prettyDate(slot.end)}` : "No specific rep slot"}
+                                    </div>
+                                  ))
+                                  : "No specific rep slot"}
                               </div>
                             )
                           ) : null}
