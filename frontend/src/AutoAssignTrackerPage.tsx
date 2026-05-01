@@ -46,7 +46,7 @@ function formatDate(value: string): string {
 
 function modeBadge(mode: AssignmentMode): React.CSSProperties {
   if (mode === "auto") return { ...badgeBase, background: "#d1fae5", color: "#065f46", border: "1px solid #a7f3d0" };
-  if (mode === "queued") return { ...badgeBase, background: "#fee2e2", color: "#991b1b", border: "1px solid #fecaca" };
+  if (mode === "queued") return { ...badgeBase, background: "#fef9c3", color: "#854d0e", border: "1px solid #fde68a" };
   return { ...badgeBase, background: "#e2e8f0", color: "#334155", border: "1px solid #cbd5e1" };
 }
 
@@ -134,7 +134,7 @@ export default function AutoAssignTrackerPage() {
           <div style={kpiValue}>{stats.total}</div>
         </div>
         <div style={kpiCardWarn}>
-          <div style={kpiLabel}>Queued (Risk)</div>
+          <div style={kpiLabel}>Queued</div>
           <div style={kpiValue}>{stats.queued}</div>
         </div>
         <div style={kpiCardGood}>

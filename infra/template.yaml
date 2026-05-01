@@ -518,11 +518,15 @@ Resources:
                 Action:
                   - events:*
                 Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/moving-crm-*"
+              # EventBridge Scheduler
+              - Effect: Allow
+                Action:
+                  - scheduler:*
+                Resource: "*"
               # API Gateway
               - Effect: Allow
                 Action:
                   - apigateway:*
-                  - apigatewayv2:*
                   - execute-api:*
                 Resource:
                   - "*"
