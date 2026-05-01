@@ -12,6 +12,22 @@ logger = logging.getLogger("moving-crm")
 _mangum_handler = Mangum(app, lifespan="off")
 
 
+def _is_scheduler_backlog_invoke(event: dict) -> bool:
+    """Only run backlog for explicit scheduler payloads."""
+    trigger = str(event.get("trigger") or "").strip().lower()
+    job = str(event.get("job") or "").strip().lower()
+    if trigger == "auto_assign_backlog" or job == "auto_assign_backlog":
+        return True
+
+    # Backward-compatible support for EventBridge rule-style envelopes.
+    source = str(event.get("source") or "").strip().lower()
+    detail_type = str(event.get("detail-type") or "").strip().lower()
+    if source in {"aws.scheduler", "aws.events"} and detail_type.startswith("scheduled"):
+        return True
+
+    return False
+
+
 def _header_value(event: dict, name: str) -> str:
     headers = event.get("headers") or {}
     return str(headers.get(name) or headers.get(name.lower()) or "")
@@ -36,6 +52,18 @@ def handler(event, context):
             getattr(context, "aws_request_id", ""),
         )
         return _mangum_handler(event, context)
+
+    if not _is_scheduler_backlog_invoke(event):
+        logger.warning(
+            "Ignoring unknown non-HTTP invoke: keys=%s request_id=%s",
+            sorted(list(event.keys())),
+            getattr(context, "aws_request_id", ""),
+        )
+        print(
+            "[scheduler] ignored non-http invoke keys=%s request_id=%s"
+            % (sorted(list(event.keys())), getattr(context, "aws_request_id", ""))
+        )
+        return {"ok": False, "ignored": True, "reason": "unknown_non_http_event"}
 
     logger.info(
         "Non-HTTP invoke treated as scheduler: source=%s keys=%s request_id=%s",

@@ -885,7 +885,7 @@ Resources:
       Target:
         Arn: !GetAtt ApiLambdaFunction.Arn
         RoleArn: !GetAtt AutoAssignSchedulerRole.Arn
-        Input: "{}"
+        Input: !Sub '{"trigger":"auto_assign_backlog","schedule":"moving-crm-auto-assign-${Environment}"}'
 
   # ===========================================================================
   # LEAD FOLLOWUP LAMBDA
