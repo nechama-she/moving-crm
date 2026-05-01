@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Header, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
@@ -272,18 +273,38 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             "stats": {"queued_found": 0, "assigned": 0, "companies_touched": 0},
         }
 
-    # Find ALL unassigned leads — both ones with a queued event and older leads
-    # that predate the assignment engine (they never got an event row).
+    # Only process leads that arrived after the currently active admin-unavailability
+    # window started. This prevents sweeping old historical unassigned leads.
+    active_window_start = (
+        db.query(func.min(AdminUnavailability.start_at))
+        .filter(
+            AdminUnavailability.start_at <= now,
+            AdminUnavailability.end_at > now,
+        )
+        .scalar()
+    )
+    if not active_window_start:
+        return {
+            "ok": True,
+            "message": "No active admin unavailability window found.",
+            "dry_run": dry_run,
+            "stats": {"queued_found": 0, "assigned": 0, "companies_touched": 0},
+        }
+
+    # Backlog scope is constrained to the active unavailability window.
     queued_leads = (
         db.query(Lead)
-        .filter(Lead.assigned_to.is_(None))
+        .filter(
+            Lead.assigned_to.is_(None),
+            Lead.created_at >= active_window_start,
+        )
         .order_by(Lead.created_at.asc())
         .all()
     )
     if not queued_leads:
         return {
             "ok": True,
-            "message": "No unassigned leads found.",
+            "message": "No unassigned leads found in active admin unavailability window.",
             "dry_run": dry_run,
             "stats": {"queued_found": 0, "assigned": 0, "companies_touched": 0},
         }
@@ -341,6 +362,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             "queued_found": len(queued_leads),
             "assigned": assigned_count,
             "companies_touched": touched_companies,
+            "window_start_at": active_window_start.isoformat() if active_window_start else "",
         },
     }
 

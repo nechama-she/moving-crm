@@ -121,6 +121,11 @@ export default function AutoAssignTrackerPage() {
     return Math.round((stats.queued / stats.total) * 100);
   }, [stats]);
 
+  const activeKpiButton = (mode: AssignmentMode | "all") => {
+    if (mode === "all") return modeFilter === "";
+    return modeFilter === mode;
+  };
+
   return (
     <div style={{ padding: "20px 24px", fontFamily: "inherit", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Auto Assignment Tracker</h1>
@@ -129,22 +134,22 @@ export default function AutoAssignTrackerPage() {
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 14 }}>
-        <div style={kpiCard}>
+        <button type="button" style={kpiButton(kpiCard, activeKpiButton("all"))} onClick={() => setModeFilter("")}>
           <div style={kpiLabel}>Total Events</div>
           <div style={kpiValue}>{stats.total}</div>
-        </div>
-        <div style={kpiCardWarn}>
+        </button>
+        <button type="button" style={kpiButton(kpiCardWarn, activeKpiButton("queued"))} onClick={() => setModeFilter("queued")}>
           <div style={kpiLabel}>Queued</div>
           <div style={kpiValue}>{stats.queued}</div>
-        </div>
-        <div style={kpiCardGood}>
+        </button>
+        <button type="button" style={kpiButton(kpiCardGood, activeKpiButton("auto"))} onClick={() => setModeFilter("auto")}>
           <div style={kpiLabel}>Auto Assigned</div>
           <div style={kpiValue}>{stats.auto}</div>
-        </div>
-        <div style={kpiCard}>
+        </button>
+        <button type="button" style={kpiButton(kpiCard, activeKpiButton("queued"))} onClick={() => setModeFilter("queued")}>
           <div style={kpiLabel}>Queue Rate</div>
           <div style={kpiValue}>{disasterRate}%</div>
-        </div>
+        </button>
       </div>
 
       <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", marginBottom: 16 }}>
@@ -262,6 +267,16 @@ const kpiCardGood: React.CSSProperties = {
   border: "1px solid #bbf7d0",
   background: "#f0fdf4",
 };
+
+function kpiButton(base: React.CSSProperties, active: boolean): React.CSSProperties {
+  return {
+    ...base,
+    width: "100%",
+    textAlign: "left",
+    cursor: "pointer",
+    boxShadow: active ? "0 0 0 2px #1d4ed8 inset" : "none",
+  };
+}
 
 const kpiLabel: React.CSSProperties = {
   fontSize: 12,
