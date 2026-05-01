@@ -216,6 +216,29 @@ def _clear_stale_queued_events_for_window(active_window_start: datetime, db: Ses
     return len(stale_ids)
 
 
+def _clear_queued_events_for_leads(lead_ids: list[str], db: Session) -> int:
+    if not lead_ids:
+        return 0
+
+    queued_ids = [
+        row[0]
+        for row in (
+            db.query(AutoAssignEvent.id)
+            .filter(
+                AutoAssignEvent.lead_id.in_(lead_ids),
+                AutoAssignEvent.assignment_mode == "queued",
+                AutoAssignEvent.assignment_reason.in_(QUEUE_REASONS_MANAGED_BY_BACKLOG),
+            )
+            .all()
+        )
+    ]
+    if not queued_ids:
+        return 0
+
+    db.query(AutoAssignEvent).filter(AutoAssignEvent.id.in_(queued_ids)).delete(synchronize_session=False)
+    return len(queued_ids)
+
+
 def _send_assignment_webhook_todo(lead: Lead, rep: User | None):
     if not rep:
         return
@@ -454,6 +477,14 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             )
             continue
 
+        cleared_for_company = _clear_queued_events_for_leads([lead.id for lead in company_leads], db)
+        if cleared_for_company:
+            logger.info(
+                "Backlog cleared queued events for assignable company: company_id=%s cleared=%s",
+                company_id,
+                cleared_for_company,
+            )
+
         touched_companies += 1
         logger.info(
             "Backlog company processing: company_id=%s queued_leads=%s active_reps=%s dry_run=%s",
@@ -467,6 +498,22 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
 
         for idx, lead in enumerate(company_leads):
             rep = active_reps[(start_idx + idx) % len(active_reps)]
+            dry_run_reason = "dry_run_queued_backlog_round_robin"
+            if dry_run:
+                latest_event = latest_events_by_lead.get(lead.id)
+                if (
+                    latest_event
+                    and latest_event.assignment_mode == "auto"
+                    and latest_event.assignment_reason == dry_run_reason
+                    and latest_event.assigned_to == rep.id
+                ):
+                    logger.info(
+                        "Backlog lead dry-run already recorded (unchanged): lead_id=%s rep_id=%s",
+                        lead.id,
+                        rep.id,
+                    )
+                    assigned_count += 1
+                    continue
             logger.info(
                 "Backlog lead assigned: lead_id=%s company_id=%s rep_id=%s dry_run=%s",
                 lead.id,
@@ -483,7 +530,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
                     company_id=lead.company_id,
                     assigned_to=rep.id,
                     assignment_mode="auto",
-                    assignment_reason="dry_run_queued_backlog_round_robin" if dry_run else "queued_backlog_round_robin",
+                    assignment_reason=dry_run_reason if dry_run else "queued_backlog_round_robin",
                     note="DRY RUN: would assign from queued backlog" if dry_run else "Assigned from queued backlog by scheduler run",
                 )
             )

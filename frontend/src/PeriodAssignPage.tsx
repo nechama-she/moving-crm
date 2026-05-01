@@ -62,6 +62,7 @@ function toLocalInputValue(value: string | undefined): string {
 
 export default function PeriodAssignPage() {
   const { token } = useAuth();
+  const [nowMs, setNowMs] = useState<number>(Date.now());
   const [reps, setReps] = useState<Rep[]>([]);
   const [admins, setAdmins] = useState<Rep[]>([]);
   const [loadingReps, setLoadingReps] = useState(true);
@@ -83,6 +84,11 @@ export default function PeriodAssignPage() {
   const [editReason, setEditReason] = useState("");
   const [editSelectedRepIds, setEditSelectedRepIds] = useState<string[]>([]);
   const [editRepSlotsByRep, setEditRepSlotsByRep] = useState<Record<string, RepSlot[]>>({});
+
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, []);
 
   function defaultSlot(start: string, end: string): RepSlot {
     return { start: start || "", end: end || "" };
@@ -245,6 +251,13 @@ export default function PeriodAssignPage() {
     const b2 = toMs(bEnd);
     if (!a1 || !a2 || !b1 || !b2) return false;
     return a1 < b2 && b1 < a2;
+  }
+
+  function isActiveNow(start: string | undefined, end: string | undefined): boolean {
+    const s = toMs(start);
+    const e = toMs(end);
+    if (!s || !e) return false;
+    return s <= nowMs && nowMs < e;
   }
 
   function getRepWindowsForAdminWindow(window: AdminUnavailabilityWindow, repId: string): RepAvailabilityWindow[] {
@@ -699,6 +712,9 @@ export default function PeriodAssignPage() {
                       const slots = isEditing
                         ? (editRepSlotsByRep[rep.id] || [defaultSlot(editStart, editEnd)])
                         : linked.map((slot) => ({ start: toLocalInputValue(slot.start_at), end: toLocalInputValue(slot.end_at) }));
+                      const adminWindowActiveNow = isActiveNow(isEditing ? editStart : toLocalInputValue(w.start_at), isEditing ? editEnd : toLocalInputValue(w.end_at));
+                      const repSlotActiveNow = slots.some((slot) => isActiveNow(slot.start, slot.end));
+                      const repAvailableNow = Boolean(selected && adminWindowActiveNow && repSlotActiveNow);
                       return (
                         <div key={`${w.id}-${rep.id}`} style={{ border: selected ? "1px solid #91c8f6" : "1px solid #e5e7eb", borderRadius: 6, padding: 8, background: selected ? "#f8fbff" : "#fff" }}>
                           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "#334155" }}>
@@ -709,6 +725,28 @@ export default function PeriodAssignPage() {
                               onChange={() => toggleEditSelectedRep(rep.id)}
                             />
                             {rep.name}
+                            <span
+                              style={{
+                                marginLeft: "auto",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 6,
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: repAvailableNow ? "#166534" : "#475569",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  width: 8,
+                                  height: 8,
+                                  borderRadius: 999,
+                                  background: repAvailableNow ? "#22c55e" : "#94a3b8",
+                                  display: "inline-block",
+                                }}
+                              />
+                              {repAvailableNow ? "Available now" : "Not available"}
+                            </span>
                           </label>
                           {selected ? (
                             isEditing ? (
