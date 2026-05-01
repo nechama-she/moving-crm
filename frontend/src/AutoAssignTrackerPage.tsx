@@ -62,8 +62,9 @@ export default function AutoAssignTrackerPage() {
   const [companyIdFilter, setCompanyIdFilter] = useState("");
   const [repIdFilter, setRepIdFilter] = useState("");
   const [modeFilter, setModeFilter] = useState<AssignmentMode>("");
-  const [startDateFilter, setStartDateFilter] = useState("");
-  const [endDateFilter, setEndDateFilter] = useState("");
+  const todayStr = new Date().toISOString().split("T")[0];
+  const [startDateFilter, setStartDateFilter] = useState(todayStr);
+  const [endDateFilter, setEndDateFilter] = useState(todayStr);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/auto-assign-filters`, { headers: authHeaders(token) })

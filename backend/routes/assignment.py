@@ -261,19 +261,8 @@ def get_auto_assign_events(
         return {"items": [], "total": 0, "has_more": False, "stats": {"total": 0, "queued": 0, "auto": 0}}
 
 
-@router.post("/auto-assign-run")
-def run_auto_assign_backlog(
-    dry_run: bool = Query(default=True),
-    x_api_secret: str = Header(...),
-    db: Session = Depends(get_db),
-):
-    cfg = get_config()
-    secret = cfg.get("API_SECRET", os.getenv("API_SECRET", ""))
-    if not secret:
-        raise HTTPException(status_code=500, detail="API secret not configured")
-    if x_api_secret != secret:
-        raise HTTPException(status_code=401, detail="Invalid API secret")
-
+def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
+    """Core backlog runner — callable internally (scheduler) or via HTTP endpoint."""
     now = _utcnow()
     if _any_admin_available_now(db, now=now):
         return {
@@ -373,3 +362,19 @@ def run_auto_assign_backlog(
             "companies_touched": touched_companies,
         },
     }
+
+
+@router.post("/auto-assign-run")
+def run_auto_assign_backlog(
+    dry_run: bool = Query(default=True),
+    x_api_secret: str = Header(...),
+    db: Session = Depends(get_db),
+):
+    cfg = get_config()
+    secret = cfg.get("API_SECRET", os.getenv("API_SECRET", ""))
+    if not secret:
+        raise HTTPException(status_code=500, detail="API secret not configured")
+    if x_api_secret != secret:
+        raise HTTPException(status_code=401, detail="Invalid API secret")
+
+    return _run_backlog_core(db, dry_run=dry_run)

@@ -840,6 +840,60 @@ Resources:
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*"
 
   # ===========================================================================
+  # AUTO-ASSIGN BACKLOG SCHEDULER (every 15 min)
+  # ===========================================================================
+  AutoAssignSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-auto-assign-scheduler-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambda
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt ApiLambdaFunction.Arn
+
+  AutoAssignScheduler:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub moving-crm-auto-assign-${Environment}
+      Description: Runs the backlog assignment engine every 15 minutes
+      ScheduleExpression: "rate(1 minute)"
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: !GetAtt ApiLambdaFunction.Arn
+        RoleArn: !GetAtt AutoAssignSchedulerRole.Arn
+        Input: !Sub |
+          {
+            "version": "2.0",
+            "routeKey": "POST /api/auto-assign-run",
+            "rawPath": "/api/auto-assign-run",
+            "rawQueryString": "dry_run=false",
+            "headers": {
+              "x-api-secret": "{{resolve:ssm:/moving-crm/${Environment}/API_SECRET}}"
+            },
+            "requestContext": {
+              "http": {
+                "method": "POST",
+                "path": "/api/auto-assign-run"
+              },
+              "stage": "$default"
+            },
+            "body": null,
+            "isBase64Encoded": false
+          }
+
+  # ===========================================================================
   # LEAD FOLLOWUP LAMBDA
   # ===========================================================================
   LeadFollowupRole:
