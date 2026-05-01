@@ -134,6 +134,62 @@ def _next_round_robin_start_index(company_id: str, rep_ids: list[str], db: Sessi
     return (last_idx + 1) % len(rep_ids)
 
 
+def _latest_assignment_event_by_lead(lead_ids: list[str], db: Session) -> dict[str, AutoAssignEvent]:
+    if not lead_ids:
+        return {}
+
+    rows = (
+        db.query(AutoAssignEvent)
+        .filter(AutoAssignEvent.lead_id.in_(lead_ids))
+        .order_by(AutoAssignEvent.lead_id.asc(), AutoAssignEvent.created_at.desc(), AutoAssignEvent.id.desc())
+        .all()
+    )
+
+    latest_by_lead: dict[str, AutoAssignEvent] = {}
+    for row in rows:
+        if row.lead_id and row.lead_id not in latest_by_lead:
+            latest_by_lead[row.lead_id] = row
+    return latest_by_lead
+
+
+def _queue_backlog_leads(
+    leads: list[Lead],
+    assignment_reason: str,
+    note: str,
+    latest_events_by_lead: dict[str, AutoAssignEvent],
+    db: Session,
+) -> int:
+    queued_count = 0
+    for lead in leads:
+        latest_event = latest_events_by_lead.get(lead.id)
+        if latest_event and latest_event.assignment_mode == "queued" and latest_event.assignment_reason == assignment_reason:
+            logger.info(
+                "Backlog lead queued (unchanged): lead_id=%s company_id=%s reason=%s",
+                lead.id,
+                lead.company_id,
+                assignment_reason,
+            )
+            continue
+        db.add(
+            AutoAssignEvent(
+                lead_id=lead.id,
+                company_id=lead.company_id,
+                assigned_to=None,
+                assignment_mode="queued",
+                assignment_reason=assignment_reason,
+                note=note,
+            )
+        )
+        logger.info(
+            "Backlog lead queued: lead_id=%s company_id=%s reason=%s",
+            lead.id,
+            lead.company_id,
+            assignment_reason,
+        )
+        queued_count += 1
+    return queued_count
+
+
 def _send_assignment_webhook_todo(lead: Lead, rep: User | None):
     if not rep:
         return
@@ -265,7 +321,9 @@ def get_auto_assign_events(
 def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
     """Core backlog runner — callable internally (scheduler) or via HTTP endpoint."""
     now = _utcnow()
+    logger.info("Backlog run started: dry_run=%s now=%s", dry_run, now.isoformat())
     if _any_admin_available_now(db, now=now):
+        logger.info("Backlog run skipped: at least one admin is available now")
         return {
             "ok": True,
             "message": "Admins are available; backlog auto-assignment skipped.",
@@ -284,12 +342,14 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
         .scalar()
     )
     if not active_window_start:
+        logger.info("Backlog run skipped: no active admin unavailability window found")
         return {
             "ok": True,
             "message": "No active admin unavailability window found.",
             "dry_run": dry_run,
             "stats": {"queued_found": 0, "assigned": 0, "companies_touched": 0},
         }
+    logger.info("Backlog active window start: %s", active_window_start.isoformat())
 
     # Backlog scope is constrained to the active unavailability window.
     queued_leads = (
@@ -301,7 +361,9 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
         .order_by(Lead.created_at.asc())
         .all()
     )
+    logger.info("Backlog queued leads found in active window: %s", len(queued_leads))
     if not queued_leads:
+        logger.info("Backlog run skipped: no unassigned leads found in active window")
         return {
             "ok": True,
             "message": "No unassigned leads found in active admin unavailability window.",
@@ -309,13 +371,28 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             "stats": {"queued_found": 0, "assigned": 0, "companies_touched": 0},
         }
 
+    latest_events_by_lead = _latest_assignment_event_by_lead([lead.id for lead in queued_leads], db)
+
     allowed_rep_ids = _active_available_rep_ids(db, now=now)
+    logger.info("Backlog active reps mapped to current admin window: %s", len(allowed_rep_ids))
     if not allowed_rep_ids:
+        queued_count = _queue_backlog_leads(
+            queued_leads,
+            assignment_reason="active_window_no_mapped_rep",
+            note="Queued during active admin window because no reps are mapped to the current admin window",
+            latest_events_by_lead=latest_events_by_lead,
+            db=db,
+        )
+        db.commit()
+        logger.info(
+            "Backlog run skipped: no reps mapped as available in active admin windows; queued_events=%s",
+            queued_count,
+        )
         return {
             "ok": True,
             "message": "No reps mapped as available in active admin windows.",
             "dry_run": dry_run,
-            "stats": {"queued_found": len(queued_leads), "assigned": 0, "companies_touched": 0},
+            "stats": {"queued_found": len(queued_leads), "assigned": 0, "queued_events": queued_count, "companies_touched": 0},
         }
 
     by_company: dict[str, list[Lead]] = {}
@@ -324,20 +401,48 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
 
     assigned_count = 0
     touched_companies = 0
+    queued_count = 0
 
     for company_id, company_leads in by_company.items():
         active_reps = _active_reps_for_company(company_id, db, allowed_rep_ids=allowed_rep_ids, now=now)
         if not active_reps:
+            logger.info(
+                "Backlog company skipped: company_id=%s queued_leads=%s active_reps=0",
+                company_id,
+                len(company_leads),
+            )
+            queued_count += _queue_backlog_leads(
+                company_leads,
+                assignment_reason="active_window_no_active_rep",
+                note="Queued during active admin window because no company rep is currently active",
+                latest_events_by_lead=latest_events_by_lead,
+                db=db,
+            )
             continue
 
         touched_companies += 1
+        logger.info(
+            "Backlog company processing: company_id=%s queued_leads=%s active_reps=%s dry_run=%s",
+            company_id,
+            len(company_leads),
+            len(active_reps),
+            dry_run,
+        )
         rep_ids = [r.id for r in active_reps]
         start_idx = _next_round_robin_start_index(company_id, rep_ids, db)
 
         for idx, lead in enumerate(company_leads):
             rep = active_reps[(start_idx + idx) % len(active_reps)]
+            logger.info(
+                "Backlog lead assigned: lead_id=%s company_id=%s rep_id=%s dry_run=%s",
+                lead.id,
+                lead.company_id,
+                rep.id,
+                dry_run,
+            )
             if not dry_run:
                 lead.assigned_to = rep.id
+                _send_assignment_webhook_todo(lead, rep)
             db.add(
                 AutoAssignEvent(
                     lead_id=lead.id,
@@ -348,11 +453,18 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
                     note="DRY RUN: would assign from queued backlog" if dry_run else "Assigned from queued backlog by scheduler run",
                 )
             )
-            if not dry_run:
-                _send_assignment_webhook_todo(lead, rep)
             assigned_count += 1
 
     db.commit()
+
+    logger.info(
+        "Backlog run finished: dry_run=%s queued_found=%s assigned=%s queued_events=%s companies_touched=%s",
+        dry_run,
+        len(queued_leads),
+        assigned_count,
+        queued_count,
+        touched_companies,
+    )
 
     return {
         "ok": True,
@@ -361,6 +473,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
         "stats": {
             "queued_found": len(queued_leads),
             "assigned": assigned_count,
+            "queued_events": queued_count,
             "companies_touched": touched_companies,
             "window_start_at": active_window_start.isoformat() if active_window_start else "",
         },
