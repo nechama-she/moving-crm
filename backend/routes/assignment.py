@@ -505,7 +505,6 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
                     latest_event
                     and latest_event.assignment_mode == "auto"
                     and latest_event.assignment_reason == dry_run_reason
-                    and latest_event.assigned_to == rep.id
                 ):
                     logger.info(
                         "Backlog lead dry-run already recorded (unchanged): lead_id=%s rep_id=%s",
