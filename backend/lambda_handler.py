@@ -33,29 +33,19 @@ def handler(event, context):
         )
         return _mangum_handler(event, context)
 
-    # EventBridge invokes Lambda directly (no routeKey/rawPath)
-    if source.startswith("aws.events") or source.startswith("aws.scheduler"):
-        logger.info(
-            "EventBridge invoke: source=%s resources=%s request_id=%s",
-            source,
-            event.get("resources") or [],
-            getattr(context, "aws_request_id", ""),
-        )
-        logger.info("Scheduler trigger detected — running backlog assignment")
-        db = SessionLocal()
-        try:
-            result = _run_backlog_core(db, dry_run=False)
-            logger.info("Scheduler backlog result: %s", result)
-        except Exception as exc:
-            logger.error("Scheduler backlog run failed: %s", exc)
-        finally:
-            db.close()
-        return {"ok": True}
-
-    logger.warning(
-        "Unknown non-HTTP invoke; forwarding to Mangum: source=%s keys=%s request_id=%s",
+    logger.info(
+        "Non-HTTP invoke treated as scheduler: source=%s keys=%s request_id=%s",
         source,
         sorted(list(event.keys())),
         getattr(context, "aws_request_id", ""),
     )
-    return _mangum_handler(event, context)
+    logger.info("Scheduler trigger detected — running backlog assignment")
+    db = SessionLocal()
+    try:
+        result = _run_backlog_core(db, dry_run=False)
+        logger.info("Scheduler backlog result: %s", result)
+    except Exception as exc:
+        logger.error("Scheduler backlog run failed: %s", exc)
+    finally:
+        db.close()
+    return {"ok": True}
