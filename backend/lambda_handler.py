@@ -4,6 +4,10 @@ from main import app
 from database import SessionLocal
 from routes.assignment import _run_backlog_core
 
+# Force INFO logs in Lambda so scheduler diagnostics are visible in CloudWatch.
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+logging.getLogger("moving-crm").setLevel(logging.INFO)
 logger = logging.getLogger("moving-crm")
 _mangum_handler = Mangum(app, lifespan="off")
 
@@ -39,13 +43,24 @@ def handler(event, context):
         sorted(list(event.keys())),
         getattr(context, "aws_request_id", ""),
     )
+    print(
+        "[scheduler] invoke source=%s keys=%s request_id=%s"
+        % (
+            source,
+            sorted(list(event.keys())),
+            getattr(context, "aws_request_id", ""),
+        )
+    )
     logger.info("Scheduler trigger detected — running backlog assignment")
     db = SessionLocal()
     try:
         result = _run_backlog_core(db, dry_run=False)
         logger.info("Scheduler backlog result: %s", result)
+        print("[scheduler] backlog result=%s" % result)
     except Exception as exc:
-        logger.error("Scheduler backlog run failed: %s", exc)
+        logger.exception("Scheduler backlog run failed")
+        print("[scheduler] backlog failed: %s" % exc)
+        raise
     finally:
         db.close()
     return {"ok": True}
