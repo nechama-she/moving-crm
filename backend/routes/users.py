@@ -155,6 +155,10 @@ def delete_user(
     # Leave historical leads intact but clear current assignee before deleting rep.
     db.query(Lead).filter(Lead.assigned_to == user.id).update({Lead.assigned_to: None}, synchronize_session=False)
 
+    # Remove rep-linked availability rows first to satisfy FK constraints.
+    db.query(AdminUnavailabilityRep).filter(AdminUnavailabilityRep.rep_user_id == user.id).delete(synchronize_session=False)
+    db.query(RepAvailabilityWindow).filter(RepAvailabilityWindow.rep_user_id == user.id).delete(synchronize_session=False)
+
     db.query(UserCompany).filter(UserCompany.user_id == user.id).delete(synchronize_session=False)
     db.delete(user)
     db.commit()

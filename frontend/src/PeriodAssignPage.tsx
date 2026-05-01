@@ -173,8 +173,14 @@ export default function PeriodAssignPage() {
   function removeRepSlot(repId: string, slotIndex: number) {
     setRepSlotsByRep((prev) => {
       const existing = prev[repId] || [];
+      if (existing.length <= 1) {
+        const nextState = { ...prev };
+        delete nextState[repId];
+        setSelectedRepIds((ids) => ids.filter((id) => id !== repId));
+        return nextState;
+      }
       const next = existing.filter((_, idx) => idx !== slotIndex);
-      return { ...prev, [repId]: next.length ? next : [defaultSlot(unavailableStart, unavailableEnd)] };
+      return { ...prev, [repId]: next };
     });
   }
 
@@ -199,8 +205,14 @@ export default function PeriodAssignPage() {
   function removeEditRepSlot(repId: string, slotIndex: number) {
     setEditRepSlotsByRep((prev) => {
       const existing = prev[repId] || [];
+      if (existing.length <= 1) {
+        const nextState = { ...prev };
+        delete nextState[repId];
+        setEditSelectedRepIds((ids) => ids.filter((id) => id !== repId));
+        return nextState;
+      }
       const next = existing.filter((_, idx) => idx !== slotIndex);
-      return { ...prev, [repId]: next.length ? next : [defaultSlot(editStart, editEnd)] };
+      return { ...prev, [repId]: next };
     });
   }
 
@@ -540,10 +552,9 @@ export default function PeriodAssignPage() {
                             <button
                               type="button"
                               onClick={() => removeRepSlot(rep.id, slotIndex)}
-                              disabled={slots.length <= 1}
                               style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "6px 10px", fontSize: 12 }}
                             >
-                              Remove Slot
+                              {slots.length <= 1 ? "Remove Rep" : "Remove Slot"}
                             </button>
                           </div>
                         </div>
@@ -726,10 +737,9 @@ export default function PeriodAssignPage() {
                                       <button
                                         type="button"
                                         onClick={() => removeEditRepSlot(rep.id, slotIndex)}
-                                        disabled={slots.length <= 1}
                                         style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "6px 10px", fontSize: 12 }}
                                       >
-                                        Remove Slot
+                                        {slots.length <= 1 ? "Remove Rep" : "Remove Slot"}
                                       </button>
                                     </div>
                                   </div>
