@@ -82,7 +82,7 @@ def handler(event, context):
     logger.info("Scheduler trigger detected — running backlog assignment")
     db = SessionLocal()
     try:
-        result = _run_backlog_core(db, dry_run=False)
+        result = _run_backlog_core(db, dry_run=True)
         logger.info("Scheduler backlog result: %s", result)
         print("[scheduler] backlog result=%s" % result)
     except Exception as exc:
