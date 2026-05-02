@@ -366,14 +366,8 @@ def get_auto_assign_events(
             item["rep_name"] = rep_map.get(row.assigned_to, "") if row.assigned_to else ""
             items.append(item)
 
-        queued_count = db.query(AutoAssignEvent).filter(
-            AutoAssignEvent.company_id.in_(company_ids),
-            AutoAssignEvent.assignment_mode == "queued",
-        ).count()
-        auto_count = db.query(AutoAssignEvent).filter(
-            AutoAssignEvent.company_id.in_(company_ids),
-            AutoAssignEvent.assignment_mode == "auto",
-        ).count()
+        queued_count = query.filter(AutoAssignEvent.assignment_mode == "queued").count()
+        auto_count = query.filter(AutoAssignEvent.assignment_mode == "auto").count()
 
         return {
             "items": items,
