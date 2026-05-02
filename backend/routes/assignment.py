@@ -279,7 +279,6 @@ def _clear_queued_events_for_leads(lead_ids: list[str], db: Session) -> int:
             .filter(
                 AutoAssignEvent.lead_id.in_(lead_ids),
                 AutoAssignEvent.assignment_mode == "queued",
-                AutoAssignEvent.assignment_reason.in_(QUEUE_REASONS_MANAGED_BY_BACKLOG),
             )
             .all()
         )
