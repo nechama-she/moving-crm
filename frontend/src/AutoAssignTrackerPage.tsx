@@ -73,6 +73,10 @@ export default function AutoAssignTrackerPage() {
   const [companyIdFilter, setCompanyIdFilter] = useState("");
   const [repIdFilter, setRepIdFilter] = useState("");
   const [modeFilter, setModeFilter] = useState<AssignmentMode>("");
+  const [runMode, setRunMode] = useState<"dry" | "live">("dry");
+  const [runBusy, setRunBusy] = useState(false);
+  const [runMessage, setRunMessage] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   const todayStr = (() => { const d = new Date(); const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, "0"); const day = String(d.getDate()).padStart(2, "0"); return `${y}-${m}-${day}`; })();
   const [startDateFilter, setStartDateFilter] = useState(todayStr);
   const [endDateFilter, setEndDateFilter] = useState(todayStr);
@@ -125,7 +129,27 @@ export default function AutoAssignTrackerPage() {
     return () => {
       cancelled = true;
     };
-  }, [token, companyIdFilter, repIdFilter, modeFilter, startDateFilter, endDateFilter]);
+  }, [token, companyIdFilter, repIdFilter, modeFilter, startDateFilter, endDateFilter, reloadKey]);
+
+  async function runBacklogNow() {
+    setRunBusy(true);
+    setRunMessage("");
+    try {
+      const dryRun = runMode === "dry";
+      const res = await fetch(`${API_BASE}/api/auto-assign-run-ui?dry_run=${dryRun ? "true" : "false"}`, {
+        method: "POST",
+        headers: authHeaders(token),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setRunMessage(data?.message || (dryRun ? "Dry-run completed" : "Live run completed"));
+      setReloadKey((v) => v + 1);
+    } catch (err: unknown) {
+      setRunMessage(err instanceof Error ? `Run failed: ${err.message}` : "Run failed");
+    } finally {
+      setRunBusy(false);
+    }
+  }
 
   const disasterRate = useMemo(() => {
     if (!stats.total) return 0;
@@ -143,6 +167,60 @@ export default function AutoAssignTrackerPage() {
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
         Track every assignment decision and quickly spot queued lead spikes.
       </p>
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+        <span style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Run Mode</span>
+        <button
+          type="button"
+          onClick={() => setRunMode("dry")}
+          style={{
+            border: runMode === "dry" ? "1px solid #1d4ed8" : "1px solid #cbd5e1",
+            background: runMode === "dry" ? "#eff6ff" : "#fff",
+            color: "#1e3a8a",
+            borderRadius: 6,
+            padding: "6px 10px",
+            cursor: "pointer",
+            fontWeight: 700,
+          }}
+        >
+          Dry Run
+        </button>
+        <button
+          type="button"
+          onClick={() => setRunMode("live")}
+          style={{
+            border: runMode === "live" ? "1px solid #b91c1c" : "1px solid #cbd5e1",
+            background: runMode === "live" ? "#fff1f2" : "#fff",
+            color: "#7f1d1d",
+            borderRadius: 6,
+            padding: "6px 10px",
+            cursor: "pointer",
+            fontWeight: 700,
+          }}
+        >
+          Live
+        </button>
+        <button
+          type="button"
+          onClick={() => void runBacklogNow()}
+          disabled={runBusy}
+          style={{
+            border: "1px solid #0f766e",
+            background: runBusy ? "#d1fae5" : "#ecfeff",
+            color: "#134e4a",
+            borderRadius: 6,
+            padding: "6px 12px",
+            cursor: runBusy ? "default" : "pointer",
+            fontWeight: 700,
+          }}
+        >
+          {runBusy ? "Running..." : `Run Now (${runMode === "dry" ? "Dry" : "Live"})`}
+        </button>
+        {runMode === "live" ? (
+          <span style={{ fontSize: 12, color: "#b91c1c", fontWeight: 700 }}>Live mode updates assignments and SmartMoving.</span>
+        ) : null}
+        {runMessage ? <span style={{ fontSize: 12, color: "#334155" }}>{runMessage}</span> : null}
+      </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 14 }}>
         <button type="button" style={kpiButton(kpiCard, activeKpiButton("all"))} onClick={() => setModeFilter("")}>

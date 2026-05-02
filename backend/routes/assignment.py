@@ -593,3 +593,14 @@ def run_auto_assign_backlog(
         raise HTTPException(status_code=401, detail="Invalid API secret")
 
     return _run_backlog_core(db, dry_run=dry_run)
+
+
+@router.post("/auto-assign-run-ui")
+def run_auto_assign_backlog_ui(
+    dry_run: bool = Query(default=True),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return _run_backlog_core(db, dry_run=dry_run)
