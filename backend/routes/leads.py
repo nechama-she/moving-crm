@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from config import get_config
 from database import get_db
+from libs.smartmoving.client import update_opportunity_salesperson
 from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent
 
 logger = logging.getLogger("moving-crm")
@@ -18,6 +19,27 @@ router = APIRouter(prefix="/api", tags=["Leads"])
 
 # Statuses that dispatch can see (booked and beyond)
 DISPATCH_STATUSES = {"booked", "scheduled", "completed"}
+
+
+def _default_sync_result(error: str = "not_attempted") -> dict:
+    return {"ok": False, "status": "n/a", "body": "(empty)", "error": error}
+
+
+def _assignment_note(mode: str, sync_result: dict | None = None) -> str:
+    result = sync_result or _default_sync_result()
+    if mode == "auto":
+        return (
+            "Auto assigned while admins unavailable; "
+            f"SmartMoving sync ok (status={result.get('status', 'n/a')} body={result.get('body', '(empty)')})"
+        )
+    if mode == "queued":
+        return "Queued because no active rep slot"
+    if mode == "error":
+        return (
+            "Failed to assign lead; smartmoving sync failed "
+            f"(status={result.get('status', 'n/a')} error={result.get('error', 'unknown')} body={result.get('body', '(empty)')})"
+        )
+    return "Admins available; no auto assignment"
 
 
 def _utcnow() -> datetime:
@@ -178,6 +200,25 @@ def _send_assignment_webhook_todo(lead: Lead, rep: User | None):
         return
     # TODO: Call external assignment webhook/API here to mirror CRM assignment downstream.
     logger.info("TODO assignment webhook: lead=%s rep=%s(%s)", lead.id, rep.id, rep.name)
+
+
+def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None) -> dict:
+    if not rep:
+        return _default_sync_result("no_rep")
+    if not lead.smartmoving_id:
+        return _default_sync_result("lead_missing_smartmoving_id")
+    if not rep.smartmoving_rep_id:
+        return _default_sync_result("rep_missing_smartmoving_rep_id")
+
+    result = update_opportunity_salesperson(lead.smartmoving_id, rep.smartmoving_rep_id)
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "error": result.get("error", "unknown"),
+            "status": result.get("status", "n/a"),
+            "body": result.get("body", "(empty)"),
+        }
+    return {"ok": True, "status": result.get("status", "n/a"), "body": result.get("body", "(empty)")}
 
 
 def _get_user_company_ids(user: User, db: Session) -> list[str]:
@@ -443,10 +484,54 @@ def create_lead(
     db.commit()
     db.refresh(lead)
     logger.info("Created lead: %s (%s)", lead.full_name, lead.id)
-    if assigned_to_user_id:
-        logger.info("Auto-assigned lead %s to rep %s (%s)", lead.id, assigned_to_user_id, assignment_reason)
-        assigned_rep = db.query(User).filter(User.id == assigned_to_user_id).first()
-        _send_assignment_webhook_todo(lead, assigned_rep)
+    
+    # Debug: log auto-assign decision
+    any_admin_available = _any_admin_available_now(db)
+    logger.info("Live lead auto-assign check: lead_id=%s any_admin_available=%s", lead.id, any_admin_available)
+    
+    assigned_rep = db.query(User).filter(User.id == assigned_to_user_id).first() if assigned_to_user_id else None
+    sync_result = _default_sync_result()
+    
+    logger.info(
+        "Live lead assignment state before sync: lead_id=%s mode=%s assigned_to_user_id=%s assigned_rep=%s",
+        lead.id,
+        assignment_mode,
+        assigned_to_user_id,
+        f"{assigned_rep.name}({assigned_rep.id})" if assigned_rep else None,
+    )
+    
+    if assignment_mode == "auto":
+        if not assigned_rep:
+            assignment_mode = "error"
+            lead.assigned_to = None
+            db.commit()
+            db.refresh(lead)
+            sync_result = _default_sync_result("rep_not_found")
+            logger.warning("Lead %s assignment failed: rep not found for id=%s", lead.id, assigned_to_user_id)
+        else:
+            sync_result = _sync_assignment_to_smartmoving(lead, assigned_rep)
+            logger.info(
+                "Live lead SmartMoving sync result: lead_id=%s rep_id=%s ok=%s error=%s status=%s",
+                lead.id,
+                assigned_rep.id if assigned_rep else None,
+                sync_result.get("ok"),
+                sync_result.get("error"),
+                sync_result.get("status"),
+            )
+            if not sync_result.get("ok"):
+                assignment_mode = "error"
+                lead.assigned_to = None
+                db.commit()
+                db.refresh(lead)
+                logger.warning(
+                    "Lead %s assignment failed after rep selection: rep_id=%s error=%s",
+                    lead.id,
+                    assigned_rep.id,
+                    sync_result.get("error", "unknown"),
+                )
+            else:
+                logger.info("Auto-assigned lead %s to rep %s (%s)", lead.id, assigned_to_user_id, assignment_reason)
+                _send_assignment_webhook_todo(lead, assigned_rep)
 
     # Send welcome SMS if phone and smartmoving_id are present
     sms_result = None
@@ -472,6 +557,16 @@ def create_lead(
         sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
         logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
 
+    # Build assignment note with SmartMoving sync details
+    assign_note = _assignment_note(assignment_mode, sync_result)
+    logger.info(
+        "Lead auto-assign note: lead_id=%s mode=%s note=%s sync_result=%s",
+        lead.id,
+        assignment_mode,
+        assign_note,
+        sync_result,
+    )
+
     try:
         assign_event = AutoAssignEvent(
             lead_id=lead.id,
@@ -479,11 +574,7 @@ def create_lead(
             assigned_to=lead.assigned_to,
             assignment_mode=assignment_mode,
             assignment_reason=assignment_reason,
-            note=(
-                "Auto assigned while admins unavailable"
-                if assignment_mode == "auto"
-                else "Queued because no active rep slot" if assignment_mode == "queued" else "Admins available; no auto assignment"
-            ),
+            note=assign_note,
         )
         db.add(assign_event)
 
@@ -515,4 +606,6 @@ def create_lead(
         "assigned_to": lead.assigned_to or "",
         "assignment_mode": assignment_mode,
         "assignment_reason": assignment_reason,
+        "assignment_note": assign_note,
+        "assignment_sync_result": sync_result,
     }
