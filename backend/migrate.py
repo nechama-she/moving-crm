@@ -92,6 +92,13 @@ def migrate(drop_first: bool = False):
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_auto_assign_events_assignment_reason ON auto_assign_events (assignment_reason)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_auto_assign_events_created_at ON auto_assign_events (created_at)"))
         conn.execute(text("ALTER TABLE auto_assign_events ALTER COLUMN created_at SET DEFAULT NOW()"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key VARCHAR(120) PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(30) NOT NULL DEFAULT ''"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS smartmoving_rep_id VARCHAR(100)"))

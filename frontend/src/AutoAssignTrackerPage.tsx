@@ -99,6 +99,37 @@ export default function AutoAssignTrackerPage() {
 
   useEffect(() => {
     let cancelled = false;
+    async function loadRunMode() {
+      try {
+        const res = await fetch(`${API_BASE}/api/auto-assign-mode`, { headers: authHeaders(token) });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setRunMode(data?.mode === "live" ? "live" : "dry");
+      } catch {
+        // Keep default dry mode if mode settings endpoint is unavailable.
+      }
+    }
+    void loadRunMode();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  async function setRunModePersisted(next: "dry" | "live") {
+    setRunMode(next);
+    try {
+      const res = await fetch(`${API_BASE}/api/auto-assign-mode?mode=${next}`, {
+        method: "PUT",
+        headers: authHeaders(token),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      setRunMessage("Could not save mode on server.");
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
     async function load() {
       setLoading(true);
       setError("");
@@ -172,7 +203,7 @@ export default function AutoAssignTrackerPage() {
         <span style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Run Mode</span>
         <button
           type="button"
-          onClick={() => setRunMode("dry")}
+          onClick={() => void setRunModePersisted("dry")}
           style={{
             border: runMode === "dry" ? "1px solid #1d4ed8" : "1px solid #cbd5e1",
             background: runMode === "dry" ? "#eff6ff" : "#fff",
@@ -187,7 +218,7 @@ export default function AutoAssignTrackerPage() {
         </button>
         <button
           type="button"
-          onClick={() => setRunMode("live")}
+          onClick={() => void setRunModePersisted("live")}
           style={{
             border: runMode === "live" ? "1px solid #b91c1c" : "1px solid #cbd5e1",
             background: runMode === "live" ? "#fff1f2" : "#fff",
@@ -216,9 +247,11 @@ export default function AutoAssignTrackerPage() {
         >
           {runBusy ? "Running..." : `Run Now (${runMode === "dry" ? "Dry" : "Live"})`}
         </button>
-        {runMode === "live" ? (
-          <span style={{ fontSize: 12, color: "#b91c1c", fontWeight: 700 }}>Live mode updates assignments and SmartMoving.</span>
-        ) : null}
+        <span style={{ fontSize: 12, color: runMode === "live" ? "#b91c1c" : "#0369a1", fontWeight: 700 }}>
+          {runMode === "live"
+            ? "Live mode updates assignments and SmartMoving."
+            : "Dry mode is simulation only; no assignment or SmartMoving updates are written."}
+        </span>
         {runMessage ? <span style={{ fontSize: 12, color: "#334155" }}>{runMessage}</span> : null}
       </div>
 

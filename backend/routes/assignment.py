@@ -10,10 +10,11 @@ from auth import get_current_user
 from config import get_config
 from database import get_db
 from libs.smartmoving.client import update_opportunity_salesperson
-from models import AutoAssignEvent, Company, Lead, User, UserCompany, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow
+from models import AutoAssignEvent, Company, Lead, User, UserCompany, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AppSetting
 
 logger = logging.getLogger("moving-crm")
 DRY_RUN_BACKLOG_REASON = "dry_run_queued_backlog_round_robin"
+AUTO_ASSIGN_MODE_SETTING_KEY = "auto_assign_default_mode"
 QUEUE_REASONS_MANAGED_BY_BACKLOG = {
     "all_admins_unavailable_no_available_reps",
     "all_admins_unavailable_no_available_rep_for_the_company",
@@ -35,6 +36,23 @@ def _parse_iso_datetime(value: str) -> datetime:
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _get_default_run_mode(db: Session) -> str:
+    row = db.query(AppSetting).filter(AppSetting.key == AUTO_ASSIGN_MODE_SETTING_KEY).first()
+    if not row or not row.value:
+        return "dry"
+    value = row.value.strip().lower()
+    return "live" if value == "live" else "dry"
+
+
+def _set_default_run_mode(mode: str, db: Session) -> None:
+    row = db.query(AppSetting).filter(AppSetting.key == AUTO_ASSIGN_MODE_SETTING_KEY).first()
+    if row:
+        row.value = mode
+    else:
+        db.add(AppSetting(key=AUTO_ASSIGN_MODE_SETTING_KEY, value=mode))
+    db.commit()
 
 
 def _is_admin_unavailable_now(admin_user_id: str, db: Session, now: datetime | None = None) -> bool:
@@ -595,12 +613,41 @@ def run_auto_assign_backlog(
     return _run_backlog_core(db, dry_run=dry_run)
 
 
-@router.post("/auto-assign-run-ui")
-def run_auto_assign_backlog_ui(
-    dry_run: bool = Query(default=True),
+@router.get("/auto-assign-mode")
+def get_auto_assign_mode(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+    mode = _get_default_run_mode(db)
+    return {"mode": mode, "dry_run": mode == "dry"}
+
+
+@router.put("/auto-assign-mode")
+def set_auto_assign_mode(
+    mode: str = Query(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    normalized = mode.strip().lower()
+    if normalized not in {"dry", "live"}:
+        raise HTTPException(status_code=400, detail="mode must be 'dry' or 'live'")
+    _set_default_run_mode(normalized, db)
+    return {"ok": True, "mode": normalized, "dry_run": normalized == "dry"}
+
+
+@router.post("/auto-assign-run-ui")
+def run_auto_assign_backlog_ui(
+    dry_run: bool | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if dry_run is None:
+        mode = _get_default_run_mode(db)
+        dry_run = mode == "dry"
     return _run_backlog_core(db, dry_run=dry_run)

@@ -349,3 +349,21 @@ class AutoAssignEvent(Base):
             "note": self.note or "",
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }
+
+
+# ---------------------------------------------------------------------------
+# App Settings (simple key/value runtime settings)
+# ---------------------------------------------------------------------------
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key = Column(String(120), primary_key=True)
+    value = Column(Text, nullable=False, default="")
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    def to_dict(self):
+        return {
+            "key": self.key,
+            "value": self.value or "",
+            "updated_at": self.updated_at.isoformat() if self.updated_at else "",
+        }
