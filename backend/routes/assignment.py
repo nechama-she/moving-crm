@@ -309,7 +309,12 @@ def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None) -> dict:
             rep.id,
             result.get("error", "unknown"),
         )
-        return {"ok": False, "error": result.get("error", "unknown")}
+        return {
+            "ok": False,
+            "error": result.get("error", "unknown"),
+            "status": result.get("status", "n/a"),
+            "body": result.get("body", "(empty)"),
+        }
     return {"ok": True, "status": result.get("status", "n/a"), "body": result.get("body", "(empty)")}
 
 
@@ -617,7 +622,10 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             if not dry_run:
                 sync_result = _sync_assignment_to_smartmoving(lead, rep)
                 if not sync_result.get("ok"):
-                    failure_note = "Failed to assign lead; lead remains unassigned"
+                    failure_note = (
+                        "Failed to assign lead; smartmoving sync failed "
+                        f"(status={sync_result.get('status', 'n/a')} error={sync_result.get('error', 'unknown')} body={sync_result.get('body', '(empty)')})"
+                    )
                     logger.warning(
                         "Backlog lead assignment failed: lead_id=%s company_id=%s rep_id=%s error=%s",
                         lead.id,

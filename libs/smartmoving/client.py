@@ -140,7 +140,7 @@ def update_opportunity_salesperson(opportunity_id: str, salesperson_id: str) -> 
         status = getattr(r, "status_code", None) if r is not None else None
         body = getattr(r, "text", str(e)) if r is not None else str(e)
         logger.error("SmartMoving update_opportunity_salesperson error: %s %s", status, body[:300])
-        return {"ok": False, "error": f"HTTP {status}: {body[:300]}"}
+        return {"ok": False, "status": status, "body": body[:300], "error": f"HTTP {status}: {body[:300]}"}
     except Exception as e:
         logger.error("SmartMoving update_opportunity_salesperson exception: %r", e)
         return {"ok": False, "error": str(e)}
