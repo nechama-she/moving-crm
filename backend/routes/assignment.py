@@ -267,15 +267,15 @@ def _clear_queued_events_for_leads(lead_ids: list[str], db: Session) -> int:
     return len(queued_ids)
 
 
-def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None):
+def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None) -> dict:
     if not rep:
-        return
+        return {"ok": False, "error": "no_rep"}
     if not lead.smartmoving_id:
         logger.info("Assignment sync skipped: lead %s has no smartmoving_id", lead.id)
-        return
+        return {"ok": False, "error": "lead_missing_smartmoving_id"}
     if not rep.smartmoving_rep_id:
         logger.info("Assignment sync skipped: rep %s has no smartmoving_rep_id", rep.id)
-        return
+        return {"ok": False, "error": "rep_missing_smartmoving_rep_id"}
     result = update_opportunity_salesperson(lead.smartmoving_id, rep.smartmoving_rep_id)
     if not result.get("ok"):
         logger.error(
@@ -285,6 +285,8 @@ def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None):
             rep.id,
             result.get("error", "unknown"),
         )
+        return {"ok": False, "error": result.get("error", "unknown")}
+    return {"ok": True}
 
 
 @router.get("/auto-assign-filters")
@@ -558,8 +560,29 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
                 dry_run,
             )
             if not dry_run:
+                sync_result = _sync_assignment_to_smartmoving(lead, rep)
+                if not sync_result.get("ok"):
+                    failure_note = f"SmartMoving sync failed; lead not assigned locally: {sync_result.get('error', 'unknown')}"
+                    logger.warning(
+                        "Backlog lead left unassigned due to SmartMoving failure: lead_id=%s company_id=%s rep_id=%s error=%s",
+                        lead.id,
+                        lead.company_id,
+                        rep.id,
+                        sync_result.get("error", "unknown"),
+                    )
+                    failed_event = AutoAssignEvent(
+                        lead_id=lead.id,
+                        company_id=lead.company_id,
+                        assigned_to=rep.id,
+                        assignment_mode="queued",
+                        assignment_reason="queued_backlog_round_robin",
+                        note=failure_note,
+                    )
+                    db.add(failed_event)
+                    latest_events_by_lead[lead.id] = failed_event
+                    queued_count += 1
+                    continue
                 lead.assigned_to = rep.id
-                _sync_assignment_to_smartmoving(lead, rep)
             db.add(
                 AutoAssignEvent(
                     lead_id=lead.id,
