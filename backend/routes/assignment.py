@@ -15,8 +15,8 @@ from models import AutoAssignEvent, Company, Lead, User, UserCompany, AdminUnava
 logger = logging.getLogger("moving-crm")
 DRY_RUN_BACKLOG_REASON = "dry_run_queued_backlog_round_robin"
 QUEUE_REASONS_MANAGED_BY_BACKLOG = {
-    "active_window_no_mapped_rep",
-    "active_window_no_active_rep",
+    "all_admins_unavailable_no_available_reps",
+    "all_admins_unavailable_no_available_rep_for_the_company",
 }
 
 router = APIRouter(prefix="/api", tags=["Assignment"])
@@ -175,24 +175,25 @@ def _queue_backlog_leads(
                 lead.company_id,
             )
             continue
-        if latest_event and latest_event.assignment_mode == "queued" and latest_event.assignment_reason == assignment_reason:
+        if latest_event and latest_event.assignment_mode == "queued" and latest_event.assignment_reason in QUEUE_REASONS_MANAGED_BY_BACKLOG:
             logger.info(
-                "Backlog lead queued (unchanged): lead_id=%s company_id=%s reason=%s",
+                "Backlog lead queued (unchanged): lead_id=%s company_id=%s reason=%s existing_reason=%s",
                 lead.id,
                 lead.company_id,
                 assignment_reason,
+                latest_event.assignment_reason,
             )
             continue
-        db.add(
-            AutoAssignEvent(
-                lead_id=lead.id,
-                company_id=lead.company_id,
-                assigned_to=None,
-                assignment_mode="queued",
-                assignment_reason=assignment_reason,
-                note=note,
-            )
+        new_event = AutoAssignEvent(
+            lead_id=lead.id,
+            company_id=lead.company_id,
+            assigned_to=None,
+            assignment_mode="queued",
+            assignment_reason=assignment_reason,
+            note=note,
         )
+        db.add(new_event)
+        latest_events_by_lead[lead.id] = new_event
         logger.info(
             "Backlog lead queued: lead_id=%s company_id=%s reason=%s",
             lead.id,
@@ -446,24 +447,26 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
 
     latest_events_by_lead = _latest_assignment_event_by_lead([lead.id for lead in queued_leads], db)
 
-    allowed_rep_ids = _active_available_rep_ids(db, now=now)
-    logger.info("Backlog active reps mapped to current admin window: %s", len(allowed_rep_ids))
-    if not allowed_rep_ids:
+    window_rep_ids = _active_available_rep_ids(db, now=now)
+    logger.info("Backlog reps mapped to current admin window: %s", len(window_rep_ids))
+    globally_available_rep_ids = _filter_by_rep_availability(list(window_rep_ids), db, now=now)
+    logger.info("Backlog reps currently available in admin window: %s", len(globally_available_rep_ids))
+    if not globally_available_rep_ids:
         queued_count = _queue_backlog_leads(
             queued_leads,
-            assignment_reason="active_window_no_mapped_rep",
-            note="Queued during active admin window because no reps are mapped to the current admin window",
+            assignment_reason="all_admins_unavailable_no_available_reps",
+            note="Queued because no reps are available during the admin unavailability window",
             latest_events_by_lead=latest_events_by_lead,
             db=db,
         )
         db.commit()
         logger.info(
-            "Backlog run skipped: no reps mapped as available in active admin windows; queued_events=%s",
+            "Backlog run skipped: no reps currently available in active admin windows; queued_events=%s",
             queued_count,
         )
         return {
             "ok": True,
-            "message": "No reps mapped as available in active admin windows.",
+            "message": "No reps currently available in active admin windows.",
             "dry_run": dry_run,
             "stats": {"queued_found": len(queued_leads), "assigned": 0, "queued_events": queued_count, "companies_touched": 0},
         }
@@ -477,7 +480,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
     queued_count = 0
 
     for company_id, company_leads in by_company.items():
-        active_reps = _active_reps_for_company(company_id, db, allowed_rep_ids=allowed_rep_ids, now=now)
+        active_reps = _active_reps_for_company(company_id, db, allowed_rep_ids=globally_available_rep_ids, now=now)
         if not active_reps:
             logger.info(
                 "Backlog company skipped: company_id=%s queued_leads=%s active_reps=0",
@@ -486,8 +489,8 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             )
             queued_count += _queue_backlog_leads(
                 company_leads,
-                assignment_reason="active_window_no_active_rep",
-                note="Queued during active admin window because no company rep is currently active",
+                assignment_reason="all_admins_unavailable_no_available_rep_for_the_company",
+                note="Queued because no rep for this company has an active availability slot during the admin unavailability window",
                 latest_events_by_lead=latest_events_by_lead,
                 db=db,
             )
