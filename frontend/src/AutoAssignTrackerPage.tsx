@@ -45,6 +45,16 @@ function formatDate(value: string): string {
   return d.toLocaleString();
 }
 
+function localBoundaryIso(dateOnly: string, endOfDay = false): string {
+  const clock = endOfDay ? "23:59:59" : "00:00:00";
+  const d = new Date(`${dateOnly}T${clock}`);
+  const tzMinutes = -d.getTimezoneOffset();
+  const sign = tzMinutes >= 0 ? "+" : "-";
+  const hours = String(Math.floor(Math.abs(tzMinutes) / 60)).padStart(2, "0");
+  const minutes = String(Math.abs(tzMinutes) % 60).padStart(2, "0");
+  return `${dateOnly}T${clock}${sign}${hours}:${minutes}`;
+}
+
 function modeBadge(mode: AssignmentMode): React.CSSProperties {
   if (mode === "auto") return { ...badgeBase, background: "#d1fae5", color: "#065f46", border: "1px solid #a7f3d0" };
   if (mode === "queued") return { ...badgeBase, background: "#fef9c3", color: "#854d0e", border: "1px solid #fde68a" };
@@ -93,8 +103,8 @@ export default function AutoAssignTrackerPage() {
         if (companyIdFilter) params.set("company_id", companyIdFilter);
         if (repIdFilter) params.set("rep_user_id", repIdFilter);
         if (modeFilter) params.set("assignment_mode", modeFilter);
-        if (startDateFilter) params.set("start_at", `${startDateFilter}T00:00:00`);
-        if (endDateFilter) params.set("end_at", `${endDateFilter}T23:59:59`);
+        if (startDateFilter) params.set("start_at", localBoundaryIso(startDateFilter, false));
+        if (endDateFilter) params.set("end_at", localBoundaryIso(endDateFilter, true));
 
         const res = await fetch(`${API_BASE}/api/auto-assign-events?${params.toString()}`, {
           headers: authHeaders(token),
