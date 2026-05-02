@@ -63,7 +63,7 @@ export default function AutoAssignTrackerPage() {
   const [companyIdFilter, setCompanyIdFilter] = useState("");
   const [repIdFilter, setRepIdFilter] = useState("");
   const [modeFilter, setModeFilter] = useState<AssignmentMode>("");
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = (() => { const d = new Date(); const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, "0"); const day = String(d.getDate()).padStart(2, "0"); return `${y}-${m}-${day}`; })();
   const [startDateFilter, setStartDateFilter] = useState(todayStr);
   const [endDateFilter, setEndDateFilter] = useState(todayStr);
 

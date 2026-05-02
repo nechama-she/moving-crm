@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from config import get_config
 from database import get_db
+from libs.smartmoving.client import update_opportunity_salesperson
 from models import AutoAssignEvent, Company, Lead, User, UserCompany, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow
 
 logger = logging.getLogger("moving-crm")
@@ -247,11 +248,24 @@ def _clear_queued_events_for_leads(lead_ids: list[str], db: Session) -> int:
     return len(queued_ids)
 
 
-def _send_assignment_webhook_todo(lead: Lead, rep: User | None):
+def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None):
     if not rep:
         return
-    # TODO: Call external assignment webhook/API here to mirror CRM assignment downstream.
-    logger.info("TODO assignment webhook (runner): lead=%s rep=%s(%s)", lead.id, rep.id, rep.name)
+    if not lead.smartmoving_id:
+        logger.info("Assignment sync skipped: lead %s has no smartmoving_id", lead.id)
+        return
+    if not rep.smartmoving_rep_id:
+        logger.info("Assignment sync skipped: rep %s has no smartmoving_rep_id", rep.id)
+        return
+    result = update_opportunity_salesperson(lead.smartmoving_id, rep.smartmoving_rep_id)
+    if not result.get("ok"):
+        logger.error(
+            "SmartMoving assignment sync failed: lead=%s opportunity=%s rep=%s error=%s",
+            lead.id,
+            lead.smartmoving_id,
+            rep.id,
+            result.get("error", "unknown"),
+        )
 
 
 @router.get("/auto-assign-filters")
@@ -530,7 +544,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             )
             if not dry_run:
                 lead.assigned_to = rep.id
-                _send_assignment_webhook_todo(lead, rep)
+                _sync_assignment_to_smartmoving(lead, rep)
             db.add(
                 AutoAssignEvent(
                     lead_id=lead.id,
