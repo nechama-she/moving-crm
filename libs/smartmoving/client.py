@@ -127,13 +127,14 @@ def update_opportunity_salesperson(opportunity_id: str, salesperson_id: str) -> 
     )
     try:
         resp = httpx.patch(url, headers=headers, json=payload, timeout=15)
+        response_body = resp.text[:500] if resp.text else "(empty)"
         logger.info(
             "SmartMoving PATCH response: status=%s body=%s",
             resp.status_code,
-            resp.text[:500] if resp.text else "(empty)",
+            response_body,
         )
         resp.raise_for_status()
-        return {"ok": True}
+        return {"ok": True, "status": resp.status_code, "body": response_body}
     except httpx.HTTPError as e:
         r = getattr(e, "response", None)
         status = getattr(r, "status_code", None) if r is not None else None

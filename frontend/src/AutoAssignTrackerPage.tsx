@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
-type AssignmentMode = "auto" | "queued" | "manual" | "";
+type AssignmentMode = "auto" | "queued" | "manual" | "error" | "";
 
 type FilterCompany = {
   id: string;
@@ -36,6 +36,7 @@ type TrackerStats = {
   total: number;
   queued: number;
   auto: number;
+  error: number;
 };
 
 function formatDate(value: string): string {
@@ -58,6 +59,7 @@ function localBoundaryIso(dateOnly: string, endOfDay = false): string {
 function modeBadge(mode: AssignmentMode): React.CSSProperties {
   if (mode === "auto") return { ...badgeBase, background: "#d1fae5", color: "#065f46", border: "1px solid #a7f3d0" };
   if (mode === "queued") return { ...badgeBase, background: "#fef9c3", color: "#854d0e", border: "1px solid #fde68a" };
+  if (mode === "error") return { ...badgeBase, background: "#fee2e2", color: "#991b1b", border: "1px solid #fecaca" };
   return { ...badgeBase, background: "#e2e8f0", color: "#334155", border: "1px solid #cbd5e1" };
 }
 
@@ -66,7 +68,7 @@ export default function AutoAssignTrackerPage() {
   const [items, setItems] = useState<AutoAssignEvent[]>([]);
   const [companies, setCompanies] = useState<FilterCompany[]>([]);
   const [reps, setReps] = useState<FilterRep[]>([]);
-  const [stats, setStats] = useState<TrackerStats>({ total: 0, queued: 0, auto: 0 });
+  const [stats, setStats] = useState<TrackerStats>({ total: 0, queued: 0, auto: 0, error: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -148,7 +150,7 @@ export default function AutoAssignTrackerPage() {
         const data = await res.json();
         if (cancelled) return;
         setItems(data.items || []);
-        setStats(data.stats || { total: 0, queued: 0, auto: 0 });
+        setStats(data.stats || { total: 0, queued: 0, auto: 0, error: 0 });
       } catch (err: unknown) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Unknown error");
       } finally {
@@ -268,6 +270,10 @@ export default function AutoAssignTrackerPage() {
           <div style={kpiLabel}>Auto Assigned</div>
           <div style={kpiValue}>{stats.auto}</div>
         </button>
+        <button type="button" style={kpiButton(kpiCard, activeKpiButton("error"))} onClick={() => setModeFilter("error")}>
+          <div style={kpiLabel}>Errors</div>
+          <div style={kpiValue}>{stats.error}</div>
+        </button>
         <button type="button" style={kpiButton(kpiCard, activeKpiButton("queued"))} onClick={() => setModeFilter("queued")}>
           <div style={kpiLabel}>Queue Rate</div>
           <div style={kpiValue}>{disasterRate}%</div>
@@ -307,6 +313,7 @@ export default function AutoAssignTrackerPage() {
             <option value="">All modes</option>
             <option value="auto">Auto</option>
             <option value="queued">Queued</option>
+            <option value="error">Error</option>
             <option value="manual">Manual</option>
           </select>
         </label>

@@ -176,30 +176,53 @@ def _latest_assignment_event_by_lead(lead_ids: list[str], db: Session) -> dict[s
     return latest_by_lead
 
 
+def _lead_ids_with_any_queued_event(lead_ids: list[str], db: Session) -> set[str]:
+    if not lead_ids:
+        return set()
+    rows = (
+        db.query(AutoAssignEvent.lead_id)
+        .filter(
+            AutoAssignEvent.lead_id.in_(lead_ids),
+            AutoAssignEvent.assignment_mode == "queued",
+        )
+        .all()
+    )
+    return {row[0] for row in rows if row and row[0]}
+
+
 def _queue_backlog_leads(
     leads: list[Lead],
     assignment_reason: str,
     note: str,
     latest_events_by_lead: dict[str, AutoAssignEvent],
+    lead_ids_with_queued_event: set[str],
     db: Session,
 ) -> int:
     queued_count = 0
     for lead in leads:
+        if lead.id in lead_ids_with_queued_event:
+            logger.info(
+                "Backlog lead queue skipped (already queued at least once): lead_id=%s company_id=%s requested_reason=%s",
+                lead.id,
+                lead.company_id,
+                assignment_reason,
+            )
+            continue
         latest_event = latest_events_by_lead.get(lead.id)
+        if latest_event and latest_event.assignment_mode == "queued":
+            logger.info(
+                "Backlog lead queued (unchanged): lead_id=%s company_id=%s requested_reason=%s existing_reason=%s",
+                lead.id,
+                lead.company_id,
+                assignment_reason,
+                latest_event.assignment_reason,
+            )
+            continue
         if latest_event and latest_event.assignment_mode == "auto" and latest_event.assignment_reason == DRY_RUN_BACKLOG_REASON:
             logger.info(
                 "Backlog lead queue skipped (already dry-run simulated): lead_id=%s company_id=%s",
                 lead.id,
                 lead.company_id,
-            )
-            continue
-        if latest_event and latest_event.assignment_mode == "queued" and latest_event.assignment_reason in QUEUE_REASONS_MANAGED_BY_BACKLOG:
-            logger.info(
-                "Backlog lead queued (unchanged): lead_id=%s company_id=%s reason=%s existing_reason=%s",
-                lead.id,
-                lead.company_id,
-                assignment_reason,
-                latest_event.assignment_reason,
             )
             continue
         new_event = AutoAssignEvent(
@@ -212,6 +235,7 @@ def _queue_backlog_leads(
         )
         db.add(new_event)
         latest_events_by_lead[lead.id] = new_event
+        lead_ids_with_queued_event.add(lead.id)
         logger.info(
             "Backlog lead queued: lead_id=%s company_id=%s reason=%s",
             lead.id,
@@ -286,7 +310,7 @@ def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None) -> dict:
             result.get("error", "unknown"),
         )
         return {"ok": False, "error": result.get("error", "unknown")}
-    return {"ok": True}
+    return {"ok": True, "status": result.get("status", "n/a"), "body": result.get("body", "(empty)")}
 
 
 @router.get("/auto-assign-filters")
@@ -333,7 +357,7 @@ def get_auto_assign_events(
 ):
     company_ids = _get_user_company_ids(user, db)
     if not company_ids:
-        return {"items": [], "total": 0, "has_more": False, "stats": {"total": 0, "queued": 0, "auto": 0}}
+        return {"items": [], "total": 0, "has_more": False, "stats": {"total": 0, "queued": 0, "auto": 0, "error": 0}}
 
     try:
         query = db.query(AutoAssignEvent).filter(AutoAssignEvent.company_id.in_(company_ids))
@@ -389,6 +413,7 @@ def get_auto_assign_events(
 
         queued_count = query.filter(AutoAssignEvent.assignment_mode == "queued").count()
         auto_count = query.filter(AutoAssignEvent.assignment_mode == "auto").count()
+        error_count = query.filter(AutoAssignEvent.assignment_mode == "error").count()
 
         return {
             "items": items,
@@ -398,11 +423,12 @@ def get_auto_assign_events(
                 "total": total,
                 "queued": queued_count,
                 "auto": auto_count,
+                "error": error_count,
             },
         }
     except Exception as exc:
         logger.warning("Non-fatal auto assignment events read failure: %s", exc)
-        return {"items": [], "total": 0, "has_more": False, "stats": {"total": 0, "queued": 0, "auto": 0}}
+        return {"items": [], "total": 0, "has_more": False, "stats": {"total": 0, "queued": 0, "auto": 0, "error": 0}}
 
 
 def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
@@ -466,6 +492,33 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
         }
 
     latest_events_by_lead = _latest_assignment_event_by_lead([lead.id for lead in queued_leads], db)
+    lead_ids_with_queued_event = _lead_ids_with_any_queued_event([lead.id for lead in queued_leads], db)
+
+    blocked_lead_ids = {
+        lead_id
+        for lead_id, event in latest_events_by_lead.items()
+        if event
+        and event.assignment_mode == "error"
+    }
+    if blocked_lead_ids:
+        logger.info(
+            "Backlog skipped leads blocked by prior assignment failures: %s",
+            len(blocked_lead_ids),
+        )
+        queued_leads = [lead for lead in queued_leads if lead.id not in blocked_lead_ids]
+
+    if not queued_leads:
+        return {
+            "ok": True,
+            "message": "No retryable unassigned leads found in active admin unavailability window.",
+            "dry_run": dry_run,
+            "stats": {
+                "queued_found": 0,
+                "assigned": 0,
+                "companies_touched": 0,
+                "blocked_sync_failures": len(blocked_lead_ids),
+            },
+        }
 
     window_rep_ids = _active_available_rep_ids(db, now=now)
     logger.info("Backlog reps mapped to current admin window: %s", len(window_rep_ids))
@@ -477,6 +530,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             assignment_reason="all_admins_unavailable_no_available_reps",
             note="Queued because no reps are available during the admin unavailability window",
             latest_events_by_lead=latest_events_by_lead,
+            lead_ids_with_queued_event=lead_ids_with_queued_event,
             db=db,
         )
         db.commit()
@@ -512,6 +566,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
                 assignment_reason="all_admins_unavailable_no_available_rep_for_the_company",
                 note="Queued because no rep for this company has an active availability slot during the admin unavailability window",
                 latest_events_by_lead=latest_events_by_lead,
+                lead_ids_with_queued_event=lead_ids_with_queued_event,
                 db=db,
             )
             continue
@@ -562,27 +617,50 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             if not dry_run:
                 sync_result = _sync_assignment_to_smartmoving(lead, rep)
                 if not sync_result.get("ok"):
-                    failure_note = f"SmartMoving sync failed; lead not assigned locally: {sync_result.get('error', 'unknown')}"
+                    failure_note = "Failed to assign lead; lead remains unassigned"
                     logger.warning(
-                        "Backlog lead left unassigned due to SmartMoving failure: lead_id=%s company_id=%s rep_id=%s error=%s",
+                        "Backlog lead assignment failed: lead_id=%s company_id=%s rep_id=%s error=%s",
                         lead.id,
                         lead.company_id,
                         rep.id,
                         sync_result.get("error", "unknown"),
                     )
+                    latest_event = latest_events_by_lead.get(lead.id)
+                    if lead.id in lead_ids_with_queued_event:
+                        logger.info(
+                            "Backlog lead queue skipped (already queued at least once): lead_id=%s company_id=%s",
+                            lead.id,
+                            lead.company_id,
+                        )
+                        continue
+                    if latest_event and latest_event.assignment_mode == "queued":
+                        logger.info(
+                            "Backlog lead queue skipped (already queued): lead_id=%s company_id=%s existing_reason=%s",
+                            lead.id,
+                            lead.company_id,
+                            latest_event.assignment_reason,
+                        )
+                        continue
                     failed_event = AutoAssignEvent(
                         lead_id=lead.id,
                         company_id=lead.company_id,
                         assigned_to=rep.id,
-                        assignment_mode="queued",
+                        assignment_mode="error",
                         assignment_reason="queued_backlog_round_robin",
                         note=failure_note,
                     )
                     db.add(failed_event)
                     latest_events_by_lead[lead.id] = failed_event
+                    lead_ids_with_queued_event.add(lead.id)
                     queued_count += 1
                     continue
                 lead.assigned_to = rep.id
+                success_note = (
+                    "Assigned from queued backlog by scheduler run; "
+                    f"SmartMoving sync ok (status={sync_result.get('status', 'n/a')} body={sync_result.get('body', '(empty)')})"
+                )
+            else:
+                success_note = "DRY RUN: would assign from queued backlog"
             db.add(
                 AutoAssignEvent(
                     lead_id=lead.id,
@@ -590,7 +668,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
                     assigned_to=rep.id,
                     assignment_mode="auto",
                     assignment_reason=dry_run_reason if dry_run else "queued_backlog_round_robin",
-                    note="DRY RUN: would assign from queued backlog" if dry_run else "Assigned from queued backlog by scheduler run",
+                    note=success_note,
                 )
             )
             assigned_count += 1
