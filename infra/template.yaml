@@ -801,6 +801,7 @@ Resources:
           SSM_PREFIX: !Sub /moving-crm/${Environment}/
           AWS_REGION_NAME: !Ref AWS::Region
           DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
+          SMARTMOVING_API_KEY: !Ref SmartMovingApiKey
           CORS_ORIGINS: !Join
             - ","
             - - !Sub "https://${CloudFrontDistribution.DomainName}"

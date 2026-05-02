@@ -106,10 +106,25 @@ def update_opportunity_salesperson(opportunity_id: str, salesperson_id: str) -> 
 
     Returns {"ok": True} or {"ok": False, "error": ...}.
     """
+    if not SMARTMOVING_API_KEY:
+        logger.error("SmartMoving update_opportunity_salesperson skipped: API key not set")
+        return {"ok": False, "error": "API key not set"}
     url = f"{SMARTMOVING_BASE_URL}/premium/opportunities/{opportunity_id}"
-    headers = {**_headers(), "Content-Type": "application/json-patch+json"}
     payload = {"salesPersonId": salesperson_id}
-    logger.info("SmartMoving PATCH %s payload=%s", url, payload)
+    masked_key = SMARTMOVING_API_KEY[:4] + "*" * (len(SMARTMOVING_API_KEY) - 8) + SMARTMOVING_API_KEY[-4:] if len(SMARTMOVING_API_KEY) > 8 else "****"
+    headers = {
+        "x-api-key": SMARTMOVING_API_KEY,
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/json-patch+json",
+    }
+    log_headers = dict(headers)
+    log_headers["x-api-key"] = masked_key
+    logger.info(
+        "SmartMoving request: method=PATCH url=%s headers=%s payload=%s",
+        url,
+        log_headers,
+        payload,
+    )
     try:
         resp = httpx.patch(url, headers=headers, json=payload, timeout=15)
         logger.info(
