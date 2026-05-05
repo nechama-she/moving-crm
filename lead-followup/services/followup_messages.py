@@ -366,7 +366,7 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
         live_followup_resp = get_followup(sm_id, note_id)
         if "error" in live_followup_resp:
             logger.info("SKIP %s (%s): failed to fetch live followup (%s)", name, sm_id, live_followup_resp["error"])
-            qualification_reason = "live_fetch_failed"
+            qualification_reason = f"live_fetch_failed: {live_followup_resp['error']}"
             record_outreach_event(
                 lead_id=str(row.get("lead_id") or "") or None,
                 company_id=str(row.get("company_id") or "") or None,
@@ -396,7 +396,7 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
         opp_resp = get_opportunity(sm_id)
         if "error" in opp_resp:
             logger.info("SKIP %s (%s): failed to fetch opportunity (%s)", name, sm_id, opp_resp["error"])
-            qualification_reason = "opportunity_fetch_failed"
+            qualification_reason = f"opportunity_fetch_failed: {opp_resp['error']}"
             record_outreach_event(
                 lead_id=str(row.get("lead_id") or "") or None,
                 company_id=str(row.get("company_id") or "") or None,
