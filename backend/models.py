@@ -41,6 +41,7 @@ class Company(Base):
             "facebook_page_id": self.facebook_page_id or "",
             "aircall_number_id": self.aircall_number_id or "",
             "samrtmoving_branch_id": self.samrtmoving_branch_id or "",
+            "timezone": self.timezone or "America/New_York",
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }
 

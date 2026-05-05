@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from auth import require_admin
 from database import get_db
-from models import Company, User
+from models import Company, User, UserCompany, Lead
 
 logger = logging.getLogger("moving-crm")
 
@@ -18,7 +18,9 @@ class CompanyCreate(BaseModel):
     name: str
     phone: str = ""
     facebook_page_id: Optional[str] = None
+    aircall_number_id: str = ""
     samrtmoving_branch_id: str = ""
+    timezone: str = "America/New_York"
 
 
 @router.get("")
@@ -50,15 +52,21 @@ def get_company_by_facebook_page_id(
 
 @router.post("")
 def create_company(body: CompanyCreate, user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    existing = db.query(Company).filter(Company.name == body.name).first()
+    company_name = (body.name or "").strip()
+    if not company_name:
+        raise HTTPException(status_code=400, detail="Company name is required")
+
+    existing = db.query(Company).filter(Company.name == company_name).first()
     if existing:
         raise HTTPException(status_code=409, detail="Company already exists")
     page_id = (body.facebook_page_id or "").strip() or None
     company = Company(
-        name=body.name,
-        phone=body.phone,
+        name=company_name,
+        phone=(body.phone or "").strip(),
         facebook_page_id=page_id,
-        samrtmoving_branch_id=body.samrtmoving_branch_id,
+        aircall_number_id=(body.aircall_number_id or "").strip(),
+        samrtmoving_branch_id=(body.samrtmoving_branch_id or "").strip(),
+        timezone=(body.timezone or "").strip() or "America/New_York",
     )
     db.add(company)
     db.commit()
@@ -67,10 +75,12 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
 
 
 class CompanyUpdate(BaseModel):
+    name: str
     phone: str = ""
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
     samrtmoving_branch_id: str = ""
+    timezone: str = "America/New_York"
 
 
 @router.put("/{company_id}")
@@ -78,10 +88,40 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     company = db.query(Company).filter(Company.id == company_id).first()
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
-    company.phone = body.phone
+
+    company_name = (body.name or "").strip()
+    if not company_name:
+        raise HTTPException(status_code=400, detail="Company name is required")
+
+    duplicate = db.query(Company).filter(Company.name == company_name, Company.id != company_id).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Company name already exists")
+
+    company.name = company_name
+    company.phone = (body.phone or "").strip()
     company.facebook_page_id = (body.facebook_page_id or "").strip() or None
-    company.aircall_number_id = body.aircall_number_id
-    company.samrtmoving_branch_id = body.samrtmoving_branch_id
+    company.aircall_number_id = (body.aircall_number_id or "").strip()
+    company.samrtmoving_branch_id = (body.samrtmoving_branch_id or "").strip()
+    company.timezone = (body.timezone or "").strip() or "America/New_York"
     db.commit()
     db.refresh(company)
     return company.to_dict()
+
+
+@router.delete("/{company_id}")
+def delete_company(company_id: str, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    linked_users = db.query(UserCompany).filter(UserCompany.company_id == company_id).count()
+    if linked_users:
+        raise HTTPException(status_code=409, detail="Cannot delete company with assigned users")
+
+    linked_leads = db.query(Lead).filter(Lead.company_id == company_id).count()
+    if linked_leads:
+        raise HTTPException(status_code=409, detail="Cannot delete company with existing leads")
+
+    db.delete(company)
+    db.commit()
+    return {"ok": True}

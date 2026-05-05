@@ -22,6 +22,14 @@ export default function SettingsPage() {
         </section>
 
         <section style={card}>
+          <h2 style={sectionHeader}>Company Management</h2>
+          <p style={desc}>Add, edit, and delete companies with communication and SmartMoving settings.</p>
+          <div style={actionsRow}>
+            <Link to="/settings/companies" style={primaryLink}>Manage Companies</Link>
+          </div>
+        </section>
+
+        <section style={card}>
           <h2 style={sectionHeader}>Lead Assignment</h2>
           <p style={desc}>Configure admin unavailability windows and which reps are available during those windows.</p>
           <div style={actionsRow}>

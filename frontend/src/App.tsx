@@ -7,6 +7,7 @@ import LeadDetail from "./LeadDetail";
 import OutreachEventsPage from "./OutreachEventsPage";
 import PeriodAssignPage from "./PeriodAssignPage";
 import SalesRepsPage from "./SalesRepsPage";
+import CompaniesPage from "./CompaniesPage";
 import SettingsPage from "./SettingsPage";
 import AutoAssignTrackerPage from "./AutoAssignTrackerPage";
 
@@ -73,6 +74,7 @@ function ProtectedRoutes() {
           <Route path="/outreach" element={<OutreachEventsPage />} />
           <Route path="/assign-period" element={<PeriodAssignPage />} />
           <Route path="/sales-reps" element={<SalesRepsPage />} />
+          <Route path="/settings/companies" element={<CompaniesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />
           <Route path="/leads/:leadId" element={<LeadDetail />} />
