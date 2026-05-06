@@ -18,8 +18,8 @@ def handler(event, context):
     dry_run = event.get("dry_run", False)
     all_results = {}
 
-    # --- Day 2 & Day 3 SMS followups ---
-    if mode in ("all", "sms"):
+    # --- Day 2 & Day 3 followups ---
+    if mode in ("all", "day_followup"):
         from services.followup import run
 
         limit = event.get("limit", 0)

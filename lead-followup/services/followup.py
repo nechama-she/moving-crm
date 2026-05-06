@@ -8,7 +8,7 @@ from config import SMS_MESSAGE_TEMPLATE, SMS_DAY3_TEMPLATE
 from database import get_leads_for_followup, was_already_sent, record_sent_message, get_sales_rep_number, record_outreach_event
 from libs.aircall import send_sms, find_number_id
 from libs.common.phone import phone_variants
-from libs.smartmoving import get_opportunity, add_opportunity_note
+from libs.smartmoving import get_opportunity, add_opportunity_note, reset_request_counters, get_request_counters
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,7 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
     """
     if dry_run:
         logger.info("*** DRY RUN — SMS will NOT be sent ***")
+    reset_request_counters()
     # First, get all companies' timezones to compute the right UTC windows
     from database import get_company_timezones
     companies = get_company_timezones()
@@ -173,6 +174,10 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
         opp = opp_resp["data"]
         lead_status = opp.get("leadStatus", "")
         status_val = opp.get("status")
+        try:
+            status_reason_val = int(status_val) if status_val is not None else "unknown"
+        except (TypeError, ValueError):
+            status_reason_val = str(status_val or "unknown")
         stats["matched"] += 1
 
         phone = str(row.get("phone", "")).strip()
@@ -181,7 +186,7 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
 
         qualifies = _should_send_sms(lead_status, status_val)
         sms_result = None
-        qualification_reason = "ok" if qualifies else "status_not_allowed"
+        qualification_reason = "ok" if qualifies else f"status_{status_reason_val}_not_allowed"
 
         if has_client_contact:
             qualifies = False
@@ -257,4 +262,7 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
             "sms": sms_result,
         })
 
-    return {"stats": stats, "results": results, "windows": windows}
+    smartmoving_requests = get_request_counters()
+    logger.info("SmartMoving request summary (day_followup): %s", smartmoving_requests)
+
+    return {"stats": stats, "results": results, "windows": windows, "smartmoving_requests": smartmoving_requests}

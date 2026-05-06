@@ -17,7 +17,7 @@ from database import (
 )
 from libs.aircall import send_sms, find_number_id
 from libs.common.ssm import get_ssm_cached
-from libs.smartmoving import get_followup, get_opportunity, update_followup
+from libs.smartmoving import get_followup, get_opportunity, update_followup, reset_request_counters, get_request_counters
 
 logger = logging.getLogger(__name__)
 
@@ -148,16 +148,28 @@ def _build_channels(row: dict) -> list[str]:
     return channels
 
 
-def _send_aircall(row: dict, message: str, dry_run: bool) -> dict:
+def _send_aircall(row: dict, message: str, dry_run: bool, opportunity: dict | None = None) -> dict:
     phone = str(row["phone"]).strip()
     aircall_number_id = row.get("aircall_number_id")
     company_phone = row.get("company_phone", "")
 
+    sales_assignee = (opportunity or {}).get("salesAssignee") or {}
+    rep_name = (sales_assignee.get("name") or "").strip()
+    rep_number_id = get_sales_rep_number(rep_name) if rep_name else None
+
     if dry_run:
-        logger.info("Aircall DRY_RUN: would send to %s, message=%s", phone, message)
+        dry_run_number_id = rep_number_id or aircall_number_id
+        logger.info(
+            "Aircall DRY_RUN: would send to %s, number_id=%s, message=%s",
+            phone,
+            dry_run_number_id,
+            message,
+        )
         return {"channel": "aircall", "sent": False, "dry_run": True, "would_send_to": phone, "message": message}
 
-    nid = aircall_number_id
+    nid = rep_number_id or aircall_number_id
+    if rep_number_id:
+        logger.info("Using sales rep %s Aircall number %s", rep_name, rep_number_id)
     if not nid and company_phone:
         nid = find_number_id(company_phone)
 
@@ -319,6 +331,7 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
         logger.info("*** DRY RUN — messages will NOT be sent ***")
     if smartmoving_id:
         logger.info("*** Filtering to single smartmoving_id: %s ***", smartmoving_id)
+    reset_request_counters()
 
     rows = get_due_followups(smartmoving_id=smartmoving_id)
     logger.info("Found %d due followups", len(rows))
@@ -507,7 +520,7 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
                 channels_results.append({"channel": ch, "sent": False, "skipped": True, "reason": "already_sent"})
                 continue
             if ch == "aircall":
-                result = _send_aircall(row, message, dry_run)
+                result = _send_aircall(row, message, dry_run, opportunity=opportunity)
                 channels_results.append(result)
                 if result.get("sent"):
                     record_sent_message(sm_id, msg_type, "aircall")
@@ -575,4 +588,7 @@ def run_followup_messages(dry_run: bool = True, smartmoving_id: str | None = Non
     if failed_jobs:
         logger.info("Failed followups list (%d): %s", len(failed_jobs), failed_jobs)
 
-    return {"stats": stats, "results": results}
+    smartmoving_requests = get_request_counters()
+    logger.info("SmartMoving request summary (followup_messages): %s", smartmoving_requests)
+
+    return {"stats": stats, "results": results, "smartmoving_requests": smartmoving_requests}

@@ -41,17 +41,48 @@ def _followup_row(**overrides):
     return row
 
 
+_DUE_ISO = "2026-04-17T10:00:00"
+_DUE_KEY = "20260417100000"  # digits extracted from _DUE_ISO
+
+_LIVE_FOLLOWUP = {
+    "type": 1,
+    "title": "Follow up call",
+    "assignedToId": "user-1",
+    "dueDateTime": _DUE_ISO,
+    "notes": "existing note",
+    "completed": False,
+}
+
+_OPPORTUNITY = {
+    "status": 1,
+    "leadStatus": "Priority 2",
+    "salesAssignee": None,
+}
+
+
+def _dedup_key(note_id: str) -> str:
+    return f"followup_{note_id}_{_DUE_KEY}"
+
+
 def _setup(rows=None):
     db = sys.modules["database"]
     db.get_due_followups = MagicMock(return_value=rows or [])
     db.was_already_sent = MagicMock(return_value=False)
     db.record_sent_message = MagicMock()
+    db.get_sales_rep_number = MagicMock(return_value=None)
+    db.sync_followup_from_smartmoving = MagicMock(return_value={"ok": True})
     mod.get_due_followups = db.get_due_followups
     mod.was_already_sent = db.was_already_sent
     mod.record_sent_message = db.record_sent_message
+    mod.get_sales_rep_number = db.get_sales_rep_number
+    mod.sync_followup_from_smartmoving = db.sync_followup_from_smartmoving
+    mod.get_followup = MagicMock(return_value={"data": _LIVE_FOLLOWUP})
+    mod.get_opportunity = MagicMock(return_value={"data": _OPPORTUNITY})
     mod.update_followup = MagicMock(return_value={"ok": True})
     mod.send_sms = MagicMock(return_value={"ok": True, "message_id": "m1", "to": "555"})
     mod.find_number_id = MagicMock(return_value="num-1")
+    # Stub OpenAI so message generation always succeeds without a real key
+    mod._generate_message_from_note = MagicMock(return_value=("Test followup message", "stub"))
 
 
 class TestFollowupMessagesDedup:
@@ -64,7 +95,7 @@ class TestFollowupMessagesDedup:
 
         assert result["stats"]["processed"] == 1
         assert result["stats"]["note_updated"] == 1
-        mod.record_sent_message.assert_called_with("sm-abc-123", "followup_note-abc-123", "smartmoving_note")
+        mod.record_sent_message.assert_called_with("sm-abc-123", _dedup_key("note-abc-123"), "smartmoving_note")
 
     def test_duplicate_run_skips_entirely(self):
         row = _followup_row()
@@ -102,7 +133,7 @@ class TestFollowupMessagesDedup:
         row1 = _followup_row(note_id="note-1", smartmoving_id="sm-1", full_name="Lead A")
         row2 = _followup_row(note_id="note-2", smartmoving_id="sm-2", full_name="Lead B")
         _setup(rows=[row1, row2])
-        mod.was_already_sent.side_effect = lambda sm, mt, ch: mt == "followup_note-1" and ch == "smartmoving_note"
+        mod.was_already_sent.side_effect = lambda sm, mt, ch: mt == _dedup_key("note-1") and ch == "smartmoving_note"
 
         result = mod.run_followup_messages(dry_run=True)
 
