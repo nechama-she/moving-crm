@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from config import SMS_MESSAGE_TEMPLATE, SMS_DAY3_TEMPLATE
-from database import get_leads_for_followup, was_already_sent, record_sent_message, get_sales_rep_number, record_outreach_event
+from database import get_leads_for_followup, was_already_sent, record_sent_message, get_sales_rep_number, get_sales_rep_info, record_outreach_event
 from libs.aircall import send_sms, find_number_id
 from libs.common.phone import phone_variants
 from libs.smartmoving import get_opportunity, add_opportunity_note, reset_request_counters, get_request_counters
@@ -104,12 +104,37 @@ def _render_followup_message(name: str, company_name: str, template: str | None 
     return (template or SMS_MESSAGE_TEMPLATE).format(name=name, company=company_name)
 
 
-def _send_followup_sms(name: str, phone: str, company_name: str, company_phone: str, aircall_number_id: str | None, template: str = None) -> dict:
+def _build_company_signature(company_name: str, company_phone: str) -> str:
+    """Build company fallback signature."""
+    parts = ["Thanks,"]
+    if company_name:
+        parts[-1] = f"Thanks, {company_name}"
+    if company_phone:
+        parts.append(company_phone)
+    return "\n".join(parts)
+
+
+def _build_signature(company_name: str, company_phone: str, opportunity: dict | None = None) -> str:
+    """Build signature: use rep if available, otherwise company."""
+    sales_assignee = (opportunity or {}).get("salesAssignee") or {}
+    rep_name = (sales_assignee.get("name") or "").strip()
+    if rep_name:
+        rep_info = get_sales_rep_info(rep_name)
+        if rep_info and rep_info.get("phone"):
+            return f"Thanks, {rep_info['name']}\n{rep_info['phone']}"
+        elif rep_info:
+            logger.info("Sales rep %s is in users table but phone is missing; using company signature", rep_name)
+    return _build_company_signature(company_name, company_phone)
+
+
+def _send_followup_sms(name: str, phone: str, company_name: str, company_phone: str, aircall_number_id: str | None, template: str = None, signature: str = "") -> dict:
     """Send a followup SMS to a lead. Returns result dict."""
     if not phone:
         return {"sent": False, "error": "no_phone_number"}
 
     msg_text = _render_followup_message(name, company_name, template=template)
+    if signature:
+        msg_text = f"{msg_text}\n\n{signature}"
 
     # Use stored aircall_number_id, or find it from company phone
     nid = aircall_number_id
@@ -214,6 +239,9 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
                 logger.info("Using sales rep %s Aircall number %s", rep_name, rep_number)
                 aircall_number_id = rep_number
 
+            # Build signature: rep if available, otherwise company
+            signature = _build_signature(company_name, company_phone, opportunity=opp)
+
             # Dedup: skip if already sent for this lead + day
             if was_already_sent(opp_id, day_label, "aircall"):
                 logger.info("SKIP %s (%s): %s already sent", name, opp_id, day_label)
@@ -221,10 +249,12 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
                 qualification_reason = "already_sent"
             elif dry_run:
                 msg_text = _render_followup_message(name, company_name, template=template)
+                if signature:
+                    msg_text = f"{msg_text}\n\n{signature}"
                 sms_result = {"sent": False, "dry_run": True, "would_send_to": phone, "message": msg_text}
                 logger.info("DRY RUN — would send to %s: %s", phone, msg_text)
             else:
-                sms_result = _send_followup_sms(name, phone, company_name, company_phone, aircall_number_id, template=template)
+                sms_result = _send_followup_sms(name, phone, company_name, company_phone, aircall_number_id, template=template, signature=signature)
                 if sms_result.get("sent"):
                     record_sent_message(opp_id, day_label, "aircall")
                 elif sms_result.get("error"):

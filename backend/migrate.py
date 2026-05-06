@@ -102,6 +102,25 @@ def migrate(drop_first: bool = False):
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(30) NOT NULL DEFAULT ''"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS smartmoving_rep_id VARCHAR(100)"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS aircall_number_id VARCHAR(50)"))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'sales_reps'
+                ) THEN
+                    UPDATE users u
+                    SET aircall_number_id = sr.aircall_number_id
+                    FROM sales_reps sr
+                    WHERE u.aircall_number_id IS NULL
+                      AND sr.aircall_number_id IS NOT NULL
+                      AND LOWER(TRIM(u.name)) = LOWER(TRIM(sr.name));
+                END IF;
+            END
+            $$;
+        """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_smartmoving_rep_id ON users (smartmoving_rep_id)"))
         conn.commit()
 

@@ -57,6 +57,7 @@ class User(Base):
     name = Column(String(255), nullable=False)
     phone = Column(String(30), nullable=False, default="")
     smartmoving_rep_id = Column(String(100), index=True)
+    aircall_number_id = Column(String(50))
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False, default="sales_rep")
     must_change_password = Column(Boolean, nullable=False, default=False)
@@ -72,6 +73,7 @@ class User(Base):
             "name": self.name,
             "phone": self.phone or "",
             "smartmoving_rep_id": self.smartmoving_rep_id or "",
+            "aircall_number_id": self.aircall_number_id or "",
             "role": self.role,
             "must_change_password": bool(self.must_change_password),
             "companies": [uc.company.to_dict() for uc in self.companies],

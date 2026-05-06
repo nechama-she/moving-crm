@@ -259,13 +259,40 @@ def sync_followup_from_smartmoving(
 
 
 def get_sales_rep_number(name: str) -> str | None:
-    """Look up a sales rep's Aircall number ID by name. Returns None if not found."""
+    """Look up a sales rep's Aircall number ID by name from users table, with fallback to sales_reps."""
     if not name:
         return None
     engine = get_engine()
-    sql = text("SELECT aircall_number_id FROM sales_reps WHERE LOWER(TRIM(name)) = LOWER(TRIM(:name)) LIMIT 1")
+    sql = text("""
+        SELECT COALESCE(u.aircall_number_id, sr.aircall_number_id) as aircall_number_id
+        FROM users u
+        LEFT JOIN sales_reps sr ON LOWER(TRIM(u.name)) = LOWER(TRIM(sr.name))
+        WHERE LOWER(TRIM(u.name)) = LOWER(TRIM(:name))
+        LIMIT 1
+    """)
     with engine.connect() as conn:
         row = conn.execute(sql, {"name": name}).fetchone()
         result = row[0] if row else None
         logger.info("SQL get_sales_rep_number(%s) => %s", name, result)
         return result
+
+
+def get_sales_rep_info(name: str) -> dict | None:
+    """Get full sales rep info (name, phone, aircall_number_id) from users table with fallback to sales_reps."""
+    if not name:
+        return None
+    engine = get_engine()
+    sql = text("""
+        SELECT u.name, u.phone, COALESCE(u.aircall_number_id, sr.aircall_number_id) as aircall_number_id
+        FROM users u
+        LEFT JOIN sales_reps sr ON LOWER(TRIM(u.name)) = LOWER(TRIM(sr.name))
+        WHERE LOWER(TRIM(u.name)) = LOWER(TRIM(:name))
+        LIMIT 1
+    """)
+    with engine.connect() as conn:
+        row = conn.execute(sql, {"name": name}).fetchone()
+        if row:
+            result = {"name": row[0], "phone": row[1], "aircall_number_id": row[2]}
+            logger.info("SQL get_sales_rep_info(%s) => %s", name, result)
+            return result
+        return None

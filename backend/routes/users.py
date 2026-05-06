@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -21,8 +21,16 @@ class UserCreate(BaseModel):
     name: str
     phone: str = ""
     smartmoving_rep_id: str = ""
+    aircall_number_id: str = ""
     password: str
     role: str = "sales_rep"  # admin, sales_rep, dispatch
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    smartmoving_rep_id: Optional[str] = None
+    aircall_number_id: Optional[str] = None
 
 
 class AssignCompany(BaseModel):
@@ -88,11 +96,37 @@ def create_user(body: UserCreate, admin: User = Depends(require_admin), db: Sess
         name=body.name,
         phone=(body.phone or "").strip(),
         smartmoving_rep_id=(body.smartmoving_rep_id or "").strip() or None,
+        aircall_number_id=(body.aircall_number_id or "").strip() or None,
         password_hash=hash_password(body.password),
         role=body.role,
         must_change_password=True,
     )
     db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user.to_dict()
+
+
+@router.put("/{user_id}")
+def update_user(
+    user_id: str,
+    body: UserUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if body.name is not None:
+        user.name = body.name.strip()
+    if body.phone is not None:
+        user.phone = body.phone.strip()
+    if body.smartmoving_rep_id is not None:
+        user.smartmoving_rep_id = body.smartmoving_rep_id.strip() or None
+    if body.aircall_number_id is not None:
+        user.aircall_number_id = body.aircall_number_id.strip() or None
+
     db.commit()
     db.refresh(user)
     return user.to_dict()

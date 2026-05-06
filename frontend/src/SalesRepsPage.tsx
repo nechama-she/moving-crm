@@ -18,6 +18,7 @@ type AppUser = {
   email: string;
   phone?: string;
   smartmoving_rep_id?: string;
+  aircall_number_id?: string;
   role: string;
   companies?: UserCompany[];
 };
@@ -35,6 +36,7 @@ export default function SalesRepsPage() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [smartmovingRepId, setSmartmovingRepId] = useState("");
+  const [aircallNumberId, setAircallNumberId] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
@@ -109,6 +111,7 @@ export default function SalesRepsPage() {
           email: email.trim(),
           phone: phone.trim(),
           smartmoving_rep_id: smartmovingRepId.trim(),
+          aircall_number_id: aircallNumberId.trim(),
           password,
           role: "sales_rep",
         }),
@@ -137,6 +140,7 @@ export default function SalesRepsPage() {
       setEmail("");
       setPhone("");
       setSmartmovingRepId("");
+      setAircallNumberId("");
       setPassword("");
       setShowPassword(false);
       setSelectedCompanyIds([]);
@@ -210,6 +214,27 @@ export default function SalesRepsPage() {
     }
   }
 
+  async function updateRepAircall(userId: string, value: string) {
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/users/${userId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ aircall_number_id: value.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Failed to update Aircall Number ID" }));
+        throw new Error(err.detail || "Failed to update Aircall Number ID");
+      }
+      setInfo("Aircall Number ID updated.");
+      await loadData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to update Aircall Number ID");
+      throw err;
+    }
+  }
+
   if (!canUse) {
     return (
       <div style={{ padding: "20px 24px" }}>
@@ -244,6 +269,10 @@ export default function SalesRepsPage() {
           <label style={fieldLabel}>
             SmartMoving Rep ID
             <input value={smartmovingRepId} onChange={(e) => setSmartmovingRepId(e.target.value)} style={inputStyle} />
+          </label>
+          <label style={fieldLabel}>
+            Aircall Number ID
+            <input value={aircallNumberId} onChange={(e) => setAircallNumberId(e.target.value)} style={inputStyle} />
           </label>
           <label style={fieldLabel}>
             Temporary Password
@@ -327,6 +356,7 @@ export default function SalesRepsPage() {
               <th style={th}>Email</th>
               <th style={th}>Phone</th>
               <th style={th}>SmartMoving Rep ID</th>
+              <th style={th}>Aircall Number ID</th>
               <th style={th}>Companies</th>
               <th style={th}>Assign Company</th>
               <th style={th}>Actions</th>
@@ -335,12 +365,12 @@ export default function SalesRepsPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={7}>Loading...</td>
+                <td style={td} colSpan={8}>Loading...</td>
               </tr>
             ) : null}
             {!loading && salesReps.length === 0 ? (
               <tr>
-                <td style={td} colSpan={7}>No sales reps yet.</td>
+                <td style={td} colSpan={8}>No sales reps yet.</td>
               </tr>
             ) : null}
 
@@ -349,6 +379,7 @@ export default function SalesRepsPage() {
                 key={rep.id}
                 rep={rep}
                 companies={companies}
+                onUpdateAircall={updateRepAircall}
                 onAssign={assignCompany}
                 onUnassign={unassignCompany}
                 onDelete={deleteRep}
@@ -364,20 +395,35 @@ export default function SalesRepsPage() {
 function RepRow({
   rep,
   companies,
+  onUpdateAircall,
   onAssign,
   onUnassign,
   onDelete,
 }: {
   rep: AppUser;
   companies: Company[];
+  onUpdateAircall: (userId: string, value: string) => Promise<void>;
   onAssign: (userId: string, companyId: string) => Promise<void>;
   onUnassign: (userId: string, companyId: string) => Promise<void>;
   onDelete: (userId: string, repName: string) => Promise<void>;
 }) {
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [aircallNumberId, setAircallNumberId] = useState(rep.aircall_number_id || "");
+  const [savingAircall, setSavingAircall] = useState(false);
   const assigned = rep.companies || [];
   const assignedIds = new Set(assigned.map((c) => c.id));
   const availableCompanies = companies.filter((c) => !assignedIds.has(c.id));
+
+  async function saveAircallNumberId() {
+    setSavingAircall(true);
+    try {
+      await onUpdateAircall(rep.id, aircallNumberId);
+    } catch {
+      // Parent handles message display.
+    } finally {
+      setSavingAircall(false);
+    }
+  }
 
   return (
     <tr style={{ borderTop: "1px solid #e5e7eb" }}>
@@ -385,6 +431,23 @@ function RepRow({
       <td style={td}>{rep.email}</td>
       <td style={td}>{rep.phone || ""}</td>
       <td style={td}>{rep.smartmoving_rep_id || ""}</td>
+      <td style={td}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            value={aircallNumberId}
+            onChange={(e) => setAircallNumberId(e.target.value)}
+            style={{ ...inputStyle, minWidth: 170, padding: "6px 8px" }}
+          />
+          <button
+            type="button"
+            onClick={() => void saveAircallNumberId()}
+            disabled={savingAircall}
+            style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
+          >
+            {savingAircall ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </td>
       <td style={td}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {assigned.length === 0 ? <span style={{ color: "#706e6b", fontSize: 12 }}>No companies</span> : null}

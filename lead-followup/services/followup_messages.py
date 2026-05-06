@@ -14,6 +14,7 @@ from database import (
     record_outreach_event,
     sync_followup_from_smartmoving,
     get_sales_rep_number,
+    get_sales_rep_info,
 )
 from libs.aircall import send_sms, find_number_id
 from libs.common.ssm import get_ssm_cached
@@ -50,16 +51,15 @@ def _build_company_signature(row: dict) -> str:
 
 
 def _build_signature(row: dict, opportunity: dict | None = None) -> str:
-    """Use rep signature only when rep exists in sales_reps; otherwise company fallback."""
+    """Use rep signature from users table; otherwise company fallback."""
     sales_assignee = (opportunity or {}).get("salesAssignee") or {}
     rep_name = (sales_assignee.get("name") or "").strip()
     if rep_name:
-        rep_number_id = get_sales_rep_number(rep_name)
-        if rep_number_id:
-            rep_phone = (sales_assignee.get("phone") or "").strip()
-            if rep_phone:
-                return f"Thanks, {rep_name}\n{rep_phone}"
-            logger.info("Sales rep %s is mapped but phone was not resolved; using company signature", rep_name)
+        rep_info = get_sales_rep_info(rep_name)
+        if rep_info and rep_info.get("phone"):
+            return f"Thanks, {rep_info['name']}\n{rep_info['phone']}"
+        elif rep_info:
+            logger.info("Sales rep %s is in users table but phone is missing; using company signature", rep_name)
     return _build_company_signature(row)
 
 
@@ -155,7 +155,8 @@ def _send_aircall(row: dict, message: str, dry_run: bool, opportunity: dict | No
 
     sales_assignee = (opportunity or {}).get("salesAssignee") or {}
     rep_name = (sales_assignee.get("name") or "").strip()
-    rep_number_id = get_sales_rep_number(rep_name) if rep_name else None
+    rep_info = get_sales_rep_info(rep_name) if rep_name else None
+    rep_number_id = rep_info.get("aircall_number_id") if rep_info else None
 
     if dry_run:
         dry_run_number_id = rep_number_id or aircall_number_id

@@ -68,7 +68,7 @@ class TestGetSmsMessages:
 
 class TestPostSms:
 
-    @patch("routes.sms._get_ssm")
+    @patch("routes.sms.get_ssm_cached")
     @patch("routes.sms.urllib.request.urlopen")
     def test_send_success(self, mock_urlopen, mock_ssm, sms_client):
         mock_ssm.side_effect = lambda k: {"AIRCALL_API_ID": "id", "AIRCALL_API_TOKEN": "tok"}.get(
@@ -102,7 +102,7 @@ class TestPostSms:
         )
         assert resp.status_code == 422
 
-    @patch("routes.sms._get_ssm", return_value="")
+    @patch("routes.sms.get_ssm_cached", return_value="")
     def test_missing_credentials_returns_500(self, mock_ssm, sms_client):
         resp = sms_client.post(
             "/api/sms/2403703417",
@@ -110,7 +110,7 @@ class TestPostSms:
         )
         assert resp.status_code == 500
 
-    @patch("routes.sms._get_ssm")
+    @patch("routes.sms.get_ssm_cached")
     @patch("routes.sms.urllib.request.urlopen")
     def test_aircall_error_returns_502(self, mock_urlopen, mock_ssm, sms_client):
         import urllib.error
