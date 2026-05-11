@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from datetime import datetime
 
 import boto3
@@ -116,12 +117,14 @@ def _load_candidates(export_mode: str) -> list[dict]:
     return all_rows
 
 
-def run_export(export_mode: str) -> dict:
+def run_export(export_mode: str, limit: int = 0) -> dict:
     if export_mode not in {"bootstrap", "daily"}:
         raise ValueError(f"Unsupported export_mode: {export_mode}")
 
     reset_request_counters()
     candidates = _load_candidates(export_mode)
+    if limit:
+        candidates = candidates[:limit]
     rows = []
     filtered = 0
     errors = 0
@@ -131,6 +134,7 @@ def run_export(export_mode: str) -> dict:
         if not smartmoving_id:
             continue
         opp_resp = get_opportunity(smartmoving_id)
+        time.sleep(0.55)  # stay under 120 req/min SmartMoving rate limit
         if "error" in opp_resp:
             errors += 1
             continue

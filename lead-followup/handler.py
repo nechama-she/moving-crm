@@ -95,13 +95,13 @@ def handler(event, context):
     if mode == "day3_export_bootstrap":
         from services.day3_export import run_export
 
-        export_result = run_export("bootstrap")
+        export_result = run_export("bootstrap", limit=event.get("limit", 0))
         all_results["day3_export_bootstrap"] = export_result
 
     if mode == "day3_export_daily":
         from services.day3_export import run_export
 
-        export_result = run_export("daily")
+        export_result = run_export("daily", limit=event.get("limit", 0))
         all_results["day3_export_daily"] = export_result
 
     return {
