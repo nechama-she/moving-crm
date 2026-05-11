@@ -2,6 +2,7 @@
 
 import logging
 import os
+import time
 from collections import defaultdict
 from http import HTTPStatus
 from itertools import count
@@ -69,20 +70,27 @@ def get_opportunity(opportunity_id: str) -> dict:
     """Fetch a single opportunity by ID.
 
     Returns {"data": {...}} or {"error": ...}.
+    Automatically retries once after 60s if rate-limited (429).
     """
     url = f"{SMARTMOVING_BASE_URL}/opportunities/{opportunity_id}"
-    try:
-        resp = httpx.get(url, headers=_headers(), timeout=15)
-        _log_http_request(resp)
-        resp.raise_for_status()
-        return {"data": resp.json()}
-    except httpx.HTTPError as e:
-        resp = getattr(e, "response", None)
-        status = getattr(resp, "status_code", None) if resp is not None else None
-        body = getattr(resp, "text", str(e)) if resp is not None else str(e)
-        return {"error": f"HTTP {status}: {body[:300]}"}
-    except Exception as e:
-        return {"error": str(e)}
+    for attempt in range(2):
+        try:
+            resp = httpx.get(url, headers=_headers(), timeout=15)
+            _log_http_request(resp)
+            if resp.status_code == 429:
+                logger.warning("SmartMoving rate limit hit for %s — waiting 60s before retry", opportunity_id)
+                time.sleep(60)
+                continue
+            resp.raise_for_status()
+            return {"data": resp.json()}
+        except httpx.HTTPError as e:
+            resp = getattr(e, "response", None)
+            status = getattr(resp, "status_code", None) if resp is not None else None
+            body = getattr(resp, "text", str(e)) if resp is not None else str(e)
+            return {"error": f"HTTP {status}: {body[:300]}"}
+        except Exception as e:
+            return {"error": str(e)}
+    return {"error": "HTTP 429: rate limit exceeded after retry"}
 
 
 def get_followup(opportunity_id: str, followup_id: str) -> dict:

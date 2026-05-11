@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import tempfile
-import time
 from datetime import datetime
 
 import boto3
@@ -88,20 +87,26 @@ def _write_rows(rows: list[list[str]], export_mode: str) -> dict:
 
     client = _get_sheet_client()
     spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+    sheet_url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}"
+    logger.info("Opening spreadsheet: %s", sheet_url)
     worksheet = _get_or_create_worksheet(spreadsheet, GOOGLE_WORKSHEET_TITLE)
+    logger.info("Writing to worksheet '%s' in spreadsheet '%s'", worksheet.title, spreadsheet.title)
 
     if export_mode == "bootstrap":
         worksheet.clear()
-        worksheet.append_rows([_headers(), *rows], value_input_option="RAW")
+        logger.info("Bootstrap mode: cleared worksheet, appending %d rows + header", len(rows))
+        result = worksheet.append_rows([_headers(), *rows], value_input_option="RAW")
+        logger.info("append_rows response: %s", result)
     else:
         existing_header = worksheet.row_values(1)
         if existing_header != _headers():
             worksheet.clear()
             worksheet.append_row(_headers(), value_input_option="RAW")
         if rows:
-            worksheet.append_rows(rows, value_input_option="RAW")
+            result = worksheet.append_rows(rows, value_input_option="RAW")
+            logger.info("append_rows response: %s", result)
 
-    return {"worksheet_title": worksheet.title, "rows_written": len(rows)}
+    return {"worksheet_title": worksheet.title, "rows_written": len(rows), "sheet_url": sheet_url}
 
 
 def _load_candidates(export_mode: str) -> list[dict]:
@@ -145,7 +150,6 @@ def run_export(export_mode: str, limit: int = 0) -> dict:
             continue
         logger.info("[%d/%d] Fetching SmartMoving opportunity %s for lead %s", i, len(candidates), smartmoving_id, lead.get("full_name") or lead.get("id"))
         opp_resp = get_opportunity(smartmoving_id)
-        time.sleep(0.55)  # stay under 120 req/min SmartMoving rate limit
         if "error" in opp_resp:
             errors += 1
             logger.warning("[%d/%d] SmartMoving error for %s: %s", i, len(candidates), smartmoving_id, opp_resp["error"])
