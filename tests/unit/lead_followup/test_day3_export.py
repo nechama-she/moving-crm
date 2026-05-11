@@ -53,9 +53,9 @@ class TestRunExport:
              patch.object(mod, "_write_rows", return_value={"worksheet_title": "Day3 Status 0", "rows_written": 2}) as mock_write_rows, \
              patch.object(mod, "get_request_counters", return_value={"total": 3}):
             mock_get_opportunity.side_effect = [
-                {"data": {"leadStatus": "Priority 0"}},
-                {"data": {"leadStatus": "Priority 1"}},
-                {"data": {"leadStatus": None}},
+                {"data": {"leadStatus": "Priority 0", "status": 0}},
+                {"data": {"leadStatus": "Priority 1", "status": 1}},
+                {"data": {"leadStatus": None, "status": 0}},
             ]
 
             result = mod.run_export("daily")

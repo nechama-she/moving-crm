@@ -76,7 +76,26 @@ def _build_row(lead: dict) -> list[str]:
     ]
 
 
-def _write_rows(rows: list[list[str]], export_mode: str) -> dict:
+def _get_existing_sheet_keys() -> set:
+    """Return set of (phone, company) tuples already in the sheet."""
+    try:
+        client = _get_sheet_client()
+        spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = _get_or_create_worksheet(spreadsheet, GOOGLE_WORKSHEET_TITLE)
+        all_values = worksheet.get_all_values()
+        keys = set()
+        for r in all_values[1:]:  # skip header
+            phone_val = r[1].strip() if len(r) >= 2 else ""
+            company_val = r[6].strip() if len(r) >= 7 else ""
+            if phone_val:
+                keys.add((phone_val, company_val))
+        return keys
+    except Exception as exc:
+        logger.warning("Could not read existing sheet keys (non-fatal): %s", exc)
+        return set()
+
+
+def _write_rows(rows: list[list[str]]) -> dict:
     if not GOOGLE_SHEET_ID:
         raise RuntimeError("GOOGLE_SHEET_ID is not configured")
 
@@ -87,19 +106,15 @@ def _write_rows(rows: list[list[str]], export_mode: str) -> dict:
     worksheet = _get_or_create_worksheet(spreadsheet, GOOGLE_WORKSHEET_TITLE)
     logger.info("Writing to worksheet '%s' in spreadsheet '%s'", worksheet.title, spreadsheet.title)
 
-    if export_mode == "bootstrap":
-        worksheet.clear()
-        logger.info("Bootstrap mode: cleared worksheet, appending %d rows + header", len(rows))
-        result = worksheet.append_rows([_headers(), *rows], value_input_option="RAW")
+    # Ensure header row exists
+    existing_header = worksheet.row_values(1)
+    if existing_header != _headers():
+        worksheet.insert_row(_headers(), index=1, value_input_option="RAW")
+        logger.info("Header row added")
+
+    if rows:
+        result = worksheet.append_rows(rows, value_input_option="RAW")
         logger.info("append_rows response: %s", result)
-    else:
-        existing_header = worksheet.row_values(1)
-        if existing_header != _headers():
-            worksheet.clear()
-            worksheet.append_row(_headers(), value_input_option="RAW")
-        if rows:
-            result = worksheet.append_rows(rows, value_input_option="RAW")
-            logger.info("append_rows response: %s", result)
 
     return {"worksheet_title": worksheet.title, "rows_written": len(rows), "sheet_url": sheet_url}
 
@@ -126,8 +141,20 @@ def run_export(export_mode: str, limit: int = 0) -> dict:
 
     candidates = _load_candidates(export_mode)
     logger.info("Loaded %d candidate leads from DB", len(candidates))
+
+    # Read sheet upfront to avoid unnecessary SmartMoving API calls
+    existing_keys = _get_existing_sheet_keys()
+    logger.info("Sheet already has %d entries (phone+company)", len(existing_keys))
+
+    # Filter out leads already in the sheet
+    candidates = [
+        lead for lead in candidates
+        if (_build_row(lead)[1].strip(), _build_row(lead)[6].strip()) not in existing_keys
+    ]
+    logger.info("%d candidates remaining after sheet dedup", len(candidates))
+
     if limit:
-        logger.info("Will stop after %d matched (status=0) rows", limit)
+        logger.info("Will stop after %d matched rows", limit)
      
     rows = []
     filtered = 0
@@ -151,9 +178,10 @@ def run_export(export_mode: str, limit: int = 0) -> dict:
             continue
         opportunity = opp_resp["data"]
         lead_status = opportunity.get("leadStatus")
-        if lead_status not in ("Priority 0", None, ""):
+        status_val = opportunity.get("status")
+        if not ((lead_status == "Priority 0" or not lead_status) and status_val in (0, 1, 3)):
             skipped_nonzero += 1
-            logger.info("[%d/%d] Skipping %s — leadStatus=%s", i, len(candidates), smartmoving_id, lead_status)
+            logger.info("[%d/%d] Skipping %s — leadStatus=%s status=%s", i, len(candidates), smartmoving_id, lead_status, status_val)
             continue
         filtered += 1
         logger.info("[%d/%d] Matched %s — leadStatus=%s", i, len(candidates), smartmoving_id, lead_status)
@@ -163,7 +191,7 @@ def run_export(export_mode: str, limit: int = 0) -> dict:
 
     logger.info("Loop complete: matched=%d skipped_nonzero=%d skipped_no_id=%d errors=%d", filtered, skipped_nonzero, skipped_no_id, errors)
     logger.info("Writing %d rows to sheet...", len(rows))
-    sheet_result = _write_rows(rows, export_mode)
+    sheet_result = _write_rows(rows)
     logger.info("Sheet write complete: worksheet=%s rows_written=%d", sheet_result["worksheet_title"], sheet_result["rows_written"])
     smartmoving_requests = get_request_counters()
     result = {

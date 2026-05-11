@@ -1008,9 +1008,9 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: !Sub moving-crm-lead-followup-day3-export-${Environment}
-      Description: Daily day-3 status-0 lead export to Google Sheets every morning at 8am ET (12:00 UTC)
+      Description: Daily day-3 status-0 lead export to Google Sheets (disabled — handled inside day_followup run)
       ScheduleExpression: "cron(0 12 * * ? *)"
-      State: ENABLED
+      State: DISABLED
       Targets:
         - Id: LeadFollowupLambdaDay3Export
           Arn: !GetAtt LeadFollowupFunction.Arn

@@ -180,6 +180,7 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
 
     stats = {"total": len(all_rows), "matched": 0, "errors": 0, "skipped": 0, "sms_sent": 0, "sms_failed": 0}
     results = []
+    sheet_rows = []  # day-3 leads that got SMS sent
 
     for row in all_rows:
         name = row.get("full_name", "").strip()
@@ -257,6 +258,8 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
                 sms_result = _send_followup_sms(name, phone, company_name, company_phone, aircall_number_id, template=template, signature=signature)
                 if sms_result.get("sent"):
                     record_sent_message(opp_id, day_label, "aircall")
+                    if days_back == 2:
+                        sheet_rows.append(row)
                 elif sms_result.get("error"):
                     qualification_reason = sms_result.get("error") or "send_failed"
             if sms_result.get("sent"):
@@ -291,6 +294,17 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
             "qualifies": qualifies,
             "sms": sms_result,
         })
+
+    if sheet_rows:
+        try:
+            from services.day3_export import _build_row, _write_rows
+            rows_to_write = [_build_row(r) for r in sheet_rows]
+            sheet_result = _write_rows(rows_to_write)
+            logger.info("Day-3 sheet write: %d rows appended — %s", sheet_result["rows_written"], sheet_result["sheet_url"])
+            stats["sheet_rows_written"] = sheet_result["rows_written"]
+        except Exception as exc:
+            logger.warning("Day-3 sheet write failed (non-fatal): %s", exc)
+            stats["sheet_rows_written"] = 0
 
     smartmoving_requests = get_request_counters()
     logger.info("SmartMoving request summary (day_followup): %s", smartmoving_requests)
