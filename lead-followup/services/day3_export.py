@@ -122,30 +122,48 @@ def run_export(export_mode: str, limit: int = 0) -> dict:
         raise ValueError(f"Unsupported export_mode: {export_mode}")
 
     reset_request_counters()
+    logger.info("Day3 export started: mode=%s limit=%s sheet=%s worksheet=%s", export_mode, limit or "none", GOOGLE_SHEET_ID, GOOGLE_WORKSHEET_TITLE)
+
     candidates = _load_candidates(export_mode)
+    logger.info("Loaded %d candidate leads from DB", len(candidates))
     if limit:
-        candidates = candidates[:limit]
+        logger.info("Will stop after %d matched (status=0) rows", limit)
+
     rows = []
     filtered = 0
     errors = 0
+    skipped_no_id = 0
+    skipped_nonzero = 0
 
-    for lead in candidates:
+    for i, lead in enumerate(candidates, 1):
+        if limit and filtered >= limit:
+            logger.info("Reached limit of %d matched rows, stopping early", limit)
+            break
         smartmoving_id = str(lead.get("smartmoving_id") or "").strip()
         if not smartmoving_id:
+            skipped_no_id += 1
             continue
+        logger.info("[%d/%d] Fetching SmartMoving opportunity %s for lead %s", i, len(candidates), smartmoving_id, lead.get("full_name") or lead.get("id"))
         opp_resp = get_opportunity(smartmoving_id)
         time.sleep(0.55)  # stay under 120 req/min SmartMoving rate limit
         if "error" in opp_resp:
             errors += 1
+            logger.warning("[%d/%d] SmartMoving error for %s: %s", i, len(candidates), smartmoving_id, opp_resp["error"])
             continue
         opportunity = opp_resp["data"]
         status = opportunity.get("status")
         if status != 0:
+            skipped_nonzero += 1
+            logger.info("[%d/%d] Skipping %s — status=%s (not 0)", i, len(candidates), smartmoving_id, status)
             continue
         filtered += 1
+        logger.info("[%d/%d] Matched %s — status=0, adding to sheet", i, len(candidates), smartmoving_id)
         rows.append(_build_row(lead, export_mode, opportunity))
 
+    logger.info("Loop complete: matched=%d skipped_nonzero=%d skipped_no_id=%d errors=%d", filtered, skipped_nonzero, skipped_no_id, errors)
+    logger.info("Writing %d rows to sheet...", len(rows))
     sheet_result = _write_rows(rows, export_mode)
+    logger.info("Sheet write complete: worksheet=%s rows_written=%d", sheet_result["worksheet_title"], sheet_result["rows_written"])
     smartmoving_requests = get_request_counters()
     result = {
         "mode": export_mode,
