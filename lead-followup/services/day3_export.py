@@ -133,7 +133,7 @@ def run_export(export_mode: str, limit: int = 0) -> dict:
     logger.info("Loaded %d candidate leads from DB", len(candidates))
     if limit:
         logger.info("Will stop after %d matched (status=0) rows", limit)
-
+     
     rows = []
     filtered = 0
     errors = 0
