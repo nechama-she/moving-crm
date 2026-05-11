@@ -12,6 +12,7 @@ sys.modules["database"] = MagicMock()
 sys.modules["libs"] = MagicMock()
 sys.modules["libs.aircall"] = MagicMock()
 sys.modules["libs.smartmoving"] = MagicMock()
+sys.modules["services.day3_export"] = MagicMock()
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "lead-followup"))
 
@@ -96,3 +97,21 @@ class TestHandlerLogging:
         from handler import handler
         handler({"days_back": 2}, None)
         assert mock_run.call_count == 1
+
+    @patch("services.day3_export.run_export")
+    def test_day3_export_bootstrap_mode(self, mock_export):
+        mock_export.return_value = {"stats": {"rows_written": 3}}
+        from handler import handler
+        resp = handler({"mode": "day3_export_bootstrap"}, None)
+        body = json.loads(resp["body"])
+        assert body["day3_export_bootstrap"]["stats"]["rows_written"] == 3
+        mock_export.assert_called_once_with("bootstrap")
+
+    @patch("services.day3_export.run_export")
+    def test_day3_export_daily_mode(self, mock_export):
+        mock_export.return_value = {"stats": {"rows_written": 1}}
+        from handler import handler
+        resp = handler({"mode": "day3_export_daily"}, None)
+        body = json.loads(resp["body"])
+        assert body["day3_export_daily"]["stats"]["rows_written"] == 1
+        mock_export.assert_called_once_with("daily")

@@ -47,7 +47,7 @@ Parameters:
   GoogleSheetId:
     Type: String
     Default: ""
-    Description: "[DEPRECATED] No longer used — kept for backward compatibility with existing stack"
+    Description: Google Sheet ID used for day-3 lead exports
 
   DeployLambda:
     Type: String
@@ -944,6 +944,8 @@ Resources:
           DB_PORT: !GetAtt Database.Endpoint.Port
           DB_NAME: !Ref DBName
           DB_USER: !Ref DBMasterUsername
+          GOOGLE_SHEET_ID: !Ref GoogleSheetId
+          GOOGLE_DAY3_WORKSHEET_TITLE: Day3 Status 0
 
   LeadFollowupEventInvokeConfig:
     Condition: ShouldDeployLambda
@@ -1000,6 +1002,30 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt LeadFollowupDueSchedule.Arn
+
+  LeadFollowupDay3ExportSchedule:
+    Condition: ShouldDeployLambda
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub moving-crm-lead-followup-day3-export-${Environment}
+      Description: Daily day-3 status-0 lead export to Google Sheets every morning at 8am ET (12:00 UTC)
+      ScheduleExpression: "cron(0 12 * * ? *)"
+      State: ENABLED
+      Targets:
+        - Id: LeadFollowupLambdaDay3Export
+          Arn: !GetAtt LeadFollowupFunction.Arn
+          Input: '{"mode": "day3_export_daily"}'
+          RetryPolicy:
+            MaximumRetryAttempts: 0
+
+  LeadFollowupDay3ExportSchedulePermission:
+    Condition: ShouldDeployLambda
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LeadFollowupFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LeadFollowupDay3ExportSchedule.Arn
 
 Outputs:
   FrontendURL:

@@ -92,6 +92,18 @@ def handler(event, context):
             followup_msg_result["stats"]["note_failed"],
         )
 
+    if mode == "day3_export_bootstrap":
+        from services.day3_export import run_export
+
+        export_result = run_export("bootstrap")
+        all_results["day3_export_bootstrap"] = export_result
+
+    if mode == "day3_export_daily":
+        from services.day3_export import run_export
+
+        export_result = run_export("daily")
+        all_results["day3_export_daily"] = export_result
+
     return {
         "statusCode": 200,
         "body": json.dumps(all_results, default=str),
