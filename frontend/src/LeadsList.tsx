@@ -71,6 +71,10 @@ export default function LeadsList() {
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [companyFilter, setCompanyFilter] = useState("");
+  const [assignedToFilter, setAssignedToFilter] = useState("");
+  const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
+  const [reps, setReps] = useState<{ id: string; name: string }[]>([]);
   const [sortBy, setSortBy] = useState("created_time");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -80,7 +84,7 @@ export default function LeadsList() {
   const companyNameFilter = searchParams.get("company_name") || "";
 
   const STATUS_OPTIONS = ["new", "contacted", "quoted", "booked", "scheduled", "completed", "lost", "cancelled"];
-  const SORTABLE_COLS = new Set(["created_time", "full_name", "status", "move_size", "pickup_zip", "delivery_zip"]);
+  const SORTABLE_COLS = new Set(["created_time", "full_name", "status", "move_size", "pickup_zip", "delivery_zip", "company_name"]);
 
   const handleSort = (col: string) => {
     if (!SORTABLE_COLS.has(col)) return;
@@ -92,14 +96,27 @@ export default function LeadsList() {
     }
   };
 
+  useEffect(() => {
+    fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) })
+      .then((r) => r.json())
+      .then((data) => setCompanies(Array.isArray(data) ? data : []))
+      .catch(() => {});
+    fetch(`${API_BASE}/api/users/mine-reps`, { headers: authHeaders(token) })
+      .then((r) => r.json())
+      .then((data) => setReps(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, [token]);
+
   const fetchLeads = useCallback(async (offset: number = 0, query: string = "") => {
     const isFirst = offset === 0;
     if (!isFirst) setLoadingMore(true);
     try {
       const params = new URLSearchParams({ limit: "50", offset: String(offset) });
       if (query) params.set("search", query);
-      if (companyIdFilter) params.set("company_id", companyIdFilter);
+      const effectiveCompanyId = companyIdFilter || companyFilter;
+      if (effectiveCompanyId) params.set("company_id", effectiveCompanyId);
       if (statusFilter) params.set("status", statusFilter);
+      if (assignedToFilter) params.set("assigned_to", assignedToFilter);
       params.set("sort_by", sortBy);
       params.set("sort_dir", sortDir);
       const res = await fetch(`${API_BASE}/api/leads?${params}`, { headers: authHeaders(token) });
@@ -113,11 +130,11 @@ export default function LeadsList() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [token, companyIdFilter, statusFilter, sortBy, sortDir]);
+  }, [token, companyIdFilter, companyFilter, assignedToFilter, statusFilter, sortBy, sortDir]);
 
   useEffect(() => {
     fetchLeads(0, search);
-  }, [fetchLeads, search, companyIdFilter, statusFilter, sortBy, sortDir]);
+  }, [fetchLeads, search, companyIdFilter, companyFilter, assignedToFilter, statusFilter, sortBy, sortDir]);
 
   const handleSearchChange = (value: string) => {
     setSearchInput(value);
@@ -208,6 +225,31 @@ export default function LeadsList() {
             <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
           ))}
         </select>
+        {!companyIdFilter && companies.length > 1 && (
+          <select
+            value={companyFilter}
+            onChange={(e) => setCompanyFilter(e.target.value)}
+            style={{ padding: "8px 12px", border: "1px solid #dddbda", borderRadius: 4, fontSize: 14, background: "#fff", cursor: "pointer" }}
+          >
+            <option value="">All Companies</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        )}
+        {reps.length > 0 && (
+          <select
+            value={assignedToFilter}
+            onChange={(e) => setAssignedToFilter(e.target.value)}
+            style={{ padding: "8px 12px", border: "1px solid #dddbda", borderRadius: 4, fontSize: 14, background: "#fff", cursor: "pointer" }}
+          >
+            <option value="">All Reps</option>
+            <option value="__unassigned__">Unassigned</option>
+            {reps.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+        )}
       </div>
       {leads.length === 0 ? (
         <p>No leads found.</p>

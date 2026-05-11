@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Header
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, cast, DateTime
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
@@ -265,6 +265,7 @@ def get_leads(
     search: str = Query(default=""),
     status: str = Query(default=""),
     company_id: str = Query(default=""),
+    assigned_to: str = Query(default=""),
     sort_by: str = Query(default="created_time"),
     sort_dir: str = Query(default="desc"),
     user: User = Depends(get_current_user),
@@ -291,6 +292,13 @@ def get_leads(
     if status:
         query = query.filter(Lead.status == status)
 
+    # Assigned-to filter (admin/dispatch only — sales_rep is already forced above)
+    if assigned_to and user.role != "sales_rep":
+        if assigned_to == "__unassigned__":
+            query = query.filter(Lead.assigned_to == None)  # noqa: E711
+        else:
+            query = query.filter(Lead.assigned_to == assigned_to)
+
     # Search
     if search.strip():
         q = f"%{search.strip().lower()}%"
@@ -302,14 +310,17 @@ def get_leads(
         )
 
     SORTABLE = {
-        "created_time": Lead.created_time,
+        "created_time": cast(Lead.created_time, DateTime),
         "full_name": Lead.full_name,
         "status": Lead.status,
         "move_size": Lead.move_size,
         "pickup_zip": Lead.pickup_zip,
         "delivery_zip": Lead.delivery_zip,
+        "company_name": Company.name,
     }
-    sort_col = SORTABLE.get(sort_by, Lead.created_time)
+    if sort_by == "company_name":
+        query = query.join(Company, Lead.company_id == Company.id)
+    sort_col = SORTABLE.get(sort_by, cast(Lead.created_time, DateTime))
     order = sort_col.asc() if sort_dir == "asc" else sort_col.desc()
     query = query.order_by(order)
     total = query.count()

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from auth import hash_password, require_admin
+from auth import hash_password, require_admin, get_current_user
 from database import get_db
 from models import User, Company, UserCompany, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, Lead
 from routes.auth import validate_password_strength
@@ -69,6 +69,28 @@ class RepAvailabilityUpdate(BaseModel):
 def _parse_iso_datetime(value: str) -> datetime:
     # Accepts either 2026-04-29T12:00:00 or 2026-04-29T12:00:00Z
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+@router.get("/mine-reps")
+def list_my_reps(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Return sales reps accessible to the current user (same companies)."""
+    if user.role == "admin":
+        company_ids = [r[0] for r in db.query(Company.id).all()]
+    else:
+        company_ids = [r[0] for r in db.query(UserCompany.company_id).filter(UserCompany.user_id == user.id).all()]
+    rep_ids = (
+        db.query(UserCompany.user_id)
+        .filter(UserCompany.company_id.in_(company_ids))
+        .distinct()
+        .subquery()
+    )
+    reps = (
+        db.query(User)
+        .filter(User.id.in_(rep_ids), User.role == "sales_rep")
+        .order_by(User.name)
+        .all()
+    )
+    return [{"id": r.id, "name": r.name} for r in reps]
 
 
 @router.get("")
