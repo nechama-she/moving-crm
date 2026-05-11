@@ -64,20 +64,15 @@ def _headers() -> list[str]:
     ]
 
 
-def _build_row(lead: dict, export_mode: str, opportunity: dict) -> list[str]:
-    customer = opportunity.get("customer") or {}
-    branch = opportunity.get("branch") or {}
-    move_size = opportunity.get("moveSize") or {}
-    jobs = opportunity.get("jobs") or []
-    job_addresses = (jobs[0].get("jobAddresses") or []) if jobs else []
+def _build_row(lead: dict) -> list[str]:
     return [
-        str(customer.get("name") or ""),
-        str(customer.get("phoneNumber") or ""),
-        str(job_addresses[0]) if len(job_addresses) > 0 else "",
-        str(job_addresses[1]) if len(job_addresses) > 1 else "",
-        str(move_size.get("name") or ""),
-        str(customer.get("emailAddress") or ""),
-        str(branch.get("name") or ""),
+        str(lead.get("full_name") or ""),
+        str(lead.get("phone") or ""),
+        str(lead.get("pickup_zip") or ""),
+        str(lead.get("delivery_zip") or ""),
+        str(lead.get("move_size") or ""),
+        str(lead.get("email") or ""),
+        str(lead.get("company_name") or ""),
     ]
 
 
@@ -161,8 +156,10 @@ def run_export(export_mode: str, limit: int = 0) -> dict:
             logger.info("[%d/%d] Skipping %s — status=%s (not 0)", i, len(candidates), smartmoving_id, status)
             continue
         filtered += 1
-        logger.info("[%d/%d] Matched %s — status=0, adding to sheet", i, len(candidates), smartmoving_id)
-        rows.append(_build_row(lead, export_mode, opportunity))
+        logger.info("[%d/%d] Matched %s — FULL SM RESPONSE: %s", i, len(candidates), smartmoving_id, json.dumps(opportunity, default=str))
+        row = _build_row(lead)
+        logger.info("[%d/%d] Built row for %s: %s", i, len(candidates), smartmoving_id, row)
+        rows.append(row)
 
     logger.info("Loop complete: matched=%d skipped_nonzero=%d skipped_no_id=%d errors=%d", filtered, skipped_nonzero, skipped_no_id, errors)
     logger.info("Writing %d rows to sheet...", len(rows))

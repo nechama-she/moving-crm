@@ -19,23 +19,22 @@ import services.day3_export as mod
 
 class TestBuildRow:
 
-    def test_build_row_maps_smartmoving_fields(self):
-        row = mod._build_row(
-            {},
-            "daily",
-            {
-                "status": 0,
-                "customer": {"name": "John Doe", "phoneNumber": "555-1234", "emailAddress": "john@test.com"},
-                "branch": {"name": "Gorilla Movers"},
-                "moveSize": {"name": "3 Bedroom"},
-                "jobs": [{"jobAddresses": ["123 Main St", "456 Oak Ave"]}],
-            },
-        )
+    def test_build_row_maps_fields(self):
+        lead = {
+            "full_name": "John Doe",
+            "phone": "555-1234",
+            "email": "john@test.com",
+            "pickup_zip": "60601",
+            "delivery_zip": "60614",
+            "move_size": "3 Bedroom",
+            "company_name": "Gorilla Movers",
+        }
+        row = mod._build_row(lead)
 
         assert row[0] == "John Doe"        # client_name
         assert row[1] == "555-1234"        # client_phone
-        assert row[2] == "123 Main St"     # client_pickup
-        assert row[3] == "456 Oak Ave"     # client_delivery
+        assert row[2] == "60601"           # client_pickup
+        assert row[3] == "60614"           # client_delivery
         assert row[4] == "3 Bedroom"       # move_size
         assert row[5] == "john@test.com"   # client_email
         assert row[6] == "Gorilla Movers"  # moving_company
