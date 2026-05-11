@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Header
 from pydantic import BaseModel
-from sqlalchemy import func, cast, DateTime
+from sqlalchemy import func, cast
+from sqlalchemy.types import DateTime
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
