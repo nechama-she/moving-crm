@@ -105,7 +105,7 @@ class TestHandlerLogging:
         resp = handler({"mode": "day3_export_bootstrap"}, None)
         body = json.loads(resp["body"])
         assert body["day3_export_bootstrap"]["stats"]["rows_written"] == 3
-        mock_export.assert_called_once_with("bootstrap")
+        mock_export.assert_called_once_with("bootstrap", limit=0)
 
     @patch("services.day3_export.run_export")
     def test_day3_export_daily_mode(self, mock_export):
@@ -114,4 +114,4 @@ class TestHandlerLogging:
         resp = handler({"mode": "day3_export_daily"}, None)
         body = json.loads(resp["body"])
         assert body["day3_export_daily"]["stats"]["rows_written"] == 1
-        mock_export.assert_called_once_with("daily")
+        mock_export.assert_called_once_with("daily", limit=0)
