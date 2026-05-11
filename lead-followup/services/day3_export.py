@@ -150,13 +150,13 @@ def run_export(export_mode: str, limit: int = 0) -> dict:
             logger.warning("[%d/%d] SmartMoving error for %s: %s", i, len(candidates), smartmoving_id, opp_resp["error"])
             continue
         opportunity = opp_resp["data"]
-        status = opportunity.get("status")
-        if status != 0:
+        lead_status = opportunity.get("leadStatus")
+        if lead_status not in ("Priority 0", None, ""):
             skipped_nonzero += 1
-            logger.info("[%d/%d] Skipping %s — status=%s (not 0)", i, len(candidates), smartmoving_id, status)
+            logger.info("[%d/%d] Skipping %s — leadStatus=%s", i, len(candidates), smartmoving_id, lead_status)
             continue
         filtered += 1
-        logger.info("[%d/%d] Matched %s — FULL SM RESPONSE: %s", i, len(candidates), smartmoving_id, json.dumps(opportunity, default=str))
+        logger.info("[%d/%d] Matched %s — leadStatus=%s", i, len(candidates), smartmoving_id, lead_status)
         row = _build_row(lead)
         logger.info("[%d/%d] Built row for %s: %s", i, len(candidates), smartmoving_id, row)
         rows.append(row)

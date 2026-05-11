@@ -47,20 +47,22 @@ class TestRunExport:
              patch.object(mod, "_load_candidates", return_value=[
                  {"smartmoving_id": "sm-1", "company_name": "Gorilla", "full_name": "Lead 1", "phone": "111", "email": "a@test.com", "created_at": "2026-05-01"},
                  {"smartmoving_id": "sm-2", "company_name": "Gorilla", "full_name": "Lead 2", "phone": "222", "email": "b@test.com", "created_at": "2026-05-02"},
+                 {"smartmoving_id": "sm-3", "company_name": "Gorilla", "full_name": "Lead 3", "phone": "333", "email": "c@test.com", "created_at": "2026-05-03"},
              ]), \
              patch.object(mod, "get_opportunity") as mock_get_opportunity, \
-             patch.object(mod, "_write_rows", return_value={"worksheet_title": "Day3 Status 0", "rows_written": 1}) as mock_write_rows, \
-             patch.object(mod, "get_request_counters", return_value={"total": 2}):
+             patch.object(mod, "_write_rows", return_value={"worksheet_title": "Day3 Status 0", "rows_written": 2}) as mock_write_rows, \
+             patch.object(mod, "get_request_counters", return_value={"total": 3}):
             mock_get_opportunity.side_effect = [
-                {"data": {"status": 0, "customer": {"name": "A"}, "branch": {}, "moveSize": {}, "jobs": []}},
-                {"data": {"status": 1, "customer": {"name": "B"}, "branch": {}, "moveSize": {}, "jobs": []}},
+                {"data": {"leadStatus": "Priority 0"}},
+                {"data": {"leadStatus": "Priority 1"}},
+                {"data": {"leadStatus": None}},
             ]
 
             result = mod.run_export("daily")
 
-        assert result["stats"]["candidates"] == 2
-        assert result["stats"]["matched"] == 1
-        assert result["stats"]["rows_written"] == 1
+        assert result["stats"]["candidates"] == 3
+        assert result["stats"]["matched"] == 2
+        assert result["stats"]["rows_written"] == 2
         mock_write_rows.assert_called_once()
 
     def test_run_export_counts_smartmoving_errors(self):
