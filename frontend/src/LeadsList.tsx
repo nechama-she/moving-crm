@@ -171,7 +171,6 @@ export default function LeadsList() {
   };
 
   if (loading) return <p>Loading…</p>;
-  if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
 
   const columns = getColumns(leads);
 
@@ -180,6 +179,12 @@ export default function LeadsList() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
         <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700 }}>Leads</h1>
       </div>
+      {error && (
+        <div style={{ marginBottom: 10, padding: "8px 12px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, color: "#b91c1c", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>Failed to load leads: {error}</span>
+          <button onClick={() => { setError(""); fetchLeads(0, search); }} style={{ border: "none", background: "none", cursor: "pointer", color: "#b91c1c", fontWeight: 700 }}>Retry</button>
+        </div>
+      )}
       {companyIdFilter ? (
         <div style={{ marginBottom: 12, fontSize: 13, color: "#334155", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <span>

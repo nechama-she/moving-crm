@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, Depends, Header
 from pydantic import BaseModel
 from sqlalchemy import func, cast
-from sqlalchemy.types import DateTime
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
@@ -311,7 +310,7 @@ def get_leads(
         )
 
     SORTABLE = {
-        "created_time": cast(Lead.created_time, DateTime),
+        "created_time": Lead.created_at,
         "full_name": Lead.full_name,
         "status": Lead.status,
         "move_size": Lead.move_size,
@@ -321,7 +320,7 @@ def get_leads(
     }
     if sort_by == "company_name":
         query = query.join(Company, Lead.company_id == Company.id)
-    sort_col = SORTABLE.get(sort_by, cast(Lead.created_time, DateTime))
+    sort_col = SORTABLE.get(sort_by, Lead.created_at)
     order = sort_col.asc() if sort_dir == "asc" else sort_col.desc()
     query = query.order_by(order)
     total = query.count()
