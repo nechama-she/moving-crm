@@ -265,6 +265,8 @@ def get_leads(
     search: str = Query(default=""),
     status: str = Query(default=""),
     company_id: str = Query(default=""),
+    sort_by: str = Query(default="created_time"),
+    sort_dir: str = Query(default="desc"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -299,7 +301,17 @@ def get_leads(
             | Lead.email.ilike(q)
         )
 
-    query = query.order_by(Lead.created_time.desc())
+    SORTABLE = {
+        "created_time": Lead.created_time,
+        "full_name": Lead.full_name,
+        "status": Lead.status,
+        "move_size": Lead.move_size,
+        "pickup_zip": Lead.pickup_zip,
+        "delivery_zip": Lead.delivery_zip,
+    }
+    sort_col = SORTABLE.get(sort_by, Lead.created_time)
+    order = sort_col.asc() if sort_dir == "asc" else sort_col.desc()
+    query = query.order_by(order)
     total = query.count()
     items = query.offset(offset).limit(limit).all()
     has_more = offset + limit < total

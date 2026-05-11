@@ -70,11 +70,27 @@ export default function LeadsList() {
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [sortBy, setSortBy] = useState("created_time");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const observerRef = useRef<IntersectionObserver | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const companyIdFilter = searchParams.get("company_id") || "";
   const companyNameFilter = searchParams.get("company_name") || "";
+
+  const STATUS_OPTIONS = ["new", "contacted", "quoted", "booked", "scheduled", "completed", "lost", "cancelled"];
+  const SORTABLE_COLS = new Set(["created_time", "full_name", "status", "move_size", "pickup_zip", "delivery_zip"]);
+
+  const handleSort = (col: string) => {
+    if (!SORTABLE_COLS.has(col)) return;
+    if (sortBy === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(col);
+      setSortDir("asc");
+    }
+  };
 
   const fetchLeads = useCallback(async (offset: number = 0, query: string = "") => {
     const isFirst = offset === 0;
@@ -83,6 +99,9 @@ export default function LeadsList() {
       const params = new URLSearchParams({ limit: "50", offset: String(offset) });
       if (query) params.set("search", query);
       if (companyIdFilter) params.set("company_id", companyIdFilter);
+      if (statusFilter) params.set("status", statusFilter);
+      params.set("sort_by", sortBy);
+      params.set("sort_dir", sortDir);
       const res = await fetch(`${API_BASE}/api/leads?${params}`, { headers: authHeaders(token) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -94,11 +113,11 @@ export default function LeadsList() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [token, companyIdFilter]);
+  }, [token, companyIdFilter, statusFilter, sortBy, sortDir]);
 
   useEffect(() => {
     fetchLeads(0, search);
-  }, [fetchLeads, search, companyIdFilter]);
+  }, [fetchLeads, search, companyIdFilter, statusFilter, sortBy, sortDir]);
 
   const handleSearchChange = (value: string) => {
     setSearchInput(value);
@@ -163,23 +182,33 @@ export default function LeadsList() {
           </button>
         </div>
       ) : null}
-      <input
-        type="text"
-        placeholder="Search by name, ID, phone, or email…"
-        value={searchInput}
-        onChange={(e) => handleSearchChange(e.target.value)}
-        style={{
-          width: "100%",
-          maxWidth: 380,
-          padding: "8px 12px",
-          marginBottom: 12,
-          border: "1px solid #dddbda",
-          borderRadius: 4,
-          fontSize: 14,
-          outline: "none",
-          background: "#fff",
-        }}
-      />
+      <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <input
+          type="text"
+          placeholder="Search by name, ID, phone, or email…"
+          value={searchInput}
+          onChange={(e) => handleSearchChange(e.target.value)}
+          style={{
+            width: 320,
+            padding: "8px 12px",
+            border: "1px solid #dddbda",
+            borderRadius: 4,
+            fontSize: 14,
+            outline: "none",
+            background: "#fff",
+          }}
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          style={{ padding: "8px 12px", border: "1px solid #dddbda", borderRadius: 4, fontSize: 14, background: "#fff", cursor: "pointer" }}
+        >
+          <option value="">All Statuses</option>
+          {STATUS_OPTIONS.map((s) => (
+            <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+          ))}
+        </select>
+      </div>
       {leads.length === 0 ? (
         <p>No leads found.</p>
       ) : (
@@ -187,9 +216,13 @@ export default function LeadsList() {
         <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {columns.map((col) => (
+              {columns.map((col) => {
+                const isSortable = SORTABLE_COLS.has(col);
+                const isActive = sortBy === col;
+                return (
                 <th
                   key={col}
+                  onClick={() => handleSort(col)}
                   style={{
                     ...cellStyle(col),
                     textAlign: "left",
@@ -200,14 +233,18 @@ export default function LeadsList() {
                     zIndex: 1,
                     fontSize: 12,
                     fontWeight: 700,
-                    color: "#3e3e3c",
+                    color: isActive ? "#032d60" : "#3e3e3c",
                     textTransform: "uppercase",
                     letterSpacing: "0.04em",
+                    cursor: isSortable ? "pointer" : "default",
+                    userSelect: "none",
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  {formatLabel(col)}
+                  {formatLabel(col)}{isActive ? (sortDir === "asc" ? " ▲" : " ▼") : isSortable ? " ⇅" : ""}
                 </th>
-              ))}
+                );
+              })}
             </tr>
           </thead>
           <tbody>
