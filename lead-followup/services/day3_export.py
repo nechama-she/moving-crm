@@ -16,7 +16,7 @@ from services.followup import compute_utc_window
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1cftSB2c_kyjR0ADdxJ_2RrJbJv8XdnUQ73PgHeztr6s").strip()
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "").strip() or "1cftSB2c_kyjR0ADdxJ_2RrJbJv8XdnUQ73PgHeztr6s"
 GOOGLE_WORKSHEET_TITLE = os.getenv("GOOGLE_DAY3_WORKSHEET_TITLE", "Day3 Status 0")
 GOOGLE_CREDENTIALS_SSM = os.getenv("GOOGLE_CREDENTIALS_SSM", "/meta-webhook/GOOGLE_SHEETS_CREDENTIALS")
 GOOGLE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
