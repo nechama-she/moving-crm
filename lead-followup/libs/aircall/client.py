@@ -112,9 +112,11 @@ def send_sms(to: str, text: str, number_id: str | None = None, from_phone: str |
         "Content-Type": "application/json",
     }
     body = {"to": to_formatted, "body": text}
+    logger.info("send_sms REQUEST: url=%s payload=%s", url, body)
 
     try:
         resp = httpx.post(url, headers=headers, json=body, timeout=15)
+        logger.info("send_sms RESPONSE: status=%s body=%s", resp.status_code, resp.text[:500])
         resp.raise_for_status()
         data = resp.json()
         msg_id = str(data.get("id", ""))
@@ -123,8 +125,8 @@ def send_sms(to: str, text: str, number_id: str | None = None, from_phone: str |
     except httpx.HTTPError as e:
         status = getattr(e.response, "status_code", None)
         body_text = getattr(e.response, "text", str(e))
-        logger.error("send_sms error: %s %s", status, body_text[:300])
-        return {"ok": False, "error": f"HTTP {status}", "detail": body_text[:300]}
+        logger.error("send_sms error: %s %s", status, body_text[:500])
+        return {"ok": False, "error": f"HTTP {status}", "detail": body_text[:500]}
     except Exception as e:
         logger.error("send_sms error: %r", e)
         return {"ok": False, "error": str(e)}
