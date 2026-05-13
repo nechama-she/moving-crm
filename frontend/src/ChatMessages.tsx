@@ -71,7 +71,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
 
     if (phoneNumber) {
       fetches.push(
-        fetch(`${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}`, { headers: authHeaders(token) })
+        fetch(`${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}${companyName ? `?company_name=${encodeURIComponent(companyName)}` : ""}`, { headers: authHeaders(token) })
           .then((res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();

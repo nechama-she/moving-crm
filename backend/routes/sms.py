@@ -18,32 +18,30 @@ logger = logging.getLogger("moving-crm")
 router = APIRouter(prefix="/api", tags=["SMS"])
 
 @router.get("/sms/{phone}")
-def get_sms_messages(phone: str):
+def get_sms_messages(phone: str, company_name: str | None = None):
     """Fetch SMS messages for a phone number from the sms_messages table.
-    Tries multiple phone number formats and only returns Gorilla haulers messages."""
+    Tries multiple phone number formats. Filters by company_name if provided."""
     try:
         variants = _phone_variants(phone)
         all_items = []
         seen_ids = set()
 
         for variant in variants:
-            response = sms_messages_table.query(
-                KeyConditionExpression=Key("phone_number").eq(variant),
-                FilterExpression=Attr("company_name").eq("Gorilla haulers"),
-                ScanIndexForward=True,
-            )
+            query_kwargs: dict = {
+                "KeyConditionExpression": Key("phone_number").eq(variant),
+                "ScanIndexForward": True,
+            }
+            if company_name:
+                query_kwargs["FilterExpression"] = Attr("company_name").eq(company_name)
+            response = sms_messages_table.query(**query_kwargs)
             for item in response.get("Items", []):
                 mid = item.get("message_id", "")
                 if mid not in seen_ids:
                     seen_ids.add(mid)
                     all_items.append(item)
             while "LastEvaluatedKey" in response:
-                response = sms_messages_table.query(
-                    KeyConditionExpression=Key("phone_number").eq(variant),
-                    FilterExpression=Attr("company_name").eq("Gorilla haulers"),
-                    ScanIndexForward=True,
-                    ExclusiveStartKey=response["LastEvaluatedKey"],
-                )
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = sms_messages_table.query(**query_kwargs)
                 for item in response.get("Items", []):
                     mid = item.get("message_id", "")
                     if mid not in seen_ids:

@@ -92,7 +92,7 @@ def _generate_message_from_note(row: dict, opportunity: dict | None = None) -> t
         "- Do not ask if something still works or give the client an easy option to cancel.\n"
         "- Do not ask yes/no questions that invite them to decline.\n"
         "- The message should assume progress and gently prompt an update.\n"
-        "- If the note includes a time or scheduled call, frame it as a reminder, not a confirmation.\n"
+        "- Notes may start with a timestamp like '05/10 03:37 pm' indicating when the note was written. If such a timestamp is present and that date/time is already in the past (even if it was earlier today), treat any time-relative phrases in the note (e.g. 'in 30 minutes', 'in an hour', 'tomorrow', 'later today', 'Monday') as stale — do NOT use them in the message. Only use a scheduled time as a reminder if the note timestamp indicates it is still in the future.\n"
         "- If the note includes something the client needed to do (ask father, check closing date, etc.), follow up expecting an update.\n"
         "- Keep the message short, natural, and conversational, like a real text message.\n"
         "- You will be given two template options. If either option is relevant to the note, choose it (as-is or lightly adapted). If the note contains specific details that the templates cannot address (e.g. a scheduled time, a pending action the client had to take), write a custom message instead.\n"
