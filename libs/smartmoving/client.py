@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import time
 from collections import defaultdict
 from http import HTTPStatus
@@ -66,31 +67,44 @@ def _headers() -> dict:
     return {"x-api-key": SMARTMOVING_API_KEY, "Cache-Control": "no-cache"}
 
 
+def _request(method_fn, *args, **kwargs) -> httpx.Response:
+    """Execute an httpx request, retrying once on 429 using the server-specified wait."""
+    for attempt in range(2):
+        resp = method_fn(*args, **kwargs)
+        _log_http_request(resp)
+        if resp.status_code != 429 or attempt == 1:
+            return resp
+        wait = 60
+        try:
+            msg = resp.json().get("message", "")
+            m = re.search(r"Try again in (\d+) seconds", msg, re.IGNORECASE)
+            if m:
+                wait = int(m.group(1))
+        except Exception:
+            pass
+        wait += 5
+        logger.warning("SmartMoving rate limit hit — waiting %ds before retry", wait)
+        time.sleep(wait)
+    return resp  # type: ignore[return-value]  # covered by loop above
+
+
 def get_opportunity(opportunity_id: str) -> dict:
     """Fetch a single opportunity by ID.
 
     Returns {"data": {...}} or {"error": ...}.
-    Automatically retries once after 60s if rate-limited (429).
     """
     url = f"{SMARTMOVING_BASE_URL}/opportunities/{opportunity_id}"
-    for attempt in range(2):
-        try:
-            resp = httpx.get(url, headers=_headers(), timeout=15)
-            _log_http_request(resp)
-            if resp.status_code == 429:
-                logger.warning("SmartMoving rate limit hit for %s — waiting 60s before retry", opportunity_id)
-                time.sleep(60)
-                continue
-            resp.raise_for_status()
-            return {"data": resp.json()}
-        except httpx.HTTPError as e:
-            resp = getattr(e, "response", None)
-            status = getattr(resp, "status_code", None) if resp is not None else None
-            body = getattr(resp, "text", str(e)) if resp is not None else str(e)
-            return {"error": f"HTTP {status}: {body[:300]}"}
-        except Exception as e:
-            return {"error": str(e)}
-    return {"error": "HTTP 429: rate limit exceeded after retry"}
+    try:
+        resp = _request(httpx.get, url, headers=_headers(), timeout=15)
+        resp.raise_for_status()
+        return {"data": resp.json()}
+    except httpx.HTTPError as e:
+        r = getattr(e, "response", None)
+        status = getattr(r, "status_code", None) if r is not None else None
+        body = getattr(r, "text", str(e)) if r is not None else str(e)
+        return {"error": f"HTTP {status}: {body[:300]}"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def get_followup(opportunity_id: str, followup_id: str) -> dict:
@@ -100,8 +114,7 @@ def get_followup(opportunity_id: str, followup_id: str) -> dict:
     """
     url = f"{SMARTMOVING_BASE_URL}/premium/opportunities/{opportunity_id}/followups/{followup_id}"
     try:
-        resp = httpx.get(url, headers=_headers(), timeout=15)
-        _log_http_request(resp)
+        resp = _request(httpx.get, url, headers=_headers(), timeout=15)
         resp.raise_for_status()
         return {"data": resp.json()}
     except httpx.HTTPError as e:
@@ -122,8 +135,7 @@ def update_followup(opportunity_id: str, followup_id: str, payload: dict) -> dic
     headers = {**_headers(), "Content-Type": "application/json-patch+json"}
     logger.info("SmartMoving PUT %s payload=%s", url, payload)
     try:
-        resp = httpx.put(url, headers=headers, json=payload, timeout=15)
-        _log_http_request(resp)
+        resp = _request(httpx.put, url, headers=headers, json=payload, timeout=15)
         logger.info("SmartMoving PUT response: status=%s body=%s", resp.status_code, resp.text[:500] if resp.text else "(empty)")
         resp.raise_for_status()
         return {"ok": True}
@@ -149,8 +161,7 @@ def add_opportunity_note(opportunity_id: str, note: str) -> dict:
     payload = {"notes": note}
     logger.info("SmartMoving POST %s payload=%s", url, payload)
     try:
-        resp = httpx.post(url, headers=headers, json=payload, timeout=15)
-        _log_http_request(resp)
+        resp = _request(httpx.post, url, headers=headers, json=payload, timeout=15)
         logger.info("SmartMoving add_opportunity_note: status=%s body=%s", resp.status_code, resp.text[:300] if resp.text else "(empty)")
         resp.raise_for_status()
         return {"ok": True}
@@ -188,8 +199,7 @@ def update_opportunity_salesperson(opportunity_id: str, salesperson_id: str) -> 
         payload,
     )
     try:
-        resp = httpx.patch(url, headers=headers, json=payload, timeout=15)
-        _log_http_request(resp)
+        resp = _request(httpx.patch, url, headers=headers, json=payload, timeout=15)
         response_body = resp.text[:500] if resp.text else "(empty)"
         logger.info(
             "SmartMoving PATCH response: status=%s body=%s",

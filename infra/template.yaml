@@ -984,8 +984,8 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       Name: !Sub moving-crm-lead-followup-due-${Environment}
-      Description: Due followup messages every morning at 8am ET (12:00 UTC)
-      ScheduleExpression: "cron(0 12 * * ? *)"
+      Description: Due followup messages every morning at 8:15am ET (12:15 UTC)
+      ScheduleExpression: "cron(15 12 * * ? *)"
       State: ENABLED
       Targets:
         - Id: LeadFollowupLambdaDue
