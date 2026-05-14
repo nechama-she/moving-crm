@@ -27,6 +27,8 @@ class Company(Base):
     facebook_page_id = Column(String(100), unique=True, index=True)
     aircall_number_id = Column(String(50))
     samrtmoving_branch_id = Column(String(100))
+    granot_api_id = Column(String(100))
+    granot_mover_ref = Column(String(100))
     timezone = Column(String(50), default="America/New_York")
     created_at = Column(DateTime(timezone=True), default=_now)
 
@@ -41,6 +43,8 @@ class Company(Base):
             "facebook_page_id": self.facebook_page_id or "",
             "aircall_number_id": self.aircall_number_id or "",
             "samrtmoving_branch_id": self.samrtmoving_branch_id or "",
+            "granot_api_id": self.granot_api_id or "",
+            "granot_mover_ref": self.granot_mover_ref or "",
             "timezone": self.timezone or "America/New_York",
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }

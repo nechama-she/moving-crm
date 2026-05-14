@@ -9,6 +9,8 @@ type Company = {
   facebook_page_id?: string;
   aircall_number_id?: string;
   samrtmoving_branch_id?: string;
+  granot_api_id?: string;
+  granot_mover_ref?: string;
   timezone?: string;
 };
 
@@ -18,6 +20,8 @@ type CompanyForm = {
   facebook_page_id: string;
   aircall_number_id: string;
   samrtmoving_branch_id: string;
+  granot_api_id: string;
+  granot_mover_ref: string;
   timezone: string;
 };
 
@@ -27,6 +31,8 @@ const emptyForm: CompanyForm = {
   facebook_page_id: "",
   aircall_number_id: "",
   samrtmoving_branch_id: "",
+  granot_api_id: "",
+  granot_mover_ref: "",
   timezone: "America/New_York",
 };
 
@@ -86,6 +92,8 @@ export default function CompaniesPage() {
       facebook_page_id: company.facebook_page_id || "",
       aircall_number_id: company.aircall_number_id || "",
       samrtmoving_branch_id: company.samrtmoving_branch_id || "",
+      granot_api_id: company.granot_api_id || "",
+      granot_mover_ref: company.granot_mover_ref || "",
       timezone: company.timezone || "America/New_York",
     });
     setError("");
@@ -109,6 +117,8 @@ export default function CompaniesPage() {
         facebook_page_id: form.facebook_page_id.trim(),
         aircall_number_id: form.aircall_number_id.trim(),
         samrtmoving_branch_id: form.samrtmoving_branch_id.trim(),
+        granot_api_id: form.granot_api_id.trim(),
+        granot_mover_ref: form.granot_mover_ref.trim(),
         timezone: form.timezone.trim() || "America/New_York",
       };
 
@@ -168,6 +178,8 @@ export default function CompaniesPage() {
         c.facebook_page_id || "",
         c.aircall_number_id || "",
         c.samrtmoving_branch_id || "",
+        c.granot_api_id || "",
+        c.granot_mover_ref || "",
         c.timezone || "",
       ];
       return fields.some((v) => v.toLowerCase().includes(q));
@@ -212,6 +224,14 @@ export default function CompaniesPage() {
           <label style={fieldLabel}>
             SmartMoving Branch ID
             <input value={form.samrtmoving_branch_id} onChange={(e) => updateField("samrtmoving_branch_id", e.target.value)} style={inputStyle} />
+          </label>
+          <label style={fieldLabel}>
+            Granot API ID
+            <input value={form.granot_api_id} onChange={(e) => updateField("granot_api_id", e.target.value)} style={inputStyle} />
+          </label>
+          <label style={fieldLabel}>
+            Granot Mover Ref
+            <input value={form.granot_mover_ref} onChange={(e) => updateField("granot_mover_ref", e.target.value)} style={inputStyle} />
           </label>
           <label style={fieldLabel}>
             Timezone
@@ -262,6 +282,8 @@ export default function CompaniesPage() {
               <th style={th}>Facebook Page ID</th>
               <th style={th}>Aircall Number ID</th>
               <th style={th}>SmartMoving Branch ID</th>
+              <th style={th}>Granot API ID</th>
+              <th style={th}>Granot Mover Ref</th>
               <th style={th}>Timezone</th>
               <th style={th}>Actions</th>
             </tr>
@@ -269,13 +291,13 @@ export default function CompaniesPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={7}>Loading...</td>
+                <td style={td} colSpan={9}>Loading...</td>
               </tr>
             ) : null}
 
             {!loading && filteredCompanies.length === 0 ? (
               <tr>
-                <td style={td} colSpan={7}>No companies found.</td>
+                <td style={td} colSpan={9}>No companies found.</td>
               </tr>
             ) : null}
 
@@ -286,6 +308,8 @@ export default function CompaniesPage() {
                 <td style={td}>{company.facebook_page_id || "-"}</td>
                 <td style={td}>{company.aircall_number_id || "-"}</td>
                 <td style={td}>{company.samrtmoving_branch_id || "-"}</td>
+                <td style={td}>{company.granot_api_id || "-"}</td>
+                <td style={td}>{company.granot_mover_ref || "-"}</td>
                 <td style={td}>{company.timezone || "-"}</td>
                 <td style={td}>
                   <div style={{ display: "flex", gap: 8 }}>

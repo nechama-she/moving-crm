@@ -20,6 +20,8 @@ class CompanyCreate(BaseModel):
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
     samrtmoving_branch_id: str = ""
+    granot_api_id: str = ""
+    granot_mover_ref: str = ""
     timezone: str = "America/New_York"
 
 
@@ -77,6 +79,8 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
         facebook_page_id=page_id,
         aircall_number_id=(body.aircall_number_id or "").strip(),
         samrtmoving_branch_id=(body.samrtmoving_branch_id or "").strip(),
+        granot_api_id=(body.granot_api_id or "").strip() or None,
+        granot_mover_ref=(body.granot_mover_ref or "").strip() or None,
         timezone=(body.timezone or "").strip() or "America/New_York",
     )
     db.add(company)
@@ -91,6 +95,8 @@ class CompanyUpdate(BaseModel):
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
     samrtmoving_branch_id: str = ""
+    granot_api_id: str = ""
+    granot_mover_ref: str = ""
     timezone: str = "America/New_York"
 
 
@@ -113,6 +119,8 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     company.facebook_page_id = (body.facebook_page_id or "").strip() or None
     company.aircall_number_id = (body.aircall_number_id or "").strip()
     company.samrtmoving_branch_id = (body.samrtmoving_branch_id or "").strip()
+    company.granot_api_id = (body.granot_api_id or "").strip() or None
+    company.granot_mover_ref = (body.granot_mover_ref or "").strip() or None
     company.timezone = (body.timezone or "").strip() or "America/New_York"
     db.commit()
     db.refresh(company)
