@@ -31,10 +31,10 @@ def get_sms_messages(phone: str, company_name: str | None = None):
                 "KeyConditionExpression": Key("phone_number").eq(variant),
                 "ScanIndexForward": True,
             }
-            if company_name:
-                query_kwargs["FilterExpression"] = Attr("company_name").eq(company_name)
             response = sms_messages_table.query(**query_kwargs)
             for item in response.get("Items", []):
+                if company_name and item.get("company_name", "").lower() != company_name.lower():
+                    continue
                 mid = item.get("message_id", "")
                 if mid not in seen_ids:
                     seen_ids.add(mid)
@@ -43,6 +43,8 @@ def get_sms_messages(phone: str, company_name: str | None = None):
                 query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
                 response = sms_messages_table.query(**query_kwargs)
                 for item in response.get("Items", []):
+                    if company_name and item.get("company_name", "").lower() != company_name.lower():
+                        continue
                     mid = item.get("message_id", "")
                     if mid not in seen_ids:
                         seen_ids.add(mid)
