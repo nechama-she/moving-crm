@@ -334,6 +334,15 @@ def get_leads(
     }
 
 
+@router.get("/leads/by-leadgen/{leadgen_id}")
+def get_lead_by_leadgen(leadgen_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    company_ids = _get_user_company_ids(user, db)
+    lead = db.query(Lead).filter(Lead.leadgen_id == leadgen_id, Lead.company_id.in_(company_ids)).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return lead.to_dict()
+
+
 @router.get("/leads/{lead_id}")
 def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     company_ids = _get_user_company_ids(user, db)
