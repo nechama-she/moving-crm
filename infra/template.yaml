@@ -1093,6 +1093,7 @@ Resources:
                   - ssm:GetParametersByPath
                 Resource:
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/*"
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/meta-webhook/*"
               - Effect: Allow
                 Action:
                   - sqs:ReceiveMessage
@@ -1119,6 +1120,7 @@ Resources:
         Variables:
           SSM_PREFIX: !Sub /moving-crm/${Environment}/
           API_URL: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+          MOVING_CRM_ADMIN_PASSWORD_PARAM: /meta-webhook/MOVINGCRM_ADMIN_PASSWORD
 
   LeadDuplicateEventInvokeConfig:
     Condition: ShouldDeployLambda

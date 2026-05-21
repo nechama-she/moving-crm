@@ -31,8 +31,10 @@ def _get_api_secret() -> str:
 
 
 def _get_admin_password() -> str:
-    ssm_prefix = os.getenv("SSM_PREFIX", "/moving-crm/dev/")
-    param = ssm_prefix.rstrip("/") + "/ADMIN_PASSWORD"
+    param = os.environ.get(
+        "MOVING_CRM_ADMIN_PASSWORD_PARAM",
+        "/meta-webhook/MOVINGCRM_ADMIN_PASSWORD",
+    )
     logger.info("Fetching admin password from SSM: %s", param)
     ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
     resp = ssm.get_parameter(Name=param, WithDecryption=True)
