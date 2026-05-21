@@ -1,6 +1,9 @@
+import json
 import logging
 import os
 from datetime import datetime, timezone
+
+import boto3
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Header
 from pydantic import BaseModel
@@ -193,6 +196,27 @@ def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_id
 
     # Pick least-loaded rep for this company; ties resolved by alphabetical name.
     return min(rep_rows, key=lambda u: (counts.get(u.id, 0), u.name.lower()))
+
+
+def _enqueue_lead_for_duplication(lead_id: str, source_company_id: str, target_company_id: str) -> None:
+    queue_url = os.getenv("LEAD_DUPLICATE_QUEUE_URL", "")
+    if not queue_url:
+        logger.warning("LEAD_DUPLICATE_QUEUE_URL not set; skipping enqueue for lead %s", lead_id)
+        return
+    try:
+        sqs = boto3.client("sqs", region_name=os.getenv("AWS_REGION_NAME", "us-east-1"))
+        sqs.send_message(
+            QueueUrl=queue_url,
+            MessageBody=json.dumps({
+                "lead_id": lead_id,
+                "source_company_id": source_company_id,
+                "target_company_id": target_company_id,
+            }),
+            DelaySeconds=600,
+        )
+        logger.info("Enqueued lead %s for duplication to company %s", lead_id, target_company_id)
+    except Exception as exc:
+        logger.warning("Failed to enqueue lead %s for duplication: %s", lead_id, exc)
 
 
 def _send_assignment_webhook_todo(lead: Lead, rep: User | None):
@@ -629,6 +653,14 @@ def create_lead(
     except Exception as exc:
         db.rollback()
         logger.warning("Non-fatal outreach event write failure for lead %s: %s", lead.id, exc)
+
+    # Duplicate lead to another company after a 10-minute delay
+    if False:  # TODO: replace with real routing condition
+        _enqueue_lead_for_duplication(
+            lead_id=lead.id,
+            source_company_id=company.id,
+            target_company_id="",  # TODO: set target company ID
+        )
 
     return {
         "status": "created",

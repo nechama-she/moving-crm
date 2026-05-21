@@ -532,6 +532,11 @@ Resources:
                   - "*"
                   - !Sub "arn:aws:apigateway:${AWS::Region}::/apis"
                   - !Sub "arn:aws:apigateway:${AWS::Region}::/apis/*"
+              # SQS (lead duplicate queues)
+              - Effect: Allow
+                Action:
+                  - sqs:*
+                Resource: "*"
               # Secrets Manager (RDS managed passwords)
               - Effect: Allow
                 Action:
@@ -783,6 +788,10 @@ Resources:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/cache"
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt LeadDuplicateQueue.Arn
 
   ApiLambdaFunction:
     Type: AWS::Lambda::Function
@@ -806,6 +815,7 @@ Resources:
             - ","
             - - !Sub "https://${CloudFrontDistribution.DomainName}"
               - "http://localhost:5173"
+          LEAD_DUPLICATE_QUEUE_URL: !GetAtt LeadDuplicateQueue.QueueUrl
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
@@ -1026,6 +1036,98 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt LeadFollowupDay3ExportSchedule.Arn
+
+  # ===========================================================================
+  # LEAD DUPLICATE — SQS queues
+  # ===========================================================================
+  LeadDuplicateDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub moving-crm-lead-duplicate-dlq-${Environment}
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  LeadDuplicateQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub moving-crm-lead-duplicate-${Environment}
+      VisibilityTimeout: 180
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt LeadDuplicateDLQ.Arn
+        maxReceiveCount: 1
+
+  # ===========================================================================
+  # LEAD DUPLICATE — Lambda
+  # ===========================================================================
+  LeadDuplicateRole:
+    Condition: ShouldDeployLambda
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-lead-duplicate-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LeadDuplicatePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/*"
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource:
+                  - !GetAtt LeadDuplicateQueue.Arn
+                  - !GetAtt LeadDuplicateDLQ.Arn
+
+  LeadDuplicateFunction:
+    Condition: ShouldDeployLambda
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub moving-crm-lead-duplicate-${Environment}
+      Runtime: python3.11
+      Handler: handler.handler
+      Timeout: 30
+      MemorySize: 256
+      Role: !GetAtt LeadDuplicateRole.Arn
+      Code:
+        S3Bucket: !Ref FrontendBucket
+        S3Key: lead-duplicate/package.zip
+      Environment:
+        Variables:
+          SSM_PREFIX: !Sub /moving-crm/${Environment}/
+          API_URL: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  LeadDuplicateEventInvokeConfig:
+    Condition: ShouldDeployLambda
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref LeadDuplicateFunction
+      MaximumRetryAttempts: 0
+      Qualifier: $LATEST
+
+  LeadDuplicateEventSourceMapping:
+    Condition: ShouldDeployLambda
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt LeadDuplicateQueue.Arn
+      FunctionName: !GetAtt LeadDuplicateFunction.Arn
+      BatchSize: 1
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
 
 Outputs:
   FrontendURL:

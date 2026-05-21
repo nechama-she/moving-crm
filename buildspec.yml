@@ -28,6 +28,18 @@ phases:
       - echo "Uploading Lambda package to S3"
       - aws s3 cp $CODEBUILD_SRC_DIR/lead-followup/package.zip s3://${FRONTEND_BUCKET}/lead-followup/package.zip
 
+      - echo "Packaging lead-duplicate Lambda"
+      - cd $CODEBUILD_SRC_DIR/lead-duplicate
+      - "pip install --root-user-action=ignore -r requirements.txt -t ./package --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.11 --implementation cp"
+      - rm -rf ./package/boto3* ./package/botocore* ./package/s3transfer* ./package/jmespath* ./package/sqlalchemy/dialects/mssql ./package/sqlalchemy/dialects/mysql ./package/sqlalchemy/dialects/oracle ./package/sqlalchemy/dialects/sqlite
+      - find ./package \( -type d \( -name __pycache__ -o -name tests \) -exec rm -rf {} + \) -o \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.pyx' \) -delete 2>/dev/null || true
+      - cp handler.py ./package/
+      - cd package && zip -qr9 ../package.zip . && cd ..
+      - echo "lead-duplicate package size:" && du -h $CODEBUILD_SRC_DIR/lead-duplicate/package.zip
+
+      - echo "Uploading lead-duplicate package to S3"
+      - aws s3 cp $CODEBUILD_SRC_DIR/lead-duplicate/package.zip s3://${FRONTEND_BUCKET}/lead-duplicate/package.zip
+
       - echo "Packaging API backend Lambda"
       - cd $CODEBUILD_SRC_DIR/backend
       - "pip install --root-user-action=ignore -r requirements.txt -t ./package --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.11 --implementation cp"
