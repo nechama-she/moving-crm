@@ -198,7 +198,7 @@ def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_id
     return min(rep_rows, key=lambda u: (counts.get(u.id, 0), u.name.lower()))
 
 
-def _enqueue_lead_for_duplication(lead_id: str, source_company_id: str, target_company_id: str) -> None:
+def _enqueue_lead_for_duplication(lead_id: str, target_company_name: str, target_referral_source: str) -> None:
     queue_url = os.getenv("LEAD_DUPLICATE_QUEUE_URL", "")
     if not queue_url:
         logger.warning("LEAD_DUPLICATE_QUEUE_URL not set; skipping enqueue for lead %s", lead_id)
@@ -209,12 +209,12 @@ def _enqueue_lead_for_duplication(lead_id: str, source_company_id: str, target_c
             QueueUrl=queue_url,
             MessageBody=json.dumps({
                 "lead_id": lead_id,
-                "source_company_id": source_company_id,
-                "target_company_id": target_company_id,
+                "target_company_name": target_company_name,
+                "target_referral_source": target_referral_source,
             }),
             DelaySeconds=600,
         )
-        logger.info("Enqueued lead %s for duplication to company %s", lead_id, target_company_id)
+        logger.info("Enqueued lead %s for duplication to company %s", lead_id, target_company_name)
     except Exception as exc:
         logger.warning("Failed to enqueue lead %s for duplication: %s", lead_id, exc)
 
@@ -654,12 +654,12 @@ def create_lead(
         db.rollback()
         logger.warning("Non-fatal outreach event write failure for lead %s: %s", lead.id, exc)
 
-    # Duplicate lead to another company after a 10-minute delay
-    if False:  # TODO: replace with real routing condition
+    # Duplicate lead to Top Tier Van Lines after a 10-minute delay
+    if lead.referral_source == "Facebook-Gorilla-HHG-Nationwide":
         _enqueue_lead_for_duplication(
             lead_id=lead.id,
-            source_company_id=company.id,
-            target_company_id="",  # TODO: set target company ID
+            target_company_name="Top Tier Van Lines",
+            target_referral_source="Facebook-TTVL-HHG-Nationwide",
         )
 
     return {

@@ -508,11 +508,20 @@ Resources:
                 Action:
                   - codepipeline:*
                 Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:moving-crm-*"
-              # Lambda
+              # Lambda functions
               - Effect: Allow
                 Action:
                   - lambda:*
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-*"
+              # Lambda event source mappings (ARN is event-source-mapping:<uuid>, not scoped to function name)
+              - Effect: Allow
+                Action:
+                  - lambda:CreateEventSourceMapping
+                  - lambda:UpdateEventSourceMapping
+                  - lambda:DeleteEventSourceMapping
+                  - lambda:GetEventSourceMapping
+                  - lambda:ListEventSourceMappings
+                Resource: "*"
               # EventBridge
               - Effect: Allow
                 Action:
