@@ -33,6 +33,7 @@ def _get_api_secret() -> str:
 def _get_admin_password() -> str:
     ssm_prefix = os.getenv("SSM_PREFIX", "/moving-crm/dev/")
     param = ssm_prefix.rstrip("/") + "/ADMIN_PASSWORD"
+    logger.info("Fetching admin password from SSM: %s", param)
     ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
     resp = ssm.get_parameter(Name=param, WithDecryption=True)
     return resp["Parameter"]["Value"]
@@ -41,11 +42,13 @@ def _get_admin_password() -> str:
 def _login(api_url: str) -> str:
     email = os.getenv("MOVING_CRM_ADMIN_EMAIL", "admin@gorillamove.com")
     password = _get_admin_password()
+    logger.info("Logging in as %s to %s/api/auth/login", email, api_url)
     resp = httpx.post(
         f"{api_url}/api/auth/login",
         json={"email": email, "password": password},
         timeout=10,
     )
+    logger.info("Login response: status=%d body=%s", resp.status_code, resp.text[:300])
     resp.raise_for_status()
     return resp.json()["token"]
 
@@ -72,8 +75,10 @@ def _process(body: dict) -> None:
     lead_id = body["lead_id"]
     target_company_name = body["target_company_name"]
     target_referral_source = body["target_referral_source"]
+    logger.info("Processing lead_id=%s target_company=%s target_referral=%s", lead_id, target_company_name, target_referral_source)
 
     api_url = os.getenv("API_URL", "").rstrip("/")
+    logger.info("API_URL=%s SSM_PREFIX=%s", api_url, os.getenv("SSM_PREFIX", "NOT SET"))
     if not api_url:
         raise RuntimeError("API_URL env var not set")
 
@@ -81,11 +86,14 @@ def _process(body: dict) -> None:
     token = _login(api_url)
 
     # ── Fetch source lead via API ───────────────────────────────────────────
+    get_url = f"{api_url}/api/leads/{lead_id}"
+    logger.info("GET %s", get_url)
     get_resp = httpx.get(
-        f"{api_url}/api/leads/{lead_id}",
+        get_url,
         headers={"Authorization": f"Bearer {token}"},
         timeout=10,
     )
+    logger.info("GET %s → status=%d body=%s", get_url, get_resp.status_code, get_resp.text[:300])
     if get_resp.status_code == 404:
         logger.warning("Source lead %s not found; skipping", lead_id)
         return
