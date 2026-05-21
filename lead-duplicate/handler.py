@@ -36,7 +36,9 @@ def _get_admin_password() -> str:
     logger.info("Fetching admin password from SSM: %s", param)
     ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
     resp = ssm.get_parameter(Name=param, WithDecryption=True)
-    return resp["Parameter"]["Value"]
+    password = resp["Parameter"]["Value"]
+    logger.info("Admin password retrieved: length=%d preview=%s...%s", len(password), password[:3], password[-3:])
+    return password
 
 
 def _login(api_url: str) -> str:
