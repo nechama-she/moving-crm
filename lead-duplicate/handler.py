@@ -30,6 +30,26 @@ def _get_api_secret() -> str:
     return resp["Parameter"]["Value"]
 
 
+def _get_admin_password() -> str:
+    ssm_prefix = os.getenv("SSM_PREFIX", "/moving-crm/dev/")
+    param = ssm_prefix.rstrip("/") + "/ADMIN_PASSWORD"
+    ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
+    resp = ssm.get_parameter(Name=param, WithDecryption=True)
+    return resp["Parameter"]["Value"]
+
+
+def _login(api_url: str) -> str:
+    email = os.getenv("MOVING_CRM_ADMIN_EMAIL", "admin@gorillamove.com")
+    password = _get_admin_password()
+    resp = httpx.post(
+        f"{api_url}/api/auth/login",
+        json={"email": email, "password": password},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()["token"]
+
+
 def handler(event, context):
     records = event.get("Records", [])
     logger.info("lead-duplicate handler invoked with %d record(s)", len(records))
@@ -58,11 +78,12 @@ def _process(body: dict) -> None:
         raise RuntimeError("API_URL env var not set")
 
     api_secret = _get_api_secret()
+    token = _login(api_url)
 
     # ── Fetch source lead via API ───────────────────────────────────────────
     get_resp = httpx.get(
         f"{api_url}/api/leads/{lead_id}",
-        headers={"x-api-secret": api_secret},
+        headers={"Authorization": f"Bearer {token}"},
         timeout=10,
     )
     if get_resp.status_code == 404:
