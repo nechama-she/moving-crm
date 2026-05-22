@@ -58,7 +58,7 @@ def _login(api_url: str) -> str:
 
 
 def _create_smartmoving_lead(lead: dict, referral_source: str) -> str:
-    url = "https://api.smartmoving.com/api/leads/from-provider/v2?providerKey=ce2082b7-b43f-469d-b909-b1eb00df8d37&branchId=213bea8f-9e5f-49f4-8908-b1eb00db95e2"
+    url = "https://api.smartmoving.com/api/leads/from-provider/v2?providerKey=ce2082b7-b43f-469d-b909-b1eb00df8d37&branchId=b2d21327-bd04-4517-bb9e-b444014996a5"
 
     note = (
         f"email: {lead.get('email', '')}. "
