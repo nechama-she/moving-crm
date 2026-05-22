@@ -57,6 +57,40 @@ def _login(api_url: str) -> str:
     return resp.json()["token"]
 
 
+def _create_smartmoving_lead(lead: dict, referral_source: str) -> str:
+    url = "https://api.smartmoving.com/api/leads/from-provider/v2?providerKey=ce2082b7-b43f-469d-b909-b1eb00df8d37&branchId=213bea8f-9e5f-49f4-8908-b1eb00db95e2"
+
+    note = (
+        f"email: {lead.get('email', '')}. "
+        f"pickup:{lead.get('pickup_zip', '')}. "
+        f"delivery:{lead.get('delivery_zip', '')}. "
+        f"moveDate:{lead.get('when_is_the_move?', '')}."
+    )
+
+    payload = {
+        "fullName":       lead.get("full_name", ""),
+        "phoneNumber":    lead.get("phone_number", "").replace("-", ""),
+        "email":          lead.get("email", ""),
+        "originZip":      lead.get("pickup_zip", ""),
+        "destinationZip": lead.get("delivery_zip", ""),
+        "moveDate":       lead.get("when_is_the_move?", ""),
+        "notes":          note,
+        "referralSource": referral_source,
+        "leadno":         lead.get("leadgen_id", ""),
+        "serviceType":    "Moving",
+        "moveSize":       lead.get("move_size", "") or "Room or Less",
+    }
+
+    logger.info("Creating SmartMoving lead payload=%s", payload)
+    resp = httpx.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=15)
+    logger.info("SmartMoving response: status=%d body=%s", resp.status_code, resp.text[:300])
+    resp.raise_for_status()
+    result = resp.json()
+    smartmoving_id = result.get("leadId", "") if isinstance(result, dict) else resp.text.strip('"')
+    logger.info("SmartMoving leadId=%s", smartmoving_id)
+    return smartmoving_id
+
+
 def handler(event, context):
     records = event.get("Records", [])
     logger.info("lead-duplicate handler invoked with %d record(s)", len(records))
@@ -104,7 +138,14 @@ def _process(body: dict) -> None:
     get_resp.raise_for_status()
     lead = get_resp.json()
 
-    # ── Submit duplicate lead ───────────────────────────────────────────────
+    # ── Create lead in SmartMoving first ───────────────────────────────────
+    smartmoving_id = ""
+    try:
+        smartmoving_id = _create_smartmoving_lead(lead, target_referral_source)
+    except Exception:
+        logger.exception("SmartMoving lead creation failed for lead %s; continuing without smartmoving_id", lead_id)
+
+    # ── Submit duplicate lead to CRM ────────────────────────────────────────
     payload = {
         "full_name":        lead.get("full_name", ""),
         "email":            lead.get("email", ""),
@@ -116,7 +157,7 @@ def _process(body: dict) -> None:
         "move_type":        lead.get("are_you_moving_within_the_state_or_out_of_state?", ""),
         "created_time":     lead.get("created_time", ""),
         "leadgen_id":       lead.get("leadgen_id", ""),
-        "smartmoving_id":   "",
+        "smartmoving_id":   smartmoving_id,
         "facebook_user_id": lead.get("user_id", ""),
         "notes":            lead.get("notes", ""),
         "referral_source":  target_referral_source,
