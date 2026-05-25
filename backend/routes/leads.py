@@ -655,24 +655,25 @@ def create_lead(
         logger.warning("Non-fatal outreach event write failure for lead %s: %s", lead.id, exc)
 
     # Duplicate lead to Top Tier Van Lines after a 10-minute delay
-    if lead.referral_source == "Facebook-Gorilla-HHG-Nationwide":
-        _enqueue_lead_for_duplication(
-            lead_id=lead.id,
-            target_company_name="Top Tier Van Lines",
-            target_referral_source="Facebook-TTVL-HHG-Nationwide",
-        )
-    elif lead.referral_source == "Facebook-Gorilla-HHG-FL-GA-NC":
-        _enqueue_lead_for_duplication(
-            lead_id=lead.id,
-            target_company_name="Top Tier Van Lines",
-            target_referral_source="Facebook-TTVL-HHG-FL-GA-NC",
-        )
-    elif lead.referral_source == "Facebook-Gorilla-HHG-Local":
-        _enqueue_lead_for_duplication(
-            lead_id=lead.id,
-            target_company_name="Movers 95",
-            target_referral_source="Facebook-Movers95-HHG-Local",
-        )
+    if company.name == "Gorilla Haulers":
+        if lead.referral_source == "Facebook-Gorilla-HHG-Nationwide":
+            _enqueue_lead_for_duplication(
+                lead_id=lead.id,
+                target_company_name="Top Tier Van Lines",
+                target_referral_source="Facebook-TTVL-HHG-Nationwide",
+            )
+        elif lead.referral_source == "Facebook-Gorilla-HHG-FL-GA-NC":
+            _enqueue_lead_for_duplication(
+                lead_id=lead.id,
+                target_company_name="Top Tier Van Lines",
+                target_referral_source="Facebook-TTVL-HHG-FL-GA-NC",
+            )
+        elif lead.referral_source == "Facebook-Gorilla-HHG-Local":
+            _enqueue_lead_for_duplication(
+                lead_id=lead.id,
+                target_company_name="Movers 95",
+                target_referral_source="Facebook-Movers95-HHG-Local",
+            )
 
     return {
         "status": "created",

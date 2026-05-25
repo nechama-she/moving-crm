@@ -57,8 +57,16 @@ def _login(api_url: str) -> str:
     return resp.json()["token"]
 
 
-def _create_smartmoving_lead(lead: dict, referral_source: str) -> str:
-    url = "https://api.smartmoving.com/api/leads/from-provider/v2?providerKey=ce2082b7-b43f-469d-b909-b1eb00df8d37&branchId=b2d21327-bd04-4517-bb9e-b444014996a5"
+_SMARTMOVING_BRANCH_URLS = {
+    "Top Tier Van Lines": "https://api.smartmoving.com/api/leads/from-provider/v2?providerKey=ce2082b7-b43f-469d-b909-b1eb00df8d37&branchId=b2d21327-bd04-4517-bb9e-b444014996a5",
+    "Movers 95":          "https://api.smartmoving.com/api/leads/from-provider/v2?providerKey=ce2082b7-b43f-469d-b909-b1eb00df8d37&branchId=57392601-1bce-4e65-82e8-b1eb00ddb5e2",
+}
+
+
+def _create_smartmoving_lead(lead: dict, referral_source: str, target_company_name: str) -> str:
+    url = _SMARTMOVING_BRANCH_URLS.get(target_company_name)
+    if not url:
+        raise ValueError(f"No SmartMoving URL configured for company: {target_company_name}")
 
     note = (
         f"email: {lead.get('email', '')}. "
@@ -141,7 +149,7 @@ def _process(body: dict) -> None:
     # ── Create lead in SmartMoving first ───────────────────────────────────
     smartmoving_id = ""
     try:
-        smartmoving_id = _create_smartmoving_lead(lead, target_referral_source)
+        smartmoving_id = _create_smartmoving_lead(lead, target_referral_source, target_company_name)
     except Exception:
         logger.exception("SmartMoving lead creation failed for lead %s; continuing without smartmoving_id", lead_id)
 
