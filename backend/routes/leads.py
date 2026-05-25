@@ -425,6 +425,34 @@ def update_lead(
     return lead.to_dict()
 
 
+class AssignByNameRequest(BaseModel):
+    name: str
+
+
+@router.patch("/leads/assign-by-name/{opportunity_id}")
+def assign_lead_by_name(
+    opportunity_id: str,
+    body: AssignByNameRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can assign leads")
+
+    lead = db.query(Lead).filter(Lead.smartmoving_id == opportunity_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    rep = db.query(User).filter(User.name == body.name.strip()).first()
+    if not rep:
+        raise HTTPException(status_code=404, detail=f"User '{body.name}' not found")
+
+    lead.assigned_to = rep.id
+    db.commit()
+    db.refresh(lead)
+    return lead.to_dict()
+
+
 # ---- POST /api/leads — create a new lead from Zapier / external source ----
 
 MOVE_TYPE_MAP = {
