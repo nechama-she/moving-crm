@@ -27,6 +27,11 @@ export default function LeadDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"conversations" | "activity">("conversations");
+  const [editingUser, setEditingUser] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [savingUser, setSavingUser] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
@@ -152,7 +157,179 @@ export default function LeadDetail() {
         </div>
       </div>
 
-      {renderSection("User Details", USER_FIELDS)}
+      {/* Client highlights card */}
+      {(() => {
+        const name = String(lead.full_name || "").trim();
+        const phone = String(lead.phone_number || "").trim();
+        const email = String(lead.email || "").trim();
+        const initials = name
+          ? name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("")
+          : "?";
+
+        function startEditUser() {
+          setEditName(name);
+          setEditPhone(phone);
+          setEditEmail(email);
+          setEditingUser(true);
+        }
+
+        async function saveUser() {
+          setSavingUser(true);
+          try {
+            const res = await fetch(`${API_BASE}/api/leads/${leadId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", ...authHeaders(token) },
+              body: JSON.stringify({
+                full_name: editName,
+                phone_number: editPhone,
+                email: editEmail,
+              }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const updated = await res.json();
+            setLead(updated);
+            setEditingUser(false);
+          } catch (e) {
+            alert(`Failed to save: ${e instanceof Error ? e.message : "error"}`);
+          } finally {
+            setSavingUser(false);
+          }
+        }
+
+        const tile: React.CSSProperties = {
+          flex: 1,
+          minWidth: 200,
+          padding: "12px 14px",
+          background: "#f3f6f9",
+          border: "1px solid #e5e9ed",
+          borderRadius: 6,
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+        };
+        const tileLabel: React.CSSProperties = {
+          fontSize: 10,
+          fontWeight: 700,
+          color: "#706e6b",
+          textTransform: "uppercase",
+          letterSpacing: 0.5,
+        };
+
+        return (
+          <div style={{ ...sectionStyle, padding: 18 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+              <div
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: "50%",
+                  background: "#0176d3",
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 700,
+                  fontSize: 18,
+                  flexShrink: 0,
+                }}
+              >
+                {initials}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {editingUser ? (
+                  <input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    placeholder="Full name"
+                    style={{
+                      width: "100%",
+                      fontSize: 18,
+                      fontWeight: 700,
+                      color: "#032d60",
+                      padding: "4px 8px",
+                      border: "1px solid #dddbda",
+                      borderRadius: 4,
+                    }}
+                  />
+                ) : (
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
+                    {name || "—"}
+                  </div>
+                )}
+              </div>
+              {editingUser ? (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    onClick={() => setEditingUser(false)}
+                    disabled={savingUser}
+                    style={{ padding: "5px 12px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, cursor: "pointer" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveUser}
+                    disabled={savingUser}
+                    style={{ padding: "5px 12px", border: "1px solid #0176d3", borderRadius: 4, background: "#0176d3", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                  >
+                    {savingUser ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={startEditUser}
+                  title="Edit"
+                  style={{ padding: "5px 10px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: "pointer" }}
+                >
+                  ✎ Edit
+                </button>
+              )}
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              <div style={tile}>
+                <span style={{ fontSize: 18 }}>📞</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={tileLabel}>Phone</div>
+                  {editingUser ? (
+                    <input
+                      value={editPhone}
+                      onChange={(e) => setEditPhone(e.target.value)}
+                      placeholder="Phone number"
+                      style={{ width: "100%", fontSize: 14, padding: "3px 6px", border: "1px solid #dddbda", borderRadius: 4 }}
+                    />
+                  ) : phone ? (
+                    <a href={`tel:${phone}`} style={{ fontSize: 14, color: "#0176d3", fontWeight: 600, textDecoration: "none" }}>
+                      {phone}
+                    </a>
+                  ) : (
+                    <span style={{ fontSize: 14, color: "#706e6b" }}>—</span>
+                  )}
+                </div>
+              </div>
+              <div style={tile}>
+                <span style={{ fontSize: 18 }}>✉️</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={tileLabel}>Email</div>
+                  {editingUser ? (
+                    <input
+                      value={editEmail}
+                      onChange={(e) => setEditEmail(e.target.value)}
+                      placeholder="Email address"
+                      style={{ width: "100%", fontSize: 14, padding: "3px 6px", border: "1px solid #dddbda", borderRadius: 4 }}
+                    />
+                  ) : email ? (
+                    <a href={`mailto:${email}`} style={{ fontSize: 14, color: "#0176d3", fontWeight: 600, textDecoration: "none", wordBreak: "break-all" }}>
+                      {email}
+                    </a>
+                  ) : (
+                    <span style={{ fontSize: 14, color: "#706e6b" }}>—</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <div style={sectionStyle}>
         <div style={sectionHeader}>Move Details</div>

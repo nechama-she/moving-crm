@@ -393,6 +393,9 @@ class LeadUpdate(BaseModel):
     priority: int | None = None
     assigned_to: str | None = None
     notes: str | None = None
+    full_name: str | None = None
+    phone_number: str | None = None
+    email: str | None = None
 
 
 @router.patch("/leads/{lead_id}")
@@ -419,6 +422,15 @@ def update_lead(
         lead.assigned_to = body.assigned_to or None
     if body.notes is not None:
         lead.notes = body.notes
+    if body.full_name is not None:
+        name = body.full_name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Name cannot be empty")
+        lead.full_name = name
+    if body.phone_number is not None:
+        lead.phone = body.phone_number.strip()
+    if body.email is not None:
+        lead.email = body.email.strip() or None
 
     db.commit()
     db.refresh(lead)

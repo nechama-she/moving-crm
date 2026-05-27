@@ -103,6 +103,8 @@ export default function TasksPanel({ leadId, token }: Props) {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
+  const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({});
+  const toggleDate = (key: string) => setCollapsedDates((m) => ({ ...m, [key]: !m[key] }));
   const [showNewForm, setShowNewForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -283,16 +285,24 @@ export default function TasksPanel({ leadId, token }: Props) {
       ) : (
         <div>
           {/* Upcoming tasks grouped by date (flat, no wrapper) */}
-          {upcomingKeys.map((dateKey) => (
-            <div key={`up-${dateKey}`}>
-              <div style={bucketHeader(dateHeaderColor(dateKey))}>
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: dateHeaderColor(dateKey), display: "inline-block" }} />
-                {formatDateHeader(dateKey)}
-                <span style={{ color: "#706e6b", fontWeight: 400, marginLeft: 4 }}>· {upcomingGrouped[dateKey].length}</span>
+          {upcomingKeys.map((dateKey) => {
+            const key = `up-${dateKey}`;
+            const collapsed = !!collapsedDates[key];
+            return (
+              <div key={key}>
+                <div
+                  style={{ ...bucketHeader(dateHeaderColor(dateKey)), cursor: "pointer" }}
+                  onClick={() => toggleDate(key)}
+                >
+                  <span style={{ fontSize: 10, color: "#706e6b" }}>{collapsed ? "▸" : "▾"}</span>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: dateHeaderColor(dateKey), display: "inline-block" }} />
+                  {formatDateHeader(dateKey)}
+                  <span style={{ color: "#706e6b", fontWeight: 400, marginLeft: 4 }}>· {upcomingGrouped[dateKey].length}</span>
+                </div>
+                {!collapsed && upcomingGrouped[dateKey].map((task) => renderTaskRow(task, dateKey))}
               </div>
-              {upcomingGrouped[dateKey].map((task) => renderTaskRow(task, dateKey))}
-            </div>
-          ))}
+            );
+          })}
 
           {/* Completed (collapsible) */}
           {doneCount > 0 && (
@@ -319,16 +329,24 @@ export default function TasksPanel({ leadId, token }: Props) {
                 Completed
                 <span style={{ color: "#706e6b", fontWeight: 500 }}>· {doneCount}</span>
               </div>
-              {!completedCollapsed && completedKeys.map((dateKey) => (
-                <div key={`done-${dateKey}`}>
-                  <div style={bucketHeader("#2e844a")}>
-                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#2e844a", display: "inline-block" }} />
-                    {formatDateHeader(dateKey)}
-                    <span style={{ color: "#706e6b", fontWeight: 400, marginLeft: 4 }}>· {completedGrouped[dateKey].length}</span>
+              {!completedCollapsed && completedKeys.map((dateKey) => {
+                const key = `done-${dateKey}`;
+                const collapsed = !!collapsedDates[key];
+                return (
+                  <div key={key}>
+                    <div
+                      style={{ ...bucketHeader("#2e844a"), cursor: "pointer" }}
+                      onClick={() => toggleDate(key)}
+                    >
+                      <span style={{ fontSize: 10, color: "#706e6b" }}>{collapsed ? "▸" : "▾"}</span>
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#2e844a", display: "inline-block" }} />
+                      {formatDateHeader(dateKey)}
+                      <span style={{ color: "#706e6b", fontWeight: 400, marginLeft: 4 }}>· {completedGrouped[dateKey].length}</span>
+                    </div>
+                    {!collapsed && completedGrouped[dateKey].map((task) => renderTaskRow(task, dateKey))}
                   </div>
-                  {completedGrouped[dateKey].map((task) => renderTaskRow(task, dateKey))}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
