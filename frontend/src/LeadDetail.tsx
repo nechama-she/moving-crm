@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import ChatMessages from "./ChatMessages";
 import FollowupPanel from "./FollowupPanel";
+import TasksPanel from "./TasksPanel";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
 
@@ -171,6 +172,8 @@ export default function LeadDetail() {
 
       {(otherFields.length > 0 || META_FIELDS.some((k) => allKeys.includes(k))) &&
         renderSection("Other Info", [...META_FIELDS, ...otherFields])}
+
+      <TasksPanel leadId={leadId!} token={token} />
 
       {chatUserId || lead.phone_number ? (
         <div style={{ marginTop: 32 }}>

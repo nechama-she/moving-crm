@@ -361,6 +361,37 @@ class AutoAssignEvent(Base):
 
 
 # ---------------------------------------------------------------------------
+# Tasks (linked to a lead, visible to anyone who can see the lead)
+# ---------------------------------------------------------------------------
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
+    title = Column(String(500), nullable=False)
+    due_date = Column(String(10))          # YYYY-MM-DD, nullable
+    status = Column(String(20), nullable=False, default="open", index=True)
+    # statuses: open, in_progress, done
+    assigned_to = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "lead_id": self.lead_id,
+            "title": self.title,
+            "due_date": self.due_date or "",
+            "status": self.status,
+            "assigned_to": self.assigned_to or "",
+            "created_by": self.created_by,
+            "created_at": self.created_at.isoformat() if self.created_at else "",
+            "updated_at": self.updated_at.isoformat() if self.updated_at else "",
+        }
+
+
+# ---------------------------------------------------------------------------
 # App Settings (simple key/value runtime settings)
 # ---------------------------------------------------------------------------
 class AppSetting(Base):
