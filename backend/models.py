@@ -374,6 +374,7 @@ class Task(Base):
     # statuses: open, in_progress, done
     task_type = Column(String(20), nullable=False, default="other", index=True)
     # types: call, email, text, messenger, instagram, other
+    notes = Column(Text, nullable=False, default="")
     created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), default=_now)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -386,6 +387,7 @@ class Task(Base):
             "due_date": self.due_date or "",
             "status": self.status,
             "task_type": self.task_type or "other",
+            "notes": self.notes or "",
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else "",
             "updated_at": self.updated_at.isoformat() if self.updated_at else "",

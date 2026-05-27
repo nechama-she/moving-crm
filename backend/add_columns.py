@@ -12,6 +12,7 @@ COLUMNS = [
     ("companies", "samrtmoving_branch_id", "VARCHAR(100)"),
     ("companies", "timezone", "VARCHAR(50) DEFAULT 'America/New_York'"),
     ("tasks", "task_type", "VARCHAR(20) DEFAULT 'other' NOT NULL"),
+    ("tasks", "notes", "TEXT DEFAULT ''"),
 ]
 
 with engine.connect() as conn:

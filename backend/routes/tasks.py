@@ -38,6 +38,7 @@ class TaskResponse(BaseModel):
     due_date: str = Field("", description="YYYY-MM-DD, empty string if no due date")
     status: TaskStatus = Field(..., description="open | in_progress | done")
     task_type: TaskType = Field(..., description="call | email | text | messenger | instagram | other")
+    notes: str = Field("", description="Free-form details, supports newlines")
     created_by: str = Field(..., description="User UUID who created the task")
     created_at: str = Field(..., description="ISO 8601 timestamp")
     updated_at: str = Field(..., description="ISO 8601 timestamp")
@@ -51,6 +52,7 @@ class TaskResponse(BaseModel):
                 "due_date": "2026-06-02",
                 "status": "open",
                 "task_type": "call",
+                "notes": "Customer wants final price for 3BR move.\nMention insurance options.",
                 "created_by": "u-123",
                 "created_at": "2026-05-27T14:32:00+00:00",
                 "updated_at": "2026-05-27T14:32:00+00:00",
@@ -114,6 +116,7 @@ def list_tasks(
 class TaskCreate(BaseModel):
     title: str = Field(..., min_length=1, description="Task subject")
     due_date: Optional[str] = Field(None, description="YYYY-MM-DD; omit or null for no due date")
+    notes: Optional[str] = Field(None, description="Free-form details, supports newlines")
     status: TaskStatus = Field(TaskStatus.open, description="Initial status")
     task_type: TaskType = Field(TaskType.other, description="Channel / activity type")
 
@@ -142,6 +145,7 @@ def create_task(
         lead_id=lead_id,
         title=title,
         due_date=(body.due_date or "").strip() or None,
+        notes=body.notes or "",
         status=body.status.value,
         task_type=body.task_type.value,
         created_by=user.id,
@@ -158,6 +162,7 @@ def create_task(
 class TaskUpdate(BaseModel):
     title: Optional[str] = Field(None, description="New subject")
     due_date: Optional[str] = Field(None, description="YYYY-MM-DD; empty string clears the due date")
+    notes: Optional[str] = Field(None, description="Free-form details, supports newlines")
     status: Optional[TaskStatus] = None
     task_type: Optional[TaskType] = None
 
@@ -185,6 +190,8 @@ def update_task(
         task.title = title
     if body.due_date is not None:
         task.due_date = body.due_date.strip() or None
+    if body.notes is not None:
+        task.notes = body.notes
     if body.status is not None:
         task.status = body.status.value
     if body.task_type is not None:

@@ -8,6 +8,7 @@ interface Task {
   due_date: string;
   status: "open" | "in_progress" | "done";
   task_type: TaskType;
+  notes: string;
   created_by: string;
   created_at: string;
 }
@@ -110,9 +111,11 @@ export default function TasksPanel({ leadId, token }: Props) {
   const [editDueDate, setEditDueDate] = useState("");
   const [editStatus, setEditStatus] = useState<Task["status"]>("open");
   const [editType, setEditType] = useState<TaskType>("call");
+  const [editNotes, setEditNotes] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [newDueDate, setNewDueDate] = useState("");
   const [newType, setNewType] = useState<TaskType>("call");
+  const [newNotes, setNewNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
   function load() {
@@ -134,11 +137,12 @@ export default function TasksPanel({ leadId, token }: Props) {
     await fetch(`${API_BASE}/api/leads/${leadId}/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
-      body: JSON.stringify({ title, due_date: newDueDate || null, task_type: newType }),
+      body: JSON.stringify({ title, due_date: newDueDate || null, task_type: newType, notes: newNotes }),
     });
     setNewTitle("");
     setNewDueDate("");
     setNewType("call");
+    setNewNotes("");
     setShowNewForm(false);
     setSaving(false);
     load();
@@ -163,6 +167,7 @@ export default function TasksPanel({ leadId, token }: Props) {
         due_date: editDueDate || null,
         status: editStatus,
         task_type: editType,
+        notes: editNotes,
       }),
     });
     setEditingId(null);
@@ -185,6 +190,7 @@ export default function TasksPanel({ leadId, token }: Props) {
     setEditDueDate(task.due_date);
     setEditStatus(task.status);
     setEditType(task.task_type || "other");
+    setEditNotes(task.notes || "");
   }
 
   function groupByDate(list: Task[]): Record<string, Task[]> {
@@ -262,8 +268,18 @@ export default function TasksPanel({ leadId, token }: Props) {
               />
             </label>
           </div>
+          <label style={{ display: "block", fontSize: 11, color: "#706e6b", marginTop: 8 }}>
+            Notes
+            <textarea
+              value={newNotes}
+              onChange={(e) => setNewNotes(e.target.value)}
+              placeholder="Add details (optional)…"
+              rows={3}
+              style={{ ...inputStyle, marginTop: 3, resize: "vertical", fontFamily: "inherit" }}
+            />
+          </label>
           <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
-            <button type="button" onClick={() => { setShowNewForm(false); setNewTitle(""); setNewDueDate(""); }} style={btnGhost}>
+            <button type="button" onClick={() => { setShowNewForm(false); setNewTitle(""); setNewDueDate(""); setNewNotes(""); }} style={btnGhost}>
               Cancel
             </button>
             <button type="submit" disabled={saving || !newTitle.trim()} style={{ ...btnPrimary, opacity: !newTitle.trim() ? 0.5 : 1 }}>
@@ -432,6 +448,16 @@ export default function TasksPanel({ leadId, token }: Props) {
                     </select>
                   </label>
                 </div>
+                <label style={{ ...fieldLabel, display: "block", marginTop: 8 }}>
+                  Notes
+                  <textarea
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    rows={4}
+                    placeholder="Add details (optional)…"
+                    style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                  />
+                </label>
                 <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
                   <button onClick={() => setEditingId(null)} style={btnGhost}>Cancel</button>
                   <button onClick={() => saveEdit(task)} style={btnPrimary}>Save</button>
@@ -449,6 +475,14 @@ export default function TasksPanel({ leadId, token }: Props) {
                   <dt style={dtStyle}>Created</dt>
                   <dd style={ddStyle}>{new Date(task.created_at).toLocaleString()}</dd>
                 </dl>
+                {task.notes && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ ...dtStyle, marginBottom: 4 }}>Notes</div>
+                    <div style={{ fontSize: 13, color: "#181818", whiteSpace: "pre-wrap", background: "#fff", padding: "8px 10px", border: "1px solid #e5e9ed", borderRadius: 4 }}>
+                      {task.notes}
+                    </div>
+                  </div>
+                )}
                 <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
                   <button onClick={(e) => { e.stopPropagation(); deleteTask(task); }} style={btnDanger}>Delete</button>
                   <button onClick={(e) => { e.stopPropagation(); startEdit(task); }} style={btnPrimary}>Edit</button>
