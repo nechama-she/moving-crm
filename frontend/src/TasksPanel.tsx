@@ -12,12 +12,6 @@ interface Task {
   created_at: string;
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  open: "Open",
-  in_progress: "In Progress",
-  done: "Done",
-};
-
 const STATUS_COLORS: Record<string, string> = {
   open: "#706e6b",
   in_progress: "#ff9900",
@@ -66,12 +60,21 @@ export default function TasksPanel({ leadId, token }: Props) {
     load();
   }
 
-  async function cycleStatus(task: Task) {
-    const next: Record<string, string> = { open: "in_progress", in_progress: "done", done: "open" };
+  async function toggleDone(task: Task) {
+    const newStatus = task.status === "done" ? "open" : "done";
     await fetch(`${API_BASE}/api/tasks/${task.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
-      body: JSON.stringify({ status: next[task.status] }),
+      body: JSON.stringify({ status: newStatus }),
+    });
+    load();
+  }
+
+  async function setStatus(task: Task, status: string) {
+    await fetch(`${API_BASE}/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({ status }),
     });
     load();
   }
@@ -122,21 +125,13 @@ export default function TasksPanel({ leadId, token }: Props) {
               key={task.id}
               style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 16px", borderBottom: "1px solid #f3f2f2" }}
             >
-              {/* Status cycle button */}
-              <button
-                onClick={() => cycleStatus(task)}
-                title={`Status: ${STATUS_LABELS[task.status]} — click to advance`}
-                style={{
-                  flexShrink: 0,
-                  marginTop: 1,
-                  width: 18,
-                  height: 18,
-                  borderRadius: "50%",
-                  border: `2px solid ${STATUS_COLORS[task.status]}`,
-                  background: task.status === "done" ? STATUS_COLORS[task.status] : "transparent",
-                  cursor: "pointer",
-                  padding: 0,
-                }}
+              {/* Done checkbox */}
+              <input
+                type="checkbox"
+                checked={task.status === "done"}
+                onChange={() => toggleDone(task)}
+                title={task.status === "done" ? "Mark as not done" : "Mark as done"}
+                style={{ flexShrink: 0, marginTop: 3, width: 16, height: 16, cursor: "pointer" }}
               />
 
               {/* Title / edit */}
@@ -166,9 +161,24 @@ export default function TasksPanel({ leadId, token }: Props) {
                     {task.due_date && (
                       <span style={{ fontSize: 11, color: "#706e6b" }}>· due {task.due_date}</span>
                     )}
-                    <span style={{ fontSize: 11, fontWeight: 600, color: STATUS_COLORS[task.status] }}>
-                      {STATUS_LABELS[task.status]}
-                    </span>
+                    <select
+                      value={task.status}
+                      onChange={(e) => setStatus(task, e.target.value)}
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: STATUS_COLORS[task.status],
+                        border: `1px solid ${STATUS_COLORS[task.status]}`,
+                        borderRadius: 3,
+                        padding: "1px 6px",
+                        background: "#fff",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <option value="open">Open</option>
+                      <option value="in_progress">In Progress</option>
+                      <option value="done">Done</option>
+                    </select>
                   </div>
                 )}
               </div>
