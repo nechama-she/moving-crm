@@ -148,10 +148,8 @@ export default function LeadDetail() {
         ← Back to Leads
       </button>
 
-      <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
-        <h1 style={{ marginBottom: 16, flex: 1, fontSize: 20, color: "#032d60" }}>
-          {String(lead.full_name || "Lead Details")}
-        </h1>
+      <div style={{ display: "flex", gap: 20, alignItems: "flex-start", marginBottom: 16 }}>
+        <div style={{ flex: 1 }} />
         <div style={{ width: 320, flexShrink: 0 }}>
           <FollowupPanel leadId={leadId!} />
         </div>
@@ -260,6 +258,7 @@ export default function LeadDetail() {
               {editingUser ? (
                 <div style={{ display: "flex", gap: 6 }}>
                   <button
+                    type="button"
                     onClick={() => setEditingUser(false)}
                     disabled={savingUser}
                     style={{ padding: "5px 12px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, cursor: "pointer" }}
@@ -267,6 +266,7 @@ export default function LeadDetail() {
                     Cancel
                   </button>
                   <button
+                    type="button"
                     onClick={saveUser}
                     disabled={savingUser}
                     style={{ padding: "5px 12px", border: "1px solid #0176d3", borderRadius: 4, background: "#0176d3", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
@@ -276,6 +276,7 @@ export default function LeadDetail() {
                 </div>
               ) : (
                 <button
+                  type="button"
                   onClick={startEditUser}
                   title="Edit"
                   style={{ padding: "5px 10px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: "pointer" }}
