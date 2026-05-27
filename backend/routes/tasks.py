@@ -1,5 +1,6 @@
 import logging
-from typing import List, Literal, Optional
+from enum import Enum
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -13,8 +14,20 @@ logger = logging.getLogger("moving-crm")
 
 router = APIRouter(prefix="/api", tags=["Tasks"])
 
-TaskType = Literal["call", "email", "text", "messenger", "instagram", "other"]
-TaskStatus = Literal["open", "in_progress", "done"]
+
+class TaskStatus(str, Enum):
+    open = "open"
+    in_progress = "in_progress"
+    done = "done"
+
+
+class TaskType(str, Enum):
+    call = "call"
+    email = "email"
+    text = "text"
+    messenger = "messenger"
+    instagram = "instagram"
+    other = "other"
 
 
 class TaskResponse(BaseModel):
@@ -25,7 +38,6 @@ class TaskResponse(BaseModel):
     due_date: str = Field("", description="YYYY-MM-DD, empty string if no due date")
     status: TaskStatus = Field(..., description="open | in_progress | done")
     task_type: TaskType = Field(..., description="call | email | text | messenger | instagram | other")
-    assigned_to: str = Field("", description="User UUID the task is assigned to, empty if unassigned")
     created_by: str = Field(..., description="User UUID who created the task")
     created_at: str = Field(..., description="ISO 8601 timestamp")
     updated_at: str = Field(..., description="ISO 8601 timestamp")
@@ -39,7 +51,6 @@ class TaskResponse(BaseModel):
                 "due_date": "2026-06-02",
                 "status": "open",
                 "task_type": "call",
-                "assigned_to": "",
                 "created_by": "u-123",
                 "created_at": "2026-05-27T14:32:00+00:00",
                 "updated_at": "2026-05-27T14:32:00+00:00",
@@ -103,9 +114,8 @@ def list_tasks(
 class TaskCreate(BaseModel):
     title: str = Field(..., min_length=1, description="Task subject")
     due_date: Optional[str] = Field(None, description="YYYY-MM-DD; omit or null for no due date")
-    assigned_to: Optional[str] = Field(None, description="User UUID to assign the task to")
-    status: TaskStatus = Field("open", description="Initial status")
-    task_type: TaskType = Field("other", description="Channel / activity type")
+    status: TaskStatus = Field(TaskStatus.open, description="Initial status")
+    task_type: TaskType = Field(TaskType.other, description="Channel / activity type")
 
 
 @router.post(
@@ -132,9 +142,8 @@ def create_task(
         lead_id=lead_id,
         title=title,
         due_date=(body.due_date or "").strip() or None,
-        status=body.status,
-        task_type=body.task_type,
-        assigned_to=body.assigned_to or None,
+        status=body.status.value,
+        task_type=body.task_type.value,
         created_by=user.id,
     )
     db.add(task)
@@ -150,7 +159,6 @@ class TaskUpdate(BaseModel):
     title: Optional[str] = Field(None, description="New subject")
     due_date: Optional[str] = Field(None, description="YYYY-MM-DD; empty string clears the due date")
     status: Optional[TaskStatus] = None
-    assigned_to: Optional[str] = Field(None, description="User UUID; empty string unassigns")
     task_type: Optional[TaskType] = None
 
 
@@ -178,11 +186,9 @@ def update_task(
     if body.due_date is not None:
         task.due_date = body.due_date.strip() or None
     if body.status is not None:
-        task.status = body.status
-    if body.assigned_to is not None:
-        task.assigned_to = body.assigned_to or None
+        task.status = body.status.value
     if body.task_type is not None:
-        task.task_type = body.task_type
+        task.task_type = body.task_type.value
 
     db.commit()
     db.refresh(task)

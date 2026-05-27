@@ -8,7 +8,6 @@ interface Task {
   due_date: string;
   status: "open" | "in_progress" | "done";
   task_type: TaskType;
-  assigned_to: string;
   created_by: string;
   created_at: string;
 }
