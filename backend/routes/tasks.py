@@ -13,6 +13,8 @@ logger = logging.getLogger("moving-crm")
 
 router = APIRouter(prefix="/api", tags=["Tasks"])
 
+VALID_TYPES = ("call", "email", "text", "messenger", "instagram", "other")
+
 
 def _can_see_lead(user: User, lead: Lead, db: Session) -> bool:
     """Return True if the user has access to the lead's company."""
@@ -67,6 +69,7 @@ class TaskCreate(BaseModel):
     due_date: Optional[str] = None   # YYYY-MM-DD or ""
     assigned_to: Optional[str] = None
     status: str = "open"
+    task_type: str = "other"
 
 
 @router.post("/leads/{lead_id}/tasks", status_code=201)
@@ -89,6 +92,7 @@ def create_task(
         title=title,
         due_date=(body.due_date or "").strip() or None,
         status=body.status if body.status in ("open", "in_progress", "done") else "open",
+        task_type=body.task_type if body.task_type in VALID_TYPES else "other",
         assigned_to=body.assigned_to or None,
         created_by=user.id,
     )
@@ -106,6 +110,7 @@ class TaskUpdate(BaseModel):
     due_date: Optional[str] = None
     status: Optional[str] = None
     assigned_to: Optional[str] = None
+    task_type: Optional[str] = None
 
 
 @router.patch("/tasks/{task_id}")
@@ -133,6 +138,10 @@ def update_task(
         task.status = body.status
     if body.assigned_to is not None:
         task.assigned_to = body.assigned_to or None
+    if body.task_type is not None:
+        if body.task_type not in VALID_TYPES:
+            raise HTTPException(status_code=400, detail="Invalid task_type")
+        task.task_type = body.task_type
 
     db.commit()
     db.refresh(task)

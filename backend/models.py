@@ -372,6 +372,8 @@ class Task(Base):
     due_date = Column(String(10))          # YYYY-MM-DD, nullable
     status = Column(String(20), nullable=False, default="open", index=True)
     # statuses: open, in_progress, done
+    task_type = Column(String(20), nullable=False, default="other", index=True)
+    # types: call, email, text, messenger, instagram, other
     assigned_to = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), default=_now)
@@ -384,6 +386,7 @@ class Task(Base):
             "title": self.title,
             "due_date": self.due_date or "",
             "status": self.status,
+            "task_type": self.task_type or "other",
             "assigned_to": self.assigned_to or "",
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else "",

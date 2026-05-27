@@ -7,10 +7,33 @@ interface Task {
   title: string;
   due_date: string;
   status: "open" | "in_progress" | "done";
+  task_type: TaskType;
   assigned_to: string;
   created_by: string;
   created_at: string;
 }
+
+type TaskType = "call" | "email" | "text" | "messenger" | "instagram" | "other";
+
+const TYPE_LABELS: Record<TaskType, string> = {
+  call: "Call",
+  email: "Email",
+  text: "Text",
+  messenger: "Messenger",
+  instagram: "Instagram",
+  other: "Other",
+};
+
+const TYPE_ICONS: Record<TaskType, string> = {
+  call: "📞",
+  email: "✉️",
+  text: "💬",
+  messenger: "Ⓜ️",
+  instagram: "📷",
+  other: "📝",
+};
+
+const TYPE_OPTIONS: TaskType[] = ["call", "email", "text", "messenger", "instagram", "other"];
 
 const STATUS_LABELS: Record<string, string> = {
   open: "Open",
@@ -35,25 +58,6 @@ function todayISO(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function dateBucket(task: Task): string {
-  if (task.status === "done") return "Completed";
-  if (!task.due_date) return "No Due Date";
-  const today = todayISO();
-  if (task.due_date < today) return "Overdue";
-  if (task.due_date === today) return "Today";
-  return "Upcoming";
-}
-
-const BUCKET_ORDER = ["Overdue", "Today", "Upcoming", "No Due Date", "Completed"];
-
-const BUCKET_COLORS: Record<string, string> = {
-  Overdue: "#c23934",
-  Today: "#0176d3",
-  Upcoming: "#3e3e3c",
-  "No Due Date": "#706e6b",
-  Completed: "#2e844a",
-};
-
 function formatDueLabel(due: string): string {
   if (!due) return "";
   const today = todayISO();
@@ -70,18 +74,44 @@ function formatDueLabel(due: string): string {
   });
 }
 
+function formatDateHeader(key: string): string {
+  if (key === "No Due Date") return "No Due Date";
+  const today = todayISO();
+  const d = new Date(`${key}T00:00:00`);
+  const base = d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+  });
+  if (key < today) return `${base} · Overdue`;
+  if (key === today) return `${base} · Today`;
+  return base;
+}
+
+function dateHeaderColor(key: string): string {
+  if (key === "No Due Date") return "#706e6b";
+  const today = todayISO();
+  if (key < today) return "#c23934";
+  if (key === today) return "#0176d3";
+  return "#3e3e3c";
+}
+
 // ─── Component ─────────────────────────────────────────────────────────────
 export default function TasksPanel({ leadId, token }: Props) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [completedCollapsed, setCompletedCollapsed] = useState(true);
   const [showNewForm, setShowNewForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editDueDate, setEditDueDate] = useState("");
   const [editStatus, setEditStatus] = useState<Task["status"]>("open");
+  const [editType, setEditType] = useState<TaskType>("call");
   const [newTitle, setNewTitle] = useState("");
   const [newDueDate, setNewDueDate] = useState("");
+  const [newType, setNewType] = useState<TaskType>("call");
   const [saving, setSaving] = useState(false);
 
   function load() {
@@ -103,10 +133,11 @@ export default function TasksPanel({ leadId, token }: Props) {
     await fetch(`${API_BASE}/api/leads/${leadId}/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
-      body: JSON.stringify({ title, due_date: newDueDate || null }),
+      body: JSON.stringify({ title, due_date: newDueDate || null, task_type: newType }),
     });
     setNewTitle("");
     setNewDueDate("");
+    setNewType("call");
     setShowNewForm(false);
     setSaving(false);
     load();
@@ -130,6 +161,7 @@ export default function TasksPanel({ leadId, token }: Props) {
         title: editTitle.trim() || task.title,
         due_date: editDueDate || null,
         status: editStatus,
+        task_type: editType,
       }),
     });
     setEditingId(null);
@@ -151,26 +183,34 @@ export default function TasksPanel({ leadId, token }: Props) {
     setEditTitle(task.title);
     setEditDueDate(task.due_date);
     setEditStatus(task.status);
+    setEditType(task.task_type || "other");
   }
 
-  const grouped = useMemo(() => {
+  function groupByDate(list: Task[]): Record<string, Task[]> {
     const map: Record<string, Task[]> = {};
-    for (const t of tasks) {
-      const b = dateBucket(t);
-      (map[b] ||= []).push(t);
+    for (const t of list) {
+      const key = t.due_date || "No Due Date";
+      (map[key] ||= []).push(t);
     }
     for (const key of Object.keys(map)) {
-      map[key].sort((a, b) => {
-        if (a.due_date && b.due_date && a.due_date !== b.due_date) return a.due_date.localeCompare(b.due_date);
-        if (a.due_date && !b.due_date) return -1;
-        if (!a.due_date && b.due_date) return 1;
-        return a.created_at.localeCompare(b.created_at);
-      });
+      map[key].sort((a, b) => a.created_at.localeCompare(b.created_at));
     }
     return map;
-  }, [tasks]);
+  }
+
+  function sortKeys(map: Record<string, Task[]>, descending = false): string[] {
+    const dated = Object.keys(map).filter((k) => k !== "No Due Date").sort();
+    if (descending) dated.reverse();
+    return map["No Due Date"] ? [...dated, "No Due Date"] : dated;
+  }
+
+  const upcomingGrouped = useMemo(() => groupByDate(tasks.filter((t) => t.status !== "done")), [tasks]);
+  const completedGrouped = useMemo(() => groupByDate(tasks.filter((t) => t.status === "done")), [tasks]);
+  const upcomingKeys = useMemo(() => sortKeys(upcomingGrouped), [upcomingGrouped]);
+  const completedKeys = useMemo(() => sortKeys(completedGrouped, true), [completedGrouped]);
 
   const openCount = tasks.filter((t) => t.status !== "done").length;
+  const doneCount = tasks.length - openCount;
 
   return (
     <div style={cardStyle}>
@@ -199,6 +239,18 @@ export default function TasksPanel({ leadId, token }: Props) {
             style={inputStyle}
           />
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <label style={{ flex: 1, fontSize: 11, color: "#706e6b" }}>
+              Type
+              <select
+                value={newType}
+                onChange={(e) => setNewType(e.target.value as TaskType)}
+                style={{ ...inputStyle, marginTop: 3 }}
+              >
+                {TYPE_OPTIONS.map((t) => (
+                  <option key={t} value={t}>{TYPE_ICONS[t]} {TYPE_LABELS[t]}</option>
+                ))}
+              </select>
+            </label>
             <label style={{ flex: 1, fontSize: 11, color: "#706e6b" }}>
               Due date
               <input
@@ -230,106 +282,167 @@ export default function TasksPanel({ leadId, token }: Props) {
         </div>
       ) : (
         <div>
-          {BUCKET_ORDER.filter((b) => grouped[b]?.length).map((bucket) => (
-            <div key={bucket}>
-              <div style={bucketHeader(BUCKET_COLORS[bucket])}>
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: BUCKET_COLORS[bucket], display: "inline-block" }} />
-                {bucket}
-                <span style={{ color: "#706e6b", fontWeight: 400, marginLeft: 4 }}>· {grouped[bucket].length}</span>
+          {/* Upcoming tasks grouped by date (flat, no wrapper) */}
+          {upcomingKeys.map((dateKey) => (
+            <div key={`up-${dateKey}`}>
+              <div style={bucketHeader(dateHeaderColor(dateKey))}>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: dateHeaderColor(dateKey), display: "inline-block" }} />
+                {formatDateHeader(dateKey)}
+                <span style={{ color: "#706e6b", fontWeight: 400, marginLeft: 4 }}>· {upcomingGrouped[dateKey].length}</span>
               </div>
-              {grouped[bucket].map((task) => {
-                const isExpanded = expandedId === task.id;
-                const isEditing = editingId === task.id;
-                return (
-                  <div key={task.id} style={taskRow(isExpanded)}>
-                    <div
-                      style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 16px", cursor: "pointer" }}
-                      onClick={() => { if (!isEditing) setExpandedId(isExpanded ? null : task.id); }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={task.status === "done"}
-                        onChange={() => toggleDone(task)}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ marginTop: 3, width: 15, height: 15, cursor: "pointer", accentColor: "#2e844a" }}
-                      />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{
-                          fontSize: 13,
-                          color: task.status === "done" ? "#706e6b" : "#181818",
-                          textDecoration: task.status === "done" ? "line-through" : "none",
-                          fontWeight: 500,
-                        }}>
-                          {task.title}
-                        </div>
-                        <div style={{ display: "flex", gap: 10, marginTop: 3, fontSize: 11, color: "#706e6b", alignItems: "center" }}>
-                          {task.due_date && (
-                            <span style={{ color: bucket === "Overdue" ? "#c23934" : "#706e6b", fontWeight: bucket === "Overdue" ? 600 : 400 }}>
-                              📅 {formatDueLabel(task.due_date)}
-                            </span>
-                          )}
-                          <span style={{ color: STATUS_COLORS[task.status], fontWeight: 600 }}>
-                            {STATUS_LABELS[task.status]}
-                          </span>
-                        </div>
-                      </div>
-                      <span style={{ fontSize: 11, color: "#706e6b" }}>{isExpanded ? "▾" : "▸"}</span>
-                    </div>
-
-                    {isExpanded && (
-                      <div style={detailStyle}>
-                        {isEditing ? (
-                          <>
-                            <label style={fieldLabel}>
-                              Subject
-                              <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={inputStyle} />
-                            </label>
-                            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-                              <label style={{ ...fieldLabel, flex: 1 }}>
-                                Due Date
-                                <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} style={inputStyle} />
-                              </label>
-                              <label style={{ ...fieldLabel, flex: 1 }}>
-                                Status
-                                <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as Task["status"])} style={inputStyle}>
-                                  <option value="open">Open</option>
-                                  <option value="in_progress">In Progress</option>
-                                  <option value="done">Completed</option>
-                                </select>
-                              </label>
-                            </div>
-                            <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
-                              <button onClick={() => setEditingId(null)} style={btnGhost}>Cancel</button>
-                              <button onClick={() => saveEdit(task)} style={btnPrimary}>Save</button>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <dl style={dlStyle}>
-                              <dt style={dtStyle}>Status</dt>
-                              <dd style={ddStyle}>{STATUS_LABELS[task.status]}</dd>
-                              <dt style={dtStyle}>Due Date</dt>
-                              <dd style={ddStyle}>{task.due_date ? formatDueLabel(task.due_date) : "—"}</dd>
-                              <dt style={dtStyle}>Created</dt>
-                              <dd style={ddStyle}>{new Date(task.created_at).toLocaleString()}</dd>
-                            </dl>
-                            <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
-                              <button onClick={(e) => { e.stopPropagation(); deleteTask(task); }} style={btnDanger}>Delete</button>
-                              <button onClick={(e) => { e.stopPropagation(); startEdit(task); }} style={btnPrimary}>Edit</button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              {upcomingGrouped[dateKey].map((task) => renderTaskRow(task, dateKey))}
             </div>
           ))}
+
+          {/* Completed (collapsible) */}
+          {doneCount > 0 && (
+            <div>
+              <div
+                onClick={() => setCompletedCollapsed((v) => !v)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "10px 16px",
+                  background: "#fafaf9",
+                  borderBottom: "1px solid #dddbda",
+                  borderTop: "1px solid #dddbda",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "#2e844a",
+                  textTransform: "uppercase",
+                  letterSpacing: 0.5,
+                }}
+              >
+                <span style={{ fontSize: 11, color: "#706e6b" }}>{completedCollapsed ? "▸" : "▾"}</span>
+                Completed
+                <span style={{ color: "#706e6b", fontWeight: 500 }}>· {doneCount}</span>
+              </div>
+              {!completedCollapsed && completedKeys.map((dateKey) => (
+                <div key={`done-${dateKey}`}>
+                  <div style={bucketHeader("#2e844a")}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#2e844a", display: "inline-block" }} />
+                    {formatDateHeader(dateKey)}
+                    <span style={{ color: "#706e6b", fontWeight: 400, marginLeft: 4 }}>· {completedGrouped[dateKey].length}</span>
+                  </div>
+                  {completedGrouped[dateKey].map((task) => renderTaskRow(task, dateKey))}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {upcomingKeys.length === 0 && doneCount === 0 && !showNewForm && (
+            <div style={emptyStyle}>
+              <div style={{ fontSize: 13, color: "#706e6b" }}>No activity yet</div>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
+
+  function renderTaskRow(task: Task, dateKey: string) {
+    const isExpanded = expandedId === task.id;
+    const isEditing = editingId === task.id;
+    const isOverdue = dateKey !== "No Due Date" && dateKey < todayISO() && task.status !== "done";
+    return (
+      <div key={task.id} style={taskRow(isExpanded)}>
+        <div
+          style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 16px", cursor: "pointer" }}
+          onClick={() => { if (!isEditing) setExpandedId(isExpanded ? null : task.id); }}
+        >
+          <input
+            type="checkbox"
+            checked={task.status === "done"}
+            onChange={() => toggleDone(task)}
+            onClick={(e) => e.stopPropagation()}
+            style={{ marginTop: 3, width: 15, height: 15, cursor: "pointer", accentColor: "#2e844a" }}
+          />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 13,
+              color: task.status === "done" ? "#706e6b" : "#181818",
+              textDecoration: task.status === "done" ? "line-through" : "none",
+              fontWeight: 500,
+            }}>
+              <span style={{ marginRight: 6 }} title={TYPE_LABELS[task.task_type || "other"]}>
+                {TYPE_ICONS[task.task_type || "other"]}
+              </span>
+              {task.title}
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 3, fontSize: 11, color: "#706e6b", alignItems: "center" }}>
+              {task.due_date && (
+                <span style={{ color: isOverdue ? "#c23934" : "#706e6b", fontWeight: isOverdue ? 600 : 400 }}>
+                  📅 {formatDueLabel(task.due_date)}
+                </span>
+              )}
+              <span style={{ color: STATUS_COLORS[task.status], fontWeight: 600 }}>
+                {STATUS_LABELS[task.status]}
+              </span>
+            </div>
+          </div>
+          <span style={{ fontSize: 11, color: "#706e6b" }}>{isExpanded ? "▾" : "▸"}</span>
+        </div>
+
+        {isExpanded && (
+          <div style={detailStyle}>
+            {isEditing ? (
+              <>
+                <label style={fieldLabel}>
+                  Subject
+                  <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={inputStyle} />
+                </label>
+                <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+                  <label style={{ ...fieldLabel, flex: 1 }}>
+                    Type
+                    <select value={editType} onChange={(e) => setEditType(e.target.value as TaskType)} style={inputStyle}>
+                      {TYPE_OPTIONS.map((t) => (
+                        <option key={t} value={t}>{TYPE_ICONS[t]} {TYPE_LABELS[t]}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ ...fieldLabel, flex: 1 }}>
+                    Due Date
+                    <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} style={inputStyle} />
+                  </label>
+                  <label style={{ ...fieldLabel, flex: 1 }}>
+                    Status
+                    <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as Task["status"])} style={inputStyle}>
+                      <option value="open">Open</option>
+                      <option value="in_progress">In Progress</option>
+                      <option value="done">Completed</option>
+                    </select>
+                  </label>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
+                  <button onClick={() => setEditingId(null)} style={btnGhost}>Cancel</button>
+                  <button onClick={() => saveEdit(task)} style={btnPrimary}>Save</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <dl style={dlStyle}>
+                  <dt style={dtStyle}>Type</dt>
+                  <dd style={ddStyle}>{TYPE_ICONS[task.task_type || "other"]} {TYPE_LABELS[task.task_type || "other"]}</dd>
+                  <dt style={dtStyle}>Status</dt>
+                  <dd style={ddStyle}>{STATUS_LABELS[task.status]}</dd>
+                  <dt style={dtStyle}>Due Date</dt>
+                  <dd style={ddStyle}>{task.due_date ? formatDueLabel(task.due_date) : "—"}</dd>
+                  <dt style={dtStyle}>Created</dt>
+                  <dd style={ddStyle}>{new Date(task.created_at).toLocaleString()}</dd>
+                </dl>
+                <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
+                  <button onClick={(e) => { e.stopPropagation(); deleteTask(task); }} style={btnDanger}>Delete</button>
+                  <button onClick={(e) => { e.stopPropagation(); startEdit(task); }} style={btnPrimary}>Edit</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
 }
 
 // ─── Styles ────────────────────────────────────────────────────────────────
