@@ -26,6 +26,7 @@ export default function LeadDetail() {
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [activeTab, setActiveTab] = useState<"conversations" | "activity">("conversations");
 
   useEffect(() => {
     fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
@@ -173,21 +174,59 @@ export default function LeadDetail() {
       {(otherFields.length > 0 || META_FIELDS.some((k) => allKeys.includes(k))) &&
         renderSection("Other Info", [...META_FIELDS, ...otherFields])}
 
-      <TasksPanel leadId={leadId!} token={token} />
-
-      {chatUserId || lead.phone_number ? (
-        <div style={{ marginTop: 32 }}>
-          <h2 style={{ marginBottom: 12 }}>Conversations</h2>
-          <ChatMessages
-            userId={chatUserId}
-            userName={String(lead.full_name || "Client")}
-            phoneNumber={lead.phone_number ? String(lead.phone_number) : ""}
-            inboxUrl={messengerInboxUrl}
-            aircallNumberId={lead.aircall_number_id ? String(lead.aircall_number_id) : ""}
-            companyName={lead.company_name ? String(lead.company_name) : ""}
-          />
+      {/* Tabbed panel: Conversations / Activity */}
+      <div style={{ marginTop: 32, border: "1px solid #dddbda", borderRadius: 4, background: "#fff", overflow: "hidden" }}>
+        <div style={{ display: "flex", borderBottom: "1px solid #dddbda", background: "#f3f2f2" }}>
+          <button
+            onClick={() => setActiveTab("conversations")}
+            style={{
+              padding: "10px 18px",
+              border: "none",
+              borderBottom: activeTab === "conversations" ? "3px solid #0176d3" : "3px solid transparent",
+              background: activeTab === "conversations" ? "#fff" : "transparent",
+              fontWeight: 600,
+              fontSize: 13,
+              color: activeTab === "conversations" ? "#032d60" : "#3e3e3c",
+              cursor: "pointer",
+            }}
+          >
+            Conversations
+          </button>
+          <button
+            onClick={() => setActiveTab("activity")}
+            style={{
+              padding: "10px 18px",
+              border: "none",
+              borderBottom: activeTab === "activity" ? "3px solid #0176d3" : "3px solid transparent",
+              background: activeTab === "activity" ? "#fff" : "transparent",
+              fontWeight: 600,
+              fontSize: 13,
+              color: activeTab === "activity" ? "#032d60" : "#3e3e3c",
+              cursor: "pointer",
+            }}
+          >
+            Activity
+          </button>
         </div>
-      ) : null}
+        <div style={{ padding: 16 }}>
+          {activeTab === "conversations" ? (
+            chatUserId || lead.phone_number ? (
+              <ChatMessages
+                userId={chatUserId}
+                userName={String(lead.full_name || "Client")}
+                phoneNumber={lead.phone_number ? String(lead.phone_number) : ""}
+                inboxUrl={messengerInboxUrl}
+                aircallNumberId={lead.aircall_number_id ? String(lead.aircall_number_id) : ""}
+                companyName={lead.company_name ? String(lead.company_name) : ""}
+              />
+            ) : (
+              <p style={{ color: "#706e6b", fontSize: 13 }}>No conversation available for this lead.</p>
+            )
+          ) : (
+            <TasksPanel leadId={leadId!} token={token} />
+          )}
+        </div>
+      </div>
     </div>
   );
 }
