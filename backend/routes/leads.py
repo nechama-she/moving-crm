@@ -15,6 +15,7 @@ from config import get_config
 from database import get_db
 from libs.smartmoving.client import update_opportunity_salesperson
 from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent
+from routes.templates import get_company_template
 
 logger = logging.getLogger("moving-crm")
 
@@ -414,6 +415,8 @@ def update_lead(
     if body.assigned_to is not None and user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can assign leads")
 
+    prev_assigned_to = lead.assigned_to
+
     if body.status is not None:
         lead.status = body.status
     if body.priority is not None:
@@ -434,7 +437,71 @@ def update_lead(
 
     db.commit()
     db.refresh(lead)
+
+    # If assignment changed to a new rep, send the rep_assignment SMS.
+    if (
+        body.assigned_to is not None
+        and lead.assigned_to
+        and lead.assigned_to != prev_assigned_to
+    ):
+        try:
+            _send_rep_assignment_sms(lead, db)
+        except Exception as exc:
+            logger.warning("Non-fatal rep_assignment SMS failure for lead %s: %s", lead.id, exc)
+
     return lead.to_dict()
+
+
+def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
+    if not lead.phone:
+        return
+    rep = db.query(User).filter(User.id == lead.assigned_to).first()
+    company = db.query(Company).filter(Company.id == lead.company_id).first()
+    if not rep or not company:
+        return
+
+    from libs.aircall import send_sms, find_number_id
+
+    template = get_company_template(db, company.id, "rep_assignment_sms")
+    first_name = lead.full_name.split()[0] if (lead.full_name or "").strip() else ""
+    message = template.format(
+        first_name=first_name,
+        company_name=company.name,
+        company_phone=company.phone or "",
+        smartmoving_id=lead.smartmoving_id or "",
+        rep_name=rep.name or "",
+    )
+
+    # Prefer the rep's own Aircall number, fall back to the company's.
+    nid = rep.aircall_number_id or company.aircall_number_id
+    if not nid and company.phone:
+        nid = find_number_id(company.phone)
+        if nid:
+            company.aircall_number_id = nid
+            db.commit()
+
+    sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
+    logger.info("Rep-assignment SMS for lead %s: %s", lead.id, sms_result)
+
+    try:
+        db.add(OutreachEvent(
+            lead_id=lead.id,
+            company_id=company.id,
+            smartmoving_id=lead.smartmoving_id or "",
+            note_id="",
+            outreach_type="rep_assignment",
+            job_id=lead.smartmoving_id or "",
+            qualified=bool(sms_result.get("ok")),
+            qualification_reason="ok" if sms_result.get("ok") else (sms_result.get("error") or "sms_failed"),
+            message=message,
+            messenger=False,
+            aircall=True,
+            dry_run=False,
+        ))
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("Non-fatal rep_assignment outreach log failure for lead %s: %s", lead.id, exc)
 
 
 class AssignByNameRequest(BaseModel):
@@ -634,11 +701,13 @@ def create_lead(
     if lead.phone and lead.smartmoving_id:
         from libs.aircall import send_sms, find_number_id
         first_name = lead.full_name.split()[0] if lead.full_name.strip() else ""
-        message = SMS_TEMPLATE.format(
+        template = get_company_template(db, company.id, "welcome_sms")
+        message = template.format(
             first_name=first_name,
             company_name=company.name,
             smartmoving_id=lead.smartmoving_id,
             company_phone=company.phone or "",
+            rep_name="",
         )
 
         # Resolve Aircall number_id: use cached value or look up and store

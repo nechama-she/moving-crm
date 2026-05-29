@@ -287,6 +287,27 @@ def sync_followup_from_smartmoving(
         return {"ok": True}
 
 
+def get_company_template(company_id: str, key: str) -> str | None:
+    """Read a per-company SMS template body from company_message_templates.
+
+    Returns the column value if a row exists and the field is non-empty, else None.
+    """
+    if not company_id or key not in {"welcome_sms", "rep_assignment_sms", "day2_followup_sms", "day3_followup_sms"}:
+        return None
+    engine = get_engine()
+    sql = text(f"SELECT {key} FROM company_message_templates WHERE company_id = :cid LIMIT 1")
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(sql, {"cid": company_id}).fetchone()
+            if not row:
+                return None
+            val = (row[0] or "").strip()
+            return val or None
+    except Exception as exc:
+        logger.warning("get_company_template(%s, %s) failed: %s", company_id, key, exc)
+        return None
+
+
 def get_sales_rep_number(name: str) -> str | None:
     """Look up a sales rep's Aircall number ID by name from users table, with fallback to sales_reps."""
     if not name:

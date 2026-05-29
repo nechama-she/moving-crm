@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_config
-from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks
+from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates
 from routes.meta import messenger, instagram
 
 cfg = get_config()
@@ -29,4 +29,5 @@ app.include_router(followups.router)
 app.include_router(outreach.router)
 app.include_router(assignment.router)
 app.include_router(tasks.router)
+app.include_router(templates.router)
 app.include_router(system.router)

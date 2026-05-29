@@ -410,3 +410,29 @@ class AppSetting(Base):
             "value": self.value or "",
             "updated_at": self.updated_at.isoformat() if self.updated_at else "",
         }
+
+
+# ---------------------------------------------------------------------------
+# Per-Company Message Templates (SMS bodies the system sends)
+# ---------------------------------------------------------------------------
+class CompanyMessageTemplate(Base):
+    __tablename__ = "company_message_templates"
+
+    company_id = Column(String(36), ForeignKey("companies.id"), primary_key=True)
+    welcome_sms = Column(Text, nullable=False, default="")
+    rep_assignment_sms = Column(Text, nullable=False, default="")
+    day2_followup_sms = Column(Text, nullable=False, default="")
+    day3_followup_sms = Column(Text, nullable=False, default="")
+    updated_by = Column(String(36), ForeignKey("users.id"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    def to_dict(self):
+        return {
+            "company_id": self.company_id,
+            "welcome_sms": self.welcome_sms or "",
+            "rep_assignment_sms": self.rep_assignment_sms or "",
+            "day2_followup_sms": self.day2_followup_sms or "",
+            "day3_followup_sms": self.day3_followup_sms or "",
+            "updated_by": self.updated_by or "",
+            "updated_at": self.updated_at.isoformat() if self.updated_at else "",
+        }

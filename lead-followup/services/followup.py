@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from config import SMS_MESSAGE_TEMPLATE, SMS_DAY3_TEMPLATE
-from database import get_leads_for_followup, was_already_sent, record_sent_message, get_sales_rep_number, get_sales_rep_info, record_outreach_event
+from database import get_leads_for_followup, was_already_sent, record_sent_message, get_sales_rep_number, get_sales_rep_info, record_outreach_event, get_company_template
 from libs.aircall import send_sms, find_number_id
 from libs.common.phone import phone_variants
 from libs.smartmoving import get_opportunity, add_opportunity_note, reset_request_counters, get_request_counters
@@ -101,7 +101,14 @@ def _should_send_sms(lead_status: str, status_val) -> bool:
 
 
 def _render_followup_message(name: str, company_name: str, template: str | None = None) -> str:
-    return (template or SMS_MESSAGE_TEMPLATE).format(name=name, company=company_name)
+    tpl = template or SMS_MESSAGE_TEMPLATE
+    # Support both new ({first_name}/{company_name}) and legacy ({name}/{company}) placeholders.
+    return tpl.format(
+        first_name=name,
+        name=name,
+        company_name=company_name,
+        company=company_name,
+    )
 
 
 def _build_company_signature(company_name: str, company_phone: str) -> str:
@@ -176,7 +183,8 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
 
     logger.info("Total leads across all companies: %d", len(all_rows))
 
-    template = SMS_DAY3_TEMPLATE if days_back >= 2 else SMS_MESSAGE_TEMPLATE
+    template_key = "day3_followup_sms" if days_back >= 2 else "day2_followup_sms"
+    default_template = SMS_DAY3_TEMPLATE if days_back >= 2 else SMS_MESSAGE_TEMPLATE
 
     stats = {"total": len(all_rows), "matched": 0, "errors": 0, "skipped": 0, "sms_sent": 0, "sms_failed": 0}
     results = []
@@ -209,6 +217,9 @@ def run(days_back: int = 1, limit: int = 0, dry_run: bool = False) -> dict:
         phone = str(row.get("phone", "")).strip()
         facebook_user_id = str(row.get("facebook_user_id", "") or "").strip()
         has_client_contact = _has_client_messages(phone=phone, facebook_user_id=facebook_user_id)
+
+        company_template = get_company_template(str(row.get("company_id") or ""), template_key) or default_template
+        template = company_template
 
         qualifies = _should_send_sms(lead_status, status_val)
         sms_result = None

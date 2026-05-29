@@ -30,6 +30,14 @@ export default function SettingsPage() {
         </section>
 
         <section style={card}>
+          <h2 style={sectionHeader}>SMS Templates</h2>
+          <p style={desc}>Edit the welcome, rep-assignment, and day 2/3 followup SMS bodies per company.</p>
+          <div style={actionsRow}>
+            <Link to="/settings/templates" style={primaryLink}>Manage Templates</Link>
+          </div>
+        </section>
+
+        <section style={card}>
           <h2 style={sectionHeader}>Lead Assignment</h2>
           <p style={desc}>Configure admin unavailability windows and which reps are available during those windows.</p>
           <div style={actionsRow}>
