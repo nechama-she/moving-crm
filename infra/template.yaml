@@ -833,6 +833,21 @@ Resources:
                 Action:
                   - sqs:SendMessage
                 Resource: !GetAtt LeadDuplicateQueue.Arn
+              # EventBridge Scheduler — create one-time delayed schedules for lead duplication
+              - Effect: Allow
+                Action:
+                  - scheduler:CreateSchedule
+                  - scheduler:GetSchedule
+                  - scheduler:DeleteSchedule
+                Resource: !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/lead-dup-*"
+              # Allow passing the scheduler role to EventBridge Scheduler
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt LeadDuplicateSchedulerRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: scheduler.amazonaws.com
 
   ApiLambdaFunction:
     Type: AWS::Lambda::Function
@@ -857,6 +872,8 @@ Resources:
             - - !Sub "https://${CloudFrontDistribution.DomainName}"
               - "http://localhost:5173"
           LEAD_DUPLICATE_QUEUE_URL: !GetAtt LeadDuplicateQueue.QueueUrl
+          LEAD_DUPLICATE_FUNCTION_ARN: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-lead-duplicate-${Environment}"
+          LEAD_DUPLICATE_SCHEDULER_ROLE_ARN: !GetAtt LeadDuplicateSchedulerRole.Arn
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
@@ -1077,6 +1094,38 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt LeadFollowupDay3ExportSchedule.Arn
+
+  # ===========================================================================
+  # LEAD DUPLICATE — EventBridge Scheduler role (delayed one-time invocations)
+  # ===========================================================================
+  LeadDuplicateSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-lead-duplicate-scheduler-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLeadDuplicate
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-lead-duplicate-${Environment}"
+
+  LeadDuplicateSchedulerLambdaPermission:
+    Condition: ShouldDeployLambda
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LeadDuplicateFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: scheduler.amazonaws.com
+      SourceArn: !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/lead-dup-*"
 
   # ===========================================================================
   # LEAD DUPLICATE — SQS queues

@@ -199,25 +199,66 @@ def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_id
     return min(rep_rows, key=lambda u: (counts.get(u.id, 0), u.name.lower()))
 
 
+LEAD_DUPLICATE_DELAY_HOURS = 8
+
+
 def _enqueue_lead_for_duplication(lead_id: str, target_company_name: str, target_referral_source: str) -> None:
-    queue_url = os.getenv("LEAD_DUPLICATE_QUEUE_URL", "")
-    if not queue_url:
-        logger.warning("LEAD_DUPLICATE_QUEUE_URL not set; skipping enqueue for lead %s", lead_id)
-        return
-    try:
-        sqs = boto3.client("sqs", region_name=os.getenv("AWS_REGION_NAME", "us-east-1"))
-        sqs.send_message(
-            QueueUrl=queue_url,
-            MessageBody=json.dumps({
-                "lead_id": lead_id,
-                "target_company_name": target_company_name,
-                "target_referral_source": target_referral_source,
-            }),
-            DelaySeconds=600,
+    """Schedule a one-time EventBridge Scheduler invocation of the lead-duplicate Lambda.
+
+    Uses EventBridge Scheduler (not SQS) because SQS DelaySeconds is capped at 15 minutes.
+    The schedule auto-deletes after firing (ActionAfterCompletion=DELETE).
+    """
+    function_arn = os.getenv("LEAD_DUPLICATE_FUNCTION_ARN", "")
+    role_arn = os.getenv("LEAD_DUPLICATE_SCHEDULER_ROLE_ARN", "")
+    if not function_arn or not role_arn:
+        logger.warning(
+            "LEAD_DUPLICATE_FUNCTION_ARN or LEAD_DUPLICATE_SCHEDULER_ROLE_ARN not set; "
+            "skipping schedule for lead %s",
+            lead_id,
         )
-        logger.info("Enqueued lead %s for duplication to company %s", lead_id, target_company_name)
+        return
+
+    from datetime import timedelta
+
+    fire_at = _utcnow() + timedelta(hours=LEAD_DUPLICATE_DELAY_HOURS)
+    # Scheduler expects naive UTC ISO8601 (no offset, no microseconds).
+    schedule_at = fire_at.replace(microsecond=0, tzinfo=None).isoformat()
+
+    # Schedule name must be unique and <=64 chars, [0-9A-Za-z_.-]
+    short_id = lead_id.replace("-", "")[:24]
+    epoch = int(fire_at.timestamp())
+    schedule_name = f"lead-dup-{short_id}-{epoch}"
+
+    payload = {
+        "lead_id": lead_id,
+        "target_company_name": target_company_name,
+        "target_referral_source": target_referral_source,
+    }
+
+    try:
+        scheduler = boto3.client("scheduler", region_name=os.getenv("AWS_REGION_NAME", "us-east-1"))
+        scheduler.create_schedule(
+            Name=schedule_name,
+            ScheduleExpression=f"at({schedule_at})",
+            ScheduleExpressionTimezone="UTC",
+            FlexibleTimeWindow={"Mode": "OFF"},
+            ActionAfterCompletion="DELETE",
+            Target={
+                "Arn": function_arn,
+                "RoleArn": role_arn,
+                "Input": json.dumps(payload),
+                "RetryPolicy": {
+                    "MaximumRetryAttempts": 0,
+                    "MaximumEventAgeInSeconds": 3600,
+                },
+            },
+        )
+        logger.info(
+            "Scheduled lead %s for duplication to %s at %sZ (schedule=%s)",
+            lead_id, target_company_name, schedule_at, schedule_name,
+        )
     except Exception as exc:
-        logger.warning("Failed to enqueue lead %s for duplication: %s", lead_id, exc)
+        logger.warning("Failed to schedule lead %s for duplication: %s", lead_id, exc)
 
 
 def _send_assignment_webhook_todo(lead: Lead, rep: User | None):

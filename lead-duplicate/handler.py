@@ -100,8 +100,19 @@ def _create_smartmoving_lead(lead: dict, referral_source: str, target_company_na
 
 
 def handler(event, context):
+    # Direct invocation (EventBridge Scheduler) — event is the payload itself.
+    if not isinstance(event, dict) or "Records" not in event:
+        logger.info("lead-duplicate handler invoked via direct event")
+        try:
+            _process(event)
+        except Exception:
+            logger.exception("Failed to process direct event")
+            raise
+        return {"ok": True}
+
+    # SQS invocation (legacy path; kept for in-flight messages).
     records = event.get("Records", [])
-    logger.info("lead-duplicate handler invoked with %d record(s)", len(records))
+    logger.info("lead-duplicate handler invoked with %d SQS record(s)", len(records))
 
     failures = []
     for record in records:
