@@ -199,7 +199,7 @@ def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_id
     return min(rep_rows, key=lambda u: (counts.get(u.id, 0), u.name.lower()))
 
 
-LEAD_DUPLICATE_DELAY_MINUTES = 10  # TODO: change back to 8 hours after testing
+LEAD_DUPLICATE_DELAY_HOURS = 8
 
 
 def _enqueue_lead_for_duplication(lead_id: str, target_company_name: str, target_referral_source: str) -> None:
@@ -220,7 +220,7 @@ def _enqueue_lead_for_duplication(lead_id: str, target_company_name: str, target
 
     from datetime import timedelta
 
-    fire_at = _utcnow() + timedelta(minutes=LEAD_DUPLICATE_DELAY_MINUTES)
+    fire_at = _utcnow() + timedelta(hours=LEAD_DUPLICATE_DELAY_HOURS)
     # Scheduler expects naive UTC ISO8601 (no offset, no microseconds).
     schedule_at = fire_at.replace(microsecond=0, tzinfo=None).isoformat()
 
