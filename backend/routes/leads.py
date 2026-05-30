@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from config import get_config
 from database import get_db
+from libs.common.phone import normalize_digits
 from libs.smartmoving.client import update_opportunity_salesperson
 from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent
 from routes.templates import get_company_template
@@ -48,6 +49,14 @@ def _assignment_note(mode: str, sync_result: dict | None = None) -> str:
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _normalize_phone(raw: str | None) -> str:
+    """Strip everything except digits, then drop leading country code '1' if 11 digits."""
+    digits = normalize_digits(raw or "")
+    if len(digits) == 11 and digits.startswith("1"):
+        return digits[1:]
+    return digits
 
 
 def _is_admin_unavailable_now(admin_user_id: str, db: Session, now: datetime | None = None) -> bool:
@@ -472,7 +481,7 @@ def update_lead(
             raise HTTPException(status_code=400, detail="Name cannot be empty")
         lead.full_name = name
     if body.phone_number is not None:
-        lead.phone = body.phone_number.strip()
+        lead.phone = _normalize_phone(body.phone_number)
     if body.email is not None:
         lead.email = body.email.strip() or None
 
@@ -668,7 +677,7 @@ def create_lead(
         assigned_to=assigned_to_user_id,
         full_name=body.full_name.strip(),
         email=body.email.strip(),
-        phone=body.phone_number.strip(),
+        phone=_normalize_phone(body.phone_number),
         source=body.source or "zapier",
         leadgen_id=body.leadgen_id.strip() or None,
         smartmoving_id=body.smartmoving_id.strip() or None,
