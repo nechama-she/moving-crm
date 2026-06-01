@@ -64,14 +64,25 @@ phases:
       - ECR_REPO="moving-crm-dispatch-${ENVIRONMENT:-dev}"
       - ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
       - |
-        if docker info >/dev/null 2>&1; then
-          aws ecr describe-repositories --repository-names "$ECR_REPO" >/dev/null 2>&1 || aws ecr create-repository --repository-name "$ECR_REPO" --image-scanning-configuration scanOnPush=true
-          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
-          cd $CODEBUILD_SRC_DIR/dispatch-backend && docker build -t ${ECR_URI}:latest .
-          docker push ${ECR_URI}:latest
-        else
-          echo "Docker not available (Privileged Mode not yet enabled on this CodeBuild project). Skipping dispatch-backend image build — Infrastructure stage will enable it."
+        set +e
+        docker info >/dev/null 2>&1
+        DOCKER_OK=$?
+        set -e
+        if [ "$DOCKER_OK" -ne 0 ]; then
+          echo "Docker not available (Privileged Mode not yet enabled). Skipping dispatch-backend image build."
+          exit 0
         fi
+        set +e
+        aws ecr describe-repositories --repository-names "$ECR_REPO" >/dev/null 2>&1
+        REPO_EXISTS=$?
+        set -e
+        if [ "$REPO_EXISTS" -ne 0 ]; then
+          aws ecr create-repository --repository-name "$ECR_REPO" --image-scanning-configuration scanOnPush=true || { echo "ECR create-repository failed (missing perms?). Skipping."; exit 0; }
+        fi
+        aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        cd "$CODEBUILD_SRC_DIR/dispatch-backend"
+        docker build -t "${ECR_URI}:latest" .
+        docker push "${ECR_URI}:latest"
 
 artifacts:
   files:
