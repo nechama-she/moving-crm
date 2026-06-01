@@ -259,26 +259,6 @@ Resources:
                 AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
 
   # ===========================================================================
-  # CLOUDFRONT — Function to rewrite /dispatch/* SPA paths to /dispatch/index.html
-  # ===========================================================================
-  DispatchRouterFunction:
-    Type: AWS::CloudFront::Function
-    Properties:
-      Name: !Sub moving-crm-dispatch-router-${Environment}
-      AutoPublish: true
-      FunctionConfig:
-        Comment: Rewrite /dispatch/* SPA routes to /dispatch/index.html
-        Runtime: cloudfront-js-2.0
-      FunctionCode: |
-        function handler(event) {
-          var uri = event.request.uri;
-          if (!uri.includes('.')) {
-            event.request.uri = '/dispatch/index.html';
-          }
-          return event.request;
-        }
-
-  # ===========================================================================
   # CLOUDFRONT — HTTPS for frontend
   # ===========================================================================
   CloudFrontOAC:
@@ -303,18 +283,74 @@ Resources:
             OriginAccessControlId: !Ref CloudFrontOAC
             S3OriginConfig:
               OriginAccessIdentity: ""
-        CacheBehaviors:
-          - PathPattern: /dispatch/*
-            TargetOriginId: S3Origin
-            ViewerProtocolPolicy: redirect-to-https
-            AllowedMethods: [GET, HEAD]
-            CachedMethods: [GET, HEAD]
-            ForwardedValues:
-              QueryString: false
-            Compress: true
-            FunctionAssociations:
-              - EventType: viewer-request
-                FunctionARN: !GetAtt DispatchRouterFunction.FunctionARN
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues:
+            QueryString: false
+          Compress: true
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  # ===========================================================================
+  # DISPATCH — Standalone site (separate S3 bucket + CloudFront distribution)
+  # ===========================================================================
+  DispatchBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub moving-crm-dispatch-${Environment}-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  DispatchBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DispatchBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${DispatchBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${DispatchDistribution}"
+
+  DispatchOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub moving-crm-dispatch-oac-${Environment}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  DispatchDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub moving-crm-dispatch-${Environment}
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt DispatchBucket.RegionalDomainName
+            OriginAccessControlId: !Ref DispatchOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ""
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
@@ -376,6 +412,16 @@ Resources:
                 Resource:
                   - !GetAtt FrontendBucket.Arn
                   - !Sub "${FrontendBucket.Arn}/*"
+              # Dispatch bucket (standalone site)
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt DispatchBucket.Arn
+                  - !Sub "${DispatchBucket.Arn}/*"
               # SSM (read DB config + write admin password)
               - Effect: Allow
                 Action:
@@ -646,6 +692,8 @@ Resources:
             Value: !Ref AWS::Region
           - Name: FRONTEND_BUCKET
             Value: !Ref FrontendBucket
+          - Name: DISPATCH_BUCKET
+            Value: !Ref DispatchBucket
           - Name: DYNAMO_TABLE_NAME
             Value: leads
 
@@ -777,6 +825,8 @@ Resources:
             Value: !Ref AWS::Region
           - Name: FRONTEND_BUCKET
             Value: !Ref FrontendBucket
+          - Name: DISPATCH_BUCKET
+            Value: !Ref DispatchBucket
           - Name: DYNAMO_TABLE_NAME
             Value: leads
           - Name: DB_PASSWORD
@@ -1266,3 +1316,15 @@ Outputs:
   CloudFrontURL:
     Description: HTTPS frontend URL
     Value: !Sub "https://${CloudFrontDistribution.DomainName}"
+
+  DispatchURL:
+    Description: Dispatch site URL (CloudFront)
+    Value: !Sub "https://${DispatchDistribution.DomainName}"
+
+  DispatchBucketName:
+    Description: S3 bucket for dispatch site
+    Value: !Ref DispatchBucket
+
+  DispatchDistributionId:
+    Description: CloudFront distribution ID for dispatch
+    Value: !Ref DispatchDistribution
