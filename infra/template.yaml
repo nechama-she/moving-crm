@@ -386,33 +386,21 @@ Resources:
         PasswordLength: 64
         ExcludePunctuation: true
 
-  DispatchAppRunnerAccessRole:
+  DispatchApiLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub moving-crm-dispatch-apprunner-ecr-${Environment}
+      RoleName: !Sub moving-crm-dispatch-api-${Environment}
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
-              Service: build.apprunner.amazonaws.com
+              Service: lambda.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
-
-  DispatchAppRunnerInstanceRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub moving-crm-dispatch-apprunner-${Environment}
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: tasks.apprunner.amazonaws.com
-            Action: sts:AssumeRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: ReadSecrets
+        - PolicyName: DispatchApiLambdaPolicy
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -423,59 +411,70 @@ Resources:
                   - !GetAtt Database.MasterUserSecret.SecretArn
                   - !Ref DispatchJwtSecret
 
-  DispatchAppRunnerService:
-    Condition: ShouldDeployDispatchApi
-    Type: AWS::AppRunner::Service
+  DispatchApiLambdaFunction:
+    Type: AWS::Lambda::Function
     Properties:
-      ServiceName: !Sub moving-crm-dispatch-${Environment}
-      SourceConfiguration:
-        AutoDeploymentsEnabled: true
-        AuthenticationConfiguration:
-          AccessRoleArn: !GetAtt DispatchAppRunnerAccessRole.Arn
-        ImageRepository:
-          ImageRepositoryType: ECR
-          ImageIdentifier: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/moving-crm-dispatch-${Environment}:latest"
-          ImageConfiguration:
-            Port: "8000"
-            RuntimeEnvironmentVariables:
-              - Name: PYTHONUNBUFFERED
-                Value: "1"
-              - Name: DB_HOST
-                Value: !GetAtt Database.Endpoint.Address
-              - Name: DB_PORT
-                Value: !GetAtt Database.Endpoint.Port
-              - Name: DB_NAME
-                Value: !Ref DBName
-              - Name: DB_USER
-                Value: !Ref DBMasterUsername
-              - Name: CORS_ORIGINS
-                Value: !Sub "https://${DispatchDistribution.DomainName},http://localhost:5174"
-            RuntimeEnvironmentSecrets:
-              - Name: DB_PASSWORD
-                Value: !Sub
-                  - "${SecretArn}:password::"
-                  - SecretArn: !GetAtt Database.MasterUserSecret.SecretArn
-              - Name: JWT_SECRET
-                Value: !Ref DispatchJwtSecret
-      InstanceConfiguration:
-        Cpu: 1024
-        Memory: 2048
-        InstanceRoleArn: !GetAtt DispatchAppRunnerInstanceRole.Arn
-      HealthCheckConfiguration:
-        Protocol: HTTP
-        Path: /health
-        Interval: 20
-        Timeout: 10
-        HealthyThreshold: 1
-        UnhealthyThreshold: 5
+      FunctionName: !Sub moving-crm-dispatch-api-${Environment}
+      Runtime: python3.11
+      Handler: lambda_handler.handler
+      Timeout: 30
+      MemorySize: 512
+      Role: !GetAtt DispatchApiLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref FrontendBucket
+        S3Key: dispatch-backend/package.zip
+      Environment:
+        Variables:
+          AWS_REGION_NAME: !Ref AWS::Region
+          DB_HOST: !GetAtt Database.Endpoint.Address
+          DB_PORT: !GetAtt Database.Endpoint.Port
+          DB_NAME: !Ref DBName
+          DB_USER: !Ref DBMasterUsername
+          DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
+          JWT_SECRET_ARN: !Ref DispatchJwtSecret
+          CORS_ORIGINS: !Sub "https://${DispatchDistribution.DomainName},http://localhost:5174"
 
-  DispatchAppRunnerEnvVars:
-    Condition: ShouldDeployDispatchApi
-    Type: AWS::SSM::Parameter
+  DispatchHttpApi:
+    Type: AWS::ApiGatewayV2::Api
     Properties:
-      Name: !Sub /moving-crm/${Environment}/DISPATCH_API_URL
-      Type: String
-      Value: !Sub "https://${DispatchAppRunnerService.ServiceUrl}"
+      Name: !Sub moving-crm-dispatch-api-${Environment}
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - !Sub "https://${DispatchDistribution.DomainName}"
+          - "http://localhost:5174"
+        AllowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+        AllowHeaders: ["Authorization", "Content-Type"]
+
+  DispatchHttpApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref DispatchHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt DispatchApiLambdaFunction.Arn
+      PayloadFormatVersion: "2.0"
+
+  DispatchHttpApiDefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref DispatchHttpApi
+      RouteKey: "$default"
+      Target: !Sub "integrations/${DispatchHttpApiIntegration}"
+
+  DispatchHttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref DispatchHttpApi
+      StageName: "$default"
+      AutoDeploy: true
+
+  DispatchApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt DispatchApiLambdaFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DispatchHttpApi}/*"
 
 
   CodeBuildRole:
@@ -1473,6 +1472,5 @@ Outputs:
     Value: !Ref DispatchDistribution
 
   DispatchApiURL:
-    Condition: ShouldDeployDispatchApi
-    Description: Dispatch backend URL (App Runner)
-    Value: !Sub "https://${DispatchAppRunnerService.ServiceUrl}"
+    Description: Dispatch backend URL (API Gateway → Lambda)
+    Value: !Sub "https://${DispatchHttpApi}.execute-api.${AWS::Region}.amazonaws.com"

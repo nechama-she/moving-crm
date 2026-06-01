@@ -59,14 +59,18 @@ phases:
       - echo "Uploading API backend package to S3"
       - aws s3 cp $CODEBUILD_SRC_DIR/backend/api-package.zip s3://${FRONTEND_BUCKET}/api-backend/package.zip
 
-      - echo "Building dispatch-backend Docker image"
-      - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-      - ECR_REPO="moving-crm-dispatch-${ENVIRONMENT:-dev}"
-      - ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
-      - aws ecr describe-repositories --repository-names "$ECR_REPO" >/dev/null 2>&1 || aws ecr create-repository --repository-name "$ECR_REPO" --image-scanning-configuration scanOnPush=true
-      - aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-      - cd "$CODEBUILD_SRC_DIR/dispatch-backend" && docker build -t "${ECR_URI}:latest" .
-      - docker push "${ECR_URI}:latest"
+      - echo "Packaging dispatch-backend Lambda"
+      - cd $CODEBUILD_SRC_DIR/dispatch-backend
+      - "pip install --root-user-action=ignore -r requirements.txt -t ./package --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.11 --implementation cp"
+      - rm -rf ./package/boto3* ./package/botocore* ./package/s3transfer* ./package/jmespath* ./package/sqlalchemy/dialects/mssql ./package/sqlalchemy/dialects/mysql ./package/sqlalchemy/dialects/oracle ./package/sqlalchemy/dialects/sqlite
+      - find ./package \( -type d \( -name __pycache__ -o -name tests \) -exec rm -rf {} + \) -o \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.pyx' \) -delete 2>/dev/null || true
+      - cp *.py ./package/
+      - cp -r routes ./package/
+      - cd package && zip -qr9 ../dispatch-package.zip . && cd ..
+      - echo "dispatch-backend package size:" && du -h $CODEBUILD_SRC_DIR/dispatch-backend/dispatch-package.zip
+
+      - echo "Uploading dispatch-backend package to S3"
+      - aws s3 cp $CODEBUILD_SRC_DIR/dispatch-backend/dispatch-package.zip s3://${FRONTEND_BUCKET}/dispatch-backend/package.zip
 
 artifacts:
   files:
