@@ -49,9 +49,8 @@ phases:
       - aws s3 sync $CODEBUILD_SRC_DIR/dispatch-frontend/dist/ s3://${DISPATCH_BUCKET}/ --delete
 
       - echo "Injecting dispatch backend URL into dispatch config"
-      - DISPATCH_API_URL=${DISPATCH_API_URL:-http://localhost:8001}
-      - echo "window.__DISPATCH_API_BASE__ = '${DISPATCH_API_URL}';" > /tmp/dispatch-api-config.js
-      - aws s3 cp /tmp/dispatch-api-config.js s3://${DISPATCH_BUCKET}/api-config.js
+      - DISPATCH_API_URL=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='DispatchApiURL'].OutputValue" --output text)
+      - if [ -z "$DISPATCH_API_URL" ] || [ "$DISPATCH_API_URL" = "None" ]; then echo "DispatchApiURL not yet available (DeployDispatchApi=false). Skipping dispatch api-config.js."; else echo "window.__DISPATCH_API_BASE__ = '${DISPATCH_API_URL}';" > /tmp/dispatch-api-config.js && aws s3 cp /tmp/dispatch-api-config.js s3://${DISPATCH_BUCKET}/api-config.js; fi
 
       - echo "Invalidating CloudFront cache (frontend)"
       - DIST_ID=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)

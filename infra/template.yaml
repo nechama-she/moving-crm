@@ -55,8 +55,15 @@ Parameters:
     AllowedValues: ["true", "false"]
     Description: Set to false for initial bootstrap (Lambda zip not yet in S3)
 
+  DeployDispatchApi:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Set to true after the first successful build pushes the dispatch-backend image to ECR
+
 Conditions:
   ShouldDeployLambda: !Equals [!Ref DeployLambda, "true"]
+  ShouldDeployDispatchApi: !Equals [!Ref DeployDispatchApi, "true"]
 
 Resources:
   # ===========================================================================
@@ -368,8 +375,109 @@ Resources:
             ResponsePagePath: /index.html
 
   # ===========================================================================
-  # IAM — CodeBuild + CodePipeline roles
+  # DISPATCH API — App Runner service (always-on FastAPI from GitHub)
   # ===========================================================================
+  DispatchJwtSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub moving-crm-dispatch-jwt-${Environment}
+      Description: JWT signing secret for dispatch-backend
+      GenerateSecretString:
+        PasswordLength: 64
+        ExcludePunctuation: true
+
+  DispatchAppRunnerAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-dispatch-apprunner-ecr-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: build.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+
+  DispatchAppRunnerInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-dispatch-apprunner-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: tasks.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReadSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !GetAtt Database.MasterUserSecret.SecretArn
+                  - !Ref DispatchJwtSecret
+
+  DispatchAppRunnerService:
+    Condition: ShouldDeployDispatchApi
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: !Sub moving-crm-dispatch-${Environment}
+      SourceConfiguration:
+        AutoDeploymentsEnabled: true
+        AuthenticationConfiguration:
+          AccessRoleArn: !GetAtt DispatchAppRunnerAccessRole.Arn
+        ImageRepository:
+          ImageRepositoryType: ECR
+          ImageIdentifier: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/moving-crm-dispatch-${Environment}:latest"
+          ImageConfiguration:
+            Port: "8000"
+            RuntimeEnvironmentVariables:
+              - Name: PYTHONUNBUFFERED
+                Value: "1"
+              - Name: DB_HOST
+                Value: !GetAtt Database.Endpoint.Address
+              - Name: DB_PORT
+                Value: !GetAtt Database.Endpoint.Port
+              - Name: DB_NAME
+                Value: !Ref DBName
+              - Name: DB_USER
+                Value: !Ref DBMasterUsername
+              - Name: CORS_ORIGINS
+                Value: !Sub "https://${DispatchDistribution.DomainName},http://localhost:5174"
+            RuntimeEnvironmentSecrets:
+              - Name: DB_PASSWORD
+                Value: !Sub
+                  - "${SecretArn}:password::"
+                  - SecretArn: !GetAtt Database.MasterUserSecret.SecretArn
+              - Name: JWT_SECRET
+                Value: !Ref DispatchJwtSecret
+      InstanceConfiguration:
+        Cpu: 1024
+        Memory: 2048
+        InstanceRoleArn: !GetAtt DispatchAppRunnerInstanceRole.Arn
+      HealthCheckConfiguration:
+        Protocol: HTTP
+        Path: /health
+        Interval: 20
+        Timeout: 10
+        HealthyThreshold: 1
+        UnhealthyThreshold: 5
+
+  DispatchAppRunnerEnvVars:
+    Condition: ShouldDeployDispatchApi
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /moving-crm/${Environment}/DISPATCH_API_URL
+      Type: String
+      Value: !Sub "https://${DispatchAppRunnerService.ServiceUrl}"
+
+
   CodeBuildRole:
     Type: AWS::IAM::Role
     Properties:
@@ -458,6 +566,23 @@ Resources:
                 Action:
                   - cloudfront:CreateInvalidation
                 Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
+              # ECR (push dispatch-backend Docker image)
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:DescribeRepositories
+                  - ecr:CreateRepository
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/moving-crm-dispatch-*"
 
   CodePipelineRole:
     Type: AWS::IAM::Role
@@ -634,6 +759,20 @@ Resources:
                 Action:
                   - cloudfront:*
                 Resource: "*"
+              # App Runner (dispatch backend)
+              - Effect: Allow
+                Action:
+                  - apprunner:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName:
+                      - apprunner.amazonaws.com
+                      - build.apprunner.amazonaws.com
               # CloudWatch Logs
               - Effect: Allow
                 Action:
@@ -683,6 +822,7 @@ Resources:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_SMALL
         Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        PrivilegedMode: true
         EnvironmentVariables:
           - Name: ENVIRONMENT
             Value: !Ref Environment
@@ -774,7 +914,8 @@ Resources:
                     "GitHubBranch": "${GitHubBranch}",
                     "AllowedCIDR": "${AllowedCIDR}",
                     "SmartMovingApiKey": "${SmartMovingApiKey}",
-                    "DeployLambda": "true"
+                    "DeployLambda": "true",
+                    "DeployDispatchApi": "${DeployDispatchApi}"
                   }
               InputArtifacts:
                 - Name: SourceCode
@@ -1328,3 +1469,8 @@ Outputs:
   DispatchDistributionId:
     Description: CloudFront distribution ID for dispatch
     Value: !Ref DispatchDistribution
+
+  DispatchApiURL:
+    Condition: ShouldDeployDispatchApi
+    Description: Dispatch backend URL (App Runner)
+    Value: !Sub "https://${DispatchAppRunnerService.ServiceUrl}"
