@@ -59,30 +59,10 @@ phases:
       - echo "Uploading API backend package to S3"
       - aws s3 cp $CODEBUILD_SRC_DIR/backend/api-package.zip s3://${FRONTEND_BUCKET}/api-backend/package.zip
 
-      - echo "Building dispatch-backend Docker image"
-      - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-      - ECR_REPO="moving-crm-dispatch-${ENVIRONMENT:-dev}"
-      - ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
-      - |
-        set +e
-        docker info >/dev/null 2>&1
-        DOCKER_OK=$?
-        set -e
-        if [ "$DOCKER_OK" -ne 0 ]; then
-          echo "Docker not available (Privileged Mode not yet enabled). Skipping dispatch-backend image build."
-          exit 0
-        fi
-        set +e
-        aws ecr describe-repositories --repository-names "$ECR_REPO" >/dev/null 2>&1
-        REPO_EXISTS=$?
-        set -e
-        if [ "$REPO_EXISTS" -ne 0 ]; then
-          aws ecr create-repository --repository-name "$ECR_REPO" --image-scanning-configuration scanOnPush=true || { echo "ECR create-repository failed (missing perms?). Skipping."; exit 0; }
-        fi
-        aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-        cd "$CODEBUILD_SRC_DIR/dispatch-backend"
-        docker build -t "${ECR_URI}:latest" .
-        docker push "${ECR_URI}:latest"
+      # NOTE: dispatch-backend Docker image build intentionally omitted from this
+      # bootstrap push. After this run, Infrastructure stage will have enabled
+      # PrivilegedMode + ECR perms + reordered pipeline (Infra-before-Build).
+      # The next push adds the docker build step back and it will succeed.
 
 artifacts:
   files:
