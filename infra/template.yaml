@@ -421,8 +421,9 @@ Resources:
       MemorySize: 512
       Role: !GetAtt DispatchApiLambdaRole.Arn
       Code:
-        S3Bucket: !Ref FrontendBucket
-        S3Key: dispatch-backend/package.zip
+        ZipFile: |
+          def handler(event, context):
+              return {"statusCode": 503, "body": "Dispatch API not yet deployed"}
       Environment:
         Variables:
           AWS_REGION_NAME: !Ref AWS::Region
@@ -875,8 +876,23 @@ Resources:
                 - Name: SourceCode
 
         # --- Infrastructure: deploy CloudFormation template (self-mutating) ---
-        # Runs BEFORE Build so Build picks up latest CodeBuild config
-        # (PrivilegedMode, ECR perms) before the dispatch-backend image build.
+        # --- Build: compile frontend, package Lambdas ---
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceCode
+              OutputArtifacts:
+                - Name: BuildOutput
+
+        # --- Infrastructure: deploy CloudFormation template (self-mutating) ---
         - Name: Infrastructure
           Actions:
             - Name: DeployInfra
@@ -904,22 +920,6 @@ Resources:
                   }
               InputArtifacts:
                 - Name: SourceCode
-
-        # --- Build: compile frontend, package Lambda, build dispatch image ---
-        - Name: Build
-          Actions:
-            - Name: Build
-              ActionTypeId:
-                Category: Build
-                Owner: AWS
-                Provider: CodeBuild
-                Version: "1"
-              Configuration:
-                ProjectName: !Ref CodeBuildProject
-              InputArtifacts:
-                - Name: SourceCode
-              OutputArtifacts:
-                - Name: BuildOutput
 
         # --- Deploy: frontend to S3, update Lambda code, run migrations ---
         - Name: Deploy
