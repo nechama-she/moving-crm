@@ -57,7 +57,7 @@ Parameters:
 
   DeployDispatchApi:
     Type: String
-    Default: "false"
+    Default: "true"
     AllowedValues: ["true", "false"]
     Description: Set to true after the first successful build pushes the dispatch-backend image to ECR
 
