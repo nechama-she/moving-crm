@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import ChatMessages from "./ChatMessages";
@@ -41,6 +41,8 @@ export default function LeadDetail() {
   const [companiesError, setCompaniesError] = useState("");
   const [editCompanyId, setEditCompanyId] = useState("");
   const [savingCompany, setSavingCompany] = useState(false);
+  const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
+  const companyMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
@@ -78,6 +80,18 @@ export default function LeadDetail() {
       })
       .catch((err) => setCompaniesError(err.message));
   }, [token]);
+
+  useEffect(() => {
+    function onDocMouseDown(event: MouseEvent) {
+      if (!companyMenuRef.current) return;
+      const target = event.target as Node;
+      if (!companyMenuRef.current.contains(target)) {
+        setCompanyMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, []);
 
   if (loading) return <p style={{ padding: 24 }}>Loading…</p>;
   if (error)
@@ -230,21 +244,26 @@ export default function LeadDetail() {
           }
         }
 
-        async function saveCompany() {
-          if (!editCompanyId) return;
+        async function saveCompany(nextCompanyId: string) {
+          if (!nextCompanyId) return;
+          if (nextCompanyId === String(lead?.company_id || "")) {
+            setCompanyMenuOpen(false);
+            return;
+          }
           setSavingCompany(true);
           try {
             const res = await fetch(`${API_BASE}/api/leads/${leadId}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json", ...authHeaders(token) },
               body: JSON.stringify({
-                company_id: editCompanyId,
+                company_id: nextCompanyId,
               }),
             });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const updated = await res.json();
             setLead(updated);
             setEditCompanyId(String(updated.company_id || ""));
+            setCompanyMenuOpen(false);
           } catch (e) {
             alert(`Failed to save company: ${e instanceof Error ? e.message : "error"}`);
           } finally {
@@ -270,6 +289,7 @@ export default function LeadDetail() {
           textTransform: "uppercase",
           letterSpacing: 0.5,
         };
+        const selectedCompanyName = companies.find((c) => c.id === editCompanyId)?.name || String(lead.company_name || "-");
 
         return (
           <div style={{ ...sectionStyle, padding: 18 }}>
@@ -389,59 +409,90 @@ export default function LeadDetail() {
               <div style={tile}>
                 <span style={{ fontSize: 18 }}>🏢</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={tileLabel}>Company</div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <select
-                      value={editCompanyId}
-                      onChange={(e) => setEditCompanyId(e.target.value)}
-                      disabled={!canEditCompany}
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        fontSize: 13,
-                        padding: "4px 6px",
-                        border: "1px solid #dddbda",
-                        borderRadius: 4,
-                        background: "#fff",
-                      }}
-                    >
-                      <option value="" disabled>
-                        Select company
-                      </option>
-                      {companies.map((company) => (
-                        <option key={company.id} value={company.id}>
-                          {company.name}
-                        </option>
-                      ))}
-                    </select>
+                  <div style={tileLabel}>Company Assignment</div>
+                  <div style={{ fontSize: 12, color: "#334155", marginBottom: 4 }}>
+                    Current: <strong>{String(lead.company_name || "-")}</strong>
+                  </div>
+                  <div ref={companyMenuRef} style={{ position: "relative" }}>
                     <button
                       type="button"
-                      onClick={saveCompany}
-                      disabled={
-                        !canEditCompany ||
-                        savingCompany ||
-                        !editCompanyId ||
-                        editCompanyId === String(lead.company_id || "")
-                      }
+                      onClick={() => canEditCompany && setCompanyMenuOpen((v) => !v)}
+                      disabled={!canEditCompany || savingCompany}
                       style={{
-                        padding: "4px 10px",
-                        border: "1px solid #0176d3",
-                        borderRadius: 4,
-                        background: "#0176d3",
-                        color: "#fff",
-                        fontSize: 12,
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "7px 10px",
+                        border: "1px solid #cbd5e1",
+                        borderRadius: 6,
+                        background: "#fff",
+                        color: "#0f172a",
+                        fontSize: 13,
                         fontWeight: 600,
-                        cursor: "pointer",
+                        cursor: canEditCompany ? "pointer" : "default",
                       }}
                     >
-                      {savingCompany ? "Saving…" : "Save"}
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {savingCompany ? "Updating..." : selectedCompanyName}
+                      </span>
+                      <span style={{ marginLeft: 8, color: "#475569", fontSize: 12 }}>
+                        {companyMenuOpen ? "▲" : "▼"}
+                      </span>
                     </button>
+
+                    {canEditCompany && companyMenuOpen ? (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: "calc(100% + 4px)",
+                          left: 0,
+                          right: 0,
+                          maxHeight: 220,
+                          overflowY: "auto",
+                          background: "#fff",
+                          border: "1px solid #cbd5e1",
+                          borderRadius: 6,
+                          boxShadow: "0 8px 24px rgba(15,23,42,.12)",
+                          zIndex: 20,
+                        }}
+                      >
+                        {companies.map((company) => {
+                          const isCurrent = company.id === String(lead.company_id || "");
+                          return (
+                            <button
+                              key={company.id}
+                              type="button"
+                              onClick={() => {
+                                setEditCompanyId(company.id);
+                                void saveCompany(company.id);
+                              }}
+                              disabled={savingCompany}
+                              style={{
+                                width: "100%",
+                                textAlign: "left",
+                                border: "none",
+                                background: isCurrent ? "#f1f5f9" : "#fff",
+                                color: isCurrent ? "#0f172a" : "#1e293b",
+                                padding: "8px 10px",
+                                fontSize: 13,
+                                cursor: "pointer",
+                              }}
+                            >
+                              {company.name}{isCurrent ? " (current)" : ""}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
                   </div>
                   {companiesError ? (
                     <div style={{ marginTop: 4, color: "#ba0517", fontSize: 12 }}>{companiesError}</div>
                   ) : !canEditCompany ? (
-                    <div style={{ marginTop: 4, color: "#706e6b", fontSize: 12 }}>Only admins can change company.</div>
-                  ) : null}
+                    <div style={{ marginTop: 4, color: "#706e6b", fontSize: 12 }}>Only admins can update lead company.</div>
+                  ) : (
+                    <div style={{ marginTop: 4, color: "#64748b", fontSize: 12 }}>Click the company name to open options and choose a different company.</div>
+                  )}
                 </div>
               </div>
             </div>
