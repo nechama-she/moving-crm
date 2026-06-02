@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
@@ -21,14 +22,29 @@ type AppUser = {
   companies?: UserCompany[];
 };
 
+type LeadJob = {
+  id: string;
+  full_name: string;
+  move_date: string;
+  status: string;
+};
+
 export default function DispatchPage() {
   const { token, user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const isDispatch = user?.role === "dispatch";
+
   const [users, setUsers] = useState<AppUser[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+
+  const [dispatchCompanies, setDispatchCompanies] = useState<Company[]>([]);
+  const [jobsByCompany, setJobsByCompany] = useState<Record<string, LeadJob[]>>({});
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarError, setCalendarError] = useState("");
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -42,15 +58,18 @@ export default function DispatchPage() {
     [users]
   );
 
-  const canUse = user?.role === "admin";
-
   useEffect(() => {
-    if (!canUse) {
+    if (!isAdmin) {
       setLoading(false);
       return;
     }
     void loadData();
-  }, [token, canUse]);
+  }, [token, isAdmin]);
+
+  useEffect(() => {
+    if (!isDispatch) return;
+    void loadDispatchCalendarData();
+  }, [token, isDispatch]);
 
   async function loadData() {
     setLoading(true);
@@ -184,11 +203,99 @@ export default function DispatchPage() {
     }
   }
 
-  if (!canUse) {
+  async function fetchCompanyJobs(companyId: string): Promise<LeadJob[]> {
+    const out: LeadJob[] = [];
+    const LIMIT = 200;
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore && offset <= 5000) {
+      const params = new URLSearchParams({
+        company_id: companyId,
+        limit: String(LIMIT),
+        offset: String(offset),
+      });
+      const res = await fetch(`${API_BASE}/api/leads?${params.toString()}`, { headers: authHeaders(token) });
+      if (!res.ok) throw new Error(`Leads HTTP ${res.status}`);
+
+      const data = await res.json() as { items?: Array<Record<string, unknown>>; has_more?: boolean };
+      const items = Array.isArray(data.items) ? data.items : [];
+
+      for (const item of items) {
+        const moveDate = String(item["when_is_the_move?"] || "").trim();
+        if (!moveDate) continue;
+        out.push({
+          id: String(item.id || ""),
+          full_name: String(item.full_name || "Unnamed"),
+          move_date: moveDate,
+          status: String(item.status || ""),
+        });
+      }
+
+      hasMore = Boolean(data.has_more);
+      offset += LIMIT;
+    }
+
+    return out;
+  }
+
+  async function loadDispatchCalendarData() {
+    setCalendarLoading(true);
+    setCalendarError("");
+    try {
+      const companiesRes = await fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) });
+      if (!companiesRes.ok) throw new Error(`Companies HTTP ${companiesRes.status}`);
+
+      const companiesData = (await companiesRes.json()) as Company[];
+      const assignedCompanies = (companiesData || []).sort((a, b) => a.name.localeCompare(b.name));
+      setDispatchCompanies(assignedCompanies);
+
+      const entries = await Promise.all(
+        assignedCompanies.map(async (company) => [company.id, await fetchCompanyJobs(company.id)] as const)
+      );
+      setJobsByCompany(Object.fromEntries(entries));
+    } catch (err: unknown) {
+      setCalendarError(err instanceof Error ? err.message : "Failed to load dispatch calendar");
+    } finally {
+      setCalendarLoading(false);
+    }
+  }
+
+  if (isDispatch) {
+    return (
+      <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
+        <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Dispatch Calendar</h1>
+        <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
+          Company calendars with jobs grouped by move date.
+        </p>
+
+        {calendarError ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{calendarError}</p> : null}
+        {calendarLoading ? <p style={{ color: "#3e3e3c", fontSize: 13 }}>Loading calendars...</p> : null}
+
+        {!calendarLoading && dispatchCompanies.length === 0 ? (
+          <div style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", padding: 14 }}>
+            <p style={{ margin: 0, color: "#3e3e3c", fontSize: 13 }}>
+              No companies are assigned to your dispatch user yet.
+            </p>
+          </div>
+        ) : null}
+
+        {!calendarLoading && dispatchCompanies.map((company) => (
+          <CompanyCalendar
+            key={company.id}
+            companyName={company.name}
+            jobs={jobsByCompany[company.id] || []}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
     return (
       <div style={{ padding: "20px 24px" }}>
         <h1 style={{ fontSize: 20, color: "#032d60", marginBottom: 8 }}>Dispatch</h1>
-        <p style={{ color: "#ba0517" }}>Only admins can manage dispatch users.</p>
+        <p style={{ color: "#ba0517" }}>You do not have access to this page.</p>
       </div>
     );
   }
@@ -328,6 +435,116 @@ export default function DispatchPage() {
   );
 }
 
+function parseMoveDate(raw: string): Date | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const direct = new Date(trimmed);
+  if (!Number.isNaN(direct.getTime())) return direct;
+
+  const mmddyyyy = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mmddyyyy) {
+    const month = Number(mmddyyyy[1]) - 1;
+    const day = Number(mmddyyyy[2]);
+    const year = Number(mmddyyyy[3]);
+    const parsed = new Date(year, month, day);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  return null;
+}
+
+function CompanyCalendar({
+  companyName,
+  jobs,
+}: {
+  companyName: string;
+  jobs: LeadJob[];
+}) {
+  const [viewDate, setViewDate] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
+
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const firstWeekday = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthLabel = viewDate.toLocaleString(undefined, { month: "long", year: "numeric" });
+
+  const jobsByDay = new Map<number, LeadJob[]>();
+  for (const job of jobs) {
+    const parsed = parseMoveDate(job.move_date);
+    if (!parsed) continue;
+    if (parsed.getFullYear() !== year || parsed.getMonth() !== month) continue;
+
+    const day = parsed.getDate();
+    const bucket = jobsByDay.get(day) || [];
+    bucket.push(job);
+    jobsByDay.set(day, bucket);
+  }
+
+  const prevMonth = () => setViewDate((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1));
+  const nextMonth = () => setViewDate((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
+
+  return (
+    <section style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
+      <div style={{ padding: "10px 14px", borderBottom: "1px solid #dddbda", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 15, color: "#032d60" }}>{companyName}</h2>
+          <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>Jobs by move date</p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button type="button" onClick={prevMonth} style={calendarNavBtn}>◀</button>
+          <strong style={{ minWidth: 150, textAlign: "center", fontSize: 13, color: "#0f172a" }}>{monthLabel}</strong>
+          <button type="button" onClick={nextMonth} style={calendarNavBtn}>▶</button>
+        </div>
+      </div>
+
+      <div style={{ padding: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
+          {weekdayLabels.map((label) => (
+            <div key={label} style={{ fontSize: 11, color: "#64748b", fontWeight: 700, textTransform: "uppercase", textAlign: "center" }}>
+              {label}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
+          {Array.from({ length: firstWeekday }).map((_, i) => (
+            <div key={`blank-${i}`} style={calendarBlankCell} />
+          ))}
+
+          {Array.from({ length: daysInMonth }).map((_, i) => {
+            const day = i + 1;
+            const dayJobs = jobsByDay.get(day) || [];
+            return (
+              <div key={day} style={calendarDayCell}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b", marginBottom: 6 }}>{day}</div>
+                <div style={{ display: "grid", gap: 4 }}>
+                  {dayJobs.slice(0, 3).map((job) => (
+                    <Link
+                      key={job.id}
+                      to={`/leads/${job.id}`}
+                      style={{ display: "block", fontSize: 11, color: "#0b5cab", textDecoration: "none", background: "#eaf5fe", border: "1px solid #c9e6ff", borderRadius: 4, padding: "2px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                      title={`${job.full_name} (${job.status})`}
+                    >
+                      {job.full_name}
+                    </Link>
+                  ))}
+                  {dayJobs.length > 3 ? (
+                    <span style={{ fontSize: 11, color: "#64748b" }}>+{dayJobs.length - 3} more</span>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function DispatchRow({
   dispatchUser,
   companies,
@@ -432,4 +649,33 @@ const td: React.CSSProperties = {
   fontSize: 13,
   color: "#111827",
   verticalAlign: "top",
+};
+
+const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const calendarNavBtn: React.CSSProperties = {
+  border: "1px solid #cbd5e1",
+  background: "#fff",
+  color: "#0f172a",
+  borderRadius: 4,
+  width: 28,
+  height: 28,
+  cursor: "pointer",
+  fontSize: 12,
+};
+
+const calendarBlankCell: React.CSSProperties = {
+  minHeight: 90,
+  border: "1px dashed #e2e8f0",
+  borderRadius: 4,
+  background: "#fafcff",
+};
+
+const calendarDayCell: React.CSSProperties = {
+  minHeight: 90,
+  border: "1px solid #e2e8f0",
+  borderRadius: 4,
+  background: "#fff",
+  padding: 6,
+  boxSizing: "border-box",
 };

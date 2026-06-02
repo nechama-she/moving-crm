@@ -29,10 +29,14 @@ const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties 
 function ProtectedRoutes() {
   const { token, loading, logout, user } = useAuth();
   const location = useLocation();
+  const isDispatchUser = user?.role === "dispatch";
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
   if (!token) return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   if (user?.must_change_password && location.pathname !== "/change-password") {
     return <Navigate to="/change-password" replace />;
+  }
+  if (isDispatchUser && location.pathname !== "/dispatch" && location.pathname !== "/change-password") {
+    return <Navigate to="/dispatch" replace />;
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
@@ -49,15 +53,23 @@ function ProtectedRoutes() {
           Moving CRM
         </span>
         <div style={{ display: "flex", flex: 1 }}>
-          <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
-          <NavLink to="/outreach" style={navLinkStyle}>Outreach</NavLink>
-          <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
+          {isDispatchUser ? (
+            <NavLink to="/dispatch" style={navLinkStyle}>Dispatch</NavLink>
+          ) : (
+            <>
+              <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
+              <NavLink to="/outreach" style={navLinkStyle}>Outreach</NavLink>
+              <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
+            </>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {user && <span style={{ color: "#9dc9e8", fontSize: 13 }}>{user.name}</span>}
-          <NavLink to="/change-password" style={({ isActive }) => ({ ...navLinkStyle({ isActive }), padding: "0 8px", fontSize: 13 })}>
-            Change Password
-          </NavLink>
+          {!isDispatchUser ? (
+            <NavLink to="/change-password" style={({ isActive }) => ({ ...navLinkStyle({ isActive }), padding: "0 8px", fontSize: 13 })}>
+              Change Password
+            </NavLink>
+          ) : null}
           <button
             onClick={logout}
             style={{
@@ -83,7 +95,7 @@ function ProtectedRoutes() {
           <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />
           <Route path="/leads/:leadId" element={<LeadDetail />} />
           <Route path="/change-password" element={<ChangePasswordPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to={isDispatchUser ? "/dispatch" : "/"} replace />} />
         </Routes>
       </div>
     </div>
