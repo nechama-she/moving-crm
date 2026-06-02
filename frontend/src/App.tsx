@@ -7,6 +7,7 @@ import LeadDetail from "./LeadDetail";
 import OutreachEventsPage from "./OutreachEventsPage";
 import PeriodAssignPage from "./PeriodAssignPage";
 import SalesRepsPage from "./SalesRepsPage";
+import DispatchPage from "./DispatchPage";
 import CompaniesPage from "./CompaniesPage";
 import CompanyTemplatesPage from "./CompanyTemplatesPage";
 import SettingsPage from "./SettingsPage";
@@ -75,6 +76,7 @@ function ProtectedRoutes() {
           <Route path="/outreach" element={<OutreachEventsPage />} />
           <Route path="/assign-period" element={<PeriodAssignPage />} />
           <Route path="/sales-reps" element={<SalesRepsPage />} />
+          <Route path="/dispatch" element={<DispatchPage />} />
           <Route path="/settings/companies" element={<CompaniesPage />} />
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
