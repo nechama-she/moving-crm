@@ -55,8 +55,15 @@ Parameters:
     AllowedValues: ["true", "false"]
     Description: Set to false for initial bootstrap (Lambda zip not yet in S3)
 
+  DeployDispatchApi:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Deprecated compatibility parameter kept only for the live pipeline
+
 Conditions:
   ShouldDeployLambda: !Equals [!Ref DeployLambda, "true"]
+  HasDeprecatedDispatchCompatParam: !Equals [!Ref DeployDispatchApi, "true"]
 
 Resources:
   # ===========================================================================
@@ -1243,3 +1250,8 @@ Outputs:
   CloudFrontURL:
     Description: HTTPS frontend URL
     Value: !Sub "https://${CloudFrontDistribution.DomainName}"
+
+  DispatchCompatDeprecated:
+    Condition: HasDeprecatedDispatchCompatParam
+    Description: Deprecated compatibility output for stale pipeline overrides
+    Value: !Ref DeployDispatchApi
