@@ -443,6 +443,7 @@ class LeadUpdate(BaseModel):
     status: str | None = None
     priority: int | None = None
     assigned_to: str | None = None
+    company_id: str | None = None
     notes: str | None = None
     full_name: str | None = None
     phone_number: str | None = None
@@ -464,6 +465,8 @@ def update_lead(
     # Only admin can assign leads
     if body.assigned_to is not None and user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can assign leads")
+    if body.company_id is not None and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can change lead company")
 
     prev_assigned_to = lead.assigned_to
 
@@ -473,6 +476,30 @@ def update_lead(
         lead.priority = body.priority
     if body.assigned_to is not None:
         lead.assigned_to = body.assigned_to or None
+    if body.company_id is not None:
+        next_company_id = body.company_id.strip()
+        if not next_company_id:
+            raise HTTPException(status_code=400, detail="company_id cannot be empty")
+        if next_company_id not in company_ids:
+            raise HTTPException(status_code=403, detail="Not allowed to move lead to this company")
+        company_exists = db.query(Company.id).filter(Company.id == next_company_id).first()
+        if not company_exists:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        lead.company_id = next_company_id
+
+        # Keep assignment consistent with the lead's new company.
+        if lead.assigned_to:
+            rep_has_company = (
+                db.query(UserCompany)
+                .filter(
+                    UserCompany.user_id == lead.assigned_to,
+                    UserCompany.company_id == next_company_id,
+                )
+                .first()
+            )
+            if not rep_has_company:
+                lead.assigned_to = None
     if body.notes is not None:
         lead.notes = body.notes
     if body.full_name is not None:

@@ -9,6 +9,11 @@ import { useAuth, authHeaders } from "./AuthContext";
 
 const HIDDEN_FIELDS = new Set(["entry_id", "inbox_url"]);
 
+type CompanyOption = {
+  id: string;
+  name: string;
+};
+
 const USER_FIELDS = ["full_name", "phone_number", "email"];
 const MOVE_FIELDS = [
   "pickup_zip",
@@ -22,7 +27,7 @@ const META_FIELDS = ["leadgen_id", "created_time", "page_id", "form_id", "adgrou
 export default function LeadDetail() {
   const { leadId } = useParams<{ leadId: string }>();
   const navigate = useNavigate();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -32,6 +37,10 @@ export default function LeadDetail() {
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [savingUser, setSavingUser] = useState(false);
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [companiesError, setCompaniesError] = useState("");
+  const [editCompanyId, setEditCompanyId] = useState("");
+  const [savingCompany, setSavingCompany] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
@@ -39,15 +48,42 @@ export default function LeadDetail() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
-      .then(setLead)
+      .then((data) => {
+        setLead(data);
+        setEditCompanyId(String(data?.company_id || ""));
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [leadId]);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data: unknown) => {
+        const rows = Array.isArray(data) ? data : [];
+        const nextCompanies = rows
+          .map((row) => {
+            const item = row as Record<string, unknown>;
+            return {
+              id: String(item.id || ""),
+              name: String(item.name || ""),
+            };
+          })
+          .filter((c) => c.id);
+        setCompanies(nextCompanies);
+        setCompaniesError("");
+      })
+      .catch((err) => setCompaniesError(err.message));
+  }, [token]);
 
   if (loading) return <p style={{ padding: 24 }}>Loading…</p>;
   if (error)
     return <p style={{ padding: 24, color: "#ba0517" }}>Error: {error}</p>;
   if (!lead) return <p style={{ padding: 24 }}>Lead not found.</p>;
+  const canEditCompany = user?.role === "admin";
 
   // Extract user_id from inbox_url for chat lookup
   const inboxUrl = lead.inbox_url ? String(lead.inbox_url) : "";
@@ -194,6 +230,28 @@ export default function LeadDetail() {
           }
         }
 
+        async function saveCompany() {
+          if (!editCompanyId) return;
+          setSavingCompany(true);
+          try {
+            const res = await fetch(`${API_BASE}/api/leads/${leadId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", ...authHeaders(token) },
+              body: JSON.stringify({
+                company_id: editCompanyId,
+              }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const updated = await res.json();
+            setLead(updated);
+            setEditCompanyId(String(updated.company_id || ""));
+          } catch (e) {
+            alert(`Failed to save company: ${e instanceof Error ? e.message : "error"}`);
+          } finally {
+            setSavingCompany(false);
+          }
+        }
+
         const tile: React.CSSProperties = {
           flex: 1,
           minWidth: 200,
@@ -325,6 +383,65 @@ export default function LeadDetail() {
                   ) : (
                     <span style={{ fontSize: 14, color: "#706e6b" }}>—</span>
                   )}
+                </div>
+              </div>
+
+              <div style={tile}>
+                <span style={{ fontSize: 18 }}>🏢</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={tileLabel}>Company</div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <select
+                      value={editCompanyId}
+                      onChange={(e) => setEditCompanyId(e.target.value)}
+                      disabled={!canEditCompany}
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        fontSize: 13,
+                        padding: "4px 6px",
+                        border: "1px solid #dddbda",
+                        borderRadius: 4,
+                        background: "#fff",
+                      }}
+                    >
+                      <option value="" disabled>
+                        Select company
+                      </option>
+                      {companies.map((company) => (
+                        <option key={company.id} value={company.id}>
+                          {company.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={saveCompany}
+                      disabled={
+                        !canEditCompany ||
+                        savingCompany ||
+                        !editCompanyId ||
+                        editCompanyId === String(lead.company_id || "")
+                      }
+                      style={{
+                        padding: "4px 10px",
+                        border: "1px solid #0176d3",
+                        borderRadius: 4,
+                        background: "#0176d3",
+                        color: "#fff",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {savingCompany ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                  {companiesError ? (
+                    <div style={{ marginTop: 4, color: "#ba0517", fontSize: 12 }}>{companiesError}</div>
+                  ) : !canEditCompany ? (
+                    <div style={{ marginTop: 4, color: "#706e6b", fontSize: 12 }}>Only admins can change company.</div>
+                  ) : null}
                 </div>
               </div>
             </div>
