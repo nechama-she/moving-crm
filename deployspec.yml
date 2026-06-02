@@ -45,34 +45,9 @@ phases:
       - echo "window.__API_URL__ = '${API_URL}';" > /tmp/api-config.js
       - aws s3 cp /tmp/api-config.js s3://${FRONTEND_BUCKET}/api-config.js
 
-      - echo "Deploying dispatch-frontend to its own S3 bucket"
-      - aws s3 sync $CODEBUILD_SRC_DIR/dispatch-frontend/dist/ s3://${DISPATCH_BUCKET}/ --delete
-
-      - echo "Updating dispatch-backend Lambda function code (skip if not yet provisioned)"
-      - |
-        if aws lambda get-function --function-name moving-crm-dispatch-api-${ENVIRONMENT:-dev} > /dev/null 2>&1; then
-          aws lambda update-function-code --function-name moving-crm-dispatch-api-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key dispatch-backend/package.zip
-        else
-          echo "Dispatch Lambda not provisioned yet; skipping update."
-        fi
-
-      - echo "Injecting dispatch backend URL into dispatch config"
-      - DISPATCH_API_URL=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='DispatchApiURL'].OutputValue" --output text 2>/dev/null || echo "")
-      - |
-        if [ -n "$DISPATCH_API_URL" ]; then
-          echo "window.__DISPATCH_API_BASE__ = '${DISPATCH_API_URL}';" > /tmp/dispatch-api-config.js
-          aws s3 cp /tmp/dispatch-api-config.js s3://${DISPATCH_BUCKET}/api-config.js
-        else
-          echo "DispatchApiURL output not present yet; skipping dispatch config write."
-        fi
-
       - echo "Invalidating CloudFront cache (frontend)"
       - DIST_ID=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)
       - aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*"
-
-      - echo "Invalidating CloudFront cache (dispatch)"
-      - DISPATCH_DIST_ID=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='DispatchDistributionId'].OutputValue" --output text)
-      - aws cloudfront create-invalidation --distribution-id $DISPATCH_DIST_ID --paths "/*"
 
   post_build:
     commands:

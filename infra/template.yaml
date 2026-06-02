@@ -55,15 +55,8 @@ Parameters:
     AllowedValues: ["true", "false"]
     Description: Set to false for initial bootstrap (Lambda zip not yet in S3)
 
-  DeployDispatchApi:
-    Type: String
-    Default: "true"
-    AllowedValues: ["true", "false"]
-    Description: Set to true after the first successful build pushes the dispatch-backend image to ECR
-
 Conditions:
   ShouldDeployLambda: !Equals [!Ref DeployLambda, "true"]
-  ShouldDeployDispatchApi: !Equals [!Ref DeployDispatchApi, "true"]
 
 Resources:
   # ===========================================================================
@@ -306,177 +299,6 @@ Resources:
             ResponseCode: 200
             ResponsePagePath: /index.html
 
-  # ===========================================================================
-  # DISPATCH — Standalone site (separate S3 bucket + CloudFront distribution)
-  # ===========================================================================
-  DispatchBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub moving-crm-dispatch-${Environment}-${AWS::AccountId}
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-
-  DispatchBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref DispatchBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: AllowCloudFrontOnly
-            Effect: Allow
-            Principal:
-              Service: cloudfront.amazonaws.com
-            Action: s3:GetObject
-            Resource: !Sub "${DispatchBucket.Arn}/*"
-            Condition:
-              StringEquals:
-                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${DispatchDistribution}"
-
-  DispatchOAC:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: !Sub moving-crm-dispatch-oac-${Environment}
-        OriginAccessControlOriginType: s3
-        SigningBehavior: always
-        SigningProtocol: sigv4
-
-  DispatchDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Enabled: true
-        Comment: !Sub moving-crm-dispatch-${Environment}
-        DefaultRootObject: index.html
-        Origins:
-          - Id: S3Origin
-            DomainName: !GetAtt DispatchBucket.RegionalDomainName
-            OriginAccessControlId: !Ref DispatchOAC
-            S3OriginConfig:
-              OriginAccessIdentity: ""
-        DefaultCacheBehavior:
-          TargetOriginId: S3Origin
-          ViewerProtocolPolicy: redirect-to-https
-          AllowedMethods: [GET, HEAD]
-          CachedMethods: [GET, HEAD]
-          ForwardedValues:
-            QueryString: false
-          Compress: true
-        CustomErrorResponses:
-          - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-          - ErrorCode: 403
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-
-  # ===========================================================================
-  # DISPATCH API — App Runner service (always-on FastAPI from GitHub)
-  # ===========================================================================
-  DispatchJwtSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: !Sub moving-crm-dispatch-jwt-${Environment}
-      Description: JWT signing secret for dispatch-backend
-      GenerateSecretString:
-        PasswordLength: 64
-        ExcludePunctuation: true
-
-  DispatchApiLambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub moving-crm-dispatch-api-${Environment}
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: DispatchApiLambdaPolicy
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - secretsmanager:GetSecretValue
-                Resource:
-                  - !GetAtt Database.MasterUserSecret.SecretArn
-                  - !Ref DispatchJwtSecret
-
-  DispatchApiLambdaFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub moving-crm-dispatch-api-${Environment}
-      Runtime: python3.11
-      Handler: lambda_handler.handler
-      Timeout: 30
-      MemorySize: 512
-      Role: !GetAtt DispatchApiLambdaRole.Arn
-      Code:
-        ZipFile: |
-          def handler(event, context):
-              return {"statusCode": 503, "body": "Dispatch API not yet deployed"}
-      Environment:
-        Variables:
-          AWS_REGION_NAME: !Ref AWS::Region
-          DB_HOST: !GetAtt Database.Endpoint.Address
-          DB_PORT: !GetAtt Database.Endpoint.Port
-          DB_NAME: !Ref DBName
-          DB_USER: !Ref DBMasterUsername
-          DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
-          JWT_SECRET_ARN: !Ref DispatchJwtSecret
-          CORS_ORIGINS: !Sub "https://${DispatchDistribution.DomainName},http://localhost:5174"
-
-  DispatchHttpApi:
-    Type: AWS::ApiGatewayV2::Api
-    Properties:
-      Name: !Sub moving-crm-dispatch-api-${Environment}
-      ProtocolType: HTTP
-      CorsConfiguration:
-        AllowOrigins:
-          - !Sub "https://${DispatchDistribution.DomainName}"
-          - "http://localhost:5174"
-        AllowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-        AllowHeaders: ["Authorization", "Content-Type"]
-
-  DispatchHttpApiIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref DispatchHttpApi
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !GetAtt DispatchApiLambdaFunction.Arn
-      PayloadFormatVersion: "2.0"
-
-  DispatchHttpApiDefaultRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref DispatchHttpApi
-      RouteKey: "$default"
-      Target: !Sub "integrations/${DispatchHttpApiIntegration}"
-
-  DispatchHttpApiStage:
-    Type: AWS::ApiGatewayV2::Stage
-    Properties:
-      ApiId: !Ref DispatchHttpApi
-      StageName: "$default"
-      AutoDeploy: true
-
-  DispatchApiLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !GetAtt DispatchApiLambdaFunction.Arn
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DispatchHttpApi}/*"
-
 
   CodeBuildRole:
     Type: AWS::IAM::Role
@@ -520,16 +342,15 @@ Resources:
                 Resource:
                   - !GetAtt FrontendBucket.Arn
                   - !Sub "${FrontendBucket.Arn}/*"
-              # Dispatch bucket (standalone site)
+              # Old dispatch bucket cleanup before stack update
               - Effect: Allow
                 Action:
-                  - s3:GetObject
-                  - s3:PutObject
-                  - s3:DeleteObject
                   - s3:ListBucket
-                Resource:
-                  - !GetAtt DispatchBucket.Arn
-                  - !Sub "${DispatchBucket.Arn}/*"
+                Resource: !Sub "arn:aws:s3:::moving-crm-dispatch-${Environment}-${AWS::AccountId}"
+              - Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                Resource: !Sub "arn:aws:s3:::moving-crm-dispatch-${Environment}-${AWS::AccountId}/*"
               # SSM (read DB config + write admin password)
               - Effect: Allow
                 Action:
@@ -566,23 +387,6 @@ Resources:
                 Action:
                   - cloudfront:CreateInvalidation
                 Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
-              # ECR (push dispatch-backend Docker image)
-              - Effect: Allow
-                Action:
-                  - ecr:GetAuthorizationToken
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - ecr:DescribeRepositories
-                  - ecr:CreateRepository
-                  - ecr:BatchCheckLayerAvailability
-                  - ecr:BatchGetImage
-                  - ecr:GetDownloadUrlForLayer
-                  - ecr:InitiateLayerUpload
-                  - ecr:UploadLayerPart
-                  - ecr:CompleteLayerUpload
-                  - ecr:PutImage
-                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/moving-crm-dispatch-*"
 
   CodePipelineRole:
     Type: AWS::IAM::Role
@@ -759,20 +563,6 @@ Resources:
                 Action:
                   - cloudfront:*
                 Resource: "*"
-              # App Runner (dispatch backend)
-              - Effect: Allow
-                Action:
-                  - apprunner:*
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - iam:CreateServiceLinkedRole
-                Resource: "*"
-                Condition:
-                  StringEquals:
-                    iam:AWSServiceName:
-                      - apprunner.amazonaws.com
-                      - build.apprunner.amazonaws.com
               # CloudWatch Logs
               - Effect: Allow
                 Action:
@@ -832,8 +622,6 @@ Resources:
             Value: !Ref AWS::Region
           - Name: FRONTEND_BUCKET
             Value: !Ref FrontendBucket
-          - Name: DISPATCH_BUCKET
-            Value: !Ref DispatchBucket
           - Name: DYNAMO_TABLE_NAME
             Value: leads
 
@@ -915,8 +703,7 @@ Resources:
                     "GitHubBranch": "${GitHubBranch}",
                     "AllowedCIDR": "${AllowedCIDR}",
                     "SmartMovingApiKey": "${SmartMovingApiKey}",
-                    "DeployLambda": "true",
-                    "DeployDispatchApi": "${DeployDispatchApi}"
+                    "DeployLambda": "true"
                   }
               InputArtifacts:
                 - Name: SourceCode
@@ -967,8 +754,6 @@ Resources:
             Value: !Ref AWS::Region
           - Name: FRONTEND_BUCKET
             Value: !Ref FrontendBucket
-          - Name: DISPATCH_BUCKET
-            Value: !Ref DispatchBucket
           - Name: DYNAMO_TABLE_NAME
             Value: leads
           - Name: DB_PASSWORD
@@ -1458,19 +1243,3 @@ Outputs:
   CloudFrontURL:
     Description: HTTPS frontend URL
     Value: !Sub "https://${CloudFrontDistribution.DomainName}"
-
-  DispatchURL:
-    Description: Dispatch site URL (CloudFront)
-    Value: !Sub "https://${DispatchDistribution.DomainName}"
-
-  DispatchBucketName:
-    Description: S3 bucket for dispatch site
-    Value: !Ref DispatchBucket
-
-  DispatchDistributionId:
-    Description: CloudFront distribution ID for dispatch
-    Value: !Ref DispatchDistribution
-
-  DispatchApiURL:
-    Description: Dispatch backend URL (API Gateway → Lambda)
-    Value: !Sub "https://${DispatchHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
