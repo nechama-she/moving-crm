@@ -182,7 +182,7 @@ export default function LeadDetail() {
   return (
     <div style={{ padding: 20, fontFamily: "inherit", maxWidth: 960, overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <button
-        onClick={() => navigate("/")}
+        onClick={() => navigate(user?.role === "dispatch" ? "/dispatch" : "/")}
         style={{
           marginBottom: 14,
           padding: "5px 14px",

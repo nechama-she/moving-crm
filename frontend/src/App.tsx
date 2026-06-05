@@ -30,12 +30,16 @@ function ProtectedRoutes() {
   const { token, loading, logout, user } = useAuth();
   const location = useLocation();
   const isDispatchUser = user?.role === "dispatch";
+  const isDispatchAllowedPath =
+    location.pathname === "/dispatch" ||
+    location.pathname === "/change-password" ||
+    /^\/leads\/[^/]+$/.test(location.pathname);
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
   if (!token) return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   if (user?.must_change_password && location.pathname !== "/change-password") {
     return <Navigate to="/change-password" replace />;
   }
-  if (isDispatchUser && location.pathname !== "/dispatch" && location.pathname !== "/change-password") {
+  if (isDispatchUser && !isDispatchAllowedPath) {
     return <Navigate to="/dispatch" replace />;
   }
   return (

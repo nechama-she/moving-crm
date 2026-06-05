@@ -489,6 +489,7 @@ function CompanyCalendar({
   onPrevMonth: () => void;
   onNextMonth: () => void;
 }) {
+  const [expandedDays, setExpandedDays] = useState<Record<number, boolean>>({});
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
   const firstWeekday = new Date(year, month, 1).getDay();
@@ -537,11 +538,13 @@ function CompanyCalendar({
           {Array.from({ length: daysInMonth }).map((_, i) => {
             const day = i + 1;
             const dayJobs = jobsByDay.get(day) || [];
+            const isExpanded = !!expandedDays[day];
+            const visibleJobs = isExpanded ? dayJobs : dayJobs.slice(0, 3);
             return (
               <div key={day} style={calendarDayCell}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b", marginBottom: 6 }}>{day}</div>
                 <div style={{ display: "grid", gap: 4 }}>
-                  {dayJobs.slice(0, 3).map((job) => (
+                  {visibleJobs.map((job) => (
                     <Link
                       key={job.id}
                       to={`/leads/${job.id}`}
@@ -554,7 +557,22 @@ function CompanyCalendar({
                     </Link>
                   ))}
                   {dayJobs.length > 3 ? (
-                    <span style={{ fontSize: 11, color: "#64748b" }}>+{dayJobs.length - 3} more</span>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedDays((prev) => ({ ...prev, [day]: !prev[day] }))}
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        padding: 0,
+                        margin: 0,
+                        textAlign: "left",
+                        fontSize: 11,
+                        color: "#0b5cab",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {isExpanded ? "Show less" : `+${dayJobs.length - 3} more`}
+                    </button>
                   ) : null}
                 </div>
               </div>
