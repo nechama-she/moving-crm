@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, date, timedelta, timezone
 
 import boto3
 
@@ -57,6 +57,19 @@ def _normalize_phone(raw: str | None) -> str:
     if len(digits) == 11 and digits.startswith("1"):
         return digits[1:]
     return digits
+
+
+def _parse_booked_move_date(value: str | None) -> date | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except Exception:
+            continue
+    return None
 
 
 def _is_admin_unavailable_now(admin_user_id: str, db: Session, now: datetime | None = None) -> bool:
@@ -333,6 +346,83 @@ def _lookup_sender_id(lead: Lead) -> str | None:
     return None
 
 
+@router.get("/dispatch-calendar")
+def get_dispatch_calendar(
+    company_id: str = Query(default=""),
+    move_month: str = Query(default=""),  # YYYY-MM
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role not in ("admin", "dispatch"):
+        raise HTTPException(status_code=403, detail="Dispatch access required")
+
+    if not move_month:
+        raise HTTPException(status_code=400, detail="move_month is required")
+
+    try:
+        year_str, month_str = move_month.split("-")
+        year = int(year_str)
+        month = int(month_str)
+        if month < 1 or month > 12:
+            raise ValueError()
+    except Exception:
+        raise HTTPException(status_code=400, detail="move_month must be YYYY-MM")
+
+    month_start = date(year, month, 1)
+    next_month = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+
+    allowed_company_ids = _get_user_company_ids(user, db)
+    if not allowed_company_ids:
+        return {"items": []}
+
+    target_company_ids = allowed_company_ids
+    if company_id:
+        if company_id not in allowed_company_ids:
+            raise HTTPException(status_code=403, detail="Not allowed for this company")
+        target_company_ids = [company_id]
+
+    # Some legacy/imported leads only have move_date set. Use booked_move_date first,
+    # then fallback to parsed move_date so dispatch can still see those jobs.
+    rows = (
+        db.query(Lead)
+        .filter(Lead.company_id.in_(target_company_ids))
+        .order_by(Lead.created_at.asc())
+        .all()
+    )
+
+    filtered: list[tuple[Lead, date]] = []
+    for row in rows:
+        effective_date = row.booked_move_date or _parse_booked_move_date(row.move_date)
+        if not effective_date:
+            continue
+        if month_start <= effective_date < next_month:
+            filtered.append((row, effective_date))
+
+    filtered.sort(key=lambda item: (item[1], item[0].created_at or datetime.min))
+
+    company_name_by_id = {
+        c.id: c.name
+        for c in db.query(Company).filter(Company.id.in_(target_company_ids)).all()
+    }
+
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "company_id": row.company_id,
+                "company_name": company_name_by_id.get(row.company_id, ""),
+                "full_name": row.full_name or "",
+                "move_date": row.move_date or "",
+                "booked_move_date": effective_date.isoformat(),
+                "pickup_zip": row.pickup_zip or "",
+                "delivery_zip": row.delivery_zip or "",
+                "status": row.status or "",
+            }
+            for row, effective_date in filtered
+        ]
+    }
+
+
 @router.get("/leads")
 def get_leads(
     limit: int = Query(default=50, ge=1, le=200),
@@ -448,6 +538,7 @@ class LeadUpdate(BaseModel):
     full_name: str | None = None
     phone_number: str | None = None
     email: str | None = None
+    move_date: str | None = None
 
 
 @router.patch("/leads/{lead_id}")
@@ -511,6 +602,9 @@ def update_lead(
         lead.phone = _normalize_phone(body.phone_number)
     if body.email is not None:
         lead.email = body.email.strip() or None
+    if body.move_date is not None:
+        lead.move_date = body.move_date.strip()
+        lead.booked_move_date = _parse_booked_move_date(body.move_date)
 
     db.commit()
     db.refresh(lead)
@@ -713,6 +807,7 @@ def create_lead(
         delivery_zip=body.delivery_zip.strip(),
         move_size=body.move_size.strip(),
         move_date=body.move_date.strip(),
+        booked_move_date=_parse_booked_move_date(body.move_date),
         move_type=MOVE_TYPE_MAP.get(raw_move_type, raw_move_type),
         created_time=body.created_time.strip(),
         notes=body.notes.strip() or None,

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer, Boolean, UniqueConstraint
+from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, Boolean, UniqueConstraint
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -184,6 +184,7 @@ class Lead(Base):
     delivery_zip = Column(Text)
     move_size = Column(Text)
     move_date = Column(Text)
+    booked_move_date = Column(Date)
     move_type = Column(Text)
     service_type = Column(String(50))
     referral_source = Column(String(100))
@@ -218,6 +219,7 @@ class Lead(Base):
             "delivery_zip": self.delivery_zip or "",
             "move_size": self.move_size or "",
             "when_is_the_move?": self.move_date or "",
+            "booked_move_date": self.booked_move_date.isoformat() if self.booked_move_date else "",
             "are_you_moving_within_the_state_or_out_of_state?": self.move_type or "",
             "created_time": self.created_time or "",
             "inbox_url": self.inbox_url or "",

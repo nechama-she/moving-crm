@@ -26,8 +26,23 @@ type LeadJob = {
   id: string;
   full_name: string;
   move_date: string;
+  booked_move_date: string;
+  pickup_zip: string;
+  delivery_zip: string;
   status: string;
 };
+
+function monthKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function parseCalendarDate(raw: string): Date | null {
+  const value = (raw || "").trim();
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
 
 export default function DispatchPage() {
   const { token, user } = useAuth();
@@ -42,7 +57,12 @@ export default function DispatchPage() {
   const [info, setInfo] = useState("");
 
   const [dispatchCompanies, setDispatchCompanies] = useState<Company[]>([]);
-  const [jobsByCompany, setJobsByCompany] = useState<Record<string, LeadJob[]>>({});
+  const [selectedDispatchCompanyId, setSelectedDispatchCompanyId] = useState("");
+  const [dispatchMonth, setDispatchMonth] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
+  const [calendarJobs, setCalendarJobs] = useState<LeadJob[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState("");
 
@@ -68,8 +88,13 @@ export default function DispatchPage() {
 
   useEffect(() => {
     if (!isDispatch) return;
-    void loadDispatchCalendarData();
+    void loadDispatchCompanies();
   }, [token, isDispatch]);
+
+  useEffect(() => {
+    if (!isDispatch || !selectedDispatchCompanyId) return;
+    void loadDispatchCalendarJobs(selectedDispatchCompanyId, dispatchMonth);
+  }, [token, isDispatch, selectedDispatchCompanyId, dispatchMonth]);
 
   async function loadData() {
     setLoading(true);
@@ -89,6 +114,60 @@ export default function DispatchPage() {
       setError(err instanceof Error ? err.message : "Failed to load dispatch users and companies");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadDispatchCompanies() {
+    setCalendarError("");
+    try {
+      const companiesRes = await fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) });
+      if (!companiesRes.ok) throw new Error(`Companies HTTP ${companiesRes.status}`);
+
+      const companiesData = (await companiesRes.json()) as Company[];
+      const assignedCompanies = (companiesData || []).sort((a, b) => a.name.localeCompare(b.name));
+      setDispatchCompanies(assignedCompanies);
+
+      if (assignedCompanies.length > 0) {
+        setSelectedDispatchCompanyId((prev) =>
+          prev && assignedCompanies.some((c) => c.id === prev) ? prev : assignedCompanies[0].id
+        );
+      } else {
+        setSelectedDispatchCompanyId("");
+        setCalendarJobs([]);
+      }
+    } catch (err: unknown) {
+      setCalendarError(err instanceof Error ? err.message : "Failed to load companies");
+    }
+  }
+
+  async function loadDispatchCalendarJobs(companyId: string, month: Date) {
+    setCalendarLoading(true);
+    setCalendarError("");
+    try {
+      const params = new URLSearchParams({
+        company_id: companyId,
+        move_month: monthKey(month),
+      });
+      const res = await fetch(`${API_BASE}/api/dispatch-calendar?${params.toString()}`, { headers: authHeaders(token) });
+      if (!res.ok) throw new Error(`Dispatch calendar HTTP ${res.status}`);
+      const data = (await res.json()) as { items?: Array<Record<string, unknown>> };
+      const items = Array.isArray(data.items) ? data.items : [];
+      setCalendarJobs(
+        items.map((item) => ({
+          id: String(item.id || ""),
+          full_name: String(item.full_name || "Unnamed"),
+          move_date: String(item.move_date || ""),
+          booked_move_date: String(item.booked_move_date || ""),
+          pickup_zip: String(item.pickup_zip || ""),
+          delivery_zip: String(item.delivery_zip || ""),
+          status: String(item.status || ""),
+        }))
+      );
+    } catch (err: unknown) {
+      setCalendarError(err instanceof Error ? err.message : "Failed to load dispatch jobs");
+      setCalendarJobs([]);
+    } finally {
+      setCalendarLoading(false);
     }
   }
 
@@ -203,74 +282,34 @@ export default function DispatchPage() {
     }
   }
 
-  async function fetchCompanyJobs(companyId: string): Promise<LeadJob[]> {
-    const out: LeadJob[] = [];
-    const LIMIT = 200;
-    let offset = 0;
-    let hasMore = true;
-
-    while (hasMore && offset <= 5000) {
-      const params = new URLSearchParams({
-        company_id: companyId,
-        limit: String(LIMIT),
-        offset: String(offset),
-      });
-      const res = await fetch(`${API_BASE}/api/leads?${params.toString()}`, { headers: authHeaders(token) });
-      if (!res.ok) throw new Error(`Leads HTTP ${res.status}`);
-
-      const data = await res.json() as { items?: Array<Record<string, unknown>>; has_more?: boolean };
-      const items = Array.isArray(data.items) ? data.items : [];
-
-      for (const item of items) {
-        const moveDate = String(item["when_is_the_move?"] || "").trim();
-        if (!moveDate) continue;
-        out.push({
-          id: String(item.id || ""),
-          full_name: String(item.full_name || "Unnamed"),
-          move_date: moveDate,
-          status: String(item.status || ""),
-        });
-      }
-
-      hasMore = Boolean(data.has_more);
-      offset += LIMIT;
-    }
-
-    return out;
-  }
-
-  async function loadDispatchCalendarData() {
-    setCalendarLoading(true);
-    setCalendarError("");
-    try {
-      const companiesRes = await fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) });
-      if (!companiesRes.ok) throw new Error(`Companies HTTP ${companiesRes.status}`);
-
-      const companiesData = (await companiesRes.json()) as Company[];
-      const assignedCompanies = (companiesData || []).sort((a, b) => a.name.localeCompare(b.name));
-      setDispatchCompanies(assignedCompanies);
-
-      const entries = await Promise.all(
-        assignedCompanies.map(async (company) => [company.id, await fetchCompanyJobs(company.id)] as const)
-      );
-      setJobsByCompany(Object.fromEntries(entries));
-    } catch (err: unknown) {
-      setCalendarError(err instanceof Error ? err.message : "Failed to load dispatch calendar");
-    } finally {
-      setCalendarLoading(false);
-    }
-  }
-
   if (isDispatch) {
     return (
       <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
         <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Dispatch Calendar</h1>
         <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
-          Company calendars with jobs grouped by move date.
+          Jobs grouped by booked move date for the selected company and month.
         </p>
 
         {calendarError ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{calendarError}</p> : null}
-        {calendarLoading ? <p style={{ color: "#3e3e3c", fontSize: 13 }}>Loading calendars...</p> : null}
+
+        {!calendarLoading && dispatchCompanies.length > 1 ? (
+          <div style={{ marginBottom: 12, maxWidth: 340 }}>
+            <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569", fontWeight: 600 }}>
+              Company
+              <select
+                value={selectedDispatchCompanyId}
+                onChange={(e) => setSelectedDispatchCompanyId(e.target.value)}
+                style={inputStyle}
+              >
+                {dispatchCompanies.map((company) => (
+                  <option key={company.id} value={company.id}>{company.name}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
+
+        {calendarLoading ? <p style={{ color: "#3e3e3c", fontSize: 13 }}>Loading calendar...</p> : null}
 
         {!calendarLoading && dispatchCompanies.length === 0 ? (
           <div style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", padding: 14 }}>
@@ -280,13 +319,15 @@ export default function DispatchPage() {
           </div>
         ) : null}
 
-        {!calendarLoading && dispatchCompanies.map((company) => (
+        {!calendarLoading && selectedDispatchCompanyId ? (
           <CompanyCalendar
-            key={company.id}
-            companyName={company.name}
-            jobs={jobsByCompany[company.id] || []}
+            companyName={dispatchCompanies.find((c) => c.id === selectedDispatchCompanyId)?.name || "Company"}
+            jobs={calendarJobs}
+            viewDate={dispatchMonth}
+            onPrevMonth={() => setDispatchMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
+            onNextMonth={() => setDispatchMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
           />
-        ))}
+        ) : null}
       </div>
     );
   }
@@ -435,37 +476,19 @@ export default function DispatchPage() {
   );
 }
 
-function parseMoveDate(raw: string): Date | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-
-  const direct = new Date(trimmed);
-  if (!Number.isNaN(direct.getTime())) return direct;
-
-  const mmddyyyy = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (mmddyyyy) {
-    const month = Number(mmddyyyy[1]) - 1;
-    const day = Number(mmddyyyy[2]);
-    const year = Number(mmddyyyy[3]);
-    const parsed = new Date(year, month, day);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
-  }
-
-  return null;
-}
-
 function CompanyCalendar({
   companyName,
   jobs,
+  viewDate,
+  onPrevMonth,
+  onNextMonth,
 }: {
   companyName: string;
   jobs: LeadJob[];
+  viewDate: Date;
+  onPrevMonth: () => void;
+  onNextMonth: () => void;
 }) {
-  const [viewDate, setViewDate] = useState(() => {
-    const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1);
-  });
-
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
   const firstWeekday = new Date(year, month, 1).getDay();
@@ -474,30 +497,26 @@ function CompanyCalendar({
 
   const jobsByDay = new Map<number, LeadJob[]>();
   for (const job of jobs) {
-    const parsed = parseMoveDate(job.move_date);
+    const parsed = parseCalendarDate(job.booked_move_date || job.move_date);
     if (!parsed) continue;
     if (parsed.getFullYear() !== year || parsed.getMonth() !== month) continue;
-
     const day = parsed.getDate();
     const bucket = jobsByDay.get(day) || [];
     bucket.push(job);
     jobsByDay.set(day, bucket);
   }
 
-  const prevMonth = () => setViewDate((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1));
-  const nextMonth = () => setViewDate((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
-
   return (
     <section style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
       <div style={{ padding: "10px 14px", borderBottom: "1px solid #dddbda", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 15, color: "#032d60" }}>{companyName}</h2>
-          <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>Jobs by move date</p>
+          <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>Filtered by selected month</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button type="button" onClick={prevMonth} style={calendarNavBtn}>◀</button>
+          <button type="button" onClick={onPrevMonth} style={calendarNavBtn}>◀</button>
           <strong style={{ minWidth: 150, textAlign: "center", fontSize: 13, color: "#0f172a" }}>{monthLabel}</strong>
-          <button type="button" onClick={nextMonth} style={calendarNavBtn}>▶</button>
+          <button type="button" onClick={onNextMonth} style={calendarNavBtn}>▶</button>
         </div>
       </div>
 
@@ -526,10 +545,12 @@ function CompanyCalendar({
                     <Link
                       key={job.id}
                       to={`/leads/${job.id}`}
-                      style={{ display: "block", fontSize: 11, color: "#0b5cab", textDecoration: "none", background: "#eaf5fe", border: "1px solid #c9e6ff", borderRadius: 4, padding: "2px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                      title={`${job.full_name} (${job.status})`}
+                      style={{ display: "block", fontSize: 11, color: "#0b5cab", textDecoration: "none", background: "#eaf5fe", border: "1px solid #c9e6ff", borderRadius: 4, padding: "4px 5px", overflow: "hidden" }}
+                      title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
                     >
-                      {job.full_name}
+                      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
+                      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"}{" -> "}{job.delivery_zip || "?"}</div>
+                      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0369a1" }}>{job.status || "new"}</div>
                     </Link>
                   ))}
                   {dayJobs.length > 3 ? (

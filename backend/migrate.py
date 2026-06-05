@@ -105,6 +105,18 @@ def migrate(drop_first: bool = False):
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(30) NOT NULL DEFAULT ''"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS smartmoving_rep_id VARCHAR(100)"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS aircall_number_id VARCHAR(50)"))
+        conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS booked_move_date DATE"))
+        conn.execute(text("""
+            UPDATE leads
+            SET booked_move_date = CASE
+                WHEN move_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN move_date::date
+                WHEN move_date ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$' THEN to_date(move_date, 'MM/DD/YYYY')
+                ELSE NULL
+            END
+            WHERE booked_move_date IS NULL
+              AND COALESCE(TRIM(move_date), '') <> ''
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_leads_company_id_booked_move_date ON leads (company_id, booked_move_date)"))
         conn.execute(text("""
             DO $$
             BEGIN
