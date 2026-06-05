@@ -110,7 +110,23 @@ def migrate(drop_first: bool = False):
             UPDATE leads
             SET booked_move_date = CASE
                 WHEN move_date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN move_date::date
-                WHEN move_date ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$' THEN to_date(move_date, 'MM/DD/YYYY')
+                WHEN move_date ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$' THEN
+                    CASE
+                        -- If first token cannot be month, treat as DD/MM/YYYY.
+                        WHEN split_part(move_date, '/', 1)::int > 12
+                             AND split_part(move_date, '/', 2)::int BETWEEN 1 AND 12
+                        THEN to_date(move_date, 'DD/MM/YYYY')
+                        -- If second token cannot be day in MM/DD/YYYY month position,
+                        -- treat as MM/DD/YYYY.
+                        WHEN split_part(move_date, '/', 2)::int > 12
+                             AND split_part(move_date, '/', 1)::int BETWEEN 1 AND 12
+                        THEN to_date(move_date, 'MM/DD/YYYY')
+                        -- Ambiguous values (both <= 12): keep existing behavior.
+                        WHEN split_part(move_date, '/', 1)::int BETWEEN 1 AND 12
+                             AND split_part(move_date, '/', 2)::int BETWEEN 1 AND 12
+                        THEN to_date(move_date, 'MM/DD/YYYY')
+                        ELSE NULL
+                    END
                 ELSE NULL
             END
             WHERE booked_move_date IS NULL
