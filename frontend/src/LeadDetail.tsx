@@ -386,7 +386,8 @@ export default function LeadDetail() {
   }
 
   return (
-    <div style={{ padding: 20, fontFamily: "inherit", maxWidth: 960, overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
+    <div style={{ width: "100%", height: "calc(100vh - 52px)", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "24px clamp(16px, 3vw, 28px) 40px", background: "#f6f8fb" }}>
+      <div style={{ width: "100%", maxWidth: 1120, margin: "0 auto" }}>
       <button
         onClick={() => navigate(user?.role === "dispatch" ? "/dispatch" : "/")}
         style={{
@@ -401,16 +402,16 @@ export default function LeadDetail() {
           fontWeight: 500,
         }}
       >
-        ← Back to Leads
+        {user?.role === "dispatch" ? "← Back to Dispatch" : "← Back to Leads"}
       </button>
 
-      <div style={{ marginBottom: 16, border: "1px solid #dddbda", borderRadius: 4, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", overflow: "hidden" }}>
+      <div style={{ marginBottom: 20, border: "1px solid #d8dde6", borderRadius: 10, background: "#fff", boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)", overflow: "hidden" }}>
         <div style={{ padding: "10px 16px", background: "#f3f2f2", borderBottom: "1px solid #dddbda", fontWeight: 700, fontSize: 12, color: "#3e3e3c", textTransform: "uppercase", letterSpacing: "0.05em" }}>
           Job Files
         </div>
         <div style={{ padding: 12 }}>
           <div
-            style={{ border: dragOver ? "2px dashed #0176d3" : "2px dashed #cbd5e1", borderRadius: 8, padding: 12, background: dragOver ? "#f0f8ff" : "#f8fafc", marginBottom: 10 }}
+            style={{ border: dragOver ? "2px dashed #0176d3" : "2px dashed #cbd5e1", borderRadius: 10, padding: 14, background: dragOver ? "#f0f8ff" : "#f8fafc", marginBottom: 12 }}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={(e) => {
@@ -421,7 +422,7 @@ export default function LeadDetail() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, border: "1px solid #dddbda", borderRadius: 4, padding: "6px 10px", fontSize: 12, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff" }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, border: "1px solid #d8dde6", borderRadius: 6, padding: "7px 12px", fontSize: 12, fontWeight: 600, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff", whiteSpace: "nowrap" }}>
               <input
                 type="file"
                 multiple
@@ -435,21 +436,21 @@ export default function LeadDetail() {
               />
               {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload Files"}
             </label>
-            <span style={{ fontSize: 12, color: "#64748b" }}>Drag files here or click upload. Max 15 MB each.</span>
+            <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>Drag files here or click upload. Max 15 MB each.</span>
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) auto", gap: 8, marginBottom: 12 }}>
             <input
               value={attachmentsQuery}
               onChange={(e) => setAttachmentsQuery(e.target.value)}
               placeholder="Search files..."
-              style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "6px 8px", minWidth: 220, fontSize: 12 }}
+              style={{ border: "1px solid #d8dde6", borderRadius: 6, padding: "8px 10px", width: "100%", minWidth: 0, fontSize: 12, boxSizing: "border-box" }}
             />
             <select
               value={attachmentsSort}
               onChange={(e) => setAttachmentsSort(e.target.value as "newest" | "name" | "size")}
-              style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "6px 8px", fontSize: 12, background: "#fff" }}
+              style={{ border: "1px solid #d8dde6", borderRadius: 6, padding: "8px 10px", fontSize: 12, background: "#fff", minWidth: 110 }}
             >
               <option value="newest">Newest</option>
               <option value="name">Name</option>
@@ -463,18 +464,18 @@ export default function LeadDetail() {
           {!attachmentsLoading && filteredAttachments.length > 0 ? (
             <div style={{ display: "grid", gap: 8 }}>
               {filteredAttachments.map((attachment) => (
-                <div key={attachment.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e5e7eb", borderRadius: 4, padding: "8px 10px", background: "#fff" }}>
-                  <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
-                    <div style={{ minWidth: 38, height: 24, borderRadius: 4, background: "#eef2ff", color: "#1e3a8a", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700 }}>
+                <div key={attachment.id} style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", background: "#fff", flexWrap: "wrap" }}>
+                  <div style={{ minWidth: 0, display: "flex", alignItems: "flex-start", gap: 10, flex: "1 1 320px" }}>
+                    <div style={{ minWidth: 42, height: 28, borderRadius: 6, background: "#eef2ff", color: "#1e3a8a", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
                       {fileIcon(attachment.file_name)}
                     </div>
                     <div style={{ minWidth: 0, flex: 1 }}>
                     {renamingId === attachment.id ? (
-                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                         <input
                           value={renameValue}
                           onChange={(e) => setRenameValue(e.target.value)}
-                          style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "4px 6px", fontSize: 12, minWidth: 200 }}
+                          style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "6px 8px", fontSize: 12, width: "min(100%, 280px)", minWidth: 0 }}
                         />
                         <button type="button" onClick={() => void renameAttachment(attachment.id, renameValue)} style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "3px 8px", fontSize: 11 }}>Save</button>
                         <button type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }} style={{ border: "1px solid #dddbda", background: "#fff", color: "#475569", borderRadius: 4, padding: "3px 8px", fontSize: 11 }}>Cancel</button>
@@ -489,7 +490,7 @@ export default function LeadDetail() {
                     </div>
                     </div>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end", marginLeft: "auto" }}>
                     <button
                       type="button"
                       onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
@@ -560,9 +561,8 @@ export default function LeadDetail() {
       ) : null}
 
       {!isDispatchUser ? (
-        <div style={{ display: "flex", gap: 20, alignItems: "flex-start", marginBottom: 16 }}>
-          <div style={{ flex: 1 }} />
-          <div style={{ width: 320, flexShrink: 0 }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 20 }}>
+          <div style={{ width: "100%", maxWidth: 360 }}>
             <FollowupPanel leadId={leadId!} />
           </div>
         </div>
@@ -937,6 +937,7 @@ export default function LeadDetail() {
           </div>
         </div>
       ) : null}
+      </div>
     </div>
   );
 }
