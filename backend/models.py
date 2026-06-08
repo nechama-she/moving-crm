@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, Boolean, UniqueConstraint
+from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, Boolean, UniqueConstraint, LargeBinary
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -230,6 +230,30 @@ class Lead(Base):
             "status": self.status or "new",
             "priority": self.priority or 0,
             "notes": self.notes or "",
+        }
+
+
+class LeadAttachment(Base):
+    __tablename__ = "lead_attachments"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
+    file_name = Column(String(255), nullable=False)
+    content_type = Column(String(120), nullable=False, default="application/octet-stream")
+    file_size = Column(Integer, nullable=False, default=0)
+    file_blob = Column(LargeBinary, nullable=False)
+    uploaded_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "lead_id": self.lead_id,
+            "file_name": self.file_name or "",
+            "content_type": self.content_type or "application/octet-stream",
+            "file_size": self.file_size or 0,
+            "uploaded_by": self.uploaded_by or "",
+            "created_at": self.created_at.isoformat() if self.created_at else "",
         }
 
 

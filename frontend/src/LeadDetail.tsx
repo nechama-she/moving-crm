@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import ChatMessages from "./ChatMessages";
@@ -12,6 +12,15 @@ const HIDDEN_FIELDS = new Set(["entry_id", "inbox_url"]);
 type CompanyOption = {
   id: string;
   name: string;
+};
+
+type LeadAttachment = {
+  id: string;
+  file_name: string;
+  content_type: string;
+  file_size: number;
+  created_at: string;
+  uploaded_by_name?: string;
 };
 
 const USER_FIELDS = ["full_name", "phone_number", "email"];
@@ -43,6 +52,20 @@ export default function LeadDetail() {
   const [savingCompany, setSavingCompany] = useState(false);
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const companyMenuRef = useRef<HTMLDivElement | null>(null);
+  const [attachments, setAttachments] = useState<LeadAttachment[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(true);
+  const [attachmentsError, setAttachmentsError] = useState("");
+  const [uploadingCount, setUploadingCount] = useState(0);
+  const [attachmentsQuery, setAttachmentsQuery] = useState("");
+  const [attachmentsSort, setAttachmentsSort] = useState<"newest" | "name" | "size">("newest");
+  const [dragOver, setDragOver] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewTitle, setPreviewTitle] = useState("");
+  const [previewType, setPreviewType] = useState<"image" | "pdf" | "text" | "none">("none");
+  const [previewText, setPreviewText] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [renamingId, setRenamingId] = useState("");
+  const [renameValue, setRenameValue] = useState("");
 
   useEffect(() => {
     fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
@@ -80,6 +103,188 @@ export default function LeadDetail() {
       })
       .catch((err) => setCompaniesError(err.message));
   }, [token]);
+
+  async function loadAttachments() {
+    setAttachmentsLoading(true);
+    setAttachmentsError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments`, { headers: authHeaders(token) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { items?: Array<Record<string, unknown>> };
+      const rows = Array.isArray(data.items) ? data.items : [];
+      setAttachments(rows.map((row) => ({
+        id: String(row.id || ""),
+        file_name: String(row.file_name || ""),
+        content_type: String(row.content_type || "application/octet-stream"),
+        file_size: Number(row.file_size || 0),
+        created_at: String(row.created_at || ""),
+        uploaded_by_name: String(row.uploaded_by_name || ""),
+      })));
+    } catch (err: unknown) {
+      setAttachmentsError(err instanceof Error ? err.message : "Failed to load attachments");
+      setAttachments([]);
+    } finally {
+      setAttachmentsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadAttachments();
+  }, [leadId, token]);
+
+  async function uploadAttachments(files: File[]) {
+    if (files.length === 0) return;
+    setUploadingCount(files.length);
+    setAttachmentsError("");
+    try {
+      for (const file of files) {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments`, {
+          method: "POST",
+          headers: authHeaders(token),
+          body: form,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+          throw new Error(String((err as { detail?: unknown }).detail || `HTTP ${res.status}`));
+        }
+        setUploadingCount((v) => Math.max(0, v - 1));
+      }
+      await loadAttachments();
+    } catch (err: unknown) {
+      setAttachmentsError(err instanceof Error ? err.message : "Failed to upload attachment");
+    } finally {
+      setUploadingCount(0);
+    }
+  }
+
+  async function downloadAttachment(attachmentId: string, fileName: string) {
+    setAttachmentsError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}/download`, {
+        headers: authHeaders(token),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = fileName || "attachment";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err: unknown) {
+      setAttachmentsError(err instanceof Error ? err.message : "Failed to download attachment");
+    }
+  }
+
+  async function deleteAttachment(attachmentId: string) {
+    setAttachmentsError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await loadAttachments();
+    } catch (err: unknown) {
+      setAttachmentsError(err instanceof Error ? err.message : "Failed to delete attachment");
+    }
+  }
+
+  async function renameAttachment(attachmentId: string, fileName: string) {
+    const nextName = fileName.trim();
+    if (!nextName) return;
+    setAttachmentsError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ file_name: nextName }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await loadAttachments();
+      setRenamingId("");
+      setRenameValue("");
+    } catch (err: unknown) {
+      setAttachmentsError(err instanceof Error ? err.message : "Failed to rename attachment");
+    }
+  }
+
+  async function openPreview(attachmentId: string, fileName: string, contentType: string) {
+    setAttachmentsError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}/download`, {
+        headers: authHeaders(token),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(objectUrl);
+      setPreviewTitle(fileName || "Preview");
+
+      const lowerName = (fileName || "").toLowerCase();
+      const type = (contentType || blob.type || "").toLowerCase();
+      const isImage = type.startsWith("image/") || /\.(png|jpg|jpeg|gif|webp|bmp|svg)$/.test(lowerName);
+      const isPdf = type.includes("pdf") || lowerName.endsWith(".pdf");
+      const isText = type.startsWith("text/") || /\.(txt|md|csv|json|log|xml)$/.test(lowerName);
+
+      if (isImage) {
+        setPreviewType("image");
+        setPreviewText("");
+      } else if (isPdf) {
+        setPreviewType("pdf");
+        setPreviewText("");
+      } else if (isText) {
+        setPreviewType("text");
+        setPreviewText(await blob.text());
+      } else {
+        setPreviewType("none");
+        setPreviewText("Preview not available for this file type.");
+      }
+      setPreviewOpen(true);
+    } catch (err: unknown) {
+      setAttachmentsError(err instanceof Error ? err.message : "Failed to preview attachment");
+    }
+  }
+
+  function closePreview() {
+    setPreviewOpen(false);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl("");
+    }
+    setPreviewType("none");
+    setPreviewText("");
+    setPreviewTitle("");
+  }
+
+  function fileIcon(name: string) {
+    const lower = name.toLowerCase();
+    if (/(\.png|\.jpg|\.jpeg|\.gif|\.webp|\.bmp|\.svg)$/.test(lower)) return "IMG";
+    if (lower.endsWith(".pdf")) return "PDF";
+    if (/(\.doc|\.docx)$/.test(lower)) return "DOC";
+    if (/(\.xls|\.xlsx|\.csv)$/.test(lower)) return "XLS";
+    if (/(\.zip|\.rar|\.7z)$/.test(lower)) return "ZIP";
+    return "FILE";
+  }
+
+  const filteredAttachments = useMemo(() => {
+    const q = attachmentsQuery.trim().toLowerCase();
+    let rows = attachments.filter((a) => {
+      if (!q) return true;
+      return a.file_name.toLowerCase().includes(q) || (a.uploaded_by_name || "").toLowerCase().includes(q);
+    });
+    rows = [...rows];
+    if (attachmentsSort === "name") rows.sort((a, b) => a.file_name.localeCompare(b.file_name));
+    if (attachmentsSort === "size") rows.sort((a, b) => (b.file_size || 0) - (a.file_size || 0));
+    if (attachmentsSort === "newest") rows.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+    return rows;
+  }, [attachments, attachmentsQuery, attachmentsSort]);
 
   useEffect(() => {
     function onDocMouseDown(event: MouseEvent) {
@@ -197,6 +402,161 @@ export default function LeadDetail() {
       >
         ← Back to Leads
       </button>
+
+      <div style={{ marginBottom: 16, border: "1px solid #dddbda", borderRadius: 4, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", overflow: "hidden" }}>
+        <div style={{ padding: "10px 16px", background: "#f3f2f2", borderBottom: "1px solid #dddbda", fontWeight: 700, fontSize: 12, color: "#3e3e3c", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          Job Files
+        </div>
+        <div style={{ padding: 12 }}>
+          <div
+            style={{ border: dragOver ? "2px dashed #0176d3" : "2px dashed #cbd5e1", borderRadius: 8, padding: 12, background: dragOver ? "#f0f8ff" : "#f8fafc", marginBottom: 10 }}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              const files = Array.from(e.dataTransfer.files || []);
+              void uploadAttachments(files);
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, border: "1px solid #dddbda", borderRadius: 4, padding: "6px 10px", fontSize: 12, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff" }}>
+              <input
+                type="file"
+                multiple
+                disabled={uploadingCount > 0}
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  void uploadAttachments(files);
+                  e.currentTarget.value = "";
+                }}
+              />
+              {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload Files"}
+            </label>
+            <span style={{ fontSize: 12, color: "#64748b" }}>Drag files here or click upload. Max 15 MB each.</span>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+            <input
+              value={attachmentsQuery}
+              onChange={(e) => setAttachmentsQuery(e.target.value)}
+              placeholder="Search files..."
+              style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "6px 8px", minWidth: 220, fontSize: 12 }}
+            />
+            <select
+              value={attachmentsSort}
+              onChange={(e) => setAttachmentsSort(e.target.value as "newest" | "name" | "size")}
+              style={{ border: "1px solid #dddbda", borderRadius: 4, padding: "6px 8px", fontSize: 12, background: "#fff" }}
+            >
+              <option value="newest">Newest</option>
+              <option value="name">Name</option>
+              <option value="size">Size</option>
+            </select>
+          </div>
+
+          {attachmentsError ? <p style={{ margin: "0 0 10px", color: "#ba0517", fontSize: 12 }}>{attachmentsError}</p> : null}
+          {attachmentsLoading ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>Loading files...</p> : null}
+          {!attachmentsLoading && filteredAttachments.length === 0 ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>No files found.</p> : null}
+          {!attachmentsLoading && filteredAttachments.length > 0 ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {filteredAttachments.map((attachment) => (
+                <div key={attachment.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px solid #e5e7eb", borderRadius: 4, padding: "8px 10px", background: "#fff" }}>
+                  <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
+                    <div style={{ minWidth: 38, height: 24, borderRadius: 4, background: "#eef2ff", color: "#1e3a8a", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700 }}>
+                      {fileIcon(attachment.file_name)}
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                    {renamingId === attachment.id ? (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <input
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "4px 6px", fontSize: 12, minWidth: 200 }}
+                        />
+                        <button type="button" onClick={() => void renameAttachment(attachment.id, renameValue)} style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "3px 8px", fontSize: 11 }}>Save</button>
+                        <button type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }} style={{ border: "1px solid #dddbda", background: "#fff", color: "#475569", borderRadius: 4, padding: "3px 8px", fontSize: 11 }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{attachment.file_name}</div>
+                    )}
+                    <div style={{ fontSize: 11, color: "#64748b" }}>
+                      {Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB
+                      {attachment.created_at ? ` • ${new Date(attachment.created_at).toLocaleString()}` : ""}
+                      {attachment.uploaded_by_name ? ` • ${attachment.uploaded_by_name}` : ""}
+                    </div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
+                      style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
+                    >
+                      Preview
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void downloadAttachment(attachment.id, attachment.file_name)}
+                      style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "4px 8px", fontSize: 12, fontWeight: 600 }}
+                    >
+                      Download
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRenamingId(attachment.id);
+                        setRenameValue(attachment.file_name);
+                      }}
+                      style={{ border: "1px solid #dddbda", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm("Delete this file?")) {
+                          void deleteAttachment(attachment.id);
+                        }
+                      }}
+                      style={{ border: "1px solid #dddbda", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {previewOpen ? (
+        <div
+          role="presentation"
+          onClick={closePreview}
+          style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.55)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(900px, 100%)", maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 8, border: "1px solid #cbd5e1" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid #e2e8f0" }}>
+              <strong style={{ fontSize: 13, color: "#0f172a" }}>{previewTitle}</strong>
+              <button type="button" onClick={closePreview} style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}>Close</button>
+            </div>
+            <div style={{ padding: 12 }}>
+              {previewType === "image" ? <img src={previewUrl} alt={previewTitle} style={{ maxWidth: "100%", height: "auto", borderRadius: 6 }} /> : null}
+              {previewType === "pdf" ? <iframe src={previewUrl} title={previewTitle} style={{ width: "100%", height: 650, border: "none" }} /> : null}
+              {previewType === "text" ? <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12, color: "#334155", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: 10 }}>{previewText}</pre> : null}
+              {previewType === "none" ? <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>{previewText}</p> : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div style={{ display: "flex", gap: 20, alignItems: "flex-start", marginBottom: 16 }}>
         <div style={{ flex: 1 }} />

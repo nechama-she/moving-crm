@@ -5,7 +5,8 @@ from datetime import datetime, date, timedelta, timezone
 
 import boto3
 
-from fastapi import APIRouter, HTTPException, Query, Depends, Header
+from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, cast
 from sqlalchemy.orm import Session
@@ -15,7 +16,7 @@ from config import get_config
 from database import get_db
 from libs.common.phone import normalize_digits
 from libs.smartmoving.client import update_opportunity_salesperson
-from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent
+from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment
 from routes.templates import get_company_template
 
 logger = logging.getLogger("moving-crm")
@@ -527,6 +528,146 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
             logger.info("Matched sender_id %s for lead %s", sender_id, lead.id)
 
     return lead.to_dict()
+
+
+MAX_ATTACHMENT_SIZE_BYTES = 15 * 1024 * 1024  # 15 MB
+
+
+def _get_visible_lead_or_404(lead_id: str, user: User, db: Session) -> Lead:
+    company_ids = _get_user_company_ids(user, db)
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.company_id.in_(company_ids)).first()
+    if not lead:
+        lead = db.query(Lead).filter(Lead.leadgen_id == lead_id, Lead.company_id.in_(company_ids)).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return lead
+
+
+@router.get("/leads/{lead_id}/attachments")
+def list_lead_attachments(
+    lead_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    rows = (
+        db.query(LeadAttachment, User)
+        .outerjoin(User, LeadAttachment.uploaded_by == User.id)
+        .filter(LeadAttachment.lead_id == lead.id)
+        .order_by(LeadAttachment.created_at.desc())
+        .all()
+    )
+    items = []
+    for attachment, uploader in rows:
+        item = attachment.to_dict()
+        item["uploaded_by_name"] = uploader.name if uploader else ""
+        items.append(item)
+    return {"items": items}
+
+
+@router.post("/leads/{lead_id}/attachments")
+def upload_lead_attachment(
+    lead_id: str,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+
+    file_name = (file.filename or "").strip()
+    if not file_name:
+        raise HTTPException(status_code=400, detail="File name is required")
+
+    payload = file.file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="File is empty")
+    if len(payload) > MAX_ATTACHMENT_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="File is too large (max 15 MB)")
+
+    row = LeadAttachment(
+        lead_id=lead.id,
+        file_name=file_name,
+        content_type=(file.content_type or "application/octet-stream"),
+        file_size=len(payload),
+        file_blob=payload,
+        uploaded_by=user.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row.to_dict()
+
+
+@router.get("/leads/{lead_id}/attachments/{attachment_id}/download")
+def download_lead_attachment(
+    lead_id: str,
+    attachment_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    row = (
+        db.query(LeadAttachment)
+        .filter(LeadAttachment.id == attachment_id, LeadAttachment.lead_id == lead.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    safe_name = (row.file_name or "attachment").replace('"', "")
+    headers = {"Content-Disposition": f'attachment; filename="{safe_name}"'}
+    return Response(content=row.file_blob, media_type=row.content_type or "application/octet-stream", headers=headers)
+
+
+@router.delete("/leads/{lead_id}/attachments/{attachment_id}")
+def delete_lead_attachment(
+    lead_id: str,
+    attachment_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    row = (
+        db.query(LeadAttachment)
+        .filter(LeadAttachment.id == attachment_id, LeadAttachment.lead_id == lead.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+class AttachmentRenameBody(BaseModel):
+    file_name: str
+
+
+@router.patch("/leads/{lead_id}/attachments/{attachment_id}")
+def rename_lead_attachment(
+    lead_id: str,
+    attachment_id: str,
+    body: AttachmentRenameBody,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    row = (
+        db.query(LeadAttachment)
+        .filter(LeadAttachment.id == attachment_id, LeadAttachment.lead_id == lead.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    next_name = (body.file_name or "").strip()
+    if not next_name:
+        raise HTTPException(status_code=400, detail="file_name is required")
+    row.file_name = next_name[:255]
+    db.commit()
+    db.refresh(row)
+    return row.to_dict()
 
 
 class LeadUpdate(BaseModel):

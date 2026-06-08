@@ -134,6 +134,20 @@ def migrate(drop_first: bool = False):
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_leads_company_id_booked_move_date ON leads (company_id, booked_move_date)"))
         conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS lead_attachments (
+                id VARCHAR(36) PRIMARY KEY,
+                lead_id VARCHAR(36) NOT NULL REFERENCES leads(id),
+                file_name VARCHAR(255) NOT NULL,
+                content_type VARCHAR(120) NOT NULL DEFAULT 'application/octet-stream',
+                file_size INTEGER NOT NULL DEFAULT 0,
+                file_blob BYTEA NOT NULL,
+                uploaded_by VARCHAR(36) NOT NULL REFERENCES users(id),
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_attachments_lead_id ON lead_attachments (lead_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_attachments_created_at ON lead_attachments (created_at)"))
+        conn.execute(text("""
             DO $$
             BEGIN
                 IF EXISTS (
