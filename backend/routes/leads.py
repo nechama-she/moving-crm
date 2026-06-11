@@ -225,7 +225,12 @@ def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_id
 LEAD_DUPLICATE_DELAY_HOURS = 8
 
 
-def _enqueue_lead_for_duplication(lead_id: str, target_company_name: str, target_referral_source: str) -> None:
+def _enqueue_lead_for_duplication(
+    lead_id: str,
+    target_company_name: str,
+    target_referral_source: str,
+    delay_minutes: int | None = None,
+) -> None:
     """Schedule a one-time EventBridge Scheduler invocation of the lead-duplicate Lambda.
 
     Uses EventBridge Scheduler (not SQS) because SQS DelaySeconds is capped at 15 minutes.
@@ -243,7 +248,10 @@ def _enqueue_lead_for_duplication(lead_id: str, target_company_name: str, target
 
     from datetime import timedelta
 
-    fire_at = _utcnow() + timedelta(hours=LEAD_DUPLICATE_DELAY_HOURS)
+    if delay_minutes is not None:
+        fire_at = _utcnow() + timedelta(minutes=delay_minutes)
+    else:
+        fire_at = _utcnow() + timedelta(hours=LEAD_DUPLICATE_DELAY_HOURS)
     # Scheduler expects naive UTC ISO8601 (no offset, no microseconds).
     schedule_at = fire_at.replace(microsecond=0, tzinfo=None).isoformat()
 
@@ -1089,6 +1097,7 @@ def create_lead(
                 lead_id=lead.id,
                 target_company_name="Top Tier Van Lines",
                 target_referral_source="Facebook-TTVL-HHG-FL-GA-NC",
+                delay_minutes=15,
             )
         elif lead.referral_source == "Facebook-Gorilla-HHG-Local":
             _enqueue_lead_for_duplication(
