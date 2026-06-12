@@ -355,6 +355,11 @@ def _lookup_sender_id(lead: Lead) -> str | None:
     return None
 
 
+def _effective_dispatch_date(lead: Lead) -> date | None:
+    """Get the booked/service date used by dispatch calendar and search."""
+    return lead.booked_move_date or _parse_booked_move_date(lead.move_date)
+
+
 @router.get("/dispatch-calendar")
 def get_dispatch_calendar(
     company_id: str = Query(default=""),
@@ -395,13 +400,14 @@ def get_dispatch_calendar(
     rows = (
         db.query(Lead)
         .filter(Lead.company_id.in_(target_company_ids))
+        .filter(Lead.status == "booked")
         .order_by(Lead.created_at.asc())
         .all()
     )
 
     filtered: list[tuple[Lead, date]] = []
     for row in rows:
-        effective_date = row.booked_move_date or _parse_booked_move_date(row.move_date)
+        effective_date = _effective_dispatch_date(row)
         if not effective_date:
             continue
         if month_start <= effective_date < next_month:
@@ -430,6 +436,68 @@ def get_dispatch_calendar(
             for row, effective_date in filtered
         ]
     }
+
+
+@router.get("/dispatch-job-search")
+def search_dispatch_jobs(
+    query: str = Query(default=""),
+    limit: int = Query(default=10, ge=1, le=25),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role not in ("admin", "dispatch"):
+        raise HTTPException(status_code=403, detail="Dispatch access required")
+
+    search = query.strip()
+    if len(search) < 2:
+        return {"items": []}
+
+    allowed_company_ids = _get_user_company_ids(user, db)
+    if not allowed_company_ids:
+        return {"items": []}
+
+    pattern = f"%{search.lower()}%"
+    rows = (
+        db.query(Lead, Company.name.label("company_name"))
+        .join(Company, Lead.company_id == Company.id)
+        .filter(
+            Lead.company_id.in_(allowed_company_ids),
+            Lead.status == "booked",
+            (
+                Lead.full_name.ilike(pattern)
+                | Lead.leadgen_id.ilike(pattern)
+                | Lead.smartmoving_id.ilike(pattern)
+                | Lead.pickup_zip.ilike(pattern)
+                | Lead.delivery_zip.ilike(pattern)
+            ),
+        )
+        .order_by(Lead.created_at.desc())
+        .all()
+    )
+
+    items: list[dict] = []
+    for lead, company_name in rows:
+        effective_date = _effective_dispatch_date(lead)
+        if not effective_date:
+            continue
+        items.append(
+            {
+                "id": lead.id,
+                "company_id": lead.company_id,
+                "company_name": company_name or "",
+                "full_name": lead.full_name or "",
+                "booked_move_date": effective_date.isoformat(),
+                "move_date": lead.move_date or "",
+                "pickup_zip": lead.pickup_zip or "",
+                "delivery_zip": lead.delivery_zip or "",
+                "status": lead.status or "",
+                "leadgen_id": lead.leadgen_id or "",
+            }
+        )
+        if len(items) >= limit:
+            break
+
+    return {"items": items}
 
 
 @router.get("/leads")

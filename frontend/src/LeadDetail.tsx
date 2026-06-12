@@ -573,6 +573,10 @@ export default function LeadDetail() {
         const name = String(lead.full_name || "").trim();
         const phone = String(lead.phone_number || "").trim();
         const email = String(lead.email || "").trim();
+        const statusValue = String(lead.status || "new").trim().toLowerCase();
+        const statusLabel = statusValue
+          ? statusValue.charAt(0).toUpperCase() + statusValue.slice(1)
+          : "New";
         const initials = name
           ? name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("")
           : "?";
@@ -652,6 +656,17 @@ export default function LeadDetail() {
           textTransform: "uppercase",
           letterSpacing: 0.5,
         };
+        const statusStyles: Record<string, React.CSSProperties> = {
+          new: { background: "#eef2ff", color: "#3730a3", border: "1px solid #c7d2fe" },
+          contacted: { background: "#fff7ed", color: "#c2410c", border: "1px solid #fed7aa" },
+          quoted: { background: "#f5f3ff", color: "#7c3aed", border: "1px solid #ddd6fe" },
+          booked: { background: "#ecfeff", color: "#0e7490", border: "1px solid #a5f3fc" },
+          scheduled: { background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe" },
+          completed: { background: "#ecfdf5", color: "#047857", border: "1px solid #a7f3d0" },
+          lost: { background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca" },
+          cancelled: { background: "#f8fafc", color: "#475569", border: "1px solid #cbd5e1" },
+        };
+        const statusStyle = statusStyles[statusValue] || { background: "#f1f5f9", color: "#334155", border: "1px solid #cbd5e1" };
         const selectedCompanyName = companies.find((c) => c.id === editCompanyId)?.name || String(lead.company_name || "-");
 
         return (
@@ -691,8 +706,26 @@ export default function LeadDetail() {
                     }}
                   />
                 ) : (
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
-                    {name || "—"}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
+                      {name || "—"}
+                    </div>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        padding: "3px 10px",
+                        borderRadius: 999,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        letterSpacing: "0.04em",
+                        textTransform: "uppercase",
+                        whiteSpace: "nowrap",
+                        ...statusStyle,
+                      }}
+                    >
+                      {statusLabel}
+                    </span>
                   </div>
                 )}
               </div>

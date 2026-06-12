@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -30,6 +30,12 @@ type LeadJob = {
   pickup_zip: string;
   delivery_zip: string;
   status: string;
+};
+
+type DispatchJobSearchResult = LeadJob & {
+  company_id: string;
+  company_name: string;
+  leadgen_id: string;
 };
 
 function monthKey(d: Date): string {
@@ -65,6 +71,13 @@ export default function DispatchPage() {
   const [calendarJobs, setCalendarJobs] = useState<LeadJob[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState("");
+  const [selectedJobId, setSelectedJobId] = useState("");
+  const [jobSearch, setJobSearch] = useState("");
+  const [jobSearchResults, setJobSearchResults] = useState<DispatchJobSearchResult[]>([]);
+  const [jobSearchLoading, setJobSearchLoading] = useState(false);
+  const [jobSearchError, setJobSearchError] = useState("");
+  const [jobSearchOpen, setJobSearchOpen] = useState(false);
+  const jobSearchRef = useRef<HTMLDivElement | null>(null);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -95,6 +108,65 @@ export default function DispatchPage() {
     if (!isDispatch || !selectedDispatchCompanyId) return;
     void loadDispatchCalendarJobs(selectedDispatchCompanyId, dispatchMonth);
   }, [token, isDispatch, selectedDispatchCompanyId, dispatchMonth]);
+
+  useEffect(() => {
+    function onDocMouseDown(event: MouseEvent) {
+      if (!jobSearchRef.current) return;
+      const target = event.target as Node;
+      if (!jobSearchRef.current.contains(target)) {
+        setJobSearchOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, []);
+
+  useEffect(() => {
+    if (!isDispatch) return;
+    const q = jobSearch.trim();
+    if (q.length < 2) {
+      setJobSearchResults([]);
+      setJobSearchLoading(false);
+      setJobSearchError("");
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      void (async () => {
+        setJobSearchLoading(true);
+        setJobSearchError("");
+        try {
+          const params = new URLSearchParams({ query: q, limit: "10" });
+          const res = await fetch(`${API_BASE}/api/dispatch-job-search?${params.toString()}`, { headers: authHeaders(token) });
+          if (!res.ok) throw new Error(`Dispatch job search HTTP ${res.status}`);
+          const data = (await res.json()) as { items?: Array<Record<string, unknown>> };
+          const items = Array.isArray(data.items) ? data.items : [];
+          setJobSearchResults(
+            items.map((item) => ({
+              id: String(item.id || ""),
+              full_name: String(item.full_name || "Unnamed"),
+              move_date: String(item.move_date || ""),
+              booked_move_date: String(item.booked_move_date || ""),
+              pickup_zip: String(item.pickup_zip || ""),
+              delivery_zip: String(item.delivery_zip || ""),
+              status: String(item.status || ""),
+              company_id: String(item.company_id || ""),
+              company_name: String(item.company_name || ""),
+              leadgen_id: String(item.leadgen_id || ""),
+            }))
+          );
+          setJobSearchOpen(true);
+        } catch (err: unknown) {
+          setJobSearchError(err instanceof Error ? err.message : "Failed to search jobs");
+          setJobSearchResults([]);
+        } finally {
+          setJobSearchLoading(false);
+        }
+      })();
+    }, 250);
+
+    return () => clearTimeout(timeout);
+  }, [jobSearch, token, isDispatch]);
 
   async function loadData() {
     setLoading(true);
@@ -169,6 +241,17 @@ export default function DispatchPage() {
     } finally {
       setCalendarLoading(false);
     }
+  }
+
+  function selectDispatchJob(job: DispatchJobSearchResult) {
+    const parsed = parseCalendarDate(job.booked_move_date || job.move_date);
+    if (!parsed) return;
+    setSelectedJobId(job.id);
+    setSelectedDispatchCompanyId(job.company_id);
+    setDispatchMonth(new Date(parsed.getFullYear(), parsed.getMonth(), 1));
+    setJobSearch(job.full_name);
+    setJobSearchResults([]);
+    setJobSearchOpen(false);
   }
 
   function toggleCompany(companyId: string) {
@@ -319,11 +402,80 @@ export default function DispatchPage() {
           </div>
         ) : null}
 
+        <div ref={jobSearchRef} style={{ marginBottom: 12, maxWidth: 520, position: "relative" }}>
+          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569", fontWeight: 600 }}>
+            Search booked job
+            <input
+              value={jobSearch}
+              onChange={(e) => {
+                setJobSearch(e.target.value);
+                setJobSearchOpen(true);
+              }}
+              onFocus={() => setJobSearchOpen(true)}
+              placeholder="Search your booked jobs by name, lead id, zip, or SmartMoving id..."
+              style={inputStyle}
+            />
+          </label>
+          {jobSearchLoading ? <div style={{ marginTop: 4, fontSize: 12, color: "#64748b" }}>Searching...</div> : null}
+          {jobSearchError ? <div style={{ marginTop: 4, fontSize: 12, color: "#ba0517" }}>{jobSearchError}</div> : null}
+          {jobSearchOpen && jobSearch.trim().length >= 2 ? (
+            <div
+              style={{
+                position: "absolute",
+                top: "calc(100% + 4px)",
+                left: 0,
+                right: 0,
+                zIndex: 30,
+                background: "#fff",
+                border: "1px solid #cbd5e1",
+                borderRadius: 6,
+                boxShadow: "0 12px 24px rgba(15,23,42,.12)",
+                maxHeight: 320,
+                overflowY: "auto",
+              }}
+            >
+              {jobSearchResults.length === 0 && !jobSearchLoading ? (
+                <div style={{ padding: 10, fontSize: 13, color: "#64748b" }}>No booked jobs found.</div>
+              ) : null}
+              {jobSearchResults.map((job) => (
+                <button
+                  key={job.id}
+                  type="button"
+                  onClick={() => selectDispatchJob(job)}
+                  style={{
+                    width: "100%",
+                    display: "grid",
+                    gap: 2,
+                    textAlign: "left",
+                    border: "none",
+                    background: "#fff",
+                    padding: "10px 12px",
+                    cursor: "pointer",
+                    borderBottom: "1px solid #e2e8f0",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <strong style={{ fontSize: 13, color: "#0f172a" }}>{job.full_name || "Unnamed"}</strong>
+                    <span style={{ fontSize: 11, color: "#475569", fontWeight: 600 }}>{job.booked_move_date}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#334155" }}>
+                    {job.company_name || "Company"} • {job.pickup_zip || "?"} → {job.delivery_zip || "?"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#64748b" }}>
+                    {job.leadgen_id ? `Lead ${job.leadgen_id} • ` : ""}{job.status || "booked"}
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
         {!calendarLoading && selectedDispatchCompanyId ? (
           <CompanyCalendar
             companyName={dispatchCompanies.find((c) => c.id === selectedDispatchCompanyId)?.name || "Company"}
             jobs={calendarJobs}
             viewDate={dispatchMonth}
+            selectedJobId={selectedJobId}
             onPrevMonth={() => setDispatchMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
             onNextMonth={() => setDispatchMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
           />
@@ -480,12 +632,14 @@ function CompanyCalendar({
   companyName,
   jobs,
   viewDate,
+  selectedJobId,
   onPrevMonth,
   onNextMonth,
 }: {
   companyName: string;
   jobs: LeadJob[];
   viewDate: Date;
+  selectedJobId: string;
   onPrevMonth: () => void;
   onNextMonth: () => void;
 }) {
@@ -506,6 +660,16 @@ function CompanyCalendar({
     bucket.push(job);
     jobsByDay.set(day, bucket);
   }
+
+  useEffect(() => {
+    if (!selectedJobId) return;
+    const selectedJob = jobs.find((job) => job.id === selectedJobId);
+    if (!selectedJob) return;
+    const parsed = parseCalendarDate(selectedJob.booked_move_date || selectedJob.move_date);
+    if (!parsed || parsed.getFullYear() !== year || parsed.getMonth() !== month) return;
+    const day = parsed.getDate();
+    setExpandedDays((prev) => (prev[day] ? prev : { ...prev, [day]: true }));
+  }, [jobs, selectedJobId, year, month]);
 
   return (
     <section style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
@@ -540,20 +704,47 @@ function CompanyCalendar({
             const dayJobs = jobsByDay.get(day) || [];
             const isExpanded = !!expandedDays[day];
             const visibleJobs = isExpanded ? dayJobs : dayJobs.slice(0, 3);
+            const isSelectedDay = selectedJobId ? dayJobs.some((job) => job.id === selectedJobId) : false;
             return (
-              <div key={day} style={calendarDayCell}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b", marginBottom: 6 }}>{day}</div>
+              <div
+                key={day}
+                style={{
+                  ...calendarDayCell,
+                  border: isSelectedDay ? "1px solid #2563eb" : calendarDayCell.border,
+                  boxShadow: isSelectedDay ? "0 0 0 2px rgba(37, 99, 235, 0.15)" : undefined,
+                  background: isSelectedDay ? "#eff6ff" : calendarDayCell.background,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b" }}>{day}</div>
+                  {isSelectedDay ? (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#1d4ed8", background: "#dbeafe", borderRadius: 999, padding: "2px 6px" }}>
+                      Selected
+                    </span>
+                  ) : null}
+                </div>
                 <div style={{ display: "grid", gap: 4 }}>
                   {visibleJobs.map((job) => (
                     <Link
                       key={job.id}
                       to={`/leads/${job.id}`}
-                      style={{ display: "block", fontSize: 11, color: "#0b5cab", textDecoration: "none", background: "#eaf5fe", border: "1px solid #c9e6ff", borderRadius: 4, padding: "4px 5px", overflow: "hidden" }}
+                      style={{
+                        display: "block",
+                        fontSize: 11,
+                        color: job.id === selectedJobId ? "#0f172a" : "#0b5cab",
+                        textDecoration: "none",
+                        background: job.id === selectedJobId ? "#bfdbfe" : "#eaf5fe",
+                        border: job.id === selectedJobId ? "1px solid #2563eb" : "1px solid #c9e6ff",
+                        borderRadius: 4,
+                        padding: "4px 5px",
+                        overflow: "hidden",
+                        boxShadow: job.id === selectedJobId ? "0 0 0 1px rgba(37, 99, 235, 0.2)" : undefined,
+                      }}
                       title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
                     >
                       <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
                       <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"}{" -> "}{job.delivery_zip || "?"}</div>
-                      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0369a1" }}>{job.status || "new"}</div>
+                      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: job.id === selectedJobId ? "#1d4ed8" : "#0369a1" }}>{job.status || "booked"}</div>
                     </Link>
                   ))}
                   {dayJobs.length > 3 ? (
