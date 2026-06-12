@@ -445,8 +445,8 @@ def search_dispatch_jobs(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if user.role not in ("admin", "dispatch"):
-        raise HTTPException(status_code=403, detail="Dispatch access required")
+    if user.role not in ("admin", "dispatch", "sales_rep"):
+        raise HTTPException(status_code=403, detail="Access denied")
 
     search = query.strip()
     if len(search) < 2:
@@ -474,6 +474,9 @@ def search_dispatch_jobs(
         .order_by(Lead.created_at.desc())
         .all()
     )
+
+    if user.role == "sales_rep":
+        rows = [(lead, company_name) for lead, company_name in rows if lead.assigned_to == user.id]
 
     items: list[dict] = []
     for lead, company_name in rows:
