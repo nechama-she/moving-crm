@@ -934,6 +934,17 @@ MOVE_TYPE_MAP = {
     "local": "local",
 }
 
+ALLOWED_LEAD_STATUSES = {
+    "new",
+    "contacted",
+    "quoted",
+    "booked",
+    "scheduled",
+    "completed",
+    "lost",
+    "cancelled",
+}
+
 
 class NewLead(BaseModel):
     full_name: str = ""
@@ -951,6 +962,7 @@ class NewLead(BaseModel):
     notes: str = ""
     referral_source: str = ""
     service_type: str = ""
+    status: str = ""
     company_name: str
     source: str
 
@@ -1012,6 +1024,10 @@ def create_lead(
             assignment_reason = "all_admins_unavailable_no_available_rep"
 
     raw_move_type = body.move_type.lower().strip()
+    raw_status = (body.status or "").strip().lower()
+    status_provided = bool(raw_status)
+    if raw_status and raw_status not in ALLOWED_LEAD_STATUSES:
+        raw_status = "new"
 
     lead = Lead(
         company_id=company.id,
@@ -1033,7 +1049,7 @@ def create_lead(
         notes=body.notes.strip() or None,
         referral_source=body.referral_source.strip() or None,
         service_type=body.service_type.strip() or None,
-        status="new",
+        status=raw_status or "new",
     )
     db.add(lead)
     db.commit()
@@ -1156,7 +1172,7 @@ def create_lead(
         logger.warning("Non-fatal outreach event write failure for lead %s: %s", lead.id, exc)
 
     # Duplicate lead to Top Tier Van Lines after a 10-minute delay
-    if company.name == "Gorilla Haulers":
+    if company.name == "Gorilla Haulers" and not status_provided:
         if lead.referral_source == "Facebook-Gorilla-HHG-Nationwide":
             _enqueue_lead_for_duplication(
                 lead_id=lead.id,
