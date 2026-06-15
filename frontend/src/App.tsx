@@ -58,14 +58,17 @@ function ProtectedRoutes() {
         </span>
         <div style={{ display: "flex", flex: 1 }}>
           {isDispatchUser ? (
-            <NavLink to="/dispatch" style={navLinkStyle}>Dispatch</NavLink>
+            <NavLink to="/dispatch" style={navLinkStyle}>Dispatcher Console</NavLink>
           ) : (
             <>
               <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
               <NavLink to="/outreach" style={navLinkStyle}>Outreach</NavLink>
               <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
               {user?.role === "admin" && (
-                <NavLink to="/dispatch" style={navLinkStyle}>Dispatch</NavLink>
+                <>
+                  <NavLink to="/dispatch" style={navLinkStyle}>Dispatcher Console</NavLink>
+                  <NavLink to="/dispatch-users" style={navLinkStyle}>Dispatcher Setup</NavLink>
+                </>
               )}
             </>
           )}
@@ -95,7 +98,8 @@ function ProtectedRoutes() {
           <Route path="/outreach" element={<OutreachEventsPage />} />
           <Route path="/assign-period" element={<PeriodAssignPage />} />
           <Route path="/sales-reps" element={<SalesRepsPage />} />
-          <Route path="/dispatch" element={<DispatchPage />} />
+          <Route path="/dispatch" element={<DispatchPage mode="calendar" />} />
+          <Route path="/dispatch-users" element={<DispatchPage mode="manage" />} />
           <Route path="/settings/companies" element={<CompaniesPage />} />
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
           <Route path="/settings" element={<SettingsPage />} />

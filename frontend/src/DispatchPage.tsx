@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
+type DispatchPageMode = "calendar" | "manage";
+
 type Company = {
   id: string;
   name: string;
@@ -50,10 +52,13 @@ function parseCalendarDate(raw: string): Date | null {
   return parsed;
 }
 
-export default function DispatchPage() {
+export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const { token, user } = useAuth();
   const isAdmin = user?.role === "admin";
   const isDispatch = user?.role === "dispatch";
+  const effectiveMode: DispatchPageMode = mode || (isDispatch ? "calendar" : "manage");
+  const showCalendar = effectiveMode === "calendar";
+  const showManage = effectiveMode === "manage";
 
   const [users, setUsers] = useState<AppUser[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -92,22 +97,22 @@ export default function DispatchPage() {
   );
 
   useEffect(() => {
-    if (!isAdmin) {
+    if (!isAdmin || !showManage) {
       setLoading(false);
       return;
     }
     void loadData();
-  }, [token, isAdmin]);
+  }, [token, isAdmin, showManage]);
 
   useEffect(() => {
-    if (!isDispatch) return;
-    void loadDispatchCompanies();
-  }, [token, isDispatch]);
+    if (!showCalendar) return;
+    void loadDispatchCompanies(isAdmin);
+  }, [token, showCalendar, isAdmin]);
 
   useEffect(() => {
-    if (!isDispatch || !selectedDispatchCompanyId) return;
+    if (!showCalendar || !selectedDispatchCompanyId) return;
     void loadDispatchCalendarJobs(selectedDispatchCompanyId, dispatchMonth);
-  }, [token, isDispatch, selectedDispatchCompanyId, dispatchMonth]);
+  }, [token, showCalendar, selectedDispatchCompanyId, dispatchMonth]);
 
   useEffect(() => {
     function onDocMouseDown(event: MouseEvent) {
@@ -122,7 +127,7 @@ export default function DispatchPage() {
   }, []);
 
   useEffect(() => {
-    if (!isDispatch) return;
+    if (!showCalendar) return;
     const q = jobSearch.trim();
     if (q.length < 2) {
       setJobSearchResults([]);
@@ -166,7 +171,7 @@ export default function DispatchPage() {
     }, 250);
 
     return () => clearTimeout(timeout);
-  }, [jobSearch, token, isDispatch]);
+  }, [jobSearch, token, showCalendar]);
 
   async function loadData() {
     setLoading(true);
@@ -189,10 +194,11 @@ export default function DispatchPage() {
     }
   }
 
-  async function loadDispatchCompanies() {
+  async function loadDispatchCompanies(forAdmin: boolean) {
     setCalendarError("");
     try {
-      const companiesRes = await fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) });
+      const endpoint = forAdmin ? "/api/companies" : "/api/companies/mine";
+      const companiesRes = await fetch(`${API_BASE}${endpoint}`, { headers: authHeaders(token) });
       if (!companiesRes.ok) throw new Error(`Companies HTTP ${companiesRes.status}`);
 
       const companiesData = (await companiesRes.json()) as Company[];
@@ -365,10 +371,10 @@ export default function DispatchPage() {
     }
   }
 
-  if (isDispatch) {
+  if (showCalendar) {
     return (
       <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
-        <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Dispatch Calendar</h1>
+        <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Dispatcher Console</h1>
         <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
           Jobs grouped by booked move date for the selected company and month.
         </p>
@@ -484,18 +490,27 @@ export default function DispatchPage() {
     );
   }
 
-  if (!isAdmin) {
+  if (showManage && !isAdmin) {
     return (
       <div style={{ padding: "20px 24px" }}>
-        <h1 style={{ fontSize: 20, color: "#032d60", marginBottom: 8 }}>Dispatch</h1>
+        <h1 style={{ fontSize: 20, color: "#032d60", marginBottom: 8 }}>Dispatcher Setup</h1>
         <p style={{ color: "#ba0517" }}>You do not have access to this page.</p>
+      </div>
+    );
+  }
+
+  if (!showManage) {
+    return (
+      <div style={{ padding: "20px 24px" }}>
+        <h1 style={{ fontSize: 20, color: "#032d60", marginBottom: 8 }}>Dispatcher Page</h1>
+        <p style={{ color: "#ba0517" }}>Unknown dispatch page mode.</p>
       </div>
     );
   }
 
   return (
     <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
-      <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Dispatch</h1>
+      <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Dispatcher Setup</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
         Create dispatch users and map them to the companies they can access.
       </p>
