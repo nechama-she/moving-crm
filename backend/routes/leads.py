@@ -1168,7 +1168,7 @@ def create_lead(
                 lead_id=lead.id,
                 target_company_name="Top Tier Van Lines",
                 target_referral_source="Facebook-TTVL-HHG-FL-GA-NC",
-                delay_minutes=15,
+                delay_minutes=120,
             )
         elif lead.referral_source == "Facebook-Gorilla-HHG-Local":
             _enqueue_lead_for_duplication(
