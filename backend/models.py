@@ -257,6 +257,35 @@ class LeadAttachment(Base):
         }
 
 
+class DispatchCalendarDay(Base):
+    __tablename__ = "dispatch_calendar_days"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    company_id = Column(String(36), ForeignKey("companies.id"), nullable=False, index=True)
+    day_date = Column(Date, nullable=False, index=True)
+    is_full = Column(Boolean, nullable=False, default=False)
+    note = Column(Text)
+    updated_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("company_id", "day_date", name="uq_dispatch_calendar_days_company_day"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "company_id": self.company_id,
+            "day_date": self.day_date.isoformat() if self.day_date else "",
+            "is_full": bool(self.is_full),
+            "note": self.note or "",
+            "updated_by": self.updated_by or "",
+            "created_at": self.created_at.isoformat() if self.created_at else "",
+            "updated_at": self.updated_at.isoformat() if self.updated_at else "",
+        }
+
+
 # ---------------------------------------------------------------------------
 # Followups
 # ---------------------------------------------------------------------------

@@ -40,6 +40,12 @@ type DispatchJobSearchResult = LeadJob & {
   leadgen_id: string;
 };
 
+type DispatchCalendarDaySetting = {
+  day_date: string;
+  is_full: boolean;
+  note: string;
+};
+
 function monthKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
@@ -76,6 +82,8 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const [calendarJobs, setCalendarJobs] = useState<LeadJob[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState("");
+  const [daySettings, setDaySettings] = useState<Record<string, DispatchCalendarDaySetting>>({});
+  const [daySettingsError, setDaySettingsError] = useState("");
   const [selectedJobId, setSelectedJobId] = useState("");
   const [jobSearch, setJobSearch] = useState("");
   const [jobSearchResults, setJobSearchResults] = useState<DispatchJobSearchResult[]>([]);
@@ -112,6 +120,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   useEffect(() => {
     if (!showCalendar || !selectedDispatchCompanyId) return;
     void loadDispatchCalendarJobs(selectedDispatchCompanyId, dispatchMonth);
+    void loadDispatchCalendarDaySettings(selectedDispatchCompanyId, dispatchMonth);
   }, [token, showCalendar, selectedDispatchCompanyId, dispatchMonth]);
 
   useEffect(() => {
@@ -249,6 +258,75 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     }
   }
 
+  async function loadDispatchCalendarDaySettings(companyId: string, month: Date) {
+    setDaySettingsError("");
+    try {
+      const params = new URLSearchParams({
+        company_id: companyId,
+        move_month: monthKey(month),
+      });
+      const res = await fetch(`${API_BASE}/api/dispatch-calendar-days?${params.toString()}`, { headers: authHeaders(token) });
+      if (!res.ok) throw new Error(`Dispatch day settings HTTP ${res.status}`);
+      const data = (await res.json()) as { items?: Array<Record<string, unknown>> };
+      const items = Array.isArray(data.items) ? data.items : [];
+      const nextMap: Record<string, DispatchCalendarDaySetting> = {};
+      for (const item of items) {
+        const dayDate = String(item.day_date || "");
+        if (!dayDate) continue;
+        nextMap[dayDate] = {
+          day_date: dayDate,
+          is_full: Boolean(item.is_full),
+          note: String(item.note || ""),
+        };
+      }
+      setDaySettings(nextMap);
+    } catch (err: unknown) {
+      setDaySettingsError(err instanceof Error ? err.message : "Failed to load day settings");
+      setDaySettings({});
+    }
+  }
+
+  async function saveDispatchCalendarDaySetting(dayDate: string, isFull: boolean, note: string) {
+    if (!selectedDispatchCompanyId) return;
+    const cleanNote = note.trim();
+    const res = await fetch(`${API_BASE}/api/dispatch-calendar-days`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({
+        company_id: selectedDispatchCompanyId,
+        day_date: dayDate,
+        is_full: isFull,
+        note: cleanNote,
+      }),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const err = (await res.json()) as { detail?: string };
+        detail = err.detail || detail;
+      } catch {
+        // keep default detail
+      }
+      throw new Error(detail);
+    }
+    const payload = (await res.json()) as { ok?: boolean; item?: Record<string, unknown> | null };
+    const item = payload.item;
+    setDaySettings((prev) => {
+      const next = { ...prev };
+      if (!item) {
+        delete next[dayDate];
+        return next;
+      }
+      const storedDayDate = String(item.day_date || dayDate);
+      next[storedDayDate] = {
+        day_date: storedDayDate,
+        is_full: Boolean(item.is_full),
+        note: String(item.note || ""),
+      };
+      return next;
+    });
+  }
+
   function selectDispatchJob(job: DispatchJobSearchResult) {
     const parsed = parseCalendarDate(job.booked_move_date || job.move_date);
     if (!parsed) return;
@@ -380,6 +458,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
         </p>
 
         {calendarError ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{calendarError}</p> : null}
+        {daySettingsError ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{daySettingsError}</p> : null}
 
         {!calendarLoading && dispatchCompanies.length > 1 ? (
           <div style={{ marginBottom: 12, maxWidth: 340 }}>
@@ -480,10 +559,12 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
           <CompanyCalendar
             companyName={dispatchCompanies.find((c) => c.id === selectedDispatchCompanyId)?.name || "Company"}
             jobs={calendarJobs}
+            daySettings={daySettings}
             viewDate={dispatchMonth}
             selectedJobId={selectedJobId}
             onPrevMonth={() => setDispatchMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
             onNextMonth={() => setDispatchMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
+            onSaveDaySetting={saveDispatchCalendarDaySetting}
           />
         ) : null}
       </div>
@@ -646,19 +727,28 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
 function CompanyCalendar({
   companyName,
   jobs,
+  daySettings,
   viewDate,
   selectedJobId,
   onPrevMonth,
   onNextMonth,
+  onSaveDaySetting,
 }: {
   companyName: string;
   jobs: LeadJob[];
+  daySettings: Record<string, DispatchCalendarDaySetting>;
   viewDate: Date;
   selectedJobId: string;
   onPrevMonth: () => void;
   onNextMonth: () => void;
+  onSaveDaySetting: (dayDate: string, isFull: boolean, note: string) => Promise<void>;
 }) {
   const [expandedDays, setExpandedDays] = useState<Record<number, boolean>>({});
+  const [editingDay, setEditingDay] = useState<number | null>(null);
+  const [draftIsFullByDay, setDraftIsFullByDay] = useState<Record<number, boolean>>({});
+  const [draftNoteByDay, setDraftNoteByDay] = useState<Record<number, string>>({});
+  const [savingDayByDay, setSavingDayByDay] = useState<Record<number, boolean>>({});
+  const [dayErrorByDay, setDayErrorByDay] = useState<Record<number, string>>({});
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
   const firstWeekday = new Date(year, month, 1).getDay();
@@ -685,6 +775,35 @@ function CompanyCalendar({
     const day = parsed.getDate();
     setExpandedDays((prev) => (prev[day] ? prev : { ...prev, [day]: true }));
   }, [jobs, selectedJobId, year, month]);
+
+  function dayDateKey(day: number): string {
+    return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  function startEditDay(day: number) {
+    const key = dayDateKey(day);
+    const setting = daySettings[key];
+    setDraftIsFullByDay((prev) => ({ ...prev, [day]: Boolean(setting?.is_full) }));
+    setDraftNoteByDay((prev) => ({ ...prev, [day]: setting?.note || "" }));
+    setDayErrorByDay((prev) => ({ ...prev, [day]: "" }));
+    setEditingDay(day);
+  }
+
+  async function saveDay(day: number) {
+    const key = dayDateKey(day);
+    const isFull = Boolean(draftIsFullByDay[day]);
+    const note = (draftNoteByDay[day] || "").trim();
+    setSavingDayByDay((prev) => ({ ...prev, [day]: true }));
+    setDayErrorByDay((prev) => ({ ...prev, [day]: "" }));
+    try {
+      await onSaveDaySetting(key, isFull, note);
+      setEditingDay(null);
+    } catch (err: unknown) {
+      setDayErrorByDay((prev) => ({ ...prev, [day]: err instanceof Error ? err.message : "Failed to save day" }));
+    } finally {
+      setSavingDayByDay((prev) => ({ ...prev, [day]: false }));
+    }
+  }
 
   return (
     <section style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
@@ -717,9 +836,18 @@ function CompanyCalendar({
           {Array.from({ length: daysInMonth }).map((_, i) => {
             const day = i + 1;
             const dayJobs = jobsByDay.get(day) || [];
+            const dayKey = dayDateKey(day);
+            const daySetting = daySettings[dayKey];
+            const isFullDay = Boolean(daySetting?.is_full);
+            const dayNote = daySetting?.note || "";
             const isExpanded = !!expandedDays[day];
             const visibleJobs = isExpanded ? dayJobs : dayJobs.slice(0, 3);
             const isSelectedDay = selectedJobId ? dayJobs.some((job) => job.id === selectedJobId) : false;
+            const isEditingDay = editingDay === day;
+            const draftIsFull = Boolean(draftIsFullByDay[day]);
+            const draftNote = draftNoteByDay[day] ?? dayNote;
+            const isSavingDay = Boolean(savingDayByDay[day]);
+            const dayError = dayErrorByDay[day] || "";
             return (
               <div
                 key={day}
@@ -727,17 +855,75 @@ function CompanyCalendar({
                   ...calendarDayCell,
                   border: isSelectedDay ? "1px solid #2563eb" : calendarDayCell.border,
                   boxShadow: isSelectedDay ? "0 0 0 2px rgba(37, 99, 235, 0.15)" : undefined,
-                  background: isSelectedDay ? "#eff6ff" : calendarDayCell.background,
+                  background: isSelectedDay ? "#eff6ff" : (isFullDay ? "#fff7ed" : calendarDayCell.background),
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b" }}>{day}</div>
-                  {isSelectedDay ? (
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "#1d4ed8", background: "#dbeafe", borderRadius: 999, padding: "2px 6px" }}>
-                      Selected
-                    </span>
-                  ) : null}
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    {isFullDay ? (
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#9a3412", background: "#ffedd5", borderRadius: 999, padding: "2px 6px" }}>
+                        Full
+                      </span>
+                    ) : null}
+                    {isSelectedDay ? (
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#1d4ed8", background: "#dbeafe", borderRadius: 999, padding: "2px 6px" }}>
+                        Selected
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
+                {dayNote ? (
+                  <div style={{ marginBottom: 6, fontSize: 10, color: "#334155", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4, padding: "4px 5px" }} title={dayNote}>
+                    {dayNote.length > 60 ? `${dayNote.slice(0, 60)}...` : dayNote}
+                  </div>
+                ) : null}
+                {isEditingDay ? (
+                  <div style={{ marginBottom: 6, border: "1px solid #cbd5e1", borderRadius: 6, padding: 6, background: "#fff" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#334155", marginBottom: 6 }}>
+                      <input
+                        type="checkbox"
+                        checked={draftIsFull}
+                        onChange={(e) => setDraftIsFullByDay((prev) => ({ ...prev, [day]: e.target.checked }))}
+                      />
+                      Mark day as full
+                    </label>
+                    <textarea
+                      value={draftNote}
+                      onChange={(e) => setDraftNoteByDay((prev) => ({ ...prev, [day]: e.target.value }))}
+                      placeholder="Day note"
+                      rows={2}
+                      style={{ width: "100%", boxSizing: "border-box", border: "1px solid #cbd5e1", borderRadius: 4, padding: "4px 6px", fontSize: 11, resize: "vertical" }}
+                    />
+                    {dayError ? <div style={{ marginTop: 4, fontSize: 10, color: "#ba0517" }}>{dayError}</div> : null}
+                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                      <button
+                        type="button"
+                        onClick={() => void saveDay(day)}
+                        disabled={isSavingDay}
+                        style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "3px 7px", fontSize: 11, fontWeight: 600 }}
+                      >
+                        {isSavingDay ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingDay(null)}
+                        disabled={isSavingDay}
+                        style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "3px 7px", fontSize: 11 }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => startEditDay(day)}
+                    style={{ border: "1px dashed #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "2px 6px", fontSize: 10, marginBottom: 6 }}
+                  >
+                    Day options
+                  </button>
+                )}
                 <div style={{ display: "grid", gap: 4 }}>
                   {visibleJobs.map((job) => (
                     <Link

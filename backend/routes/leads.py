@@ -16,7 +16,7 @@ from config import get_config
 from database import get_db
 from libs.common.phone import normalize_digits
 from libs.smartmoving.client import update_opportunity_salesperson
-from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment
+from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay
 from routes.templates import get_company_template
 
 logger = logging.getLogger("moving-crm")
@@ -360,6 +360,21 @@ def _effective_dispatch_date(lead: Lead) -> date | None:
     return lead.booked_move_date or _parse_booked_move_date(lead.move_date)
 
 
+def _parse_move_month(value: str) -> tuple[date, date]:
+    try:
+        year_str, month_str = value.split("-")
+        year = int(year_str)
+        month = int(month_str)
+        if month < 1 or month > 12:
+            raise ValueError()
+    except Exception:
+        raise HTTPException(status_code=400, detail="move_month must be YYYY-MM")
+
+    month_start = date(year, month, 1)
+    next_month = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    return month_start, next_month
+
+
 @router.get("/dispatch-calendar")
 def get_dispatch_calendar(
     company_id: str = Query(default=""),
@@ -373,17 +388,7 @@ def get_dispatch_calendar(
     if not move_month:
         raise HTTPException(status_code=400, detail="move_month is required")
 
-    try:
-        year_str, month_str = move_month.split("-")
-        year = int(year_str)
-        month = int(month_str)
-        if month < 1 or month > 12:
-            raise ValueError()
-    except Exception:
-        raise HTTPException(status_code=400, detail="move_month must be YYYY-MM")
-
-    month_start = date(year, month, 1)
-    next_month = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    month_start, next_month = _parse_move_month(move_month)
 
     allowed_company_ids = _get_user_company_ids(user, db)
     if not allowed_company_ids:
@@ -436,6 +441,100 @@ def get_dispatch_calendar(
             for row, effective_date in filtered
         ]
     }
+
+
+@router.get("/dispatch-calendar-days")
+def get_dispatch_calendar_days(
+    company_id: str = Query(default=""),
+    move_month: str = Query(default=""),  # YYYY-MM
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role not in ("admin", "dispatch"):
+        raise HTTPException(status_code=403, detail="Dispatch access required")
+    if not company_id:
+        raise HTTPException(status_code=400, detail="company_id is required")
+    if not move_month:
+        raise HTTPException(status_code=400, detail="move_month is required")
+
+    allowed_company_ids = _get_user_company_ids(user, db)
+    if company_id not in allowed_company_ids:
+        raise HTTPException(status_code=403, detail="Not allowed for this company")
+
+    month_start, next_month = _parse_move_month(move_month)
+    rows = (
+        db.query(DispatchCalendarDay)
+        .filter(
+            DispatchCalendarDay.company_id == company_id,
+            DispatchCalendarDay.day_date >= month_start,
+            DispatchCalendarDay.day_date < next_month,
+        )
+        .order_by(DispatchCalendarDay.day_date.asc())
+        .all()
+    )
+    return {"items": [row.to_dict() for row in rows]}
+
+
+class DispatchCalendarDayUpsert(BaseModel):
+    company_id: str
+    day_date: str
+    is_full: bool = False
+    note: str = ""
+
+
+@router.put("/dispatch-calendar-days")
+def upsert_dispatch_calendar_day(
+    body: DispatchCalendarDayUpsert,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role not in ("admin", "dispatch"):
+        raise HTTPException(status_code=403, detail="Dispatch access required")
+
+    company_id = body.company_id.strip()
+    if not company_id:
+        raise HTTPException(status_code=400, detail="company_id is required")
+
+    allowed_company_ids = _get_user_company_ids(user, db)
+    if company_id not in allowed_company_ids:
+        raise HTTPException(status_code=403, detail="Not allowed for this company")
+
+    try:
+        target_day = datetime.strptime((body.day_date or "").strip(), "%Y-%m-%d").date()
+    except Exception:
+        raise HTTPException(status_code=400, detail="day_date must be YYYY-MM-DD")
+
+    note = (body.note or "").strip()
+    row = (
+        db.query(DispatchCalendarDay)
+        .filter(DispatchCalendarDay.company_id == company_id, DispatchCalendarDay.day_date == target_day)
+        .first()
+    )
+
+    # Keep table compact by deleting empty settings.
+    if not body.is_full and not note:
+        if row:
+            db.delete(row)
+            db.commit()
+        return {"ok": True, "item": None}
+
+    if not row:
+        row = DispatchCalendarDay(
+            company_id=company_id,
+            day_date=target_day,
+            is_full=bool(body.is_full),
+            note=note or None,
+            updated_by=user.id,
+        )
+        db.add(row)
+    else:
+        row.is_full = bool(body.is_full)
+        row.note = note or None
+        row.updated_by = user.id
+
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "item": row.to_dict()}
 
 
 @router.get("/dispatch-job-search")

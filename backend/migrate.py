@@ -148,6 +148,22 @@ def migrate(drop_first: bool = False):
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_attachments_lead_id ON lead_attachments (lead_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_attachments_created_at ON lead_attachments (created_at)"))
         conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS dispatch_calendar_days (
+                id VARCHAR(36) PRIMARY KEY,
+                company_id VARCHAR(36) NOT NULL REFERENCES companies(id),
+                day_date DATE NOT NULL,
+                is_full BOOLEAN NOT NULL DEFAULT FALSE,
+                note TEXT,
+                updated_by VARCHAR(36) NOT NULL REFERENCES users(id),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_dispatch_calendar_days_company_day ON dispatch_calendar_days (company_id, day_date)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_dispatch_calendar_days_company_id ON dispatch_calendar_days (company_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_dispatch_calendar_days_day_date ON dispatch_calendar_days (day_date)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_dispatch_calendar_days_updated_at ON dispatch_calendar_days (updated_at)"))
+        conn.execute(text("""
             DO $$
             BEGIN
                 IF EXISTS (
