@@ -400,7 +400,7 @@ def get_dispatch_calendar(
     rows = (
         db.query(Lead)
         .filter(Lead.company_id.in_(target_company_ids))
-        .filter(Lead.status == "booked")
+        .filter(Lead.status.in_(DISPATCH_STATUSES))
         .order_by(Lead.created_at.asc())
         .all()
     )
@@ -462,7 +462,7 @@ def search_dispatch_jobs(
         .join(Company, Lead.company_id == Company.id)
         .filter(
             Lead.company_id.in_(allowed_company_ids),
-            Lead.status == "booked",
+            Lead.status.in_(DISPATCH_STATUSES),
             (
                 Lead.full_name.ilike(pattern)
                 | Lead.leadgen_id.ilike(pattern)

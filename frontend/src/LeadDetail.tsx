@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useNavigate } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import ChatMessages from "./ChatMessages";
@@ -63,6 +64,7 @@ export default function LeadDetail() {
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const companyMenuRef = useRef<HTMLDivElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
+  const statusButtonRef = useRef<HTMLButtonElement | null>(null);
   const [attachments, setAttachments] = useState<LeadAttachment[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(true);
   const [attachmentsError, setAttachmentsError] = useState("");
@@ -79,6 +81,7 @@ export default function LeadDetail() {
   const [renameValue, setRenameValue] = useState("");
   const [savingStatus, setSavingStatus] = useState(false);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  const [statusMenuRect, setStatusMenuRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
@@ -312,6 +315,25 @@ export default function LeadDetail() {
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
   }, []);
+
+  useEffect(() => {
+    if (!statusMenuOpen) return;
+
+    function updateStatusMenuRect() {
+      const node = statusButtonRef.current;
+      if (!node) return;
+      const rect = node.getBoundingClientRect();
+      setStatusMenuRect({ top: rect.bottom + 8, left: rect.left, width: rect.width, height: rect.height });
+    }
+
+    updateStatusMenuRect();
+    window.addEventListener("resize", updateStatusMenuRect);
+    window.addEventListener("scroll", updateStatusMenuRect, true);
+    return () => {
+      window.removeEventListener("resize", updateStatusMenuRect);
+      window.removeEventListener("scroll", updateStatusMenuRect, true);
+    };
+  }, [statusMenuOpen]);
 
   if (loading) return <p style={{ padding: 24 }}>Loading…</p>;
   if (error)
@@ -706,7 +728,7 @@ export default function LeadDetail() {
         const selectedCompanyName = companies.find((c) => c.id === editCompanyId)?.name || String(lead.company_name || "-");
 
         return (
-          <div style={{ ...sectionStyle, padding: 18 }}>
+          <div style={{ ...sectionStyle, padding: 18, overflow: "visible", position: "relative" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
               <div
                 style={{
@@ -748,6 +770,7 @@ export default function LeadDetail() {
                     </div>
                     <div ref={statusMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
                       <button
+                        ref={statusButtonRef}
                         type="button"
                         aria-haspopup="menu"
                         aria-expanded={statusMenuOpen}
@@ -772,66 +795,66 @@ export default function LeadDetail() {
                         {statusLabel}
                         <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.9 }}>▾</span>
                       </button>
-
-                      {statusMenuOpen ? (
-                        <div
-                          role="menu"
-                          style={{
-                            position: "absolute",
-                            top: "calc(100% + 8px)",
-                            left: 0,
-                            minWidth: 180,
-                            background: "#fff",
-                            border: "1px solid #d8dde6",
-                            borderRadius: 12,
-                            boxShadow: "0 16px 40px rgba(15,23,42,.14)",
-                            overflow: "hidden",
-                            zIndex: 30,
-                          }}
-                        >
-                          <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                            Change status
-                          </div>
-                          {LEAD_STATUS_OPTIONS.map((option) => {
-                            const optionLabel = option.charAt(0).toUpperCase() + option.slice(1);
-                            const active = option === statusValue;
-                            const optionColor = String((statusStyles[option] || {}).color || "#64748b");
-                            return (
-                              <button
-                                key={option}
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={active}
-                                disabled={savingStatus}
-                                onClick={() => {
-                                  void saveStatus(option);
-                                }}
-                                style={{
-                                  width: "100%",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "space-between",
-                                  gap: 10,
-                                  border: "none",
-                                  background: active ? "#f8fafc" : "#fff",
-                                  padding: "10px 12px",
-                                  textAlign: "left",
-                                  cursor: savingStatus ? "default" : "pointer",
-                                  color: "#0f172a",
-                                }}
-                              >
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                                  <span style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: optionColor }} />
-                                  <span style={{ fontSize: 13, fontWeight: 600 }}>{optionLabel}</span>
-                                </span>
-                                {active ? <span style={{ fontSize: 12, color: "#0176d3", fontWeight: 700 }}>Current</span> : null}
-                              </button>
-                            );
-                          })}
-                          {savingStatus ? <div style={{ padding: "8px 12px", fontSize: 12, color: "#64748b", borderTop: "1px solid #eef2f7" }}>Saving...</div> : null}
-                        </div>
-                      ) : null}
                     </div>
+                    {statusMenuOpen && statusMenuRect ? createPortal(
+                      <div
+                        role="menu"
+                        style={{
+                          position: "fixed",
+                          top: statusMenuRect.top,
+                          left: statusMenuRect.left,
+                          minWidth: Math.max(statusMenuRect.width, 220),
+                          background: "#fff",
+                          border: "1px solid #d8dde6",
+                          borderRadius: 12,
+                          boxShadow: "0 20px 50px rgba(15,23,42,.22)",
+                          overflow: "hidden",
+                          zIndex: 99999,
+                        }}
+                      >
+                        <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                          Change status
+                        </div>
+                        {LEAD_STATUS_OPTIONS.map((option) => {
+                          const optionLabel = option.charAt(0).toUpperCase() + option.slice(1);
+                          const active = option === statusValue;
+                          const optionColor = String((statusStyles[option] || {}).color || "#64748b");
+                          return (
+                            <button
+                              key={option}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={active}
+                              disabled={savingStatus}
+                              onClick={() => {
+                                void saveStatus(option);
+                              }}
+                              style={{
+                                width: "100%",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: 10,
+                                border: "none",
+                                background: active ? "#f8fafc" : "#fff",
+                                padding: "10px 12px",
+                                textAlign: "left",
+                                cursor: savingStatus ? "default" : "pointer",
+                                color: "#0f172a",
+                              }}
+                            >
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                                <span style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: optionColor }} />
+                                <span style={{ fontSize: 13, fontWeight: 600 }}>{optionLabel}</span>
+                              </span>
+                              {active ? <span style={{ fontSize: 12, color: "#0176d3", fontWeight: 700 }}>Current</span> : null}
+                            </button>
+                          );
+                        })}
+                        {savingStatus ? <div style={{ padding: "8px 12px", fontSize: 12, color: "#64748b", borderTop: "1px solid #eef2f7" }}>Saving...</div> : null}
+                      </div>,
+                      document.body
+                    ) : null}
                   </div>
                 )}
               </div>

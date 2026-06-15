@@ -118,10 +118,6 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
     ? allMessages.filter((m) => m.platform === "messages")
     : allMessages.filter((m) => (m.platform?.toLowerCase() || "") === activeTab);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [filtered]);
-
   if (loading)
     return <p style={{ padding: 16, color: "#888" }}>Loading messages…</p>;
   if (error)
