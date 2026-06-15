@@ -32,6 +32,16 @@ const MOVE_FIELDS = [
   "are_you_moving_within_the_state_or_out_of_state?",
 ];
 const META_FIELDS = ["leadgen_id", "created_time", "page_id", "form_id", "adgroup_id", "ad_id"];
+const LEAD_STATUS_OPTIONS = [
+  "new",
+  "contacted",
+  "quoted",
+  "booked",
+  "scheduled",
+  "completed",
+  "lost",
+  "cancelled",
+];
 
 export default function LeadDetail() {
   const { leadId } = useParams<{ leadId: string }>();
@@ -52,6 +62,7 @@ export default function LeadDetail() {
   const [savingCompany, setSavingCompany] = useState(false);
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const companyMenuRef = useRef<HTMLDivElement | null>(null);
+  const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const [attachments, setAttachments] = useState<LeadAttachment[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(true);
   const [attachmentsError, setAttachmentsError] = useState("");
@@ -66,6 +77,8 @@ export default function LeadDetail() {
   const [previewUrl, setPreviewUrl] = useState("");
   const [renamingId, setRenamingId] = useState("");
   const [renameValue, setRenameValue] = useState("");
+  const [savingStatus, setSavingStatus] = useState(false);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
@@ -288,10 +301,12 @@ export default function LeadDetail() {
 
   useEffect(() => {
     function onDocMouseDown(event: MouseEvent) {
-      if (!companyMenuRef.current) return;
       const target = event.target as Node;
-      if (!companyMenuRef.current.contains(target)) {
+      if (companyMenuRef.current && !companyMenuRef.current.contains(target)) {
         setCompanyMenuOpen(false);
+      }
+      if (statusMenuRef.current && !statusMenuRef.current.contains(target)) {
+        setStatusMenuOpen(false);
       }
     }
     document.addEventListener("mousedown", onDocMouseDown);
@@ -638,6 +653,27 @@ export default function LeadDetail() {
           }
         }
 
+        async function saveStatus(nextStatus: string) {
+          if (!LEAD_STATUS_OPTIONS.includes(nextStatus)) return;
+          if (nextStatus === statusValue) return;
+          setSavingStatus(true);
+          try {
+            const res = await fetch(`${API_BASE}/api/leads/${leadId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", ...authHeaders(token) },
+              body: JSON.stringify({ status: nextStatus }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const updated = await res.json();
+            setLead(updated);
+            setStatusMenuOpen(false);
+          } catch (e) {
+            alert(`Failed to save status: ${e instanceof Error ? e.message : "error"}`);
+          } finally {
+            setSavingStatus(false);
+          }
+        }
+
         const tile: React.CSSProperties = {
           flex: 1,
           minWidth: 200,
@@ -710,22 +746,92 @@ export default function LeadDetail() {
                     <div style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
                       {name || "—"}
                     </div>
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        padding: "3px 10px",
-                        borderRadius: 999,
-                        fontSize: 11,
-                        fontWeight: 700,
-                        letterSpacing: "0.04em",
-                        textTransform: "uppercase",
-                        whiteSpace: "nowrap",
-                        ...statusStyle,
-                      }}
-                    >
-                      {statusLabel}
-                    </span>
+                    <div ref={statusMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <button
+                        type="button"
+                        aria-haspopup="menu"
+                        aria-expanded={statusMenuOpen}
+                        onClick={() => setStatusMenuOpen((v) => !v)}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "4px 11px",
+                          borderRadius: 999,
+                          border: "none",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          letterSpacing: "0.04em",
+                          textTransform: "uppercase",
+                          whiteSpace: "nowrap",
+                          cursor: "pointer",
+                          boxShadow: "0 1px 2px rgba(15,23,42,.08)",
+                          ...statusStyle,
+                        }}
+                      >
+                        {statusLabel}
+                        <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.9 }}>▾</span>
+                      </button>
+
+                      {statusMenuOpen ? (
+                        <div
+                          role="menu"
+                          style={{
+                            position: "absolute",
+                            top: "calc(100% + 8px)",
+                            left: 0,
+                            minWidth: 180,
+                            background: "#fff",
+                            border: "1px solid #d8dde6",
+                            borderRadius: 12,
+                            boxShadow: "0 16px 40px rgba(15,23,42,.14)",
+                            overflow: "hidden",
+                            zIndex: 30,
+                          }}
+                        >
+                          <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                            Change status
+                          </div>
+                          {LEAD_STATUS_OPTIONS.map((option) => {
+                            const optionLabel = option.charAt(0).toUpperCase() + option.slice(1);
+                            const active = option === statusValue;
+                            const optionColor = String((statusStyles[option] || {}).color || "#64748b");
+                            return (
+                              <button
+                                key={option}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={active}
+                                disabled={savingStatus}
+                                onClick={() => {
+                                  void saveStatus(option);
+                                }}
+                                style={{
+                                  width: "100%",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  gap: 10,
+                                  border: "none",
+                                  background: active ? "#f8fafc" : "#fff",
+                                  padding: "10px 12px",
+                                  textAlign: "left",
+                                  cursor: savingStatus ? "default" : "pointer",
+                                  color: "#0f172a",
+                                }}
+                              >
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                                  <span style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: optionColor }} />
+                                  <span style={{ fontSize: 13, fontWeight: 600 }}>{optionLabel}</span>
+                                </span>
+                                {active ? <span style={{ fontSize: 12, color: "#0176d3", fontWeight: 700 }}>Current</span> : null}
+                              </button>
+                            );
+                          })}
+                          {savingStatus ? <div style={{ padding: "8px 12px", fontSize: 12, color: "#64748b", borderTop: "1px solid #eef2f7" }}>Saving...</div> : null}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 )}
               </div>
