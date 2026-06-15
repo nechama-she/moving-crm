@@ -64,6 +64,9 @@ function ProtectedRoutes() {
               <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
               <NavLink to="/outreach" style={navLinkStyle}>Outreach</NavLink>
               <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
+              {user?.role === "admin" && (
+                <NavLink to="/dispatch" style={navLinkStyle}>Dispatch</NavLink>
+              )}
             </>
           )}
         </div>
