@@ -977,6 +977,10 @@ def delete_lead_job(
 # Job-level attachment endpoints
 # ---------------------------------------------------------------------------
 
+class AttachmentRenameBody(BaseModel):
+    file_name: str
+
+
 def _get_job_or_404(lead_id: str, job_id: str, user: User, db: Session) -> "LeadJob":
     lead = _get_visible_lead_or_404(lead_id, user, db)
     job = (
@@ -1096,7 +1100,7 @@ def rename_job_attachment(
     lead_id: str,
     job_id: str,
     attachment_id: str,
-    body: "AttachmentRenameBody",
+    body: AttachmentRenameBody,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1212,10 +1216,6 @@ def delete_lead_attachment(
     db.delete(row)
     db.commit()
     return {"ok": True}
-
-
-class AttachmentRenameBody(BaseModel):
-    file_name: str
 
 
 @router.patch("/leads/{lead_id}/attachments/{attachment_id}")
