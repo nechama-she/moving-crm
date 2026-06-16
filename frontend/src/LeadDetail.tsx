@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import ChatMessages from "./ChatMessages";
 import FollowupPanel from "./FollowupPanel";
@@ -69,6 +69,7 @@ const LEAD_STATUS_OPTIONS = [
 export default function LeadDetail() {
   const { leadId } = useParams<{ leadId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { token, user } = useAuth();
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
@@ -120,6 +121,11 @@ export default function LeadDetail() {
   const [savingJobId, setSavingJobId] = useState("");
   const [deletingJobId, setDeletingJobId] = useState("");
   const [activeJobTabId, setActiveJobTabId] = useState("");
+  const consumedRouteJobRef = useRef("");
+  const routeJobId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return (params.get("job_id") || "").trim();
+  }, [location.search]);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
@@ -158,11 +164,17 @@ export default function LeadDetail() {
       .catch((err) => setCompaniesError(err.message));
   }, [token]);
 
-  async function loadAttachments() {
+  async function loadAttachments(jobId?: string) {
+    const targetJobId = jobId ?? activeJobTabId;
+    if (!targetJobId || targetJobId === "__new__") {
+      setAttachments([]);
+      setAttachmentsLoading(false);
+      return;
+    }
     setAttachmentsLoading(true);
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments`, { headers: authHeaders(token) });
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${targetJobId}/attachments`, { headers: authHeaders(token) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { items?: Array<Record<string, unknown>> };
       const rows = Array.isArray(data.items) ? data.items : [];
@@ -230,6 +242,14 @@ export default function LeadDetail() {
   }, [leadId, token]);
 
   useEffect(() => {
+    if (!activeJobTabId || activeJobTabId === "__new__") {
+      setAttachments([]);
+      return;
+    }
+    void loadAttachments(activeJobTabId);
+  }, [activeJobTabId]);
+
+  useEffect(() => {
     void loadLeadJobs();
   }, [leadId, token]);
 
@@ -243,10 +263,19 @@ export default function LeadDetail() {
       return;
     }
     if (activeJobTabId === "__new__") return;
+    if (
+      routeJobId &&
+      consumedRouteJobRef.current !== routeJobId &&
+      leadJobs.some((job) => job.id === routeJobId)
+    ) {
+      consumedRouteJobRef.current = routeJobId;
+      setActiveJobTabId(routeJobId);
+      return;
+    }
     if (!activeJobTabId || !leadJobs.some((job) => job.id === activeJobTabId)) {
       setActiveJobTabId(leadJobs[0].id);
     }
-  }, [leadJobs, activeJobTabId]);
+  }, [leadJobs, activeJobTabId, routeJobId]);
 
   async function saveJob(jobId: string) {
     const draft = jobDrafts[jobId];
@@ -327,13 +356,17 @@ export default function LeadDetail() {
 
   async function uploadAttachments(files: File[]) {
     if (files.length === 0) return;
+    if (!activeJobTabId || activeJobTabId === "__new__") {
+      setAttachmentsError("Please select a job tab before uploading files.");
+      return;
+    }
     setUploadingCount(files.length);
     setAttachmentsError("");
     try {
       for (const file of files) {
         const form = new FormData();
         form.append("file", file);
-        const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments`, {
+        const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${activeJobTabId}/attachments`, {
           method: "POST",
           headers: authHeaders(token),
           body: form,
@@ -355,7 +388,7 @@ export default function LeadDetail() {
   async function downloadAttachment(attachmentId: string, fileName: string) {
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}/download`, {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${activeJobTabId}/attachments/${attachmentId}/download`, {
         headers: authHeaders(token),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -376,7 +409,7 @@ export default function LeadDetail() {
   async function deleteAttachment(attachmentId: string) {
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}`, {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${activeJobTabId}/attachments/${attachmentId}`, {
         method: "DELETE",
         headers: authHeaders(token),
       });
@@ -392,7 +425,7 @@ export default function LeadDetail() {
     if (!nextName) return;
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}`, {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${activeJobTabId}/attachments/${attachmentId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
         body: JSON.stringify({ file_name: nextName }),
@@ -409,7 +442,7 @@ export default function LeadDetail() {
   async function openPreview(attachmentId: string, fileName: string, contentType: string) {
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}/download`, {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${activeJobTabId}/attachments/${attachmentId}/download`, {
         headers: authHeaders(token),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

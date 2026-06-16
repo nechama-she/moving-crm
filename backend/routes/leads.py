@@ -973,6 +973,150 @@ def delete_lead_job(
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Job-level attachment endpoints
+# ---------------------------------------------------------------------------
+
+def _get_job_or_404(lead_id: str, job_id: str, user: User, db: Session) -> "LeadJob":
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    job = (
+        db.query(LeadJob)
+        .filter(LeadJob.id == job_id, LeadJob.lead_id == lead.id)
+        .first()
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@router.get("/leads/{lead_id}/jobs/{job_id}/attachments")
+def list_job_attachments(
+    lead_id: str,
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = _get_job_or_404(lead_id, job_id, user, db)
+    rows = (
+        db.query(LeadAttachment, User)
+        .outerjoin(User, LeadAttachment.uploaded_by == User.id)
+        .filter(LeadAttachment.job_id == job.id)
+        .order_by(LeadAttachment.created_at.desc())
+        .all()
+    )
+    items = []
+    for attachment, uploader in rows:
+        item = attachment.to_dict()
+        item["uploaded_by_name"] = uploader.name if uploader else ""
+        items.append(item)
+    return {"items": items}
+
+
+@router.post("/leads/{lead_id}/jobs/{job_id}/attachments")
+def upload_job_attachment(
+    lead_id: str,
+    job_id: str,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = _get_job_or_404(lead_id, job_id, user, db)
+
+    file_name = (file.filename or "").strip()
+    if not file_name:
+        raise HTTPException(status_code=400, detail="File name is required")
+
+    payload = file.file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="File is empty")
+    if len(payload) > MAX_ATTACHMENT_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="File is too large (max 15 MB)")
+
+    row = LeadAttachment(
+        lead_id=lead_id,
+        job_id=job.id,
+        file_name=file_name,
+        content_type=(file.content_type or "application/octet-stream"),
+        file_size=len(payload),
+        file_blob=payload,
+        uploaded_by=user.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    item = row.to_dict()
+    item["uploaded_by_name"] = user.name if user else ""
+    return item
+
+
+@router.get("/leads/{lead_id}/jobs/{job_id}/attachments/{attachment_id}/download")
+def download_job_attachment(
+    lead_id: str,
+    job_id: str,
+    attachment_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = _get_job_or_404(lead_id, job_id, user, db)
+    row = (
+        db.query(LeadAttachment)
+        .filter(LeadAttachment.id == attachment_id, LeadAttachment.job_id == job.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    safe_name = (row.file_name or "attachment").replace('"', "")
+    headers = {"Content-Disposition": f'attachment; filename="{safe_name}"'}
+    return Response(content=row.file_blob, media_type=row.content_type or "application/octet-stream", headers=headers)
+
+
+@router.delete("/leads/{lead_id}/jobs/{job_id}/attachments/{attachment_id}")
+def delete_job_attachment(
+    lead_id: str,
+    job_id: str,
+    attachment_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = _get_job_or_404(lead_id, job_id, user, db)
+    row = (
+        db.query(LeadAttachment)
+        .filter(LeadAttachment.id == attachment_id, LeadAttachment.job_id == job.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@router.patch("/leads/{lead_id}/jobs/{job_id}/attachments/{attachment_id}")
+def rename_job_attachment(
+    lead_id: str,
+    job_id: str,
+    attachment_id: str,
+    body: "AttachmentRenameBody",
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = _get_job_or_404(lead_id, job_id, user, db)
+    row = (
+        db.query(LeadAttachment)
+        .filter(LeadAttachment.id == attachment_id, LeadAttachment.job_id == job.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    next_name = (body.file_name or "").strip()
+    if not next_name:
+        raise HTTPException(status_code=400, detail="file_name is required")
+    row.file_name = next_name[:255]
+    db.commit()
+    db.refresh(row)
+    return row.to_dict()
+
+
 @router.get("/leads/{lead_id}/attachments")
 def list_lead_attachments(
     lead_id: str,

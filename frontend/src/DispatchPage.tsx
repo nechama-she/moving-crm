@@ -999,7 +999,7 @@ function CompanyCalendar({
                   <div style={{ display: "grid", gap: 6 }}>
                     {activeJob ? (
                       <Link
-                        to={`/leads/${activeJob.lead_id || activeJob.id}`}
+                        to={`/leads/${activeJob.lead_id || activeJob.id}?job_id=${encodeURIComponent(activeJob.id)}`}
                         style={{
                           display: "block",
                           fontSize: 11,

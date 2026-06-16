@@ -238,6 +238,7 @@ class LeadAttachment(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid)
     lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey("lead_jobs.id"), nullable=True, index=True)
     file_name = Column(String(255), nullable=False)
     content_type = Column(String(120), nullable=False, default="application/octet-stream")
     file_size = Column(Integer, nullable=False, default=0)
@@ -249,6 +250,7 @@ class LeadAttachment(Base):
         return {
             "id": self.id,
             "lead_id": self.lead_id,
+            "job_id": self.job_id or "",
             "file_name": self.file_name or "",
             "content_type": self.content_type or "application/octet-stream",
             "file_size": self.file_size or 0,
