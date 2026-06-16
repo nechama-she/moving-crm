@@ -334,7 +334,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   }
 
   function selectDispatchJob(job: DispatchJobSearchResult) {
-    const parsed = parseCalendarDate(job.booked_move_date || job.move_date);
+    const parsed = parseCalendarDate(job.move_date);
     if (!parsed) return;
     setSelectedJobId(job.id);
     setSelectedDispatchCompanyId(job.company_id);
@@ -547,7 +547,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 >
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                     <strong style={{ fontSize: 13, color: "#0f172a" }}>{job.full_name || "Unnamed"}</strong>
-                    <span style={{ fontSize: 11, color: "#475569", fontWeight: 600 }}>{job.booked_move_date}</span>
+                    <span style={{ fontSize: 11, color: "#475569", fontWeight: 600 }}>{job.move_date}</span>
                   </div>
                   <div style={{ fontSize: 12, color: "#334155" }}>
                     {job.company_name || "Company"} • {job.pickup_zip || "?"} → {job.delivery_zip || "?"}
@@ -764,7 +764,7 @@ function CompanyCalendar({
 
   const jobsByDay = new Map<number, LeadJob[]>();
   for (const job of jobs) {
-    const parsed = parseCalendarDate(job.booked_move_date || job.move_date);
+    const parsed = parseCalendarDate(job.move_date);
     if (!parsed) continue;
     if (parsed.getFullYear() !== year || parsed.getMonth() !== month) continue;
     const day = parsed.getDate();
@@ -777,7 +777,7 @@ function CompanyCalendar({
     if (!selectedJobId) return;
     const selectedJob = jobs.find((job) => job.id === selectedJobId);
     if (!selectedJob) return;
-    const parsed = parseCalendarDate(selectedJob.booked_move_date || selectedJob.move_date);
+    const parsed = parseCalendarDate(selectedJob.move_date);
     if (!parsed || parsed.getFullYear() !== year || parsed.getMonth() !== month) return;
     const day = parsed.getDate();
     const dayJobs = jobsByDay.get(day) || [];

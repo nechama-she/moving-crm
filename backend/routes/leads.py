@@ -358,11 +358,11 @@ def _lookup_sender_id(lead: Lead) -> str | None:
 
 def _effective_dispatch_date(lead: Lead) -> date | None:
     """Get the booked/service date used by dispatch calendar and search."""
-    return lead.booked_move_date or _parse_booked_move_date(lead.move_date)
+    return _parse_booked_move_date(lead.move_date)
 
 
 def _effective_job_date(job: LeadJob) -> date | None:
-    return job.booked_move_date or _parse_booked_move_date(job.move_date)
+    return _parse_booked_move_date(job.move_date)
 
 
 def _parse_move_month(value: str) -> tuple[date, date]:
@@ -405,8 +405,7 @@ def get_dispatch_calendar(
             raise HTTPException(status_code=403, detail="Not allowed for this company")
         target_company_ids = [company_id]
 
-    # Some legacy/imported leads only have move_date set. Use booked_move_date first,
-    # then fallback to parsed move_date so dispatch can still see those jobs.
+    # Dispatch calendar groups jobs by the job-level move_date.
     rows = (
         db.query(LeadJob, Lead, Company.name.label("company_name"))
         .join(Lead, Lead.id == LeadJob.lead_id)
@@ -436,7 +435,7 @@ def get_dispatch_calendar(
                 "company_name": company_name,
                 "full_name": lead.full_name or "",
                 "move_date": job.move_date or "",
-                "booked_move_date": effective_date.isoformat(),
+                "booked_move_date": job.move_date or "",
                 "pickup_zip": job.pickup_zip or "",
                 "delivery_zip": job.delivery_zip or "",
                 "price": float(job.price) if job.price is not None else None,
@@ -594,7 +593,7 @@ def search_dispatch_jobs(
                 "company_id": job.company_id,
                 "company_name": company_name or "",
                 "full_name": lead.full_name or "",
-                "booked_move_date": effective_date.isoformat(),
+                "booked_move_date": job.move_date or "",
                 "move_date": job.move_date or "",
                 "pickup_zip": job.pickup_zip or "",
                 "delivery_zip": job.delivery_zip or "",
