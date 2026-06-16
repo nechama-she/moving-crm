@@ -1224,54 +1224,6 @@ export default function LeadDetail() {
                   )}
                 </div>
               </div>
-
-              <div style={tile}>
-                <span style={{ fontSize: 18 }}>📎</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={tileLabel}>Files</div>
-                  <div style={{ display: "grid", gap: 6 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <label style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, border: "1px solid #d8dde6", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 600, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff", whiteSpace: "nowrap", width: "fit-content" }}>
-                        <input
-                          type="file"
-                          multiple
-                          disabled={uploadingCount > 0}
-                          style={{ display: "none" }}
-                          onChange={(e) => {
-                            const files = Array.from(e.target.files || []);
-                            void uploadAttachments(files);
-                            e.currentTarget.value = "";
-                          }}
-                        />
-                        {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload"}
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setFilesModalOpen(true)}
-                        style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "5px 10px", fontSize: 12, fontWeight: 600, width: "fit-content" }}
-                      >
-                        More
-                      </button>
-                    </div>
-                    {attachmentsError ? <div style={{ color: "#ba0517", fontSize: 12 }}>{attachmentsError}</div> : null}
-                    {!attachmentsLoading && quickAttachments.length === 0 ? <div style={{ color: "#706e6b", fontSize: 12 }}>No files yet.</div> : null}
-                    {!attachmentsLoading && quickAttachments.length > 0 ? (
-                      <div style={{ display: "grid", gap: 4 }}>
-                        {quickAttachments.slice(0, 2).map((attachment) => (
-                          <button
-                            key={attachment.id}
-                            type="button"
-                            onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
-                            style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: "4px 6px", fontSize: 11, color: "#334155", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}
-                          >
-                            {attachment.file_name}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         );
@@ -1398,6 +1350,59 @@ export default function LeadDetail() {
                       >
                         {deletingJobId === job.id ? "Deleting..." : "Delete"}
                       </button>
+                    </div>
+
+                    <div style={{ marginTop: 12, border: "1px solid #d8dde6", borderRadius: 8, background: "#f8fafc" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px", borderBottom: "1px solid #e2e8f0" }}>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 14 }}>📎</span>
+                          <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.02em" }}>{`Job ${job.job_order} Files`}</strong>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          <label style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, border: "1px solid #d8dde6", borderRadius: 6, padding: "5px 9px", fontSize: 11, fontWeight: 700, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff", whiteSpace: "nowrap" }}>
+                            <input
+                              type="file"
+                              multiple
+                              disabled={uploadingCount > 0}
+                              style={{ display: "none" }}
+                              onChange={(e) => {
+                                const files = Array.from(e.target.files || []);
+                                void uploadAttachments(files);
+                                e.currentTarget.value = "";
+                              }}
+                            />
+                            {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload"}
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setFilesModalOpen(true)}
+                            style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 6, padding: "5px 9px", fontSize: 11, fontWeight: 700 }}
+                          >
+                            More
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ padding: 10, display: "grid", gap: 6 }}>
+                        {attachmentsError ? <div style={{ color: "#ba0517", fontSize: 12 }}>{attachmentsError}</div> : null}
+                        {attachmentsLoading ? <div style={{ color: "#64748b", fontSize: 12 }}>Loading files...</div> : null}
+                        {!attachmentsLoading && quickAttachments.length === 0 ? <div style={{ color: "#706e6b", fontSize: 12 }}>No files for this job yet.</div> : null}
+                        {!attachmentsLoading && quickAttachments.length > 0 ? (
+                          <div style={{ display: "grid", gap: 5 }}>
+                            {quickAttachments.slice(0, 3).map((attachment) => (
+                              <button
+                                key={attachment.id}
+                                type="button"
+                                onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
+                                style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: "5px 7px", fontSize: 11, color: "#334155", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}
+                                title={attachment.file_name}
+                              >
+                                {attachment.file_name}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 );
