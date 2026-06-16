@@ -937,6 +937,7 @@ export default function LeadDetail() {
         };
         const statusStyle = statusStyles[statusValue] || { background: "#f1f5f9", color: "#334155", border: "1px solid #cbd5e1" };
         const selectedCompanyName = companies.find((c) => c.id === editCompanyId)?.name || String(lead.company_name || "-");
+        const assignedToName = String(lead.assigned_to_name || "").trim() || "Unassigned";
 
         return (
           <div style={{ ...sectionStyle, padding: 18, overflow: "visible", position: "relative" }}>
@@ -1146,6 +1147,33 @@ export default function LeadDetail() {
                           })}
                         </div>
                       ) : null}
+                      </div>
+                      <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                        <div
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            maxWidth: 240,
+                            padding: "4px 11px",
+                            borderRadius: 999,
+                            border: "1px solid #cbd5e1",
+                            background: "#f8fafc",
+                            color: "#334155",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            letterSpacing: "0.04em",
+                            textTransform: "uppercase",
+                            whiteSpace: "nowrap",
+                            boxShadow: "0 1px 2px rgba(15,23,42,.08)",
+                          }}
+                          title={assignedToName}
+                        >
+                          <span style={{ color: "#64748b" }}>Assign To</span>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1e293b" }}>
+                            {assignedToName}
+                          </span>
+                        </div>
                       </div>
                     </div>
                     {companiesError ? <div style={{ color: "#ba0517", fontSize: 12 }}>{companiesError}</div> : null}
