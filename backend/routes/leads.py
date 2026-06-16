@@ -9,7 +9,7 @@ import boto3
 from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy import func, cast
+from sqlalchemy import func, cast, text
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
@@ -993,6 +993,39 @@ def _get_job_or_404(lead_id: str, job_id: str, user: User, db: Session) -> "Lead
     return job
 
 
+def _ensure_attachment_job_column(db: Session) -> None:
+    """Ensure lead_attachments.job_id exists even if migration has not run yet."""
+    try:
+        db.execute(text("ALTER TABLE lead_attachments ADD COLUMN IF NOT EXISTS job_id VARCHAR(36)"))
+        db.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_attachments_job_id ON lead_attachments (job_id)"))
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+def _backfill_attachment_jobs_for_lead(lead_id: str, db: Session) -> None:
+    """Map legacy lead-level attachments to the lead primary job (job_order=1)."""
+    primary_job = (
+        db.query(LeadJob)
+        .filter(LeadJob.lead_id == lead_id, LeadJob.job_order == 1)
+        .first()
+    )
+    if not primary_job:
+        return
+    try:
+        db.execute(
+            text(
+                "UPDATE lead_attachments "
+                "SET job_id = :job_id "
+                "WHERE lead_id = :lead_id AND (job_id IS NULL OR job_id = '')"
+            ),
+            {"job_id": primary_job.id, "lead_id": lead_id},
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
 @router.get("/leads/{lead_id}/jobs/{job_id}/attachments")
 def list_job_attachments(
     lead_id: str,
@@ -1000,6 +1033,8 @@ def list_job_attachments(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_attachment_job_column(db)
+    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     rows = (
         db.query(LeadAttachment, User)
@@ -1024,6 +1059,8 @@ def upload_job_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_attachment_job_column(db)
+    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
 
     file_name = (file.filename or "").strip()
@@ -1061,6 +1098,8 @@ def download_job_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_attachment_job_column(db)
+    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     row = (
         db.query(LeadAttachment)
@@ -1082,6 +1121,8 @@ def delete_job_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_attachment_job_column(db)
+    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     row = (
         db.query(LeadAttachment)
@@ -1104,6 +1145,8 @@ def rename_job_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_attachment_job_column(db)
+    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     row = (
         db.query(LeadAttachment)
