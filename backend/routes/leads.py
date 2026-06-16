@@ -559,6 +559,45 @@ def search_dispatch_jobs(
     if not allowed_company_ids:
         return {"items": []}
 
+    # Exact job-id lookup for deep-linking from lead job cards.
+    exact_row = (
+        db.query(LeadJob, Lead, Company.name.label("company_name"))
+        .join(Lead, Lead.id == LeadJob.lead_id)
+        .join(Company, LeadJob.company_id == Company.id)
+        .filter(
+            LeadJob.id == search,
+            LeadJob.company_id.in_(allowed_company_ids),
+            Lead.status.in_(DISPATCH_STATUSES),
+        )
+        .first()
+    )
+    if exact_row:
+        job, lead, company_name = exact_row
+        if user.role == "sales_rep" and lead.assigned_to != user.id:
+            return {"items": []}
+        effective_date = _effective_job_date(job)
+        if not effective_date:
+            return {"items": []}
+        return {
+            "items": [
+                {
+                    "id": job.id,
+                    "lead_id": lead.id,
+                    "job_order": int(job.job_order or 0),
+                    "company_id": job.company_id,
+                    "company_name": company_name or "",
+                    "full_name": lead.full_name or "",
+                    "booked_move_date": job.move_date or "",
+                    "move_date": job.move_date or "",
+                    "pickup_zip": job.pickup_zip or "",
+                    "delivery_zip": job.delivery_zip or "",
+                    "price": float(job.price) if job.price is not None else None,
+                    "status": lead.status or "",
+                    "leadgen_id": lead.leadgen_id or "",
+                }
+            ]
+        }
+
     pattern = f"%{search.lower()}%"
     rows = (
         db.query(LeadJob, Lead, Company.name.label("company_name"))
@@ -571,6 +610,7 @@ def search_dispatch_jobs(
                 Lead.full_name.ilike(pattern)
                 | Lead.leadgen_id.ilike(pattern)
                 | Lead.smartmoving_id.ilike(pattern)
+                | LeadJob.id.ilike(pattern)
                 | LeadJob.pickup_zip.ilike(pattern)
                 | LeadJob.delivery_zip.ilike(pattern)
             ),
