@@ -15,6 +15,11 @@ type CompanyOption = {
   name: string;
 };
 
+type UserOption = {
+  id: string;
+  name: string;
+};
+
 type LeadAttachment = {
   id: string;
   file_name: string;
@@ -81,9 +86,11 @@ export default function LeadDetail() {
   const [editEmail, setEditEmail] = useState("");
   const [savingUser, setSavingUser] = useState(false);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [users, setUsers] = useState<UserOption[]>([]);
   const [companiesError, setCompaniesError] = useState("");
   const [editCompanyId, setEditCompanyId] = useState("");
   const [savingCompany, setSavingCompany] = useState(false);
+  const [savingAssignedTo, setSavingAssignedTo] = useState(false);
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const companyMenuRef = useRef<HTMLDivElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
@@ -163,6 +170,31 @@ export default function LeadDetail() {
       })
       .catch((err) => setCompaniesError(err.message));
   }, [token]);
+
+  useEffect(() => {
+    if (user?.role !== "admin") return;
+    fetch(`${API_BASE}/api/users`, { headers: authHeaders(token) })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data: unknown) => {
+        const rows = Array.isArray(data) ? data : [];
+        setUsers(
+          rows
+            .map((row) => {
+              const item = row as Record<string, unknown>;
+              return {
+                id: String(item.id || ""),
+                name: String(item.name || ""),
+              };
+            })
+            .filter((item) => item.id)
+            .sort((a, b) => a.name.localeCompare(b.name))
+        );
+      })
+      .catch(() => setUsers([]));
+  }, [token, user?.role]);
 
   async function loadAttachments(jobId?: string) {
     const targetJobId = jobId ?? activeJobTabId;
@@ -907,6 +939,26 @@ export default function LeadDetail() {
           }
         }
 
+        async function saveAssignedTo(nextAssignedTo: string) {
+          const currentAssignedTo = String(lead?.assigned_to || "");
+          if (nextAssignedTo === currentAssignedTo) return;
+          setSavingAssignedTo(true);
+          try {
+            const res = await fetch(`${API_BASE}/api/leads/${leadId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", ...authHeaders(token) },
+              body: JSON.stringify({ assigned_to: nextAssignedTo }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const updated = await res.json();
+            setLead(updated);
+          } catch (e) {
+            alert(`Failed to save assignee: ${e instanceof Error ? e.message : "error"}`);
+          } finally {
+            setSavingAssignedTo(false);
+          }
+        }
+
         const tile: React.CSSProperties = {
           flex: 1,
           minWidth: 200,
@@ -1154,7 +1206,7 @@ export default function LeadDetail() {
                             display: "inline-flex",
                             alignItems: "center",
                             gap: 6,
-                            maxWidth: 240,
+                            maxWidth: 280,
                             padding: "4px 11px",
                             borderRadius: 999,
                             border: "1px solid #cbd5e1",
@@ -1170,9 +1222,32 @@ export default function LeadDetail() {
                           title={assignedToName}
                         >
                           <span style={{ color: "#64748b" }}>Assign To</span>
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1e293b" }}>
-                            {assignedToName}
-                          </span>
+                          {user?.role === "admin" ? (
+                            <select
+                              value={String(lead.assigned_to || "")}
+                              onChange={(e) => void saveAssignedTo(e.target.value)}
+                              disabled={savingAssignedTo}
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                color: "#1e293b",
+                                fontSize: 11,
+                                fontWeight: 700,
+                                minWidth: 120,
+                                outline: "none",
+                                cursor: savingAssignedTo ? "default" : "pointer",
+                              }}
+                            >
+                              <option value="">Unassigned</option>
+                              {users.map((option) => (
+                                <option key={option.id} value={option.id}>{option.name}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1e293b" }}>
+                              {assignedToName}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
