@@ -93,6 +93,8 @@ export default function LeadDetail() {
   const [savingAssignedTo, setSavingAssignedTo] = useState(false);
   const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const companyMenuRef = useRef<HTMLDivElement | null>(null);
+  const [assignMenuOpen, setAssignMenuOpen] = useState(false);
+  const assignMenuRef = useRef<HTMLDivElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const statusButtonRef = useRef<HTMLButtonElement | null>(null);
   const [attachments, setAttachments] = useState<LeadAttachment[]>([]);
@@ -556,6 +558,9 @@ export default function LeadDetail() {
       if (companyMenuRef.current && !companyMenuRef.current.contains(target)) {
         setCompanyMenuOpen(false);
       }
+      if (assignMenuRef.current && !assignMenuRef.current.contains(target)) {
+        setAssignMenuOpen(false);
+      }
       if (statusMenuRef.current && !statusMenuRef.current.contains(target)) {
         setStatusMenuOpen(false);
       }
@@ -941,7 +946,10 @@ export default function LeadDetail() {
 
         async function saveAssignedTo(nextAssignedTo: string) {
           const currentAssignedTo = String(lead?.assigned_to || "");
-          if (nextAssignedTo === currentAssignedTo) return;
+          if (nextAssignedTo === currentAssignedTo) {
+            setAssignMenuOpen(false);
+            return;
+          }
           setSavingAssignedTo(true);
           try {
             const res = await fetch(`${API_BASE}/api/leads/${leadId}`, {
@@ -952,6 +960,7 @@ export default function LeadDetail() {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const updated = await res.json();
             setLead(updated);
+            setAssignMenuOpen(false);
           } catch (e) {
             alert(`Failed to save assignee: ${e instanceof Error ? e.message : "error"}`);
           } finally {
@@ -1200,8 +1209,11 @@ export default function LeadDetail() {
                         </div>
                       ) : null}
                       </div>
-                      <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-                        <div
+                      <div ref={assignMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                        <button
+                          type="button"
+                          onClick={() => user?.role === "admin" && setAssignMenuOpen((v) => !v)}
+                          disabled={user?.role !== "admin" || savingAssignedTo}
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
@@ -1217,38 +1229,79 @@ export default function LeadDetail() {
                             letterSpacing: "0.04em",
                             textTransform: "uppercase",
                             whiteSpace: "nowrap",
+                            cursor: user?.role === "admin" ? "pointer" : "default",
                             boxShadow: "0 1px 2px rgba(15,23,42,.08)",
                           }}
                           title={assignedToName}
                         >
                           <span style={{ color: "#64748b" }}>Assign To</span>
-                          {user?.role === "admin" ? (
-                            <select
-                              value={String(lead.assigned_to || "")}
-                              onChange={(e) => void saveAssignedTo(e.target.value)}
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1e293b" }}>
+                            {savingAssignedTo ? "Updating..." : assignedToName}
+                          </span>
+                          <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.9 }}>▾</span>
+                        </button>
+                        {user?.role === "admin" && assignMenuOpen ? (
+                          <div
+                            style={{
+                              position: "absolute",
+                              top: "calc(100% + 4px)",
+                              left: 0,
+                              right: 0,
+                              minWidth: 260,
+                              maxHeight: 220,
+                              overflowY: "auto",
+                              background: "#fff",
+                              border: "1px solid #cbd5e1",
+                              borderRadius: 12,
+                              boxShadow: "0 20px 50px rgba(15,23,42,.22)",
+                              zIndex: 20,
+                            }}
+                          >
+                            <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                              Change assignee
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void saveAssignedTo("")}
                               disabled={savingAssignedTo}
                               style={{
+                                width: "100%",
+                                textAlign: "left",
                                 border: "none",
-                                background: "transparent",
-                                color: "#1e293b",
-                                fontSize: 11,
-                                fontWeight: 700,
-                                minWidth: 120,
-                                outline: "none",
-                                cursor: savingAssignedTo ? "default" : "pointer",
+                                background: !lead.assigned_to ? "#f8fafc" : "#fff",
+                                color: !lead.assigned_to ? "#0f172a" : "#1e293b",
+                                padding: "10px 12px",
+                                fontSize: 13,
+                                cursor: "pointer",
                               }}
                             >
-                              <option value="">Unassigned</option>
-                              {users.map((option) => (
-                                <option key={option.id} value={option.id}>{option.name}</option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1e293b" }}>
-                              {assignedToName}
-                            </span>
-                          )}
-                        </div>
+                              Unassigned{!lead.assigned_to ? " (current)" : ""}
+                            </button>
+                            {users.map((option) => {
+                              const isCurrent = option.id === String(lead.assigned_to || "");
+                              return (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  onClick={() => void saveAssignedTo(option.id)}
+                                  disabled={savingAssignedTo}
+                                  style={{
+                                    width: "100%",
+                                    textAlign: "left",
+                                    border: "none",
+                                    background: isCurrent ? "#f8fafc" : "#fff",
+                                    color: isCurrent ? "#0f172a" : "#1e293b",
+                                    padding: "10px 12px",
+                                    fontSize: 13,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  {option.name}{isCurrent ? " (current)" : ""}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                     {companiesError ? <div style={{ color: "#ba0517", fontSize: 12 }}>{companiesError}</div> : null}
