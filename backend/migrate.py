@@ -148,6 +148,47 @@ def migrate(drop_first: bool = False):
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_attachments_lead_id ON lead_attachments (lead_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_attachments_created_at ON lead_attachments (created_at)"))
         conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS lead_jobs (
+                id VARCHAR(36) PRIMARY KEY,
+                lead_id VARCHAR(36) NOT NULL REFERENCES leads(id),
+                company_id VARCHAR(36) NOT NULL REFERENCES companies(id),
+                job_order INTEGER NOT NULL DEFAULT 1,
+                pickup_zip TEXT,
+                delivery_zip TEXT,
+                move_date TEXT,
+                booked_move_date DATE,
+                price NUMERIC(12,2),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_lead_jobs_lead_order UNIQUE (lead_id, job_order)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_jobs_lead_id ON lead_jobs (lead_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_jobs_company_id ON lead_jobs (company_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_jobs_booked_move_date ON lead_jobs (booked_move_date)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_jobs_created_at ON lead_jobs (created_at)"))
+        conn.execute(text("""
+            INSERT INTO lead_jobs (
+                id, lead_id, company_id, job_order, pickup_zip, delivery_zip,
+                move_date, booked_move_date, created_at, updated_at
+            )
+            SELECT
+                md5(random()::text || clock_timestamp()::text || l.id),
+                l.id,
+                l.company_id,
+                1,
+                l.pickup_zip,
+                l.delivery_zip,
+                l.move_date,
+                l.booked_move_date,
+                NOW(),
+                NOW()
+            FROM leads l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM lead_jobs lj WHERE lj.lead_id = l.id
+            )
+        """))
+        conn.execute(text("""
             CREATE TABLE IF NOT EXISTS dispatch_calendar_days (
                 id VARCHAR(36) PRIMARY KEY,
                 company_id VARCHAR(36) NOT NULL REFERENCES companies(id),

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, date, timedelta, timezone
 
 import boto3
@@ -16,7 +17,7 @@ from config import get_config
 from database import get_db
 from libs.common.phone import normalize_digits
 from libs.smartmoving.client import update_opportunity_salesperson
-from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay
+from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob
 from routes.templates import get_company_template
 
 logger = logging.getLogger("moving-crm")
@@ -360,6 +361,10 @@ def _effective_dispatch_date(lead: Lead) -> date | None:
     return lead.booked_move_date or _parse_booked_move_date(lead.move_date)
 
 
+def _effective_job_date(job: LeadJob) -> date | None:
+    return job.booked_move_date or _parse_booked_move_date(job.move_date)
+
+
 def _parse_move_month(value: str) -> tuple[date, date]:
     try:
         year_str, month_str = value.split("-")
@@ -403,42 +408,41 @@ def get_dispatch_calendar(
     # Some legacy/imported leads only have move_date set. Use booked_move_date first,
     # then fallback to parsed move_date so dispatch can still see those jobs.
     rows = (
-        db.query(Lead)
-        .filter(Lead.company_id.in_(target_company_ids))
+        db.query(LeadJob, Lead, Company.name.label("company_name"))
+        .join(Lead, Lead.id == LeadJob.lead_id)
+        .join(Company, Company.id == LeadJob.company_id)
+        .filter(LeadJob.company_id.in_(target_company_ids))
         .filter(Lead.status.in_(DISPATCH_STATUSES))
-        .order_by(Lead.created_at.asc())
+        .order_by(LeadJob.created_at.asc())
         .all()
     )
 
-    filtered: list[tuple[Lead, date]] = []
-    for row in rows:
-        effective_date = _effective_dispatch_date(row)
+    filtered: list[tuple[LeadJob, Lead, str, date]] = []
+    for job, lead, company_name in rows:
+        effective_date = _effective_job_date(job)
         if not effective_date:
             continue
         if month_start <= effective_date < next_month:
-            filtered.append((row, effective_date))
+            filtered.append((job, lead, company_name or "", effective_date))
 
-    filtered.sort(key=lambda item: (item[1], item[0].created_at or datetime.min))
-
-    company_name_by_id = {
-        c.id: c.name
-        for c in db.query(Company).filter(Company.id.in_(target_company_ids)).all()
-    }
+    filtered.sort(key=lambda item: (item[3], item[0].created_at or datetime.min))
 
     return {
         "items": [
             {
-                "id": row.id,
-                "company_id": row.company_id,
-                "company_name": company_name_by_id.get(row.company_id, ""),
-                "full_name": row.full_name or "",
-                "move_date": row.move_date or "",
+                "id": job.id,
+                "lead_id": lead.id,
+                "company_id": job.company_id,
+                "company_name": company_name,
+                "full_name": lead.full_name or "",
+                "move_date": job.move_date or "",
                 "booked_move_date": effective_date.isoformat(),
-                "pickup_zip": row.pickup_zip or "",
-                "delivery_zip": row.delivery_zip or "",
-                "status": row.status or "",
+                "pickup_zip": job.pickup_zip or "",
+                "delivery_zip": job.delivery_zip or "",
+                "price": float(job.price) if job.price is not None else None,
+                "status": lead.status or "",
             }
-            for row, effective_date in filtered
+            for job, lead, company_name, effective_date in filtered
         ]
     }
 
@@ -557,41 +561,44 @@ def search_dispatch_jobs(
 
     pattern = f"%{search.lower()}%"
     rows = (
-        db.query(Lead, Company.name.label("company_name"))
-        .join(Company, Lead.company_id == Company.id)
+        db.query(LeadJob, Lead, Company.name.label("company_name"))
+        .join(Lead, Lead.id == LeadJob.lead_id)
+        .join(Company, LeadJob.company_id == Company.id)
         .filter(
-            Lead.company_id.in_(allowed_company_ids),
+            LeadJob.company_id.in_(allowed_company_ids),
             Lead.status.in_(DISPATCH_STATUSES),
             (
                 Lead.full_name.ilike(pattern)
                 | Lead.leadgen_id.ilike(pattern)
                 | Lead.smartmoving_id.ilike(pattern)
-                | Lead.pickup_zip.ilike(pattern)
-                | Lead.delivery_zip.ilike(pattern)
+                | LeadJob.pickup_zip.ilike(pattern)
+                | LeadJob.delivery_zip.ilike(pattern)
             ),
         )
-        .order_by(Lead.created_at.desc())
+        .order_by(LeadJob.created_at.desc())
         .all()
     )
 
     if user.role == "sales_rep":
-        rows = [(lead, company_name) for lead, company_name in rows if lead.assigned_to == user.id]
+        rows = [(job, lead, company_name) for job, lead, company_name in rows if lead.assigned_to == user.id]
 
     items: list[dict] = []
-    for lead, company_name in rows:
-        effective_date = _effective_dispatch_date(lead)
+    for job, lead, company_name in rows:
+        effective_date = _effective_job_date(job)
         if not effective_date:
             continue
         items.append(
             {
-                "id": lead.id,
-                "company_id": lead.company_id,
+                "id": job.id,
+                "lead_id": lead.id,
+                "company_id": job.company_id,
                 "company_name": company_name or "",
                 "full_name": lead.full_name or "",
                 "booked_move_date": effective_date.isoformat(),
-                "move_date": lead.move_date or "",
-                "pickup_zip": lead.pickup_zip or "",
-                "delivery_zip": lead.delivery_zip or "",
+                "move_date": job.move_date or "",
+                "pickup_zip": job.pickup_zip or "",
+                "delivery_zip": job.delivery_zip or "",
+                "price": float(job.price) if job.price is not None else None,
                 "status": lead.status or "",
                 "leadgen_id": lead.leadgen_id or "",
             }
@@ -719,6 +726,210 @@ def _get_visible_lead_or_404(lead_id: str, user: User, db: Session) -> Lead:
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     return lead
+
+
+def _next_lead_job_order(lead_id: str, db: Session) -> int:
+    max_order = db.query(func.max(LeadJob.job_order)).filter(LeadJob.lead_id == lead_id).scalar()
+    return (int(max_order) if max_order is not None else 0) + 1
+
+
+def _get_or_create_primary_lead_job(lead: Lead, db: Session) -> LeadJob:
+    row = (
+        db.query(LeadJob)
+        .filter(LeadJob.lead_id == lead.id, LeadJob.job_order == 1)
+        .first()
+    )
+    if row:
+        return row
+
+    row = LeadJob(
+        lead_id=lead.id,
+        company_id=lead.company_id,
+        job_order=1,
+        pickup_zip=lead.pickup_zip,
+        delivery_zip=lead.delivery_zip,
+        move_date=lead.move_date,
+        booked_move_date=lead.booked_move_date,
+        price=None,
+    )
+    db.add(row)
+    return row
+
+
+class LeadJobCreate(BaseModel):
+    company_id: str | None = None
+    pickup_zip: str = ""
+    delivery_zip: str = ""
+    move_date: str = ""
+    booked_move_date: str = ""
+    price: float | None = None
+
+
+class LeadJobUpdate(BaseModel):
+    company_id: str | None = None
+    pickup_zip: str | None = None
+    delivery_zip: str | None = None
+    move_date: str | None = None
+    booked_move_date: str | None = None
+    price: float | None = None
+
+
+@router.get("/leads/{lead_id}/jobs")
+def list_lead_jobs(
+    lead_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    _get_or_create_primary_lead_job(lead, db)
+    db.commit()
+
+    rows = (
+        db.query(LeadJob)
+        .filter(LeadJob.lead_id == lead.id)
+        .order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc())
+        .all()
+    )
+    return {"items": [row.to_dict() for row in rows]}
+
+
+@router.post("/leads/{lead_id}/jobs")
+def create_lead_job(
+    lead_id: str,
+    body: LeadJobCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    company_ids = _get_user_company_ids(user, db)
+
+    company_id = (body.company_id or "").strip() or lead.company_id
+    if company_id not in company_ids:
+        raise HTTPException(status_code=403, detail="Not allowed for this company")
+    company_exists = db.query(Company.id).filter(Company.id == company_id).first()
+    if not company_exists:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    move_date = (body.move_date or "").strip()
+    booked_date_raw = (body.booked_move_date or "").strip()
+    booked_date = _parse_booked_move_date(booked_date_raw or move_date)
+    if booked_date_raw and not booked_date:
+        raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
+
+    price_value = None
+    if body.price is not None:
+        try:
+            price_value = Decimal(str(body.price)).quantize(Decimal("0.01"))
+        except (InvalidOperation, ValueError):
+            raise HTTPException(status_code=400, detail="price must be a valid number")
+        if price_value < 0:
+            raise HTTPException(status_code=400, detail="price must be >= 0")
+
+    row = LeadJob(
+        lead_id=lead.id,
+        company_id=company_id,
+        job_order=_next_lead_job_order(lead.id, db),
+        pickup_zip=(body.pickup_zip or "").strip(),
+        delivery_zip=(body.delivery_zip or "").strip(),
+        move_date=move_date,
+        booked_move_date=booked_date,
+        price=price_value,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row.to_dict()
+
+
+@router.patch("/leads/{lead_id}/jobs/{job_id}")
+def update_lead_job(
+    lead_id: str,
+    job_id: str,
+    body: LeadJobUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    row = (
+        db.query(LeadJob)
+        .filter(LeadJob.id == job_id, LeadJob.lead_id == lead.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    payload = body.dict(exclude_unset=True)
+    company_ids = _get_user_company_ids(user, db)
+
+    if "company_id" in payload:
+        next_company_id = (payload.get("company_id") or "").strip()
+        if not next_company_id:
+            raise HTTPException(status_code=400, detail="company_id cannot be empty")
+        if next_company_id not in company_ids:
+            raise HTTPException(status_code=403, detail="Not allowed for this company")
+        company_exists = db.query(Company.id).filter(Company.id == next_company_id).first()
+        if not company_exists:
+            raise HTTPException(status_code=404, detail="Company not found")
+        row.company_id = next_company_id
+
+    if "pickup_zip" in payload:
+        row.pickup_zip = (payload.get("pickup_zip") or "").strip()
+    if "delivery_zip" in payload:
+        row.delivery_zip = (payload.get("delivery_zip") or "").strip()
+    if "move_date" in payload:
+        row.move_date = (payload.get("move_date") or "").strip()
+        if "booked_move_date" not in payload:
+            row.booked_move_date = _parse_booked_move_date(row.move_date)
+
+    if "booked_move_date" in payload:
+        booked_raw = (payload.get("booked_move_date") or "").strip()
+        if not booked_raw:
+            row.booked_move_date = None
+        else:
+            booked = _parse_booked_move_date(booked_raw)
+            if not booked:
+                raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
+            row.booked_move_date = booked
+
+    if "price" in payload:
+        price_raw = payload.get("price")
+        if price_raw is None:
+            row.price = None
+        else:
+            try:
+                price_value = Decimal(str(price_raw)).quantize(Decimal("0.01"))
+            except (InvalidOperation, ValueError):
+                raise HTTPException(status_code=400, detail="price must be a valid number")
+            if price_value < 0:
+                raise HTTPException(status_code=400, detail="price must be >= 0")
+            row.price = price_value
+
+    db.commit()
+    db.refresh(row)
+    return row.to_dict()
+
+
+@router.delete("/leads/{lead_id}/jobs/{job_id}")
+def delete_lead_job(
+    lead_id: str,
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    row = (
+        db.query(LeadJob)
+        .filter(LeadJob.id == job_id, LeadJob.lead_id == lead.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if row.job_order == 1:
+        raise HTTPException(status_code=400, detail="Cannot delete primary lead job")
+
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/leads/{lead_id}/attachments")
@@ -924,6 +1135,13 @@ def update_lead(
     if body.move_date is not None:
         lead.move_date = body.move_date.strip()
         lead.booked_move_date = _parse_booked_move_date(body.move_date)
+
+    primary_job = _get_or_create_primary_lead_job(lead, db)
+    if body.company_id is not None:
+        primary_job.company_id = lead.company_id
+    if body.move_date is not None:
+        primary_job.move_date = lead.move_date
+        primary_job.booked_move_date = lead.booked_move_date
 
     db.commit()
     db.refresh(lead)
@@ -1151,6 +1369,17 @@ def create_lead(
         status=raw_status or "new",
     )
     db.add(lead)
+    db.flush()
+    db.add(LeadJob(
+        lead_id=lead.id,
+        company_id=lead.company_id,
+        job_order=1,
+        pickup_zip=lead.pickup_zip,
+        delivery_zip=lead.delivery_zip,
+        move_date=lead.move_date,
+        booked_move_date=lead.booked_move_date,
+        price=None,
+    ))
     db.commit()
     db.refresh(lead)
     logger.info("Created lead: %s (%s)", lead.full_name, lead.id)

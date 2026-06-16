@@ -26,12 +26,14 @@ type AppUser = {
 
 type LeadJob = {
   id: string;
+  lead_id: string;
   full_name: string;
   move_date: string;
   booked_move_date: string;
   pickup_zip: string;
   delivery_zip: string;
   status: string;
+  price?: number | null;
 };
 
 type DispatchJobSearchResult = LeadJob & {
@@ -158,12 +160,14 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
           setJobSearchResults(
             items.map((item) => ({
               id: String(item.id || ""),
+              lead_id: String(item.lead_id || ""),
               full_name: String(item.full_name || "Unnamed"),
               move_date: String(item.move_date || ""),
               booked_move_date: String(item.booked_move_date || ""),
               pickup_zip: String(item.pickup_zip || ""),
               delivery_zip: String(item.delivery_zip || ""),
               status: String(item.status || ""),
+              price: item.price == null ? null : Number(item.price),
               company_id: String(item.company_id || ""),
               company_name: String(item.company_name || ""),
               leadgen_id: String(item.leadgen_id || ""),
@@ -242,12 +246,14 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
       setCalendarJobs(
         items.map((item) => ({
           id: String(item.id || ""),
+          lead_id: String(item.lead_id || ""),
           full_name: String(item.full_name || "Unnamed"),
           move_date: String(item.move_date || ""),
           booked_move_date: String(item.booked_move_date || ""),
           pickup_zip: String(item.pickup_zip || ""),
           delivery_zip: String(item.delivery_zip || ""),
           status: String(item.status || ""),
+          price: item.price == null ? null : Number(item.price),
         }))
       );
     } catch (err: unknown) {
@@ -489,7 +495,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
 
         <div ref={jobSearchRef} style={{ marginBottom: 12, maxWidth: 520, position: "relative" }}>
           <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569", fontWeight: 600 }}>
-            Search booked job
+            Search dispatch jobs
             <input
               value={jobSearch}
               onChange={(e) => {
@@ -497,7 +503,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 setJobSearchOpen(true);
               }}
               onFocus={() => setJobSearchOpen(true)}
-              placeholder="Search your booked jobs by name, lead id, zip, or SmartMoving id..."
+              placeholder="Search jobs by name, lead id, zip, or SmartMoving id..."
               style={inputStyle}
             />
           </label>
@@ -520,7 +526,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
               }}
             >
               {jobSearchResults.length === 0 && !jobSearchLoading ? (
-                <div style={{ padding: 10, fontSize: 13, color: "#64748b" }}>No booked jobs found.</div>
+                <div style={{ padding: 10, fontSize: 13, color: "#64748b" }}>No jobs found.</div>
               ) : null}
               {jobSearchResults.map((job) => (
                 <button
@@ -744,11 +750,12 @@ function CompanyCalendar({
   onSaveDaySetting: (dayDate: string, isFull: boolean, note: string) => Promise<void>;
 }) {
   const [expandedDays, setExpandedDays] = useState<Record<number, boolean>>({});
-  const [editingDay, setEditingDay] = useState<number | null>(null);
-  const [draftIsFullByDay, setDraftIsFullByDay] = useState<Record<number, boolean>>({});
-  const [draftNoteByDay, setDraftNoteByDay] = useState<Record<number, string>>({});
   const [savingDayByDay, setSavingDayByDay] = useState<Record<number, boolean>>({});
   const [dayErrorByDay, setDayErrorByDay] = useState<Record<number, string>>({});
+  const [noteModalDay, setNoteModalDay] = useState<number | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteModalError, setNoteModalError] = useState("");
+  const [noteModalSaving, setNoteModalSaving] = useState(false);
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
   const firstWeekday = new Date(year, month, 1).getDay();
@@ -780,28 +787,44 @@ function CompanyCalendar({
     return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
   }
 
-  function startEditDay(day: number) {
+  function openNoteModal(day: number) {
     const key = dayDateKey(day);
     const setting = daySettings[key];
-    setDraftIsFullByDay((prev) => ({ ...prev, [day]: Boolean(setting?.is_full) }));
-    setDraftNoteByDay((prev) => ({ ...prev, [day]: setting?.note || "" }));
-    setDayErrorByDay((prev) => ({ ...prev, [day]: "" }));
-    setEditingDay(day);
+    setNoteDraft(setting?.note || "");
+    setNoteModalError("");
+    setNoteModalDay(day);
   }
 
-  async function saveDay(day: number) {
+  async function toggleFullDay(day: number) {
     const key = dayDateKey(day);
-    const isFull = Boolean(draftIsFullByDay[day]);
-    const note = (draftNoteByDay[day] || "").trim();
+    const currentSetting = daySettings[key];
+    const nextIsFull = !Boolean(currentSetting?.is_full);
+    const note = currentSetting?.note || "";
     setSavingDayByDay((prev) => ({ ...prev, [day]: true }));
     setDayErrorByDay((prev) => ({ ...prev, [day]: "" }));
     try {
-      await onSaveDaySetting(key, isFull, note);
-      setEditingDay(null);
+      await onSaveDaySetting(key, nextIsFull, note);
     } catch (err: unknown) {
       setDayErrorByDay((prev) => ({ ...prev, [day]: err instanceof Error ? err.message : "Failed to save day" }));
     } finally {
       setSavingDayByDay((prev) => ({ ...prev, [day]: false }));
+    }
+  }
+
+  async function saveNoteModal() {
+    if (noteModalDay == null) return;
+    const key = dayDateKey(noteModalDay);
+    const currentSetting = daySettings[key];
+    const isFull = Boolean(currentSetting?.is_full);
+    setNoteModalSaving(true);
+    setNoteModalError("");
+    try {
+      await onSaveDaySetting(key, isFull, noteDraft);
+      setNoteModalDay(null);
+    } catch (err: unknown) {
+      setNoteModalError(err instanceof Error ? err.message : "Failed to save note");
+    } finally {
+      setNoteModalSaving(false);
     }
   }
 
@@ -843,9 +866,6 @@ function CompanyCalendar({
             const isExpanded = !!expandedDays[day];
             const visibleJobs = isExpanded ? dayJobs : dayJobs.slice(0, 3);
             const isSelectedDay = selectedJobId ? dayJobs.some((job) => job.id === selectedJobId) : false;
-            const isEditingDay = editingDay === day;
-            const draftIsFull = Boolean(draftIsFullByDay[day]);
-            const draftNote = draftNoteByDay[day] ?? dayNote;
             const isSavingDay = Boolean(savingDayByDay[day]);
             const dayError = dayErrorByDay[day] || "";
             return (
@@ -860,7 +880,36 @@ function CompanyCalendar({
               >
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b" }}>{day}</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <button
+                      type="button"
+                      onClick={() => openNoteModal(day)}
+                      style={{
+                        ...calendarActionIconBtn,
+                        borderColor: dayNote ? "#0176d3" : "#cbd5e1",
+                        background: dayNote ? "#eaf5fe" : "#fff",
+                      }}
+                      title={dayNote ? "View or edit day note" : "Add day note"}
+                      aria-label={dayNote ? "View or edit day note" : "Add day note"}
+                    >
+                      <NoteIcon active={Boolean(dayNote)} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void toggleFullDay(day)}
+                      disabled={isSavingDay}
+                      style={{
+                        ...calendarActionIconBtn,
+                        borderColor: isFullDay ? "#0176d3" : "#cbd5e1",
+                        background: isFullDay ? "#0176d3" : "#fff",
+                        color: isFullDay ? "#fff" : "#334155",
+                        opacity: isSavingDay ? 0.6 : 1,
+                      }}
+                      title={isFullDay ? "Day is full (click to turn off)" : "Mark day as full"}
+                      aria-label={isFullDay ? "Day is full (click to turn off)" : "Mark day as full"}
+                    >
+                      <FullDayIcon active={isFullDay} />
+                    </button>
                     {isFullDay ? (
                       <span style={{ fontSize: 10, fontWeight: 700, color: "#9a3412", background: "#ffedd5", borderRadius: 999, padding: "2px 6px" }}>
                         Full
@@ -878,57 +927,12 @@ function CompanyCalendar({
                     {dayNote.length > 60 ? `${dayNote.slice(0, 60)}...` : dayNote}
                   </div>
                 ) : null}
-                {isEditingDay ? (
-                  <div style={{ marginBottom: 6, border: "1px solid #cbd5e1", borderRadius: 6, padding: 6, background: "#fff" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#334155", marginBottom: 6 }}>
-                      <input
-                        type="checkbox"
-                        checked={draftIsFull}
-                        onChange={(e) => setDraftIsFullByDay((prev) => ({ ...prev, [day]: e.target.checked }))}
-                      />
-                      Mark day as full
-                    </label>
-                    <textarea
-                      value={draftNote}
-                      onChange={(e) => setDraftNoteByDay((prev) => ({ ...prev, [day]: e.target.value }))}
-                      placeholder="Day note"
-                      rows={2}
-                      style={{ width: "100%", boxSizing: "border-box", border: "1px solid #cbd5e1", borderRadius: 4, padding: "4px 6px", fontSize: 11, resize: "vertical" }}
-                    />
-                    {dayError ? <div style={{ marginTop: 4, fontSize: 10, color: "#ba0517" }}>{dayError}</div> : null}
-                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                      <button
-                        type="button"
-                        onClick={() => void saveDay(day)}
-                        disabled={isSavingDay}
-                        style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "3px 7px", fontSize: 11, fontWeight: 600 }}
-                      >
-                        {isSavingDay ? "Saving..." : "Save"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingDay(null)}
-                        disabled={isSavingDay}
-                        style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "3px 7px", fontSize: 11 }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => startEditDay(day)}
-                    style={{ border: "1px dashed #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "2px 6px", fontSize: 10, marginBottom: 6 }}
-                  >
-                    Day options
-                  </button>
-                )}
+                {dayError ? <div style={{ marginBottom: 6, fontSize: 10, color: "#ba0517" }}>{dayError}</div> : null}
                 <div style={{ display: "grid", gap: 4 }}>
                   {visibleJobs.map((job) => (
                     <Link
                       key={job.id}
-                      to={`/leads/${job.id}`}
+                      to={`/leads/${job.lead_id || job.id}`}
                       style={{
                         display: "block",
                         fontSize: 11,
@@ -946,6 +950,7 @@ function CompanyCalendar({
                       <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
                       <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"}{" -> "}{job.delivery_zip || "?"}</div>
                       <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: job.id === selectedJobId ? "#1d4ed8" : "#0369a1" }}>{job.status || "booked"}</div>
+                      {job.price != null ? <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e" }}>${job.price.toFixed(2)}</div> : null}
                     </Link>
                   ))}
                   {dayJobs.length > 3 ? (
@@ -972,7 +977,113 @@ function CompanyCalendar({
           })}
         </div>
       </div>
+
+      {noteModalDay != null ? (
+        <div
+          role="presentation"
+          onClick={() => {
+            if (!noteModalSaving) {
+              setNoteModalDay(null);
+              setNoteModalError("");
+            }
+          }}
+          style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.55)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(540px, 100%)", background: "#fff", borderRadius: 8, border: "1px solid #cbd5e1", boxShadow: "0 20px 36px rgba(15,23,42,0.2)" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 14px", borderBottom: "1px solid #e2e8f0" }}>
+              <strong style={{ fontSize: 14, color: "#0f172a" }}>Day Note • {dayDateKey(noteModalDay)}</strong>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!noteModalSaving) {
+                    setNoteModalDay(null);
+                    setNoteModalError("");
+                  }
+                }}
+                disabled={noteModalSaving}
+                style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
+              >
+                Close
+              </button>
+            </div>
+            <div style={{ padding: 14 }}>
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#334155", fontWeight: 600 }}>
+                Note
+                <textarea
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  placeholder="Add context for dispatchers (parking, access, constraints, etc.)"
+                  rows={6}
+                  style={{ width: "100%", boxSizing: "border-box", border: "1px solid #cbd5e1", borderRadius: 6, padding: "8px 10px", fontSize: 13, resize: "vertical" }}
+                />
+              </label>
+              {noteModalError ? <div style={{ marginTop: 8, fontSize: 12, color: "#ba0517" }}>{noteModalError}</div> : null}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNoteModalDay(null);
+                    setNoteModalError("");
+                  }}
+                  disabled={noteModalSaving}
+                  style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "7px 12px", fontSize: 12, fontWeight: 600 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveNoteModal()}
+                  disabled={noteModalSaving}
+                  style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "7px 12px", fontSize: 12, fontWeight: 600 }}
+                >
+                  {noteModalSaving ? "Saving..." : "Save Note"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
+  );
+}
+
+function NoteIcon({ active }: { active: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">
+      <path
+        d="M6 3h9l3 3v15H6z"
+        fill={active ? "#0176d3" : "none"}
+        stroke={active ? "#0176d3" : "currentColor"}
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path d="M15 3v4h4" fill="none" stroke={active ? "#fff" : "currentColor"} strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M9 11h6M9 14h6" fill="none" stroke={active ? "#fff" : "currentColor"} strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function FullDayIcon({ active }: { active: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">
+      <rect
+        x="3.5"
+        y="5"
+        width="17"
+        height="15"
+        rx="2.5"
+        fill={active ? "#fff" : "none"}
+        stroke={active ? "#fff" : "currentColor"}
+        strokeWidth="1.6"
+      />
+      <path d="M8 3.5v3M16 3.5v3M3.5 9h17" fill="none" stroke={active ? "#fff" : "currentColor"} strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M9 14l2 2 4-4" fill="none" stroke={active ? "#0176d3" : "currentColor"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -1109,4 +1220,18 @@ const calendarDayCell: React.CSSProperties = {
   background: "#fff",
   padding: 6,
   boxSizing: "border-box",
+};
+
+const calendarActionIconBtn: React.CSSProperties = {
+  border: "1px solid #cbd5e1",
+  background: "#fff",
+  color: "#334155",
+  borderRadius: 6,
+  width: 24,
+  height: 24,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 0,
+  cursor: "pointer",
 };

@@ -24,6 +24,28 @@ type LeadAttachment = {
   uploaded_by_name?: string;
 };
 
+type LeadJobItem = {
+  id: string;
+  lead_id: string;
+  company_id: string;
+  company_name: string;
+  job_order: number;
+  pickup_zip: string;
+  delivery_zip: string;
+  move_date: string;
+  booked_move_date: string;
+  price: number | null;
+};
+
+type LeadJobDraft = {
+  company_id: string;
+  pickup_zip: string;
+  delivery_zip: string;
+  move_date: string;
+  booked_move_date: string;
+  price: string;
+};
+
 const USER_FIELDS = ["full_name", "phone_number", "email"];
 const MOVE_FIELDS = [
   "pickup_zip",
@@ -82,6 +104,21 @@ export default function LeadDetail() {
   const [savingStatus, setSavingStatus] = useState(false);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [statusMenuRect, setStatusMenuRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const [leadJobs, setLeadJobs] = useState<LeadJobItem[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(true);
+  const [jobsError, setJobsError] = useState("");
+  const [jobDrafts, setJobDrafts] = useState<Record<string, LeadJobDraft>>({});
+  const [newJobDraft, setNewJobDraft] = useState<LeadJobDraft>({
+    company_id: "",
+    pickup_zip: "",
+    delivery_zip: "",
+    move_date: "",
+    booked_move_date: "",
+    price: "",
+  });
+  const [addingJob, setAddingJob] = useState(false);
+  const [savingJobId, setSavingJobId] = useState("");
+  const [deletingJobId, setDeletingJobId] = useState("");
 
   useEffect(() => {
     fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
@@ -144,9 +181,137 @@ export default function LeadDetail() {
     }
   }
 
+  function draftFromJob(item: LeadJobItem): LeadJobDraft {
+    return {
+      company_id: item.company_id || "",
+      pickup_zip: item.pickup_zip || "",
+      delivery_zip: item.delivery_zip || "",
+      move_date: item.move_date || "",
+      booked_move_date: item.booked_move_date || "",
+      price: item.price == null ? "" : String(item.price),
+    };
+  }
+
+  async function loadLeadJobs() {
+    setJobsLoading(true);
+    setJobsError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs`, { headers: authHeaders(token) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { items?: Array<Record<string, unknown>> };
+      const rows = Array.isArray(data.items) ? data.items : [];
+      const parsed: LeadJobItem[] = rows.map((item) => ({
+        id: String(item.id || ""),
+        lead_id: String(item.lead_id || ""),
+        company_id: String(item.company_id || ""),
+        company_name: String(item.company_name || ""),
+        job_order: Number(item.job_order || 0),
+        pickup_zip: String(item.pickup_zip || ""),
+        delivery_zip: String(item.delivery_zip || ""),
+        move_date: String(item.move_date || ""),
+        booked_move_date: String(item.booked_move_date || ""),
+        price: item.price == null ? null : Number(item.price),
+      }));
+      setLeadJobs(parsed);
+      setJobDrafts(Object.fromEntries(parsed.map((item) => [item.id, draftFromJob(item)])));
+      setNewJobDraft((prev) => ({ ...prev, company_id: prev.company_id || String(lead?.company_id || "") }));
+    } catch (err: unknown) {
+      setJobsError(err instanceof Error ? err.message : "Failed to load jobs");
+      setLeadJobs([]);
+      setJobDrafts({});
+    } finally {
+      setJobsLoading(false);
+    }
+  }
+
   useEffect(() => {
     void loadAttachments();
   }, [leadId, token]);
+
+  useEffect(() => {
+    void loadLeadJobs();
+  }, [leadId, token]);
+
+  useEffect(() => {
+    setNewJobDraft((prev) => ({ ...prev, company_id: prev.company_id || String(lead?.company_id || "") }));
+  }, [lead?.company_id]);
+
+  async function saveJob(jobId: string) {
+    const draft = jobDrafts[jobId];
+    if (!draft) return;
+    setSavingJobId(jobId);
+    setJobsError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({
+          company_id: draft.company_id,
+          pickup_zip: draft.pickup_zip,
+          delivery_zip: draft.delivery_zip,
+          move_date: draft.move_date,
+          booked_move_date: draft.booked_move_date,
+          price: draft.price.trim() === "" ? null : Number(draft.price),
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await loadLeadJobs();
+    } catch (err: unknown) {
+      setJobsError(err instanceof Error ? err.message : "Failed to save job");
+    } finally {
+      setSavingJobId("");
+    }
+  }
+
+  async function addJob() {
+    setAddingJob(true);
+    setJobsError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({
+          company_id: newJobDraft.company_id || String(lead?.company_id || ""),
+          pickup_zip: newJobDraft.pickup_zip,
+          delivery_zip: newJobDraft.delivery_zip,
+          move_date: newJobDraft.move_date,
+          booked_move_date: newJobDraft.booked_move_date,
+          price: newJobDraft.price.trim() === "" ? null : Number(newJobDraft.price),
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setNewJobDraft({
+        company_id: String(lead?.company_id || ""),
+        pickup_zip: "",
+        delivery_zip: "",
+        move_date: "",
+        booked_move_date: "",
+        price: "",
+      });
+      await loadLeadJobs();
+    } catch (err: unknown) {
+      setJobsError(err instanceof Error ? err.message : "Failed to add job");
+    } finally {
+      setAddingJob(false);
+    }
+  }
+
+  async function deleteJob(jobId: string) {
+    setDeletingJobId(jobId);
+    setJobsError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await loadLeadJobs();
+    } catch (err: unknown) {
+      setJobsError(err instanceof Error ? err.message : "Failed to delete job");
+    } finally {
+      setDeletingJobId("");
+    }
+  }
 
   async function uploadAttachments(files: File[]) {
     if (files.length === 0) return;
@@ -1024,6 +1189,118 @@ export default function LeadDetail() {
           </div>
         );
       })()}
+
+      <div style={sectionStyle}>
+        <div style={sectionHeader}>Jobs</div>
+        <div style={{ padding: 12, display: "grid", gap: 12 }}>
+          {jobsError ? <p style={{ margin: 0, color: "#ba0517", fontSize: 12 }}>{jobsError}</p> : null}
+          {jobsLoading ? <p style={{ margin: 0, color: "#64748b", fontSize: 12 }}>Loading jobs...</p> : null}
+
+          {!jobsLoading ? (
+            <div style={{ display: "grid", gap: 10 }}>
+              {leadJobs.map((job) => {
+                const draft = jobDrafts[job.id] || draftFromJob(job);
+                const primary = job.job_order === 1;
+                const busy = savingJobId === job.id || deletingJobId === job.id;
+                return (
+                  <div key={job.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: primary ? "#f8fbff" : "#fff" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                      <strong style={{ fontSize: 13, color: "#0f172a" }}>Job {job.job_order}</strong>
+                      {primary ? <span style={{ fontSize: 11, color: "#1d4ed8", fontWeight: 700 }}>Primary</span> : null}
+                    </div>
+
+                    <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>
+                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                        Company
+                        <select
+                          value={draft.company_id}
+                          onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, company_id: e.target.value } }))}
+                          style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12, background: "#fff" }}
+                        >
+                          {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+                        </select>
+                      </label>
+                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                        Pickup Zip
+                        <input value={draft.pickup_zip} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, pickup_zip: e.target.value } }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+                      </label>
+                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                        Delivery Zip
+                        <input value={draft.delivery_zip} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, delivery_zip: e.target.value } }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+                      </label>
+                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                        Move Date
+                        <input type="date" value={draft.move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, move_date: e.target.value } }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+                      </label>
+                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                        Booked Date
+                        <input type="date" value={draft.booked_move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, booked_move_date: e.target.value } }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+                      </label>
+                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                        Price
+                        <input value={draft.price} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, price: e.target.value } }))} placeholder="0.00" style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+                      </label>
+                    </div>
+
+                    <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                      <button type="button" onClick={() => void saveJob(job.id)} disabled={busy} style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}>
+                        {savingJobId === job.id ? "Saving..." : "Save Job"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!primary && window.confirm("Delete this job?")) void deleteJob(job.id);
+                        }}
+                        disabled={busy || primary}
+                        style={{ border: "1px solid #dddbda", background: "#fff", color: primary ? "#94a3b8" : "#ba0517", borderRadius: 4, padding: "5px 10px", fontSize: 12 }}
+                      >
+                        {deletingJobId === job.id ? "Deleting..." : "Delete"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 10, display: "grid", gap: 8 }}>
+            <strong style={{ fontSize: 12, color: "#334155" }}>Add Job</strong>
+            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                Company
+                <select value={newJobDraft.company_id} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, company_id: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12, background: "#fff" }}>
+                  {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                Pickup Zip
+                <input value={newJobDraft.pickup_zip} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, pickup_zip: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                Delivery Zip
+                <input value={newJobDraft.delivery_zip} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, delivery_zip: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                Move Date
+                <input type="date" value={newJobDraft.move_date} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, move_date: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                Booked Date
+                <input type="date" value={newJobDraft.booked_move_date} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, booked_move_date: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                Price
+                <input value={newJobDraft.price} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, price: e.target.value }))} placeholder="0.00" style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+              </label>
+            </div>
+            <div>
+              <button type="button" onClick={() => void addJob()} disabled={addingJob} style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "6px 12px", fontSize: 12, fontWeight: 600 }}>
+                {addingJob ? "Adding..." : "Add Job"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div style={sectionStyle}>
         <div style={sectionHeader}>Move Details</div>

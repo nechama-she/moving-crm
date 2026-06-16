@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, Boolean, UniqueConstraint, LargeBinary
+from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, Boolean, UniqueConstraint, LargeBinary, Numeric
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -254,6 +254,45 @@ class LeadAttachment(Base):
             "file_size": self.file_size or 0,
             "uploaded_by": self.uploaded_by or "",
             "created_at": self.created_at.isoformat() if self.created_at else "",
+        }
+
+
+class LeadJob(Base):
+    __tablename__ = "lead_jobs"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
+    company_id = Column(String(36), ForeignKey("companies.id"), nullable=False, index=True)
+    job_order = Column(Integer, nullable=False, default=1)
+    pickup_zip = Column(Text)
+    delivery_zip = Column(Text)
+    move_date = Column(Text)
+    booked_move_date = Column(Date)
+    price = Column(Numeric(12, 2))
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
+
+    lead = relationship("Lead", foreign_keys=[lead_id])
+    company = relationship("Company", foreign_keys=[company_id])
+
+    __table_args__ = (
+        UniqueConstraint("lead_id", "job_order", name="uq_lead_jobs_lead_order"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "lead_id": self.lead_id,
+            "company_id": self.company_id,
+            "company_name": self.company.name if self.company else "",
+            "job_order": self.job_order,
+            "pickup_zip": self.pickup_zip or "",
+            "delivery_zip": self.delivery_zip or "",
+            "move_date": self.move_date or "",
+            "booked_move_date": self.booked_move_date.isoformat() if self.booked_move_date else "",
+            "price": float(self.price) if self.price is not None else None,
+            "created_at": self.created_at.isoformat() if self.created_at else "",
+            "updated_at": self.updated_at.isoformat() if self.updated_at else "",
         }
 
 
