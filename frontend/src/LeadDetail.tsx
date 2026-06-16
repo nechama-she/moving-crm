@@ -1475,7 +1475,7 @@ export default function LeadDetail() {
         </div>
       </div>
 
-      {(user?.role === "admin" || user?.role === "rep") &&
+      {!isDispatchUser && (user?.role === "admin" || user?.role === "sales_rep") &&
         (otherFields.length > 0 || META_FIELDS.some((k) => allKeys.includes(k))) &&
         renderSection("Other Info", [...META_FIELDS, ...otherFields])}
 
