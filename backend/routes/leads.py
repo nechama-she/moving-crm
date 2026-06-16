@@ -431,6 +431,7 @@ def get_dispatch_calendar(
             {
                 "id": job.id,
                 "lead_id": lead.id,
+                "job_order": int(job.job_order or 0),
                 "company_id": job.company_id,
                 "company_name": company_name,
                 "full_name": lead.full_name or "",
@@ -590,6 +591,7 @@ def search_dispatch_jobs(
             {
                 "id": job.id,
                 "lead_id": lead.id,
+                "job_order": int(job.job_order or 0),
                 "company_id": job.company_id,
                 "company_name": company_name or "",
                 "full_name": lead.full_name or "",

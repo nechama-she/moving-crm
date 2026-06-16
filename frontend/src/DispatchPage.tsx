@@ -27,6 +27,7 @@ type AppUser = {
 type LeadJob = {
   id: string;
   lead_id: string;
+  job_order?: number;
   full_name: string;
   move_date: string;
   booked_move_date: string;
@@ -55,6 +56,15 @@ function monthKey(d: Date): string {
 function parseCalendarDate(raw: string): Date | null {
   const value = (raw || "").trim();
   if (!value) return null;
+  const ymd = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (ymd) {
+    const year = Number(ymd[1]);
+    const month = Number(ymd[2]);
+    const day = Number(ymd[3]);
+    const localDate = new Date(year, month - 1, day);
+    if (Number.isNaN(localDate.getTime())) return null;
+    return localDate;
+  }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed;
@@ -161,6 +171,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
             items.map((item) => ({
               id: String(item.id || ""),
               lead_id: String(item.lead_id || ""),
+              job_order: Number(item.job_order || 0),
               full_name: String(item.full_name || "Unnamed"),
               move_date: String(item.move_date || ""),
               booked_move_date: String(item.booked_move_date || ""),
@@ -247,6 +258,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
         items.map((item) => ({
           id: String(item.id || ""),
           lead_id: String(item.lead_id || ""),
+          job_order: Number(item.job_order || 0),
           full_name: String(item.full_name || "Unnamed"),
           move_date: String(item.move_date || ""),
           booked_move_date: String(item.booked_move_date || ""),
@@ -458,7 +470,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   if (showCalendar) {
     return (
       <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
-        <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Dispatcher Console</h1>
+        <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Dispatcher Calender</h1>
         <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
           Jobs grouped by booked move date for the selected company and month.
         </p>
@@ -483,7 +495,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
           </div>
         ) : null}
 
-        {calendarLoading ? <p style={{ color: "#3e3e3c", fontSize: 13 }}>Loading calendar...</p> : null}
+        {calendarLoading ? <p style={{ color: "#3e3e3c", fontSize: 13 }}>Loading calender...</p> : null}
 
         {!calendarLoading && dispatchCompanies.length === 0 ? (
           <div style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", padding: 14 }}>
@@ -935,7 +947,7 @@ function CompanyCalendar({
                 {dayError ? <div style={{ marginBottom: 6, fontSize: 10, color: "#ba0517" }}>{dayError}</div> : null}
                 {dayJobs.length > 0 ? (
                   <div style={{ display: "grid", gap: 6 }}>
-                    <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 2 }}>
+                    <div style={{ display: "flex", gap: 2, overflowX: "auto", padding: 2, border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff" }}>
                       {dayJobs.map((job, idx) => {
                         const isActive = idx === normalizedTab;
                         return (
@@ -944,9 +956,8 @@ function CompanyCalendar({
                             type="button"
                             onClick={() => setSelectedJobTabByDay((prev) => ({ ...prev, [day]: idx }))}
                             style={{
-                              border: isActive ? "1px solid #0176d3" : "1px solid #cbd5e1",
-                              borderBottom: isActive ? "2px solid #0176d3" : "1px solid #cbd5e1",
-                              background: isActive ? "#eaf5fe" : "#fff",
+                              border: "none",
+                              background: isActive ? "#eaf5fe" : "transparent",
                               color: isActive ? "#014486" : "#334155",
                               borderRadius: 4,
                               padding: "3px 8px",
@@ -956,7 +967,7 @@ function CompanyCalendar({
                               cursor: "pointer",
                             }}
                           >
-                            {`Job ${idx + 1}`}
+                            {`Job ${job.job_order || idx + 1}`}
                           </button>
                         );
                       })}
