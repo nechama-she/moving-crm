@@ -732,10 +732,7 @@ export default function LeadDetail() {
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end", marginLeft: "auto" }}>
                         <button
                           type="button"
-                          onClick={() => {
-                            setFilesModalOpen(false);
-                            void openPreview(attachment.id, attachment.file_name, attachment.content_type);
-                          }}
+                          onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
                           style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
                         >
                           Preview
