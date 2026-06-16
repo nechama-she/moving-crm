@@ -73,7 +73,7 @@ export default function LeadDetail() {
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<"conversations" | "activity">("conversations");
+  const [activeTab, setActiveTab] = useState<"conversations" | "activity" | "files">("conversations");
   const [editingUser, setEditingUser] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
@@ -95,6 +95,7 @@ export default function LeadDetail() {
   const [attachmentsSort, setAttachmentsSort] = useState<"newest" | "name" | "size">("newest");
   const [dragOver, setDragOver] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [filesModalOpen, setFilesModalOpen] = useState(false);
   const [previewTitle, setPreviewTitle] = useState("");
   const [previewType, setPreviewType] = useState<"image" | "pdf" | "text" | "none">("none");
   const [previewText, setPreviewText] = useState("");
@@ -119,6 +120,7 @@ export default function LeadDetail() {
   const [addingJob, setAddingJob] = useState(false);
   const [savingJobId, setSavingJobId] = useState("");
   const [deletingJobId, setDeletingJobId] = useState("");
+  const [activeJobTabId, setActiveJobTabId] = useState("");
 
   useEffect(() => {
     fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
@@ -235,6 +237,17 @@ export default function LeadDetail() {
   useEffect(() => {
     setNewJobDraft((prev) => ({ ...prev, company_id: prev.company_id || String(lead?.company_id || "") }));
   }, [lead?.company_id]);
+
+  useEffect(() => {
+    if (leadJobs.length === 0) {
+      setActiveJobTabId("");
+      return;
+    }
+    if (activeJobTabId === "__new__") return;
+    if (!activeJobTabId || !leadJobs.some((job) => job.id === activeJobTabId)) {
+      setActiveJobTabId(leadJobs[0].id);
+    }
+  }, [leadJobs, activeJobTabId]);
 
   async function saveJob(jobId: string) {
     const draft = jobDrafts[jobId];
@@ -467,6 +480,12 @@ export default function LeadDetail() {
     return rows;
   }, [attachments, attachmentsQuery, attachmentsSort]);
 
+  const quickAttachments = useMemo(() => {
+    return [...attachments]
+      .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
+      .slice(0, 4);
+  }, [attachments]);
+
   useEffect(() => {
     function onDocMouseDown(event: MouseEvent) {
       const target = event.target as Node;
@@ -607,135 +626,6 @@ export default function LeadDetail() {
         {user?.role === "dispatch" ? "← Back to Dispatch" : "← Back to Leads"}
       </button>
 
-      <div style={{ marginBottom: 20, border: "1px solid #d8dde6", borderRadius: 10, background: "#fff", boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)", overflow: "hidden" }}>
-        <div style={{ padding: "10px 16px", background: "#f3f2f2", borderBottom: "1px solid #dddbda", fontWeight: 700, fontSize: 12, color: "#3e3e3c", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-          Job Files
-        </div>
-        <div style={{ padding: 12 }}>
-          <div
-            style={{ border: dragOver ? "2px dashed #0176d3" : "2px dashed #cbd5e1", borderRadius: 10, padding: 14, background: dragOver ? "#f0f8ff" : "#f8fafc", marginBottom: 12 }}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-              const files = Array.from(e.dataTransfer.files || []);
-              void uploadAttachments(files);
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, border: "1px solid #d8dde6", borderRadius: 6, padding: "7px 12px", fontSize: 12, fontWeight: 600, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff", whiteSpace: "nowrap" }}>
-              <input
-                type="file"
-                multiple
-                disabled={uploadingCount > 0}
-                style={{ display: "none" }}
-                onChange={(e) => {
-                  const files = Array.from(e.target.files || []);
-                  void uploadAttachments(files);
-                  e.currentTarget.value = "";
-                }}
-              />
-              {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload Files"}
-            </label>
-            <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>Drag files here or click upload. Max 15 MB each.</span>
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) auto", gap: 8, marginBottom: 12 }}>
-            <input
-              value={attachmentsQuery}
-              onChange={(e) => setAttachmentsQuery(e.target.value)}
-              placeholder="Search files..."
-              style={{ border: "1px solid #d8dde6", borderRadius: 6, padding: "8px 10px", width: "100%", minWidth: 0, fontSize: 12, boxSizing: "border-box" }}
-            />
-            <select
-              value={attachmentsSort}
-              onChange={(e) => setAttachmentsSort(e.target.value as "newest" | "name" | "size")}
-              style={{ border: "1px solid #d8dde6", borderRadius: 6, padding: "8px 10px", fontSize: 12, background: "#fff", minWidth: 110 }}
-            >
-              <option value="newest">Newest</option>
-              <option value="name">Name</option>
-              <option value="size">Size</option>
-            </select>
-          </div>
-
-          {attachmentsError ? <p style={{ margin: "0 0 10px", color: "#ba0517", fontSize: 12 }}>{attachmentsError}</p> : null}
-          {attachmentsLoading ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>Loading files...</p> : null}
-          {!attachmentsLoading && filteredAttachments.length === 0 ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>No files found.</p> : null}
-          {!attachmentsLoading && filteredAttachments.length > 0 ? (
-            <div style={{ display: "grid", gap: 8 }}>
-              {filteredAttachments.map((attachment) => (
-                <div key={attachment.id} style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", background: "#fff", flexWrap: "wrap" }}>
-                  <div style={{ minWidth: 0, display: "flex", alignItems: "flex-start", gap: 10, flex: "1 1 320px" }}>
-                    <div style={{ minWidth: 42, height: 28, borderRadius: 6, background: "#eef2ff", color: "#1e3a8a", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
-                      {fileIcon(attachment.file_name)}
-                    </div>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                    {renamingId === attachment.id ? (
-                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                        <input
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "6px 8px", fontSize: 12, width: "min(100%, 280px)", minWidth: 0 }}
-                        />
-                        <button type="button" onClick={() => void renameAttachment(attachment.id, renameValue)} style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "3px 8px", fontSize: 11 }}>Save</button>
-                        <button type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }} style={{ border: "1px solid #dddbda", background: "#fff", color: "#475569", borderRadius: 4, padding: "3px 8px", fontSize: 11 }}>Cancel</button>
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{attachment.file_name}</div>
-                    )}
-                    <div style={{ fontSize: 11, color: "#64748b" }}>
-                      {Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB
-                      {attachment.created_at ? ` • ${new Date(attachment.created_at).toLocaleString()}` : ""}
-                      {attachment.uploaded_by_name ? ` • ${attachment.uploaded_by_name}` : ""}
-                    </div>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end", marginLeft: "auto" }}>
-                    <button
-                      type="button"
-                      onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
-                      style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
-                    >
-                      Preview
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void downloadAttachment(attachment.id, attachment.file_name)}
-                      style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "4px 8px", fontSize: 12, fontWeight: 600 }}
-                    >
-                      Download
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setRenamingId(attachment.id);
-                        setRenameValue(attachment.file_name);
-                      }}
-                      style={{ border: "1px solid #dddbda", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
-                    >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (window.confirm("Delete this file?")) {
-                          void deleteAttachment(attachment.id);
-                        }
-                      }}
-                      style={{ border: "1px solid #dddbda", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </div>
-
       {previewOpen ? (
         <div
           role="presentation"
@@ -757,6 +647,118 @@ export default function LeadDetail() {
               {previewType === "pdf" ? <iframe src={previewUrl} title={previewTitle} style={{ width: "100%", height: 650, border: "none" }} /> : null}
               {previewType === "text" ? <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12, color: "#334155", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: 10 }}>{previewText}</pre> : null}
               {previewType === "none" ? <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>{previewText}</p> : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {filesModalOpen ? (
+        <div
+          role="presentation"
+          onClick={() => setFilesModalOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.55)", zIndex: 85, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(980px, 100%)", maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 8, border: "1px solid #cbd5e1" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid #e2e8f0" }}>
+              <strong style={{ fontSize: 13, color: "#0f172a" }}>All Files</strong>
+              <button type="button" onClick={() => setFilesModalOpen(false)} style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}>Close</button>
+            </div>
+            <div style={{ padding: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) auto", gap: 8, marginBottom: 12 }}>
+                <input
+                  value={attachmentsQuery}
+                  onChange={(e) => setAttachmentsQuery(e.target.value)}
+                  placeholder="Search files..."
+                  style={{ border: "1px solid #d8dde6", borderRadius: 6, padding: "8px 10px", width: "100%", minWidth: 0, fontSize: 12, boxSizing: "border-box" }}
+                />
+                <select
+                  value={attachmentsSort}
+                  onChange={(e) => setAttachmentsSort(e.target.value as "newest" | "name" | "size")}
+                  style={{ border: "1px solid #d8dde6", borderRadius: 6, padding: "8px 10px", fontSize: 12, background: "#fff", minWidth: 110 }}
+                >
+                  <option value="newest">Newest</option>
+                  <option value="name">Name</option>
+                  <option value="size">Size</option>
+                </select>
+              </div>
+
+              {attachmentsLoading ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>Loading files...</p> : null}
+              {!attachmentsLoading && filteredAttachments.length === 0 ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>No files found.</p> : null}
+              {!attachmentsLoading && filteredAttachments.length > 0 ? (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {filteredAttachments.map((attachment) => (
+                    <div key={attachment.id} style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", background: "#fff", flexWrap: "wrap" }}>
+                      <div style={{ minWidth: 0, display: "flex", alignItems: "flex-start", gap: 10, flex: "1 1 320px" }}>
+                        <div style={{ minWidth: 42, height: 28, borderRadius: 6, background: "#eef2ff", color: "#1e3a8a", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                          {fileIcon(attachment.file_name)}
+                        </div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          {renamingId === attachment.id ? (
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                              <input
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "6px 8px", fontSize: 12, width: "min(100%, 280px)", minWidth: 0 }}
+                              />
+                              <button type="button" onClick={() => void renameAttachment(attachment.id, renameValue)} style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "3px 8px", fontSize: 11 }}>Save</button>
+                              <button type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }} style={{ border: "1px solid #dddbda", background: "#fff", color: "#475569", borderRadius: 4, padding: "3px 8px", fontSize: 11 }}>Cancel</button>
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{attachment.file_name}</div>
+                          )}
+                          <div style={{ fontSize: 11, color: "#64748b" }}>
+                            {Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB
+                            {attachment.created_at ? ` • ${new Date(attachment.created_at).toLocaleString()}` : ""}
+                            {attachment.uploaded_by_name ? ` • ${attachment.uploaded_by_name}` : ""}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end", marginLeft: "auto" }}>
+                        <button
+                          type="button"
+                          onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
+                          style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
+                        >
+                          Preview
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void downloadAttachment(attachment.id, attachment.file_name)}
+                          style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "4px 8px", fontSize: 12, fontWeight: 600 }}
+                        >
+                          Download
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRenamingId(attachment.id);
+                            setRenameValue(attachment.file_name);
+                          }}
+                          style={{ border: "1px solid #dddbda", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm("Delete this file?")) {
+                              void deleteAttachment(attachment.id);
+                            }
+                          }}
+                          style={{ border: "1px solid #dddbda", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -1100,8 +1102,8 @@ export default function LeadDetail() {
                 <span style={{ fontSize: 18 }}>🏢</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={tileLabel}>Company Assignment</div>
-                  <div style={{ fontSize: 12, color: "#334155", marginBottom: 4 }}>
-                    Current: <strong>{String(lead.company_name || "-")}</strong>
+                  <div style={{ fontSize: 12, color: "#334155", marginBottom: 6 }}>
+                    Select assigned company
                   </div>
                   <div ref={companyMenuRef} style={{ position: "relative" }}>
                     <button
@@ -1109,25 +1111,29 @@ export default function LeadDetail() {
                       onClick={() => canEditCompany && setCompanyMenuOpen((v) => !v)}
                       disabled={!canEditCompany || savingCompany}
                       style={{
-                        width: "100%",
-                        display: "flex",
+                        display: "inline-flex",
                         alignItems: "center",
-                        justifyContent: "space-between",
-                        padding: "7px 10px",
+                        gap: 6,
+                        maxWidth: "100%",
+                        padding: "4px 11px",
+                        borderRadius: 999,
                         border: "1px solid #cbd5e1",
-                        borderRadius: 6,
-                        background: "#fff",
-                        color: "#0f172a",
-                        fontSize: 13,
-                        fontWeight: 600,
+                        background: "#f8fafc",
+                        color: "#334155",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        letterSpacing: "0.04em",
+                        textTransform: "uppercase",
+                        whiteSpace: "nowrap",
                         cursor: canEditCompany ? "pointer" : "default",
+                        boxShadow: "0 1px 2px rgba(15,23,42,.08)",
                       }}
                     >
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {savingCompany ? "Updating..." : selectedCompanyName}
                       </span>
-                      <span style={{ marginLeft: 8, color: "#475569", fontSize: 12 }}>
-                        {companyMenuOpen ? "▲" : "▼"}
+                      <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.9 }}>
+                        ▾
                       </span>
                     </button>
 
@@ -1142,11 +1148,14 @@ export default function LeadDetail() {
                           overflowY: "auto",
                           background: "#fff",
                           border: "1px solid #cbd5e1",
-                          borderRadius: 6,
-                          boxShadow: "0 8px 24px rgba(15,23,42,.12)",
+                          borderRadius: 12,
+                          boxShadow: "0 20px 50px rgba(15,23,42,.22)",
                           zIndex: 20,
                         }}
                       >
+                        <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                          Change company
+                        </div>
                         {companies.map((company) => {
                           const isCurrent = company.id === String(lead.company_id || "");
                           return (
@@ -1162,9 +1171,9 @@ export default function LeadDetail() {
                                 width: "100%",
                                 textAlign: "left",
                                 border: "none",
-                                background: isCurrent ? "#f1f5f9" : "#fff",
+                                background: isCurrent ? "#f8fafc" : "#fff",
                                 color: isCurrent ? "#0f172a" : "#1e293b",
-                                padding: "8px 10px",
+                                padding: "10px 12px",
                                 fontSize: 13,
                                 cursor: "pointer",
                               }}
@@ -1181,7 +1190,7 @@ export default function LeadDetail() {
                   ) : !canEditCompany ? (
                     <div style={{ marginTop: 4, color: "#706e6b", fontSize: 12 }}>Only admins can update lead company.</div>
                   ) : (
-                    <div style={{ marginTop: 4, color: "#64748b", fontSize: 12 }}>Click the company name to open options and choose a different company.</div>
+                    <div style={{ marginTop: 4, color: "#64748b", fontSize: 12 }}>Click to choose company.</div>
                   )}
                 </div>
               </div>
@@ -1198,12 +1207,60 @@ export default function LeadDetail() {
 
           {!jobsLoading ? (
             <div style={{ display: "grid", gap: 10 }}>
-              {leadJobs.map((job) => {
+              <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>
+                {leadJobs.map((job) => {
+                  const active = activeJobTabId === job.id;
+                  return (
+                    <button
+                      key={job.id}
+                      type="button"
+                      onClick={() => setActiveJobTabId(job.id)}
+                      style={{
+                        border: active ? "1px solid #0176d3" : "1px solid #cbd5e1",
+                        borderBottom: active ? "2px solid #0176d3" : "1px solid #cbd5e1",
+                        background: active ? "#eaf5fe" : "#fff",
+                        color: active ? "#014486" : "#334155",
+                        borderRadius: 4,
+                        padding: "5px 10px",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {`Job ${job.job_order}`}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => setActiveJobTabId("__new__")}
+                  style={{
+                    border: activeJobTabId === "__new__" ? "1px solid #0176d3" : "1px solid #cbd5e1",
+                    borderBottom: activeJobTabId === "__new__" ? "2px solid #0176d3" : "1px solid #cbd5e1",
+                    background: activeJobTabId === "__new__" ? "#eaf5fe" : "#fff",
+                    color: activeJobTabId === "__new__" ? "#014486" : "#334155",
+                    borderRadius: 4,
+                    width: 34,
+                    fontSize: 16,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                  aria-label="Add job"
+                  title="Add job"
+                >
+                  +
+                </button>
+              </div>
+
+              {activeJobTabId !== "__new__" && leadJobs.some((j) => j.id === activeJobTabId) ? (() => {
+                const job = leadJobs.find((j) => j.id === activeJobTabId)!;
                 const draft = jobDrafts[job.id] || draftFromJob(job);
                 const primary = job.job_order === 1;
                 const busy = savingJobId === job.id || deletingJobId === job.id;
                 return (
-                  <div key={job.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: primary ? "#f8fbff" : "#fff" }}>
+                  <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: primary ? "#f8fbff" : "#fff" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
                       <strong style={{ fontSize: 13, color: "#0f172a" }}>Job {job.job_order}</strong>
                       {primary ? <span style={{ fontSize: 11, color: "#1d4ed8", fontWeight: 700 }}>Primary</span> : null}
@@ -1259,10 +1316,11 @@ export default function LeadDetail() {
                     </div>
                   </div>
                 );
-              })}
+              })() : null}
             </div>
           ) : null}
 
+          {activeJobTabId === "__new__" ? (
           <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 10, display: "grid", gap: 8 }}>
             <strong style={{ fontSize: 12, color: "#334155" }}>Add Job</strong>
             <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>
@@ -1299,6 +1357,7 @@ export default function LeadDetail() {
               </button>
             </div>
           </div>
+          ) : null}
         </div>
       </div>
 
@@ -1355,6 +1414,21 @@ export default function LeadDetail() {
             >
               Activity
             </button>
+            <button
+              onClick={() => setActiveTab("files")}
+              style={{
+                padding: "10px 18px",
+                border: "none",
+                borderBottom: activeTab === "files" ? "3px solid #0176d3" : "3px solid transparent",
+                background: activeTab === "files" ? "#fff" : "transparent",
+                fontWeight: 600,
+                fontSize: 13,
+                color: activeTab === "files" ? "#032d60" : "#3e3e3c",
+                cursor: "pointer",
+              }}
+            >
+              Files
+            </button>
           </div>
           <div style={{ padding: 16 }}>
             {activeTab === "conversations" ? (
@@ -1370,8 +1444,78 @@ export default function LeadDetail() {
               ) : (
                 <p style={{ color: "#706e6b", fontSize: 13 }}>No conversation available for this lead.</p>
               )
-            ) : (
+            ) : activeTab === "activity" ? (
               <TasksPanel leadId={leadId!} token={token} />
+            ) : (
+              <div style={{ display: "grid", gap: 12 }}>
+                <div
+                  style={{ border: dragOver ? "2px dashed #0176d3" : "2px dashed #cbd5e1", borderRadius: 10, padding: 14, background: dragOver ? "#f0f8ff" : "#f8fafc" }}
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOver(false);
+                    const files = Array.from(e.dataTransfer.files || []);
+                    void uploadAttachments(files);
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 8, border: "1px solid #d8dde6", borderRadius: 6, padding: "7px 12px", fontSize: 12, fontWeight: 600, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff", whiteSpace: "nowrap" }}>
+                      <input
+                        type="file"
+                        multiple
+                        disabled={uploadingCount > 0}
+                        style={{ display: "none" }}
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || []);
+                          void uploadAttachments(files);
+                          e.currentTarget.value = "";
+                        }}
+                      />
+                      {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload Files"}
+                    </label>
+                    <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>Drop files here or click upload. Max 15 MB each.</span>
+                  </div>
+                </div>
+
+                {attachmentsError ? <p style={{ margin: 0, color: "#ba0517", fontSize: 12 }}>{attachmentsError}</p> : null}
+                {attachmentsLoading ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>Loading files...</p> : null}
+                {!attachmentsLoading && quickAttachments.length === 0 ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>No files yet.</p> : null}
+                {!attachmentsLoading && quickAttachments.length > 0 ? (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {quickAttachments.map((attachment) => (
+                      <div key={attachment.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 10px", background: "#fff", flexWrap: "wrap" }}>
+                        <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 10, flex: "1 1 280px" }}>
+                          <div style={{ minWidth: 42, height: 26, borderRadius: 6, background: "#eef2ff", color: "#1e3a8a", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                            {fileIcon(attachment.file_name)}
+                          </div>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{attachment.file_name}</div>
+                            <div style={{ fontSize: 11, color: "#64748b" }}>{Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB</div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
+                          style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
+                        >
+                          Preview
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setFilesModalOpen(true)}
+                    style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 12px", fontSize: 12, fontWeight: 600 }}
+                  >
+                    More
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </div>

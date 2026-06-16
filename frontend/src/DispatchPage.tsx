@@ -749,7 +749,7 @@ function CompanyCalendar({
   onNextMonth: () => void;
   onSaveDaySetting: (dayDate: string, isFull: boolean, note: string) => Promise<void>;
 }) {
-  const [expandedDays, setExpandedDays] = useState<Record<number, boolean>>({});
+  const [selectedJobTabByDay, setSelectedJobTabByDay] = useState<Record<number, number>>({});
   const [savingDayByDay, setSavingDayByDay] = useState<Record<number, boolean>>({});
   const [dayErrorByDay, setDayErrorByDay] = useState<Record<number, string>>({});
   const [noteModalDay, setNoteModalDay] = useState<number | null>(null);
@@ -780,7 +780,11 @@ function CompanyCalendar({
     const parsed = parseCalendarDate(selectedJob.booked_move_date || selectedJob.move_date);
     if (!parsed || parsed.getFullYear() !== year || parsed.getMonth() !== month) return;
     const day = parsed.getDate();
-    setExpandedDays((prev) => (prev[day] ? prev : { ...prev, [day]: true }));
+    const dayJobs = jobsByDay.get(day) || [];
+    const selectedIndex = dayJobs.findIndex((job) => job.id === selectedJobId);
+    if (selectedIndex >= 0) {
+      setSelectedJobTabByDay((prev) => (prev[day] === selectedIndex ? prev : { ...prev, [day]: selectedIndex }));
+    }
   }, [jobs, selectedJobId, year, month]);
 
   function dayDateKey(day: number): string {
@@ -863,11 +867,12 @@ function CompanyCalendar({
             const daySetting = daySettings[dayKey];
             const isFullDay = Boolean(daySetting?.is_full);
             const dayNote = daySetting?.note || "";
-            const isExpanded = !!expandedDays[day];
-            const visibleJobs = isExpanded ? dayJobs : dayJobs.slice(0, 3);
             const isSelectedDay = selectedJobId ? dayJobs.some((job) => job.id === selectedJobId) : false;
             const isSavingDay = Boolean(savingDayByDay[day]);
             const dayError = dayErrorByDay[day] || "";
+            const selectedTab = selectedJobTabByDay[day] ?? 0;
+            const normalizedTab = Math.min(selectedTab, Math.max(dayJobs.length - 1, 0));
+            const activeJob = dayJobs[normalizedTab] || null;
             return (
               <div
                 key={day}
@@ -928,50 +933,59 @@ function CompanyCalendar({
                   </div>
                 ) : null}
                 {dayError ? <div style={{ marginBottom: 6, fontSize: 10, color: "#ba0517" }}>{dayError}</div> : null}
-                <div style={{ display: "grid", gap: 4 }}>
-                  {visibleJobs.map((job) => (
-                    <Link
-                      key={job.id}
-                      to={`/leads/${job.lead_id || job.id}`}
-                      style={{
-                        display: "block",
-                        fontSize: 11,
-                        color: job.id === selectedJobId ? "#0f172a" : "#0b5cab",
-                        textDecoration: "none",
-                        background: job.id === selectedJobId ? "#bfdbfe" : "#eaf5fe",
-                        border: job.id === selectedJobId ? "1px solid #2563eb" : "1px solid #c9e6ff",
-                        borderRadius: 4,
-                        padding: "4px 5px",
-                        overflow: "hidden",
-                        boxShadow: job.id === selectedJobId ? "0 0 0 1px rgba(37, 99, 235, 0.2)" : undefined,
-                      }}
-                      title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
-                    >
-                      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
-                      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"}{" -> "}{job.delivery_zip || "?"}</div>
-                      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: job.id === selectedJobId ? "#1d4ed8" : "#0369a1" }}>{job.status || "booked"}</div>
-                      {job.price != null ? <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e" }}>${job.price.toFixed(2)}</div> : null}
-                    </Link>
-                  ))}
-                  {dayJobs.length > 3 ? (
-                    <button
-                      type="button"
-                      onClick={() => setExpandedDays((prev) => ({ ...prev, [day]: !prev[day] }))}
-                      style={{
-                        border: "none",
-                        background: "transparent",
-                        padding: 0,
-                        margin: 0,
-                        textAlign: "left",
-                        fontSize: 11,
-                        color: "#0b5cab",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {isExpanded ? "Show less" : `+${dayJobs.length - 3} more`}
-                    </button>
-                  ) : null}
-                </div>
+                {dayJobs.length > 0 ? (
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 2 }}>
+                      {dayJobs.map((job, idx) => {
+                        const isActive = idx === normalizedTab;
+                        return (
+                          <button
+                            key={job.id}
+                            type="button"
+                            onClick={() => setSelectedJobTabByDay((prev) => ({ ...prev, [day]: idx }))}
+                            style={{
+                              border: isActive ? "1px solid #0176d3" : "1px solid #cbd5e1",
+                              borderBottom: isActive ? "2px solid #0176d3" : "1px solid #cbd5e1",
+                              background: isActive ? "#eaf5fe" : "#fff",
+                              color: isActive ? "#014486" : "#334155",
+                              borderRadius: 4,
+                              padding: "3px 8px",
+                              fontSize: 11,
+                              fontWeight: 600,
+                              whiteSpace: "nowrap",
+                              cursor: "pointer",
+                            }}
+                          >
+                            {`Job ${idx + 1}`}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {activeJob ? (
+                      <Link
+                        to={`/leads/${activeJob.lead_id || activeJob.id}`}
+                        style={{
+                          display: "block",
+                          fontSize: 11,
+                          color: activeJob.id === selectedJobId ? "#0f172a" : "#0b5cab",
+                          textDecoration: "none",
+                          background: activeJob.id === selectedJobId ? "#bfdbfe" : "#eaf5fe",
+                          border: activeJob.id === selectedJobId ? "1px solid #2563eb" : "1px solid #c9e6ff",
+                          borderRadius: 4,
+                          padding: "4px 5px",
+                          overflow: "hidden",
+                          boxShadow: activeJob.id === selectedJobId ? "0 0 0 1px rgba(37, 99, 235, 0.2)" : undefined,
+                        }}
+                        title={`${activeJob.full_name} • ${activeJob.pickup_zip || "?"} -> ${activeJob.delivery_zip || "?"} • ${activeJob.status}`}
+                      >
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{activeJob.full_name}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{activeJob.pickup_zip || "?"}{" -> "}{activeJob.delivery_zip || "?"}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: activeJob.id === selectedJobId ? "#1d4ed8" : "#0369a1" }}>{activeJob.status || "booked"}</div>
+                        {activeJob.price != null ? <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e" }}>${activeJob.price.toFixed(2)}</div> : null}
+                      </Link>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             );
           })}
