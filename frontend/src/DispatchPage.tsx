@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
@@ -71,6 +71,7 @@ function parseCalendarDate(raw: string): Date | null {
 }
 
 export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
+  const location = useLocation();
   const { token, user } = useAuth();
   const isAdmin = user?.role === "admin";
   const isDispatch = user?.role === "dispatch";
@@ -110,6 +111,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
+  const handledRouteJobIdRef = useRef("");
 
   const dispatchUsers = useMemo(
     () => users.filter((u) => u.role === "dispatch").sort((a, b) => a.name.localeCompare(b.name)),
@@ -134,6 +136,15 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     void loadDispatchCalendarJobs(selectedDispatchCompanyId, dispatchMonth);
     void loadDispatchCalendarDaySettings(selectedDispatchCompanyId, dispatchMonth);
   }, [token, showCalendar, selectedDispatchCompanyId, dispatchMonth]);
+
+  useEffect(() => {
+    if (!showCalendar || dispatchCompanies.length === 0) return;
+    const params = new URLSearchParams(location.search);
+    const routeJobId = (params.get("job_id") || "").trim();
+    if (!routeJobId) return;
+    if (handledRouteJobIdRef.current === routeJobId) return;
+    void focusDispatchJobById(routeJobId);
+  }, [showCalendar, dispatchCompanies, location.search]);
 
   useEffect(() => {
     function onDocMouseDown(event: MouseEvent) {
@@ -354,6 +365,45 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     setJobSearch(job.full_name);
     setJobSearchResults([]);
     setJobSearchOpen(false);
+  }
+
+  async function focusDispatchJobById(jobId: string) {
+    try {
+      const params = new URLSearchParams({ query: jobId, limit: "25" });
+      const res = await fetch(`${API_BASE}/api/dispatch-job-search?${params.toString()}`, { headers: authHeaders(token) });
+      if (!res.ok) throw new Error(`Dispatch job search HTTP ${res.status}`);
+      const data = (await res.json()) as { items?: Array<Record<string, unknown>> };
+      const items = Array.isArray(data.items) ? data.items : [];
+      const mapped = items.map((item) => ({
+        id: String(item.id || ""),
+        lead_id: String(item.lead_id || ""),
+        job_order: Number(item.job_order || 0),
+        full_name: String(item.full_name || "Unnamed"),
+        move_date: String(item.move_date || ""),
+        booked_move_date: String(item.booked_move_date || ""),
+        pickup_zip: String(item.pickup_zip || ""),
+        delivery_zip: String(item.delivery_zip || ""),
+        status: String(item.status || ""),
+        price: item.price == null ? null : Number(item.price),
+        company_id: String(item.company_id || ""),
+        company_name: String(item.company_name || ""),
+        leadgen_id: String(item.leadgen_id || ""),
+      }));
+      const match = mapped.find((item) => item.id === jobId);
+      if (!match) return;
+      const parsed = parseCalendarDate(match.move_date);
+      if (parsed) {
+        setDispatchMonth(new Date(parsed.getFullYear(), parsed.getMonth(), 1));
+      }
+      setSelectedDispatchCompanyId(match.company_id);
+      setSelectedJobId(match.id);
+      setJobSearch(match.full_name);
+      setJobSearchResults([]);
+      setJobSearchOpen(false);
+      handledRouteJobIdRef.current = jobId;
+    } catch {
+      // Keep current calendar view if deep-link job lookup fails.
+    }
   }
 
   function toggleCompany(companyId: string) {
@@ -947,31 +997,6 @@ function CompanyCalendar({
                 {dayError ? <div style={{ marginBottom: 6, fontSize: 10, color: "#ba0517" }}>{dayError}</div> : null}
                 {dayJobs.length > 0 ? (
                   <div style={{ display: "grid", gap: 6 }}>
-                    <div style={{ display: "flex", gap: 2, overflowX: "auto", padding: 2, border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff" }}>
-                      {dayJobs.map((job, idx) => {
-                        const isActive = idx === normalizedTab;
-                        return (
-                          <button
-                            key={job.id}
-                            type="button"
-                            onClick={() => setSelectedJobTabByDay((prev) => ({ ...prev, [day]: idx }))}
-                            style={{
-                              border: "none",
-                              background: isActive ? "#eaf5fe" : "transparent",
-                              color: isActive ? "#014486" : "#334155",
-                              borderRadius: 4,
-                              padding: "3px 8px",
-                              fontSize: 11,
-                              fontWeight: 600,
-                              whiteSpace: "nowrap",
-                              cursor: "pointer",
-                            }}
-                          >
-                            {`Job ${job.job_order || idx + 1}`}
-                          </button>
-                        );
-                      })}
-                    </div>
                     {activeJob ? (
                       <Link
                         to={`/leads/${activeJob.lead_id || activeJob.id}`}
@@ -992,8 +1017,36 @@ function CompanyCalendar({
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{activeJob.full_name}</div>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{activeJob.pickup_zip || "?"}{" -> "}{activeJob.delivery_zip || "?"}</div>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: activeJob.id === selectedJobId ? "#1d4ed8" : "#0369a1" }}>{activeJob.status || "booked"}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{`Job ${activeJob.job_order || normalizedTab + 1}`}</div>
                         {activeJob.price != null ? <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e" }}>${activeJob.price.toFixed(2)}</div> : null}
                       </Link>
+                    ) : null}
+                    {dayJobs.length > 1 ? (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {dayJobs.map((job, idx) => {
+                          const isActive = idx === normalizedTab;
+                          return (
+                            <button
+                              key={job.id}
+                              type="button"
+                              onClick={() => setSelectedJobTabByDay((prev) => ({ ...prev, [day]: idx }))}
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                color: isActive ? "#1d4ed8" : "#475569",
+                                padding: 0,
+                                fontSize: 11,
+                                fontWeight: 600,
+                                whiteSpace: "nowrap",
+                                cursor: "pointer",
+                                textDecoration: isActive ? "none" : "underline",
+                              }}
+                            >
+                              {`Job ${job.job_order || idx + 1}`}
+                            </button>
+                          );
+                        })}
+                      </div>
                     ) : null}
                   </div>
                 ) : null}
