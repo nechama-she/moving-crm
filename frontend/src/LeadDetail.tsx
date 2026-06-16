@@ -1398,7 +1398,8 @@ export default function LeadDetail() {
         </div>
       </div>
 
-      {(otherFields.length > 0 || META_FIELDS.some((k) => allKeys.includes(k))) &&
+      {(user?.role === "admin" || user?.role === "rep") &&
+        (otherFields.length > 0 || META_FIELDS.some((k) => allKeys.includes(k))) &&
         renderSection("Other Info", [...META_FIELDS, ...otherFields])}
 
       {!isDispatchUser ? (
