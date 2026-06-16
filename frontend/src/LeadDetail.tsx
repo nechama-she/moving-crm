@@ -73,7 +73,7 @@ export default function LeadDetail() {
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<"conversations" | "activity" | "files">("conversations");
+  const [activeTab, setActiveTab] = useState<"conversations" | "activity">("conversations");
   const [editingUser, setEditingUser] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
@@ -93,7 +93,6 @@ export default function LeadDetail() {
   const [uploadingCount, setUploadingCount] = useState(0);
   const [attachmentsQuery, setAttachmentsQuery] = useState("");
   const [attachmentsSort, setAttachmentsSort] = useState<"newest" | "name" | "size">("newest");
-  const [dragOver, setDragOver] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [filesModalOpen, setFilesModalOpen] = useState(false);
   const [previewTitle, setPreviewTitle] = useState("");
@@ -931,97 +930,180 @@ export default function LeadDetail() {
                     }}
                   />
                 ) : (
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
-                      {name || "—"}
-                    </div>
-                    <div ref={statusMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
+                        {name || "—"}
+                      </div>
+                      <div ref={statusMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                        <button
+                          ref={statusButtonRef}
+                          type="button"
+                          aria-haspopup="menu"
+                          aria-expanded={statusMenuOpen}
+                          onClick={() => setStatusMenuOpen((v) => !v)}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            padding: "4px 11px",
+                            borderRadius: 999,
+                            border: "none",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            letterSpacing: "0.04em",
+                            textTransform: "uppercase",
+                            whiteSpace: "nowrap",
+                            cursor: "pointer",
+                            boxShadow: "0 1px 2px rgba(15,23,42,.08)",
+                            ...statusStyle,
+                          }}
+                        >
+                          {statusLabel}
+                          <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.9 }}>▾</span>
+                        </button>
+                      </div>
+                      {statusMenuOpen && statusMenuRect ? createPortal(
+                        <div
+                          role="menu"
+                          style={{
+                            position: "fixed",
+                            top: statusMenuRect.top,
+                            left: statusMenuRect.left,
+                            minWidth: Math.max(statusMenuRect.width, 220),
+                            background: "#fff",
+                            border: "1px solid #d8dde6",
+                            borderRadius: 12,
+                            boxShadow: "0 20px 50px rgba(15,23,42,.22)",
+                            overflow: "hidden",
+                            zIndex: 99999,
+                          }}
+                        >
+                          <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                            Change status
+                          </div>
+                          {LEAD_STATUS_OPTIONS.map((option) => {
+                            const optionLabel = option.charAt(0).toUpperCase() + option.slice(1);
+                            const active = option === statusValue;
+                            const optionColor = String((statusStyles[option] || {}).color || "#64748b");
+                            return (
+                              <button
+                                key={option}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={active}
+                                disabled={savingStatus}
+                                onClick={() => {
+                                  void saveStatus(option);
+                                }}
+                                style={{
+                                  width: "100%",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  gap: 10,
+                                  border: "none",
+                                  background: active ? "#f8fafc" : "#fff",
+                                  padding: "10px 12px",
+                                  textAlign: "left",
+                                  cursor: savingStatus ? "default" : "pointer",
+                                  color: "#0f172a",
+                                }}
+                              >
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                                  <span style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: optionColor }} />
+                                  <span style={{ fontSize: 13, fontWeight: 600 }}>{optionLabel}</span>
+                                </span>
+                                {active ? <span style={{ fontSize: 12, color: "#0176d3", fontWeight: 700 }}>Current</span> : null}
+                              </button>
+                            );
+                          })}
+                          {savingStatus ? <div style={{ padding: "8px 12px", fontSize: 12, color: "#64748b", borderTop: "1px solid #eef2f7" }}>Saving...</div> : null}
+                        </div>,
+                        document.body
+                      ) : null}
+                      <div ref={companyMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
                       <button
-                        ref={statusButtonRef}
                         type="button"
-                        aria-haspopup="menu"
-                        aria-expanded={statusMenuOpen}
-                        onClick={() => setStatusMenuOpen((v) => !v)}
+                        onClick={() => canEditCompany && setCompanyMenuOpen((v) => !v)}
+                        disabled={!canEditCompany || savingCompany}
                         style={{
                           display: "inline-flex",
                           alignItems: "center",
                           gap: 6,
+                          maxWidth: 240,
                           padding: "4px 11px",
                           borderRadius: 999,
-                          border: "none",
+                          border: "1px solid #cbd5e1",
+                          background: "#f8fafc",
+                          color: "#334155",
                           fontSize: 11,
                           fontWeight: 700,
                           letterSpacing: "0.04em",
                           textTransform: "uppercase",
                           whiteSpace: "nowrap",
-                          cursor: "pointer",
+                          cursor: canEditCompany ? "pointer" : "default",
                           boxShadow: "0 1px 2px rgba(15,23,42,.08)",
-                          ...statusStyle,
                         }}
+                        title={savingCompany ? "Updating company" : selectedCompanyName}
                       >
-                        {statusLabel}
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {savingCompany ? "Updating..." : selectedCompanyName}
+                        </span>
                         <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.9 }}>▾</span>
                       </button>
-                    </div>
-                    {statusMenuOpen && statusMenuRect ? createPortal(
-                      <div
-                        role="menu"
-                        style={{
-                          position: "fixed",
-                          top: statusMenuRect.top,
-                          left: statusMenuRect.left,
-                          minWidth: Math.max(statusMenuRect.width, 220),
-                          background: "#fff",
-                          border: "1px solid #d8dde6",
-                          borderRadius: 12,
-                          boxShadow: "0 20px 50px rgba(15,23,42,.22)",
-                          overflow: "hidden",
-                          zIndex: 99999,
-                        }}
-                      >
-                        <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                          Change status
+
+                      {canEditCompany && companyMenuOpen ? (
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: "calc(100% + 4px)",
+                            left: 0,
+                            right: 0,
+                            minWidth: 260,
+                            maxHeight: 220,
+                            overflowY: "auto",
+                            background: "#fff",
+                            border: "1px solid #cbd5e1",
+                            borderRadius: 12,
+                            boxShadow: "0 20px 50px rgba(15,23,42,.22)",
+                            zIndex: 20,
+                          }}
+                        >
+                          <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                            Change company
+                          </div>
+                          {companies.map((company) => {
+                            const isCurrent = company.id === String(lead.company_id || "");
+                            return (
+                              <button
+                                key={company.id}
+                                type="button"
+                                onClick={() => {
+                                  setEditCompanyId(company.id);
+                                  void saveCompany(company.id);
+                                }}
+                                disabled={savingCompany}
+                                style={{
+                                  width: "100%",
+                                  textAlign: "left",
+                                  border: "none",
+                                  background: isCurrent ? "#f8fafc" : "#fff",
+                                  color: isCurrent ? "#0f172a" : "#1e293b",
+                                  padding: "10px 12px",
+                                  fontSize: 13,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {company.name}{isCurrent ? " (current)" : ""}
+                              </button>
+                            );
+                          })}
                         </div>
-                        {LEAD_STATUS_OPTIONS.map((option) => {
-                          const optionLabel = option.charAt(0).toUpperCase() + option.slice(1);
-                          const active = option === statusValue;
-                          const optionColor = String((statusStyles[option] || {}).color || "#64748b");
-                          return (
-                            <button
-                              key={option}
-                              type="button"
-                              role="menuitemradio"
-                              aria-checked={active}
-                              disabled={savingStatus}
-                              onClick={() => {
-                                void saveStatus(option);
-                              }}
-                              style={{
-                                width: "100%",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                gap: 10,
-                                border: "none",
-                                background: active ? "#f8fafc" : "#fff",
-                                padding: "10px 12px",
-                                textAlign: "left",
-                                cursor: savingStatus ? "default" : "pointer",
-                                color: "#0f172a",
-                              }}
-                            >
-                              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                                <span style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: optionColor }} />
-                                <span style={{ fontSize: 13, fontWeight: 600 }}>{optionLabel}</span>
-                              </span>
-                              {active ? <span style={{ fontSize: 12, color: "#0176d3", fontWeight: 700 }}>Current</span> : null}
-                            </button>
-                          );
-                        })}
-                        {savingStatus ? <div style={{ padding: "8px 12px", fontSize: 12, color: "#64748b", borderTop: "1px solid #eef2f7" }}>Saving...</div> : null}
-                      </div>,
-                      document.body
-                    ) : null}
+                      ) : null}
+                      </div>
+                    </div>
+                    {companiesError ? <div style={{ color: "#ba0517", fontSize: 12 }}>{companiesError}</div> : null}
                   </div>
                 )}
               </div>
@@ -1099,99 +1181,48 @@ export default function LeadDetail() {
               </div>
 
               <div style={tile}>
-                <span style={{ fontSize: 18 }}>🏢</span>
+                <span style={{ fontSize: 18 }}>📎</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={tileLabel}>Company Assignment</div>
-                  <div style={{ fontSize: 12, color: "#334155", marginBottom: 6 }}>
-                    Select assigned company
-                  </div>
-                  <div ref={companyMenuRef} style={{ position: "relative" }}>
-                    <button
-                      type="button"
-                      onClick={() => canEditCompany && setCompanyMenuOpen((v) => !v)}
-                      disabled={!canEditCompany || savingCompany}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6,
-                        maxWidth: "100%",
-                        padding: "4px 11px",
-                        borderRadius: 999,
-                        border: "1px solid #cbd5e1",
-                        background: "#f8fafc",
-                        color: "#334155",
-                        fontSize: 11,
-                        fontWeight: 700,
-                        letterSpacing: "0.04em",
-                        textTransform: "uppercase",
-                        whiteSpace: "nowrap",
-                        cursor: canEditCompany ? "pointer" : "default",
-                        boxShadow: "0 1px 2px rgba(15,23,42,.08)",
-                      }}
-                    >
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {savingCompany ? "Updating..." : selectedCompanyName}
-                      </span>
-                      <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.9 }}>
-                        ▾
-                      </span>
-                    </button>
-
-                    {canEditCompany && companyMenuOpen ? (
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: "calc(100% + 4px)",
-                          left: 0,
-                          right: 0,
-                          maxHeight: 220,
-                          overflowY: "auto",
-                          background: "#fff",
-                          border: "1px solid #cbd5e1",
-                          borderRadius: 12,
-                          boxShadow: "0 20px 50px rgba(15,23,42,.22)",
-                          zIndex: 20,
+                  <div style={tileLabel}>Files</div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <label style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, border: "1px solid #d8dde6", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 600, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff", whiteSpace: "nowrap", width: "fit-content" }}>
+                      <input
+                        type="file"
+                        multiple
+                        disabled={uploadingCount > 0}
+                        style={{ display: "none" }}
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || []);
+                          void uploadAttachments(files);
+                          e.currentTarget.value = "";
                         }}
-                      >
-                        <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                          Change company
-                        </div>
-                        {companies.map((company) => {
-                          const isCurrent = company.id === String(lead.company_id || "");
-                          return (
-                            <button
-                              key={company.id}
-                              type="button"
-                              onClick={() => {
-                                setEditCompanyId(company.id);
-                                void saveCompany(company.id);
-                              }}
-                              disabled={savingCompany}
-                              style={{
-                                width: "100%",
-                                textAlign: "left",
-                                border: "none",
-                                background: isCurrent ? "#f8fafc" : "#fff",
-                                color: isCurrent ? "#0f172a" : "#1e293b",
-                                padding: "10px 12px",
-                                fontSize: 13,
-                                cursor: "pointer",
-                              }}
-                            >
-                              {company.name}{isCurrent ? " (current)" : ""}
-                            </button>
-                          );
-                        })}
+                      />
+                      {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload"}
+                    </label>
+                    {attachmentsError ? <div style={{ color: "#ba0517", fontSize: 12 }}>{attachmentsError}</div> : null}
+                    {!attachmentsLoading && quickAttachments.length === 0 ? <div style={{ color: "#706e6b", fontSize: 12 }}>No files yet.</div> : null}
+                    {!attachmentsLoading && quickAttachments.length > 0 ? (
+                      <div style={{ display: "grid", gap: 4 }}>
+                        {quickAttachments.slice(0, 2).map((attachment) => (
+                          <button
+                            key={attachment.id}
+                            type="button"
+                            onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
+                            style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: "4px 6px", fontSize: 11, color: "#334155", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}
+                          >
+                            {attachment.file_name}
+                          </button>
+                        ))}
                       </div>
                     ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setFilesModalOpen(true)}
+                      style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "5px 10px", fontSize: 12, fontWeight: 600, width: "fit-content" }}
+                    >
+                      More
+                    </button>
                   </div>
-                  {companiesError ? (
-                    <div style={{ marginTop: 4, color: "#ba0517", fontSize: 12 }}>{companiesError}</div>
-                  ) : !canEditCompany ? (
-                    <div style={{ marginTop: 4, color: "#706e6b", fontSize: 12 }}>Only admins can update lead company.</div>
-                  ) : (
-                    <div style={{ marginTop: 4, color: "#64748b", fontSize: 12 }}>Click to choose company.</div>
-                  )}
                 </div>
               </div>
             </div>
@@ -1414,21 +1445,6 @@ export default function LeadDetail() {
             >
               Activity
             </button>
-            <button
-              onClick={() => setActiveTab("files")}
-              style={{
-                padding: "10px 18px",
-                border: "none",
-                borderBottom: activeTab === "files" ? "3px solid #0176d3" : "3px solid transparent",
-                background: activeTab === "files" ? "#fff" : "transparent",
-                fontWeight: 600,
-                fontSize: 13,
-                color: activeTab === "files" ? "#032d60" : "#3e3e3c",
-                cursor: "pointer",
-              }}
-            >
-              Files
-            </button>
           </div>
           <div style={{ padding: 16 }}>
             {activeTab === "conversations" ? (
@@ -1446,77 +1462,7 @@ export default function LeadDetail() {
               )
             ) : activeTab === "activity" ? (
               <TasksPanel leadId={leadId!} token={token} />
-            ) : (
-              <div style={{ display: "grid", gap: 12 }}>
-                <div
-                  style={{ border: dragOver ? "2px dashed #0176d3" : "2px dashed #cbd5e1", borderRadius: 10, padding: 14, background: dragOver ? "#f0f8ff" : "#f8fafc" }}
-                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                  onDragLeave={() => setDragOver(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setDragOver(false);
-                    const files = Array.from(e.dataTransfer.files || []);
-                    void uploadAttachments(files);
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                    <label style={{ display: "inline-flex", alignItems: "center", gap: 8, border: "1px solid #d8dde6", borderRadius: 6, padding: "7px 12px", fontSize: 12, fontWeight: 600, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff", whiteSpace: "nowrap" }}>
-                      <input
-                        type="file"
-                        multiple
-                        disabled={uploadingCount > 0}
-                        style={{ display: "none" }}
-                        onChange={(e) => {
-                          const files = Array.from(e.target.files || []);
-                          void uploadAttachments(files);
-                          e.currentTarget.value = "";
-                        }}
-                      />
-                      {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload Files"}
-                    </label>
-                    <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>Drop files here or click upload. Max 15 MB each.</span>
-                  </div>
-                </div>
-
-                {attachmentsError ? <p style={{ margin: 0, color: "#ba0517", fontSize: 12 }}>{attachmentsError}</p> : null}
-                {attachmentsLoading ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>Loading files...</p> : null}
-                {!attachmentsLoading && quickAttachments.length === 0 ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>No files yet.</p> : null}
-                {!attachmentsLoading && quickAttachments.length > 0 ? (
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {quickAttachments.map((attachment) => (
-                      <div key={attachment.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 10px", background: "#fff", flexWrap: "wrap" }}>
-                        <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 10, flex: "1 1 280px" }}>
-                          <div style={{ minWidth: 42, height: 26, borderRadius: 6, background: "#eef2ff", color: "#1e3a8a", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
-                            {fileIcon(attachment.file_name)}
-                          </div>
-                          <div style={{ minWidth: 0, flex: 1 }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{attachment.file_name}</div>
-                            <div style={{ fontSize: 11, color: "#64748b" }}>{Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB</div>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
-                          style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
-                        >
-                          Preview
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setFilesModalOpen(true)}
-                    style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 12px", fontSize: 12, fontWeight: 600 }}
-                  >
-                    More
-                  </button>
-                </div>
-              </div>
-            )}
+            ) : null}
           </div>
         </div>
       ) : null}
