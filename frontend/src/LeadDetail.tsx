@@ -629,7 +629,7 @@ export default function LeadDetail() {
         <div
           role="presentation"
           onClick={closePreview}
-          style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.55)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.55)", zIndex: 95, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
         >
           <div
             role="dialog"
@@ -655,19 +655,31 @@ export default function LeadDetail() {
         <div
           role="presentation"
           onClick={() => setFilesModalOpen(false)}
-          style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.55)", zIndex: 85, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          style={{ position: "fixed", inset: 0, zIndex: 85 }}
         >
           <div
             role="dialog"
             aria-modal="true"
             onClick={(e) => e.stopPropagation()}
-            style={{ width: "min(980px, 100%)", maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 8, border: "1px solid #cbd5e1" }}
+            style={{
+              position: "fixed",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: "min(480px, 100vw)",
+              background: "#fff",
+              borderLeft: "1px solid #cbd5e1",
+              boxShadow: "-8px 0 32px rgba(15,23,42,.14)",
+              display: "flex",
+              flexDirection: "column",
+              zIndex: 86,
+            }}
           >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid #e2e8f0" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
               <strong style={{ fontSize: 13, color: "#0f172a" }}>All Files</strong>
               <button type="button" onClick={() => setFilesModalOpen(false)} style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}>Close</button>
             </div>
-            <div style={{ padding: 12 }}>
+            <div style={{ padding: 12, overflowY: "auto", flex: 1 }}>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) auto", gap: 8, marginBottom: 12 }}>
                 <input
                   value={attachmentsQuery}
@@ -720,7 +732,10 @@ export default function LeadDetail() {
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end", marginLeft: "auto" }}>
                         <button
                           type="button"
-                          onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
+                          onClick={() => {
+                            setFilesModalOpen(false);
+                            void openPreview(attachment.id, attachment.file_name, attachment.content_type);
+                          }}
                           style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
                         >
                           Preview
@@ -1185,20 +1200,29 @@ export default function LeadDetail() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={tileLabel}>Files</div>
                   <div style={{ display: "grid", gap: 6 }}>
-                    <label style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, border: "1px solid #d8dde6", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 600, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff", whiteSpace: "nowrap", width: "fit-content" }}>
-                      <input
-                        type="file"
-                        multiple
-                        disabled={uploadingCount > 0}
-                        style={{ display: "none" }}
-                        onChange={(e) => {
-                          const files = Array.from(e.target.files || []);
-                          void uploadAttachments(files);
-                          e.currentTarget.value = "";
-                        }}
-                      />
-                      {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload"}
-                    </label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <label style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, border: "1px solid #d8dde6", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 600, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff", whiteSpace: "nowrap", width: "fit-content" }}>
+                        <input
+                          type="file"
+                          multiple
+                          disabled={uploadingCount > 0}
+                          style={{ display: "none" }}
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files || []);
+                            void uploadAttachments(files);
+                            e.currentTarget.value = "";
+                          }}
+                        />
+                        {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload"}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setFilesModalOpen(true)}
+                        style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "5px 10px", fontSize: 12, fontWeight: 600, width: "fit-content" }}
+                      >
+                        More
+                      </button>
+                    </div>
                     {attachmentsError ? <div style={{ color: "#ba0517", fontSize: 12 }}>{attachmentsError}</div> : null}
                     {!attachmentsLoading && quickAttachments.length === 0 ? <div style={{ color: "#706e6b", fontSize: 12 }}>No files yet.</div> : null}
                     {!attachmentsLoading && quickAttachments.length > 0 ? (
@@ -1215,13 +1239,6 @@ export default function LeadDetail() {
                         ))}
                       </div>
                     ) : null}
-                    <button
-                      type="button"
-                      onClick={() => setFilesModalOpen(true)}
-                      style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "5px 10px", fontSize: 12, fontWeight: 600, width: "fit-content" }}
-                    >
-                      More
-                    </button>
                   </div>
                 </div>
               </div>
@@ -1324,10 +1341,6 @@ export default function LeadDetail() {
                         Booked Date
                         <input type="date" value={draft.booked_move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, booked_move_date: e.target.value } }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
                       </label>
-                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
-                        Price
-                        <input value={draft.price} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, price: e.target.value } }))} placeholder="0.00" style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
-                      </label>
                     </div>
 
                     <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
@@ -1377,10 +1390,6 @@ export default function LeadDetail() {
                 Booked Date
                 <input type="date" value={newJobDraft.booked_move_date} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, booked_move_date: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
               </label>
-              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
-                Price
-                <input value={newJobDraft.price} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, price: e.target.value }))} placeholder="0.00" style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
-              </label>
             </div>
             <div>
               <button type="button" onClick={() => void addJob()} disabled={addingJob} style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "6px 12px", fontSize: 12, fontWeight: 600 }}>
@@ -1390,23 +1399,6 @@ export default function LeadDetail() {
           </div>
           ) : null}
         </div>
-      </div>
-
-      <div style={sectionStyle}>
-        <div style={sectionHeader}>Move Details</div>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <tbody>
-            <tr>
-              <td style={cellLabel}>Route</td>
-              <td style={cellValue}>
-                {formatValue("pickup_zip", lead.pickup_zip)} → {formatValue("delivery_zip", lead.delivery_zip)}
-              </td>
-            </tr>
-            {renderRow("move_size")}
-            {renderRow("when_is_the_move?")}
-            {renderRow("are_you_moving_within_the_state_or_out_of_state?")}
-          </tbody>
-        </table>
       </div>
 
       {(otherFields.length > 0 || META_FIELDS.some((k) => allKeys.includes(k))) &&
