@@ -27,6 +27,7 @@ type AppUser = {
 type LeadJob = {
   id: string;
   lead_id: string;
+  company_id?: string;
   job_order?: number;
   full_name: string;
   move_date: string;
@@ -87,7 +88,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const [info, setInfo] = useState("");
 
   const [dispatchCompanies, setDispatchCompanies] = useState<Company[]>([]);
-  const [selectedDispatchCompanyId, setSelectedDispatchCompanyId] = useState("");
+  const [selectedDispatchCompanyIds, setSelectedDispatchCompanyIds] = useState<string[]>([]);
   const [dispatchMonth, setDispatchMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -112,6 +113,14 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const [showPassword, setShowPassword] = useState(false);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
   const handledRouteJobIdRef = useRef("");
+  const singleSelectedDispatchCompanyId = selectedDispatchCompanyIds.length === 1 ? selectedDispatchCompanyIds[0] : "";
+
+  const filteredCalendarJobs = useMemo(() => {
+    if (selectedDispatchCompanyIds.length === 0) return [];
+    if (selectedDispatchCompanyIds.length === dispatchCompanies.length) return calendarJobs;
+    const selected = new Set(selectedDispatchCompanyIds);
+    return calendarJobs.filter((job) => selected.has(String((job as unknown as { company_id?: string }).company_id || "")));
+  }, [calendarJobs, selectedDispatchCompanyIds, dispatchCompanies.length]);
 
   const dispatchUsers = useMemo(
     () => users.filter((u) => u.role === "dispatch").sort((a, b) => a.name.localeCompare(b.name)),
@@ -132,10 +141,18 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   }, [token, showCalendar, isAdmin]);
 
   useEffect(() => {
-    if (!showCalendar || !selectedDispatchCompanyId) return;
-    void loadDispatchCalendarJobs(selectedDispatchCompanyId, dispatchMonth);
-    void loadDispatchCalendarDaySettings(selectedDispatchCompanyId, dispatchMonth);
-  }, [token, showCalendar, selectedDispatchCompanyId, dispatchMonth]);
+    if (!showCalendar) return;
+    void loadDispatchCalendarJobs(dispatchMonth);
+  }, [token, showCalendar, dispatchMonth]);
+
+  useEffect(() => {
+    if (!showCalendar || !singleSelectedDispatchCompanyId) {
+      setDaySettings({});
+      setDaySettingsError("");
+      return;
+    }
+    void loadDispatchCalendarDaySettings(singleSelectedDispatchCompanyId, dispatchMonth);
+  }, [token, showCalendar, singleSelectedDispatchCompanyId, dispatchMonth]);
 
   useEffect(() => {
     if (!showCalendar || dispatchCompanies.length === 0) return;
@@ -241,11 +258,13 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
       setDispatchCompanies(assignedCompanies);
 
       if (assignedCompanies.length > 0) {
-        setSelectedDispatchCompanyId((prev) =>
-          prev && assignedCompanies.some((c) => c.id === prev) ? prev : assignedCompanies[0].id
-        );
+        setSelectedDispatchCompanyIds((prev) => {
+          if (prev.length === 0) return assignedCompanies.map((c) => c.id);
+          const valid = prev.filter((id) => assignedCompanies.some((c) => c.id === id));
+          return valid.length > 0 ? valid : assignedCompanies.map((c) => c.id);
+        });
       } else {
-        setSelectedDispatchCompanyId("");
+        setSelectedDispatchCompanyIds([]);
         setCalendarJobs([]);
       }
     } catch (err: unknown) {
@@ -253,12 +272,11 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     }
   }
 
-  async function loadDispatchCalendarJobs(companyId: string, month: Date) {
+  async function loadDispatchCalendarJobs(month: Date) {
     setCalendarLoading(true);
     setCalendarError("");
     try {
       const params = new URLSearchParams({
-        company_id: companyId,
         move_month: monthKey(month),
       });
       const res = await fetch(`${API_BASE}/api/dispatch-calendar?${params.toString()}`, { headers: authHeaders(token) });
@@ -269,6 +287,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
         items.map((item) => ({
           id: String(item.id || ""),
           lead_id: String(item.lead_id || ""),
+          company_id: String(item.company_id || ""),
           job_order: Number(item.job_order || 0),
           full_name: String(item.full_name || "Unnamed"),
           move_date: String(item.move_date || ""),
@@ -316,13 +335,13 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   }
 
   async function saveDispatchCalendarDaySetting(dayDate: string, isFull: boolean, note: string) {
-    if (!selectedDispatchCompanyId) return;
+    if (!singleSelectedDispatchCompanyId) return;
     const cleanNote = note.trim();
     const res = await fetch(`${API_BASE}/api/dispatch-calendar-days`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
       body: JSON.stringify({
-        company_id: selectedDispatchCompanyId,
+        company_id: singleSelectedDispatchCompanyId,
         day_date: dayDate,
         is_full: isFull,
         note: cleanNote,
@@ -360,7 +379,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     const parsed = parseCalendarDate(job.move_date);
     if (!parsed) return;
     setSelectedJobId(job.id);
-    setSelectedDispatchCompanyId(job.company_id);
+    setSelectedDispatchCompanyIds([job.company_id]);
     setDispatchMonth(new Date(parsed.getFullYear(), parsed.getMonth(), 1));
     setJobSearch(job.full_name);
     setJobSearchResults([]);
@@ -395,7 +414,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
       if (parsed) {
         setDispatchMonth(new Date(parsed.getFullYear(), parsed.getMonth(), 1));
       }
-      setSelectedDispatchCompanyId(match.company_id);
+      setSelectedDispatchCompanyIds([match.company_id]);
       setSelectedJobId(match.id);
       setJobSearch(match.full_name);
       setJobSearchResults([]);
@@ -522,26 +541,53 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
       <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
         <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Dispatcher Calender</h1>
         <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
-          Jobs grouped by booked move date for the selected company and month.
+          Jobs grouped by booked move date for all checked companies in the selected month.
         </p>
 
         {calendarError ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{calendarError}</p> : null}
         {daySettingsError ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{daySettingsError}</p> : null}
 
-        {!calendarLoading && dispatchCompanies.length > 1 ? (
-          <div style={{ marginBottom: 12, maxWidth: 340 }}>
-            <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569", fontWeight: 600 }}>
-              Company
-              <select
-                value={selectedDispatchCompanyId}
-                onChange={(e) => setSelectedDispatchCompanyId(e.target.value)}
-                style={inputStyle}
-              >
-                {dispatchCompanies.map((company) => (
-                  <option key={company.id} value={company.id}>{company.name}</option>
-                ))}
-              </select>
+        {!calendarLoading && dispatchCompanies.length > 0 ? (
+          <div style={{ marginBottom: 12, maxWidth: 700, display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Companies</div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#334155", fontWeight: 600 }}>
+              <input
+                type="checkbox"
+                checked={selectedDispatchCompanyIds.length > 0 && selectedDispatchCompanyIds.length === dispatchCompanies.length}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    setSelectedDispatchCompanyIds(dispatchCompanies.map((c) => c.id));
+                  } else {
+                    setSelectedDispatchCompanyIds([]);
+                  }
+                }}
+              />
+              All companies
             </label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              {dispatchCompanies.map((company) => {
+                const checked = selectedDispatchCompanyIds.includes(company.id);
+                return (
+                  <label key={company.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#334155" }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        setSelectedDispatchCompanyIds((prev) =>
+                          e.target.checked ? [...prev, company.id] : prev.filter((id) => id !== company.id)
+                        );
+                      }}
+                    />
+                    {company.name}
+                  </label>
+                );
+              })}
+            </div>
+            {selectedDispatchCompanyIds.length !== 1 ? (
+              <div style={{ fontSize: 11, color: "#64748b" }}>
+                Day note/full controls are available when exactly one company is checked.
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -623,10 +669,14 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
           ) : null}
         </div>
 
-        {!calendarLoading && selectedDispatchCompanyId ? (
+        {!calendarLoading && selectedDispatchCompanyIds.length > 0 ? (
           <CompanyCalendar
-            companyName={dispatchCompanies.find((c) => c.id === selectedDispatchCompanyId)?.name || "Company"}
-            jobs={calendarJobs}
+            companyName={selectedDispatchCompanyIds.length === dispatchCompanies.length
+              ? "All Companies"
+              : selectedDispatchCompanyIds.length === 1
+                ? (dispatchCompanies.find((c) => c.id === selectedDispatchCompanyIds[0])?.name || "Company")
+                : `${selectedDispatchCompanyIds.length} Companies`}
+            jobs={filteredCalendarJobs}
             daySettings={daySettings}
             viewDate={dispatchMonth}
             selectedJobId={selectedJobId}
