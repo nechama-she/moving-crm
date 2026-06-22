@@ -1218,9 +1218,15 @@ function CompanyCalendar({
                   </div>
                 </div>
                 {dayNote ? (
-                  <div style={{ marginBottom: 6, fontSize: 10, color: "#334155", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4, padding: "4px 5px" }} title={dayNote}>
+                  <button
+                    type="button"
+                    onClick={() => openDayPanel(day)}
+                    style={{ marginBottom: 6, width: "100%", textAlign: "left", fontSize: 10, color: "#334155", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4, padding: "4px 5px", cursor: "pointer" }}
+                    title={dayNote}
+                    aria-label="Open day panel note"
+                  >
                     {dayNote.length > 60 ? `${dayNote.slice(0, 60)}...` : dayNote}
-                  </div>
+                  </button>
                 ) : null}
                 {dayJobs.length > 0 ? (
                   <div style={{ display: "grid", gap: 6 }}>
