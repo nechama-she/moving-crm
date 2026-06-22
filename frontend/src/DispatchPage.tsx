@@ -1039,7 +1039,7 @@ function CompanyCalendar({
                 }}
               >
                 <span style={{ width: 8, height: 8, borderRadius: 999, background: item.tone.border, display: "inline-block" }} />
-                {item.name}
+                Company
               </span>
             ))}
           </div>
@@ -1161,7 +1161,7 @@ function CompanyCalendar({
                         title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
                       >
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: getCompanyTone(job).text, fontWeight: 700 }}>{job.company_name || "Company"}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: getCompanyTone(job).text, fontWeight: 700 }}>Company</div>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"}{" -> "}{job.delivery_zip || "?"}</div>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: job.id === selectedJobId ? "#1d4ed8" : getCompanyTone(job).text }}>{job.status || "booked"}</div>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{`Job ${job.job_order || idx + 1}`}</div>
@@ -1251,7 +1251,7 @@ function CompanyCalendar({
                     <strong style={{ fontSize: 13, color: "#0f172a" }}>{job.full_name}</strong>
                     <span style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 700 }}>{`Job ${job.job_order || idx + 1}`}</span>
                   </div>
-                  <div style={{ fontSize: 12, color: getCompanyTone(job).text, fontWeight: 700 }}>{job.company_name || "Company"}</div>
+                  <div style={{ fontSize: 12, color: getCompanyTone(job).text, fontWeight: 700 }}>Company</div>
                   <div style={{ fontSize: 12, color: "#334155" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
                   <div style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 600 }}>{job.status || "booked"}</div>
                   {job.price != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>${job.price.toFixed(2)}</div> : null}
