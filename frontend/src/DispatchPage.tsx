@@ -28,6 +28,7 @@ type LeadJob = {
   id: string;
   lead_id: string;
   company_id?: string;
+  company_name?: string;
   job_order?: number;
   full_name: string;
   move_date: string;
@@ -335,7 +336,9 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   }
 
   async function saveDispatchCalendarDaySetting(dayDate: string, isFull: boolean, note: string) {
-    if (!singleSelectedDispatchCompanyId) return;
+    if (!singleSelectedDispatchCompanyId) {
+      throw new Error("Select exactly one company to edit day settings.");
+    }
     const cleanNote = note.trim();
     const res = await fetch(`${API_BASE}/api/dispatch-calendar-days`, {
       method: "PUT",
@@ -671,6 +674,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
 
         {!calendarLoading && selectedDispatchCompanyIds.length > 0 ? (
           <CompanyCalendar
+            canEditDaySettings={selectedDispatchCompanyIds.length === 1}
             companyName={selectedDispatchCompanyIds.length === dispatchCompanies.length
               ? "All Companies"
               : selectedDispatchCompanyIds.length === 1
@@ -844,6 +848,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
 
 function CompanyCalendar({
   companyName,
+  canEditDaySettings,
   jobs,
   daySettings,
   viewDate,
@@ -853,6 +858,7 @@ function CompanyCalendar({
   onSaveDaySetting,
 }: {
   companyName: string;
+  canEditDaySettings: boolean;
   jobs: LeadJob[];
   daySettings: Record<string, DispatchCalendarDaySetting>;
   viewDate: Date;
@@ -861,13 +867,13 @@ function CompanyCalendar({
   onNextMonth: () => void;
   onSaveDaySetting: (dayDate: string, isFull: boolean, note: string) => Promise<void>;
 }) {
-  const [selectedJobTabByDay, setSelectedJobTabByDay] = useState<Record<number, number>>({});
   const [savingDayByDay, setSavingDayByDay] = useState<Record<number, boolean>>({});
   const [dayErrorByDay, setDayErrorByDay] = useState<Record<number, string>>({});
   const [noteModalDay, setNoteModalDay] = useState<number | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteModalError, setNoteModalError] = useState("");
   const [noteModalSaving, setNoteModalSaving] = useState(false);
+  const [jobListDrawerDay, setJobListDrawerDay] = useState<number | null>(null);
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
   const firstWeekday = new Date(year, month, 1).getDay();
@@ -884,6 +890,7 @@ function CompanyCalendar({
     bucket.push(job);
     jobsByDay.set(day, bucket);
   }
+  const drawerDayJobs = jobListDrawerDay == null ? [] : (jobsByDay.get(jobListDrawerDay) || []);
 
   useEffect(() => {
     if (!selectedJobId) return;
@@ -893,9 +900,8 @@ function CompanyCalendar({
     if (!parsed || parsed.getFullYear() !== year || parsed.getMonth() !== month) return;
     const day = parsed.getDate();
     const dayJobs = jobsByDay.get(day) || [];
-    const selectedIndex = dayJobs.findIndex((job) => job.id === selectedJobId);
-    if (selectedIndex >= 0) {
-      setSelectedJobTabByDay((prev) => (prev[day] === selectedIndex ? prev : { ...prev, [day]: selectedIndex }));
+    if (dayJobs.some((job) => job.id === selectedJobId)) {
+      return;
     }
   }, [jobs, selectedJobId, year, month]);
 
@@ -944,6 +950,14 @@ function CompanyCalendar({
     }
   }
 
+  function openJobListDrawer(day: number) {
+    setJobListDrawerDay(day);
+  }
+
+  function closeJobListDrawer() {
+    setJobListDrawerDay(null);
+  }
+
   return (
     <section style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
       <div style={{ padding: "10px 14px", borderBottom: "1px solid #dddbda", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
@@ -982,9 +996,8 @@ function CompanyCalendar({
             const isSelectedDay = selectedJobId ? dayJobs.some((job) => job.id === selectedJobId) : false;
             const isSavingDay = Boolean(savingDayByDay[day]);
             const dayError = dayErrorByDay[day] || "";
-            const selectedTab = selectedJobTabByDay[day] ?? 0;
-            const normalizedTab = Math.min(selectedTab, Math.max(dayJobs.length - 1, 0));
-            const activeJob = dayJobs[normalizedTab] || null;
+            const visibleJobs = dayJobs.slice(0, 3);
+            const overflowCount = Math.max(dayJobs.length - visibleJobs.length, 0);
             return (
               <div
                 key={day}
@@ -1000,30 +1013,40 @@ function CompanyCalendar({
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <button
                       type="button"
-                      onClick={() => openNoteModal(day)}
+                      onClick={() => {
+                        if (canEditDaySettings) {
+                          openNoteModal(day);
+                        }
+                      }}
+                      disabled={!canEditDaySettings}
                       style={{
                         ...calendarActionIconBtn,
                         borderColor: dayNote ? "#0176d3" : "#cbd5e1",
                         background: dayNote ? "#eaf5fe" : "#fff",
+                        opacity: !canEditDaySettings ? 0.55 : 1,
                       }}
-                      title={dayNote ? "View or edit day note" : "Add day note"}
-                      aria-label={dayNote ? "View or edit day note" : "Add day note"}
+                      title={canEditDaySettings ? (dayNote ? "View or edit day note" : "Add day note") : "Select exactly one company to edit day settings"}
+                      aria-label={canEditDaySettings ? (dayNote ? "View or edit day note" : "Add day note") : "Select exactly one company to edit day settings"}
                     >
                       <NoteIcon active={Boolean(dayNote)} />
                     </button>
                     <button
                       type="button"
-                      onClick={() => void toggleFullDay(day)}
-                      disabled={isSavingDay}
+                      onClick={() => {
+                        if (canEditDaySettings) {
+                          void toggleFullDay(day);
+                        }
+                      }}
+                      disabled={isSavingDay || !canEditDaySettings}
                       style={{
                         ...calendarActionIconBtn,
                         borderColor: isFullDay ? "#0176d3" : "#cbd5e1",
                         background: isFullDay ? "#0176d3" : "#fff",
                         color: isFullDay ? "#fff" : "#334155",
-                        opacity: isSavingDay ? 0.6 : 1,
+                        opacity: isSavingDay || !canEditDaySettings ? 0.55 : 1,
                       }}
-                      title={isFullDay ? "Day is full (click to turn off)" : "Mark day as full"}
-                      aria-label={isFullDay ? "Day is full (click to turn off)" : "Mark day as full"}
+                      title={canEditDaySettings ? (isFullDay ? "Day is full (click to turn off)" : "Mark day as full") : "Select exactly one company to edit day settings"}
+                      aria-label={canEditDaySettings ? (isFullDay ? "Day is full (click to turn off)" : "Mark day as full") : "Select exactly one company to edit day settings"}
                     >
                       <FullDayIcon active={isFullDay} />
                     </button>
@@ -1047,56 +1070,50 @@ function CompanyCalendar({
                 {dayError ? <div style={{ marginBottom: 6, fontSize: 10, color: "#ba0517" }}>{dayError}</div> : null}
                 {dayJobs.length > 0 ? (
                   <div style={{ display: "grid", gap: 6 }}>
-                    {activeJob ? (
+                    {visibleJobs.map((job, idx) => (
                       <Link
-                        to={`/leads/${activeJob.lead_id || activeJob.id}?job_id=${encodeURIComponent(activeJob.id)}`}
+                        key={job.id}
+                        to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
                         style={{
                           display: "block",
                           fontSize: 11,
-                          color: activeJob.id === selectedJobId ? "#0f172a" : "#0b5cab",
+                          color: job.id === selectedJobId ? "#0f172a" : "#0b5cab",
                           textDecoration: "none",
-                          background: activeJob.id === selectedJobId ? "#bfdbfe" : "#eaf5fe",
-                          border: activeJob.id === selectedJobId ? "1px solid #2563eb" : "1px solid #c9e6ff",
+                          background: job.id === selectedJobId ? "#bfdbfe" : "#eaf5fe",
+                          border: job.id === selectedJobId ? "1px solid #2563eb" : "1px solid #c9e6ff",
                           borderRadius: 4,
                           padding: "4px 5px",
                           overflow: "hidden",
-                          boxShadow: activeJob.id === selectedJobId ? "0 0 0 1px rgba(37, 99, 235, 0.2)" : undefined,
+                          boxShadow: job.id === selectedJobId ? "0 0 0 1px rgba(37, 99, 235, 0.2)" : undefined,
                         }}
-                        title={`${activeJob.full_name} • ${activeJob.pickup_zip || "?"} -> ${activeJob.delivery_zip || "?"} • ${activeJob.status}`}
+                        title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
                       >
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{activeJob.full_name}</div>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{activeJob.pickup_zip || "?"}{" -> "}{activeJob.delivery_zip || "?"}</div>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: activeJob.id === selectedJobId ? "#1d4ed8" : "#0369a1" }}>{activeJob.status || "booked"}</div>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{`Job ${activeJob.job_order || normalizedTab + 1}`}</div>
-                        {activeJob.price != null ? <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e" }}>${activeJob.price.toFixed(2)}</div> : null}
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.company_name || "Company"}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"}{" -> "}{job.delivery_zip || "?"}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: job.id === selectedJobId ? "#1d4ed8" : "#0369a1" }}>{job.status || "booked"}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{`Job ${job.job_order || idx + 1}`}</div>
+                        {job.price != null ? <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e" }}>${job.price.toFixed(2)}</div> : null}
                       </Link>
-                    ) : null}
-                    {dayJobs.length > 1 ? (
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        {dayJobs.map((job, idx) => {
-                          const isActive = idx === normalizedTab;
-                          return (
-                            <button
-                              key={job.id}
-                              type="button"
-                              onClick={() => setSelectedJobTabByDay((prev) => ({ ...prev, [day]: idx }))}
-                              style={{
-                                border: "none",
-                                background: "transparent",
-                                color: isActive ? "#1d4ed8" : "#475569",
-                                padding: 0,
-                                fontSize: 11,
-                                fontWeight: 600,
-                                whiteSpace: "nowrap",
-                                cursor: "pointer",
-                                textDecoration: isActive ? "none" : "underline",
-                              }}
-                            >
-                              {`Job ${job.job_order || idx + 1}`}
-                            </button>
-                          );
-                        })}
-                      </div>
+                    ))}
+                    {overflowCount > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => openJobListDrawer(day)}
+                        style={{
+                          border: "1px solid #cbd5e1",
+                          background: "#f8fafc",
+                          borderRadius: 4,
+                          color: "#0f172a",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          padding: "4px 6px",
+                          cursor: "pointer",
+                          textAlign: "left",
+                        }}
+                      >
+                        More +{overflowCount}
+                      </button>
                     ) : null}
                   </div>
                 ) : null}
@@ -1105,6 +1122,73 @@ function CompanyCalendar({
           })}
         </div>
       </div>
+
+      {jobListDrawerDay != null ? (
+        <div
+          role="presentation"
+          onClick={closeJobListDrawer}
+          style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.35)", zIndex: 95 }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "fixed",
+              top: 0,
+              right: 0,
+              width: "min(420px, 100%)",
+              height: "100vh",
+              background: "#fff",
+              borderLeft: "1px solid #cbd5e1",
+              boxShadow: "-16px 0 32px rgba(15, 23, 42, 0.18)",
+              display: "flex",
+              flexDirection: "column",
+              zIndex: 96,
+            }}
+          >
+            <div style={{ padding: 14, borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Jobs on {dayDateKey(jobListDrawerDay)}</div>
+                <div style={{ fontSize: 12, color: "#64748b" }}>{drawerDayJobs.length} job{drawerDayJobs.length === 1 ? "" : "s"}</div>
+              </div>
+              <button type="button" onClick={closeJobListDrawer} style={calendarNavBtn} aria-label="Close job list">
+                ✕
+              </button>
+            </div>
+            <div style={{ padding: 12, overflowY: "auto", display: "grid", gap: 10 }}>
+              {drawerDayJobs.map((job, idx) => (
+                <Link
+                  key={job.id}
+                  to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+                  onClick={closeJobListDrawer}
+                  style={{
+                    display: "grid",
+                    gap: 3,
+                    textDecoration: "none",
+                    color: "#0f172a",
+                    border: job.id === selectedJobId ? "1px solid #2563eb" : "1px solid #dbe4ee",
+                    background: job.id === selectedJobId ? "#eff6ff" : "#fff",
+                    borderRadius: 8,
+                    padding: 10,
+                    boxShadow: job.id === selectedJobId ? "0 0 0 1px rgba(37, 99, 235, 0.12)" : "none",
+                  }}
+                  title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <strong style={{ fontSize: 13, color: "#0f172a" }}>{job.full_name}</strong>
+                    <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>{`Job ${job.job_order || idx + 1}`}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#475569" }}>{job.company_name || "Company"}</div>
+                  <div style={{ fontSize: 12, color: "#334155" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
+                  <div style={{ fontSize: 11, color: "#0369a1", fontWeight: 600 }}>{job.status || "booked"}</div>
+                  {job.price != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>${job.price.toFixed(2)}</div> : null}
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {noteModalDay != null ? (
         <div
