@@ -312,6 +312,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
           id: String(item.id || ""),
           lead_id: String(item.lead_id || ""),
           company_id: String(item.company_id || ""),
+          company_name: String(item.company_name || ""),
           job_order: Number(item.job_order || 0),
           full_name: String(item.full_name || "Unnamed"),
           move_date: String(item.move_date || ""),
