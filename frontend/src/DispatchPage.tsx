@@ -51,6 +51,29 @@ type DispatchCalendarDaySetting = {
   note: string;
 };
 
+type CompanyTone = {
+  key: string;
+  name: string;
+  tint: string;
+  border: string;
+  text: string;
+};
+
+const COMPANY_TONES: CompanyTone[] = [
+  { key: "sky", name: "Sky", tint: "#e0f2fe", border: "#7dd3fc", text: "#0c4a6e" },
+  { key: "emerald", name: "Emerald", tint: "#dcfce7", border: "#86efac", text: "#14532d" },
+  { key: "amber", name: "Amber", tint: "#fef3c7", border: "#fcd34d", text: "#78350f" },
+  { key: "rose", name: "Rose", tint: "#ffe4e6", border: "#fda4af", text: "#881337" },
+  { key: "teal", name: "Teal", tint: "#ccfbf1", border: "#5eead4", text: "#115e59" },
+  { key: "orange", name: "Orange", tint: "#ffedd5", border: "#fdba74", text: "#7c2d12" },
+  { key: "lime", name: "Lime", tint: "#ecfccb", border: "#bef264", text: "#3f6212" },
+  { key: "cyan", name: "Cyan", tint: "#cffafe", border: "#67e8f9", text: "#155e75" },
+];
+
+function companyKeyForJob(job: LeadJob): string {
+  return job.company_id || job.company_name || "unknown";
+}
+
 function monthKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
@@ -880,6 +903,30 @@ function CompanyCalendar({
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthLabel = viewDate.toLocaleString(undefined, { month: "long", year: "numeric" });
 
+  const companyStyles = useMemo(() => {
+    const uniqueCompanies = new Map<string, { name: string; tone: CompanyTone }>();
+    const sortedJobs = [...jobs].sort((left, right) => {
+      const leftName = (left.company_name || "").toLowerCase();
+      const rightName = (right.company_name || "").toLowerCase();
+      if (leftName !== rightName) return leftName.localeCompare(rightName);
+      return companyKeyForJob(left).localeCompare(companyKeyForJob(right));
+    });
+
+    for (const job of sortedJobs) {
+      const key = companyKeyForJob(job);
+      if (uniqueCompanies.has(key)) continue;
+      const tone = COMPANY_TONES[uniqueCompanies.size % COMPANY_TONES.length];
+      uniqueCompanies.set(key, { name: job.company_name || "Company", tone });
+    }
+
+    return uniqueCompanies;
+  }, [jobs]);
+
+  function getCompanyTone(job: LeadJob): CompanyTone {
+    const key = companyKeyForJob(job);
+    return companyStyles.get(key)?.tone || COMPANY_TONES[0];
+  }
+
   const jobsByDay = new Map<number, LeadJob[]>();
   for (const job of jobs) {
     const parsed = parseCalendarDate(job.move_date);
@@ -973,6 +1020,30 @@ function CompanyCalendar({
       </div>
 
       <div style={{ padding: 10 }}>
+        {companyStyles.size > 1 ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+            {Array.from(companyStyles.entries()).map(([key, item]) => (
+              <span
+                key={key}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: item.tone.text,
+                  background: item.tone.tint,
+                  border: `1px solid ${item.tone.border}`,
+                  borderRadius: 999,
+                  padding: "4px 8px",
+                }}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: item.tone.border, display: "inline-block" }} />
+                {item.name}
+              </span>
+            ))}
+          </div>
+        ) : null}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
           {weekdayLabels.map((label) => (
             <div key={label} style={{ fontSize: 11, color: "#64748b", fontWeight: 700, textTransform: "uppercase", textAlign: "center" }}>
@@ -1074,13 +1145,14 @@ function CompanyCalendar({
                       <Link
                         key={job.id}
                         to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+                        data-company-key={companyKeyForJob(job)}
                         style={{
                           display: "block",
                           fontSize: 11,
-                          color: job.id === selectedJobId ? "#0f172a" : "#0b5cab",
+                          color: getCompanyTone(job).text,
                           textDecoration: "none",
-                          background: job.id === selectedJobId ? "#bfdbfe" : "#eaf5fe",
-                          border: job.id === selectedJobId ? "1px solid #2563eb" : "1px solid #c9e6ff",
+                          background: job.id === selectedJobId ? "#f8fafc" : getCompanyTone(job).tint,
+                          border: `1px solid ${job.id === selectedJobId ? "#2563eb" : getCompanyTone(job).border}`,
                           borderRadius: 4,
                           padding: "4px 5px",
                           overflow: "hidden",
@@ -1089,9 +1161,9 @@ function CompanyCalendar({
                         title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
                       >
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.company_name || "Company"}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: getCompanyTone(job).text, fontWeight: 700 }}>{job.company_name || "Company"}</div>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"}{" -> "}{job.delivery_zip || "?"}</div>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: job.id === selectedJobId ? "#1d4ed8" : "#0369a1" }}>{job.status || "booked"}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: job.id === selectedJobId ? "#1d4ed8" : getCompanyTone(job).text }}>{job.status || "booked"}</div>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{`Job ${job.job_order || idx + 1}`}</div>
                         {job.price != null ? <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e" }}>${job.price.toFixed(2)}</div> : null}
                       </Link>
@@ -1166,9 +1238,9 @@ function CompanyCalendar({
                     display: "grid",
                     gap: 3,
                     textDecoration: "none",
-                    color: "#0f172a",
-                    border: job.id === selectedJobId ? "1px solid #2563eb" : "1px solid #dbe4ee",
-                    background: job.id === selectedJobId ? "#eff6ff" : "#fff",
+                    color: getCompanyTone(job).text,
+                    border: job.id === selectedJobId ? "1px solid #2563eb" : `1px solid ${getCompanyTone(job).border}`,
+                    background: job.id === selectedJobId ? "#eff6ff" : getCompanyTone(job).tint,
                     borderRadius: 8,
                     padding: 10,
                     boxShadow: job.id === selectedJobId ? "0 0 0 1px rgba(37, 99, 235, 0.12)" : "none",
@@ -1177,11 +1249,11 @@ function CompanyCalendar({
                 >
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                     <strong style={{ fontSize: 13, color: "#0f172a" }}>{job.full_name}</strong>
-                    <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>{`Job ${job.job_order || idx + 1}`}</span>
+                    <span style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 700 }}>{`Job ${job.job_order || idx + 1}`}</span>
                   </div>
-                  <div style={{ fontSize: 12, color: "#475569" }}>{job.company_name || "Company"}</div>
+                  <div style={{ fontSize: 12, color: getCompanyTone(job).text, fontWeight: 700 }}>{job.company_name || "Company"}</div>
                   <div style={{ fontSize: 12, color: "#334155" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
-                  <div style={{ fontSize: 11, color: "#0369a1", fontWeight: 600 }}>{job.status || "booked"}</div>
+                  <div style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 600 }}>{job.status || "booked"}</div>
                   {job.price != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>${job.price.toFixed(2)}</div> : null}
                 </Link>
               ))}
