@@ -70,8 +70,34 @@ const COMPANY_TONES: CompanyTone[] = [
   { key: "cyan", name: "Cyan", tint: "#cffafe", border: "#67e8f9", text: "#155e75" },
 ];
 
+// Pin company keys (company_id or name) to fixed tones so colors stay constant.
+const COMPANY_TONE_BY_KEY: Record<string, string> = Object.freeze({
+  unknown: "sky",
+});
+
+const COMPANY_TONE_BY_NAME = Object.freeze(
+  COMPANY_TONES.reduce<Record<string, CompanyTone>>((acc, tone) => {
+    acc[tone.key] = tone;
+    return acc;
+  }, {})
+);
+
 function companyKeyForJob(job: LeadJob): string {
   return job.company_id || job.company_name || "unknown";
+}
+
+function toneForCompanyKey(companyKey: string): CompanyTone {
+  const normalizedKey = (companyKey || "").trim().toLowerCase();
+  const pinnedToneKey = COMPANY_TONE_BY_KEY[normalizedKey];
+  if (pinnedToneKey && COMPANY_TONE_BY_NAME[pinnedToneKey]) {
+    return COMPANY_TONE_BY_NAME[pinnedToneKey];
+  }
+
+  let hash = 0;
+  for (let i = 0; i < normalizedKey.length; i += 1) {
+    hash = (hash * 31 + normalizedKey.charCodeAt(i)) >>> 0;
+  }
+  return COMPANY_TONES[hash % COMPANY_TONES.length];
 }
 
 function monthKey(d: Date): string {
@@ -359,18 +385,46 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     }
   }
 
-  async function saveDispatchCalendarDaySetting(dayDate: string, isFull: boolean, note: string) {
-    if (!singleSelectedDispatchCompanyId) {
-      setDaySettingsError("Select exactly one company to edit day settings.");
-      return;
+  async function loadDispatchCalendarDaySettingForCompany(companyId: string, dayDate: string, month: Date): Promise<DispatchCalendarDaySetting | null> {
+    const params = new URLSearchParams({
+      company_id: companyId,
+      move_month: monthKey(month),
+    });
+    const res = await fetch(`${API_BASE}/api/dispatch-calendar-days?${params.toString()}`, { headers: authHeaders(token) });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const err = (await res.json()) as { detail?: string };
+        detail = err.detail || detail;
+      } catch {
+        // keep default detail
+      }
+      throw new Error(detail);
     }
+    const data = (await res.json()) as { items?: Array<Record<string, unknown>> };
+    const items = Array.isArray(data.items) ? data.items : [];
+    const match = items.find((item) => String(item.day_date || "") === dayDate);
+    if (!match) return null;
+    return {
+      day_date: String(match.day_date || dayDate),
+      is_full: Boolean(match.is_full),
+      note: String(match.note || ""),
+    };
+  }
+
+  async function saveDispatchCalendarDaySettingForCompany(
+    companyId: string,
+    dayDate: string,
+    isFull: boolean,
+    note: string
+  ): Promise<DispatchCalendarDaySetting | null> {
     setDaySettingsError("");
     const cleanNote = note.trim();
     const res = await fetch(`${API_BASE}/api/dispatch-calendar-days`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
       body: JSON.stringify({
-        company_id: singleSelectedDispatchCompanyId,
+        company_id: companyId,
         day_date: dayDate,
         is_full: isFull,
         note: cleanNote,
@@ -388,20 +442,27 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     }
     const payload = (await res.json()) as { ok?: boolean; item?: Record<string, unknown> | null };
     const item = payload.item;
-    setDaySettings((prev) => {
-      const next = { ...prev };
-      if (!item) {
-        delete next[dayDate];
+    const nextSetting = item
+      ? {
+          day_date: String(item.day_date || dayDate),
+          is_full: Boolean(item.is_full),
+          note: String(item.note || ""),
+        }
+      : null;
+
+    if (companyId === singleSelectedDispatchCompanyId) {
+      setDaySettings((prev) => {
+        const next = { ...prev };
+        if (!nextSetting) {
+          delete next[dayDate];
+          return next;
+        }
+        next[nextSetting.day_date] = nextSetting;
         return next;
-      }
-      const storedDayDate = String(item.day_date || dayDate);
-      next[storedDayDate] = {
-        day_date: storedDayDate,
-        is_full: Boolean(item.is_full),
-        note: String(item.note || ""),
-      };
-      return next;
-    });
+      });
+    }
+
+    return nextSetting;
   }
 
   function selectDispatchJob(job: DispatchJobSearchResult) {
@@ -700,19 +761,20 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
 
         {!calendarLoading && selectedDispatchCompanyIds.length > 0 ? (
           <CompanyCalendar
-            canEditDaySettings={selectedDispatchCompanyIds.length === 1}
             companyName={selectedDispatchCompanyIds.length === dispatchCompanies.length
               ? "All Companies"
               : selectedDispatchCompanyIds.length === 1
                 ? (dispatchCompanies.find((c) => c.id === selectedDispatchCompanyIds[0])?.name || "Company")
                 : `${selectedDispatchCompanyIds.length} Companies`}
+            daySettingCompanies={dispatchCompanies.filter((c) => selectedDispatchCompanyIds.includes(c.id))}
             jobs={filteredCalendarJobs}
             daySettings={daySettings}
             viewDate={dispatchMonth}
             selectedJobId={selectedJobId}
             onPrevMonth={() => setDispatchMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
             onNextMonth={() => setDispatchMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
-            onSaveDaySetting={saveDispatchCalendarDaySetting}
+            onLoadDaySetting={loadDispatchCalendarDaySettingForCompany}
+            onSaveDaySetting={saveDispatchCalendarDaySettingForCompany}
           />
         ) : null}
       </div>
@@ -874,32 +936,34 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
 
 function CompanyCalendar({
   companyName,
-  canEditDaySettings,
+  daySettingCompanies,
   jobs,
   daySettings,
   viewDate,
   selectedJobId,
   onPrevMonth,
   onNextMonth,
+  onLoadDaySetting,
   onSaveDaySetting,
 }: {
   companyName: string;
-  canEditDaySettings: boolean;
+  daySettingCompanies: Company[];
   jobs: LeadJob[];
   daySettings: Record<string, DispatchCalendarDaySetting>;
   viewDate: Date;
   selectedJobId: string;
   onPrevMonth: () => void;
   onNextMonth: () => void;
-  onSaveDaySetting: (dayDate: string, isFull: boolean, note: string) => Promise<void>;
+  onLoadDaySetting: (companyId: string, dayDate: string, month: Date) => Promise<DispatchCalendarDaySetting | null>;
+  onSaveDaySetting: (companyId: string, dayDate: string, isFull: boolean, note: string) => Promise<DispatchCalendarDaySetting | null>;
 }) {
-  const [savingDayByDay, setSavingDayByDay] = useState<Record<number, boolean>>({});
-  const [dayErrorByDay, setDayErrorByDay] = useState<Record<number, string>>({});
-  const [noteModalDay, setNoteModalDay] = useState<number | null>(null);
-  const [noteDraft, setNoteDraft] = useState("");
-  const [noteModalError, setNoteModalError] = useState("");
-  const [noteModalSaving, setNoteModalSaving] = useState(false);
-  const [jobListDrawerDay, setJobListDrawerDay] = useState<number | null>(null);
+  const [jobPanelDay, setJobPanelDay] = useState<number | null>(null);
+  const [panelCompanyId, setPanelCompanyId] = useState("");
+  const [panelNote, setPanelNote] = useState("");
+  const [panelIsFull, setPanelIsFull] = useState(false);
+  const [panelLoading, setPanelLoading] = useState(false);
+  const [panelSaving, setPanelSaving] = useState(false);
+  const [panelError, setPanelError] = useState("");
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
   const firstWeekday = new Date(year, month, 1).getDay();
@@ -918,7 +982,7 @@ function CompanyCalendar({
     for (const job of sortedJobs) {
       const key = companyKeyForJob(job);
       if (uniqueCompanies.has(key)) continue;
-      const tone = COMPANY_TONES[uniqueCompanies.size % COMPANY_TONES.length];
+      const tone = toneForCompanyKey(key);
       uniqueCompanies.set(key, { name: job.company_name || "Company", tone });
     }
 
@@ -940,7 +1004,7 @@ function CompanyCalendar({
     bucket.push(job);
     jobsByDay.set(day, bucket);
   }
-  const drawerDayJobs = jobListDrawerDay == null ? [] : (jobsByDay.get(jobListDrawerDay) || []);
+  const panelDayJobs = jobPanelDay == null ? [] : (jobsByDay.get(jobPanelDay) || []);
 
   useEffect(() => {
     if (!selectedJobId) return;
@@ -959,54 +1023,76 @@ function CompanyCalendar({
     return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
   }
 
-  function openNoteModal(day: number) {
-    const key = dayDateKey(day);
-    const setting = daySettings[key];
-    setNoteDraft(setting?.note || "");
-    setNoteModalError("");
-    setNoteModalDay(day);
+  function openDayPanel(day: number, preferredCompanyId = "") {
+    const dayJobs = jobsByDay.get(day) || [];
+    const preferred = preferredCompanyId && daySettingCompanies.some((company) => company.id === preferredCompanyId)
+      ? preferredCompanyId
+      : "";
+    const dayMatchedCompanyId = daySettingCompanies.find((company) =>
+      dayJobs.some((job) => String(job.company_id || "") === company.id)
+    )?.id || "";
+    const fallbackCompanyId = daySettingCompanies[0]?.id || "";
+    setPanelCompanyId(preferred || dayMatchedCompanyId || fallbackCompanyId);
+    setPanelError("");
+    setJobPanelDay(day);
   }
 
-  async function toggleFullDay(day: number) {
-    const key = dayDateKey(day);
-    const currentSetting = daySettings[key];
-    const nextIsFull = !Boolean(currentSetting?.is_full);
-    const note = currentSetting?.note || "";
-    setSavingDayByDay((prev) => ({ ...prev, [day]: true }));
-    setDayErrorByDay((prev) => ({ ...prev, [day]: "" }));
+  function closeDayPanel() {
+    if (panelSaving) return;
+    setJobPanelDay(null);
+    setPanelError("");
+  }
+
+  async function saveDayPanelSetting() {
+    if (jobPanelDay == null) return;
+    if (!panelCompanyId) {
+      setPanelError("Select a company first.");
+      return;
+    }
+    setPanelSaving(true);
+    setPanelError("");
     try {
-      await onSaveDaySetting(key, nextIsFull, note);
+      const saved = await onSaveDaySetting(panelCompanyId, dayDateKey(jobPanelDay), panelIsFull, panelNote);
+      setPanelIsFull(Boolean(saved?.is_full));
+      setPanelNote(saved?.note || "");
     } catch (err: unknown) {
-      setDayErrorByDay((prev) => ({ ...prev, [day]: err instanceof Error ? err.message : "Failed to save day" }));
+      setPanelError(err instanceof Error ? err.message : "Failed to save day setting");
     } finally {
-      setSavingDayByDay((prev) => ({ ...prev, [day]: false }));
+      setPanelSaving(false);
     }
   }
 
-  async function saveNoteModal() {
-    if (noteModalDay == null) return;
-    const key = dayDateKey(noteModalDay);
-    const currentSetting = daySettings[key];
-    const isFull = Boolean(currentSetting?.is_full);
-    setNoteModalSaving(true);
-    setNoteModalError("");
-    try {
-      await onSaveDaySetting(key, isFull, noteDraft);
-      setNoteModalDay(null);
-    } catch (err: unknown) {
-      setNoteModalError(err instanceof Error ? err.message : "Failed to save note");
-    } finally {
-      setNoteModalSaving(false);
+  useEffect(() => {
+    if (jobPanelDay == null) return;
+    if (!panelCompanyId) {
+      setPanelIsFull(false);
+      setPanelNote("");
+      return;
     }
-  }
-
-  function openJobListDrawer(day: number) {
-    setJobListDrawerDay(day);
-  }
-
-  function closeJobListDrawer() {
-    setJobListDrawerDay(null);
-  }
+    let cancelled = false;
+    setPanelLoading(true);
+    setPanelError("");
+    void (async () => {
+      try {
+        const setting = await onLoadDaySetting(panelCompanyId, dayDateKey(jobPanelDay), viewDate);
+        if (cancelled) return;
+        setPanelIsFull(Boolean(setting?.is_full));
+        setPanelNote(setting?.note || "");
+      } catch (err: unknown) {
+        if (cancelled) return;
+        setPanelError(err instanceof Error ? err.message : "Failed to load day setting");
+        setPanelIsFull(false);
+        setPanelNote("");
+      } finally {
+        if (!cancelled) {
+          setPanelLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobPanelDay, panelCompanyId, viewDate, onLoadDaySetting]);
 
   return (
     <section style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
@@ -1023,7 +1109,7 @@ function CompanyCalendar({
       </div>
 
       <div style={{ padding: 10 }}>
-        {companyStyles.size > 1 ? (
+        {companyStyles.size > 0 ? (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
             {Array.from(companyStyles.entries()).map(([key, item]) => (
               <span
@@ -1068,8 +1154,6 @@ function CompanyCalendar({
             const isFullDay = Boolean(daySetting?.is_full);
             const dayNote = daySetting?.note || "";
             const isSelectedDay = selectedJobId ? dayJobs.some((job) => job.id === selectedJobId) : false;
-            const isSavingDay = Boolean(savingDayByDay[day]);
-            const dayError = dayErrorByDay[day] || "";
             const visibleJobs = dayJobs.slice(0, 3);
             const overflowCount = Math.max(dayJobs.length - visibleJobs.length, 0);
             return (
@@ -1087,40 +1171,28 @@ function CompanyCalendar({
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (canEditDaySettings) {
-                          openNoteModal(day);
-                        }
-                      }}
-                      disabled={!canEditDaySettings}
+                      onClick={() => openDayPanel(day)}
                       style={{
                         ...calendarActionIconBtn,
                         borderColor: dayNote ? "#0176d3" : "#cbd5e1",
                         background: dayNote ? "#eaf5fe" : "#fff",
-                        opacity: !canEditDaySettings ? 0.55 : 1,
                       }}
-                      title={canEditDaySettings ? (dayNote ? "View or edit day note" : "Add day note") : "Select exactly one company to edit day settings"}
-                      aria-label={canEditDaySettings ? (dayNote ? "View or edit day note" : "Add day note") : "Select exactly one company to edit day settings"}
+                      title="Open day panel"
+                      aria-label="Open day panel"
                     >
                       <NoteIcon active={Boolean(dayNote)} />
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (canEditDaySettings) {
-                          void toggleFullDay(day);
-                        }
-                      }}
-                      disabled={isSavingDay || !canEditDaySettings}
+                      onClick={() => openDayPanel(day)}
                       style={{
                         ...calendarActionIconBtn,
                         borderColor: isFullDay ? "#0176d3" : "#cbd5e1",
                         background: isFullDay ? "#0176d3" : "#fff",
                         color: isFullDay ? "#fff" : "#334155",
-                        opacity: isSavingDay || !canEditDaySettings ? 0.55 : 1,
                       }}
-                      title={canEditDaySettings ? (isFullDay ? "Day is full (click to turn off)" : "Mark day as full") : "Select exactly one company to edit day settings"}
-                      aria-label={canEditDaySettings ? (isFullDay ? "Day is full (click to turn off)" : "Mark day as full") : "Select exactly one company to edit day settings"}
+                      title="Open day panel"
+                      aria-label="Open day panel"
                     >
                       <FullDayIcon active={isFullDay} />
                     </button>
@@ -1141,7 +1213,6 @@ function CompanyCalendar({
                     {dayNote.length > 60 ? `${dayNote.slice(0, 60)}...` : dayNote}
                   </div>
                 ) : null}
-                {dayError ? <div style={{ marginBottom: 6, fontSize: 10, color: "#ba0517" }}>{dayError}</div> : null}
                 {dayJobs.length > 0 ? (
                   <div style={{ display: "grid", gap: 6 }}>
                     {visibleJobs.map((job, idx) => (
@@ -1174,7 +1245,7 @@ function CompanyCalendar({
                     {overflowCount > 0 ? (
                       <button
                         type="button"
-                        onClick={() => openJobListDrawer(day)}
+                        onClick={() => openDayPanel(day)}
                         style={{
                           border: "1px solid #cbd5e1",
                           background: "#f8fafc",
@@ -1198,10 +1269,10 @@ function CompanyCalendar({
         </div>
       </div>
 
-      {jobListDrawerDay != null ? (
+      {jobPanelDay != null ? (
         <div
           role="presentation"
-          onClick={closeJobListDrawer}
+          onClick={closeDayPanel}
           style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.35)", zIndex: 95 }}
         >
           <div
@@ -1224,19 +1295,70 @@ function CompanyCalendar({
           >
             <div style={{ padding: 14, borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Jobs on {dayDateKey(jobListDrawerDay)}</div>
-                <div style={{ fontSize: 12, color: "#64748b" }}>{drawerDayJobs.length} job{drawerDayJobs.length === 1 ? "" : "s"}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Day Panel • {dayDateKey(jobPanelDay)}</div>
+                <div style={{ fontSize: 12, color: "#64748b" }}>{panelDayJobs.length} job{panelDayJobs.length === 1 ? "" : "s"}</div>
               </div>
-              <button type="button" onClick={closeJobListDrawer} style={calendarNavBtn} aria-label="Close job list">
+              <button type="button" onClick={closeDayPanel} style={calendarNavBtn} aria-label="Close day panel">
                 ✕
               </button>
             </div>
-            <div style={{ padding: 12, overflowY: "auto", display: "grid", gap: 10 }}>
-              {drawerDayJobs.map((job, idx) => (
+            <div style={{ padding: 12, overflowY: "auto", display: "grid", gap: 12 }}>
+              <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: "#f8fafc", display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 12, color: "#334155", fontWeight: 700 }}>Day Settings</div>
+                <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#334155", fontWeight: 600 }}>
+                  Company
+                  <select
+                    value={panelCompanyId}
+                    onChange={(e) => setPanelCompanyId(e.target.value)}
+                    style={{ ...inputStyle, height: 34 }}
+                    disabled={daySettingCompanies.length === 0 || panelSaving}
+                  >
+                    {daySettingCompanies.length === 0 ? <option value="">No selected companies</option> : null}
+                    {daySettingCompanies.map((company) => (
+                      <option key={company.id} value={company.id}>{company.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#334155", fontWeight: 600 }}>
+                  <input
+                    type="checkbox"
+                    checked={panelIsFull}
+                    onChange={(e) => setPanelIsFull(e.target.checked)}
+                    disabled={!panelCompanyId || panelLoading || panelSaving}
+                  />
+                  Mark day as full
+                </label>
+                <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#334155", fontWeight: 600 }}>
+                  Note
+                  <textarea
+                    value={panelNote}
+                    onChange={(e) => setPanelNote(e.target.value)}
+                    placeholder="Add context for dispatchers (parking, access, constraints, etc.)"
+                    rows={4}
+                    disabled={!panelCompanyId || panelLoading || panelSaving}
+                    style={{ width: "100%", boxSizing: "border-box", border: "1px solid #cbd5e1", borderRadius: 6, padding: "8px 10px", fontSize: 13, resize: "vertical", background: "#fff" }}
+                  />
+                </label>
+                {panelLoading ? <div style={{ fontSize: 12, color: "#475569" }}>Loading day setting...</div> : null}
+                {panelError ? <div style={{ fontSize: 12, color: "#ba0517" }}>{panelError}</div> : null}
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    onClick={() => void saveDayPanelSetting()}
+                    disabled={!panelCompanyId || panelLoading || panelSaving}
+                    style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "7px 12px", fontSize: 12, fontWeight: 600 }}
+                  >
+                    {panelSaving ? "Saving..." : "Save Day Setting"}
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 12, color: "#334155", fontWeight: 700 }}>Jobs</div>
+              {panelDayJobs.map((job, idx) => (
                 <Link
                   key={job.id}
                   to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
-                  onClick={closeJobListDrawer}
+                  onClick={closeDayPanel}
                   style={{
                     display: "grid",
                     gap: 3,
@@ -1260,77 +1382,6 @@ function CompanyCalendar({
                   {job.price != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>${job.price.toFixed(2)}</div> : null}
                 </Link>
               ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {noteModalDay != null ? (
-        <div
-          role="presentation"
-          onClick={() => {
-            if (!noteModalSaving) {
-              setNoteModalDay(null);
-              setNoteModalError("");
-            }
-          }}
-          style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.55)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: "min(540px, 100%)", background: "#fff", borderRadius: 8, border: "1px solid #cbd5e1", boxShadow: "0 20px 36px rgba(15,23,42,0.2)" }}
-          >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 14px", borderBottom: "1px solid #e2e8f0" }}>
-              <strong style={{ fontSize: 14, color: "#0f172a" }}>Day Note • {dayDateKey(noteModalDay)}</strong>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!noteModalSaving) {
-                    setNoteModalDay(null);
-                    setNoteModalError("");
-                  }
-                }}
-                disabled={noteModalSaving}
-                style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
-              >
-                Close
-              </button>
-            </div>
-            <div style={{ padding: 14 }}>
-              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#334155", fontWeight: 600 }}>
-                Note
-                <textarea
-                  value={noteDraft}
-                  onChange={(e) => setNoteDraft(e.target.value)}
-                  placeholder="Add context for dispatchers (parking, access, constraints, etc.)"
-                  rows={6}
-                  style={{ width: "100%", boxSizing: "border-box", border: "1px solid #cbd5e1", borderRadius: 6, padding: "8px 10px", fontSize: 13, resize: "vertical" }}
-                />
-              </label>
-              {noteModalError ? <div style={{ marginTop: 8, fontSize: 12, color: "#ba0517" }}>{noteModalError}</div> : null}
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNoteModalDay(null);
-                    setNoteModalError("");
-                  }}
-                  disabled={noteModalSaving}
-                  style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "7px 12px", fontSize: 12, fontWeight: 600 }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void saveNoteModal()}
-                  disabled={noteModalSaving}
-                  style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "7px 12px", fontSize: 12, fontWeight: 600 }}
-                >
-                  {noteModalSaving ? "Saving..." : "Save Note"}
-                </button>
-              </div>
             </div>
           </div>
         </div>
