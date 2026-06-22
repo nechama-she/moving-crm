@@ -957,6 +957,7 @@ function CompanyCalendar({
   onLoadDaySetting: (companyId: string, dayDate: string, month: Date) => Promise<DispatchCalendarDaySetting | null>;
   onSaveDaySetting: (companyId: string, dayDate: string, isFull: boolean, note: string) => Promise<DispatchCalendarDaySetting | null>;
 }) {
+  const location = useLocation();
   const [jobPanelDay, setJobPanelDay] = useState<number | null>(null);
   const [panelCompanyId, setPanelCompanyId] = useState("");
   const [panelNote, setPanelNote] = useState("");
@@ -969,6 +970,14 @@ function CompanyCalendar({
   const firstWeekday = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthLabel = viewDate.toLocaleString(undefined, { month: "long", year: "numeric" });
+  const dispatchBackState = useMemo(
+    () => ({
+      backTo: `${location.pathname}${location.search}`,
+      backLabel: "← Back to Calendar",
+      backOrigin: "dispatch-calendar",
+    }),
+    [location.pathname, location.search]
+  );
 
   const companyStyles = useMemo(() => {
     const uniqueCompanies = new Map<string, { name: string; tone: CompanyTone }>();
@@ -1219,6 +1228,7 @@ function CompanyCalendar({
                       <Link
                         key={job.id}
                         to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+                        state={dispatchBackState}
                         data-company-key={companyKeyForJob(job)}
                         style={{
                           display: "block",
@@ -1358,6 +1368,7 @@ function CompanyCalendar({
                 <Link
                   key={job.id}
                   to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+                  state={dispatchBackState}
                   onClick={closeDayPanel}
                   style={{
                     display: "grid",

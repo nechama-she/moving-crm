@@ -51,6 +51,12 @@ type LeadJobDraft = {
   price: string;
 };
 
+type LeadDetailNavigationState = {
+  backTo?: string;
+  backLabel?: string;
+  backOrigin?: string;
+};
+
 const USER_FIELDS = ["full_name", "phone_number", "email"];
 const MOVE_FIELDS = [
   "pickup_zip",
@@ -135,6 +141,9 @@ export default function LeadDetail() {
     const params = new URLSearchParams(location.search);
     return (params.get("job_id") || "").trim();
   }, [location.search]);
+  const navigationState = (location.state as LeadDetailNavigationState | null) || null;
+  const backTo = navigationState?.backTo || (user?.role === "dispatch" ? "/dispatch" : "/");
+  const backLabel = navigationState?.backLabel || (user?.role === "dispatch" ? "← Back to Dispatch" : "← Back to Leads");
 
   useEffect(() => {
     fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
@@ -679,7 +688,7 @@ export default function LeadDetail() {
     <div style={{ width: "100%", height: "calc(100vh - 52px)", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "24px clamp(16px, 3vw, 28px) 40px", background: "#f6f8fb" }}>
       <div style={{ width: "100%", maxWidth: 1120, margin: "0 auto" }}>
       <button
-        onClick={() => navigate(user?.role === "dispatch" ? "/dispatch" : "/")}
+        onClick={() => navigate(backTo)}
         style={{
           marginBottom: 14,
           padding: "5px 14px",
@@ -692,7 +701,7 @@ export default function LeadDetail() {
           fontWeight: 500,
         }}
       >
-        {user?.role === "dispatch" ? "← Back to Dispatch" : "← Back to Leads"}
+        {backLabel}
       </button>
 
       {previewOpen ? (
