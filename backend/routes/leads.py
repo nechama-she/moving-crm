@@ -11,6 +11,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, cast, text
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from auth import get_current_user
 from config import get_config
@@ -1542,12 +1543,6 @@ def create_lead(
     if not body.full_name.strip():
         raise HTTPException(status_code=400, detail="full_name is required")
 
-    # Deduplicate by smartmoving_id
-    if body.smartmoving_id.strip():
-        existing = db.query(Lead).filter(Lead.smartmoving_id == body.smartmoving_id.strip()).first()
-        if existing:
-            return {"status": "skipped", "reason": "duplicate", "smartmoving_id": body.smartmoving_id}
-
     company = db.query(Company).filter(Company.name == body.company_name.strip()).first()
     if not company:
         raise HTTPException(status_code=400, detail=f"Company '{body.company_name}' not found")
@@ -1596,19 +1591,26 @@ def create_lead(
         service_type=body.service_type.strip() or None,
         status=raw_status or "new",
     )
-    db.add(lead)
-    db.flush()
-    db.add(LeadJob(
-        lead_id=lead.id,
-        company_id=lead.company_id,
-        job_order=1,
-        pickup_zip=lead.pickup_zip,
-        delivery_zip=lead.delivery_zip,
-        move_date=lead.move_date,
-        booked_move_date=lead.booked_move_date,
-        price=None,
-    ))
-    db.commit()
+    try:
+        db.add(lead)
+        db.flush()
+        db.add(LeadJob(
+            lead_id=lead.id,
+            company_id=lead.company_id,
+            job_order=1,
+            pickup_zip=lead.pickup_zip,
+            delivery_zip=lead.delivery_zip,
+            move_date=lead.move_date,
+            booked_move_date=lead.booked_move_date,
+            price=None,
+        ))
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        if "smartmoving_id" in str(e):
+            raise HTTPException(status_code=409, detail=f"Lead with smartmoving_id '{body.smartmoving_id}' already exists")
+        raise HTTPException(status_code=400, detail="Database integrity error")
+    
     db.refresh(lead)
     logger.info("Created lead: %s (%s)", lead.full_name, lead.id)
     
