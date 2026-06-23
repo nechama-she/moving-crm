@@ -72,6 +72,9 @@ const COMPANY_TONES: CompanyTone[] = [
 
 // Pin company keys (company_id or name) to fixed tones so colors stay constant.
 const COMPANY_TONE_BY_KEY: Record<string, string> = Object.freeze({
+  "gorilla haulers": "emerald",
+  "top tier van lines": "amber",
+  "movers 95": "rose",
   unknown: "sky",
 });
 
@@ -83,7 +86,7 @@ const COMPANY_TONE_BY_NAME = Object.freeze(
 );
 
 function companyKeyForJob(job: LeadJob): string {
-  return job.company_id || job.company_name || "unknown";
+  return job.company_name || job.company_id || "unknown";
 }
 
 function toneForCompanyKey(companyKey: string): CompanyTone {
@@ -93,11 +96,7 @@ function toneForCompanyKey(companyKey: string): CompanyTone {
     return COMPANY_TONE_BY_NAME[pinnedToneKey];
   }
 
-  let hash = 0;
-  for (let i = 0; i < normalizedKey.length; i += 1) {
-    hash = (hash * 31 + normalizedKey.charCodeAt(i)) >>> 0;
-  }
-  return COMPANY_TONES[hash % COMPANY_TONES.length];
+  return COMPANY_TONE_BY_NAME.sky;
 }
 
 function monthKey(d: Date): string {
@@ -1000,7 +999,7 @@ function CompanyCalendar({
 
   function getCompanyTone(job: LeadJob): CompanyTone {
     const key = companyKeyForJob(job);
-    return companyStyles.get(key)?.tone || COMPANY_TONES[0];
+    return companyStyles.get(key)?.tone || toneForCompanyKey(key);
   }
 
   const jobsByDay = new Map<number, LeadJob[]>();
