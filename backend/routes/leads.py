@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, cast, text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from dateutil import parser as date_parser
 
 from auth import get_current_user
 from config import get_config
@@ -67,9 +68,27 @@ def _parse_booked_move_date(value: str | None) -> date | None:
     if not raw:
         return None
 
-    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+    # Common compact format from imports (e.g. 20260106).
+    if raw.isdigit() and len(raw) == 8:
         try:
-            return datetime.strptime(raw, fmt).date()
+            return datetime.strptime(raw, "%Y%m%d").date()
+        except Exception:
+            pass
+
+    # Try strict ISO first, then a broad parser for varied valid date inputs.
+    iso_candidate = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+    try:
+        return datetime.fromisoformat(iso_candidate).date()
+    except Exception:
+        pass
+
+    for kwargs in (
+        {"fuzzy": True, "yearfirst": True, "dayfirst": False},
+        {"fuzzy": True, "yearfirst": False, "dayfirst": False},
+        {"fuzzy": True, "yearfirst": False, "dayfirst": True},
+    ):
+        try:
+            return date_parser.parse(raw, **kwargs).date()
         except Exception:
             continue
     return None
