@@ -1088,6 +1088,7 @@ export default function LeadDetail() {
                         <div
                           ref={statusMenuPopoverRef}
                           role="menu"
+                          onMouseDown={(e) => e.stopPropagation()}
                           style={{
                             position: "fixed",
                             top: statusMenuRect.top,
