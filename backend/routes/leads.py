@@ -30,6 +30,9 @@ router = APIRouter(prefix="/api", tags=["Leads"])
 # Statuses that dispatch can see (booked and beyond)
 DISPATCH_STATUSES = {"booked", "scheduled", "completed"}
 
+# Terminal statuses that should never receive automated messages.
+NO_MESSAGE_STATUSES = {"booked", "scheduled", "completed", "lost", "cancelled"}
+
 
 def _default_sync_result(error: str = "not_attempted") -> dict:
     return {"ok": False, "status": "n/a", "body": "(empty)", "error": error}
@@ -1457,6 +1460,8 @@ def update_lead(
 
 
 def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
+    if (lead.status or "").strip().lower() in NO_MESSAGE_STATUSES:
+        return
     if not lead.phone:
         return
     rep = db.query(User).filter(User.id == lead.assigned_to).first()
@@ -1720,6 +1725,8 @@ def create_lead(
     
     db.refresh(lead)
     logger.info("Created lead: %s (%s)", lead.full_name, lead.id)
+
+    suppress_new_lead_automation = lead.status in NO_MESSAGE_STATUSES
     
     # Debug: log auto-assign decision
     any_admin_available = _any_admin_available_now(db)
@@ -1771,7 +1778,8 @@ def create_lead(
 
     # Send welcome SMS if phone and smartmoving_id are present
     sms_result = None
-    if lead.phone and lead.smartmoving_id:
+    message = ""
+    if not suppress_new_lead_automation and lead.phone and lead.smartmoving_id:
         from libs.aircall import send_sms, find_number_id
         first_name = lead.full_name.split()[0] if lead.full_name.strip() else ""
         template = get_company_template(db, company.id, "welcome_sms")
@@ -1816,28 +1824,29 @@ def create_lead(
         )
         db.add(assign_event)
 
-        outreach_event = OutreachEvent(
-            lead_id=lead.id,
-            company_id=company.id,
-            smartmoving_id=lead.smartmoving_id or "",
-            note_id="",
-            outreach_type="new_lead",
-            job_id=lead.smartmoving_id or "",
-            qualified=bool(lead.phone and lead.smartmoving_id),
-            qualification_reason="ok" if lead.phone and lead.smartmoving_id else "missing_phone_or_job_id",
-            message=message if lead.phone and lead.smartmoving_id else "",
-            messenger=False,
-            aircall=bool(lead.phone),
-            dry_run=False,
-        )
-        db.add(outreach_event)
+        if not suppress_new_lead_automation:
+            outreach_event = OutreachEvent(
+                lead_id=lead.id,
+                company_id=company.id,
+                smartmoving_id=lead.smartmoving_id or "",
+                note_id="",
+                outreach_type="new_lead",
+                job_id=lead.smartmoving_id or "",
+                qualified=bool(lead.phone and lead.smartmoving_id),
+                qualification_reason="ok" if lead.phone and lead.smartmoving_id else "missing_phone_or_job_id",
+                message=message if lead.phone and lead.smartmoving_id else "",
+                messenger=False,
+                aircall=bool(lead.phone),
+                dry_run=False,
+            )
+            db.add(outreach_event)
         db.commit()
     except Exception as exc:
         db.rollback()
         logger.warning("Non-fatal outreach event write failure for lead %s: %s", lead.id, exc)
 
     # Duplicate lead to Top Tier Van Lines after a 10-minute delay
-    if company.name == "Gorilla Haulers" and not status_provided:
+    if company.name == "Gorilla Haulers" and not status_provided and not suppress_new_lead_automation:
         if lead.referral_source == "Facebook-Gorilla-HHG-Nationwide":
             _enqueue_lead_for_duplication(
                 lead_id=lead.id,

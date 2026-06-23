@@ -64,6 +64,7 @@ def get_leads_for_followup(window_start, window_end, limit=0, company_id=None):
         JOIN companies c ON l.company_id = c.id
         WHERE l.smartmoving_id IS NOT NULL
           AND l.created_time IS NOT NULL
+                    AND lower(coalesce(l.status, '')) NOT IN ('booked', 'scheduled', 'completed', 'lost', 'cancelled')
           AND l.created_at >= :window_start
           AND l.created_at < :window_end
     """
@@ -122,6 +123,7 @@ def get_due_followups(smartmoving_id: str | None = None):
         JOIN leads l ON l.smartmoving_id = f.smartmoving_id::text
         JOIN companies c ON l.company_id = c.id
         WHERE f.completed = false
+                    AND lower(coalesce(l.status, '')) NOT IN ('booked', 'scheduled', 'completed', 'lost', 'cancelled')
           AND f.due_date_time::date = CURRENT_DATE
     """
     params = {}
