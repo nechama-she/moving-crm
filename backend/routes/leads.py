@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, date, timedelta, timezone
 
@@ -61,6 +62,10 @@ def _normalize_phone(raw: str | None) -> str:
     if len(digits) == 11 and digits.startswith("1"):
         return digits[1:]
     return digits
+
+
+def _normalize_person_name(value: str | None) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip()).lower()
 
 
 def _parse_booked_move_date(value: str | None) -> date | None:
@@ -1622,36 +1627,29 @@ def create_lead(
     requested_assignee_name = (body.assigned_to_name or body.sales_person_name or "").strip()
 
     if requested_assignee_id:
-        rep = (
-            db.query(User)
-            .join(UserCompany, UserCompany.user_id == User.id)
-            .filter(
-                User.id == requested_assignee_id,
-                User.role == "sales_rep",
-                UserCompany.company_id == company.id,
-            )
-            .first()
-        )
-        if not rep:
-            raise HTTPException(status_code=400, detail="assigned_to must be an active sales rep in the target company")
-        assigned_to_user_id = rep.id
+        assignee = db.query(User).filter(User.id == requested_assignee_id).first()
+        if not assignee:
+            raise HTTPException(status_code=400, detail="assigned_to user id not found")
+        assigned_to_user_id = assignee.id
         assignment_reason = "api_assigned_to"
     elif requested_assignee_name:
-        reps = (
-            db.query(User)
-            .join(UserCompany, UserCompany.user_id == User.id)
-            .filter(
-                User.role == "sales_rep",
-                UserCompany.company_id == company.id,
-                func.lower(func.trim(User.name)) == requested_assignee_name.lower(),
+        users = db.query(User).all()
+        needle = _normalize_person_name(requested_assignee_name)
+        matched_users = [u for u in users if _normalize_person_name(u.name) == needle]
+        if not matched_users:
+            available_names = sorted({(u.name or "").strip() for u in users if (u.name or "").strip()})
+            preview = ", ".join(available_names[:10])
+            extra = "" if len(available_names) <= 10 else f" (+{len(available_names) - 10} more)"
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"sales_person_name '{requested_assignee_name}' not found"
+                    + (f". Available reps: {preview}{extra}" if preview else "")
+                ),
             )
-            .all()
-        )
-        if not reps:
-            raise HTTPException(status_code=400, detail="sales_person_name not found in target company")
-        if len(reps) > 1:
+        if len(matched_users) > 1:
             raise HTTPException(status_code=400, detail="sales_person_name is ambiguous; send assigned_to user id")
-        assigned_to_user_id = reps[0].id
+        assigned_to_user_id = matched_users[0].id
         assignment_reason = "api_assigned_to_name"
 
     # Auto-assign only while all admins are unavailable and no explicit assignee was provided.
