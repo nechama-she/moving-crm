@@ -121,6 +121,7 @@ export default function LeadDetail() {
   const [savingStatus, setSavingStatus] = useState(false);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [statusMenuRect, setStatusMenuRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const [deletingLead, setDeletingLead] = useState(false);
   const [leadJobs, setLeadJobs] = useState<LeadJobItem[]>([]);
   const [jobsLoading, setJobsLoading] = useState(true);
   const [jobsError, setJobsError] = useState("");
@@ -689,25 +690,66 @@ export default function LeadDetail() {
     );
   }
 
+  async function deleteLead() {
+    if (!leadId) return;
+    if (!window.confirm("Delete this lead and all related records? This cannot be undone.")) return;
+    setDeletingLead(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(String((err as { detail?: unknown }).detail || `HTTP ${res.status}`));
+      }
+      navigate(backTo);
+    } catch (e) {
+      alert(`Failed to delete lead: ${e instanceof Error ? e.message : "error"}`);
+    } finally {
+      setDeletingLead(false);
+    }
+  }
+
   return (
     <div style={{ width: "100%", height: "calc(100vh - 52px)", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "24px clamp(16px, 3vw, 28px) 40px", background: "#f6f8fb" }}>
       <div style={{ width: "100%", maxWidth: 1120, margin: "0 auto" }}>
-      <button
-        onClick={() => navigate(backTo)}
-        style={{
-          marginBottom: 14,
-          padding: "5px 14px",
-          cursor: "pointer",
-          border: "1px solid #dddbda",
-          borderRadius: 4,
-          background: "#fff",
-          fontSize: 13,
-          color: "#0176d3",
-          fontWeight: 500,
-        }}
-      >
-        {backLabel}
-      </button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <button
+          onClick={() => navigate(backTo)}
+          style={{
+            padding: "5px 14px",
+            cursor: "pointer",
+            border: "1px solid #dddbda",
+            borderRadius: 4,
+            background: "#fff",
+            fontSize: 13,
+            color: "#0176d3",
+            fontWeight: 500,
+          }}
+        >
+          {backLabel}
+        </button>
+        {user?.role === "admin" ? (
+          <button
+            type="button"
+            onClick={() => void deleteLead()}
+            disabled={deletingLead}
+            style={{
+              padding: "6px 12px",
+              border: "1px solid #fca5a5",
+              borderRadius: 6,
+              background: "#fff1f2",
+              color: "#b91c1c",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: deletingLead ? "default" : "pointer",
+            }}
+          >
+            {deletingLead ? "Deleting..." : "Delete Lead"}
+          </button>
+        ) : null}
+      </div>
 
       {previewOpen ? (
         <div

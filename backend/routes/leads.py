@@ -19,7 +19,7 @@ from config import get_config
 from database import get_db
 from libs.common.phone import normalize_digits
 from libs.smartmoving.client import update_opportunity_salesperson
-from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob
+from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, Followup, SentMessage, Task
 from routes.templates import get_company_template
 
 logger = logging.getLogger("moving-crm")
@@ -774,6 +774,41 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
             logger.info("Matched sender_id %s for lead %s", sender_id, lead.id)
 
     return lead.to_dict()
+
+
+@router.delete("/leads/{lead_id}")
+def delete_lead(
+    lead_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can delete leads")
+
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    smartmoving_id = (lead.smartmoving_id or "").strip()
+    resolved_lead_id = lead.id
+
+    try:
+        db.query(LeadAttachment).filter(LeadAttachment.lead_id == resolved_lead_id).delete(synchronize_session=False)
+        db.query(LeadJob).filter(LeadJob.lead_id == resolved_lead_id).delete(synchronize_session=False)
+        db.query(Task).filter(Task.lead_id == resolved_lead_id).delete(synchronize_session=False)
+        db.query(AutoAssignEvent).filter(AutoAssignEvent.lead_id == resolved_lead_id).delete(synchronize_session=False)
+        db.query(OutreachEvent).filter(OutreachEvent.lead_id == resolved_lead_id).delete(synchronize_session=False)
+
+        if smartmoving_id:
+            db.query(Followup).filter(Followup.smartmoving_id == smartmoving_id).delete(synchronize_session=False)
+            db.query(SentMessage).filter(SentMessage.smartmoving_id == smartmoving_id).delete(synchronize_session=False)
+            db.query(OutreachEvent).filter(OutreachEvent.smartmoving_id == smartmoving_id).delete(synchronize_session=False)
+
+        db.delete(lead)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to hard-delete lead %s", resolved_lead_id)
+        raise HTTPException(status_code=500, detail="Failed to delete lead")
+
+    return {"ok": True, "deleted_lead_id": resolved_lead_id}
 
 
 MAX_ATTACHMENT_SIZE_BYTES = 15 * 1024 * 1024  # 15 MB
