@@ -1572,6 +1572,10 @@ class NewLead(BaseModel):
     referral_source: str = ""
     service_type: str = ""
     status: str = ""
+    assigned_to: str = ""
+    assigned_to_name: str = ""
+    sales_person_id: str = ""
+    sales_person_name: str = ""
     company_name: str
     source: str
 
@@ -1614,8 +1618,44 @@ def create_lead(
     assignment_mode = "manual"
     assignment_reason = "admin_available"
 
-    # Auto-assign only while all admins are unavailable.
-    if not _any_admin_available_now(db):
+    requested_assignee_id = (body.assigned_to or body.sales_person_id or "").strip()
+    requested_assignee_name = (body.assigned_to_name or body.sales_person_name or "").strip()
+
+    if requested_assignee_id:
+        rep = (
+            db.query(User)
+            .join(UserCompany, UserCompany.user_id == User.id)
+            .filter(
+                User.id == requested_assignee_id,
+                User.role == "sales_rep",
+                UserCompany.company_id == company.id,
+            )
+            .first()
+        )
+        if not rep:
+            raise HTTPException(status_code=400, detail="assigned_to must be an active sales rep in the target company")
+        assigned_to_user_id = rep.id
+        assignment_reason = "api_assigned_to"
+    elif requested_assignee_name:
+        reps = (
+            db.query(User)
+            .join(UserCompany, UserCompany.user_id == User.id)
+            .filter(
+                User.role == "sales_rep",
+                UserCompany.company_id == company.id,
+                func.lower(func.trim(User.name)) == requested_assignee_name.lower(),
+            )
+            .all()
+        )
+        if not reps:
+            raise HTTPException(status_code=400, detail="sales_person_name not found in target company")
+        if len(reps) > 1:
+            raise HTTPException(status_code=400, detail="sales_person_name is ambiguous; send assigned_to user id")
+        assigned_to_user_id = reps[0].id
+        assignment_reason = "api_assigned_to_name"
+
+    # Auto-assign only while all admins are unavailable and no explicit assignee was provided.
+    if not assigned_to_user_id and not _any_admin_available_now(db):
         available_rep_ids = _active_available_rep_ids(db)
         rep = _pick_round_robin_rep_for_company(company.id, db, available_rep_ids)
         if rep:
