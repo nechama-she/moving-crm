@@ -17,6 +17,7 @@ export default function SettingsPage() {
           <h2 style={sectionHeader}>User Management</h2>
           <p style={desc}>Create and maintain users who work leads in the CRM.</p>
           <div style={actionsRow}>
+            <Link to="/admin-users" style={primaryLink}>Manage Admin Users</Link>
             <Link to="/sales-reps" style={primaryLink}>Manage Sales Reps</Link>
             <Link to="/dispatch" style={ghostLink}>Manage Dispatch</Link>
           </div>
