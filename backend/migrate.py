@@ -106,6 +106,43 @@ def migrate(drop_first: bool = False):
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS smartmoving_rep_id VARCHAR(100)"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS aircall_number_id VARCHAR(50)"))
         conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS booked_move_date DATE"))
+        # Normalize blank SmartMoving IDs to NULL, dedupe legacy rows,
+        # then enforce uniqueness at the DB level.
+        conn.execute(text("UPDATE leads SET smartmoving_id = NULL WHERE smartmoving_id IS NOT NULL AND BTRIM(smartmoving_id) = ''"))
+        duplicate_groups = conn.execute(text("""
+            SELECT COUNT(*)
+            FROM (
+                SELECT smartmoving_id
+                FROM leads
+                WHERE smartmoving_id IS NOT NULL
+                GROUP BY smartmoving_id
+                HAVING COUNT(*) > 1
+            ) d
+        """)).scalar() or 0
+        if duplicate_groups:
+            logger.warning("Found %s duplicate smartmoving_id group(s); keeping newest row per ID and nulling older duplicates", duplicate_groups)
+            conn.execute(text("""
+                WITH ranked AS (
+                    SELECT
+                        id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY smartmoving_id
+                            ORDER BY created_at DESC NULLS LAST, id DESC
+                        ) AS rn
+                    FROM leads
+                    WHERE smartmoving_id IS NOT NULL
+                )
+                UPDATE leads l
+                SET smartmoving_id = NULL
+                FROM ranked r
+                WHERE l.id = r.id
+                  AND r.rn > 1
+            """))
+        conn.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_smartmoving_id
+            ON leads (smartmoving_id)
+            WHERE smartmoving_id IS NOT NULL
+        """))
         conn.execute(text("""
             UPDATE leads
             SET booked_move_date = CASE
