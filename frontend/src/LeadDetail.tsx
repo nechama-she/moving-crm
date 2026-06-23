@@ -102,6 +102,7 @@ export default function LeadDetail() {
   const [assignMenuOpen, setAssignMenuOpen] = useState(false);
   const assignMenuRef = useRef<HTMLDivElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
+  const statusMenuPopoverRef = useRef<HTMLDivElement | null>(null);
   const statusButtonRef = useRef<HTMLButtonElement | null>(null);
   const [attachments, setAttachments] = useState<LeadAttachment[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(true);
@@ -570,7 +571,11 @@ export default function LeadDetail() {
       if (assignMenuRef.current && !assignMenuRef.current.contains(target)) {
         setAssignMenuOpen(false);
       }
-      if (statusMenuRef.current && !statusMenuRef.current.contains(target)) {
+      if (
+        statusMenuRef.current
+        && !statusMenuRef.current.contains(target)
+        && !statusMenuPopoverRef.current?.contains(target)
+      ) {
         setStatusMenuOpen(false);
       }
     }
@@ -1081,6 +1086,7 @@ export default function LeadDetail() {
                       </div>
                       {statusMenuOpen && statusMenuRect ? createPortal(
                         <div
+                          ref={statusMenuPopoverRef}
                           role="menu"
                           style={{
                             position: "fixed",
