@@ -94,6 +94,14 @@ def _parse_booked_move_date(value: str | None) -> date | None:
     return None
 
 
+def _normalize_move_date(value: str | None) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    parsed = _parse_booked_move_date(raw)
+    return parsed.isoformat() if parsed else raw
+
+
 def _is_admin_unavailable_now(admin_user_id: str, db: Session, now: datetime | None = None) -> bool:
     ts = now or _utcnow()
     return (
@@ -906,7 +914,7 @@ def create_lead_job(
     if not company_exists:
         raise HTTPException(status_code=404, detail="Company not found")
 
-    move_date = (body.move_date or "").strip()
+    move_date = _normalize_move_date(body.move_date)
     booked_date_raw = (body.booked_move_date or "").strip()
     booked_date = _parse_booked_move_date(booked_date_raw or move_date)
     if booked_date_raw and not booked_date:
@@ -973,7 +981,7 @@ def update_lead_job(
     if "delivery_zip" in payload:
         row.delivery_zip = (payload.get("delivery_zip") or "").strip()
     if "move_date" in payload:
-        row.move_date = (payload.get("move_date") or "").strip()
+        row.move_date = _normalize_move_date(payload.get("move_date") or "")
         if "booked_move_date" not in payload:
             row.booked_move_date = _parse_booked_move_date(row.move_date)
 
@@ -1416,7 +1424,7 @@ def update_lead(
     if body.email is not None:
         lead.email = body.email.strip() or None
     if body.move_date is not None:
-        lead.move_date = body.move_date.strip()
+        lead.move_date = _normalize_move_date(body.move_date)
         lead.booked_move_date = _parse_booked_move_date(body.move_date)
 
     primary_job = _get_or_create_primary_lead_job(lead, db)
@@ -1624,8 +1632,9 @@ def create_lead(
     if raw_status and raw_status not in ALLOWED_LEAD_STATUSES:
         raw_status = "new"
 
+    normalized_move_date = _normalize_move_date(body.move_date)
     booked_raw = (body.booked_move_date or "").strip()
-    parsed_booked_date = _parse_booked_move_date(booked_raw or body.move_date)
+    parsed_booked_date = _parse_booked_move_date(booked_raw or normalized_move_date)
     if booked_raw and not parsed_booked_date:
         raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
 
@@ -1642,7 +1651,7 @@ def create_lead(
         pickup_zip=body.pickup_zip.strip(),
         delivery_zip=body.delivery_zip.strip(),
         move_size=body.move_size.strip(),
-        move_date=body.move_date.strip(),
+        move_date=normalized_move_date,
         booked_move_date=parsed_booked_date,
         move_type=MOVE_TYPE_MAP.get(raw_move_type, raw_move_type),
         created_time=body.created_time.strip(),

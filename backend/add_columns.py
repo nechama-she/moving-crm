@@ -1,26 +1,7 @@
-"""Add new columns to existing tables (idempotent)."""
-from database import engine
-from sqlalchemy import text
+"""Legacy migration placeholder.
 
-COLUMNS = [
-    ("leads", "referral_source", "VARCHAR(100)"),
-    ("leads", "service_type", "VARCHAR(50)"),
-    ("leads", "smartmoving_id", "VARCHAR(100)"),
-    ("companies", "facebook_page_id", "VARCHAR(100)"),
-    ("companies", "aircall_number_id", "VARCHAR(50)"),
-    ("companies", "aircall_name", "VARCHAR(255)"),
-    ("companies", "samrtmoving_branch_id", "VARCHAR(100)"),
-    ("companies", "timezone", "VARCHAR(50) DEFAULT 'America/New_York'"),
-    ("tasks", "task_type", "VARCHAR(20) DEFAULT 'other' NOT NULL"),
-    ("tasks", "notes", "TEXT DEFAULT ''"),
-]
+This script is intentionally kept as a no-op so existing pipeline steps continue
+to succeed without re-running historical column migrations.
+"""
 
-with engine.connect() as conn:
-    for table, col, col_type in COLUMNS:
-        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {col_type}"))
-        conn.commit()
-        print(f"OK: {table}.{col}")
-
-print("Done")
-
-print("Done")
+print("No legacy column migrations to apply.")
