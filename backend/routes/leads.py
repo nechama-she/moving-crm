@@ -1554,6 +1554,7 @@ class NewLead(BaseModel):
     delivery_zip: str = ""
     move_size: str = ""
     move_date: str = ""
+    booked_move_date: str = ""
     move_type: str = ""
     created_time: str = ""
     leadgen_id: str = ""
@@ -1623,6 +1624,11 @@ def create_lead(
     if raw_status and raw_status not in ALLOWED_LEAD_STATUSES:
         raw_status = "new"
 
+    booked_raw = (body.booked_move_date or "").strip()
+    parsed_booked_date = _parse_booked_move_date(booked_raw or body.move_date)
+    if booked_raw and not parsed_booked_date:
+        raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
+
     lead = Lead(
         company_id=company.id,
         assigned_to=assigned_to_user_id,
@@ -1637,7 +1643,7 @@ def create_lead(
         delivery_zip=body.delivery_zip.strip(),
         move_size=body.move_size.strip(),
         move_date=body.move_date.strip(),
-        booked_move_date=_parse_booked_move_date(body.move_date),
+        booked_move_date=parsed_booked_date,
         move_type=MOVE_TYPE_MAP.get(raw_move_type, raw_move_type),
         created_time=body.created_time.strip(),
         notes=body.notes.strip() or None,
