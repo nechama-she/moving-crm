@@ -8,6 +8,7 @@ type DispatchPageMode = "calendar" | "manage";
 type Company = {
   id: string;
   name: string;
+  color?: string;
 };
 
 type UserCompany = {
@@ -29,6 +30,7 @@ type LeadJob = {
   lead_id: string;
   company_id?: string;
   company_name?: string;
+  company_color?: string;
   job_order?: number;
   full_name: string;
   move_date: string;
@@ -52,51 +54,26 @@ type DispatchCalendarDaySetting = {
 };
 
 type CompanyTone = {
-  key: string;
-  name: string;
   tint: string;
   border: string;
   text: string;
 };
 
-const COMPANY_TONES: CompanyTone[] = [
-  { key: "sky", name: "Sky", tint: "#e0f2fe", border: "#7dd3fc", text: "#0c4a6e" },
-  { key: "emerald", name: "Emerald", tint: "#dcfce7", border: "#86efac", text: "#14532d" },
-  { key: "amber", name: "Amber", tint: "#fef3c7", border: "#fcd34d", text: "#78350f" },
-  { key: "rose", name: "Rose", tint: "#ffe4e6", border: "#fda4af", text: "#881337" },
-  { key: "teal", name: "Teal", tint: "#ccfbf1", border: "#5eead4", text: "#115e59" },
-  { key: "orange", name: "Orange", tint: "#ffedd5", border: "#fdba74", text: "#7c2d12" },
-  { key: "lime", name: "Lime", tint: "#ecfccb", border: "#bef264", text: "#3f6212" },
-  { key: "cyan", name: "Cyan", tint: "#cffafe", border: "#67e8f9", text: "#155e75" },
-];
-
-// Pin company keys (company_id or name) to fixed tones so colors stay constant.
-const COMPANY_TONE_BY_KEY: Record<string, string> = Object.freeze({
-  "gorilla haulers": "emerald",
-  "top tier van lines": "amber",
-  "movers 95": "rose",
-  unknown: "sky",
-});
-
-const COMPANY_TONE_BY_NAME = Object.freeze(
-  COMPANY_TONES.reduce<Record<string, CompanyTone>>((acc, tone) => {
-    acc[tone.key] = tone;
-    return acc;
-  }, {})
-);
+const DEFAULT_COMPANY_TONE: CompanyTone = Object.freeze({ tint: "#e0f2fe", border: "#7dd3fc", text: "#0c4a6e" });
 
 function companyKeyForJob(job: LeadJob): string {
   return job.company_name || job.company_id || "unknown";
 }
 
-function toneForCompanyKey(companyKey: string): CompanyTone {
-  const normalizedKey = (companyKey || "").trim().toLowerCase();
-  const pinnedToneKey = COMPANY_TONE_BY_KEY[normalizedKey];
-  if (pinnedToneKey && COMPANY_TONE_BY_NAME[pinnedToneKey]) {
-    return COMPANY_TONE_BY_NAME[pinnedToneKey];
-  }
+function toneForCompanyColor(companyColor?: string): CompanyTone {
+  const normalizedColor = normalizeHexColor(companyColor);
+  if (!normalizedColor) return DEFAULT_COMPANY_TONE;
 
-  return COMPANY_TONE_BY_NAME.sky;
+  return {
+    tint: mixHexColors(normalizedColor, "#ffffff", 0.82),
+    border: mixHexColors(normalizedColor, "#ffffff", 0.48),
+    text: mixHexColors(normalizedColor, "#111827", 0.35),
+  };
 }
 
 function monthKey(d: Date): string {
@@ -118,6 +95,39 @@ function parseCalendarDate(raw: string): Date | null {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed;
+}
+
+function normalizeHexColor(value?: string): string | null {
+  const raw = (value || "").trim();
+  if (!/^#[0-9a-fA-F]{6}$/.test(raw)) return null;
+  return raw.toLowerCase();
+}
+
+function mixHexColors(baseHex: string, mixHex: string, mixRatio: number): string {
+  const baseRgb = hexToRgb(baseHex);
+  const mixRgb = hexToRgb(mixHex);
+  if (!baseRgb || !mixRgb) return baseHex;
+
+  const ratio = Math.max(0, Math.min(1, mixRatio));
+  return rgbToHex({
+    red: Math.round(baseRgb.red * (1 - ratio) + mixRgb.red * ratio),
+    green: Math.round(baseRgb.green * (1 - ratio) + mixRgb.green * ratio),
+    blue: Math.round(baseRgb.blue * (1 - ratio) + mixRgb.blue * ratio),
+  });
+}
+
+function hexToRgb(hex: string): { red: number; green: number; blue: number } | null {
+  const normalized = normalizeHexColor(hex);
+  if (!normalized) return null;
+  return {
+    red: Number.parseInt(normalized.slice(1, 3), 16),
+    green: Number.parseInt(normalized.slice(3, 5), 16),
+    blue: Number.parseInt(normalized.slice(5, 7), 16),
+  };
+}
+
+function rgbToHex(rgb: { red: number; green: number; blue: number }): string {
+  return `#${rgb.red.toString(16).padStart(2, "0")}${rgb.green.toString(16).padStart(2, "0")}${rgb.blue.toString(16).padStart(2, "0")}`;
 }
 
 export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
@@ -990,7 +1000,7 @@ function CompanyCalendar({
     for (const job of sortedJobs) {
       const key = companyKeyForJob(job);
       if (uniqueCompanies.has(key)) continue;
-      const tone = toneForCompanyKey(key);
+      const tone = toneForCompanyColor(job.company_color);
       uniqueCompanies.set(key, { name: job.company_name || "Company", tone });
     }
 
@@ -999,7 +1009,7 @@ function CompanyCalendar({
 
   function getCompanyTone(job: LeadJob): CompanyTone {
     const key = companyKeyForJob(job);
-    return companyStyles.get(key)?.tone || toneForCompanyKey(key);
+    return companyStyles.get(key)?.tone || toneForCompanyColor(job.company_color);
   }
 
   const jobsByDay = new Map<number, LeadJob[]>();

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from auth import require_admin, get_current_user
+from company_colors import normalize_company_color, resolve_company_color
 from database import get_db
 from models import Company, User, UserCompany, Lead
 
@@ -16,6 +17,7 @@ router = APIRouter(prefix="/api/companies", tags=["Companies"])
 
 class CompanyCreate(BaseModel):
     name: str
+    color: Optional[str] = None
     phone: str = ""
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
@@ -70,12 +72,16 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
     if not company_name:
         raise HTTPException(status_code=400, detail="Company name is required")
 
+    if body.color and not normalize_company_color(body.color):
+        raise HTTPException(status_code=400, detail="Company color must be a valid hex color")
+
     existing = db.query(Company).filter(Company.name == company_name).first()
     if existing:
         raise HTTPException(status_code=409, detail="Company already exists")
     page_id = (body.facebook_page_id or "").strip() or None
     company = Company(
         name=company_name,
+        color=resolve_company_color(company_name, body.color),
         phone=(body.phone or "").strip(),
         facebook_page_id=page_id,
         aircall_number_id=(body.aircall_number_id or "").strip(),
@@ -93,6 +99,7 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
 
 class CompanyUpdate(BaseModel):
     name: str
+    color: Optional[str] = None
     phone: str = ""
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
@@ -113,11 +120,15 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     if not company_name:
         raise HTTPException(status_code=400, detail="Company name is required")
 
+    if body.color and not normalize_company_color(body.color):
+        raise HTTPException(status_code=400, detail="Company color must be a valid hex color")
+
     duplicate = db.query(Company).filter(Company.name == company_name, Company.id != company_id).first()
     if duplicate:
         raise HTTPException(status_code=409, detail="Company name already exists")
 
     company.name = company_name
+    company.color = resolve_company_color(company_name, body.color)
     company.phone = (body.phone or "").strip()
     company.facebook_page_id = (body.facebook_page_id or "").strip() or None
     company.aircall_number_id = (body.aircall_number_id or "").strip()

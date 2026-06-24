@@ -4,6 +4,8 @@ from datetime import datetime
 from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, Boolean, UniqueConstraint, LargeBinary, Numeric
 from sqlalchemy.orm import declarative_base, relationship
 
+from company_colors import resolve_company_color
+
 Base = declarative_base()
 
 
@@ -23,6 +25,7 @@ class Company(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid)
     name = Column(String(255), nullable=False, unique=True)
+    color = Column(String(7))
     phone = Column(String(30))
     facebook_page_id = Column(String(100), unique=True, index=True)
     aircall_number_id = Column(String(50))
@@ -40,6 +43,7 @@ class Company(Base):
         return {
             "id": self.id,
             "name": self.name,
+            "color": resolve_company_color(self.name, self.color),
             "phone": self.phone or "",
             "facebook_page_id": self.facebook_page_id or "",
             "aircall_number_id": self.aircall_number_id or "",

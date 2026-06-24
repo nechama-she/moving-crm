@@ -443,7 +443,7 @@ def get_dispatch_calendar(
 
     # Dispatch calendar groups jobs by the job-level move_date.
     rows = (
-        db.query(LeadJob, Lead, Company.name.label("company_name"))
+        db.query(LeadJob, Lead, Company.name.label("company_name"), Company.color.label("company_color"))
         .join(Lead, Lead.id == LeadJob.lead_id)
         .join(Company, Company.id == LeadJob.company_id)
         .filter(LeadJob.company_id.in_(target_company_ids))
@@ -452,15 +452,15 @@ def get_dispatch_calendar(
         .all()
     )
 
-    filtered: list[tuple[LeadJob, Lead, str, date]] = []
-    for job, lead, company_name in rows:
+    filtered: list[tuple[LeadJob, Lead, str, str | None, date]] = []
+    for job, lead, company_name, company_color in rows:
         effective_date = _effective_job_date(job)
         if not effective_date:
             continue
         if month_start <= effective_date < next_month:
-            filtered.append((job, lead, company_name or "", effective_date))
+            filtered.append((job, lead, company_name or "", company_color, effective_date))
 
-    filtered.sort(key=lambda item: (item[3], item[0].created_at or datetime.min))
+    filtered.sort(key=lambda item: (item[4], item[0].created_at or datetime.min))
 
     return {
         "items": [
@@ -470,6 +470,7 @@ def get_dispatch_calendar(
                 "job_order": int(job.job_order or 0),
                 "company_id": job.company_id,
                 "company_name": company_name,
+                "company_color": company_color or "",
                 "full_name": lead.full_name or "",
                 "move_date": job.move_date or "",
                 "booked_move_date": job.move_date or "",
@@ -478,7 +479,7 @@ def get_dispatch_calendar(
                 "price": float(job.price) if job.price is not None else None,
                 "status": lead.status or "",
             }
-            for job, lead, company_name, effective_date in filtered
+            for job, lead, company_name, company_color, effective_date in filtered
         ]
     }
 
@@ -597,7 +598,7 @@ def search_dispatch_jobs(
 
     # Exact job-id lookup for deep-linking from lead job cards.
     exact_row = (
-        db.query(LeadJob, Lead, Company.name.label("company_name"))
+        db.query(LeadJob, Lead, Company.name.label("company_name"), Company.color.label("company_color"))
         .join(Lead, Lead.id == LeadJob.lead_id)
         .join(Company, LeadJob.company_id == Company.id)
         .filter(
@@ -608,7 +609,7 @@ def search_dispatch_jobs(
         .first()
     )
     if exact_row:
-        job, lead, company_name = exact_row
+        job, lead, company_name, company_color = exact_row
         if user.role == "sales_rep" and lead.assigned_to != user.id:
             return {"items": []}
         effective_date = _effective_job_date(job)
@@ -622,6 +623,7 @@ def search_dispatch_jobs(
                     "job_order": int(job.job_order or 0),
                     "company_id": job.company_id,
                     "company_name": company_name or "",
+                    "company_color": company_color or "",
                     "full_name": lead.full_name or "",
                     "booked_move_date": job.move_date or "",
                     "move_date": job.move_date or "",
@@ -636,7 +638,7 @@ def search_dispatch_jobs(
 
     pattern = f"%{search.lower()}%"
     rows = (
-        db.query(LeadJob, Lead, Company.name.label("company_name"))
+        db.query(LeadJob, Lead, Company.name.label("company_name"), Company.color.label("company_color"))
         .join(Lead, Lead.id == LeadJob.lead_id)
         .join(Company, LeadJob.company_id == Company.id)
         .filter(
@@ -656,10 +658,10 @@ def search_dispatch_jobs(
     )
 
     if user.role == "sales_rep":
-        rows = [(job, lead, company_name) for job, lead, company_name in rows if lead.assigned_to == user.id]
+        rows = [(job, lead, company_name, company_color) for job, lead, company_name, company_color in rows if lead.assigned_to == user.id]
 
     items: list[dict] = []
-    for job, lead, company_name in rows:
+    for job, lead, company_name, company_color in rows:
         effective_date = _effective_job_date(job)
         if not effective_date:
             continue
@@ -670,6 +672,7 @@ def search_dispatch_jobs(
                 "job_order": int(job.job_order or 0),
                 "company_id": job.company_id,
                 "company_name": company_name or "",
+                "company_color": company_color or "",
                 "full_name": lead.full_name or "",
                 "booked_move_date": job.move_date or "",
                 "move_date": job.move_date or "",

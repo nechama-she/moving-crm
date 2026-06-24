@@ -5,6 +5,7 @@ import { authHeaders, useAuth } from "./AuthContext";
 type Company = {
   id: string;
   name: string;
+  color?: string;
   phone?: string;
   facebook_page_id?: string;
   aircall_number_id?: string;
@@ -17,6 +18,7 @@ type Company = {
 
 type CompanyForm = {
   name: string;
+  color: string;
   phone: string;
   facebook_page_id: string;
   aircall_number_id: string;
@@ -29,6 +31,7 @@ type CompanyForm = {
 
 const emptyForm: CompanyForm = {
   name: "",
+  color: "",
   phone: "",
   facebook_page_id: "",
   aircall_number_id: "",
@@ -54,6 +57,7 @@ export default function CompaniesPage() {
   const [search, setSearch] = useState("");
 
   const editing = !!editingId;
+  const previewColor = form.color || generateCompanyColor(form.name || "Company");
 
   useEffect(() => {
     if (!canUse) {
@@ -91,6 +95,7 @@ export default function CompaniesPage() {
     setEditingId(company.id);
     setForm({
       name: company.name || "",
+      color: company.color || "",
       phone: company.phone || "",
       facebook_page_id: company.facebook_page_id || "",
       aircall_number_id: company.aircall_number_id || "",
@@ -117,6 +122,7 @@ export default function CompaniesPage() {
     try {
       const payload = {
         name: form.name.trim(),
+        color: form.color.trim(),
         phone: form.phone.trim(),
         facebook_page_id: form.facebook_page_id.trim(),
         aircall_number_id: form.aircall_number_id.trim(),
@@ -179,6 +185,7 @@ export default function CompaniesPage() {
     return companies.filter((c) => {
       const fields = [
         c.name || "",
+        c.color || "",
         c.phone || "",
         c.facebook_page_id || "",
         c.aircall_number_id || "",
@@ -214,6 +221,13 @@ export default function CompaniesPage() {
           <label style={fieldLabel}>
             Name
             <input value={form.name} onChange={(e) => updateField("name", e.target.value)} style={inputStyle} />
+          </label>
+          <label style={fieldLabel}>
+            Color
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="color" value={previewColor} onChange={(e) => updateField("color", e.target.value)} style={colorInputStyle} />
+              <input value={form.color} onChange={(e) => updateField("color", e.target.value)} style={inputStyle} placeholder="Auto-generated if blank" />
+            </div>
           </label>
           <label style={fieldLabel}>
             Phone
@@ -288,6 +302,7 @@ export default function CompaniesPage() {
           <thead>
             <tr>
               <th style={th}>Name</th>
+              <th style={th}>Color</th>
               <th style={th}>Phone</th>
               <th style={th}>Facebook Page ID</th>
               <th style={th}>Aircall Number ID</th>
@@ -302,19 +317,25 @@ export default function CompaniesPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={10}>Loading...</td>
+                <td style={td} colSpan={11}>Loading...</td>
               </tr>
             ) : null}
 
             {!loading && filteredCompanies.length === 0 ? (
               <tr>
-                <td style={td} colSpan={10}>No companies found.</td>
+                <td style={td} colSpan={11}>No companies found.</td>
               </tr>
             ) : null}
 
             {!loading && filteredCompanies.map((company) => (
               <tr key={company.id} style={{ borderTop: "1px solid #f1f0ef" }}>
                 <td style={td}>{company.name || "-"}</td>
+                <td style={td}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ width: 16, height: 16, borderRadius: 999, background: company.color || "#ffffff", border: "1px solid #cbd5e1", display: "inline-block" }} />
+                    <span>{company.color || "-"}</span>
+                  </div>
+                </td>
                 <td style={td}>{company.phone || "-"}</td>
                 <td style={td}>{company.facebook_page_id || "-"}</td>
                 <td style={td}>{company.aircall_number_id || "-"}</td>
@@ -395,3 +416,74 @@ const td: React.CSSProperties = {
   color: "#181818",
   verticalAlign: "top",
 };
+
+const colorInputStyle: React.CSSProperties = {
+  width: 40,
+  height: 34,
+  border: "1px solid #c9c7c5",
+  borderRadius: 4,
+  padding: 2,
+  background: "#fff",
+  boxSizing: "border-box",
+};
+
+function generateCompanyColor(name: string): string {
+  const normalizedName = (name || "company").trim().toLowerCase() || "company";
+  const digest = sha1Bytes(normalizedName);
+  const hue = ((digest[0] << 8) | digest[1]) % 360;
+  const saturation = 58 + (digest[2] % 15);
+  const lightness = 42 + (digest[3] % 12);
+  return hslToHex(hue, saturation / 100, lightness / 100);
+}
+
+function sha1Bytes(value: string): Uint8Array {
+  let hash = 2166136261;
+  for (let idx = 0; idx < value.length; idx += 1) {
+    hash ^= value.charCodeAt(idx);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  const out = new Uint8Array(4);
+  out[0] = (hash >>> 24) & 0xff;
+  out[1] = (hash >>> 16) & 0xff;
+  out[2] = (hash >>> 8) & 0xff;
+  out[3] = hash & 0xff;
+  return out;
+}
+
+function hslToHex(hue: number, saturation: number, lightness: number): string {
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const hueSection = hue / 60;
+  const xVal = chroma * (1 - Math.abs((hueSection % 2) - 1));
+
+  let red1 = 0;
+  let green1 = 0;
+  let blue1 = 0;
+
+  if (hueSection >= 0 && hueSection < 1) {
+    red1 = chroma;
+    green1 = xVal;
+  } else if (hueSection < 2) {
+    red1 = xVal;
+    green1 = chroma;
+  } else if (hueSection < 3) {
+    green1 = chroma;
+    blue1 = xVal;
+  } else if (hueSection < 4) {
+    green1 = xVal;
+    blue1 = chroma;
+  } else if (hueSection < 5) {
+    red1 = xVal;
+    blue1 = chroma;
+  } else {
+    red1 = chroma;
+    blue1 = xVal;
+  }
+
+  const match = lightness - chroma / 2;
+  const red = Math.round((red1 + match) * 255);
+  const green = Math.round((green1 + match) * 255);
+  const blue = Math.round((blue1 + match) * 255);
+
+  return `#${red.toString(16).padStart(2, "0")}${green.toString(16).padStart(2, "0")}${blue.toString(16).padStart(2, "0")}`;
+}
