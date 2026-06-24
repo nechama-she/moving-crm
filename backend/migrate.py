@@ -10,7 +10,6 @@ import logging
 
 from sqlalchemy import text
 
-from company_colors import resolve_company_color
 from database import engine
 from models import Base
 
@@ -28,18 +27,6 @@ def migrate(drop_first: bool = False):
 
     # Keep only essential fast, idempotent maintenance.
     with engine.connect() as conn:
-        conn.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS color VARCHAR(7)"))
-        companies_missing_colors = conn.execute(text("""
-            SELECT id, name, color
-            FROM companies
-            WHERE color IS NULL OR BTRIM(color) = ''
-        """)).fetchall()
-        for company_id, company_name, company_color in companies_missing_colors:
-            conn.execute(
-                text("UPDATE companies SET color = :color WHERE id = :company_id"),
-                {"company_id": company_id, "color": resolve_company_color(company_name, company_color)},
-            )
-
         # Normalize blank SmartMoving IDs to NULL and enforce uniqueness.
         conn.execute(text("UPDATE leads SET smartmoving_id = NULL WHERE smartmoving_id IS NOT NULL AND BTRIM(smartmoving_id) = ''"))
         duplicate_groups = conn.execute(text("""

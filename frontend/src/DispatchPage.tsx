@@ -65,8 +65,8 @@ function companyKeyForJob(job: LeadJob): string {
   return job.company_name || job.company_id || "unknown";
 }
 
-function toneForCompanyColor(companyColor?: string): CompanyTone {
-  const normalizedColor = normalizeHexColor(companyColor);
+function toneForCompanyColor(companyColor?: string, companyName?: string): CompanyTone {
+  const normalizedColor = normalizeHexColor(companyColor) || generateCompanyColorFromName(companyName);
   if (!normalizedColor) return DEFAULT_COMPANY_TONE;
 
   return {
@@ -128,6 +128,65 @@ function hexToRgb(hex: string): { red: number; green: number; blue: number } | n
 
 function rgbToHex(rgb: { red: number; green: number; blue: number }): string {
   return `#${rgb.red.toString(16).padStart(2, "0")}${rgb.green.toString(16).padStart(2, "0")}${rgb.blue.toString(16).padStart(2, "0")}`;
+}
+
+function generateCompanyColorFromName(name?: string): string | null {
+  const normalizedName = (name || "").trim().toLowerCase();
+  if (!normalizedName) return null;
+
+  let hash = 2166136261;
+  for (let idx = 0; idx < normalizedName.length; idx += 1) {
+    hash ^= normalizedName.charCodeAt(idx);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  const byte0 = (hash >>> 24) & 0xff;
+  const byte1 = (hash >>> 16) & 0xff;
+  const byte2 = (hash >>> 8) & 0xff;
+  const byte3 = hash & 0xff;
+
+  const hue = ((byte0 << 8) | byte1) % 360;
+  const saturation = 58 + (byte2 % 15);
+  const lightness = 42 + (byte3 % 12);
+
+  return hslToHex(hue, saturation / 100, lightness / 100);
+}
+
+function hslToHex(hue: number, saturation: number, lightness: number): string {
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const hueSection = hue / 60;
+  const xVal = chroma * (1 - Math.abs((hueSection % 2) - 1));
+
+  let red1 = 0;
+  let green1 = 0;
+  let blue1 = 0;
+
+  if (hueSection >= 0 && hueSection < 1) {
+    red1 = chroma;
+    green1 = xVal;
+  } else if (hueSection < 2) {
+    red1 = xVal;
+    green1 = chroma;
+  } else if (hueSection < 3) {
+    green1 = chroma;
+    blue1 = xVal;
+  } else if (hueSection < 4) {
+    green1 = xVal;
+    blue1 = chroma;
+  } else if (hueSection < 5) {
+    red1 = xVal;
+    blue1 = chroma;
+  } else {
+    red1 = chroma;
+    blue1 = xVal;
+  }
+
+  const match = lightness - chroma / 2;
+  return rgbToHex({
+    red: Math.round((red1 + match) * 255),
+    green: Math.round((green1 + match) * 255),
+    blue: Math.round((blue1 + match) * 255),
+  });
 }
 
 export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
@@ -268,6 +327,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
               price: item.price == null ? null : Number(item.price),
               company_id: String(item.company_id || ""),
               company_name: String(item.company_name || ""),
+              company_color: String(item.company_color || ""),
               leadgen_id: String(item.leadgen_id || ""),
             }))
           );
@@ -348,6 +408,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
           lead_id: String(item.lead_id || ""),
           company_id: String(item.company_id || ""),
           company_name: String(item.company_name || ""),
+          company_color: String(item.company_color || ""),
           job_order: Number(item.job_order || 0),
           full_name: String(item.full_name || "Unnamed"),
           move_date: String(item.move_date || ""),
@@ -505,6 +566,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
         price: item.price == null ? null : Number(item.price),
         company_id: String(item.company_id || ""),
         company_name: String(item.company_name || ""),
+        company_color: String(item.company_color || ""),
         leadgen_id: String(item.leadgen_id || ""),
       }));
       const match = mapped.find((item) => item.id === jobId);
@@ -1000,7 +1062,7 @@ function CompanyCalendar({
     for (const job of sortedJobs) {
       const key = companyKeyForJob(job);
       if (uniqueCompanies.has(key)) continue;
-      const tone = toneForCompanyColor(job.company_color);
+      const tone = toneForCompanyColor(job.company_color, job.company_name);
       uniqueCompanies.set(key, { name: job.company_name || "Company", tone });
     }
 
@@ -1009,7 +1071,7 @@ function CompanyCalendar({
 
   function getCompanyTone(job: LeadJob): CompanyTone {
     const key = companyKeyForJob(job);
-    return companyStyles.get(key)?.tone || toneForCompanyColor(job.company_color);
+    return companyStyles.get(key)?.tone || toneForCompanyColor(job.company_color, job.company_name);
   }
 
   const jobsByDay = new Map<number, LeadJob[]>();
