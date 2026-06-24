@@ -15,10 +15,13 @@ phases:
       - echo "Building frontend"
       - cd $CODEBUILD_SRC_DIR/frontend && npm run build
 
-      - echo "Cleaning up old dispatch bucket contents"
-      - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-      - DISPATCH_BUCKET=moving-crm-dispatch-${ENVIRONMENT:-dev}-${ACCOUNT_ID}
-      - aws s3 rm s3://${DISPATCH_BUCKET}/ --recursive || true
+      - echo "Dispatch bucket cleanup is optional (set RUN_DISPATCH_CLEANUP=1 to enable)"
+      - |
+        if [ "${RUN_DISPATCH_CLEANUP:-0}" = "1" ]; then
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          DISPATCH_BUCKET=moving-crm-dispatch-${ENVIRONMENT:-dev}-${ACCOUNT_ID}
+          aws s3 rm s3://${DISPATCH_BUCKET}/ --recursive || true
+        fi
 
       - echo "Packaging lead-followup Lambda"
       - cd $CODEBUILD_SRC_DIR/lead-followup
