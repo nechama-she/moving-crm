@@ -40,6 +40,18 @@ type LeadJobItem = {
   move_date: string;
   booked_move_date: string;
   price: number | null;
+  charges: LeadJobChargeItem[];
+};
+
+type LeadJobChargeItem = {
+  id: string;
+  job_id: string;
+  name: string;
+  description: string;
+  sort_order: number;
+  subtotal: number;
+  discount_amount: number;
+  total_cost: number;
 };
 
 type LeadJobDraft = {
@@ -269,6 +281,21 @@ export default function LeadDetail() {
         move_date: String(item.move_date || ""),
         booked_move_date: String(item.booked_move_date || ""),
         price: item.price == null ? null : Number(item.price),
+        charges: Array.isArray(item.charges)
+          ? item.charges.map((charge) => {
+              const row = charge as Record<string, unknown>;
+              return {
+                id: String(row.id || ""),
+                job_id: String(row.job_id || ""),
+                name: String(row.name || ""),
+                description: String(row.description || ""),
+                sort_order: Number(row.sort_order || 0),
+                subtotal: Number(row.subtotal || 0),
+                discount_amount: Number(row.discount_amount || 0),
+                total_cost: Number(row.total_cost || 0),
+              };
+            })
+          : [],
       }));
       setLeadJobs(parsed);
       setJobDrafts(Object.fromEntries(parsed.map((item) => [item.id, draftFromJob(item)])));
@@ -1612,6 +1639,34 @@ export default function LeadDetail() {
                               >
                                 {attachment.file_name}
                               </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 12, border: "1px solid #d8dde6", borderRadius: 8, background: "#f8fafc" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderBottom: "1px solid #e2e8f0" }}>
+                        <span style={{ fontSize: 14 }}>$</span>
+                        <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.02em" }}>Charges</strong>
+                      </div>
+
+                      <div style={{ padding: 10, display: "grid", gap: 6 }}>
+                        {job.charges.length === 0 ? <div style={{ color: "#706e6b", fontSize: 12 }}>No charges for this job yet.</div> : null}
+                        {job.charges.length > 0 ? (
+                          <div style={{ display: "grid", gap: 6 }}>
+                            {job.charges.map((charge) => (
+                              <div key={charge.id} style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: 8, display: "grid", gap: 4 }}>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                  <strong style={{ fontSize: 12, color: "#0f172a" }}>{charge.name}</strong>
+                                  <span style={{ fontSize: 12, color: "#0f172a", fontWeight: 700 }}>${charge.total_cost.toFixed(2)}</span>
+                                </div>
+                                {charge.description ? <div style={{ fontSize: 11, color: "#475569" }}>{charge.description}</div> : null}
+                                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11, color: "#64748b" }}>
+                                  <span>{`Subtotal: $${charge.subtotal.toFixed(2)}`}</span>
+                                  <span>{`Discount: $${charge.discount_amount.toFixed(2)}`}</span>
+                                </div>
+                              </div>
                             ))}
                           </div>
                         ) : null}

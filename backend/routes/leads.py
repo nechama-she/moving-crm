@@ -9,7 +9,7 @@ import boto3
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, cast, text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -20,7 +20,7 @@ from config import get_config
 from database import get_db
 from libs.common.phone import normalize_digits
 from libs.smartmoving.client import update_opportunity_salesperson
-from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, Followup, SentMessage, Task
+from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task
 from routes.templates import get_company_template
 
 logger = logging.getLogger("moving-crm")
@@ -871,6 +871,53 @@ def _get_or_create_primary_lead_job(lead: Lead, db: Session) -> LeadJob:
     return row
 
 
+class LeadJobChargePayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = ""
+    description: str = ""
+    editable_description: str | None = Field(default=None, alias="editableDescription")
+    sort_order: int = Field(default=0, alias="sortOrder")
+    subtotal: float = 0
+    discount_amount: float = Field(default=0, alias="discountAmount")
+    total_cost: float = Field(default=0, alias="totalCost")
+
+
+class LeadJobChargesBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    estimated_charges: list[LeadJobChargePayload] = Field(default_factory=list, alias="estimatedCharges")
+
+
+def _to_money_decimal(value: float | int | str | None, field_name: str) -> Decimal:
+    try:
+        amount = Decimal(str(value if value is not None else 0)).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a valid number")
+    return amount
+
+
+def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload], db: Session) -> None:
+    if not job.id:
+        db.flush()
+
+    db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id).delete(synchronize_session=False)
+
+    for index, charge in enumerate(charges):
+        display_name = (charge.editable_description or "").strip() or (charge.name or "").strip()
+        if not display_name:
+            continue
+        db.add(LeadJobCharge(
+            job_id=job.id,
+            name=display_name,
+            description=(charge.description or "").strip(),
+            sort_order=int(charge.sort_order if charge.sort_order is not None else index),
+            subtotal=_to_money_decimal(charge.subtotal, "subtotal"),
+            discount_amount=_to_money_decimal(charge.discount_amount, "discount_amount"),
+            total_cost=_to_money_decimal(charge.total_cost, "total_cost"),
+        ))
+
+
 class LeadJobCreate(BaseModel):
     company_id: str | None = None
     pickup_zip: str = ""
@@ -951,6 +998,29 @@ def create_lead_job(
         price=price_value,
     )
     db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row.to_dict()
+
+
+@router.put("/leads/{lead_id}/jobs/{job_id}/charges")
+def replace_lead_job_charges(
+    lead_id: str,
+    job_id: str,
+    body: LeadJobChargesBody,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    row = (
+        db.query(LeadJob)
+        .filter(LeadJob.id == job_id, LeadJob.lead_id == lead.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    _replace_job_charges(row, body.estimated_charges, db)
     db.commit()
     db.refresh(row)
     return row.to_dict()
@@ -1362,6 +1432,8 @@ def rename_lead_attachment(
 
 
 class LeadUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     status: str | None = None
     priority: int | None = None
     assigned_to: str | None = None
@@ -1371,6 +1443,7 @@ class LeadUpdate(BaseModel):
     phone_number: str | None = None
     email: str | None = None
     move_date: str | None = None
+    estimated_charges: list[LeadJobChargePayload] | None = Field(default=None, alias="estimatedCharges")
 
 
 @router.patch("/leads/{lead_id}")
@@ -1444,6 +1517,8 @@ def update_lead(
     if body.move_date is not None:
         primary_job.move_date = lead.move_date
         primary_job.booked_move_date = lead.booked_move_date
+    if body.estimated_charges is not None:
+        _replace_job_charges(primary_job, body.estimated_charges, db)
 
     db.commit()
     db.refresh(lead)
@@ -1568,6 +1643,8 @@ ALLOWED_LEAD_STATUSES = {
 
 
 class NewLead(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     full_name: str = ""
     email: str = ""
     phone_number: str = ""
@@ -1589,6 +1666,7 @@ class NewLead(BaseModel):
     assigned_to_name: str = ""
     sales_person_id: str = ""
     sales_person_name: str = ""
+    estimated_charges: list[LeadJobChargePayload] = Field(default_factory=list, alias="estimatedCharges")
     company_name: str
     source: str
 
@@ -1709,7 +1787,7 @@ def create_lead(
     try:
         db.add(lead)
         db.flush()
-        db.add(LeadJob(
+        primary_job = LeadJob(
             lead_id=lead.id,
             company_id=lead.company_id,
             job_order=1,
@@ -1718,7 +1796,11 @@ def create_lead(
             move_date=lead.move_date,
             booked_move_date=lead.booked_move_date,
             price=None,
-        ))
+        )
+        db.add(primary_job)
+        db.flush()
+        if body.estimated_charges:
+            _replace_job_charges(primary_job, body.estimated_charges, db)
         db.commit()
     except IntegrityError as e:
         db.rollback()

@@ -280,6 +280,7 @@ class LeadJob(Base):
 
     lead = relationship("Lead", foreign_keys=[lead_id])
     company = relationship("Company", foreign_keys=[company_id])
+    charges = relationship("LeadJobCharge", back_populates="job", cascade="all, delete-orphan", order_by="LeadJobCharge.sort_order.asc(), LeadJobCharge.created_at.asc()")
 
     __table_args__ = (
         UniqueConstraint("lead_id", "job_order", name="uq_lead_jobs_lead_order"),
@@ -297,6 +298,38 @@ class LeadJob(Base):
             "move_date": self.move_date or "",
             "booked_move_date": self.booked_move_date.isoformat() if self.booked_move_date else "",
             "price": float(self.price) if self.price is not None else None,
+            "charges": [row.to_dict() for row in self.charges],
+            "created_at": self.created_at.isoformat() if self.created_at else "",
+            "updated_at": self.updated_at.isoformat() if self.updated_at else "",
+        }
+
+
+class LeadJobCharge(Base):
+    __tablename__ = "lead_job_charges"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    job_id = Column(String(36), ForeignKey("lead_jobs.id"), nullable=False, index=True)
+    name = Column(Text, nullable=False)
+    description = Column(Text)
+    sort_order = Column(Integer, nullable=False, default=0)
+    subtotal = Column(Numeric(12, 2), nullable=False, default=0)
+    discount_amount = Column(Numeric(12, 2), nullable=False, default=0)
+    total_cost = Column(Numeric(12, 2), nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
+
+    job = relationship("LeadJob", back_populates="charges")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "name": self.name or "",
+            "description": self.description or "",
+            "sort_order": int(self.sort_order or 0),
+            "subtotal": float(self.subtotal) if self.subtotal is not None else 0,
+            "discount_amount": float(self.discount_amount) if self.discount_amount is not None else 0,
+            "total_cost": float(self.total_cost) if self.total_cost is not None else 0,
             "created_at": self.created_at.isoformat() if self.created_at else "",
             "updated_at": self.updated_at.isoformat() if self.updated_at else "",
         }
