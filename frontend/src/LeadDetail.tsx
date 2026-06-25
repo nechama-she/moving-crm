@@ -683,6 +683,31 @@ export default function LeadDetail() {
     color: "#181818",
   };
 
+  const estimatedTotalData = (() => {
+    const raw = lead.estimatedTotal ?? lead.estimated_total;
+    if (!raw || typeof raw !== "object") return null;
+    const row = raw as Record<string, unknown>;
+    const subtotal = Number(row.subtotal ?? 0);
+    const taxableAmount = Number(row.taxableAmount ?? row.taxable_amount ?? 0);
+    const tax = Number(row.tax ?? 0);
+    const finalTotal = Number(row.finalTotal ?? row.final_total ?? 0);
+    const values = [subtotal, taxableAmount, tax, finalTotal];
+    if (values.some((value) => !Number.isFinite(value))) return null;
+    return { subtotal, taxableAmount, tax, finalTotal };
+  })();
+
+  const estimatedDiscountAmount = estimatedTotalData
+    ? Math.max(0, estimatedTotalData.subtotal - estimatedTotalData.finalTotal)
+    : 0;
+  const showEstimatedDiscount = Boolean(estimatedTotalData && estimatedDiscountAmount > 0);
+  const estimatedDiscountPercent = showEstimatedDiscount && estimatedTotalData && estimatedTotalData.subtotal > 0
+    ? (estimatedDiscountAmount / estimatedTotalData.subtotal) * 100
+    : 0;
+
+  function formatMoney(value: number): string {
+    return `$${value.toFixed(2)}`;
+  }
+
   function renderRow(key: string) {
     const val = lead![key];
     if (val == null || val === "") return null;
@@ -1473,6 +1498,43 @@ export default function LeadDetail() {
       <div style={sectionStyle}>
         <div style={sectionHeader}>Jobs</div>
         <div style={{ padding: 12, display: "grid", gap: 12 }}>
+          {estimatedTotalData ? (
+            <div style={{ border: "1px solid #d8dde6", borderRadius: 8, background: "#f8fafc", overflow: "hidden" }}>
+              <div style={{ padding: "8px 10px", borderBottom: "1px solid #e2e8f0", fontSize: 12, fontWeight: 700, color: "#0f172a", letterSpacing: "0.02em" }}>
+                Lead Estimated Total
+              </div>
+              <div style={{ padding: 10, display: "grid", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#334155" }}>
+                  <span>Subtotal</span>
+                  <strong>{formatMoney(estimatedTotalData.subtotal)}</strong>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#334155" }}>
+                  <span>Taxable Amount</span>
+                  <strong>{formatMoney(estimatedTotalData.taxableAmount)}</strong>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#334155" }}>
+                  <span>Tax</span>
+                  <strong>{formatMoney(estimatedTotalData.tax)}</strong>
+                </div>
+                {showEstimatedDiscount ? (
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#0f766e" }}>
+                      <span>Discount %</span>
+                      <strong>{`${estimatedDiscountPercent.toFixed(2)}%`}</strong>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#0f766e" }}>
+                      <span>Discount Amount</span>
+                      <strong>{formatMoney(estimatedDiscountAmount)}</strong>
+                    </div>
+                  </>
+                ) : null}
+                <div style={{ borderTop: "1px solid #dbe4ef", marginTop: 2, paddingTop: 8, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#0f172a" }}>
+                  <span style={{ fontWeight: 700 }}>Final Total</span>
+                  <strong>{formatMoney(estimatedTotalData.finalTotal)}</strong>
+                </div>
+              </div>
+            </div>
+          ) : null}
           {jobsError ? <p style={{ margin: 0, color: "#ba0517", fontSize: 12 }}>{jobsError}</p> : null}
           {jobsLoading ? <p style={{ margin: 0, color: "#64748b", fontSize: 12 }}>Loading jobs...</p> : null}
 
@@ -1530,6 +1592,7 @@ export default function LeadDetail() {
                 const draft = jobDrafts[job.id] || draftFromJob(job);
                 const primary = job.job_order === 1;
                 const busy = savingJobId === job.id || deletingJobId === job.id;
+                const chargesTotal = job.charges.reduce((sum, charge) => sum + charge.total_cost, 0);
                 return (
                   <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: primary ? "#f8fbff" : "#fff" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
@@ -1646,9 +1709,12 @@ export default function LeadDetail() {
                     </div>
 
                     <div style={{ marginTop: 12, border: "1px solid #d8dde6", borderRadius: 8, background: "#f8fafc" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderBottom: "1px solid #e2e8f0" }}>
-                        <span style={{ fontSize: 14 }}>$</span>
-                        <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.02em" }}>Charges</strong>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px", borderBottom: "1px solid #e2e8f0" }}>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 14 }}>$</span>
+                          <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.02em" }}>Charges</strong>
+                        </div>
+                        <strong style={{ fontSize: 12, color: "#0f172a" }}>{`Total: $${chargesTotal.toFixed(2)}`}</strong>
                       </div>
 
                       <div style={{ padding: 10, display: "grid", gap: 6 }}>
