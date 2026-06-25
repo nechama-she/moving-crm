@@ -8,7 +8,7 @@ import TasksPanel from "./TasksPanel";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
 
-const HIDDEN_FIELDS = new Set(["entry_id", "inbox_url", "estimatedTotal", "estimated_total"]);
+const HIDDEN_FIELDS = new Set(["entry_id", "inbox_url", "estimatedTotal", "estimated_total", "payments"]);
 
 type CompanyOption = {
   id: string;
@@ -703,6 +703,24 @@ export default function LeadDetail() {
   const estimatedDiscountPercent = showEstimatedDiscount && estimatedTotalData && estimatedTotalData.subtotal > 0
     ? (estimatedDiscountAmount / estimatedTotalData.subtotal) * 100
     : 0;
+
+  const paymentsData = (() => {
+    const raw = lead.payments;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((row) => {
+        if (!row || typeof row !== "object") return null;
+        const item = row as Record<string, unknown>;
+        const amount = Number(item.amount ?? 0);
+        if (!Number.isFinite(amount)) return null;
+        return {
+          amount,
+          takenByUser: String(item.takenByUser ?? "").trim(),
+        };
+      })
+      .filter((row): row is { amount: number; takenByUser: string } => row !== null);
+  })();
+  const paymentsTotal = paymentsData.reduce((sum, payment) => sum + payment.amount, 0);
 
   function formatMoney(value: number): string {
     return `$${value.toFixed(2)}`;
@@ -1531,6 +1549,25 @@ export default function LeadDetail() {
                 <div style={{ borderTop: "1px solid #dbe4ef", marginTop: 2, paddingTop: 8, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#0f172a" }}>
                   <span style={{ fontWeight: 700 }}>Final Total</span>
                   <strong>{formatMoney(estimatedTotalData.finalTotal)}</strong>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {paymentsData.length > 0 ? (
+            <div style={{ border: "1px solid #d8dde6", borderRadius: 8, background: "#f8fafc", overflow: "hidden" }}>
+              <div style={{ padding: "8px 10px", borderBottom: "1px solid #e2e8f0", fontSize: 12, fontWeight: 700, color: "#0f172a", letterSpacing: "0.02em" }}>
+                Payments
+              </div>
+              <div style={{ padding: 10, display: "grid", gap: 6 }}>
+                {paymentsData.map((payment, index) => (
+                  <div key={`${payment.takenByUser}-${index}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#334155" }}>
+                    <span>{payment.takenByUser || `Payment ${index + 1}`}</span>
+                    <strong>{formatMoney(payment.amount)}</strong>
+                  </div>
+                ))}
+                <div style={{ borderTop: "1px solid #dbe4ef", marginTop: 2, paddingTop: 8, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#0f172a" }}>
+                  <span style={{ fontWeight: 700 }}>Total Payments</span>
+                  <strong>{formatMoney(paymentsTotal)}</strong>
                 </div>
               </div>
             </div>

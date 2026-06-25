@@ -194,6 +194,7 @@ class Lead(Base):
     service_type = Column(String(50))
     referral_source = Column(String(100))
     estimated_total = Column(Text)
+    payments = Column(Text)
 
     status = Column(String(30), nullable=False, default="new", index=True)
     # new → contacted → quoted → booked → scheduled → completed | lost | cancelled
@@ -221,6 +222,21 @@ class Lead(Base):
                     }
             except Exception:
                 estimated_total_data = None
+
+        payments_data: list[dict[str, float | str]] = []
+        if self.payments:
+            try:
+                parsed_payments = json.loads(self.payments)
+                if isinstance(parsed_payments, list):
+                    for row in parsed_payments:
+                        if not isinstance(row, dict):
+                            continue
+                        payments_data.append({
+                            "amount": float(row.get("amount") or 0),
+                            "takenByUser": str(row.get("takenByUser") or "").strip(),
+                        })
+            except Exception:
+                payments_data = []
 
         return {
             "id": self.id,
@@ -251,6 +267,7 @@ class Lead(Base):
             "priority": self.priority or 0,
             "notes": self.notes or "",
             "estimatedTotal": estimated_total_data,
+            "payments": payments_data,
         }
 
 
