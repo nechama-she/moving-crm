@@ -1,4 +1,5 @@
 import uuid
+import json
 from datetime import datetime
 
 from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, Boolean, UniqueConstraint, LargeBinary, Numeric
@@ -192,6 +193,7 @@ class Lead(Base):
     move_type = Column(Text)
     service_type = Column(String(50))
     referral_source = Column(String(100))
+    estimated_total = Column(Text)
 
     status = Column(String(30), nullable=False, default="new", index=True)
     # new → contacted → quoted → booked → scheduled → completed | lost | cancelled
@@ -206,6 +208,20 @@ class Lead(Base):
     assignee = relationship("User", foreign_keys=[assigned_to])
 
     def to_dict(self):
+        estimated_total_data = None
+        if self.estimated_total:
+            try:
+                parsed = json.loads(self.estimated_total)
+                if isinstance(parsed, dict):
+                    estimated_total_data = {
+                        "subtotal": float(parsed.get("subtotal") or 0),
+                        "taxableAmount": float(parsed.get("taxableAmount") or 0),
+                        "tax": float(parsed.get("tax") or 0),
+                        "finalTotal": float(parsed.get("finalTotal") or 0),
+                    }
+            except Exception:
+                estimated_total_data = None
+
         return {
             "id": self.id,
             "company_id": self.company_id,
@@ -234,6 +250,7 @@ class Lead(Base):
             "status": self.status or "new",
             "priority": self.priority or 0,
             "notes": self.notes or "",
+            "estimatedTotal": estimated_total_data,
         }
 
 

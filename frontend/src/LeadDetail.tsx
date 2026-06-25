@@ -8,7 +8,7 @@ import TasksPanel from "./TasksPanel";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
 
-const HIDDEN_FIELDS = new Set(["entry_id", "inbox_url"]);
+const HIDDEN_FIELDS = new Set(["entry_id", "inbox_url", "estimatedTotal", "estimated_total"]);
 
 type CompanyOption = {
   id: string;
@@ -1592,6 +1592,8 @@ export default function LeadDetail() {
                 const draft = jobDrafts[job.id] || draftFromJob(job);
                 const primary = job.job_order === 1;
                 const busy = savingJobId === job.id || deletingJobId === job.id;
+                const chargesSubtotal = job.charges.reduce((sum, charge) => sum + charge.subtotal, 0);
+                const chargesDiscount = job.charges.reduce((sum, charge) => sum + charge.discount_amount, 0);
                 const chargesTotal = job.charges.reduce((sum, charge) => sum + charge.total_cost, 0);
                 return (
                   <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: primary ? "#f8fbff" : "#fff" }}>
@@ -1718,6 +1720,24 @@ export default function LeadDetail() {
                       </div>
 
                       <div style={{ padding: 10, display: "grid", gap: 6 }}>
+                        {job.charges.length > 0 ? (
+                          <div style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: 8, display: "grid", gap: 4 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: "#334155" }}>
+                              <span>Subtotal</span>
+                              <strong>${chargesSubtotal.toFixed(2)}</strong>
+                            </div>
+                            {chargesDiscount > 0 ? (
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: "#0f766e" }}>
+                                <span>Discount</span>
+                                <strong>- ${chargesDiscount.toFixed(2)}</strong>
+                              </div>
+                            ) : null}
+                            <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 6, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: "#0f172a" }}>
+                              <span style={{ fontWeight: 700 }}>Total</span>
+                              <strong>${chargesTotal.toFixed(2)}</strong>
+                            </div>
+                          </div>
+                        ) : null}
                         {job.charges.length === 0 ? <div style={{ color: "#706e6b", fontSize: 12 }}>No charges for this job yet.</div> : null}
                         {job.charges.length > 0 ? (
                           <div style={{ display: "grid", gap: 6 }}>

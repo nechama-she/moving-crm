@@ -27,6 +27,8 @@ def migrate(drop_first: bool = False):
 
     # Keep only essential fast, idempotent maintenance.
     with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS estimated_total TEXT"))
+
         # Normalize blank SmartMoving IDs to NULL and enforce uniqueness.
         conn.execute(text("UPDATE leads SET smartmoving_id = NULL WHERE smartmoving_id IS NOT NULL AND BTRIM(smartmoving_id) = ''"))
         duplicate_groups = conn.execute(text("""

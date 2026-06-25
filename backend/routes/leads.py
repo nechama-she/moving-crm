@@ -889,6 +889,26 @@ class LeadJobChargesBody(BaseModel):
     estimated_charges: list[LeadJobChargePayload] = Field(default_factory=list, alias="estimatedCharges")
 
 
+class EstimatedTotalPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    subtotal: float = 0
+    taxable_amount: float = Field(default=0, alias="taxableAmount")
+    tax: float = 0
+    final_total: float = Field(default=0, alias="finalTotal")
+
+
+def _serialize_estimated_total(payload: EstimatedTotalPayload | None) -> str | None:
+    if payload is None:
+        return None
+    return json.dumps({
+        "subtotal": float(payload.subtotal),
+        "taxableAmount": float(payload.taxable_amount),
+        "tax": float(payload.tax),
+        "finalTotal": float(payload.final_total),
+    })
+
+
 def _to_money_decimal(value: float | int | str | None, field_name: str) -> Decimal:
     try:
         amount = Decimal(str(value if value is not None else 0)).quantize(Decimal("0.01"))
@@ -1444,6 +1464,7 @@ class LeadUpdate(BaseModel):
     email: str | None = None
     move_date: str | None = None
     estimated_charges: list[LeadJobChargePayload] | None = Field(default=None, alias="estimatedCharges")
+    estimated_total: EstimatedTotalPayload | None = Field(default=None, alias="estimatedTotal")
 
 
 @router.patch("/leads/{lead_id}")
@@ -1510,6 +1531,8 @@ def update_lead(
     if body.move_date is not None:
         lead.move_date = _normalize_move_date(body.move_date)
         lead.booked_move_date = _parse_booked_move_date(body.move_date)
+    if body.estimated_total is not None:
+        lead.estimated_total = _serialize_estimated_total(body.estimated_total)
 
     primary_job = _get_or_create_primary_lead_job(lead, db)
     if body.company_id is not None:
@@ -1667,6 +1690,7 @@ class NewLead(BaseModel):
     sales_person_id: str = ""
     sales_person_name: str = ""
     estimated_charges: list[LeadJobChargePayload] = Field(default_factory=list, alias="estimatedCharges")
+    estimated_total: EstimatedTotalPayload | None = Field(default=None, alias="estimatedTotal")
     company_name: str
     source: str
 
@@ -1783,6 +1807,7 @@ def create_lead(
         referral_source=body.referral_source.strip() or None,
         service_type=body.service_type.strip() or None,
         status=raw_status or "new",
+        estimated_total=_serialize_estimated_total(body.estimated_total),
     )
     try:
         db.add(lead)
