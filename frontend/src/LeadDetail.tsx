@@ -1569,6 +1569,23 @@ export default function LeadDetail() {
                   <span style={{ fontWeight: 700 }}>Total Payments</span>
                   <strong>{formatMoney(paymentsTotal)}</strong>
                 </div>
+                {estimatedTotalData && estimatedTotalData.finalTotal > 0 ? (() => {
+                  const remaining = estimatedTotalData.finalTotal - paymentsTotal;
+                  const remainingPercent = (remaining / estimatedTotalData.finalTotal) * 100;
+                  const isPaid = remaining <= 0;
+                  return (
+                    <div style={{ borderTop: "1px solid #dbe4ef", marginTop: 2, paddingTop: 8, display: "grid", gap: 4 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: isPaid ? "#15803d" : "#b91c1c", fontWeight: 700 }}>
+                        <span>Remaining Balance</span>
+                        <span>{isPaid ? formatMoney(0) : formatMoney(remaining)}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 11, color: isPaid ? "#15803d" : "#b91c1c" }}>
+                        <span>{isPaid ? "Paid in full" : `${Math.max(0, remainingPercent).toFixed(1)}% remaining`}</span>
+                        <span>{isPaid ? "✓" : `${(100 - Math.max(0, remainingPercent)).toFixed(1)}% paid`}</span>
+                      </div>
+                    </div>
+                  );
+                })() : null}
               </div>
             </div>
           ) : null}
