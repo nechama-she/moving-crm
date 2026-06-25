@@ -1716,7 +1716,6 @@ export default function LeadDetail() {
                           <span style={{ fontSize: 14 }}>$</span>
                           <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.02em" }}>Charges</strong>
                         </div>
-                        <strong style={{ fontSize: 12, color: "#0f172a" }}>{`Total: $${chargesTotal.toFixed(2)}`}</strong>
                       </div>
 
                       <div style={{ padding: 10, display: "grid", gap: 6 }}>
