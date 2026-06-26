@@ -308,6 +308,7 @@ class LeadJob(Base):
     delivery_zip = Column(Text)
     move_date = Column(Text)
     booked_move_date = Column(Date)
+    smartmoving_job_id = Column(String(100), index=True)
     price = Column(Numeric(12, 2))
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
@@ -324,6 +325,7 @@ class LeadJob(Base):
         return {
             "id": self.id,
             "lead_id": self.lead_id,
+            "smartmoving_job_id": self.smartmoving_job_id or "",
             "company_id": self.company_id,
             "company_name": self.company.name if self.company else "",
             "job_order": self.job_order,

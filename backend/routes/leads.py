@@ -467,6 +467,8 @@ def get_dispatch_calendar(
             {
                 "id": job.id,
                 "lead_id": lead.id,
+                "smartmoving_id": lead.smartmoving_id or "",
+                "smartmoving_job_id": job.smartmoving_job_id or "",
                 "job_order": int(job.job_order or 0),
                 "company_id": job.company_id,
                 "company_name": company_name,
@@ -959,6 +961,7 @@ def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload], db: 
 
 class LeadJobCreate(BaseModel):
     company_id: str | None = None
+    smartmoving_job_id: str = ""
     pickup_zip: str = ""
     delivery_zip: str = ""
     move_date: str = ""
@@ -968,6 +971,7 @@ class LeadJobCreate(BaseModel):
 
 class LeadJobUpdate(BaseModel):
     company_id: str | None = None
+    smartmoving_job_id: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
     move_date: str | None = None
@@ -1030,6 +1034,7 @@ def create_lead_job(
         lead_id=lead.id,
         company_id=company_id,
         job_order=_next_lead_job_order(lead.id, db),
+        smartmoving_job_id=(body.smartmoving_job_id or "").strip() or None,
         pickup_zip=(body.pickup_zip or "").strip(),
         delivery_zip=(body.delivery_zip or "").strip(),
         move_date=move_date,
@@ -1095,6 +1100,9 @@ def update_lead_job(
         if not company_exists:
             raise HTTPException(status_code=404, detail="Company not found")
         row.company_id = next_company_id
+
+    if "smartmoving_job_id" in payload:
+        row.smartmoving_job_id = (payload.get("smartmoving_job_id") or "").strip() or None
 
     if "pickup_zip" in payload:
         row.pickup_zip = (payload.get("pickup_zip") or "").strip()
@@ -1479,6 +1487,8 @@ class LeadUpdate(BaseModel):
     company_id: str | None = None
     notes: str | None = None
     full_name: str | None = None
+    smartmoving_id: str | None = None
+    smartmoving_job_id: str | None = None
     phone_number: str | None = None
     email: str | None = None
     move_date: str | None = None
@@ -1544,6 +1554,8 @@ def update_lead(
         if not name:
             raise HTTPException(status_code=400, detail="Name cannot be empty")
         lead.full_name = name
+    if body.smartmoving_id is not None:
+        lead.smartmoving_id = body.smartmoving_id.strip() or None
     if body.phone_number is not None:
         lead.phone = _normalize_phone(body.phone_number)
     if body.email is not None:
@@ -1562,6 +1574,8 @@ def update_lead(
     if body.move_date is not None:
         primary_job.move_date = lead.move_date
         primary_job.booked_move_date = lead.booked_move_date
+    if body.smartmoving_job_id is not None:
+        primary_job.smartmoving_job_id = body.smartmoving_job_id.strip() or None
     if body.estimated_charges is not None:
         _replace_job_charges(primary_job, body.estimated_charges, db)
 
@@ -1702,6 +1716,7 @@ class NewLead(BaseModel):
     created_time: str = ""
     leadgen_id: str = ""
     smartmoving_id: str = ""
+    smartmoving_job_id: str = ""
     facebook_user_id: str = ""
     notes: str = ""
     referral_source: str = ""
@@ -1840,6 +1855,7 @@ def create_lead(
             lead_id=lead.id,
             company_id=lead.company_id,
             job_order=1,
+            smartmoving_job_id=body.smartmoving_job_id.strip() or None,
             pickup_zip=lead.pickup_zip,
             delivery_zip=lead.delivery_zip,
             move_date=lead.move_date,
