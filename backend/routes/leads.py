@@ -1478,6 +1478,19 @@ def rename_lead_attachment(
     return row.to_dict()
 
 
+class LeadUpdateJob(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str | None = None
+    smartmoving_job_id: str | None = None
+    pickup_zip: str | None = None
+    delivery_zip: str | None = None
+    move_date: str | None = None
+    booked_move_date: str | None = None
+    price: float | None = None
+    estimated_charges: list[LeadJobChargePayload] | None = Field(default=None, alias="estimatedCharges")
+
+
 class LeadUpdate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -1488,11 +1501,9 @@ class LeadUpdate(BaseModel):
     notes: str | None = None
     full_name: str | None = None
     smartmoving_id: str | None = None
-    smartmoving_job_id: str | None = None
     phone_number: str | None = None
     email: str | None = None
-    move_date: str | None = None
-    estimated_charges: list[LeadJobChargePayload] | None = Field(default=None, alias="estimatedCharges")
+    jobs: list[LeadUpdateJob] | None = None
     estimated_total: EstimatedTotalPayload | None = Field(default=None, alias="estimatedTotal")
     payments: list[LeadPaymentPayload] | None = None
 
@@ -1560,9 +1571,6 @@ def update_lead(
         lead.phone = _normalize_phone(body.phone_number)
     if body.email is not None:
         lead.email = body.email.strip() or None
-    if body.move_date is not None:
-        lead.move_date = _normalize_move_date(body.move_date)
-        lead.booked_move_date = _parse_booked_move_date(body.move_date)
     if body.estimated_total is not None:
         lead.estimated_total = _serialize_estimated_total(body.estimated_total)
     if body.payments is not None:
@@ -1571,13 +1579,67 @@ def update_lead(
     primary_job = _get_or_create_primary_lead_job(lead, db)
     if body.company_id is not None:
         primary_job.company_id = lead.company_id
-    if body.move_date is not None:
-        primary_job.move_date = lead.move_date
-        primary_job.booked_move_date = lead.booked_move_date
-    if body.smartmoving_job_id is not None:
-        primary_job.smartmoving_job_id = body.smartmoving_job_id.strip() or None
-    if body.estimated_charges is not None:
-        _replace_job_charges(primary_job, body.estimated_charges, db)
+
+    if body.jobs is not None:
+        for job_patch in body.jobs:
+            job_payload = job_patch.dict(exclude_unset=True, by_alias=False)
+            if not job_payload:
+                continue
+
+            target_job = primary_job
+            target_job_id = (job_payload.get("id") or "").strip()
+            if target_job_id:
+                target_job = (
+                    db.query(LeadJob)
+                    .filter(LeadJob.id == target_job_id, LeadJob.lead_id == lead.id)
+                    .first()
+                )
+                if not target_job:
+                    raise HTTPException(status_code=404, detail=f"Job not found: {target_job_id}")
+
+            if "smartmoving_job_id" in job_payload:
+                target_job.smartmoving_job_id = (job_payload.get("smartmoving_job_id") or "").strip() or None
+
+            if "pickup_zip" in job_payload:
+                target_job.pickup_zip = (job_payload.get("pickup_zip") or "").strip()
+
+            if "delivery_zip" in job_payload:
+                target_job.delivery_zip = (job_payload.get("delivery_zip") or "").strip()
+
+            if "move_date" in job_payload:
+                target_job.move_date = _normalize_move_date(job_payload.get("move_date") or "")
+                if "booked_move_date" not in job_payload:
+                    target_job.booked_move_date = _parse_booked_move_date(target_job.move_date)
+
+            if "booked_move_date" in job_payload:
+                booked_raw = (job_payload.get("booked_move_date") or "").strip()
+                if not booked_raw:
+                    target_job.booked_move_date = None
+                else:
+                    booked = _parse_booked_move_date(booked_raw)
+                    if not booked:
+                        raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
+                    target_job.booked_move_date = booked
+
+            if "price" in job_payload:
+                next_price = job_payload.get("price")
+                if next_price is None:
+                    target_job.price = None
+                else:
+                    try:
+                        price_value = Decimal(str(next_price)).quantize(Decimal("0.01"))
+                    except (InvalidOperation, ValueError):
+                        raise HTTPException(status_code=400, detail="price must be a valid number")
+                    if price_value < 0:
+                        raise HTTPException(status_code=400, detail="price must be >= 0")
+                    target_job.price = price_value
+
+            if "estimated_charges" in job_payload:
+                _replace_job_charges(target_job, job_payload.get("estimated_charges") or [], db)
+
+        # Keep lead-level move fields aligned with primary job.
+        lead.move_date = primary_job.move_date
+        lead.booked_move_date = primary_job.booked_move_date
 
     db.commit()
     db.refresh(lead)
