@@ -1497,6 +1497,7 @@ class LeadUpdate(BaseModel):
     status: str | None = None
     priority: int | None = None
     assigned_to: str | None = None
+    assigned_to_name: str | None = None
     company_id: str | None = None
     notes: str | None = None
     full_name: str | None = None
@@ -1521,7 +1522,7 @@ def update_lead(
         raise HTTPException(status_code=404, detail="Lead not found")
 
     # Only admin can assign leads
-    if body.assigned_to is not None and user.role != "admin":
+    if (body.assigned_to is not None or body.assigned_to_name is not None) and user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can assign leads")
     if body.company_id is not None and user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can change lead company")
@@ -1532,8 +1533,23 @@ def update_lead(
         lead.status = body.status
     if body.priority is not None:
         lead.priority = body.priority
+    if body.assigned_to is not None and body.assigned_to_name is not None:
+        raise HTTPException(status_code=400, detail="Provide either assigned_to or assigned_to_name, not both")
     if body.assigned_to is not None:
         lead.assigned_to = body.assigned_to or None
+    elif body.assigned_to_name is not None:
+        requested_name = body.assigned_to_name.strip()
+        if not requested_name:
+            lead.assigned_to = None
+        else:
+            users = db.query(User).all()
+            needle = _normalize_person_name(requested_name)
+            matched_users = [u for u in users if _normalize_person_name(u.name) == needle]
+            if not matched_users:
+                raise HTTPException(status_code=400, detail=f"assigned_to_name '{requested_name}' not found")
+            if len(matched_users) > 1:
+                raise HTTPException(status_code=400, detail="assigned_to_name is ambiguous; send assigned_to user id")
+            lead.assigned_to = matched_users[0].id
     if body.company_id is not None:
         next_company_id = body.company_id.strip()
         if not next_company_id:
