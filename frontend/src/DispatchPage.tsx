@@ -240,6 +240,16 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     return calendarJobs.filter((job) => selected.has(String((job as unknown as { company_id?: string }).company_id || "")));
   }, [calendarJobs, selectedDispatchCompanyIds, dispatchCompanies.length]);
 
+  const monthlyJobsByCompanyId = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const job of calendarJobs) {
+      const companyId = String((job as unknown as { company_id?: string }).company_id || "");
+      if (!companyId) continue;
+      counts.set(companyId, (counts.get(companyId) || 0) + 1);
+    }
+    return counts;
+  }, [calendarJobs]);
+
   const dispatchUsers = useMemo(
     () => users.filter((u) => u.role === "dispatch").sort((a, b) => a.name.localeCompare(b.name)),
     [users]
@@ -710,7 +720,15 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
 
         {!calendarLoading && dispatchCompanies.length > 0 ? (
           <div style={{ marginBottom: 12, maxWidth: 700, display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Companies</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Companies</div>
+              <div style={{ fontSize: 12, color: "#334155", fontWeight: 600 }}>
+                Total jobs this month: {calendarJobs.length}
+                {selectedDispatchCompanyIds.length > 0 && selectedDispatchCompanyIds.length !== dispatchCompanies.length
+                  ? ` • Showing ${filteredCalendarJobs.length}`
+                  : ""}
+              </div>
+            </div>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#334155", fontWeight: 600 }}>
               <input
                 type="checkbox"
@@ -723,11 +741,12 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                   }
                 }}
               />
-              All companies
+              All companies ({calendarJobs.length})
             </label>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
               {dispatchCompanies.map((company) => {
                 const checked = selectedDispatchCompanyIds.includes(company.id);
+                const monthlyCount = monthlyJobsByCompanyId.get(company.id) || 0;
                 return (
                   <label key={company.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#334155" }}>
                     <input
@@ -739,7 +758,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                         );
                       }}
                     />
-                    {company.name}
+                    {company.name} ({monthlyCount})
                   </label>
                 );
               })}
@@ -1051,7 +1070,7 @@ function CompanyCalendar({
   );
 
   const companyStyles = useMemo(() => {
-    const uniqueCompanies = new Map<string, { name: string; tone: CompanyTone }>();
+    const uniqueCompanies = new Map<string, { name: string; tone: CompanyTone; count: number }>();
     const sortedJobs = [...jobs].sort((left, right) => {
       const leftName = (left.company_name || "").toLowerCase();
       const rightName = (right.company_name || "").toLowerCase();
@@ -1061,9 +1080,13 @@ function CompanyCalendar({
 
     for (const job of sortedJobs) {
       const key = companyKeyForJob(job);
-      if (uniqueCompanies.has(key)) continue;
+      const existing = uniqueCompanies.get(key);
+      if (existing) {
+        uniqueCompanies.set(key, { ...existing, count: existing.count + 1 });
+        continue;
+      }
       const tone = toneForCompanyColor(job.company_color, job.company_name);
-      uniqueCompanies.set(key, { name: job.company_name || "Company", tone });
+      uniqueCompanies.set(key, { name: job.company_name || "Company", tone, count: 1 });
     }
 
     return uniqueCompanies;
@@ -1208,7 +1231,7 @@ function CompanyCalendar({
                 }}
               >
                 <span style={{ width: 8, height: 8, borderRadius: 999, background: item.tone.border, display: "inline-block" }} />
-                {item.name}
+                {item.name} ({item.count})
               </span>
             ))}
           </div>
