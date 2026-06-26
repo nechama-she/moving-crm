@@ -719,7 +719,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
         {daySettingsError ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{daySettingsError}</p> : null}
 
         {!calendarLoading && dispatchCompanies.length > 0 ? (
-          <div style={{ marginBottom: 12, maxWidth: 700, display: "grid", gap: 6 }}>
+          <div style={{ marginBottom: 12, maxWidth: 900, display: "grid", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Companies</div>
               <div style={{ fontSize: 12, color: "#334155", fontWeight: 600 }}>
@@ -729,37 +729,65 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                   : ""}
               </div>
             </div>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#334155", fontWeight: 600 }}>
-              <input
-                type="checkbox"
-                checked={selectedDispatchCompanyIds.length > 0 && selectedDispatchCompanyIds.length === dispatchCompanies.length}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setSelectedDispatchCompanyIds(dispatchCompanies.map((c) => c.id));
-                  } else {
-                    setSelectedDispatchCompanyIds([]);
-                  }
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setSelectedDispatchCompanyIds(dispatchCompanies.map((c) => c.id))}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  border: selectedDispatchCompanyIds.length > 0 && selectedDispatchCompanyIds.length === dispatchCompanies.length
+                    ? "1px solid #0f766e"
+                    : "1px solid #cbd5e1",
+                  background: selectedDispatchCompanyIds.length > 0 && selectedDispatchCompanyIds.length === dispatchCompanies.length
+                    ? "#ccfbf1"
+                    : "#fff",
+                  color: selectedDispatchCompanyIds.length > 0 && selectedDispatchCompanyIds.length === dispatchCompanies.length
+                    ? "#115e59"
+                    : "#334155",
+                  borderRadius: 999,
+                  padding: "5px 10px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
                 }}
-              />
-              All companies ({calendarJobs.length})
-            </label>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              >
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: "#0f766e", display: "inline-block" }} />
+                All ({calendarJobs.length})
+              </button>
               {dispatchCompanies.map((company) => {
                 const checked = selectedDispatchCompanyIds.includes(company.id);
                 const monthlyCount = monthlyJobsByCompanyId.get(company.id) || 0;
+                const tone = toneForCompanyColor(company.color, company.name);
                 return (
-                  <label key={company.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#334155" }}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) => {
-                        setSelectedDispatchCompanyIds((prev) =>
-                          e.target.checked ? [...prev, company.id] : prev.filter((id) => id !== company.id)
-                        );
-                      }}
-                    />
+                  <button
+                    type="button"
+                    key={company.id}
+                    onClick={() => {
+                      setSelectedDispatchCompanyIds((prev) =>
+                        checked ? prev.filter((id) => id !== company.id) : [...prev, company.id]
+                      );
+                    }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      border: checked ? `1px solid ${tone.border}` : "1px solid #cbd5e1",
+                      background: checked ? tone.tint : "#fff",
+                      color: checked ? tone.text : "#334155",
+                      borderRadius: 999,
+                      padding: "5px 10px",
+                      fontSize: 12,
+                      fontWeight: checked ? 700 : 600,
+                      cursor: "pointer",
+                    }}
+                    aria-pressed={checked}
+                    title={company.name}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: 999, background: tone.border, display: "inline-block" }} />
                     {company.name} ({monthlyCount})
-                  </label>
+                  </button>
                 );
               })}
             </div>
@@ -1070,7 +1098,7 @@ function CompanyCalendar({
   );
 
   const companyStyles = useMemo(() => {
-    const uniqueCompanies = new Map<string, { name: string; tone: CompanyTone; count: number }>();
+    const uniqueCompanies = new Map<string, { name: string; tone: CompanyTone }>();
     const sortedJobs = [...jobs].sort((left, right) => {
       const leftName = (left.company_name || "").toLowerCase();
       const rightName = (right.company_name || "").toLowerCase();
@@ -1080,13 +1108,9 @@ function CompanyCalendar({
 
     for (const job of sortedJobs) {
       const key = companyKeyForJob(job);
-      const existing = uniqueCompanies.get(key);
-      if (existing) {
-        uniqueCompanies.set(key, { ...existing, count: existing.count + 1 });
-        continue;
-      }
+      if (uniqueCompanies.has(key)) continue;
       const tone = toneForCompanyColor(job.company_color, job.company_name);
-      uniqueCompanies.set(key, { name: job.company_name || "Company", tone, count: 1 });
+      uniqueCompanies.set(key, { name: job.company_name || "Company", tone });
     }
 
     return uniqueCompanies;
@@ -1212,30 +1236,6 @@ function CompanyCalendar({
       </div>
 
       <div style={{ padding: 10 }}>
-        {companyStyles.size > 0 ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-            {Array.from(companyStyles.entries()).map(([key, item]) => (
-              <span
-                key={key}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: item.tone.text,
-                  background: item.tone.tint,
-                  border: `1px solid ${item.tone.border}`,
-                  borderRadius: 999,
-                  padding: "4px 8px",
-                }}
-              >
-                <span style={{ width: 8, height: 8, borderRadius: 999, background: item.tone.border, display: "inline-block" }} />
-                {item.name} ({item.count})
-              </span>
-            ))}
-          </div>
-        ) : null}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
           {weekdayLabels.map((label) => (
             <div key={label} style={{ fontSize: 11, color: "#64748b", fontWeight: 700, textTransform: "uppercase", textAlign: "center" }}>
