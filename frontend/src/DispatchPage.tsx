@@ -732,7 +732,11 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               <button
                 type="button"
-                onClick={() => setSelectedDispatchCompanyIds(dispatchCompanies.map((c) => c.id))}
+                onClick={() => {
+                  const allIds = dispatchCompanies.map((c) => c.id);
+                  const isAllSelected = selectedDispatchCompanyIds.length > 0 && selectedDispatchCompanyIds.length === dispatchCompanies.length;
+                  setSelectedDispatchCompanyIds(isAllSelected ? [] : allIds);
+                }}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
