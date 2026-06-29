@@ -938,13 +938,16 @@ def _to_money_decimal(value: float | int | str | None, field_name: str) -> Decim
     return amount
 
 
-def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload], db: Session) -> None:
+def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload | dict], db: Session) -> None:
     if not job.id:
         db.flush()
 
     db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id).delete(synchronize_session=False)
 
     for index, charge in enumerate(charges):
+        if isinstance(charge, dict):
+            charge = LeadJobChargePayload.model_validate(charge)
+
         display_name = (charge.editable_description or "").strip() or (charge.name or "").strip()
         if not display_name:
             continue
