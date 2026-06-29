@@ -23,6 +23,13 @@ type AppUser = {
   companies?: UserCompany[];
 };
 
+type RepUpdatePayload = {
+  name: string;
+  phone: string;
+  smartmoving_rep_id: string;
+  aircall_number_id: string;
+};
+
 export default function SalesRepsPage() {
   const { token, user } = useAuth();
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -214,23 +221,28 @@ export default function SalesRepsPage() {
     }
   }
 
-  async function updateRepAircall(userId: string, value: string) {
+  async function updateRep(userId: string, payload: RepUpdatePayload) {
     setError("");
     setInfo("");
     try {
       const res = await fetch(`${API_BASE}/api/users/${userId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
-        body: JSON.stringify({ aircall_number_id: value.trim() }),
+        body: JSON.stringify({
+          name: payload.name.trim(),
+          phone: payload.phone.trim(),
+          smartmoving_rep_id: payload.smartmoving_rep_id.trim(),
+          aircall_number_id: payload.aircall_number_id.trim(),
+        }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "Failed to update Aircall Number ID" }));
-        throw new Error(err.detail || "Failed to update Aircall Number ID");
+        const err = await res.json().catch(() => ({ detail: "Failed to update rep" }));
+        throw new Error(err.detail || "Failed to update rep");
       }
-      setInfo("Aircall Number ID updated.");
+      setInfo("Rep updated.");
       await loadData();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to update Aircall Number ID");
+      setError(err instanceof Error ? err.message : "Failed to update rep");
       throw err;
     }
   }
@@ -379,7 +391,7 @@ export default function SalesRepsPage() {
                 key={rep.id}
                 rep={rep}
                 companies={companies}
-                onUpdateAircall={updateRepAircall}
+                onUpdate={updateRep}
                 onAssign={assignCompany}
                 onUnassign={unassignCompany}
                 onDelete={deleteRep}
@@ -395,58 +407,62 @@ export default function SalesRepsPage() {
 function RepRow({
   rep,
   companies,
-  onUpdateAircall,
+  onUpdate,
   onAssign,
   onUnassign,
   onDelete,
 }: {
   rep: AppUser;
   companies: Company[];
-  onUpdateAircall: (userId: string, value: string) => Promise<void>;
+  onUpdate: (userId: string, payload: RepUpdatePayload) => Promise<void>;
   onAssign: (userId: string, companyId: string) => Promise<void>;
   onUnassign: (userId: string, companyId: string) => Promise<void>;
   onDelete: (userId: string, repName: string) => Promise<void>;
 }) {
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [name, setName] = useState(rep.name || "");
+  const [phone, setPhone] = useState(rep.phone || "");
+  const [smartmovingRepId, setSmartmovingRepId] = useState(rep.smartmoving_rep_id || "");
   const [aircallNumberId, setAircallNumberId] = useState(rep.aircall_number_id || "");
-  const [savingAircall, setSavingAircall] = useState(false);
+  const [savingRep, setSavingRep] = useState(false);
   const assigned = rep.companies || [];
   const assignedIds = new Set(assigned.map((c) => c.id));
   const availableCompanies = companies.filter((c) => !assignedIds.has(c.id));
 
-  async function saveAircallNumberId() {
-    setSavingAircall(true);
+  async function saveRep() {
+    setSavingRep(true);
     try {
-      await onUpdateAircall(rep.id, aircallNumberId);
+      await onUpdate(rep.id, {
+        name,
+        phone,
+        smartmoving_rep_id: smartmovingRepId,
+        aircall_number_id: aircallNumberId,
+      });
     } catch {
       // Parent handles message display.
     } finally {
-      setSavingAircall(false);
+      setSavingRep(false);
     }
   }
 
   return (
     <tr style={{ borderTop: "1px solid #e5e7eb" }}>
-      <td style={td}>{rep.name}</td>
-      <td style={td}>{rep.email}</td>
-      <td style={td}>{rep.phone || ""}</td>
-      <td style={td}>{rep.smartmoving_rep_id || ""}</td>
       <td style={td}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            value={aircallNumberId}
-            onChange={(e) => setAircallNumberId(e.target.value)}
-            style={{ ...inputStyle, minWidth: 170, padding: "6px 8px" }}
-          />
-          <button
-            type="button"
-            onClick={() => void saveAircallNumberId()}
-            disabled={savingAircall}
-            style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
-          >
-            {savingAircall ? "Saving..." : "Save"}
-          </button>
-        </div>
+        <input value={name} onChange={(e) => setName(e.target.value)} style={{ ...inputStyle, minWidth: 170, padding: "6px 8px" }} />
+      </td>
+      <td style={td}>{rep.email}</td>
+      <td style={td}>
+        <input value={phone} onChange={(e) => setPhone(e.target.value)} style={{ ...inputStyle, minWidth: 130, padding: "6px 8px" }} />
+      </td>
+      <td style={td}>
+        <input value={smartmovingRepId} onChange={(e) => setSmartmovingRepId(e.target.value)} style={{ ...inputStyle, minWidth: 170, padding: "6px 8px" }} />
+      </td>
+      <td style={td}>
+        <input
+          value={aircallNumberId}
+          onChange={(e) => setAircallNumberId(e.target.value)}
+          style={{ ...inputStyle, minWidth: 170, padding: "6px 8px" }}
+        />
       </td>
       <td style={td}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -485,13 +501,23 @@ function RepRow({
         </div>
       </td>
       <td style={td}>
-        <button
-          type="button"
-          onClick={() => void onDelete(rep.id, rep.name)}
-          style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
-        >
-          Delete Rep
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            type="button"
+            onClick={() => void saveRep()}
+            disabled={savingRep}
+            style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
+          >
+            {savingRep ? "Saving..." : "Save"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void onDelete(rep.id, rep.name)}
+            style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
+          >
+            Delete Rep
+          </button>
+        </div>
       </td>
     </tr>
   );
