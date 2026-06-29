@@ -1583,16 +1583,18 @@ def update_lead(
 
         # Keep assignment consistent with the lead's new company.
         if lead.assigned_to:
-            rep_has_company = (
-                db.query(UserCompany)
-                .filter(
-                    UserCompany.user_id == lead.assigned_to,
-                    UserCompany.company_id == next_company_id,
+            assigned_user = db.query(User).filter(User.id == lead.assigned_to).first()
+            if assigned_user and assigned_user.role == "sales_rep":
+                rep_has_company = (
+                    db.query(UserCompany)
+                    .filter(
+                        UserCompany.user_id == lead.assigned_to,
+                        UserCompany.company_id == next_company_id,
+                    )
+                    .first()
                 )
-                .first()
-            )
-            if not rep_has_company:
-                lead.assigned_to = None
+                if not rep_has_company:
+                    lead.assigned_to = None
     if body.notes is not None:
         lead.notes = body.notes
     if body.full_name is not None:
