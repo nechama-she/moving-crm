@@ -75,7 +75,11 @@ def _parse_iso_datetime(value: str) -> datetime:
 def list_my_reps(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Return sales reps accessible to the current user (same companies)."""
     if user.role == "admin":
-        company_ids = [r[0] for r in db.query(Company.id).all()]
+        admin_rows = db.query(UserCompany.company_id).filter(UserCompany.user_id == user.id).all()
+        if admin_rows:
+            company_ids = [r[0] for r in admin_rows]
+        else:
+            company_ids = [r[0] for r in db.query(Company.id).all()]
     else:
         company_ids = [r[0] for r in db.query(UserCompany.company_id).filter(UserCompany.user_id == user.id).all()]
     rep_ids = (

@@ -32,7 +32,12 @@ class CompanyCreate(BaseModel):
 def list_my_companies(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Return companies accessible to the current user."""
     if user.role == "admin":
-        companies = db.query(Company).order_by(Company.name).all()
+        admin_rows = db.query(UserCompany.company_id).filter(UserCompany.user_id == user.id).all()
+        if admin_rows:
+            admin_company_ids = [r[0] for r in admin_rows]
+            companies = db.query(Company).filter(Company.id.in_(admin_company_ids)).order_by(Company.name).all()
+        else:
+            companies = db.query(Company).order_by(Company.name).all()
     else:
         company_ids = [r[0] for r in db.query(UserCompany.company_id).filter(UserCompany.user_id == user.id).all()]
         companies = db.query(Company).filter(Company.id.in_(company_ids)).order_by(Company.name).all()

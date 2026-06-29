@@ -358,6 +358,9 @@ def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None) -> dict:
 def _get_user_company_ids(user: User, db: Session) -> list[str]:
     """Get company IDs the user has access to."""
     if user.role == "admin":
+        admin_rows = db.query(UserCompany.company_id).filter(UserCompany.user_id == user.id).all()
+        if admin_rows:
+            return [r[0] for r in admin_rows]
         return [row[0] for row in db.query(Company.id).all()]
     rows = db.query(UserCompany.company_id).filter(UserCompany.user_id == user.id).all()
     return [r[0] for r in rows]
