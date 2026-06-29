@@ -1502,6 +1502,7 @@ class LeadUpdate(BaseModel):
     assigned_to: str | None = None
     assigned_to_name: str | None = None
     company_id: str | None = None
+    company_name: str | None = None
     notes: str | None = None
     full_name: str | None = None
     smartmoving_id: str | None = None
@@ -1527,7 +1528,7 @@ def update_lead(
     # Only admin can assign leads
     if (body.assigned_to is not None or body.assigned_to_name is not None) and user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can assign leads")
-    if body.company_id is not None and user.role != "admin":
+    if (body.company_id is not None or body.company_name is not None) and user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can change lead company")
 
     prev_assigned_to = lead.assigned_to
@@ -1553,15 +1554,30 @@ def update_lead(
             if len(matched_users) > 1:
                 raise HTTPException(status_code=400, detail="assigned_to_name is ambiguous; send assigned_to user id")
             lead.assigned_to = matched_users[0].id
+    if body.company_id is not None and body.company_name is not None:
+        raise HTTPException(status_code=400, detail="Provide either company_id or company_name, not both")
+
+    next_company_id: str | None = None
     if body.company_id is not None:
         next_company_id = body.company_id.strip()
         if not next_company_id:
             raise HTTPException(status_code=400, detail="company_id cannot be empty")
+    elif body.company_name is not None:
+        requested_company_name = body.company_name.strip()
+        if not requested_company_name:
+            raise HTTPException(status_code=400, detail="company_name cannot be empty")
+        company = (
+            db.query(Company)
+            .filter(func.lower(Company.name) == requested_company_name.lower())
+            .first()
+        )
+        if not company:
+            raise HTTPException(status_code=404, detail=f"company_name '{requested_company_name}' not found")
+        next_company_id = company.id
+
+    if next_company_id is not None:
         if next_company_id not in company_ids:
             raise HTTPException(status_code=403, detail="Not allowed to move lead to this company")
-        company_exists = db.query(Company.id).filter(Company.id == next_company_id).first()
-        if not company_exists:
-            raise HTTPException(status_code=404, detail="Company not found")
 
         lead.company_id = next_company_id
 
@@ -1596,7 +1612,7 @@ def update_lead(
         lead.payments = _serialize_payments(body.payments)
 
     primary_job = _get_or_create_primary_lead_job(lead, db)
-    if body.company_id is not None:
+    if next_company_id is not None:
         primary_job.company_id = lead.company_id
 
     if body.jobs is not None:
