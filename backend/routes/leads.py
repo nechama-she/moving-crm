@@ -67,6 +67,10 @@ def _normalize_phone(raw: str | None) -> str:
     return digits
 
 
+def _clean_optional_text(value: str | None) -> str:
+    return (value or "").strip()
+
+
 def _normalize_person_name(value: str | None) -> str:
     return re.sub(r"\s+", " ", (value or "").strip()).lower()
 
@@ -1807,27 +1811,27 @@ class NewLead(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     full_name: str = ""
-    email: str = ""
-    phone_number: str = ""
-    pickup_zip: str = ""
-    delivery_zip: str = ""
-    move_size: str = ""
-    move_date: str = ""
-    booked_move_date: str = ""
-    move_type: str = ""
-    created_time: str = ""
-    leadgen_id: str = ""
-    smartmoving_id: str = ""
-    smartmoving_job_id: str = ""
-    facebook_user_id: str = ""
-    notes: str = ""
-    referral_source: str = ""
-    service_type: str = ""
-    status: str = ""
-    assigned_to: str = ""
-    assigned_to_name: str = ""
-    sales_person_id: str = ""
-    sales_person_name: str = ""
+    email: str | None = None
+    phone_number: str | None = None
+    pickup_zip: str | None = None
+    delivery_zip: str | None = None
+    move_size: str | None = None
+    move_date: str | None = None
+    booked_move_date: str | None = None
+    move_type: str | None = None
+    created_time: str | None = None
+    leadgen_id: str | None = None
+    smartmoving_id: str | None = None
+    smartmoving_job_id: str | None = None
+    facebook_user_id: str | None = None
+    notes: str | None = None
+    referral_source: str | None = None
+    service_type: str | None = None
+    status: str | None = None
+    assigned_to: str | None = None
+    assigned_to_name: str | None = None
+    sales_person_id: str | None = None
+    sales_person_name: str | None = None
     estimated_charges: list[LeadJobChargePayload] = Field(default_factory=list, alias="estimatedCharges")
     estimated_total: EstimatedTotalPayload | None = Field(default=None, alias="estimatedTotal")
     payments: list[LeadPaymentPayload] = Field(default_factory=list)
@@ -1873,8 +1877,8 @@ def create_lead(
     assignment_mode = "manual"
     assignment_reason = "admin_available"
 
-    requested_assignee_id = (body.assigned_to or body.sales_person_id or "").strip()
-    requested_assignee_name = (body.assigned_to_name or body.sales_person_name or "").strip()
+    requested_assignee_id = _clean_optional_text(body.assigned_to) or _clean_optional_text(body.sales_person_id)
+    requested_assignee_name = _clean_optional_text(body.assigned_to_name) or _clean_optional_text(body.sales_person_name)
 
     if requested_assignee_id:
         assignee = db.query(User).filter(User.id == requested_assignee_id).first()
@@ -1914,14 +1918,14 @@ def create_lead(
             assignment_mode = "queued"
             assignment_reason = "all_admins_unavailable_no_available_rep"
 
-    raw_move_type = body.move_type.lower().strip()
-    raw_status = (body.status or "").strip().lower()
+    raw_move_type = _clean_optional_text(body.move_type).lower()
+    raw_status = _clean_optional_text(body.status).lower()
     status_provided = bool(raw_status)
     if raw_status and raw_status not in ALLOWED_LEAD_STATUSES:
         raw_status = "new"
 
-    normalized_move_date = _normalize_move_date(body.move_date)
-    booked_raw = (body.booked_move_date or "").strip()
+    normalized_move_date = _normalize_move_date(_clean_optional_text(body.move_date))
+    booked_raw = _clean_optional_text(body.booked_move_date)
     parsed_booked_date = _parse_booked_move_date(booked_raw or normalized_move_date)
     if booked_raw and not parsed_booked_date:
         raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
@@ -1930,22 +1934,22 @@ def create_lead(
         company_id=company.id,
         assigned_to=assigned_to_user_id,
         full_name=body.full_name.strip(),
-        email=body.email.strip(),
+        email=_clean_optional_text(body.email),
         phone=_normalize_phone(body.phone_number),
         source=body.source or "zapier",
-        leadgen_id=body.leadgen_id.strip() or None,
-        smartmoving_id=body.smartmoving_id.strip() or None,
-        facebook_user_id=body.facebook_user_id.strip() or None,
-        pickup_zip=body.pickup_zip.strip(),
-        delivery_zip=body.delivery_zip.strip(),
-        move_size=body.move_size.strip(),
+        leadgen_id=_clean_optional_text(body.leadgen_id) or None,
+        smartmoving_id=_clean_optional_text(body.smartmoving_id) or None,
+        facebook_user_id=_clean_optional_text(body.facebook_user_id) or None,
+        pickup_zip=_clean_optional_text(body.pickup_zip),
+        delivery_zip=_clean_optional_text(body.delivery_zip),
+        move_size=_clean_optional_text(body.move_size),
         move_date=normalized_move_date,
         booked_move_date=parsed_booked_date,
         move_type=MOVE_TYPE_MAP.get(raw_move_type, raw_move_type),
-        created_time=body.created_time.strip(),
-        notes=body.notes.strip() or None,
-        referral_source=body.referral_source.strip() or None,
-        service_type=body.service_type.strip() or None,
+        created_time=_clean_optional_text(body.created_time),
+        notes=_clean_optional_text(body.notes) or None,
+        referral_source=_clean_optional_text(body.referral_source) or None,
+        service_type=_clean_optional_text(body.service_type) or None,
         status=raw_status or "new",
         estimated_total=_serialize_estimated_total(body.estimated_total),
         payments=_serialize_payments(body.payments),
@@ -1957,7 +1961,7 @@ def create_lead(
             lead_id=lead.id,
             company_id=lead.company_id,
             job_order=1,
-            smartmoving_job_id=body.smartmoving_job_id.strip() or None,
+            smartmoving_job_id=_clean_optional_text(body.smartmoving_job_id) or None,
             pickup_zip=lead.pickup_zip,
             delivery_zip=lead.delivery_zip,
             move_date=lead.move_date,
