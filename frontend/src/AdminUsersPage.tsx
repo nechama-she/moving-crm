@@ -77,6 +77,52 @@ export default function AdminUsersPage() {
     }
   }
 
+  function toggleCompany(companyId: string) {
+    setSelectedCompanyIds((prev) =>
+      prev.includes(companyId) ? prev.filter((id) => id !== companyId) : [...prev, companyId]
+    );
+  }
+
+  async function assignCompany(userId: string, companyId: string) {
+    if (!companyId) return;
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/users/${userId}/companies`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ company_id: companyId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Failed to assign company" }));
+        throw new Error(err.detail || "Failed to assign company");
+      }
+      setInfo("Company assigned.");
+      await loadUsers();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to assign company");
+    }
+  }
+
+  async function unassignCompany(userId: string, companyId: string) {
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/users/${userId}/companies/${companyId}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Failed to remove company" }));
+        throw new Error(err.detail || "Failed to remove company");
+      }
+      setInfo("Company removed.");
+      await loadUsers();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to remove company");
+    }
+  }
+
   async function createAdmin() {
     setError("");
     setInfo("");
@@ -124,52 +170,6 @@ export default function AdminUsersPage() {
       setShowPassword(false);
       setSelectedCompanyIds([]);
       await loadUsers();
-      function toggleCompany(companyId: string) {
-        setSelectedCompanyIds((prev) =>
-          prev.includes(companyId) ? prev.filter((id) => id !== companyId) : [...prev, companyId]
-        );
-      }
-
-      async function assignCompany(userId: string, companyId: string) {
-        if (!companyId) return;
-        setError("");
-        setInfo("");
-        try {
-          const res = await fetch(`${API_BASE}/api/users/${userId}/companies`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...authHeaders(token) },
-            body: JSON.stringify({ company_id: companyId }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ detail: "Failed to assign company" }));
-            throw new Error(err.detail || "Failed to assign company");
-          }
-          setInfo("Company assigned.");
-          await loadUsers();
-        } catch (err: unknown) {
-          setError(err instanceof Error ? err.message : "Failed to assign company");
-        }
-      }
-
-      async function unassignCompany(userId: string, companyId: string) {
-        setError("");
-        setInfo("");
-        try {
-          const res = await fetch(`${API_BASE}/api/users/${userId}/companies/${companyId}`, {
-            method: "DELETE",
-            headers: authHeaders(token),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ detail: "Failed to remove company" }));
-            throw new Error(err.detail || "Failed to remove company");
-          }
-          setInfo("Company removed.");
-          await loadUsers();
-        } catch (err: unknown) {
-          setError(err instanceof Error ? err.message : "Failed to remove company");
-        }
-      }
-
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to create admin");
     } finally {
