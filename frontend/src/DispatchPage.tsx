@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
@@ -78,6 +78,40 @@ function toneForCompanyColor(companyColor?: string, companyName?: string): Compa
 
 function monthKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function parseMonthFromSearch(search: string): Date | null {
+  const params = new URLSearchParams(search);
+  const raw = (params.get("move_month") || "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  return new Date(year, month - 1, 1);
+}
+
+function parseDispatchCompanySelectionFromSearch(search: string): { ids: string[]; hasParam: boolean } {
+  const params = new URLSearchParams(search);
+  if (!params.has("dispatch_company_ids")) {
+    return { ids: [], hasParam: false };
+  }
+  const raw = (params.get("dispatch_company_ids") || "").trim();
+  if (!raw || raw === "__none__") {
+    return { ids: [], hasParam: true };
+  }
+
+  const seen = new Set<string>();
+  const ids = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => {
+      if (!part || seen.has(part)) return false;
+      seen.add(part);
+      return true;
+    });
+
+  return { ids, hasParam: true };
 }
 
 function parseCalendarDate(raw: string): Date | null {
@@ -191,7 +225,12 @@ function hslToHex(hue: number, saturation: number, lightness: number): string {
 
 export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const { token, user } = useAuth();
+  const dispatchCompanySelectionFromSearch = useMemo(
+    () => parseDispatchCompanySelectionFromSearch(location.search),
+    [location.search]
+  );
   const isAdmin = user?.role === "admin";
   const isDispatch = user?.role === "dispatch";
   const effectiveMode: DispatchPageMode = mode || (isDispatch ? "calendar" : "manage");
@@ -206,8 +245,12 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const [info, setInfo] = useState("");
 
   const [dispatchCompanies, setDispatchCompanies] = useState<Company[]>([]);
-  const [selectedDispatchCompanyIds, setSelectedDispatchCompanyIds] = useState<string[]>([]);
+  const [selectedDispatchCompanyIds, setSelectedDispatchCompanyIds] = useState<string[]>(
+    () => parseDispatchCompanySelectionFromSearch(location.search).ids
+  );
   const [dispatchMonth, setDispatchMonth] = useState(() => {
+    const fromSearch = parseMonthFromSearch(location.search);
+    if (fromSearch) return fromSearch;
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
@@ -272,6 +315,50 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     if (!showCalendar) return;
     void loadDispatchCalendarJobs(dispatchMonth);
   }, [token, showCalendar, dispatchMonth]);
+
+  useEffect(() => {
+    if (!showCalendar) return;
+    const params = new URLSearchParams(location.search);
+    const targetMonth = monthKey(dispatchMonth);
+    let didChange = false;
+
+    if (params.get("move_month") !== targetMonth) {
+      params.set("move_month", targetMonth);
+      didChange = true;
+    }
+
+    if (dispatchCompanies.length > 0) {
+      const currentRaw = (params.get("dispatch_company_ids") || "").trim();
+      if (selectedDispatchCompanyIds.length === dispatchCompanies.length) {
+        if (params.has("dispatch_company_ids")) {
+          params.delete("dispatch_company_ids");
+          didChange = true;
+        }
+      } else if (selectedDispatchCompanyIds.length === 0) {
+        if (currentRaw !== "__none__") {
+          params.set("dispatch_company_ids", "__none__");
+          didChange = true;
+        }
+      } else {
+        const nextRaw = selectedDispatchCompanyIds.join(",");
+        if (currentRaw !== nextRaw) {
+          params.set("dispatch_company_ids", nextRaw);
+          didChange = true;
+        }
+      }
+    }
+
+    if (!didChange) return;
+    navigate({ pathname: location.pathname, search: `?${params.toString()}` }, { replace: true });
+  }, [
+    showCalendar,
+    dispatchMonth,
+    selectedDispatchCompanyIds,
+    dispatchCompanies.length,
+    location.pathname,
+    location.search,
+    navigate,
+  ]);
 
   useEffect(() => {
     if (!showCalendar || !singleSelectedDispatchCompanyId) {
@@ -388,6 +475,9 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
 
       if (assignedCompanies.length > 0) {
         setSelectedDispatchCompanyIds((prev) => {
+          if (dispatchCompanySelectionFromSearch.hasParam) {
+            return dispatchCompanySelectionFromSearch.ids.filter((id) => assignedCompanies.some((c) => c.id === id));
+          }
           if (prev.length === 0) return assignedCompanies.map((c) => c.id);
           const valid = prev.filter((id) => assignedCompanies.some((c) => c.id === id));
           return valid.length > 0 ? valid : assignedCompanies.map((c) => c.id);
