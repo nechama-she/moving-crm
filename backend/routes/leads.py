@@ -1492,6 +1492,7 @@ class LeadUpdateJob(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str | None = None
+    sort_order: int | None = Field(default=None, alias="sortOrder")
     smartmoving_job_id: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
@@ -1656,10 +1657,19 @@ def update_lead(
                     if existing_job:
                         target_job = existing_job
                     else:
+                        sort_order = job_payload.get("sort_order")
+                        if sort_order is not None:
+                            try:
+                                sort_order = int(sort_order)
+                            except (TypeError, ValueError):
+                                raise HTTPException(status_code=400, detail="sortOrder must be an integer")
+                            if sort_order < 1:
+                                raise HTTPException(status_code=400, detail="sortOrder must be >= 1")
+
                         target_job = LeadJob(
                             lead_id=lead.id,
                             company_id=lead.company_id,
-                            job_order=_next_lead_job_order(lead.id, db),
+                            job_order=sort_order if sort_order is not None else _next_lead_job_order(lead.id, db),
                             smartmoving_job_id=target_smartmoving_job_id,
                             pickup_zip=primary_job.pickup_zip or "",
                             delivery_zip=primary_job.delivery_zip or "",
@@ -1672,6 +1682,18 @@ def update_lead(
 
             if "smartmoving_job_id" in job_payload:
                 target_job.smartmoving_job_id = (job_payload.get("smartmoving_job_id") or "").strip() or None
+
+            if "sort_order" in job_payload:
+                next_sort_order = job_payload.get("sort_order")
+                if next_sort_order is None:
+                    raise HTTPException(status_code=400, detail="sortOrder cannot be null")
+                try:
+                    next_sort_order = int(next_sort_order)
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400, detail="sortOrder must be an integer")
+                if next_sort_order < 1:
+                    raise HTTPException(status_code=400, detail="sortOrder must be >= 1")
+                target_job.job_order = next_sort_order
 
             if "pickup_zip" in job_payload:
                 target_job.pickup_zip = (job_payload.get("pickup_zip") or "").strip()
@@ -1710,9 +1732,15 @@ def update_lead(
             if "estimated_charges" in job_payload:
                 _replace_job_charges(target_job, job_payload.get("estimated_charges") or [], db)
 
-        # Keep lead-level move fields aligned with primary job.
-        lead.move_date = primary_job.move_date
-        lead.booked_move_date = primary_job.booked_move_date
+        # Keep lead-level move fields aligned with the current primary job.
+        current_primary_job = (
+            db.query(LeadJob)
+            .filter(LeadJob.lead_id == lead.id)
+            .order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc())
+            .first()
+        ) or primary_job
+        lead.move_date = current_primary_job.move_date
+        lead.booked_move_date = current_primary_job.booked_move_date
 
     db.commit()
     db.refresh(lead)
