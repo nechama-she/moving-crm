@@ -1640,6 +1640,35 @@ def update_lead(
                 )
                 if not target_job:
                     raise HTTPException(status_code=404, detail=f"Job not found: {target_job_id}")
+            else:
+                # Upsert by SmartMoving job id when CRM job id is not available.
+                # This keeps PATCH idempotent for import pipelines.
+                target_smartmoving_job_id = (job_payload.get("smartmoving_job_id") or "").strip()
+                if target_smartmoving_job_id:
+                    existing_job = (
+                        db.query(LeadJob)
+                        .filter(
+                            LeadJob.lead_id == lead.id,
+                            LeadJob.smartmoving_job_id == target_smartmoving_job_id,
+                        )
+                        .first()
+                    )
+                    if existing_job:
+                        target_job = existing_job
+                    else:
+                        target_job = LeadJob(
+                            lead_id=lead.id,
+                            company_id=lead.company_id,
+                            job_order=_next_lead_job_order(lead.id, db),
+                            smartmoving_job_id=target_smartmoving_job_id,
+                            pickup_zip=primary_job.pickup_zip or "",
+                            delivery_zip=primary_job.delivery_zip or "",
+                            move_date=primary_job.move_date or "",
+                            booked_move_date=primary_job.booked_move_date,
+                            price=primary_job.price,
+                        )
+                        db.add(target_job)
+                        db.flush()
 
             if "smartmoving_job_id" in job_payload:
                 target_job.smartmoving_job_id = (job_payload.get("smartmoving_job_id") or "").strip() or None
