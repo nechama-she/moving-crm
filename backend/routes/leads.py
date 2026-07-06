@@ -1516,6 +1516,7 @@ class LeadUpdate(BaseModel):
     smartmoving_id: str | None = None
     phone_number: str | None = None
     email: str | None = None
+    move_size: str | None = None
     jobs: list[LeadUpdateJob] | None = None
     estimated_total: EstimatedTotalPayload | None = Field(default=None, alias="estimatedTotal")
     payments: list[LeadPaymentPayload] | None = None
@@ -1616,6 +1617,8 @@ def update_lead(
         lead.phone = _normalize_phone(body.phone_number)
     if body.email is not None:
         lead.email = body.email.strip() or None
+    if body.move_size is not None:
+        lead.move_size = body.move_size.strip()
     if body.estimated_total is not None:
         lead.estimated_total = _serialize_estimated_total(body.estimated_total)
     if body.payments is not None:
