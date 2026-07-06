@@ -102,6 +102,7 @@ export default function LeadDetail() {
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
+  const [editMoveSize, setEditMoveSize] = useState("");
   const [savingUser, setSavingUser] = useState(false);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [users, setUsers] = useState<UserOption[]>([]);
@@ -984,6 +985,7 @@ export default function LeadDetail() {
         const name = String(lead.full_name || "").trim();
         const phone = String(lead.phone_number || "").trim();
         const email = String(lead.email || "").trim();
+        const moveSize = String(lead.move_size || "").trim();
         const statusValue = String(lead.status || "new").trim().toLowerCase();
         const statusLabel = statusValue
           ? statusValue.charAt(0).toUpperCase() + statusValue.slice(1)
@@ -996,6 +998,7 @@ export default function LeadDetail() {
           setEditName(name);
           setEditPhone(phone);
           setEditEmail(email);
+          setEditMoveSize(moveSize);
           setEditingUser(true);
         }
 
@@ -1009,6 +1012,7 @@ export default function LeadDetail() {
                 full_name: editName,
                 phone_number: editPhone,
                 email: editEmail,
+                move_size: editMoveSize,
               }),
             });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1503,6 +1507,24 @@ export default function LeadDetail() {
                     <a href={`mailto:${email}`} style={{ fontSize: 14, color: "#0176d3", fontWeight: 600, textDecoration: "none", wordBreak: "break-all" }}>
                       {email}
                     </a>
+                  ) : (
+                    <span style={{ fontSize: 14, color: "#706e6b" }}>—</span>
+                  )}
+                </div>
+              </div>
+              <div style={tile}>
+                <span style={{ fontSize: 18 }}>📦</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={tileLabel}>Move Size</div>
+                  {editingUser ? (
+                    <input
+                      value={editMoveSize}
+                      onChange={(e) => setEditMoveSize(e.target.value)}
+                      placeholder="Move size"
+                      style={{ width: "100%", fontSize: 14, padding: "3px 6px", border: "1px solid #dddbda", borderRadius: 4 }}
+                    />
+                  ) : moveSize ? (
+                    <span style={{ fontSize: 14, color: "#334155", fontWeight: 600 }}>{moveSize}</span>
                   ) : (
                     <span style={{ fontSize: 14, color: "#706e6b" }}>—</span>
                   )}
