@@ -1629,6 +1629,8 @@ def update_lead(
         primary_job.company_id = lead.company_id
 
     if body.jobs is not None:
+        requested_job_orders: dict[str, int] = {}
+
         for job_patch in body.jobs:
             job_payload = job_patch.dict(exclude_unset=True, by_alias=False)
             if not job_payload:
@@ -1660,19 +1662,11 @@ def update_lead(
                     if existing_job:
                         target_job = existing_job
                     else:
-                        sort_order = job_payload.get("sort_order")
-                        if sort_order is not None:
-                            try:
-                                sort_order = int(sort_order)
-                            except (TypeError, ValueError):
-                                raise HTTPException(status_code=400, detail="sortOrder must be an integer")
-                            if sort_order < 1:
-                                raise HTTPException(status_code=400, detail="sortOrder must be >= 1")
-
                         target_job = LeadJob(
                             lead_id=lead.id,
                             company_id=lead.company_id,
-                            job_order=sort_order if sort_order is not None else _next_lead_job_order(lead.id, db),
+                            # Always create at the tail first; requested sortOrder is applied in batch later.
+                            job_order=_next_lead_job_order(lead.id, db),
                             smartmoving_job_id=target_smartmoving_job_id,
                             pickup_zip=primary_job.pickup_zip or "",
                             delivery_zip=primary_job.delivery_zip or "",
@@ -1696,7 +1690,7 @@ def update_lead(
                     raise HTTPException(status_code=400, detail="sortOrder must be an integer")
                 if next_sort_order < 1:
                     raise HTTPException(status_code=400, detail="sortOrder must be >= 1")
-                target_job.job_order = next_sort_order
+                requested_job_orders[target_job.id] = next_sort_order
 
             if "pickup_zip" in job_payload:
                 target_job.pickup_zip = (job_payload.get("pickup_zip") or "").strip()
@@ -1735,6 +1729,48 @@ def update_lead(
             if "estimated_charges" in job_payload:
                 _replace_job_charges(target_job, job_payload.get("estimated_charges") or [], db)
 
+        if requested_job_orders:
+            desired_values = list(requested_job_orders.values())
+            if len(set(desired_values)) != len(desired_values):
+                raise HTTPException(status_code=400, detail="sortOrder values must be unique per lead")
+
+            requested_ids = set(requested_job_orders.keys())
+            desired_orders = set(desired_values)
+
+            # Move untouched rows out of requested target slots.
+            conflicting_rows = (
+                db.query(LeadJob)
+                .filter(
+                    LeadJob.lead_id == lead.id,
+                    LeadJob.job_order.in_(desired_orders),
+                    ~LeadJob.id.in_(requested_ids),
+                )
+                .order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc())
+                .all()
+            )
+
+            next_tail_order = _next_lead_job_order(lead.id, db)
+            for row in conflicting_rows:
+                row.job_order = next_tail_order
+                next_tail_order += 1
+
+            # Two-phase assignment prevents collisions during swaps.
+            requested_rows = (
+                db.query(LeadJob)
+                .filter(LeadJob.lead_id == lead.id, LeadJob.id.in_(requested_ids))
+                .all()
+            )
+
+            temp_order = next_tail_order
+            for row in requested_rows:
+                row.job_order = temp_order
+                temp_order += 1
+            db.flush()
+
+            for row in requested_rows:
+                row.job_order = requested_job_orders[row.id]
+            db.flush()
+
         # Keep lead-level move fields aligned with the current primary job.
         current_primary_job = (
             db.query(LeadJob)
@@ -1745,7 +1781,14 @@ def update_lead(
         lead.move_date = current_primary_job.move_date
         lead.booked_move_date = current_primary_job.booked_move_date
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        message = str(getattr(exc, "orig", exc)).lower()
+        if "uq_lead_jobs_lead_order" in message or ("lead_id" in message and "job_order" in message):
+            raise HTTPException(status_code=409, detail="Conflicting sortOrder values for this lead")
+        raise HTTPException(status_code=500, detail="Failed to update lead")
     db.refresh(lead)
 
     # If assignment changed to a new rep, send the rep_assignment SMS.
