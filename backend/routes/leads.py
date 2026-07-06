@@ -1630,16 +1630,12 @@ def update_lead(
 
     if body.jobs is not None:
         requested_job_orders: dict[str, int] = {}
-        incoming_smartmoving_job_ids: set[str] = set()
+        incoming_job_ids: set[str] = set()
 
         for job_patch in body.jobs:
             job_payload = job_patch.dict(exclude_unset=True, by_alias=False)
             if not job_payload:
                 continue
-
-            incoming_smartmoving_job_id = (job_payload.get("smartmoving_job_id") or "").strip()
-            if incoming_smartmoving_job_id:
-                incoming_smartmoving_job_ids.add(incoming_smartmoving_job_id)
 
             target_job = primary_job
             target_job_id = (job_payload.get("id") or "").strip()
@@ -1681,6 +1677,10 @@ def update_lead(
                         )
                         db.add(target_job)
                         db.flush()
+
+            if not target_job.id:
+                db.flush()
+            incoming_job_ids.add(target_job.id)
 
             if "smartmoving_job_id" in job_payload:
                 target_job.smartmoving_job_id = (job_payload.get("smartmoving_job_id") or "").strip() or None
@@ -1776,53 +1776,34 @@ def update_lead(
                 row.job_order = requested_job_orders[row.id]
             db.flush()
 
-        # Mirror SmartMoving deletions: remove CRM jobs with SmartMoving IDs
-        # that are no longer present in the incoming jobs payload.
-        if incoming_smartmoving_job_ids:
-            stale_jobs = (
-                db.query(LeadJob)
-                .filter(
-                    LeadJob.lead_id == lead.id,
-                    LeadJob.smartmoving_job_id.isnot(None),
-                    ~LeadJob.smartmoving_job_id.in_(incoming_smartmoving_job_ids),
-                )
-                .all()
-            )
-            for stale_job in stale_jobs:
-                db.delete(stale_job)
-            if stale_jobs:
-                db.flush()
-
-            # Keep job_order contiguous and guarantee one primary row at order=1.
-            remaining_jobs = (
-                db.query(LeadJob)
-                .filter(LeadJob.lead_id == lead.id)
-                .order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc())
-                .all()
-            )
-            if not remaining_jobs:
-                recreated_primary = LeadJob(
-                    lead_id=lead.id,
-                    company_id=lead.company_id,
-                    job_order=1,
-                    pickup_zip=lead.pickup_zip or "",
-                    delivery_zip=lead.delivery_zip or "",
-                    move_date=lead.move_date or "",
-                    booked_move_date=lead.booked_move_date,
-                    price=None,
-                )
-                db.add(recreated_primary)
-                db.flush()
-                remaining_jobs = [recreated_primary]
-
-            temp_order = _next_lead_job_order(lead.id, db)
-            for row in remaining_jobs:
-                row.job_order = temp_order
-                temp_order += 1
+        # Mirror incoming jobs list exactly: delete every existing job not in payload.
+        stale_jobs = (
+            db.query(LeadJob)
+            .filter(LeadJob.lead_id == lead.id, ~LeadJob.id.in_(incoming_job_ids))
+            .all()
+        )
+        for stale_job in stale_jobs:
+            db.delete(stale_job)
+        if stale_jobs:
             db.flush()
 
-            for index, row in enumerate(remaining_jobs, start=1):
-                row.job_order = index
+        # Keep job_order contiguous for remaining jobs.
+        remaining_jobs = (
+            db.query(LeadJob)
+            .filter(LeadJob.lead_id == lead.id)
+            .order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc())
+            .all()
+        )
+        temp_order = _next_lead_job_order(lead.id, db)
+        for row in remaining_jobs:
+            row.job_order = temp_order
+            temp_order += 1
+        if remaining_jobs:
+            db.flush()
+
+        for index, row in enumerate(remaining_jobs, start=1):
+            row.job_order = index
+        if remaining_jobs:
             db.flush()
 
         # Keep lead-level move fields aligned with the current primary job.
