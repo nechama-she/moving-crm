@@ -25,6 +25,18 @@ type AppUser = {
   companies?: UserCompany[];
 };
 
+type EstimatedTotal = {
+  subtotal: number;
+  taxableAmount: number;
+  tax: number;
+  finalTotal: number;
+};
+
+type LeadPayment = {
+  amount: number;
+  takenByUser: string;
+};
+
 type LeadJob = {
   id: string;
   lead_id: string;
@@ -39,6 +51,8 @@ type LeadJob = {
   delivery_zip: string;
   status: string;
   price?: number | null;
+  estimatedTotal?: EstimatedTotal | null;
+  payments?: LeadPayment[];
 };
 
 type DispatchJobSearchResult = LeadJob & {
@@ -223,6 +237,40 @@ function hslToHex(hue: number, saturation: number, lightness: number): string {
   });
 }
 
+function formatMoney(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(value || 0);
+}
+
+function formatPercent(value: number): string {
+  return `${value.toFixed(1)}%`;
+}
+
+function parseEstimatedTotal(raw: unknown): EstimatedTotal | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  return {
+    subtotal: Number(value.subtotal || 0),
+    taxableAmount: Number(value.taxableAmount || 0),
+    tax: Number(value.tax || 0),
+    finalTotal: Number(value.finalTotal || 0),
+  };
+}
+
+function parsePayments(raw: unknown): LeadPayment[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => {
+    const value = (item && typeof item === "object") ? item as Record<string, unknown> : {};
+    return {
+      amount: Number(value.amount || 0),
+      takenByUser: String(value.takenByUser || ""),
+    };
+  });
+}
+
 export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -265,6 +313,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const [jobSearchLoading, setJobSearchLoading] = useState(false);
   const [jobSearchError, setJobSearchError] = useState("");
   const [jobSearchOpen, setJobSearchOpen] = useState(false);
+  const [totalsExpanded, setTotalsExpanded] = useState(false);
   const jobSearchRef = useRef<HTMLDivElement | null>(null);
 
   const [name, setName] = useState("");
@@ -292,6 +341,75 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     }
     return counts;
   }, [calendarJobs]);
+
+  const calendarMoneySummary = useMemo(() => {
+    const uniqueLeads = new Map<string, LeadJob>();
+    const companyBuckets = new Map<string, {
+      companyId: string;
+      companyName: string;
+      companyColor?: string;
+      leads: Map<string, LeadJob>;
+    }>();
+
+    for (const job of filteredCalendarJobs) {
+      if (!job.lead_id) continue;
+      if (!uniqueLeads.has(job.lead_id)) {
+        uniqueLeads.set(job.lead_id, job);
+      }
+
+      const companyId = String(job.company_id || "");
+      if (!companyId) continue;
+      let bucket = companyBuckets.get(companyId);
+      if (!bucket) {
+        bucket = {
+          companyId,
+          companyName: String(job.company_name || "Unknown company"),
+          companyColor: job.company_color,
+          leads: new Map<string, LeadJob>(),
+        };
+        companyBuckets.set(companyId, bucket);
+      }
+      if (!bucket.leads.has(job.lead_id)) {
+        bucket.leads.set(job.lead_id, job);
+      }
+    }
+
+    function summarizeJobs(items: Iterable<LeadJob>) {
+      let estimatedTotal = 0;
+      let paymentsTotal = 0;
+      let leadCount = 0;
+      for (const job of items) {
+        leadCount += 1;
+        estimatedTotal += Number(job.estimatedTotal?.finalTotal || 0);
+        paymentsTotal += (job.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+      }
+      const remainingTotal = estimatedTotal - paymentsTotal;
+      const paymentsPercent = estimatedTotal > 0 ? (paymentsTotal / estimatedTotal) * 100 : 0;
+      const remainingPercent = estimatedTotal > 0 ? (remainingTotal / estimatedTotal) * 100 : 0;
+      return {
+        estimatedTotal,
+        paymentsTotal,
+        remainingTotal,
+        paymentsPercent,
+        remainingPercent,
+        leadCount,
+      };
+    }
+
+    const companies = Array.from(companyBuckets.values())
+      .map((bucket) => ({
+        companyId: bucket.companyId,
+        companyName: bucket.companyName,
+        companyColor: bucket.companyColor,
+        ...summarizeJobs(bucket.leads.values()),
+      }))
+      .sort((left, right) => left.companyName.localeCompare(right.companyName));
+
+    return {
+      ...summarizeJobs(uniqueLeads.values()),
+      companies,
+    };
+  }, [filteredCalendarJobs]);
 
   const dispatchUsers = useMemo(
     () => users.filter((u) => u.role === "dispatch").sort((a, b) => a.name.localeCompare(b.name)),
@@ -517,6 +635,8 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
           delivery_zip: String(item.delivery_zip || ""),
           status: String(item.status || ""),
           price: item.price == null ? null : Number(item.price),
+          estimatedTotal: parseEstimatedTotal(item.estimatedTotal),
+          payments: parsePayments(item.payments),
         }))
       );
     } catch (err: unknown) {
@@ -890,6 +1010,60 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 Day note/full controls are available when exactly one company is checked.
               </div>
             ) : null}
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginTop: 4 }}>
+              <div style={{ border: "1px solid #cbd5e1", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #eff6ff 0%, #ffffff 100%)" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estimated Total</div>
+                <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(calendarMoneySummary.estimatedTotal)}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "#475569" }}>{calendarMoneySummary.leadCount} lead{calendarMoneySummary.leadCount === 1 ? "" : "s"}</div>
+              </div>
+              <div style={{ border: "1px solid #bbf7d0", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%)" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.05em" }}>Payments</div>
+                <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(calendarMoneySummary.paymentsTotal)}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "#166534" }}>{formatPercent(calendarMoneySummary.paymentsPercent)}</div>
+              </div>
+              <div style={{ border: "1px solid #fde68a", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #fffbeb 0%, #ffffff 100%)" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#b45309", textTransform: "uppercase", letterSpacing: "0.05em" }}>Remaining</div>
+                <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(calendarMoneySummary.remainingTotal)}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "#92400e" }}>{formatPercent(calendarMoneySummary.remainingPercent)}</div>
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid #dbe4ef", borderRadius: 14, background: "#fff", overflow: "hidden" }}>
+              <button
+                type="button"
+                onClick={() => setTotalsExpanded((prev) => !prev)}
+                style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "none", background: "#f8fafc", padding: "12px 14px", cursor: "pointer", textAlign: "left" }}
+              >
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>Company Breakdown</div>
+                  <div style={{ fontSize: 11, color: "#64748b" }}>Totals for currently selected companies</div>
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>{totalsExpanded ? "Hide" : "Show"}</div>
+              </button>
+              {totalsExpanded ? (
+                <div style={{ padding: 12, display: "grid", gap: 8 }}>
+                  {calendarMoneySummary.companies.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "#64748b" }}>No companies selected.</div>
+                  ) : calendarMoneySummary.companies.map((company) => {
+                    const tone = toneForCompanyColor(company.companyColor, company.companyName);
+                    return (
+                      <div key={company.companyId} style={{ border: `1px solid ${tone.border}`, background: tone.tint, borderRadius: 12, padding: 12, display: "grid", gap: 6 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: tone.text }}>{company.companyName}</div>
+                          <div style={{ fontSize: 11, color: tone.text }}>{company.leadCount} lead{company.leadCount === 1 ? "" : "s"}</div>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
+                          <div style={{ fontSize: 12, color: "#334155" }}>Estimated: <strong>{formatMoney(company.estimatedTotal)}</strong></div>
+                          <div style={{ fontSize: 12, color: "#166534" }}>Payments: <strong>{formatMoney(company.paymentsTotal)}</strong> ({formatPercent(company.paymentsPercent)})</div>
+                          <div style={{ fontSize: 12, color: "#92400e" }}>Remaining: <strong>{formatMoney(company.remainingTotal)}</strong> ({formatPercent(company.remainingPercent)})</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
 

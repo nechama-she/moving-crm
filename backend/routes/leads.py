@@ -486,6 +486,8 @@ def get_dispatch_calendar(
                 "pickup_zip": job.pickup_zip or "",
                 "delivery_zip": job.delivery_zip or "",
                 "price": float(job.price) if job.price is not None else None,
+                "estimatedTotal": _deserialize_estimated_total(lead.estimated_total),
+                "payments": _deserialize_payments(lead.payments),
                 "status": lead.status or "",
             }
             for job, lead, company_name, company_color, effective_date in filtered
@@ -944,6 +946,43 @@ def _serialize_payments(payments: list[LeadPaymentPayload] | None) -> str | None
         }
         for payment in payments
     ])
+
+
+def _deserialize_estimated_total(raw: str | None) -> dict | None:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return {
+        "subtotal": float(parsed.get("subtotal") or 0),
+        "taxableAmount": float(parsed.get("taxableAmount") or 0),
+        "tax": float(parsed.get("tax") or 0),
+        "finalTotal": float(parsed.get("finalTotal") or 0),
+    }
+
+
+def _deserialize_payments(raw: str | None) -> list[dict[str, float | str]]:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    payments: list[dict[str, float | str]] = []
+    for row in parsed:
+        if not isinstance(row, dict):
+            continue
+        payments.append({
+            "amount": float(row.get("amount") or 0),
+            "takenByUser": str(row.get("takenByUser") or "").strip(),
+        })
+    return payments
 
 
 def _to_money_decimal(value: float | int | str | None, field_name: str) -> Decimal:
