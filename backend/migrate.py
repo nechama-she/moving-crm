@@ -29,6 +29,8 @@ def migrate(drop_first: bool = False):
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS estimated_total TEXT"))
         conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS payments TEXT"))
+        conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS volume NUMERIC(12,2)"))
+        conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS weight NUMERIC(12,2)"))
         conn.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS smartmoving_job_id VARCHAR(100)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_jobs_smartmoving_job_id ON lead_jobs (smartmoving_job_id)"))
 
