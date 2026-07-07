@@ -19,7 +19,7 @@ from auth import get_current_user
 from config import get_config
 from database import get_db
 from libs.common.phone import normalize_digits
-from libs.smartmoving.client import update_opportunity_salesperson
+from libs.smartmoving.client import get_opportunity, update_opportunity_salesperson
 from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task
 from routes.templates import get_company_template
 
@@ -112,6 +112,225 @@ def _normalize_move_date(value: str | None) -> str:
         return ""
     parsed = _parse_booked_move_date(raw)
     return parsed.isoformat() if parsed else raw
+
+
+SMARTMOVING_STATUS_TO_CRM = {
+    0: "new",
+    1: "contacted",
+    3: "quoted",
+    4: "booked",
+    10: "completed",
+    11: "completed",
+    20: "cancelled",
+    30: "lost",
+    50: "lost",
+}
+
+
+def _format_smartmoving_date(value) -> str:
+    if value in (None, ""):
+        return ""
+    text = str(value).strip()
+    if text.endswith(".0"):
+        text = text[:-2]
+    if len(text) == 8 and text.isdigit():
+        return f"{text[0:4]}-{text[4:6]}-{text[6:8]}"
+    return text
+
+
+def _map_smartmoving_status(status_code) -> str:
+    try:
+        return SMARTMOVING_STATUS_TO_CRM.get(int(status_code), "")
+    except Exception:
+        return ""
+
+
+def _parse_smartmoving_priority(lead_status) -> int | None:
+    if lead_status in (None, ""):
+        return None
+    digits = "".join(ch for ch in str(lead_status) if ch.isdigit())
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except Exception:
+        return None
+
+
+def _build_smartmoving_notes(opportunity: dict) -> str:
+    parts: list[str] = []
+    quote_number = opportunity.get("quoteNumber")
+    referral_source = opportunity.get("referralSource")
+    branch = opportunity.get("branch") or {}
+    move_size = opportunity.get("moveSize") or {}
+    tariff = opportunity.get("tariff") or {}
+
+    if quote_number not in (None, ""):
+        parts.append(f"quoteNumber: {quote_number}")
+    if referral_source:
+        parts.append(f"referralSource: {referral_source}")
+    if branch.get("name"):
+        parts.append(f"branchName: {str(branch.get('name')).strip()}")
+    if branch.get("phoneNumber"):
+        parts.append(f"branchPhone: {branch.get('phoneNumber')}")
+    if move_size.get("name"):
+        parts.append(f"moveSize: {move_size.get('name')}")
+    if tariff.get("name"):
+        parts.append(f"tariff: {str(tariff.get('name')).strip()}")
+    return " | ".join(parts)
+
+
+def _map_smartmoving_estimated_total(estimated_total: dict | None) -> dict:
+    estimated_total = estimated_total or {}
+    return {
+        "subtotal": estimated_total.get("subtotal", 0),
+        "taxableAmount": estimated_total.get("taxableAmount", 0),
+        "tax": estimated_total.get("tax", 0),
+        "finalTotal": estimated_total.get("finalTotal", 0),
+    }
+
+
+def _map_smartmoving_payments(payments: list | None) -> list[dict]:
+    output: list[dict] = []
+    for item in payments or []:
+        row = {"amount": item.get("amount", 0)}
+        taken_by_user = _clean_optional_text(item.get("takenByUser"))
+        if taken_by_user:
+            row["takenByUser"] = taken_by_user
+        output.append(row)
+    return output
+
+
+def _map_smartmoving_estimated_charges(charges: list | None) -> list[dict]:
+    output: list[dict] = []
+    for charge in charges or []:
+        mapped = {
+            "sortOrder": charge.get("sortOrder", 0),
+            "subtotal": charge.get("subtotal", 0),
+            "discountAmount": charge.get("discountAmount", 0),
+            "totalCost": charge.get("totalCost", 0),
+        }
+        name = _clean_optional_text(charge.get("name"))
+        description = _clean_optional_text(charge.get("description"))
+        editable_description = charge.get("editableDescription")
+        if name:
+            mapped["name"] = name
+        if description:
+            mapped["description"] = description
+        if editable_description is not None and str(editable_description).strip():
+            mapped["editableDescription"] = str(editable_description).strip()
+        output.append(mapped)
+    return output
+
+
+def _smartmoving_job_price(job: dict) -> float:
+    total = 0.0
+    for charge in job.get("estimatedCharges") or []:
+        try:
+            total += float(charge.get("totalCost", 0) or 0)
+        except Exception:
+            continue
+    return round(total, 2)
+
+
+def _smartmoving_job_sort_order(job: dict) -> int | None:
+    raw = job.get("sortOrder")
+    if raw is not None:
+        try:
+            return int(raw)
+        except Exception:
+            pass
+
+    job_number = str(job.get("jobNumber") or "").strip()
+    if "-" not in job_number:
+        return None
+    suffix = job_number.rsplit("-", 1)[-1].strip()
+    if suffix.isdigit():
+        return int(suffix)
+    return None
+
+
+def _build_smartmoving_jobs_payload(opportunity: dict) -> list[dict]:
+    jobs: list[dict] = []
+    for job in opportunity.get("jobs") or []:
+        addresses = job.get("jobAddresses") or []
+        pickup = str(addresses[0]).strip() if len(addresses) > 0 else ""
+        delivery = str(addresses[1]).strip() if len(addresses) > 1 else ""
+        move_date = _format_smartmoving_date(job.get("jobDate") or opportunity.get("serviceDate"))
+
+        row = {
+            "smartmoving_job_id": job.get("id"),
+            "estimatedCharges": _map_smartmoving_estimated_charges(job.get("estimatedCharges") or []),
+            "price": _smartmoving_job_price(job),
+        }
+        sort_order = _smartmoving_job_sort_order(job)
+        if sort_order is not None:
+            row["sortOrder"] = sort_order
+        if pickup:
+            row["pickup_zip"] = pickup
+        if delivery:
+            row["delivery_zip"] = delivery
+        if move_date:
+            row["move_date"] = move_date
+            row["booked_move_date"] = move_date
+        jobs.append(row)
+    return jobs
+
+
+def _build_smartmoving_refresh_payload(opportunity: dict, user: User) -> dict:
+    customer = opportunity.get("customer") or {}
+    sales_assignee = opportunity.get("salesAssignee") or {}
+
+    payload: dict = {}
+
+    status = _map_smartmoving_status(opportunity.get("status"))
+    if status:
+        payload["status"] = status
+
+    priority = _parse_smartmoving_priority(opportunity.get("leadStatus"))
+    if priority is not None:
+        payload["priority"] = priority
+
+    assigned_to_name = _clean_optional_text(sales_assignee.get("name"))
+    if assigned_to_name and user.role == "admin":
+        payload["assigned_to_name"] = assigned_to_name
+
+    move_size = _clean_optional_text((opportunity.get("moveSize") or {}).get("name"))
+    if move_size:
+        payload["move_size"] = move_size
+    if opportunity.get("volume") is not None:
+        payload["volume"] = opportunity.get("volume")
+    if opportunity.get("weight") is not None:
+        payload["weight"] = opportunity.get("weight")
+
+    notes = _build_smartmoving_notes(opportunity)
+    if notes:
+        payload["notes"] = notes
+
+    for key, value in (
+        ("full_name", customer.get("name")),
+        ("smartmoving_id", opportunity.get("id")),
+        ("leadgen_id", str(opportunity.get("quoteNumber")) if opportunity.get("quoteNumber") not in (None, "") else None),
+        ("phone_number", customer.get("phoneNumber")),
+        ("email", customer.get("emailAddress")),
+        ("referral_source", opportunity.get("referralSource")),
+    ):
+        clean_value = _clean_optional_text(value)
+        if clean_value:
+            payload[key] = clean_value
+
+    move_type = {0: "Local", 1: "Intrastate", 2: "Interstate"}.get(opportunity.get("opportunityType"), "")
+    if move_type:
+        payload["move_type"] = move_type
+
+    move_date = _format_smartmoving_date(opportunity.get("serviceDate"))
+    if move_date:
+        payload["move_date"] = move_date
+
+    payload["estimatedTotal"] = _map_smartmoving_estimated_total(opportunity.get("estimatedTotal"))
+    payload["payments"] = _map_smartmoving_payments(opportunity.get("payments") or [])
+    payload["jobs"] = _build_smartmoving_jobs_payload(opportunity)
+    return payload
 
 
 def _is_admin_unavailable_now(admin_user_id: str, db: Session, now: datetime | None = None) -> bool:
@@ -1561,12 +1780,16 @@ class LeadUpdate(BaseModel):
     company_name: str | None = None
     notes: str | None = None
     full_name: str | None = None
+    leadgen_id: str | None = None
     smartmoving_id: str | None = None
     phone_number: str | None = None
     email: str | None = None
     move_size: str | None = None
     volume: float | None = None
     weight: float | None = None
+    move_date: str | None = None
+    move_type: str | None = None
+    referral_source: str | None = None
     jobs: list[LeadUpdateJob] | None = None
     estimated_total: EstimatedTotalPayload | None = Field(default=None, alias="estimatedTotal")
     payments: list[LeadPaymentPayload] | None = None
@@ -1661,6 +1884,8 @@ def update_lead(
         if not name:
             raise HTTPException(status_code=400, detail="Name cannot be empty")
         lead.full_name = name
+    if body.leadgen_id is not None:
+        lead.leadgen_id = body.leadgen_id.strip() or None
     if body.smartmoving_id is not None:
         lead.smartmoving_id = body.smartmoving_id.strip() or None
     if body.phone_number is not None:
@@ -1679,6 +1904,13 @@ def update_lead(
         if weight_value < 0:
             raise HTTPException(status_code=400, detail="weight must be >= 0")
         lead.weight = weight_value
+    if body.move_date is not None:
+        lead.move_date = _normalize_move_date(body.move_date)
+        lead.booked_move_date = _parse_booked_move_date(lead.move_date)
+    if body.move_type is not None:
+        lead.move_type = body.move_type.strip()
+    if body.referral_source is not None:
+        lead.referral_source = body.referral_source.strip() or None
     if body.estimated_total is not None:
         lead.estimated_total = _serialize_estimated_total(body.estimated_total)
     if body.payments is not None:
@@ -1898,6 +2130,30 @@ def update_lead(
             logger.warning("Non-fatal rep_assignment SMS failure for lead %s: %s", lead.id, exc)
 
     return lead.to_dict()
+
+
+@router.post("/leads/{lead_id}/refresh-smartmoving")
+def refresh_lead_from_smartmoving(
+    lead_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    smartmoving_id = _clean_optional_text(lead.smartmoving_id)
+    if not smartmoving_id:
+        raise HTTPException(status_code=400, detail="Lead does not have a smartmoving_id")
+
+    opportunity_result = get_opportunity(smartmoving_id)
+    if opportunity_result.get("error"):
+        raise HTTPException(status_code=502, detail=f"SmartMoving refresh failed: {opportunity_result['error']}")
+
+    opportunity = opportunity_result.get("data")
+    if not isinstance(opportunity, dict):
+        raise HTTPException(status_code=502, detail="SmartMoving refresh returned an invalid payload")
+
+    payload = _build_smartmoving_refresh_payload(opportunity, user)
+    body = LeadUpdate.model_validate(payload)
+    return update_lead(lead.id, body, user, db)
 
 
 def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:

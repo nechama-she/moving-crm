@@ -19,6 +19,15 @@ _REQUEST_TOTAL = 0
 _REQUEST_BY_STATUS = defaultdict(int)
 _REQUEST_BY_METHOD = defaultdict(int)
 _REQUEST_BY_ENDPOINT = defaultdict(int)
+_OPPORTUNITY_INCLUDE_PARAMS = {
+    "IncludeTripInfo": "true",
+    "IncludePayments": "true",
+    "IncludeJobAddresses": "true",
+    "IncludeFiles": "true",
+    "IncludePhotos": "true",
+    "IncludeDocuments": "true",
+    "IncludeCharges": "true",
+}
 
 
 def reset_request_counters() -> None:
@@ -95,7 +104,7 @@ def get_opportunity(opportunity_id: str) -> dict:
     """
     url = f"{SMARTMOVING_BASE_URL}/opportunities/{opportunity_id}"
     try:
-        resp = _request(httpx.get, url, headers=_headers(), timeout=15)
+        resp = _request(httpx.get, url, headers=_headers(), params=_OPPORTUNITY_INCLUDE_PARAMS, timeout=15)
         resp.raise_for_status()
         return {"data": resp.json()}
     except httpx.HTTPError as e:

@@ -104,6 +104,7 @@ export default function LeadDetail() {
   const [editEmail, setEditEmail] = useState("");
   const [editMoveSize, setEditMoveSize] = useState("");
   const [savingUser, setSavingUser] = useState(false);
+  const [refreshingSmartmoving, setRefreshingSmartmoving] = useState(false);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [companiesError, setCompaniesError] = useState("");
@@ -160,19 +161,19 @@ export default function LeadDetail() {
   const backTo = navigationState?.backTo || (user?.role === "dispatch" ? "/dispatch" : "/");
   const backLabel = navigationState?.backLabel || (user?.role === "dispatch" ? "← Back to Dispatch" : "← Back to Leads");
 
+  async function loadLead() {
+    const res = await fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    setLead(data);
+    setEditCompanyId(String(data?.company_id || ""));
+  }
+
   useEffect(() => {
-    fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((data) => {
-        setLead(data);
-        setEditCompanyId(String(data?.company_id || ""));
-      })
+    loadLead()
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [leadId]);
+  }, [leadId, token]);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) })
@@ -1104,6 +1105,25 @@ export default function LeadDetail() {
           }
         }
 
+        async function refreshFromSmartmoving() {
+          setRefreshingSmartmoving(true);
+          try {
+            const res = await fetch(`${API_BASE}/api/leads/${leadId}/refresh-smartmoving`, {
+              method: "POST",
+              headers: authHeaders(token),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const updated = await res.json();
+            setLead(updated);
+            setEditCompanyId(String(updated?.company_id || ""));
+            await loadLeadJobs();
+          } catch (e) {
+            alert(`Failed to refresh from SmartMoving: ${e instanceof Error ? e.message : "error"}`);
+          } finally {
+            setRefreshingSmartmoving(false);
+          }
+        }
+
         const tile: React.CSSProperties = {
           flex: 1,
           minWidth: 200,
@@ -1466,14 +1486,25 @@ export default function LeadDetail() {
                   </button>
                 </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={startEditUser}
-                  title="Edit"
-                  style={{ padding: "5px 10px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: "pointer" }}
-                >
-                  ✎ Edit
-                </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    type="button"
+                    onClick={() => void refreshFromSmartmoving()}
+                    disabled={refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
+                    title="Refresh from SmartMoving"
+                    style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", fontSize: 12, color: "#334155", cursor: refreshingSmartmoving ? "default" : "pointer" }}
+                  >
+                    {refreshingSmartmoving ? "Refreshing..." : "Refresh SmartMoving"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={startEditUser}
+                    title="Edit"
+                    style={{ padding: "5px 10px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: "pointer" }}
+                  >
+                    ✎ Edit
+                  </button>
+                </div>
               )}
             </div>
 
