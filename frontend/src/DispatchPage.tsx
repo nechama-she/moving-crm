@@ -929,7 +929,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
         {daySettingsError ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{daySettingsError}</p> : null}
 
         {!calendarLoading && dispatchCompanies.length > 0 ? (
-          <div style={{ marginBottom: 12, maxWidth: 900, display: "grid", gap: 8 }}>
+          <div style={{ marginBottom: 12, display: "grid", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Companies</div>
               <div style={{ fontSize: 12, color: "#334155", fontWeight: 600 }}>
