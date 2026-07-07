@@ -1044,6 +1044,12 @@ def delete_lead(
         raise HTTPException(status_code=403, detail="Only admin can delete leads")
 
     lead = _get_visible_lead_or_404(lead_id, user, db)
+
+    _hard_delete_lead(lead, db)
+    return {"ok": True, "deleted_lead_id": lead.id}
+
+
+def _hard_delete_lead(lead: Lead, db: Session) -> None:
     smartmoving_id = (lead.smartmoving_id or "").strip()
     resolved_lead_id = lead.id
 
@@ -1065,8 +1071,6 @@ def delete_lead(
         db.rollback()
         logger.exception("Failed to hard-delete lead %s", resolved_lead_id)
         raise HTTPException(status_code=500, detail="Failed to delete lead")
-
-    return {"ok": True, "deleted_lead_id": resolved_lead_id}
 
 
 MAX_ATTACHMENT_SIZE_BYTES = 15 * 1024 * 1024  # 15 MB
@@ -2145,6 +2149,16 @@ def refresh_lead_from_smartmoving(
 
     opportunity_result = get_opportunity(smartmoving_id)
     if opportunity_result.get("error"):
+        error_text = str(opportunity_result.get("error") or "")
+        lowered = error_text.lower()
+        if "http 400" in lowered and "opportunity was not found" in lowered:
+            resolved_lead_id = lead.id
+            _hard_delete_lead(lead, db)
+            return {
+                "ok": True,
+                "deleted_lead_id": resolved_lead_id,
+                "reason": "smartmoving_opportunity_not_found",
+            }
         raise HTTPException(status_code=502, detail=f"SmartMoving refresh failed: {opportunity_result['error']}")
 
     opportunity = opportunity_result.get("data")
