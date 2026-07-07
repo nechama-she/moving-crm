@@ -1112,7 +1112,16 @@ export default function LeadDetail() {
               method: "POST",
               headers: authHeaders(token),
             });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            if (!res.ok) {
+              let detail = `HTTP ${res.status}`;
+              try {
+                const err = await res.json();
+                detail = String(err?.detail || detail);
+              } catch {
+                // Keep default status detail.
+              }
+              throw new Error(detail);
+            }
             const updated = await res.json();
             setLead(updated);
             setEditCompanyId(String(updated?.company_id || ""));

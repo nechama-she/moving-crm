@@ -1054,6 +1054,14 @@ def _hard_delete_lead(lead: Lead, db: Session) -> None:
     resolved_lead_id = lead.id
 
     try:
+        job_ids = [
+            row[0]
+            for row in db.query(LeadJob.id).filter(LeadJob.lead_id == resolved_lead_id).all()
+            if row and row[0]
+        ]
+        if job_ids:
+            db.query(LeadJobCharge).filter(LeadJobCharge.job_id.in_(job_ids)).delete(synchronize_session=False)
+
         db.query(LeadAttachment).filter(LeadAttachment.lead_id == resolved_lead_id).delete(synchronize_session=False)
         db.query(LeadJob).filter(LeadJob.lead_id == resolved_lead_id).delete(synchronize_session=False)
         db.query(Task).filter(Task.lead_id == resolved_lead_id).delete(synchronize_session=False)
