@@ -1526,6 +1526,8 @@ class LeadUpdate(BaseModel):
     phone_number: str | None = None
     email: str | None = None
     move_size: str | None = None
+    volume: float | None = None
+    weight: float | None = None
     jobs: list[LeadUpdateJob] | None = None
     estimated_total: EstimatedTotalPayload | None = Field(default=None, alias="estimatedTotal")
     payments: list[LeadPaymentPayload] | None = None
@@ -1628,6 +1630,16 @@ def update_lead(
         lead.email = body.email.strip() or None
     if body.move_size is not None:
         lead.move_size = body.move_size.strip()
+    if body.volume is not None:
+        volume_value = _to_money_decimal(body.volume, "volume")
+        if volume_value < 0:
+            raise HTTPException(status_code=400, detail="volume must be >= 0")
+        lead.volume = volume_value
+    if body.weight is not None:
+        weight_value = _to_money_decimal(body.weight, "weight")
+        if weight_value < 0:
+            raise HTTPException(status_code=400, detail="weight must be >= 0")
+        lead.weight = weight_value
     if body.estimated_total is not None:
         lead.estimated_total = _serialize_estimated_total(body.estimated_total)
     if body.payments is not None:
@@ -1963,6 +1975,8 @@ class NewLead(BaseModel):
     pickup_zip: str | None = None
     delivery_zip: str | None = None
     move_size: str | None = None
+    volume: float | None = None
+    weight: float | None = None
     move_date: str | None = None
     booked_move_date: str | None = None
     move_type: str | None = None
@@ -2077,6 +2091,18 @@ def create_lead(
     if booked_raw and not parsed_booked_date:
         raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
 
+    volume_value = None
+    if body.volume is not None:
+        volume_value = _to_money_decimal(body.volume, "volume")
+        if volume_value < 0:
+            raise HTTPException(status_code=400, detail="volume must be >= 0")
+
+    weight_value = None
+    if body.weight is not None:
+        weight_value = _to_money_decimal(body.weight, "weight")
+        if weight_value < 0:
+            raise HTTPException(status_code=400, detail="weight must be >= 0")
+
     lead = Lead(
         company_id=company.id,
         assigned_to=assigned_to_user_id,
@@ -2090,6 +2116,8 @@ def create_lead(
         pickup_zip=_clean_optional_text(body.pickup_zip),
         delivery_zip=_clean_optional_text(body.delivery_zip),
         move_size=_clean_optional_text(body.move_size),
+        volume=volume_value,
+        weight=weight_value,
         move_date=normalized_move_date,
         booked_move_date=parsed_booked_date,
         move_type=MOVE_TYPE_MAP.get(raw_move_type, raw_move_type),

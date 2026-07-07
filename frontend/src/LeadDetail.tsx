@@ -986,6 +986,12 @@ export default function LeadDetail() {
         const phone = String(lead.phone_number || "").trim();
         const email = String(lead.email || "").trim();
         const moveSize = String(lead.move_size || "").trim();
+        const volumeRaw = lead.volume;
+        const weightRaw = lead.weight;
+        const volume = typeof volumeRaw === "number" ? volumeRaw : Number(volumeRaw);
+        const weight = typeof weightRaw === "number" ? weightRaw : Number(weightRaw);
+        const hasVolume = Number.isFinite(volume);
+        const hasWeight = Number.isFinite(weight);
         const statusValue = String(lead.status || "new").trim().toLowerCase();
         const statusLabel = statusValue
           ? statusValue.charAt(0).toUpperCase() + statusValue.slice(1)
@@ -1525,6 +1531,19 @@ export default function LeadDetail() {
                     />
                   ) : moveSize ? (
                     <span style={{ fontSize: 14, color: "#334155", fontWeight: 600 }}>{moveSize}</span>
+                  ) : (
+                    <span style={{ fontSize: 14, color: "#706e6b" }}>—</span>
+                  )}
+                </div>
+              </div>
+              <div style={tile}>
+                <span style={{ fontSize: 18 }}>⚖️</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={tileLabel}>Volume / Weight</div>
+                  {(hasVolume || hasWeight) ? (
+                    <span style={{ fontSize: 14, color: "#334155", fontWeight: 600 }}>
+                      {hasVolume ? volume.toFixed(2) : "—"} / {hasWeight ? weight.toFixed(2) : "—"}
+                    </span>
                   ) : (
                     <span style={{ fontSize: 14, color: "#706e6b" }}>—</span>
                   )}

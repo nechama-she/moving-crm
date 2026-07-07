@@ -188,6 +188,8 @@ class Lead(Base):
     pickup_zip = Column(Text)
     delivery_zip = Column(Text)
     move_size = Column(Text)
+    volume = Column(Numeric(12, 2))
+    weight = Column(Numeric(12, 2))
     move_date = Column(Text)
     booked_move_date = Column(Date)
     move_type = Column(Text)
@@ -254,6 +256,8 @@ class Lead(Base):
             "pickup_zip": self.pickup_zip or "",
             "delivery_zip": self.delivery_zip or "",
             "move_size": self.move_size or "",
+            "volume": float(self.volume) if self.volume is not None else None,
+            "weight": float(self.weight) if self.weight is not None else None,
             "when_is_the_move?": self.move_date or "",
             "booked_move_date": self.booked_move_date.isoformat() if self.booked_move_date else "",
             "are_you_moving_within_the_state_or_out_of_state?": self.move_type or "",
