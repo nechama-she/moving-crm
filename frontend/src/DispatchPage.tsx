@@ -1459,6 +1459,19 @@ function CompanyCalendar({
     setPanelError("");
   }
 
+  function shiftDispatchDayPanel(deltaDays: number) {
+    if (jobPanelDay == null) return;
+    const nextDate = new Date(year, month, jobPanelDay + deltaDays);
+    const monthDelta = (nextDate.getFullYear() - year) * 12 + (nextDate.getMonth() - month);
+    if (monthDelta < 0) {
+      onPrevMonth();
+    } else if (monthDelta > 0) {
+      onNextMonth();
+    }
+    setJobPanelDay(nextDate.getDate());
+    setPanelError("");
+  }
+
   async function saveDayPanelSetting() {
     if (jobPanelDay == null) return;
     if (!panelCompanyId) {
@@ -1693,9 +1706,17 @@ function CompanyCalendar({
             }}
           >
             <div style={{ padding: 14, borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Day Panel • {dayDateKey(jobPanelDay)}</div>
-                <div style={{ fontSize: 12, color: "#64748b" }}>{panelDayJobs.length} job{panelDayJobs.length === 1 ? "" : "s"}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button type="button" onClick={() => shiftDispatchDayPanel(-1)} style={calendarNavBtn} aria-label="Previous day">
+                  ◀
+                </button>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Day Panel • {dayDateKey(jobPanelDay)}</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>{panelDayJobs.length} job{panelDayJobs.length === 1 ? "" : "s"}</div>
+                </div>
+                <button type="button" onClick={() => shiftDispatchDayPanel(1)} style={calendarNavBtn} aria-label="Next day">
+                  ▶
+                </button>
               </div>
               <button type="button" onClick={closeDayPanel} style={calendarNavBtn} aria-label="Close day panel">
                 ✕

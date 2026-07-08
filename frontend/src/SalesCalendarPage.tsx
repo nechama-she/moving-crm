@@ -522,9 +522,12 @@ export default function SalesCalendarPage() {
     [panelDayJobs]
   );
 
-  useEffect(() => {
-    setDayPanelDay(null);
-  }, [viewMonth]);
+  function shiftSalesDayPanel(deltaDays: number) {
+    if (dayPanelDay == null) return;
+    const nextDate = new Date(year, month, dayPanelDay + deltaDays);
+    setViewMonth(new Date(nextDate.getFullYear(), nextDate.getMonth(), 1));
+    setDayPanelDay(nextDate.getDate());
+  }
 
   useEffect(() => {
     function onDocMouseDown(event: MouseEvent) {
@@ -952,9 +955,17 @@ export default function SalesCalendarPage() {
             }}
           >
             <div style={{ padding: 14, borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Day Panel • {`${year}-${String(month + 1).padStart(2, "0")}-${String(dayPanelDay).padStart(2, "0")}`}</div>
-                <div style={{ fontSize: 12, color: "#64748b" }}>{panelDayJobs.length} lead{panelDayJobs.length === 1 ? "" : "s"} • Total {formatMoney(panelDayTotal)}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button type="button" onClick={() => shiftSalesDayPanel(-1)} style={calendarNavBtn} aria-label="Previous day">
+                  ◀
+                </button>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Day Panel • {`${year}-${String(month + 1).padStart(2, "0")}-${String(dayPanelDay).padStart(2, "0")}`}</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>{panelDayJobs.length} lead{panelDayJobs.length === 1 ? "" : "s"} • Total {formatMoney(panelDayTotal)}</div>
+                </div>
+                <button type="button" onClick={() => shiftSalesDayPanel(1)} style={calendarNavBtn} aria-label="Next day">
+                  ▶
+                </button>
               </div>
               <button type="button" onClick={() => setDayPanelDay(null)} style={calendarNavBtn} aria-label="Close day panel">
                 ✕
