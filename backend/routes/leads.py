@@ -1116,6 +1116,24 @@ def get_lead_by_smartmoving(smartmoving_id: str, user: User = Depends(get_curren
     return lead.to_dict()
 
 
+@router.delete("/leads/by-smartmoving/{smartmoving_id}")
+def delete_lead_by_smartmoving(
+    smartmoving_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can delete leads")
+
+    company_ids = _get_user_company_ids(user, db)
+    lead = db.query(Lead).filter(Lead.smartmoving_id == smartmoving_id, Lead.company_id.in_(company_ids)).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    _hard_delete_lead(lead, db)
+    return {"ok": True, "deleted_lead_id": lead.id}
+
+
 @router.get("/leads/{lead_id}")
 def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     company_ids = _get_user_company_ids(user, db)
