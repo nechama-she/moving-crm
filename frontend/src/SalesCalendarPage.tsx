@@ -665,6 +665,7 @@ export default function SalesCalendarPage() {
               const day = i + 1;
               const dayJobs = jobsByDay.get(day) || [];
               const visibleJobs = dayJobs.slice(0, 3);
+              const hiddenJobs = dayJobs.slice(3);
               const overflowCount = Math.max(dayJobs.length - visibleJobs.length, 0);
               return (
                 <div key={day} style={calendarDayCell}>
@@ -721,9 +722,13 @@ export default function SalesCalendarPage() {
                         );
                       })}
                       {overflowCount > 0 ? (
-                        <div style={{ border: "1px solid #cbd5e1", background: "#f8fafc", borderRadius: 4, color: "#0f172a", fontSize: 11, fontWeight: 700, padding: "4px 6px", textAlign: "left" }}>
+                        <Link
+                          to={`/leads/${(hiddenJobs[0]?.lead_id || hiddenJobs[0]?.id || "")}?job_id=${encodeURIComponent(hiddenJobs[0]?.id || "")}`}
+                          state={backState}
+                          style={{ border: "1px solid #cbd5e1", background: "#f8fafc", borderRadius: 4, color: "#0f172a", fontSize: 11, fontWeight: 700, padding: "4px 6px", textAlign: "left", textDecoration: "none", display: "block" }}
+                        >
                           More +{overflowCount}
-                        </div>
+                        </Link>
                       ) : null}
                     </div>
                   ) : null}
