@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from dateutil import parser as date_parser
 
 from auth import get_current_user
+from company_colors import resolve_company_color
 from config import get_config
 from database import get_db
 from libs.common.phone import normalize_digits
@@ -704,7 +705,7 @@ def get_dispatch_calendar(
                 "job_order": int(job.job_order or 0),
                 "company_id": job.company_id,
                 "company_name": company_name,
-                "company_color": company_color or "",
+                "company_color": resolve_company_color(company_name, company_color),
                 "full_name": lead.full_name or "",
                 "move_date": job.move_date or "",
                 "booked_move_date": job.move_date or "",
@@ -796,7 +797,7 @@ def get_sales_calendar(
                 "job_order": int(job.job_order or 0),
                 "company_id": job.company_id,
                 "company_name": company_name,
-                "company_color": company_color or "",
+                "company_color": resolve_company_color(company_name, company_color),
                 "assigned_to": assigned_to_id or "",
                 "assigned_to_name": assigned_to_name or "",
                 "assigned_to_role": assigned_to_role or "",
@@ -954,7 +955,7 @@ def search_dispatch_jobs(
                     "job_order": int(job.job_order or 0),
                     "company_id": job.company_id,
                     "company_name": company_name or "",
-                    "company_color": company_color or "",
+                    "company_color": resolve_company_color(company_name, company_color),
                     "full_name": lead.full_name or "",
                     "booked_move_date": job.move_date or "",
                     "move_date": job.move_date or "",
@@ -1003,7 +1004,7 @@ def search_dispatch_jobs(
                 "job_order": int(job.job_order or 0),
                 "company_id": job.company_id,
                 "company_name": company_name or "",
-                "company_color": company_color or "",
+                "company_color": resolve_company_color(company_name, company_color),
                 "full_name": lead.full_name or "",
                 "booked_move_date": job.move_date or "",
                 "move_date": job.move_date or "",
