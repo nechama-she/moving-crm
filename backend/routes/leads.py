@@ -627,6 +627,12 @@ def _effective_job_date(job: LeadJob) -> date | None:
     return _parse_booked_move_date(job.move_date)
 
 
+def _effective_sales_job_date(job: LeadJob) -> date | None:
+    if job.booked_move_date:
+        return job.booked_move_date
+    return _parse_booked_move_date(job.move_date)
+
+
 def _parse_move_month(value: str) -> tuple[date, date]:
     try:
         year_str, month_str = value.split("-")
@@ -710,6 +716,99 @@ def get_dispatch_calendar(
                 "status": lead.status or "",
             }
             for job, lead, company_name, company_color, effective_date in filtered
+        ]
+    }
+
+
+@router.get("/sales-calendar")
+def get_sales_calendar(
+    move_month: str = Query(default=""),  # YYYY-MM
+    assigned_to: str = Query(default=""),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="Sales calendar access required")
+
+    if not move_month:
+        raise HTTPException(status_code=400, detail="move_month is required")
+
+    month_start, next_month = _parse_move_month(move_month)
+
+    allowed_company_ids = _get_user_company_ids(user, db)
+    if not allowed_company_ids:
+        return {"items": []}
+
+    rows = (
+        db.query(
+            LeadJob,
+            Lead,
+            Company.name.label("company_name"),
+            Company.color.label("company_color"),
+            User.id.label("assigned_to"),
+            User.name.label("assigned_to_name"),
+            User.role.label("assigned_to_role"),
+        )
+        .join(Lead, Lead.id == LeadJob.lead_id)
+        .join(Company, Company.id == LeadJob.company_id)
+        .outerjoin(User, User.id == Lead.assigned_to)
+        .filter(LeadJob.company_id.in_(allowed_company_ids))
+        .filter(Lead.status.in_(DISPATCH_STATUSES))
+    )
+
+    if user.role == "sales_rep":
+        rows = rows.filter(Lead.assigned_to == user.id)
+    elif assigned_to:
+        assigned_filter = assigned_to.strip()
+        if assigned_filter == "__unassigned__":
+            rows = rows.filter(Lead.assigned_to.is_(None))
+        else:
+            rows = rows.filter(Lead.assigned_to == assigned_filter)
+
+    rows = rows.order_by(LeadJob.created_at.asc()).all()
+
+    filtered: list[tuple[LeadJob, Lead, str, str | None, str | None, str | None, str | None, date]] = []
+    for job, lead, company_name, company_color, assigned_to_id, assigned_to_name, assigned_to_role in rows:
+        effective_date = _effective_sales_job_date(job)
+        if not effective_date:
+            continue
+        if month_start <= effective_date < next_month:
+            filtered.append((
+                job,
+                lead,
+                company_name or "",
+                company_color,
+                assigned_to_id,
+                assigned_to_name,
+                assigned_to_role,
+                effective_date,
+            ))
+
+    filtered.sort(key=lambda item: (item[7], item[0].created_at or datetime.min))
+
+    return {
+        "items": [
+            {
+                "id": job.id,
+                "lead_id": lead.id,
+                "smartmoving_id": lead.smartmoving_id or "",
+                "smartmoving_job_id": job.smartmoving_job_id or "",
+                "job_order": int(job.job_order or 0),
+                "company_id": job.company_id,
+                "company_name": company_name,
+                "company_color": company_color or "",
+                "assigned_to": assigned_to_id or "",
+                "assigned_to_name": assigned_to_name or "",
+                "assigned_to_role": assigned_to_role or "",
+                "full_name": lead.full_name or "",
+                "move_date": job.move_date or "",
+                "booked_move_date": job.booked_move_date.isoformat() if job.booked_move_date else "",
+                "pickup_zip": job.pickup_zip or "",
+                "delivery_zip": job.delivery_zip or "",
+                "price": float(job.price) if job.price is not None else None,
+                "status": lead.status or "",
+            }
+            for job, lead, company_name, company_color, assigned_to_id, assigned_to_name, assigned_to_role, effective_date in filtered
         ]
     }
 

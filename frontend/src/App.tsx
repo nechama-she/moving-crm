@@ -13,6 +13,7 @@ import CompanyTemplatesPage from "./CompanyTemplatesPage";
 import SettingsPage from "./SettingsPage";
 import AutoAssignTrackerPage from "./AutoAssignTrackerPage";
 import AdminUsersPage from "./AdminUsersPage";
+import SalesCalendarPage from "./SalesCalendarPage";
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -63,6 +64,7 @@ function ProtectedRoutes() {
           ) : (
             <>
               <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
+              <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
               <NavLink to="/outreach" style={navLinkStyle}>Outreach</NavLink>
               <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
               {user?.role === "admin" && (
@@ -97,6 +99,7 @@ function ProtectedRoutes() {
         <Routes>
           <Route path="/" element={<LeadsList />} />
           <Route path="/outreach" element={<OutreachEventsPage />} />
+          <Route path="/sales-calendar" element={<SalesCalendarPage />} />
           <Route path="/assign-period" element={<PeriodAssignPage />} />
           <Route path="/sales-reps" element={<SalesRepsPage />} />
           <Route path="/admin-users" element={<AdminUsersPage />} />
