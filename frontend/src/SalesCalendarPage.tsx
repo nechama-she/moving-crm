@@ -43,8 +43,26 @@ type AssigneeOption = {
   role: string;
 };
 
+type CompanyTone = {
+  tint: string;
+  border: string;
+  text: string;
+};
+
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const UNASSIGNED_KEY = "__unassigned__";
+const DEFAULT_COMPANY_TONE: CompanyTone = Object.freeze({ tint: "#e0f2fe", border: "#7dd3fc", text: "#0c4a6e" });
+
+function toneForCompanyColor(companyColor?: string, companyName?: string): CompanyTone {
+  const normalizedColor = normalizeHexColor(companyColor) || generateCompanyColorFromName(companyName);
+  if (!normalizedColor) return DEFAULT_COMPANY_TONE;
+
+  return {
+    tint: mixHexColors(normalizedColor, "#ffffff", 0.82),
+    border: mixHexColors(normalizedColor, "#ffffff", 0.48),
+    text: mixHexColors(normalizedColor, "#111827", 0.35),
+  };
+}
 
 function monthKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -65,6 +83,98 @@ function parseCalendarDate(raw: string): Date | null {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed;
+}
+
+function normalizeHexColor(value?: string): string | null {
+  const raw = (value || "").trim();
+  if (!/^#[0-9a-fA-F]{6}$/.test(raw)) return null;
+  return raw.toLowerCase();
+}
+
+function mixHexColors(baseHex: string, mixHex: string, mixRatio: number): string {
+  const baseRgb = hexToRgb(baseHex);
+  const mixRgb = hexToRgb(mixHex);
+  if (!baseRgb || !mixRgb) return baseHex;
+
+  const ratio = Math.max(0, Math.min(1, mixRatio));
+  return rgbToHex({
+    red: Math.round(baseRgb.red * (1 - ratio) + mixRgb.red * ratio),
+    green: Math.round(baseRgb.green * (1 - ratio) + mixRgb.green * ratio),
+    blue: Math.round(baseRgb.blue * (1 - ratio) + mixRgb.blue * ratio),
+  });
+}
+
+function hexToRgb(hex: string): { red: number; green: number; blue: number } | null {
+  const normalized = normalizeHexColor(hex);
+  if (!normalized) return null;
+  return {
+    red: Number.parseInt(normalized.slice(1, 3), 16),
+    green: Number.parseInt(normalized.slice(3, 5), 16),
+    blue: Number.parseInt(normalized.slice(5, 7), 16),
+  };
+}
+
+function rgbToHex(rgb: { red: number; green: number; blue: number }): string {
+  return `#${rgb.red.toString(16).padStart(2, "0")}${rgb.green.toString(16).padStart(2, "0")}${rgb.blue.toString(16).padStart(2, "0")}`;
+}
+
+function generateCompanyColorFromName(name?: string): string | null {
+  const normalizedName = (name || "").trim().toLowerCase();
+  if (!normalizedName) return null;
+
+  let hash = 2166136261;
+  for (let idx = 0; idx < normalizedName.length; idx += 1) {
+    hash ^= normalizedName.charCodeAt(idx);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  const byte0 = (hash >>> 24) & 0xff;
+  const byte1 = (hash >>> 16) & 0xff;
+  const byte2 = (hash >>> 8) & 0xff;
+  const byte3 = hash & 0xff;
+
+  const hue = ((byte0 << 8) | byte1) % 360;
+  const saturation = 58 + (byte2 % 15);
+  const lightness = 42 + (byte3 % 12);
+
+  return hslToHex(hue, saturation / 100, lightness / 100);
+}
+
+function hslToHex(hue: number, saturation: number, lightness: number): string {
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const hueSection = hue / 60;
+  const xVal = chroma * (1 - Math.abs((hueSection % 2) - 1));
+
+  let red1 = 0;
+  let green1 = 0;
+  let blue1 = 0;
+
+  if (hueSection >= 0 && hueSection < 1) {
+    red1 = chroma;
+    green1 = xVal;
+  } else if (hueSection < 2) {
+    red1 = xVal;
+    green1 = chroma;
+  } else if (hueSection < 3) {
+    green1 = chroma;
+    blue1 = xVal;
+  } else if (hueSection < 4) {
+    green1 = xVal;
+    blue1 = chroma;
+  } else if (hueSection < 5) {
+    red1 = xVal;
+    blue1 = chroma;
+  } else {
+    red1 = chroma;
+    blue1 = xVal;
+  }
+
+  const match = lightness - chroma / 2;
+  return rgbToHex({
+    red: Math.round((red1 + match) * 255),
+    green: Math.round((green1 + match) * 255),
+    blue: Math.round((blue1 + match) * 255),
+  });
 }
 
 function assigneeKey(job: SalesCalendarJob): string {
@@ -459,19 +569,22 @@ export default function SalesCalendarPage() {
               <div style={{ padding: 12, display: "grid", gap: 8 }}>
                 {salesMoneySummary.companies.length === 0 ? (
                   <div style={{ fontSize: 12, color: "#64748b" }}>No companies selected.</div>
-                ) : salesMoneySummary.companies.map((company) => (
-                  <div key={company.companyId} style={{ border: "1px solid #cbd5e1", background: "#f8fafc", borderRadius: 12, padding: 12, display: "grid", gap: 6 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>{company.companyName}</div>
-                      <div style={{ fontSize: 11, color: "#334155" }}>{company.leadCount} lead{company.leadCount === 1 ? "" : "s"}</div>
+                ) : salesMoneySummary.companies.map((company) => {
+                  const tone = toneForCompanyColor(company.companyColor, company.companyName);
+                  return (
+                    <div key={company.companyId} style={{ border: `1px solid ${tone.border}`, background: tone.tint, borderRadius: 12, padding: 12, display: "grid", gap: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: tone.text }}>{company.companyName}</div>
+                        <div style={{ fontSize: 11, color: tone.text }}>{company.leadCount} lead{company.leadCount === 1 ? "" : "s"}</div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
+                        <div style={{ fontSize: 12, color: "#334155" }}>Estimated: <strong>{formatMoney(company.estimatedTotal)}</strong></div>
+                        <div style={{ fontSize: 12, color: "#166534" }}>Payments: <strong>{formatMoney(company.paymentsTotal)}</strong> ({formatPercent(company.paymentsPercent)})</div>
+                        <div style={{ fontSize: 12, color: "#92400e" }}>Remaining: <strong>{formatMoney(company.remainingTotal)}</strong> ({formatPercent(company.remainingPercent)})</div>
+                      </div>
                     </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
-                      <div style={{ fontSize: 12, color: "#334155" }}>Estimated: <strong>{formatMoney(company.estimatedTotal)}</strong></div>
-                      <div style={{ fontSize: 12, color: "#166534" }}>Payments: <strong>{formatMoney(company.paymentsTotal)}</strong> ({formatPercent(company.paymentsPercent)})</div>
-                      <div style={{ fontSize: 12, color: "#92400e" }}>Remaining: <strong>{formatMoney(company.remainingTotal)}</strong> ({formatPercent(company.remainingPercent)})</div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
           </div>
@@ -528,10 +641,10 @@ export default function SalesCalendarPage() {
                           style={{
                             display: "block",
                             fontSize: 11,
-                            color: "#0f172a",
+                            color: toneForCompanyColor(job.company_color, job.company_name).text,
                             textDecoration: "none",
-                            background: "#f8fafc",
-                            border: "1px solid #dbe4ef",
+                            background: toneForCompanyColor(job.company_color, job.company_name).tint,
+                            border: `1px solid ${toneForCompanyColor(job.company_color, job.company_name).border}`,
                             borderRadius: 4,
                             padding: "4px 5px",
                             overflow: "hidden",
