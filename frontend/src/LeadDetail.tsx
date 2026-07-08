@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import ChatMessages from "./ChatMessages";
-import FollowupPanel from "./FollowupPanel";
 import TasksPanel from "./TasksPanel";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
@@ -1011,14 +1010,6 @@ export default function LeadDetail() {
                 </div>
               ) : null}
             </div>
-          </div>
-        </div>
-      ) : null}
-
-      {!isDispatchUser ? (
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 20 }}>
-          <div style={{ width: "100%", maxWidth: 360 }}>
-            <FollowupPanel leadId={leadId!} />
           </div>
         </div>
       ) : null}
