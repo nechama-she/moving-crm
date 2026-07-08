@@ -695,12 +695,28 @@ export default function SalesCalendarPage() {
                             }}
                             title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
                           >
-                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 700, color: companyTone.text }}>
-                              {job.company_name || "Unknown company"} • Move {job.move_date || "-"} • Booked {job.booked_move_date || "-"}
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                              <strong style={{ fontSize: 13, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {job.full_name || "Unnamed"}
+                              </strong>
+                              <span style={{ fontSize: 11, color: repTone.text, fontWeight: 700, flexShrink: 0 }}>
+                                {job.assigned_to_name || "Unassigned"}
+                              </span>
                             </div>
-                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: repTone.text, fontWeight: 600 }}>
+                            <div style={{ fontSize: 12, color: companyTone.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {job.company_name || "Unknown company"}
+                            </div>
+                            <div style={{ fontSize: 12, color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}
                             </div>
+                            <div style={{ fontSize: 11, color: companyTone.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {job.status || "booked"}
+                            </div>
+                            {job.price != null ? (
+                              <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {formatMoney(job.price)}
+                              </div>
+                            ) : null}
                           </Link>
                         );
                       })}
