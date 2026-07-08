@@ -28,6 +28,7 @@ type EstimatedTotal = {
   subtotal: number;
   taxableAmount: number;
   tax: number;
+  discountAmount?: number;
   finalTotal: number;
 };
 
@@ -224,12 +225,22 @@ function formatPercent(value: number): string {
 function parseEstimatedTotal(raw: unknown): EstimatedTotal | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
+  const hasEstimatedKeys = ["subtotal", "taxableAmount", "tax", "discountAmount", "finalTotal"].some((key) => Object.prototype.hasOwnProperty.call(value, key));
+  if (!hasEstimatedKeys) return null;
   return {
     subtotal: Number(value.subtotal || 0),
     taxableAmount: Number(value.taxableAmount || 0),
     tax: Number(value.tax || 0),
+    discountAmount: Number(value.discountAmount || 0),
     finalTotal: Number(value.finalTotal || 0),
   };
+}
+
+function leadDisplayAmount(job: SalesCalendarJob): number | null {
+  if (job.estimatedTotal) {
+    return Number(job.estimatedTotal.finalTotal || 0);
+  }
+  return job.price;
 }
 
 function parsePayments(raw: unknown): LeadPayment[] {
@@ -870,9 +881,9 @@ export default function SalesCalendarPage() {
                             <div style={{ fontSize: 11, color: companyTone.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {job.status || "booked"}
                             </div>
-                            {job.price != null ? (
+                            {leadDisplayAmount(job) != null ? (
                               <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {formatMoney(job.price)}
+                                {formatMoney(leadDisplayAmount(job) || 0)}
                               </div>
                             ) : null}
                           </Link>
@@ -958,7 +969,7 @@ export default function SalesCalendarPage() {
                     <div style={{ fontSize: 12, color: companyTone.text, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
                     <div style={{ fontSize: 12, color: "#334155" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
                     <div style={{ fontSize: 11, color: companyTone.text, fontWeight: 600 }}>{job.status || "booked"}</div>
-                    {job.price != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>{formatMoney(job.price)}</div> : null}
+                    {leadDisplayAmount(job) != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>{formatMoney(leadDisplayAmount(job) || 0)}</div> : null}
                   </Link>
                 );
               })}
