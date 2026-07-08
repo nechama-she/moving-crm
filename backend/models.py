@@ -225,7 +225,7 @@ class Lead(Base):
             except Exception:
                 estimated_total_data = None
 
-        payments_data: list[dict[str, float | str]] = []
+        payments_data: list[dict[str, object]] = []
         if self.payments:
             try:
                 parsed_payments = json.loads(self.payments)
@@ -236,6 +236,8 @@ class Lead(Base):
                         payments_data.append({
                             "amount": float(row.get("amount") or 0),
                             "takenByUser": str(row.get("takenByUser") or "").strip(),
+                            "repPaid": bool(row.get("repPaid") or False),
+                            "repPaidAt": str(row.get("repPaidAt") or "").strip(),
                         })
             except Exception:
                 payments_data = []

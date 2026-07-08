@@ -133,6 +133,7 @@ export default function LeadDetail() {
   const [renamingId, setRenamingId] = useState("");
   const [renameValue, setRenameValue] = useState("");
   const [savingStatus, setSavingStatus] = useState(false);
+  const [savingRepPaymentIndex, setSavingRepPaymentIndex] = useState<number | null>(null);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [statusMenuRect, setStatusMenuRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const [deletingLead, setDeletingLead] = useState(false);
@@ -718,11 +719,14 @@ export default function LeadDetail() {
         return {
           amount,
           takenByUser: String(item.takenByUser ?? "").trim(),
+          repPaid: Boolean(item.repPaid ?? false),
+          repPaidAt: String(item.repPaidAt ?? "").trim(),
         };
       })
-      .filter((row): row is { amount: number; takenByUser: string } => row !== null);
+      .filter((row): row is { amount: number; takenByUser: string; repPaid: boolean; repPaidAt: string } => row !== null);
   })();
   const paymentsTotal = paymentsData.reduce((sum, payment) => sum + payment.amount, 0);
+  const canManageRepPayments = user?.role === "admin" || user?.role === "sales_rep";
 
   function formatMoney(value: number): string {
     return `$${value.toFixed(2)}`;
@@ -780,6 +784,44 @@ export default function LeadDetail() {
       alert(`Failed to delete lead: ${e instanceof Error ? e.message : "error"}`);
     } finally {
       setDeletingLead(false);
+    }
+  }
+
+  async function setRepPaymentPaid(paymentIndex: number, nextPaid: boolean) {
+    if (!leadId || !canManageRepPayments) return;
+    if (paymentIndex < 0 || paymentIndex >= paymentsData.length) return;
+
+    setSavingRepPaymentIndex(paymentIndex);
+    try {
+      const nextPayments = paymentsData.map((payment, index) => {
+        if (index !== paymentIndex) {
+          return {
+            amount: payment.amount,
+            takenByUser: payment.takenByUser,
+            repPaid: payment.repPaid,
+            repPaidAt: payment.repPaidAt,
+          };
+        }
+        return {
+          amount: payment.amount,
+          takenByUser: payment.takenByUser,
+          repPaid: nextPaid,
+          repPaidAt: nextPaid ? (payment.repPaidAt || new Date().toISOString()) : "",
+        };
+      });
+
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ payments: nextPayments }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const updated = await res.json();
+      setLead(updated);
+    } catch (e) {
+      alert(`Failed to update rep payment: ${e instanceof Error ? e.message : "error"}`);
+    } finally {
+      setSavingRepPaymentIndex(null);
     }
   }
 
@@ -1641,9 +1683,34 @@ export default function LeadDetail() {
               </div>
               <div style={{ padding: 10, display: "grid", gap: 6 }}>
                 {paymentsData.map((payment, index) => (
-                  <div key={`${payment.takenByUser}-${index}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#334155" }}>
-                    <span>{payment.takenByUser || `Payment ${index + 1}`}</span>
-                    <strong>{formatMoney(payment.amount)}</strong>
+                  <div key={`${payment.takenByUser}-${index}`} style={{ display: "grid", gap: 4, borderBottom: index < paymentsData.length - 1 ? "1px solid #e2e8f0" : "none", paddingBottom: 6, marginBottom: 2 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#334155" }}>
+                      <span>{payment.takenByUser || `Payment ${index + 1}`}</span>
+                      <strong>{formatMoney(payment.amount)}</strong>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 11 }}>
+                      <span style={{ color: "#475569" }}>Rep 30%: <strong>{formatMoney(payment.amount * 0.3)}</strong></span>
+                      {canManageRepPayments ? (
+                        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, color: payment.repPaid ? "#15803d" : "#92400e", fontWeight: 700 }}>
+                          <input
+                            type="checkbox"
+                            checked={payment.repPaid}
+                            disabled={savingRepPaymentIndex === index}
+                            onChange={(e) => {
+                              void setRepPaymentPaid(index, e.target.checked);
+                            }}
+                          />
+                          {payment.repPaid ? "Paid to rep" : "Unpaid to rep"}
+                        </label>
+                      ) : (
+                        <span style={{ color: payment.repPaid ? "#15803d" : "#92400e", fontWeight: 700 }}>
+                          {payment.repPaid ? "Paid to rep" : "Unpaid to rep"}
+                        </span>
+                      )}
+                    </div>
+                    {payment.repPaid && payment.repPaidAt ? (
+                      <div style={{ fontSize: 10, color: "#64748b" }}>Paid at: {new Date(payment.repPaidAt).toLocaleString()}</div>
+                    ) : null}
                   </div>
                 ))}
                 <div style={{ borderTop: "1px solid #dbe4ef", marginTop: 2, paddingTop: 8, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "#0f172a" }}>

@@ -34,6 +34,8 @@ type EstimatedTotal = {
 type LeadPayment = {
   amount: number;
   takenByUser: string;
+  repPaid?: boolean;
+  repPaidAt?: string;
 };
 
 type AssigneeOption = {
@@ -221,6 +223,8 @@ function parsePayments(raw: unknown): LeadPayment[] {
     return {
       amount: Number(value.amount || 0),
       takenByUser: String(value.takenByUser || ""),
+      repPaid: Boolean(value.repPaid || false),
+      repPaidAt: String(value.repPaidAt || ""),
     };
   });
 }
@@ -391,21 +395,33 @@ export default function SalesCalendarPage() {
     function summarizeJobs(items: Iterable<SalesCalendarJob>) {
       let estimatedTotal = 0;
       let paymentsTotal = 0;
+      let repCommissionPaid = 0;
       let leadCount = 0;
       for (const job of items) {
         leadCount += 1;
         estimatedTotal += Number(job.estimatedTotal?.finalTotal || 0);
-        paymentsTotal += (job.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+        for (const payment of job.payments || []) {
+          const paymentAmount = Number(payment.amount || 0);
+          paymentsTotal += paymentAmount;
+          if (payment.repPaid) {
+            repCommissionPaid += paymentAmount * 0.3;
+          }
+        }
       }
       const remainingTotal = estimatedTotal - paymentsTotal;
       const paymentsPercent = estimatedTotal > 0 ? (paymentsTotal / estimatedTotal) * 100 : 0;
       const remainingPercent = estimatedTotal > 0 ? (remainingTotal / estimatedTotal) * 100 : 0;
+      const repCommissionTotal = paymentsTotal * 0.3;
+      const repCommissionRemaining = Math.max(0, repCommissionTotal - repCommissionPaid);
       return {
         estimatedTotal,
         paymentsTotal,
         remainingTotal,
         paymentsPercent,
         remainingPercent,
+        repCommissionTotal,
+        repCommissionPaid,
+        repCommissionRemaining,
         leadCount,
       };
     }
@@ -556,6 +572,16 @@ export default function SalesCalendarPage() {
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.remainingTotal)}</div>
               <div style={{ marginTop: 4, fontSize: 12, color: "#92400e" }}>{formatPercent(salesMoneySummary.remainingPercent)}</div>
             </div>
+            <div style={{ border: "1px solid #c7d2fe", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #eef2ff 0%, #ffffff 100%)" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#4338ca", textTransform: "uppercase", letterSpacing: "0.05em" }}>Rep Paid (30%)</div>
+              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.repCommissionPaid)}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#4f46e5" }}>of {formatMoney(salesMoneySummary.repCommissionTotal)}</div>
+            </div>
+            <div style={{ border: "1px solid #fecaca", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #fff1f2 0%, #ffffff 100%)" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#be123c", textTransform: "uppercase", letterSpacing: "0.05em" }}>Rep Remaining (30%)</div>
+              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.repCommissionRemaining)}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#be123c" }}>unpaid commission</div>
+            </div>
           </div>
 
           <div style={{ border: "1px solid #dbe4ef", borderRadius: 14, background: "#fff", overflow: "hidden" }}>
@@ -586,6 +612,8 @@ export default function SalesCalendarPage() {
                         <div style={{ fontSize: 12, color: "#334155" }}>Estimated: <strong>{formatMoney(company.estimatedTotal)}</strong></div>
                         <div style={{ fontSize: 12, color: "#166534" }}>Payments: <strong>{formatMoney(company.paymentsTotal)}</strong> ({formatPercent(company.paymentsPercent)})</div>
                         <div style={{ fontSize: 12, color: "#92400e" }}>Remaining: <strong>{formatMoney(company.remainingTotal)}</strong> ({formatPercent(company.remainingPercent)})</div>
+                        <div style={{ fontSize: 12, color: "#4338ca" }}>Rep Paid (30%): <strong>{formatMoney(company.repCommissionPaid)}</strong> of {formatMoney(company.repCommissionTotal)}</div>
+                        <div style={{ fontSize: 12, color: "#be123c" }}>Rep Remaining (30%): <strong>{formatMoney(company.repCommissionRemaining)}</strong></div>
                       </div>
                     </div>
                   );

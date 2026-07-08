@@ -1256,6 +1256,8 @@ class LeadPaymentPayload(BaseModel):
 
     amount: float = 0
     taken_by_user: str = Field(default="", alias="takenByUser")
+    rep_paid: bool = Field(default=False, alias="repPaid")
+    rep_paid_at: str = Field(default="", alias="repPaidAt")
 
 
 def _serialize_estimated_total(payload: EstimatedTotalPayload | None) -> str | None:
@@ -1276,6 +1278,8 @@ def _serialize_payments(payments: list[LeadPaymentPayload] | None) -> str | None
         {
             "amount": float(payment.amount),
             "takenByUser": (payment.taken_by_user or "").strip(),
+            "repPaid": bool(payment.rep_paid),
+            "repPaidAt": (payment.rep_paid_at or "").strip(),
         }
         for payment in payments
     ])
@@ -1298,7 +1302,7 @@ def _deserialize_estimated_total(raw: str | None) -> dict | None:
     }
 
 
-def _deserialize_payments(raw: str | None) -> list[dict[str, float | str]]:
+def _deserialize_payments(raw: str | None) -> list[dict[str, object]]:
     if not raw:
         return []
     try:
@@ -1307,13 +1311,15 @@ def _deserialize_payments(raw: str | None) -> list[dict[str, float | str]]:
         return []
     if not isinstance(parsed, list):
         return []
-    payments: list[dict[str, float | str]] = []
+    payments: list[dict[str, object]] = []
     for row in parsed:
         if not isinstance(row, dict):
             continue
         payments.append({
             "amount": float(row.get("amount") or 0),
             "takenByUser": str(row.get("takenByUser") or "").strip(),
+            "repPaid": bool(row.get("repPaid") or False),
+            "repPaidAt": str(row.get("repPaidAt") or "").strip(),
         })
     return payments
 
@@ -2028,6 +2034,9 @@ def update_lead(
     if body.estimated_total is not None:
         lead.estimated_total = _serialize_estimated_total(body.estimated_total)
     if body.payments is not None:
+        if user.role not in ("admin", "sales_rep"):
+            if any(payment.rep_paid or (payment.rep_paid_at or "").strip() for payment in body.payments):
+                raise HTTPException(status_code=403, detail="Only admin and sales reps can mark rep payments")
         lead.payments = _serialize_payments(body.payments)
 
     primary_job = _get_or_create_primary_lead_job(lead, db)
