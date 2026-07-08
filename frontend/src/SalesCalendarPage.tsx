@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
@@ -36,6 +36,22 @@ type LeadPayment = {
   takenByUser: string;
   repPaid?: boolean;
   repPaidAt?: string;
+};
+
+type SalesSearchResult = {
+  id: string;
+  lead_id: string;
+  full_name: string;
+  move_date: string;
+  booked_move_date: string;
+  pickup_zip: string;
+  delivery_zip: string;
+  status: string;
+  price: number | null;
+  company_id: string;
+  company_name: string;
+  company_color: string;
+  leadgen_id: string;
 };
 
 type AssigneeOption = {
@@ -242,6 +258,13 @@ export default function SalesCalendarPage() {
   const [jobs, setJobs] = useState<SalesCalendarJob[]>([]);
   const [selectedAssigneeKeys, setSelectedAssigneeKeys] = useState<string[]>([]);
   const [totalsExpanded, setTotalsExpanded] = useState(false);
+  const [dayPanelDay, setDayPanelDay] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SalesSearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLDivElement | null>(null);
 
   const isAdmin = user?.role === "admin";
 
@@ -469,6 +492,73 @@ export default function SalesCalendarPage() {
     return map;
   }, [filteredJobs, year, month]);
 
+  const panelDayJobs = dayPanelDay == null ? [] : (jobsByDay.get(dayPanelDay) || []);
+
+  useEffect(() => {
+    setDayPanelDay(null);
+  }, [viewMonth]);
+
+  useEffect(() => {
+    function onDocMouseDown(event: MouseEvent) {
+      if (!searchRef.current) return;
+      const target = event.target as Node;
+      if (!searchRef.current.contains(target)) {
+        setSearchOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, []);
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      setSearchError("");
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      void (async () => {
+        setSearchLoading(true);
+        setSearchError("");
+        try {
+          const params = new URLSearchParams({ query: q, limit: "10" });
+          const res = await fetch(`${API_BASE}/api/dispatch-job-search?${params.toString()}`, { headers: authHeaders(token) });
+          if (!res.ok) throw new Error(`Search HTTP ${res.status}`);
+          const data = (await res.json()) as { items?: Array<Record<string, unknown>> };
+          const items = Array.isArray(data.items) ? data.items : [];
+          setSearchResults(
+            items.map((item) => ({
+              id: String(item.id || ""),
+              lead_id: String(item.lead_id || ""),
+              full_name: String(item.full_name || "Unnamed"),
+              move_date: String(item.move_date || ""),
+              booked_move_date: String(item.booked_move_date || ""),
+              pickup_zip: String(item.pickup_zip || ""),
+              delivery_zip: String(item.delivery_zip || ""),
+              status: String(item.status || ""),
+              price: item.price == null ? null : Number(item.price),
+              company_id: String(item.company_id || ""),
+              company_name: String(item.company_name || ""),
+              company_color: String(item.company_color || ""),
+              leadgen_id: String(item.leadgen_id || ""),
+            }))
+          );
+          setSearchOpen(true);
+        } catch (err: unknown) {
+          setSearchError(err instanceof Error ? err.message : "Failed to search leads");
+          setSearchResults([]);
+        } finally {
+          setSearchLoading(false);
+        }
+      })();
+    }, 250);
+
+    return () => clearTimeout(timeout);
+  }, [searchQuery, token]);
+
   const backState = useMemo(
     () => ({
       backTo: `${location.pathname}${location.search}`,
@@ -562,6 +652,74 @@ export default function SalesCalendarPage() {
                 </button>
               );
             })}
+          </div>
+
+          <div ref={searchRef} style={{ marginTop: 6, maxWidth: 520, position: "relative" }}>
+            <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#475569", fontWeight: 600 }}>
+              Search leads
+              <input
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setSearchOpen(true);
+                }}
+                onFocus={() => setSearchOpen(true)}
+                placeholder="Search by name, lead id, zip, or SmartMoving id..."
+                style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "8px 10px", fontSize: 13, background: "#fff" }}
+              />
+            </label>
+            {searchLoading ? <div style={{ marginTop: 4, fontSize: 12, color: "#64748b" }}>Searching...</div> : null}
+            {searchError ? <div style={{ marginTop: 4, fontSize: 12, color: "#ba0517" }}>{searchError}</div> : null}
+            {searchOpen && searchQuery.trim().length >= 2 ? (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 4px)",
+                  left: 0,
+                  right: 0,
+                  zIndex: 30,
+                  background: "#fff",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 6,
+                  boxShadow: "0 12px 24px rgba(15,23,42,.12)",
+                  maxHeight: 320,
+                  overflowY: "auto",
+                }}
+              >
+                {searchResults.length === 0 && !searchLoading ? (
+                  <div style={{ padding: 10, fontSize: 13, color: "#64748b" }}>No leads found.</div>
+                ) : null}
+                {searchResults.map((item) => (
+                  <Link
+                    key={item.id}
+                    to={`/leads/${item.lead_id || item.id}?job_id=${encodeURIComponent(item.id)}`}
+                    state={backState}
+                    onClick={() => setSearchOpen(false)}
+                    style={{
+                      width: "100%",
+                      display: "grid",
+                      gap: 2,
+                      textAlign: "left",
+                      textDecoration: "none",
+                      background: "#fff",
+                      padding: "10px 12px",
+                      borderBottom: "1px solid #e2e8f0",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                      <strong style={{ fontSize: 13, color: "#0f172a" }}>{item.full_name || "Unnamed"}</strong>
+                      <span style={{ fontSize: 11, color: "#475569", fontWeight: 600 }}>{item.move_date}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: "#334155" }}>
+                      {item.company_name || "Company"} • {item.pickup_zip || "?"} → {item.delivery_zip || "?"}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#64748b" }}>
+                      {item.leadgen_id ? `Lead ${item.leadgen_id} • ` : ""}{item.status || "booked"}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginTop: 4 }}>
@@ -665,7 +823,6 @@ export default function SalesCalendarPage() {
               const day = i + 1;
               const dayJobs = jobsByDay.get(day) || [];
               const visibleJobs = dayJobs.slice(0, 3);
-              const hiddenJobs = dayJobs.slice(3);
               const overflowCount = Math.max(dayJobs.length - visibleJobs.length, 0);
               return (
                 <div key={day} style={calendarDayCell}>
@@ -722,13 +879,13 @@ export default function SalesCalendarPage() {
                         );
                       })}
                       {overflowCount > 0 ? (
-                        <Link
-                          to={`/leads/${(hiddenJobs[0]?.lead_id || hiddenJobs[0]?.id || "")}?job_id=${encodeURIComponent(hiddenJobs[0]?.id || "")}`}
-                          state={backState}
-                          style={{ border: "1px solid #cbd5e1", background: "#f8fafc", borderRadius: 4, color: "#0f172a", fontSize: 11, fontWeight: 700, padding: "4px 6px", textAlign: "left", textDecoration: "none", display: "block" }}
+                        <button
+                          type="button"
+                          onClick={() => setDayPanelDay(day)}
+                          style={{ border: "1px solid #cbd5e1", background: "#f8fafc", borderRadius: 4, color: "#0f172a", fontSize: 11, fontWeight: 700, padding: "4px 6px", textAlign: "left", display: "block", width: "100%", cursor: "pointer" }}
                         >
                           More +{overflowCount}
-                        </Link>
+                        </button>
                       ) : null}
                     </div>
                   ) : null}
@@ -738,6 +895,77 @@ export default function SalesCalendarPage() {
           </div>
         </div>
       </section>
+
+      {dayPanelDay != null ? (
+        <div
+          role="presentation"
+          onClick={() => setDayPanelDay(null)}
+          style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.35)", zIndex: 95 }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "fixed",
+              top: 0,
+              right: 0,
+              width: "min(420px, 100%)",
+              height: "100vh",
+              background: "#fff",
+              borderLeft: "1px solid #cbd5e1",
+              boxShadow: "-16px 0 32px rgba(15, 23, 42, 0.18)",
+              display: "flex",
+              flexDirection: "column",
+              zIndex: 96,
+            }}
+          >
+            <div style={{ padding: 14, borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Day Panel • {`${year}-${String(month + 1).padStart(2, "0")}-${String(dayPanelDay).padStart(2, "0")}`}</div>
+                <div style={{ fontSize: 12, color: "#64748b" }}>{panelDayJobs.length} lead{panelDayJobs.length === 1 ? "" : "s"}</div>
+              </div>
+              <button type="button" onClick={() => setDayPanelDay(null)} style={calendarNavBtn} aria-label="Close day panel">
+                ✕
+              </button>
+            </div>
+            <div style={{ padding: 12, overflowY: "auto", display: "grid", gap: 10 }}>
+              {panelDayJobs.map((job) => {
+                const companyTone = toneForCompanyColor(job.company_color, job.company_name);
+                const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
+                return (
+                  <Link
+                    key={job.id}
+                    to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+                    state={backState}
+                    onClick={() => setDayPanelDay(null)}
+                    style={{
+                      display: "grid",
+                      gap: 3,
+                      textDecoration: "none",
+                      color: companyTone.text,
+                      border: `1px solid ${companyTone.border}`,
+                      background: companyTone.tint,
+                      borderRadius: 8,
+                      padding: 10,
+                    }}
+                    title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                      <strong style={{ fontSize: 13, color: "#0f172a" }}>{job.full_name || "Unnamed"}</strong>
+                      <span style={{ fontSize: 11, color: repTone.text, fontWeight: 700 }}>{job.assigned_to_name || "Unassigned"}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: companyTone.text, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
+                    <div style={{ fontSize: 12, color: "#334155" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
+                    <div style={{ fontSize: 11, color: companyTone.text, fontWeight: 600 }}>{job.status || "booked"}</div>
+                    {job.price != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>{formatMoney(job.price)}</div> : null}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
