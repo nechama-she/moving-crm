@@ -806,6 +806,8 @@ def get_sales_calendar(
                 "pickup_zip": job.pickup_zip or "",
                 "delivery_zip": job.delivery_zip or "",
                 "price": float(job.price) if job.price is not None else None,
+                "estimatedTotal": _deserialize_estimated_total(lead.estimated_total),
+                "payments": _deserialize_payments(lead.payments),
                 "status": lead.status or "",
             }
             for job, lead, company_name, company_color, assigned_to_id, assigned_to_name, assigned_to_role, effective_date in filtered

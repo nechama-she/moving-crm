@@ -16,10 +16,24 @@ type SalesCalendarJob = {
   pickup_zip: string;
   delivery_zip: string;
   price: number | null;
+  estimatedTotal?: EstimatedTotal | null;
+  payments?: LeadPayment[];
   status: string;
   assigned_to: string;
   assigned_to_name: string;
   assigned_to_role: string;
+};
+
+type EstimatedTotal = {
+  subtotal: number;
+  taxableAmount: number;
+  tax: number;
+  finalTotal: number;
+};
+
+type LeadPayment = {
+  amount: number;
+  takenByUser: string;
 };
 
 type AssigneeOption = {
@@ -63,6 +77,40 @@ function roleLabel(role: string): string {
   return "";
 }
 
+function formatMoney(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(value || 0);
+}
+
+function formatPercent(value: number): string {
+  return `${value.toFixed(1)}%`;
+}
+
+function parseEstimatedTotal(raw: unknown): EstimatedTotal | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  return {
+    subtotal: Number(value.subtotal || 0),
+    taxableAmount: Number(value.taxableAmount || 0),
+    tax: Number(value.tax || 0),
+    finalTotal: Number(value.finalTotal || 0),
+  };
+}
+
+function parsePayments(raw: unknown): LeadPayment[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => {
+    const value = (item && typeof item === "object") ? item as Record<string, unknown> : {};
+    return {
+      amount: Number(value.amount || 0),
+      takenByUser: String(value.takenByUser || ""),
+    };
+  });
+}
+
 export default function SalesCalendarPage() {
   const location = useLocation();
   const { token, user } = useAuth();
@@ -75,6 +123,7 @@ export default function SalesCalendarPage() {
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<SalesCalendarJob[]>([]);
   const [selectedAssigneeKeys, setSelectedAssigneeKeys] = useState<string[]>([]);
+  const [totalsExpanded, setTotalsExpanded] = useState(false);
 
   const isAdmin = user?.role === "admin";
 
@@ -155,6 +204,8 @@ export default function SalesCalendarPage() {
           pickup_zip: String(item.pickup_zip || ""),
           delivery_zip: String(item.delivery_zip || ""),
           price: item.price == null ? null : Number(item.price),
+          estimatedTotal: parseEstimatedTotal(item.estimatedTotal),
+          payments: parsePayments(item.payments),
           status: String(item.status || ""),
           assigned_to: String(item.assigned_to || ""),
           assigned_to_name: String(item.assigned_to_name || ""),
@@ -190,6 +241,75 @@ export default function SalesCalendarPage() {
     const selected = new Set(selectedAssigneeKeys);
     return jobs.filter((job) => selected.has(assigneeKey(job)));
   }, [jobs, selectedAssigneeKeys]);
+
+  const salesMoneySummary = useMemo(() => {
+    const uniqueLeads = new Map<string, SalesCalendarJob>();
+    const companyBuckets = new Map<string, {
+      companyId: string;
+      companyName: string;
+      companyColor?: string;
+      leads: Map<string, SalesCalendarJob>;
+    }>();
+
+    for (const job of filteredJobs) {
+      if (!job.lead_id) continue;
+      if (!uniqueLeads.has(job.lead_id)) {
+        uniqueLeads.set(job.lead_id, job);
+      }
+
+      const companyId = String(job.company_id || "");
+      if (!companyId) continue;
+      let bucket = companyBuckets.get(companyId);
+      if (!bucket) {
+        bucket = {
+          companyId,
+          companyName: String(job.company_name || "Unknown company"),
+          companyColor: job.company_color,
+          leads: new Map<string, SalesCalendarJob>(),
+        };
+        companyBuckets.set(companyId, bucket);
+      }
+      if (!bucket.leads.has(job.lead_id)) {
+        bucket.leads.set(job.lead_id, job);
+      }
+    }
+
+    function summarizeJobs(items: Iterable<SalesCalendarJob>) {
+      let estimatedTotal = 0;
+      let paymentsTotal = 0;
+      let leadCount = 0;
+      for (const job of items) {
+        leadCount += 1;
+        estimatedTotal += Number(job.estimatedTotal?.finalTotal || 0);
+        paymentsTotal += (job.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+      }
+      const remainingTotal = estimatedTotal - paymentsTotal;
+      const paymentsPercent = estimatedTotal > 0 ? (paymentsTotal / estimatedTotal) * 100 : 0;
+      const remainingPercent = estimatedTotal > 0 ? (remainingTotal / estimatedTotal) * 100 : 0;
+      return {
+        estimatedTotal,
+        paymentsTotal,
+        remainingTotal,
+        paymentsPercent,
+        remainingPercent,
+        leadCount,
+      };
+    }
+
+    const companies = Array.from(companyBuckets.values())
+      .map((bucket) => ({
+        companyId: bucket.companyId,
+        companyName: bucket.companyName,
+        companyColor: bucket.companyColor,
+        ...summarizeJobs(bucket.leads.values()),
+      }))
+      .sort((left, right) => left.companyName.localeCompare(right.companyName));
+
+    return {
+      ...summarizeJobs(uniqueLeads.values()),
+      companies,
+    };
+  }, [filteredJobs]);
 
   const year = viewMonth.getFullYear();
   const month = viewMonth.getMonth();
@@ -303,6 +423,57 @@ export default function SalesCalendarPage() {
                 </button>
               );
             })}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginTop: 4 }}>
+            <div style={{ border: "1px solid #cbd5e1", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #eff6ff 0%, #ffffff 100%)" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estimated Total</div>
+              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.estimatedTotal)}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#475569" }}>{salesMoneySummary.leadCount} lead{salesMoneySummary.leadCount === 1 ? "" : "s"}</div>
+            </div>
+            <div style={{ border: "1px solid #bbf7d0", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%)" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.05em" }}>Payments</div>
+              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.paymentsTotal)}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#166534" }}>{formatPercent(salesMoneySummary.paymentsPercent)}</div>
+            </div>
+            <div style={{ border: "1px solid #fde68a", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #fffbeb 0%, #ffffff 100%)" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#b45309", textTransform: "uppercase", letterSpacing: "0.05em" }}>Remaining</div>
+              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.remainingTotal)}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#92400e" }}>{formatPercent(salesMoneySummary.remainingPercent)}</div>
+            </div>
+          </div>
+
+          <div style={{ border: "1px solid #dbe4ef", borderRadius: 14, background: "#fff", overflow: "hidden" }}>
+            <button
+              type="button"
+              onClick={() => setTotalsExpanded((prev) => !prev)}
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "none", background: "#f8fafc", padding: "12px 14px", cursor: "pointer", textAlign: "left" }}
+            >
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>Company Breakdown</div>
+                <div style={{ fontSize: 11, color: "#64748b" }}>Totals for currently selected assignees</div>
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>{totalsExpanded ? "Hide" : "Show"}</div>
+            </button>
+            {totalsExpanded ? (
+              <div style={{ padding: 12, display: "grid", gap: 8 }}>
+                {salesMoneySummary.companies.length === 0 ? (
+                  <div style={{ fontSize: 12, color: "#64748b" }}>No companies selected.</div>
+                ) : salesMoneySummary.companies.map((company) => (
+                  <div key={company.companyId} style={{ border: "1px solid #cbd5e1", background: "#f8fafc", borderRadius: 12, padding: 12, display: "grid", gap: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>{company.companyName}</div>
+                      <div style={{ fontSize: 11, color: "#334155" }}>{company.leadCount} lead{company.leadCount === 1 ? "" : "s"}</div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
+                      <div style={{ fontSize: 12, color: "#334155" }}>Estimated: <strong>{formatMoney(company.estimatedTotal)}</strong></div>
+                      <div style={{ fontSize: 12, color: "#166534" }}>Payments: <strong>{formatMoney(company.paymentsTotal)}</strong> ({formatPercent(company.paymentsPercent)})</div>
+                      <div style={{ fontSize: 12, color: "#92400e" }}>Remaining: <strong>{formatMoney(company.remainingTotal)}</strong> ({formatPercent(company.remainingPercent)})</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
