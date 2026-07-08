@@ -1,4 +1,4 @@
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -65,7 +65,6 @@ function roleLabel(role: string): string {
 
 export default function SalesCalendarPage() {
   const location = useLocation();
-  const navigate = useNavigate();
   const { token, user } = useAuth();
 
   const [viewMonth, setViewMonth] = useState(() => {
