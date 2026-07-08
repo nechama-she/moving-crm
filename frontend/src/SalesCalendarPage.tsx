@@ -64,6 +64,10 @@ function toneForCompanyColor(companyColor?: string, companyName?: string): Compa
   };
 }
 
+function toneForRepName(repName?: string): CompanyTone {
+  return toneForCompanyColor(undefined, repName || "unassigned");
+}
+
 function monthKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
@@ -507,6 +511,7 @@ export default function SalesCalendarPage() {
               const checked = selectedAssigneeKeys.includes(assignee.key);
               const count = monthlyCountByAssignee.get(assignee.key) || 0;
               const role = roleLabel(assignee.role);
+              const repTone = toneForRepName(assignee.name);
               return (
                 <button
                   key={assignee.key}
@@ -518,9 +523,9 @@ export default function SalesCalendarPage() {
                     display: "inline-flex",
                     alignItems: "center",
                     gap: 6,
-                    border: checked ? "1px solid #2563eb" : "1px solid #cbd5e1",
-                    background: checked ? "#dbeafe" : "#fff",
-                    color: checked ? "#1e40af" : "#334155",
+                    border: checked ? `1px solid ${repTone.border}` : "1px solid #cbd5e1",
+                    background: checked ? repTone.tint : "#fff",
+                    color: checked ? repTone.text : "#334155",
                     borderRadius: 999,
                     padding: "5px 10px",
                     fontSize: 12,
@@ -528,8 +533,8 @@ export default function SalesCalendarPage() {
                     cursor: "pointer",
                   }}
                 >
-                  <span style={{ width: 8, height: 8, borderRadius: 999, background: checked ? "#2563eb" : "#94a3b8", display: "inline-block" }} />
-                  {assignee.name}{role ? ` (${role})` : ""} ({count})
+                  <span style={{ width: 8, height: 8, borderRadius: 999, background: checked ? repTone.border : "#94a3b8", display: "inline-block" }} />
+                  <span style={{ color: repTone.text, fontWeight: 700 }}>{assignee.name}</span>{role ? ` (${role})` : ""} ({count})
                 </button>
               );
             })}
@@ -633,30 +638,34 @@ export default function SalesCalendarPage() {
                   </div>
                   {dayJobs.length > 0 ? (
                     <div style={{ display: "grid", gap: 6 }}>
-                      {visibleJobs.map((job, idx) => (
-                        <Link
-                          key={job.id}
-                          to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
-                          state={backState}
-                          style={{
-                            display: "block",
-                            fontSize: 11,
-                            color: toneForCompanyColor(job.company_color, job.company_name).text,
-                            textDecoration: "none",
-                            background: toneForCompanyColor(job.company_color, job.company_name).tint,
-                            border: `1px solid ${toneForCompanyColor(job.company_color, job.company_name).border}`,
-                            borderRadius: 4,
-                            padding: "4px 5px",
-                            overflow: "hidden",
-                          }}
-                          title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
-                        >
-                          <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
-                          <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#334155" }}>{job.assigned_to_name || "Unassigned"}</div>
-                          <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
-                          <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{`Job ${job.job_order || idx + 1}`}</div>
-                        </Link>
-                      ))}
+                      {visibleJobs.map((job, idx) => {
+                        const companyTone = toneForCompanyColor(job.company_color, job.company_name);
+                        const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
+                        return (
+                          <Link
+                            key={job.id}
+                            to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+                            state={backState}
+                            style={{
+                              display: "block",
+                              fontSize: 11,
+                              color: companyTone.text,
+                              textDecoration: "none",
+                              background: companyTone.tint,
+                              border: `1px solid ${companyTone.border}`,
+                              borderRadius: 4,
+                              padding: "4px 5px",
+                              overflow: "hidden",
+                            }}
+                            title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
+                          >
+                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
+                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: repTone.text, fontWeight: 700 }}>{job.assigned_to_name || "Unassigned"}</div>
+                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
+                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{`Job ${job.job_order || idx + 1}`}</div>
+                          </Link>
+                        );
+                      })}
                       {overflowCount > 0 ? (
                         <div style={{ border: "1px solid #cbd5e1", background: "#f8fafc", borderRadius: 4, color: "#0f172a", fontSize: 11, fontWeight: 700, padding: "4px 6px", textAlign: "left" }}>
                           More +{overflowCount}
