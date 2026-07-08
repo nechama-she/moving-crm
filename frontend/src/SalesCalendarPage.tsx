@@ -503,7 +503,24 @@ export default function SalesCalendarPage() {
     return map;
   }, [filteredJobs, year, month]);
 
-  const panelDayJobs = dayPanelDay == null ? [] : (jobsByDay.get(dayPanelDay) || []);
+  const panelDayJobs = useMemo(() => {
+    const base = dayPanelDay == null ? [] : (jobsByDay.get(dayPanelDay) || []);
+    return [...base].sort((left, right) => {
+      const leftRep = (left.assigned_to_name || "").trim().toLowerCase() || "zzz";
+      const rightRep = (right.assigned_to_name || "").trim().toLowerCase() || "zzz";
+      if (leftRep !== rightRep) return leftRep.localeCompare(rightRep);
+
+      const leftName = (left.full_name || "").toLowerCase();
+      const rightName = (right.full_name || "").toLowerCase();
+      if (leftName !== rightName) return leftName.localeCompare(rightName);
+
+      return String(left.id || "").localeCompare(String(right.id || ""));
+    });
+  }, [dayPanelDay, jobsByDay]);
+  const panelDayTotal = useMemo(
+    () => panelDayJobs.reduce((sum, job) => sum + Number(leadDisplayAmount(job) || 0), 0),
+    [panelDayJobs]
+  );
 
   useEffect(() => {
     setDayPanelDay(null);
@@ -836,7 +853,7 @@ export default function SalesCalendarPage() {
               const visibleJobs = dayJobs.slice(0, 3);
               const overflowCount = Math.max(dayJobs.length - visibleJobs.length, 0);
               return (
-                <div key={day} style={calendarDayCell}>
+                <div key={day} style={{ ...calendarDayCell, cursor: "pointer" }} onClick={() => setDayPanelDay(day)}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b" }}>{day}</div>
                     {dayJobs.length > 0 ? <span style={{ fontSize: 10, color: "#475569", fontWeight: 700 }}>{dayJobs.length}</span> : null}
@@ -862,6 +879,7 @@ export default function SalesCalendarPage() {
                               padding: "4px 5px",
                               overflow: "hidden",
                             }}
+                            onClick={(e) => e.stopPropagation()}
                             title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
                           >
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
@@ -892,7 +910,10 @@ export default function SalesCalendarPage() {
                       {overflowCount > 0 ? (
                         <button
                           type="button"
-                          onClick={() => setDayPanelDay(day)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDayPanelDay(day);
+                          }}
                           style={{ border: "1px solid #cbd5e1", background: "#f8fafc", borderRadius: 4, color: "#0f172a", fontSize: 11, fontWeight: 700, padding: "4px 6px", textAlign: "left", display: "block", width: "100%", cursor: "pointer" }}
                         >
                           More +{overflowCount}
@@ -934,7 +955,7 @@ export default function SalesCalendarPage() {
             <div style={{ padding: 14, borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Day Panel • {`${year}-${String(month + 1).padStart(2, "0")}-${String(dayPanelDay).padStart(2, "0")}`}</div>
-                <div style={{ fontSize: 12, color: "#64748b" }}>{panelDayJobs.length} lead{panelDayJobs.length === 1 ? "" : "s"}</div>
+                <div style={{ fontSize: 12, color: "#64748b" }}>{panelDayJobs.length} lead{panelDayJobs.length === 1 ? "" : "s"} • Total {formatMoney(panelDayTotal)}</div>
               </div>
               <button type="button" onClick={() => setDayPanelDay(null)} style={calendarNavBtn} aria-label="Close day panel">
                 ✕

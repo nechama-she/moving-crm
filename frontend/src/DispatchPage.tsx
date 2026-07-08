@@ -1407,7 +1407,20 @@ function CompanyCalendar({
     bucket.push(job);
     jobsByDay.set(day, bucket);
   }
-  const panelDayJobs = jobPanelDay == null ? [] : (jobsByDay.get(jobPanelDay) || []);
+  const panelDayJobs = useMemo(() => {
+    const base = jobPanelDay == null ? [] : (jobsByDay.get(jobPanelDay) || []);
+    return [...base].sort((left, right) => {
+      const leftCompany = (left.company_name || "").trim().toLowerCase() || "zzz";
+      const rightCompany = (right.company_name || "").trim().toLowerCase() || "zzz";
+      if (leftCompany !== rightCompany) return leftCompany.localeCompare(rightCompany);
+
+      const leftName = (left.full_name || "").toLowerCase();
+      const rightName = (right.full_name || "").toLowerCase();
+      if (leftName !== rightName) return leftName.localeCompare(rightName);
+
+      return String(left.id || "").localeCompare(String(right.id || ""));
+    });
+  }, [jobPanelDay, jobsByDay]);
 
   useEffect(() => {
     if (!selectedJobId) return;
