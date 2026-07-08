@@ -364,8 +364,8 @@ def _audit_created_at_to_local_date(created_at_utc: str, timezone_name: str) -> 
     return created_dt.astimezone(target_tz).date()
 
 
-def _first_booked_date_from_audit_rows(rows: list[dict], timezone_name: str) -> date | None:
-    first_date: date | None = None
+def _last_booked_date_from_audit_rows(rows: list[dict], timezone_name: str) -> date | None:
+    last_date: date | None = None
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -376,9 +376,9 @@ def _first_booked_date_from_audit_rows(rows: list[dict], timezone_name: str) -> 
         parsed = _audit_created_at_to_local_date(created_raw, timezone_name)
         if not parsed:
             continue
-        if first_date is None or parsed < first_date:
-            first_date = parsed
-    return first_date
+        if last_date is None or parsed > last_date:
+            last_date = parsed
+    return last_date
 
 
 def _is_admin_unavailable_now(admin_user_id: str, db: Session, now: datetime | None = None) -> bool:
@@ -2372,8 +2372,8 @@ def refresh_lead_from_smartmoving(
     company = db.query(Company).filter(Company.id == lead.company_id).first()
     company_timezone = (company.timezone if company else "") or "America/New_York"
 
-    first_booked_date = _first_booked_date_from_audit_rows(audit_rows, company_timezone)
-    booked_iso = first_booked_date.isoformat() if first_booked_date is not None else ""
+    last_booked_date = _last_booked_date_from_audit_rows(audit_rows, company_timezone)
+    booked_iso = last_booked_date.isoformat() if last_booked_date is not None else ""
     payload["booked_move_date"] = booked_iso
     for job in payload.get("jobs") or []:
         if isinstance(job, dict):
