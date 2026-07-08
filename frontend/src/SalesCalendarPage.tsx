@@ -861,7 +861,6 @@ export default function SalesCalendarPage() {
                   {dayJobs.length > 0 ? (
                     <div style={{ display: "grid", gap: 6 }}>
                       {visibleJobs.map((job) => {
-                        const companyTone = toneForCompanyColor(job.company_color, job.company_name);
                         const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
                         return (
                           <Link
@@ -871,10 +870,10 @@ export default function SalesCalendarPage() {
                             style={{
                               display: "block",
                               fontSize: 11,
-                              color: companyTone.text,
+                              color: repTone.text,
                               textDecoration: "none",
-                              background: companyTone.tint,
-                              border: `1px solid ${companyTone.border}`,
+                              background: repTone.tint,
+                              border: `1px solid ${repTone.border}`,
                               borderRadius: 4,
                               padding: "4px 5px",
                               overflow: "hidden",
@@ -890,13 +889,13 @@ export default function SalesCalendarPage() {
                                 {job.assigned_to_name || "Unassigned"}
                               </span>
                             </div>
-                            <div style={{ fontSize: 12, color: companyTone.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <div style={{ fontSize: 12, color: repTone.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {job.company_name || "Unknown company"}
                             </div>
                             <div style={{ fontSize: 12, color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}
                             </div>
-                            <div style={{ fontSize: 11, color: companyTone.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <div style={{ fontSize: 11, color: repTone.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {job.status || "booked"}
                             </div>
                             {leadDisplayAmount(job) != null ? (
@@ -963,7 +962,6 @@ export default function SalesCalendarPage() {
             </div>
             <div style={{ padding: 12, overflowY: "auto", display: "grid", gap: 10 }}>
               {panelDayJobs.map((job) => {
-                const companyTone = toneForCompanyColor(job.company_color, job.company_name);
                 const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
                 return (
                   <Link
@@ -975,9 +973,9 @@ export default function SalesCalendarPage() {
                       display: "grid",
                       gap: 3,
                       textDecoration: "none",
-                      color: companyTone.text,
-                      border: `1px solid ${companyTone.border}`,
-                      background: companyTone.tint,
+                      color: repTone.text,
+                      border: `1px solid ${repTone.border}`,
+                      background: repTone.tint,
                       borderRadius: 8,
                       padding: 10,
                     }}
@@ -987,9 +985,9 @@ export default function SalesCalendarPage() {
                       <strong style={{ fontSize: 13, color: "#0f172a" }}>{job.full_name || "Unnamed"}</strong>
                       <span style={{ fontSize: 11, color: repTone.text, fontWeight: 700 }}>{job.assigned_to_name || "Unassigned"}</span>
                     </div>
-                    <div style={{ fontSize: 12, color: companyTone.text, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
+                    <div style={{ fontSize: 12, color: repTone.text, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
                     <div style={{ fontSize: 12, color: "#334155" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
-                    <div style={{ fontSize: 11, color: companyTone.text, fontWeight: 600 }}>{job.status || "booked"}</div>
+                    <div style={{ fontSize: 11, color: repTone.text, fontWeight: 600 }}>{job.status || "booked"}</div>
                     {leadDisplayAmount(job) != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>{formatMoney(leadDisplayAmount(job) || 0)}</div> : null}
                   </Link>
                 );
