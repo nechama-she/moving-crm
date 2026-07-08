@@ -116,6 +116,28 @@ def get_opportunity(opportunity_id: str) -> dict:
         return {"error": str(e)}
 
 
+def get_opportunity_audit_activity(opportunity_id: str) -> dict:
+    """Fetch audit activity rows for an opportunity.
+
+    Returns {"data": [...]} or {"error": ...}.
+    """
+    url = f"{SMARTMOVING_BASE_URL}/opportunities/{opportunity_id}/audit-activity"
+    try:
+        resp = _request(httpx.get, url, headers=_headers(), timeout=15)
+        resp.raise_for_status()
+        payload = resp.json()
+        if not isinstance(payload, list):
+            return {"error": f"Unexpected audit payload type: {type(payload).__name__}"}
+        return {"data": payload}
+    except httpx.HTTPError as e:
+        r = getattr(e, "response", None)
+        status = getattr(r, "status_code", None) if r is not None else None
+        body = getattr(r, "text", str(e)) if r is not None else str(e)
+        return {"error": f"HTTP {status}: {body[:300]}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def get_followup(opportunity_id: str, followup_id: str) -> dict:
     """Fetch one followup from SmartMoving.
 

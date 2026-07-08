@@ -4,6 +4,7 @@ import os
 import re
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, date, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import boto3
 
@@ -20,7 +21,7 @@ from company_colors import resolve_company_color
 from config import get_config
 from database import get_db
 from libs.common.phone import normalize_digits
-from libs.smartmoving.client import get_opportunity, update_opportunity_salesperson
+from libs.smartmoving.client import get_opportunity, get_opportunity_audit_activity, update_opportunity_salesperson
 from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task
 from routes.templates import get_company_template
 
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/api", tags=["Leads"])
 
 # Statuses that dispatch can see (booked and beyond)
 DISPATCH_STATUSES = {"booked", "scheduled", "completed"}
+BOOKED_STATUS_CHANGED_RE = re.compile(r"\bstatus\s+changed\s+to\s+booked\b", re.IGNORECASE)
 
 # Terminal statuses that should never receive automated messages.
 NO_MESSAGE_STATUSES = {"booked", "scheduled", "completed", "lost", "cancelled"}
@@ -332,6 +334,51 @@ def _build_smartmoving_refresh_payload(opportunity: dict, user: User) -> dict:
     payload["payments"] = _map_smartmoving_payments(opportunity.get("payments") or [])
     payload["jobs"] = _build_smartmoving_jobs_payload(opportunity)
     return payload
+
+
+def _audit_created_at_to_local_date(created_at_utc: str, timezone_name: str) -> date | None:
+    text = (created_at_utc or "").strip()
+    if not text:
+        return None
+
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+
+    try:
+        created_dt = datetime.fromisoformat(text)
+    except Exception:
+        try:
+            created_dt = date_parser.parse(text)
+        except Exception:
+            return None
+
+    if created_dt.tzinfo is None:
+        created_dt = created_dt.replace(tzinfo=timezone.utc)
+
+    tz_name = (timezone_name or "").strip() or "America/New_York"
+    try:
+        target_tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        target_tz = ZoneInfo("America/New_York")
+
+    return created_dt.astimezone(target_tz).date()
+
+
+def _first_booked_date_from_audit_rows(rows: list[dict], timezone_name: str) -> date | None:
+    first_date: date | None = None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        description = str(row.get("description") or "")
+        if not BOOKED_STATUS_CHANGED_RE.search(description):
+            continue
+        created_raw = str(row.get("createdAtUtc") or "")
+        parsed = _audit_created_at_to_local_date(created_raw, timezone_name)
+        if not parsed:
+            continue
+        if first_date is None or parsed < first_date:
+            first_date = parsed
+    return first_date
 
 
 def _is_admin_unavailable_now(admin_user_id: str, db: Session, now: datetime | None = None) -> bool:
@@ -1927,6 +1974,7 @@ class LeadUpdate(BaseModel):
     volume: float | None = None
     weight: float | None = None
     move_date: str | None = None
+    booked_move_date: str | None = None
     move_type: str | None = None
     referral_source: str | None = None
     jobs: list[LeadUpdateJob] | None = None
@@ -2045,7 +2093,17 @@ def update_lead(
         lead.weight = weight_value
     if body.move_date is not None:
         lead.move_date = _normalize_move_date(body.move_date)
-        lead.booked_move_date = _parse_booked_move_date(lead.move_date)
+        if body.booked_move_date is None:
+            lead.booked_move_date = _parse_booked_move_date(lead.move_date)
+    if body.booked_move_date is not None:
+        booked_raw = (body.booked_move_date or "").strip()
+        if not booked_raw:
+            lead.booked_move_date = None
+        else:
+            parsed_booked = _parse_booked_move_date(booked_raw)
+            if not parsed_booked:
+                raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
+            lead.booked_move_date = parsed_booked
     if body.move_type is not None:
         lead.move_type = body.move_type.strip()
     if body.referral_source is not None:
@@ -2304,6 +2362,23 @@ def refresh_lead_from_smartmoving(
         raise HTTPException(status_code=502, detail="SmartMoving refresh returned an invalid payload")
 
     payload = _build_smartmoving_refresh_payload(opportunity, user)
+
+    audit_result = get_opportunity_audit_activity(smartmoving_id)
+    if audit_result.get("error"):
+        raise HTTPException(status_code=502, detail=f"SmartMoving audit failed: {audit_result['error']}")
+    audit_rows = audit_result.get("data")
+    if not isinstance(audit_rows, list):
+        raise HTTPException(status_code=502, detail="SmartMoving audit returned an invalid payload")
+    company = db.query(Company).filter(Company.id == lead.company_id).first()
+    company_timezone = (company.timezone if company else "") or "America/New_York"
+
+    first_booked_date = _first_booked_date_from_audit_rows(audit_rows, company_timezone)
+    booked_iso = first_booked_date.isoformat() if first_booked_date is not None else ""
+    payload["booked_move_date"] = booked_iso
+    for job in payload.get("jobs") or []:
+        if isinstance(job, dict):
+            job["booked_move_date"] = booked_iso
+
     body = LeadUpdate.model_validate(payload)
     return update_lead(lead.id, body, user, db)
 
