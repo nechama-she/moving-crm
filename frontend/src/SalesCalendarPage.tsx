@@ -360,6 +360,14 @@ export default function SalesCalendarPage() {
     return jobs.filter((job) => selected.has(assigneeKey(job)));
   }, [jobs, selectedAssigneeKeys]);
 
+  const totalLeadCount = useMemo(() => {
+    return new Set(jobs.map((job) => String(job.lead_id || "")).filter(Boolean)).size;
+  }, [jobs]);
+
+  const filteredLeadCount = useMemo(() => {
+    return new Set(filteredJobs.map((job) => String(job.lead_id || "")).filter(Boolean)).size;
+  }, [filteredJobs]);
+
   const salesMoneySummary = useMemo(() => {
     const uniqueLeads = new Map<string, SalesCalendarJob>();
     const companyBuckets = new Map<string, {
@@ -484,9 +492,9 @@ export default function SalesCalendarPage() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <div style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Assignees</div>
             <div style={{ fontSize: 12, color: "#334155", fontWeight: 600 }}>
-              Total jobs this month: {jobs.length}
+              Total leads this month: {totalLeadCount} ({jobs.length} jobs)
               {selectedAssigneeKeys.length > 0 && selectedAssigneeKeys.length !== assigneeOptions.length
-                ? ` • Showing ${filteredJobs.length}`
+                ? ` • Showing ${filteredLeadCount} leads (${filteredJobs.length} jobs)`
                 : ""}
             </div>
           </div>

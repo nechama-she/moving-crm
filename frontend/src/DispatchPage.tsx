@@ -342,6 +342,14 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     return counts;
   }, [calendarJobs]);
 
+  const totalLeadCount = useMemo(() => {
+    return new Set(calendarJobs.map((job) => String(job.lead_id || "")).filter(Boolean)).size;
+  }, [calendarJobs]);
+
+  const filteredLeadCount = useMemo(() => {
+    return new Set(filteredCalendarJobs.map((job) => String(job.lead_id || "")).filter(Boolean)).size;
+  }, [filteredCalendarJobs]);
+
   const calendarMoneySummary = useMemo(() => {
     const uniqueLeads = new Map<string, LeadJob>();
     const companyBuckets = new Map<string, {
@@ -933,9 +941,9 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Companies</div>
               <div style={{ fontSize: 12, color: "#334155", fontWeight: 600 }}>
-                Total jobs this month: {calendarJobs.length}
+                Total leads this month: {totalLeadCount} ({calendarJobs.length} jobs)
                 {selectedDispatchCompanyIds.length > 0 && selectedDispatchCompanyIds.length !== dispatchCompanies.length
-                  ? ` • Showing ${filteredCalendarJobs.length}`
+                  ? ` • Showing ${filteredLeadCount} leads (${filteredCalendarJobs.length} jobs)`
                   : ""}
               </div>
             </div>
