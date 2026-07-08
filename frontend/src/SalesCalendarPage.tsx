@@ -695,11 +695,11 @@ export default function SalesCalendarPage() {
                             }}
                             title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
                           >
-                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
-                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: repTone.text, fontWeight: 700 }}>{job.assigned_to_name || "Unassigned"}</div>
-                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
-                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e", fontSize: 11, fontWeight: 700 }}>
-                              {job.price != null ? formatMoney(job.price) : "No price"}
+                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 700, color: companyTone.text }}>
+                              {job.company_name || "Unknown company"} • Move {job.move_date || "-"} • Booked {job.booked_move_date || "-"}
+                            </div>
+                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: repTone.text, fontWeight: 600 }}>
+                              {job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}
                             </div>
                           </Link>
                         );
