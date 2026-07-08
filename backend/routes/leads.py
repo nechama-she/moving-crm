@@ -754,6 +754,7 @@ def get_sales_calendar(
         .join(Company, Company.id == LeadJob.company_id)
         .outerjoin(User, User.id == Lead.assigned_to)
         .filter(LeadJob.company_id.in_(allowed_company_ids))
+        .filter(LeadJob.job_order == 1)
         .filter(Lead.status.in_(DISPATCH_STATUSES))
     )
 

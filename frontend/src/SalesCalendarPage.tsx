@@ -482,7 +482,7 @@ export default function SalesCalendarPage() {
     <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Sales Calendar</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
-        Jobs grouped by booked move date and assignee for the selected month.
+        Leads grouped by the first booked move date and assignee for the selected month.
       </p>
 
       {error ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{error}</p> : null}
@@ -492,9 +492,9 @@ export default function SalesCalendarPage() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <div style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Assignees</div>
             <div style={{ fontSize: 12, color: "#334155", fontWeight: 600 }}>
-              Total leads this month: {totalLeadCount} ({jobs.length} jobs)
+              Total leads this month: {totalLeadCount}
               {selectedAssigneeKeys.length > 0 && selectedAssigneeKeys.length !== assigneeOptions.length
-                ? ` • Showing ${filteredLeadCount} leads (${filteredJobs.length} jobs)`
+                ? ` • Showing ${filteredLeadCount} leads`
                 : ""}
             </div>
           </div>
@@ -528,7 +528,7 @@ export default function SalesCalendarPage() {
               }}
             >
               <span style={{ width: 8, height: 8, borderRadius: 999, background: "#0f766e", display: "inline-block" }} />
-              All ({jobs.length})
+              All ({totalLeadCount})
             </button>
 
             {assigneeOptions.map((assignee) => {
@@ -636,7 +636,7 @@ export default function SalesCalendarPage() {
         <div style={{ padding: "10px 14px", borderBottom: "1px solid #dddbda", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div>
             <h2 style={{ margin: 0, fontSize: 15, color: "#032d60" }}>Sales Jobs</h2>
-            <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>Filtered by booked move date</p>
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>Filtered by first booked move date</p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button type="button" onClick={() => setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))} style={calendarNavBtn}>◀</button>
@@ -674,7 +674,7 @@ export default function SalesCalendarPage() {
                   </div>
                   {dayJobs.length > 0 ? (
                     <div style={{ display: "grid", gap: 6 }}>
-                      {visibleJobs.map((job, idx) => {
+                      {visibleJobs.map((job) => {
                         const companyTone = toneForCompanyColor(job.company_color, job.company_name);
                         const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
                         return (
@@ -698,7 +698,9 @@ export default function SalesCalendarPage() {
                             <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
                             <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: repTone.text, fontWeight: 700 }}>{job.assigned_to_name || "Unassigned"}</div>
                             <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
-                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{`Job ${job.job_order || idx + 1}`}</div>
+                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e", fontSize: 11, fontWeight: 700 }}>
+                              {job.price != null ? formatMoney(job.price) : "No price"}
+                            </div>
                           </Link>
                         );
                       })}
