@@ -331,16 +331,7 @@ export default function SalesCalendarPage() {
       return;
     }
 
-    if (!isAdmin && user?.id) {
-      setSelectedAssigneeKeys([user.id]);
-      return;
-    }
-
-    setSelectedAssigneeKeys((prev) => {
-      const valid = prev.filter((key) => assigneeOptions.some((opt) => opt.key === key));
-      if (valid.length > 0) return valid;
-      return assigneeOptions.map((opt) => opt.key);
-    });
+    setSelectedAssigneeKeys(assigneeOptions.map((opt) => opt.key));
   }, [assigneeOptions, isAdmin, user?.id]);
 
   useEffect(() => {
