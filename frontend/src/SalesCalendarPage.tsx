@@ -521,6 +521,10 @@ export default function SalesCalendarPage() {
     () => panelDayJobs.reduce((sum, job) => sum + Number(leadDisplayAmount(job) || 0), 0),
     [panelDayJobs]
   );
+  const panelDayPayments = useMemo(
+    () => panelDayJobs.reduce((sum, job) => sum + (job.payments || []).reduce((pSum, payment) => pSum + Number(payment.amount || 0), 0), 0),
+    [panelDayJobs]
+  );
 
   function shiftSalesDayPanel(deltaDays: number) {
     if (dayPanelDay == null) return;
@@ -961,7 +965,7 @@ export default function SalesCalendarPage() {
                 </button>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Day Panel • {`${year}-${String(month + 1).padStart(2, "0")}-${String(dayPanelDay).padStart(2, "0")}`}</div>
-                  <div style={{ fontSize: 12, color: "#64748b" }}>{panelDayJobs.length} lead{panelDayJobs.length === 1 ? "" : "s"} • Total {formatMoney(panelDayTotal)}</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>{panelDayJobs.length} lead{panelDayJobs.length === 1 ? "" : "s"} • Total {formatMoney(panelDayTotal)} • Payments {formatMoney(panelDayPayments)}</div>
                 </div>
                 <button type="button" onClick={() => shiftSalesDayPanel(1)} style={calendarNavBtn} aria-label="Next day">
                   ▶
