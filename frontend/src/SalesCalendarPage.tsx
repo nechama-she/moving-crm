@@ -234,6 +234,19 @@ function exactPercentText(value: number): string {
   return `${value.toFixed(6)}%`;
 }
 
+function leadRepCommissionStatus(job: SalesCalendarJob): { label: string; background: string; border: string; text: string } {
+  const payments = job.payments || [];
+  if (payments.length === 0) {
+    return { label: "Unpaid", background: "#fff1f2", border: "#fecdd3", text: "#be123c" };
+  }
+
+  const allPaid = payments.every((payment) => payment.repPaid);
+  if (allPaid) {
+    return { label: "Paid", background: "#f0fdf4", border: "#bbf7d0", text: "#15803d" };
+  }
+  return { label: "Unpaid", background: "#fff1f2", border: "#fecdd3", text: "#be123c" };
+}
+
 function parseEstimatedTotal(raw: unknown): EstimatedTotal | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
@@ -872,6 +885,7 @@ export default function SalesCalendarPage() {
                     <div style={{ display: "grid", gap: 6 }}>
                       {visibleJobs.map((job) => {
                         const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
+                        const commissionStatus = leadRepCommissionStatus(job);
                         return (
                           <Link
                             key={job.id}
@@ -908,11 +922,16 @@ export default function SalesCalendarPage() {
                             <div style={{ fontSize: 11, color: repTone.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {job.status || "booked"}
                             </div>
-                            {leadDisplayAmount(job) != null ? (
-                              <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {formatMoney(leadDisplayAmount(job) || 0)}
-                              </div>
-                            ) : null}
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                              {leadDisplayAmount(job) != null ? (
+                                <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {formatMoney(leadDisplayAmount(job) || 0)}
+                                </div>
+                              ) : <span />}
+                              <span style={{ fontSize: 10, fontWeight: 700, color: commissionStatus.text, background: commissionStatus.background, border: `1px solid ${commissionStatus.border}`, borderRadius: 999, padding: "1px 6px", whiteSpace: "nowrap" }}>
+                                {commissionStatus.label}
+                              </span>
+                            </div>
                           </Link>
                         );
                       })}
@@ -981,6 +1000,7 @@ export default function SalesCalendarPage() {
             <div style={{ padding: 12, overflowY: "auto", display: "grid", gap: 10 }}>
               {panelDayJobs.map((job) => {
                 const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
+                const commissionStatus = leadRepCommissionStatus(job);
                 return (
                   <Link
                     key={job.id}
@@ -1006,7 +1026,12 @@ export default function SalesCalendarPage() {
                     <div style={{ fontSize: 12, color: repTone.text, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
                     <div style={{ fontSize: 12, color: "#334155" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
                     <div style={{ fontSize: 11, color: repTone.text, fontWeight: 600 }}>{job.status || "booked"}</div>
-                    {leadDisplayAmount(job) != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>{formatMoney(leadDisplayAmount(job) || 0)}</div> : null}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                      {leadDisplayAmount(job) != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>{formatMoney(leadDisplayAmount(job) || 0)}</div> : <span />}
+                      <span style={{ fontSize: 10, fontWeight: 700, color: commissionStatus.text, background: commissionStatus.background, border: `1px solid ${commissionStatus.border}`, borderRadius: 999, padding: "1px 6px", whiteSpace: "nowrap" }}>
+                        {commissionStatus.label}
+                      </span>
+                    </div>
                   </Link>
                 );
               })}
