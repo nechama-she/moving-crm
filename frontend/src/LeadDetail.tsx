@@ -731,6 +731,14 @@ export default function LeadDetail() {
     return `$${value.toFixed(2)}`;
   }
 
+  function repPaidCommissionAmount(paymentAmount: number): number {
+    return paymentAmount * (1 - 0.035) / 3;
+  }
+
+  function repPaidCommissionRatePercent(): number {
+    return ((1 - 0.035) / 3) * 100;
+  }
+
   function renderRow(key: string) {
     const val = lead![key];
     if (val == null || val === "") return null;
@@ -1680,7 +1688,7 @@ export default function LeadDetail() {
                       <strong>{formatMoney(payment.amount)}</strong>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 11 }}>
-                      <span style={{ color: "#475569" }}>Rep 30%: <strong>{formatMoney(payment.amount * 0.3)}</strong></span>
+                      <span style={{ color: "#475569" }}>Rep paid ({repPaidCommissionRatePercent()}%): <strong>{formatMoney(repPaidCommissionAmount(payment.amount))}</strong></span>
                       {canManageRepPayments ? (
                         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, color: payment.repPaid ? "#15803d" : "#92400e", fontWeight: 700 }}>
                           <input
