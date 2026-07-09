@@ -231,7 +231,7 @@ function repPaidCommissionRatePercent(): number {
 }
 
 function exactPercentText(value: number): string {
-  return `${value}%`;
+  return `${value.toFixed(6)}%`;
 }
 
 function parseEstimatedTotal(raw: unknown): EstimatedTotal | null {
