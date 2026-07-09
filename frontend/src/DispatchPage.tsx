@@ -1153,7 +1153,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
           ) : null}
         </div>
 
-        {!calendarLoading && selectedDispatchCompanyIds.length > 0 ? (
+        {selectedDispatchCompanyIds.length > 0 ? (
           <CompanyCalendar
             companyName={selectedDispatchCompanyIds.length === dispatchCompanies.length
               ? "All Companies"
