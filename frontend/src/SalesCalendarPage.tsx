@@ -235,6 +235,10 @@ function exactPercentText(value: number): string {
 }
 
 function leadRepCommissionStatus(job: SalesCalendarJob): { label: string; background: string; border: string; text: string } {
+  if ((job.assigned_to_role || "") !== "sales_rep") {
+    return { label: "N/A", background: "#f8fafc", border: "#cbd5e1", text: "#64748b" };
+  }
+
   const payments = job.payments || [];
   if (payments.length === 0) {
     return { label: "Unpaid", background: "#fff1f2", border: "#fecdd3", text: "#be123c" };
@@ -454,22 +458,25 @@ export default function SalesCalendarPage() {
       let estimatedTotal = 0;
       let paymentsTotal = 0;
       let repCommissionPaid = 0;
+      let repCommissionTotal = 0;
       let leadCount = 0;
       for (const job of items) {
         leadCount += 1;
         estimatedTotal += Number(job.estimatedTotal?.finalTotal || 0);
-        for (const payment of job.payments || []) {
-          const paymentAmount = Number(payment.amount || 0);
-          paymentsTotal += paymentAmount;
-          if (payment.repPaid) {
-            repCommissionPaid += repPaidCommissionAmount(paymentAmount);
+        if ((job.assigned_to_role || "") === "sales_rep") {
+          for (const payment of job.payments || []) {
+            const paymentAmount = Number(payment.amount || 0);
+            paymentsTotal += paymentAmount;
+            repCommissionTotal += repPaidCommissionAmount(paymentAmount);
+            if (payment.repPaid) {
+              repCommissionPaid += repPaidCommissionAmount(paymentAmount);
+            }
           }
         }
       }
       const remainingTotal = estimatedTotal - paymentsTotal;
       const paymentsPercent = estimatedTotal > 0 ? (paymentsTotal / estimatedTotal) * 100 : 0;
       const remainingPercent = estimatedTotal > 0 ? (remainingTotal / estimatedTotal) * 100 : 0;
-      const repCommissionTotal = repPaidCommissionAmount(paymentsTotal);
       const repCommissionRemaining = Math.max(0, repCommissionTotal - repCommissionPaid);
       return {
         estimatedTotal,
