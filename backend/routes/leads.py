@@ -775,7 +775,7 @@ def get_sales_calendar(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if user.role not in ("admin", "sales_rep"):
+    if user.role not in ("admin", "sales_rep", "dispatch"):
         raise HTTPException(status_code=403, detail="Sales calendar access required")
 
     if not move_month:
@@ -805,7 +805,7 @@ def get_sales_calendar(
         .filter(Lead.status.in_(DISPATCH_STATUSES))
     )
 
-    if user.role == "sales_rep":
+    if user.role in ("sales_rep", "dispatch"):
         rows = rows.filter(Lead.assigned_to == user.id)
     elif assigned_to:
         assigned_filter = assigned_to.strip()

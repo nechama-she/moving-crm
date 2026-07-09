@@ -34,6 +34,7 @@ function ProtectedRoutes() {
   const isDispatchUser = user?.role === "dispatch";
   const isDispatchAllowedPath =
     location.pathname === "/dispatch" ||
+    location.pathname === "/sales-calendar" ||
     location.pathname === "/change-password" ||
     /^\/leads\/[^/]+$/.test(location.pathname);
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
@@ -60,7 +61,10 @@ function ProtectedRoutes() {
         </span>
         <div style={{ display: "flex", flex: 1 }}>
           {isDispatchUser ? (
-            <NavLink to="/dispatch" style={navLinkStyle}>Dispatcher Calender</NavLink>
+            <>
+              <NavLink to="/dispatch" style={navLinkStyle}>Dispatcher Calender</NavLink>
+              <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
+            </>
           ) : (
             <>
               <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
