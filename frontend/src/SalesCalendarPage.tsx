@@ -74,6 +74,14 @@ type CompanyTone = {
   text: string;
 };
 
+type CommissionSettingsResponse = {
+  default_percent?: number;
+  items?: Array<{
+    user_id: string;
+    percent?: number | null;
+    effective_percent?: number;
+  }>;
+};
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const UNASSIGNED_KEY = "__unassigned__";
 const DEFAULT_COMPANY_TONE: CompanyTone = Object.freeze({ tint: "#e0f2fe", border: "#7dd3fc", text: "#0c4a6e" });
@@ -228,20 +236,12 @@ function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
-function repPaidCommissionAmount(paymentAmount: number): number {
-  return paymentAmount * (1 - 0.035) / 3;
-}
-
-function repPaidCommissionRatePercent(): number {
-  return ((1 - 0.035) / 3) * 100;
+function repPaidCommissionAmount(paymentAmount: number, commissionPercent: number): number {
+  return paymentAmount * (commissionPercent / 100);
 }
 
 function processingFeeAmount(paymentsTotal: number): number {
   return paymentsTotal * 0.035;
-}
-
-function exactPercentText(value: number): string {
-  return `${value.toFixed(6)}%`;
 }
 
 function leadRepCommissionStatus(job: SalesCalendarJob): { label: string; background: string; border: string; text: string } | null {
@@ -315,6 +315,8 @@ export default function SalesCalendarPage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [defaultCommissionPercent, setDefaultCommissionPercent] = useState<number>(((1 - 0.035) / 3) * 100);
+  const [commissionPercentByUserId, setCommissionPercentByUserId] = useState<Map<string, number>>(new Map());
   const searchRef = useRef<HTMLDivElement | null>(null);
   const previousCompanyOptionIdsRef = useRef<string[]>([]);
 
@@ -365,6 +367,38 @@ export default function SalesCalendarPage() {
 
   useEffect(() => {
     let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/users/sales-rep-commission-settings`, { headers: authHeaders(token) });
+        if (!res.ok) return;
+        const payload = (await res.json()) as CommissionSettingsResponse;
+        const fallbackDefault = typeof payload.default_percent === "number"
+          ? payload.default_percent
+          : ((1 - 0.035) / 3) * 100;
+        const nextMap = new Map<string, number>();
+        for (const item of payload.items || []) {
+          if (!item || !item.user_id) continue;
+          const effective = typeof item.effective_percent === "number" ? item.effective_percent : fallbackDefault;
+          nextMap.set(item.user_id, effective);
+        }
+        if (!cancelled) {
+          setDefaultCommissionPercent(fallbackDefault);
+          setCommissionPercentByUserId(nextMap);
+        }
+      } catch {
+        if (!cancelled) {
+          setDefaultCommissionPercent(((1 - 0.035) / 3) * 100);
+          setCommissionPercentByUserId(new Map());
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError("");
 
@@ -411,6 +445,13 @@ export default function SalesCalendarPage() {
     };
   }, [token, viewMonth]);
 
+  function commissionPercentForJob(job: SalesCalendarJob): number {
+    if ((job.assigned_to_role || "") !== "sales_rep") return 0;
+    const assignedTo = String(job.assigned_to || "").trim();
+    if (!assignedTo) return defaultCommissionPercent;
+    return commissionPercentByUserId.get(assignedTo) ?? defaultCommissionPercent;
+  }
+
   const monthlyCountByAssignee = useMemo(() => {
     const counts = new Map<string, number>();
     for (const job of jobs) {
@@ -438,7 +479,7 @@ export default function SalesCalendarPage() {
       });
     }
     return Array.from(map.values()).sort((left, right) => left.companyName.localeCompare(right.companyName));
-  }, [repFilteredJobs]);
+  }, [repFilteredJobs, commissionPercentByUserId, defaultCommissionPercent]);
 
   useEffect(() => {
     const allCompanyIds = companyOptions.map((company) => company.companyId);
@@ -471,7 +512,7 @@ export default function SalesCalendarPage() {
 
   const filteredLeadCount = useMemo(() => {
     return new Set(filteredJobs.map((job) => String(job.lead_id || "")).filter(Boolean)).size;
-  }, [filteredJobs]);
+  }, [filteredJobs, commissionPercentByUserId, defaultCommissionPercent]);
 
   const breakdownCompanies = useMemo(() => {
     const companyBuckets = new Map<string, {
@@ -514,11 +555,12 @@ export default function SalesCalendarPage() {
           paymentsTotal += paymentAmount;
         }
         if ((job.assigned_to_role || "") === "sales_rep") {
+          const commissionPercent = commissionPercentForJob(job);
           for (const payment of job.payments || []) {
             const paymentAmount = Number(payment.amount || 0);
-            repCommissionTotal += repPaidCommissionAmount(paymentAmount);
+            repCommissionTotal += repPaidCommissionAmount(paymentAmount, commissionPercent);
             if (payment.repPaid) {
-              repCommissionPaid += repPaidCommissionAmount(paymentAmount);
+              repCommissionPaid += repPaidCommissionAmount(paymentAmount, commissionPercent);
             }
           }
         }
@@ -598,11 +640,12 @@ export default function SalesCalendarPage() {
           paymentsTotal += paymentAmount;
         }
         if ((job.assigned_to_role || "") === "sales_rep") {
+          const commissionPercent = commissionPercentForJob(job);
           for (const payment of job.payments || []) {
             const paymentAmount = Number(payment.amount || 0);
-            repCommissionTotal += repPaidCommissionAmount(paymentAmount);
+            repCommissionTotal += repPaidCommissionAmount(paymentAmount, commissionPercent);
             if (payment.repPaid) {
-              repCommissionPaid += repPaidCommissionAmount(paymentAmount);
+              repCommissionPaid += repPaidCommissionAmount(paymentAmount, commissionPercent);
             }
           }
         }
@@ -932,7 +975,7 @@ export default function SalesCalendarPage() {
               <div style={{ marginTop: 4, fontSize: 12, color: "#92400e" }}>{formatPercent(salesMoneySummary.remainingPercent)}</div>
             </div>
             <div style={{ border: "1px solid #c7d2fe", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #eef2ff 0%, #ffffff 100%)" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#4338ca", textTransform: "uppercase", letterSpacing: "0.05em" }}>Rep Paid ({exactPercentText(repPaidCommissionRatePercent())})</div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#4338ca", textTransform: "uppercase", letterSpacing: "0.05em" }}>Rep Paid (per rep setting)</div>
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.repCommissionPaid)}</div>
               <div style={{ marginTop: 4, fontSize: 12, color: "#4f46e5" }}>of {formatMoney(salesMoneySummary.repCommissionTotal)}</div>
             </div>
@@ -989,7 +1032,7 @@ export default function SalesCalendarPage() {
                         <div style={{ fontSize: 12, color: "#334155" }}>Estimated: <strong>{formatMoney(company.estimatedTotal)}</strong></div>
                         <div style={{ fontSize: 12, color: "#166534" }}>Payments: <strong>{formatMoney(company.paymentsTotal)}</strong> ({formatPercent(company.paymentsPercent)})</div>
                         <div style={{ fontSize: 12, color: "#92400e" }}>Remaining: <strong>{formatMoney(company.remainingTotal)}</strong> ({formatPercent(company.remainingPercent)})</div>
-                        <div style={{ fontSize: 12, color: "#4338ca" }}>Rep Paid ({exactPercentText(repPaidCommissionRatePercent())}): <strong>{formatMoney(company.repCommissionPaid)}</strong> of {formatMoney(company.repCommissionTotal)}</div>
+                        <div style={{ fontSize: 12, color: "#4338ca" }}>Rep Paid (per rep setting): <strong>{formatMoney(company.repCommissionPaid)}</strong> of {formatMoney(company.repCommissionTotal)}</div>
                         <div style={{ fontSize: 12, color: "#be123c" }}>Rep Remaining: <strong>{formatMoney(company.repCommissionRemaining)}</strong></div>
                         {isAdmin ? <div style={{ fontSize: 12, color: "#047857" }}>Company Income: <strong>{formatMoney(company.companyIncome)}</strong></div> : null}
                       </div>

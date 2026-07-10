@@ -19,6 +19,15 @@ type UserOption = {
   name: string;
 };
 
+type CommissionSettingsResponse = {
+  default_percent?: number;
+  items?: Array<{
+    user_id: string;
+    percent?: number | null;
+    effective_percent?: number;
+  }>;
+};
+
 type LeadAttachment = {
   id: string;
   file_name: string;
@@ -136,6 +145,8 @@ export default function LeadDetail() {
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [statusMenuRect, setStatusMenuRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const [deletingLead, setDeletingLead] = useState(false);
+  const [defaultCommissionPercent, setDefaultCommissionPercent] = useState<number>(((1 - 0.035) / 3) * 100);
+  const [commissionPercentByUserId, setCommissionPercentByUserId] = useState<Map<string, number>>(new Map());
   const [leadJobs, setLeadJobs] = useState<LeadJobItem[]>([]);
   const [jobsLoading, setJobsLoading] = useState(true);
   const [jobsError, setJobsError] = useState("");
@@ -174,6 +185,40 @@ export default function LeadDetail() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [leadId, token]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/api/users/sales-rep-commission-settings`, { headers: authHeaders(token) })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data: CommissionSettingsResponse) => {
+        const fallbackDefault = typeof data.default_percent === "number"
+          ? data.default_percent
+          : ((1 - 0.035) / 3) * 100;
+        const nextMap = new Map<string, number>();
+        for (const item of data.items || []) {
+          if (!item || !item.user_id) continue;
+          const effective = typeof item.effective_percent === "number" ? item.effective_percent : fallbackDefault;
+          nextMap.set(item.user_id, effective);
+        }
+        if (!cancelled) {
+          setDefaultCommissionPercent(fallbackDefault);
+          setCommissionPercentByUserId(nextMap);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDefaultCommissionPercent(((1 - 0.035) / 3) * 100);
+          setCommissionPercentByUserId(new Map());
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) })
@@ -732,11 +777,17 @@ export default function LeadDetail() {
   }
 
   function repPaidCommissionAmount(paymentAmount: number): number {
-    return paymentAmount * (1 - 0.035) / 3;
+    const assignedTo = String(lead?.assigned_to || "").trim();
+    const commissionPercent = assignedTo
+      ? (commissionPercentByUserId.get(assignedTo) ?? defaultCommissionPercent)
+      : defaultCommissionPercent;
+    return paymentAmount * (commissionPercent / 100);
   }
 
   function repPaidCommissionRatePercent(): number {
-    return ((1 - 0.035) / 3) * 100;
+    const assignedTo = String(lead?.assigned_to || "").trim();
+    if (!assignedTo) return defaultCommissionPercent;
+    return commissionPercentByUserId.get(assignedTo) ?? defaultCommissionPercent;
   }
 
   function renderRow(key: string) {

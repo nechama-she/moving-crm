@@ -98,10 +98,16 @@ def _read_sales_rep_commission_percent(db: Session, user_id: str) -> Optional[fl
 
 @router.get("/sales-rep-commission-settings")
 def list_sales_rep_commission_settings(
-    admin: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    reps = db.query(User).filter(User.role == "sales_rep").order_by(User.name.asc()).all()
+    if user.role not in ("admin", "dispatch", "sales_rep"):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    reps_query = db.query(User).filter(User.role == "sales_rep")
+    if user.role == "sales_rep":
+        reps_query = reps_query.filter(User.id == user.id)
+    reps = reps_query.order_by(User.name.asc()).all()
     items = []
     for rep in reps:
         configured_percent = _read_sales_rep_commission_percent(db, rep.id)
