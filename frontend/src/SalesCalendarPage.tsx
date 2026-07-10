@@ -236,6 +236,10 @@ function repPaidCommissionRatePercent(): number {
   return ((1 - 0.035) / 3) * 100;
 }
 
+function processingFeeAmount(paymentsTotal: number): number {
+  return paymentsTotal * 0.035;
+}
+
 function exactPercentText(value: number): string {
   return `${value.toFixed(6)}%`;
 }
@@ -523,6 +527,7 @@ export default function SalesCalendarPage() {
       const paymentsPercent = estimatedTotal > 0 ? (paymentsTotal / estimatedTotal) * 100 : 0;
       const remainingPercent = estimatedTotal > 0 ? (remainingTotal / estimatedTotal) * 100 : 0;
       const repCommissionRemaining = Math.max(0, repCommissionTotal - repCommissionPaid);
+      const companyIncome = paymentsTotal - processingFeeAmount(paymentsTotal) - repCommissionTotal;
       return {
         estimatedTotal,
         paymentsTotal,
@@ -532,6 +537,7 @@ export default function SalesCalendarPage() {
         repCommissionTotal,
         repCommissionPaid,
         repCommissionRemaining,
+        companyIncome,
         leadCount,
       };
     }
@@ -605,6 +611,7 @@ export default function SalesCalendarPage() {
       const paymentsPercent = estimatedTotal > 0 ? (paymentsTotal / estimatedTotal) * 100 : 0;
       const remainingPercent = estimatedTotal > 0 ? (remainingTotal / estimatedTotal) * 100 : 0;
       const repCommissionRemaining = Math.max(0, repCommissionTotal - repCommissionPaid);
+      const companyIncome = paymentsTotal - processingFeeAmount(paymentsTotal) - repCommissionTotal;
       return {
         estimatedTotal,
         paymentsTotal,
@@ -614,6 +621,7 @@ export default function SalesCalendarPage() {
         repCommissionTotal,
         repCommissionPaid,
         repCommissionRemaining,
+        companyIncome,
         leadCount,
       };
     }
@@ -933,6 +941,13 @@ export default function SalesCalendarPage() {
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.repCommissionRemaining)}</div>
               <div style={{ marginTop: 4, fontSize: 12, color: "#be123c" }}>unpaid commission</div>
             </div>
+            {isAdmin ? (
+              <div style={{ border: "1px solid #a7f3d0", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #ecfdf5 0%, #ffffff 100%)" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#047857", textTransform: "uppercase", letterSpacing: "0.05em" }}>Company Income</div>
+                <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.companyIncome)}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "#047857" }}>payments - 3.5% - rep commissions</div>
+              </div>
+            ) : null}
           </div>
 
           <div style={{ border: "1px solid #dbe4ef", borderRadius: 14, background: "#fff", overflow: "hidden" }}>
@@ -976,6 +991,7 @@ export default function SalesCalendarPage() {
                         <div style={{ fontSize: 12, color: "#92400e" }}>Remaining: <strong>{formatMoney(company.remainingTotal)}</strong> ({formatPercent(company.remainingPercent)})</div>
                         <div style={{ fontSize: 12, color: "#4338ca" }}>Rep Paid ({exactPercentText(repPaidCommissionRatePercent())}): <strong>{formatMoney(company.repCommissionPaid)}</strong> of {formatMoney(company.repCommissionTotal)}</div>
                         <div style={{ fontSize: 12, color: "#be123c" }}>Rep Remaining: <strong>{formatMoney(company.repCommissionRemaining)}</strong></div>
+                        {isAdmin ? <div style={{ fontSize: 12, color: "#047857" }}>Company Income: <strong>{formatMoney(company.companyIncome)}</strong></div> : null}
                       </div>
                     </label>
                   );
