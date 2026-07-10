@@ -62,6 +62,12 @@ type AssigneeOption = {
   role: string;
 };
 
+type CompanyOption = {
+  companyId: string;
+  companyName: string;
+  companyColor?: string;
+};
+
 type CompanyTone = {
   tint: string;
   border: string;
@@ -297,6 +303,7 @@ export default function SalesCalendarPage() {
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<SalesCalendarJob[]>([]);
   const [selectedAssigneeKeys, setSelectedAssigneeKeys] = useState<string[]>([]);
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
   const [totalsExpanded, setTotalsExpanded] = useState(false);
   const [dayPanelDay, setDayPanelDay] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -305,6 +312,7 @@ export default function SalesCalendarPage() {
   const [searchError, setSearchError] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement | null>(null);
+  const previousCompanyOptionIdsRef = useRef<string[]>([]);
 
   const isAdmin = user?.role === "admin";
 
@@ -408,11 +416,50 @@ export default function SalesCalendarPage() {
     return counts;
   }, [jobs]);
 
-  const filteredJobs = useMemo(() => {
+  const repFilteredJobs = useMemo(() => {
     if (selectedAssigneeKeys.length === 0) return [];
     const selected = new Set(selectedAssigneeKeys);
     return jobs.filter((job) => selected.has(assigneeKey(job)));
   }, [jobs, selectedAssigneeKeys]);
+
+  const companyOptions = useMemo(() => {
+    const map = new Map<string, CompanyOption>();
+    for (const job of repFilteredJobs) {
+      const companyId = String(job.company_id || "");
+      if (!companyId || map.has(companyId)) continue;
+      map.set(companyId, {
+        companyId,
+        companyName: String(job.company_name || "Unknown company"),
+        companyColor: job.company_color,
+      });
+    }
+    return Array.from(map.values()).sort((left, right) => left.companyName.localeCompare(right.companyName));
+  }, [repFilteredJobs]);
+
+  useEffect(() => {
+    const allCompanyIds = companyOptions.map((company) => company.companyId);
+    const previousIds = previousCompanyOptionIdsRef.current;
+    previousCompanyOptionIdsRef.current = allCompanyIds;
+
+    if (!allCompanyIds.length) {
+      setSelectedCompanyIds([]);
+      return;
+    }
+
+    setSelectedCompanyIds((prev) => {
+      const valid = prev.filter((id) => allCompanyIds.includes(id));
+      const previousWasAllSelected = previousIds.length > 0 && prev.length === previousIds.length && previousIds.every((id) => prev.includes(id));
+      if (!prev.length || previousWasAllSelected) return allCompanyIds;
+      if (valid.length > 0) return valid;
+      return allCompanyIds;
+    });
+  }, [companyOptions]);
+
+  const filteredJobs = useMemo(() => {
+    if (selectedCompanyIds.length === 0) return [];
+    const selectedCompanies = new Set(selectedCompanyIds);
+    return repFilteredJobs.filter((job) => selectedCompanies.has(String(job.company_id || "")));
+  }, [repFilteredJobs, selectedCompanyIds]);
 
   const totalLeadCount = useMemo(() => {
     return new Set(jobs.map((job) => String(job.lead_id || "")).filter(Boolean)).size;
@@ -421,6 +468,83 @@ export default function SalesCalendarPage() {
   const filteredLeadCount = useMemo(() => {
     return new Set(filteredJobs.map((job) => String(job.lead_id || "")).filter(Boolean)).size;
   }, [filteredJobs]);
+
+  const breakdownCompanies = useMemo(() => {
+    const companyBuckets = new Map<string, {
+      companyId: string;
+      companyName: string;
+      companyColor?: string;
+      leads: Map<string, SalesCalendarJob>;
+    }>();
+
+    for (const job of repFilteredJobs) {
+      if (!job.lead_id) continue;
+      const companyId = String(job.company_id || "");
+      if (!companyId) continue;
+      let bucket = companyBuckets.get(companyId);
+      if (!bucket) {
+        bucket = {
+          companyId,
+          companyName: String(job.company_name || "Unknown company"),
+          companyColor: job.company_color,
+          leads: new Map<string, SalesCalendarJob>(),
+        };
+        companyBuckets.set(companyId, bucket);
+      }
+      if (!bucket.leads.has(job.lead_id)) {
+        bucket.leads.set(job.lead_id, job);
+      }
+    }
+
+    function summarizeJobs(items: Iterable<SalesCalendarJob>) {
+      let estimatedTotal = 0;
+      let paymentsTotal = 0;
+      let repCommissionPaid = 0;
+      let repCommissionTotal = 0;
+      let leadCount = 0;
+      for (const job of items) {
+        leadCount += 1;
+        estimatedTotal += Number(job.estimatedTotal?.finalTotal || 0);
+        for (const payment of job.payments || []) {
+          const paymentAmount = Number(payment.amount || 0);
+          paymentsTotal += paymentAmount;
+        }
+        if ((job.assigned_to_role || "") === "sales_rep") {
+          for (const payment of job.payments || []) {
+            const paymentAmount = Number(payment.amount || 0);
+            repCommissionTotal += repPaidCommissionAmount(paymentAmount);
+            if (payment.repPaid) {
+              repCommissionPaid += repPaidCommissionAmount(paymentAmount);
+            }
+          }
+        }
+      }
+      const remainingTotal = estimatedTotal - paymentsTotal;
+      const paymentsPercent = estimatedTotal > 0 ? (paymentsTotal / estimatedTotal) * 100 : 0;
+      const remainingPercent = estimatedTotal > 0 ? (remainingTotal / estimatedTotal) * 100 : 0;
+      const repCommissionRemaining = Math.max(0, repCommissionTotal - repCommissionPaid);
+      return {
+        estimatedTotal,
+        paymentsTotal,
+        remainingTotal,
+        paymentsPercent,
+        remainingPercent,
+        repCommissionTotal,
+        repCommissionPaid,
+        repCommissionRemaining,
+        leadCount,
+      };
+    }
+
+    return Array.from(companyBuckets.values())
+      .map((bucket) => ({
+        companyId: bucket.companyId,
+        companyName: bucket.companyName,
+        companyColor: bucket.companyColor,
+        ...summarizeJobs(bucket.leads.values()),
+      }))
+      .sort((left, right) => left.companyName.localeCompare(right.companyName));
+  }, [repFilteredJobs]);
 
   const salesMoneySummary = useMemo(() => {
     const uniqueLeads = new Map<string, SalesCalendarJob>();
@@ -819,20 +943,31 @@ export default function SalesCalendarPage() {
             >
               <div>
                 <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>Company Breakdown</div>
-                <div style={{ fontSize: 11, color: "#64748b" }}>Totals for currently selected assignees</div>
+                <div style={{ fontSize: 11, color: "#64748b" }}>Totals for currently selected assignees. Click rows to filter companies.</div>
               </div>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>{totalsExpanded ? "Hide" : "Show"}</div>
             </button>
             {totalsExpanded ? (
               <div style={{ padding: 12, display: "grid", gap: 8 }}>
-                {salesMoneySummary.companies.length === 0 ? (
+                {breakdownCompanies.length === 0 ? (
                   <div style={{ fontSize: 12, color: "#64748b" }}>No companies selected.</div>
-                ) : salesMoneySummary.companies.map((company) => {
+                ) : breakdownCompanies.map((company) => {
                   const tone = toneForCompanyColor(company.companyColor, company.companyName);
+                  const checked = selectedCompanyIds.includes(company.companyId);
                   return (
-                    <div key={company.companyId} style={{ border: `1px solid ${tone.border}`, background: tone.tint, borderRadius: 12, padding: 12, display: "grid", gap: 6 }}>
+                    <label key={company.companyId} style={{ border: `1px solid ${checked ? tone.border : "#dbe4ef"}`, background: checked ? tone.tint : "#f8fafc", borderRadius: 12, padding: 12, display: "grid", gap: 6, cursor: "pointer", opacity: checked ? 1 : 0.7 }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                        <div style={{ fontSize: 13, fontWeight: 800, color: tone.text }}>{company.companyName}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setSelectedCompanyIds((prev) => checked ? prev.filter((id) => id !== company.companyId) : [...prev, company.companyId]);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <div style={{ fontSize: 13, fontWeight: 800, color: tone.text }}>{company.companyName}</div>
+                        </div>
                         <div style={{ fontSize: 11, color: tone.text }}>{company.leadCount} lead{company.leadCount === 1 ? "" : "s"}</div>
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
@@ -842,7 +977,7 @@ export default function SalesCalendarPage() {
                         <div style={{ fontSize: 12, color: "#4338ca" }}>Rep Paid ({exactPercentText(repPaidCommissionRatePercent())}): <strong>{formatMoney(company.repCommissionPaid)}</strong> of {formatMoney(company.repCommissionTotal)}</div>
                         <div style={{ fontSize: 12, color: "#be123c" }}>Rep Remaining: <strong>{formatMoney(company.repCommissionRemaining)}</strong></div>
                       </div>
-                    </div>
+                    </label>
                   );
                 })}
               </div>
