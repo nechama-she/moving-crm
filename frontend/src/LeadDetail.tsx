@@ -412,6 +412,10 @@ export default function LeadDetail() {
   }, [leadJobs, activeJobTabId, routeJobId]);
 
   async function saveJob(jobId: string) {
+    if (user?.role === "dispatch") {
+      setJobsError("Dispatch users are read-only");
+      return;
+    }
     const draft = jobDrafts[jobId];
     if (!draft) return;
     setSavingJobId(jobId);
@@ -440,6 +444,10 @@ export default function LeadDetail() {
   }
 
   async function addJob() {
+    if (user?.role === "dispatch") {
+      setJobsError("Dispatch users are read-only");
+      return;
+    }
     setAddingJob(true);
     setJobsError("");
     try {
@@ -475,6 +483,10 @@ export default function LeadDetail() {
   }
 
   async function deleteJob(jobId: string) {
+    if (user?.role === "dispatch") {
+      setJobsError("Dispatch users are read-only");
+      return;
+    }
     setDeletingJobId(jobId);
     setJobsError("");
     try {
@@ -492,6 +504,10 @@ export default function LeadDetail() {
   }
 
   async function uploadAttachments(files: File[]) {
+    if (user?.role === "dispatch") {
+      setAttachmentsError("Dispatch users are read-only");
+      return;
+    }
     if (files.length === 0) return;
     if (!activeJobTabId || activeJobTabId === "__new__") {
       setAttachmentsError("Please select a job tab before uploading files.");
@@ -544,6 +560,10 @@ export default function LeadDetail() {
   }
 
   async function deleteAttachment(attachmentId: string) {
+    if (user?.role === "dispatch") {
+      setAttachmentsError("Dispatch users are read-only");
+      return;
+    }
     setAttachmentsError("");
     try {
       const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${activeJobTabId}/attachments/${attachmentId}`, {
@@ -558,6 +578,10 @@ export default function LeadDetail() {
   }
 
   async function renameAttachment(attachmentId: string, fileName: string) {
+    if (user?.role === "dispatch") {
+      setAttachmentsError("Dispatch users are read-only");
+      return;
+    }
     const nextName = fileName.trim();
     if (!nextName) return;
     setAttachmentsError("");
@@ -701,6 +725,7 @@ export default function LeadDetail() {
   if (!lead) return <p style={{ padding: 24 }}>Lead not found.</p>;
   const canEditCompany = user?.role === "admin";
   const isDispatchUser = user?.role === "dispatch";
+  const canEditJobs = !isDispatchUser;
 
   // Extract user_id from inbox_url for chat lookup
   const inboxUrl = lead.inbox_url ? String(lead.inbox_url) : "";
@@ -1060,27 +1085,31 @@ export default function LeadDetail() {
                         >
                           Download
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setRenamingId(attachment.id);
-                            setRenameValue(attachment.file_name);
-                          }}
-                          style={{ border: "1px solid #dddbda", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
-                        >
-                          Rename
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (window.confirm("Delete this file?")) {
-                              void deleteAttachment(attachment.id);
-                            }
-                          }}
-                          style={{ border: "1px solid #dddbda", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
-                        >
-                          Delete
-                        </button>
+                        {canEditJobs ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRenamingId(attachment.id);
+                                setRenameValue(attachment.file_name);
+                              }}
+                              style={{ border: "1px solid #dddbda", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
+                            >
+                              Rename
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm("Delete this file?")) {
+                                  void deleteAttachment(attachment.id);
+                                }
+                              }}
+                              style={{ border: "1px solid #dddbda", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        ) : null}
                       </div>
                     </div>
                   ))}
@@ -1835,26 +1864,28 @@ export default function LeadDetail() {
                     </button>
                   );
                 })}
-                <button
-                  type="button"
-                  onClick={() => setActiveJobTabId("__new__")}
-                  style={{
-                    border: activeJobTabId === "__new__" ? "1px solid #0176d3" : "1px solid #cbd5e1",
-                    borderBottom: activeJobTabId === "__new__" ? "2px solid #0176d3" : "1px solid #cbd5e1",
-                    background: activeJobTabId === "__new__" ? "#eaf5fe" : "#fff",
-                    color: activeJobTabId === "__new__" ? "#014486" : "#334155",
-                    borderRadius: 4,
-                    width: 34,
-                    fontSize: 16,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
-                  }}
-                  aria-label="Add job"
-                  title="Add job"
-                >
-                  +
-                </button>
+                {canEditJobs ? (
+                  <button
+                    type="button"
+                    onClick={() => setActiveJobTabId("__new__")}
+                    style={{
+                      border: activeJobTabId === "__new__" ? "1px solid #0176d3" : "1px solid #cbd5e1",
+                      borderBottom: activeJobTabId === "__new__" ? "2px solid #0176d3" : "1px solid #cbd5e1",
+                      background: activeJobTabId === "__new__" ? "#eaf5fe" : "#fff",
+                      color: activeJobTabId === "__new__" ? "#014486" : "#334155",
+                      borderRadius: 4,
+                      width: 34,
+                      fontSize: 16,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                    aria-label="Add job"
+                    title="Add job"
+                  >
+                    +
+                  </button>
+                ) : null}
               </div>
 
               {activeJobTabId !== "__new__" && leadJobs.some((j) => j.id === activeJobTabId) ? (() => {
@@ -1888,6 +1919,7 @@ export default function LeadDetail() {
                         <select
                           value={draft.company_id}
                           onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, company_id: e.target.value } }))}
+                          disabled={!canEditJobs}
                           style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12, background: "#fff" }}
                         >
                           {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
@@ -1895,103 +1927,123 @@ export default function LeadDetail() {
                       </label>
                       <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
                         Move Date
-                        <input type="date" value={draft.move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, move_date: e.target.value } }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+                        <input type="date" value={draft.move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, move_date: e.target.value } }))} disabled={!canEditJobs} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
                       </label>
                       <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
                         Booked Date
-                        <input type="date" value={draft.booked_move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, booked_move_date: e.target.value } }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+                        <input type="date" value={draft.booked_move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, booked_move_date: e.target.value } }))} disabled={!canEditJobs} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
                       </label>
-                      <label style={{ display: "grid", gap: 4, gridColumn: "1 / -1", fontSize: 11, color: "#475569" }}>
-                        Pickup
-                        <input
-                          value={draft.pickup_zip}
-                          onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, pickup_zip: e.target.value } }))}
-                          placeholder="Pickup address"
-                          style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "7px 9px", fontSize: 12, background: "#fff" }}
-                        />
-                      </label>
-                      <div style={{ display: "grid", gap: 8, gridColumn: "1 / -1", border: "1px solid #dbe4ef", borderRadius: 10, background: "#f8fafc", padding: 10 }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                          <div style={{ fontSize: 12, color: "#0f172a", fontWeight: 800 }}>Stops</div>
-                          <span style={{ fontSize: 10, color: "#166534", fontWeight: 700, border: "1px solid #bbf7d0", borderRadius: 999, padding: "2px 7px", background: "#f0fdf4" }}>
-                            {draft.stops.length} stop{draft.stops.length === 1 ? "" : "s"}
-                          </span>
+                      <div style={{ gridColumn: "1 / -1", border: "1px solid #d8e6f4", borderRadius: 12, background: "linear-gradient(180deg, #f7fbff 0%, #ffffff 100%)", boxShadow: "0 2px 8px rgba(15,23,42,.05)", overflow: "hidden" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderBottom: "1px solid #e4eef8", background: "#edf5fd" }}>
+                          <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.03em" }}>ROUTE</strong>
+                          <span style={{ fontSize: 11, color: "#0369a1", fontWeight: 700 }}>{draft.stops.length} middle stop{draft.stops.length === 1 ? "" : "s"}</span>
                         </div>
-                        {draft.stops.map((address, index) => (
-                          <div
-                            key={`stop-${index}`}
-                            draggable
-                            onDragStart={(e) => {
-                              e.dataTransfer.setData("text/plain", String(index));
-                              e.dataTransfer.effectAllowed = "move";
-                            }}
-                            onDragOver={(e) => e.preventDefault()}
-                            onDrop={(e) => {
-                              e.preventDefault();
-                              const from = Number(e.dataTransfer.getData("text/plain"));
-                              if (!Number.isInteger(from) || from < 0 || from >= draft.stops.length || from === index) return;
-                              const next = [...draft.stops];
-                              const [moved] = next.splice(from, 1);
-                              next.splice(index, 0, moved);
-                              setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, stops: next } }));
-                            }}
-                            style={{ display: "grid", gridTemplateColumns: "26px 1fr auto", gap: 6, alignItems: "center", border: "1px solid #dbe4ef", borderRadius: 8, background: "#fff", padding: 6 }}
-                          >
-                            <span title="Drag" style={{ width: 22, height: 22, borderRadius: 4, border: "1px solid #d1d5db", color: "#64748b", fontSize: 12, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "grab", userSelect: "none" }}>⋮⋮</span>
+
+                        <div style={{ display: "grid", gap: 10, padding: 12 }}>
+                          <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 700, color: "#1e3a8a" }}>
+                            Pickup
                             <input
-                              value={address}
-                              onChange={(e) => {
-                                const next = [...draft.stops];
-                                next[index] = e.target.value;
-                                setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, stops: next } }));
-                              }}
-                              placeholder="Middle stop"
-                              style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "7px 9px", fontSize: 12, background: "#fff" }}
+                              value={draft.pickup_zip}
+                              onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, pickup_zip: e.target.value } }))}
+                              disabled={!canEditJobs}
+                              placeholder="Pickup address"
+                              style={{ border: "1px solid #bfdbfe", borderRadius: 8, padding: "8px 10px", fontSize: 13, background: "#fff" }}
                             />
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const next = draft.stops.filter((_, i) => i !== index);
-                                setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, stops: next } }));
-                              }}
-                              style={{ border: "1px solid #fecaca", background: "#fff", color: "#be123c", borderRadius: 6, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}
-                            >Remove</button>
+                          </label>
+
+                          <div style={{ display: "grid", gap: 8 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                              <div style={{ fontSize: 12, color: "#334155", fontWeight: 700 }}>Stops</div>
+                              {canEditJobs ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, stops: [...draft.stops, ""] } }))}
+                                  style={{ border: "1px solid #2563eb", background: "#fff", color: "#1d4ed8", borderRadius: 8, padding: "5px 10px", fontSize: 11, fontWeight: 700 }}
+                                >Add Stop</button>
+                              ) : null}
+                            </div>
+
+                            {draft.stops.length === 0 ? (
+                              <div style={{ border: "1px dashed #cbd5e1", borderRadius: 8, padding: "9px 10px", fontSize: 12, color: "#64748b", background: "#f8fafc" }}>No middle stops</div>
+                            ) : null}
+
+                            {draft.stops.map((address, index) => (
+                              <div
+                                key={`stop-${index}`}
+                                draggable={canEditJobs}
+                                onDragStart={(e) => {
+                                  e.dataTransfer.setData("text/plain", String(index));
+                                  e.dataTransfer.effectAllowed = "move";
+                                }}
+                                onDragOver={(e) => e.preventDefault()}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  const from = Number(e.dataTransfer.getData("text/plain"));
+                                  if (!Number.isInteger(from) || from < 0 || from >= draft.stops.length || from === index) return;
+                                  const next = [...draft.stops];
+                                  const [moved] = next.splice(from, 1);
+                                  next.splice(index, 0, moved);
+                                  setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, stops: next } }));
+                                }}
+                                style={{ display: "grid", gridTemplateColumns: "28px 1fr auto", gap: 8, alignItems: "center", border: "1px solid #dbe4ef", borderRadius: 8, background: "#fff", padding: 8 }}
+                              >
+                                <span title="Drag" style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid #cbd5e1", color: "#64748b", fontSize: 12, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: canEditJobs ? "grab" : "default", userSelect: "none" }}>⋮⋮</span>
+                                <input
+                                  value={address}
+                                  onChange={(e) => {
+                                    const next = [...draft.stops];
+                                    next[index] = e.target.value;
+                                    setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, stops: next } }));
+                                  }}
+                                  disabled={!canEditJobs}
+                                  placeholder="Stop address"
+                                  style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 10px", fontSize: 13, background: "#fff" }}
+                                />
+                                {canEditJobs ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const next = draft.stops.filter((_, i) => i !== index);
+                                      setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, stops: next } }));
+                                    }}
+                                    style={{ border: "1px solid #fecaca", background: "#fff", color: "#b91c1c", borderRadius: 8, padding: "5px 10px", fontSize: 11, fontWeight: 700 }}
+                                  >Remove</button>
+                                ) : null}
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                        <div>
-                          <button
-                            type="button"
-                            onClick={() => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, stops: [...draft.stops, ""] } }))}
-                            style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700 }}
-                          >Add Stop</button>
+
+                          <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 700, color: "#166534" }}>
+                            Delivery
+                            <input
+                              value={draft.delivery_zip}
+                              onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, delivery_zip: e.target.value } }))}
+                              disabled={!canEditJobs}
+                              placeholder="Delivery address"
+                              style={{ border: "1px solid #bbf7d0", borderRadius: 8, padding: "8px 10px", fontSize: 13, background: "#fff" }}
+                            />
+                          </label>
                         </div>
                       </div>
-                      <label style={{ display: "grid", gap: 4, gridColumn: "1 / -1", fontSize: 11, color: "#475569" }}>
-                        Delivery
-                        <input
-                          value={draft.delivery_zip}
-                          onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, delivery_zip: e.target.value } }))}
-                          placeholder="Delivery address"
-                          style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "7px 9px", fontSize: 12, background: "#fff" }}
-                        />
-                      </label>
                     </div>
 
-                    <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                      <button type="button" onClick={() => void saveJob(job.id)} disabled={busy} style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}>
-                        {savingJobId === job.id ? "Saving..." : "Save Job"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!primary && window.confirm("Delete this job?")) void deleteJob(job.id);
-                        }}
-                        disabled={busy || primary}
-                        style={{ border: "1px solid #dddbda", background: "#fff", color: primary ? "#94a3b8" : "#ba0517", borderRadius: 4, padding: "5px 10px", fontSize: 12 }}
-                      >
-                        {deletingJobId === job.id ? "Deleting..." : "Delete"}
-                      </button>
-                    </div>
+                    {canEditJobs ? (
+                      <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                        <button type="button" onClick={() => void saveJob(job.id)} disabled={busy} style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}>
+                          {savingJobId === job.id ? "Saving..." : "Save Job"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!primary && window.confirm("Delete this job?")) void deleteJob(job.id);
+                          }}
+                          disabled={busy || primary}
+                          style={{ border: "1px solid #dddbda", background: "#fff", color: primary ? "#94a3b8" : "#ba0517", borderRadius: 4, padding: "5px 10px", fontSize: 12 }}
+                        >
+                          {deletingJobId === job.id ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
+                    ) : null}
 
                     <div style={{ marginTop: 12, border: "1px solid #d8dde6", borderRadius: 8, background: "#f8fafc" }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px", borderBottom: "1px solid #e2e8f0" }}>
@@ -2003,20 +2055,22 @@ export default function LeadDetail() {
                           </span>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                          <label style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, border: "1px solid #d8dde6", borderRadius: 6, padding: "5px 9px", fontSize: 11, fontWeight: 700, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff", whiteSpace: "nowrap" }}>
-                            <input
-                              type="file"
-                              multiple
-                              disabled={uploadingCount > 0}
-                              style={{ display: "none" }}
-                              onChange={(e) => {
-                                const files = Array.from(e.target.files || []);
-                                void uploadAttachments(files);
-                                e.currentTarget.value = "";
-                              }}
-                            />
-                            {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload"}
-                          </label>
+                          {canEditJobs ? (
+                            <label style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, border: "1px solid #d8dde6", borderRadius: 6, padding: "5px 9px", fontSize: 11, fontWeight: 700, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff", whiteSpace: "nowrap" }}>
+                              <input
+                                type="file"
+                                multiple
+                                disabled={uploadingCount > 0}
+                                style={{ display: "none" }}
+                                onChange={(e) => {
+                                  const files = Array.from(e.target.files || []);
+                                  void uploadAttachments(files);
+                                  e.currentTarget.value = "";
+                                }}
+                              />
+                              {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload"}
+                            </label>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => setFilesModalOpen(true)}
@@ -2122,7 +2176,7 @@ export default function LeadDetail() {
             </div>
           ) : null}
 
-          {activeJobTabId === "__new__" ? (
+          {activeJobTabId === "__new__" && canEditJobs ? (
           <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 10, display: "grid", gap: 8 }}>
             <strong style={{ fontSize: 12, color: "#334155" }}>Add Job</strong>
             <div style={{ display: "grid", gap: 10 }}>
@@ -2142,81 +2196,92 @@ export default function LeadDetail() {
                 <input type="date" value={newJobDraft.booked_move_date} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, booked_move_date: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
               </label>
               </div>
-              <label style={{ display: "grid", gap: 4, gridColumn: "1 / -1", fontSize: 11, color: "#475569" }}>
-                Pickup
-                <input
-                  type="text"
-                  value={newJobDraft.pickup_zip}
-                  onChange={(e) => setNewJobDraft((prev) => ({ ...prev, pickup_zip: e.target.value }))}
-                  placeholder="Pickup address"
-                  style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "7px 9px", fontSize: 12, background: "#fff" }}
-                />
-              </label>
-              <div style={{ display: "grid", gap: 8, gridColumn: "1 / -1", border: "1px solid #dbe4ef", borderRadius: 10, background: "#f8fafc", padding: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                  <div style={{ fontSize: 12, color: "#0f172a", fontWeight: 800 }}>Stops</div>
-                  <span style={{ fontSize: 10, color: "#166534", fontWeight: 700, border: "1px solid #bbf7d0", borderRadius: 999, padding: "2px 7px", background: "#f0fdf4" }}>
-                    {newJobDraft.stops.length} stop{newJobDraft.stops.length === 1 ? "" : "s"}
-                  </span>
+              <div style={{ gridColumn: "1 / -1", border: "1px solid #d8e6f4", borderRadius: 12, background: "linear-gradient(180deg, #f7fbff 0%, #ffffff 100%)", boxShadow: "0 2px 8px rgba(15,23,42,.05)", overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderBottom: "1px solid #e4eef8", background: "#edf5fd" }}>
+                  <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.03em" }}>ROUTE</strong>
+                  <span style={{ fontSize: 11, color: "#0369a1", fontWeight: 700 }}>{newJobDraft.stops.length} middle stop{newJobDraft.stops.length === 1 ? "" : "s"}</span>
                 </div>
-                {newJobDraft.stops.map((address, index) => (
-                  <div
-                    key={`new-stop-${index}`}
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData("text/plain", String(index));
-                      e.dataTransfer.effectAllowed = "move";
-                    }}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const from = Number(e.dataTransfer.getData("text/plain"));
-                      if (!Number.isInteger(from) || from < 0 || from >= newJobDraft.stops.length || from === index) return;
-                      const next = [...newJobDraft.stops];
-                      const [moved] = next.splice(from, 1);
-                      next.splice(index, 0, moved);
-                      setNewJobDraft((prev) => ({ ...prev, stops: next }));
-                    }}
-                    style={{ display: "grid", gridTemplateColumns: "26px 1fr auto", gap: 6, alignItems: "center", border: "1px solid #dbe4ef", borderRadius: 8, background: "#fff", padding: 6 }}
-                  >
-                    <span title="Drag" style={{ width: 22, height: 22, borderRadius: 4, border: "1px solid #d1d5db", color: "#64748b", fontSize: 12, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "grab", userSelect: "none" }}>⋮⋮</span>
+
+                <div style={{ display: "grid", gap: 10, padding: 12 }}>
+                  <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 700, color: "#1e3a8a" }}>
+                    Pickup
                     <input
-                      value={address}
-                      onChange={(e) => {
-                        const next = [...newJobDraft.stops];
-                        next[index] = e.target.value;
-                        setNewJobDraft((prev) => ({ ...prev, stops: next }));
-                      }}
-                      placeholder="Middle stop"
-                      style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "7px 9px", fontSize: 12, background: "#fff" }}
+                      type="text"
+                      value={newJobDraft.pickup_zip}
+                      onChange={(e) => setNewJobDraft((prev) => ({ ...prev, pickup_zip: e.target.value }))}
+                      placeholder="Pickup address"
+                      style={{ border: "1px solid #bfdbfe", borderRadius: 8, padding: "8px 10px", fontSize: 13, background: "#fff" }}
                     />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setNewJobDraft((prev) => ({ ...prev, stops: prev.stops.filter((_, i) => i !== index) }));
-                      }}
-                      style={{ border: "1px solid #fecaca", background: "#fff", color: "#be123c", borderRadius: 6, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}
-                    >Remove</button>
+                  </label>
+
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <div style={{ fontSize: 12, color: "#334155", fontWeight: 700 }}>Stops</div>
+                      <button
+                        type="button"
+                        onClick={() => setNewJobDraft((prev) => ({ ...prev, stops: [...prev.stops, ""] }))}
+                        style={{ border: "1px solid #2563eb", background: "#fff", color: "#1d4ed8", borderRadius: 8, padding: "5px 10px", fontSize: 11, fontWeight: 700 }}
+                      >Add Stop</button>
+                    </div>
+
+                    {newJobDraft.stops.length === 0 ? (
+                      <div style={{ border: "1px dashed #cbd5e1", borderRadius: 8, padding: "9px 10px", fontSize: 12, color: "#64748b", background: "#f8fafc" }}>No middle stops</div>
+                    ) : null}
+
+                    {newJobDraft.stops.map((address, index) => (
+                      <div
+                        key={`new-stop-${index}`}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/plain", String(index));
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const from = Number(e.dataTransfer.getData("text/plain"));
+                          if (!Number.isInteger(from) || from < 0 || from >= newJobDraft.stops.length || from === index) return;
+                          const next = [...newJobDraft.stops];
+                          const [moved] = next.splice(from, 1);
+                          next.splice(index, 0, moved);
+                          setNewJobDraft((prev) => ({ ...prev, stops: next }));
+                        }}
+                        style={{ display: "grid", gridTemplateColumns: "28px 1fr auto", gap: 8, alignItems: "center", border: "1px solid #dbe4ef", borderRadius: 8, background: "#fff", padding: 8 }}
+                      >
+                        <span title="Drag" style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid #cbd5e1", color: "#64748b", fontSize: 12, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "grab", userSelect: "none" }}>⋮⋮</span>
+                        <input
+                          value={address}
+                          onChange={(e) => {
+                            const next = [...newJobDraft.stops];
+                            next[index] = e.target.value;
+                            setNewJobDraft((prev) => ({ ...prev, stops: next }));
+                          }}
+                          placeholder="Stop address"
+                          style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 10px", fontSize: 13, background: "#fff" }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewJobDraft((prev) => ({ ...prev, stops: prev.stops.filter((_, i) => i !== index) }));
+                          }}
+                          style={{ border: "1px solid #fecaca", background: "#fff", color: "#b91c1c", borderRadius: 8, padding: "5px 10px", fontSize: 11, fontWeight: 700 }}
+                        >Remove</button>
+                      </div>
+                    ))}
                   </div>
-                ))}
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setNewJobDraft((prev) => ({ ...prev, stops: [...prev.stops, ""] }))}
-                    style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700 }}
-                  >Add Stop</button>
+
+                  <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 700, color: "#166534" }}>
+                    Delivery
+                    <input
+                      type="text"
+                      value={newJobDraft.delivery_zip}
+                      onChange={(e) => setNewJobDraft((prev) => ({ ...prev, delivery_zip: e.target.value }))}
+                      placeholder="Delivery address"
+                      style={{ border: "1px solid #bbf7d0", borderRadius: 8, padding: "8px 10px", fontSize: 13, background: "#fff" }}
+                    />
+                  </label>
                 </div>
               </div>
-              <label style={{ display: "grid", gap: 4, gridColumn: "1 / -1", fontSize: 11, color: "#475569" }}>
-                Delivery
-                <input
-                  type="text"
-                  value={newJobDraft.delivery_zip}
-                  onChange={(e) => setNewJobDraft((prev) => ({ ...prev, delivery_zip: e.target.value }))}
-                  placeholder="Delivery address"
-                  style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "7px 9px", fontSize: 12, background: "#fff" }}
-                />
-              </label>
             </div>
             <div>
               <button type="button" onClick={() => void addJob()} disabled={addingJob} style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "6px 12px", fontSize: 12, fontWeight: 600 }}>

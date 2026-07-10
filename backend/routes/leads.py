@@ -669,6 +669,11 @@ def _lookup_sender_id(lead: Lead) -> str | None:
     return None
 
 
+def _ensure_not_dispatch_write(user: User) -> None:
+    if user.role == "dispatch":
+        raise HTTPException(status_code=403, detail="Dispatch users are read-only")
+
+
 def _effective_dispatch_date(lead: Lead) -> date | None:
     """Get the booked/service date used by dispatch calendar and search."""
     return _parse_booked_move_date(lead.move_date)
@@ -1584,6 +1589,7 @@ def create_lead_job(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_not_dispatch_write(user)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     company_ids = _get_user_company_ids(user, db)
 
@@ -1657,6 +1663,7 @@ def replace_lead_job_charges(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_not_dispatch_write(user)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadJob)
@@ -1680,6 +1687,7 @@ def update_lead_job(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_not_dispatch_write(user)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadJob)
@@ -1775,6 +1783,7 @@ def delete_lead_job(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_not_dispatch_write(user)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadJob)
@@ -1887,6 +1896,7 @@ def upload_job_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_not_dispatch_write(user)
     _ensure_attachment_job_column(db)
     _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
@@ -1949,6 +1959,7 @@ def delete_job_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_not_dispatch_write(user)
     _ensure_attachment_job_column(db)
     _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
@@ -1973,6 +1984,7 @@ def rename_job_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_not_dispatch_write(user)
     _ensure_attachment_job_column(db)
     _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
@@ -2166,6 +2178,7 @@ def update_lead(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_not_dispatch_write(user)
     company_ids = _get_user_company_ids(user, db)
     lead = db.query(Lead).filter(Lead.id == lead_id, Lead.company_id.in_(company_ids)).first()
     if not lead:
