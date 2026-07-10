@@ -684,11 +684,6 @@ export default function SalesCalendarPage() {
     };
   }, [filteredJobs]);
 
-  const summaryGrandTotal = useMemo(
-    () => salesMoneySummary.paymentsTotal + salesMoneySummary.remainingTotal,
-    [salesMoneySummary.paymentsTotal, salesMoneySummary.remainingTotal]
-  );
-
   const year = viewMonth.getFullYear();
   const month = viewMonth.getMonth();
   const firstWeekday = new Date(year, month, 1).getDay();
@@ -993,11 +988,6 @@ export default function SalesCalendarPage() {
               <div style={{ fontSize: 11, fontWeight: 800, color: "#be123c", textTransform: "uppercase", letterSpacing: "0.05em" }}>Rep Remaining</div>
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.repCommissionRemaining)}</div>
               <div style={{ marginTop: 4, fontSize: 12, color: "#be123c" }}>unpaid to reps</div>
-            </div>
-            <div style={{ border: "1px solid #7dd3fc", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #ecfeff 0%, #ffffff 100%)" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#0369a1", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Value</div>
-              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(summaryGrandTotal)}</div>
-              <div style={{ marginTop: 4, fontSize: 12, color: "#0c4a6e" }}>payments + remaining</div>
             </div>
             {isAdmin ? (
               <div style={{ border: "1px solid #6ee7b7", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #ecfdf5 0%, #ffffff 100%)" }}>

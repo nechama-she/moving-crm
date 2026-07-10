@@ -634,7 +634,7 @@ export default function LeadDetail() {
   const quickAttachments = useMemo(() => {
     return [...attachments]
       .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
-      .slice(0, 4);
+      .slice(0, 6);
   }, [attachments]);
 
   useEffect(() => {
@@ -1914,6 +1914,9 @@ export default function LeadDetail() {
                         <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                           <span style={{ fontSize: 14 }}>📎</span>
                           <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.02em" }}>{`Job ${job.job_order} Files`}</strong>
+                          <span style={{ fontSize: 10, color: "#334155", fontWeight: 700, border: "1px solid #cbd5e1", borderRadius: 999, padding: "2px 7px", background: "#fff" }}>
+                            {attachments.length} total
+                          </span>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                           <label style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, border: "1px solid #d8dde6", borderRadius: 6, padding: "5px 9px", fontSize: 11, fontWeight: 700, cursor: uploadingCount > 0 ? "default" : "pointer", opacity: uploadingCount > 0 ? 0.7 : 1, background: "#fff", whiteSpace: "nowrap" }}>
@@ -1945,18 +1948,38 @@ export default function LeadDetail() {
                         {attachmentsLoading ? <div style={{ color: "#64748b", fontSize: 12 }}>Loading files...</div> : null}
                         {!attachmentsLoading && quickAttachments.length === 0 ? <div style={{ color: "#706e6b", fontSize: 12 }}>No files for this job yet.</div> : null}
                         {!attachmentsLoading && quickAttachments.length > 0 ? (
-                          <div style={{ display: "grid", gap: 5 }}>
-                            {quickAttachments.slice(0, 3).map((attachment) => (
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 7 }}>
+                            {quickAttachments.map((attachment) => (
                               <button
                                 key={attachment.id}
                                 type="button"
                                 onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
-                                style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: "5px 7px", fontSize: 11, color: "#334155", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}
+                                style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 8, padding: "8px", fontSize: 11, color: "#334155", textAlign: "left", cursor: "pointer", display: "grid", gap: 4 }}
                                 title={attachment.file_name}
                               >
-                                {attachment.file_name}
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                  <span style={{ fontSize: 10, fontWeight: 800, color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 999, padding: "1px 6px", background: "#f8fafc", flexShrink: 0 }}>
+                                    {fileIcon(attachment.file_name)}
+                                  </span>
+                                  <span style={{ fontSize: 10, color: "#64748b" }}>{Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB</span>
+                                </div>
+                                <div style={{ fontSize: 12, color: "#0f172a", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {attachment.file_name}
+                                </div>
+                                <div style={{ fontSize: 10, color: "#64748b" }}>
+                                  {attachment.created_at ? new Date(attachment.created_at).toLocaleDateString() : ""}
+                                </div>
                               </button>
                             ))}
+                            {attachments.length > quickAttachments.length ? (
+                              <button
+                                type="button"
+                                onClick={() => setFilesModalOpen(true)}
+                                style={{ border: "1px dashed #94a3b8", background: "#f8fafc", borderRadius: 8, padding: "8px", fontSize: 11, color: "#334155", textAlign: "center", fontWeight: 700, cursor: "pointer" }}
+                              >
+                                View all {attachments.length} files
+                              </button>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>
