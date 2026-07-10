@@ -21,6 +21,16 @@ type AppUser = {
   aircall_number_id?: string;
   role: string;
   companies?: UserCompany[];
+  commission_percent?: number;
+};
+
+type CommissionSettingsResponse = {
+  default_percent?: number;
+  items?: Array<{
+    user_id: string;
+    percent?: number | null;
+    effective_percent?: number;
+  }>;
 };
 
 type RepUpdatePayload = {
@@ -38,6 +48,7 @@ export default function SalesRepsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  const [defaultCommissionPercent, setDefaultCommissionPercent] = useState<number>(((1 - 0.035) / 3) * 100);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -67,15 +78,33 @@ export default function SalesRepsPage() {
     setLoading(true);
     setError("");
     try {
-      const [usersRes, companiesRes] = await Promise.all([
+      const [usersRes, companiesRes, commissionRes] = await Promise.all([
         fetch(`${API_BASE}/api/users`, { headers: authHeaders(token) }),
         fetch(`${API_BASE}/api/companies`, { headers: authHeaders(token) }),
+        fetch(`${API_BASE}/api/users/sales-rep-commission-settings`, { headers: authHeaders(token) }),
       ]);
       if (!usersRes.ok) throw new Error(`Users HTTP ${usersRes.status}`);
       if (!companiesRes.ok) throw new Error(`Companies HTTP ${companiesRes.status}`);
       const usersData = (await usersRes.json()) as AppUser[];
       const companiesData = (await companiesRes.json()) as Company[];
-      setUsers(usersData || []);
+      let fallbackDefault = ((1 - 0.035) / 3) * 100;
+      const commissionByUserId = new Map<string, number>();
+      if (commissionRes.ok) {
+        const commissionData = (await commissionRes.json()) as CommissionSettingsResponse;
+        if (typeof commissionData.default_percent === "number") {
+          fallbackDefault = commissionData.default_percent;
+        }
+        for (const item of commissionData.items || []) {
+          if (item && item.user_id && typeof item.effective_percent === "number") {
+            commissionByUserId.set(item.user_id, item.effective_percent);
+          }
+        }
+      }
+      setDefaultCommissionPercent(fallbackDefault);
+      setUsers((usersData || []).map((u) => ({
+        ...u,
+        commission_percent: commissionByUserId.get(u.id) ?? fallbackDefault,
+      })));
       setCompanies((companiesData || []).sort((a, b) => a.name.localeCompare(b.name)));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load reps and companies");
@@ -247,6 +276,27 @@ export default function SalesRepsPage() {
     }
   }
 
+  async function updateRepCommission(userId: string, percent: number | null) {
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/users/sales-rep-commission-settings/${userId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ percent }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Failed to update commission percent" }));
+        throw new Error(err.detail || "Failed to update commission percent");
+      }
+      setInfo("Commission percent updated.");
+      await loadData();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to update commission percent");
+      throw err;
+    }
+  }
+
   if (!canUse) {
     return (
       <div style={{ padding: "20px 24px" }}>
@@ -365,12 +415,12 @@ export default function SalesRepsPage() {
           <thead>
             <tr>
               <th style={th}>Rep</th>
+              <th style={th}>Commission %</th>
               <th style={th}>Email</th>
               <th style={th}>Phone</th>
               <th style={th}>SmartMoving Rep ID</th>
               <th style={th}>Aircall Number ID</th>
               <th style={th}>Companies</th>
-              <th style={th}>Assign Company</th>
               <th style={th}>Actions</th>
             </tr>
           </thead>
@@ -395,6 +445,8 @@ export default function SalesRepsPage() {
                 onAssign={assignCompany}
                 onUnassign={unassignCompany}
                 onDelete={deleteRep}
+                onUpdateCommission={updateRepCommission}
+                defaultCommissionPercent={defaultCommissionPercent}
               />
             ))}
           </tbody>
@@ -411,6 +463,8 @@ function RepRow({
   onAssign,
   onUnassign,
   onDelete,
+  onUpdateCommission,
+  defaultCommissionPercent,
 }: {
   rep: AppUser;
   companies: Company[];
@@ -418,16 +472,29 @@ function RepRow({
   onAssign: (userId: string, companyId: string) => Promise<void>;
   onUnassign: (userId: string, companyId: string) => Promise<void>;
   onDelete: (userId: string, repName: string) => Promise<void>;
+  onUpdateCommission: (userId: string, percent: number | null) => Promise<void>;
+  defaultCommissionPercent: number;
 }) {
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [showCompanyManager, setShowCompanyManager] = useState(false);
   const [name, setName] = useState(rep.name || "");
   const [phone, setPhone] = useState(rep.phone || "");
   const [smartmovingRepId, setSmartmovingRepId] = useState(rep.smartmoving_rep_id || "");
   const [aircallNumberId, setAircallNumberId] = useState(rep.aircall_number_id || "");
+  const [commissionPercent, setCommissionPercent] = useState(
+    String(typeof rep.commission_percent === "number" ? rep.commission_percent : defaultCommissionPercent)
+  );
   const [savingRep, setSavingRep] = useState(false);
+  const [savingCommission, setSavingCommission] = useState(false);
   const assigned = rep.companies || [];
   const assignedIds = new Set(assigned.map((c) => c.id));
   const availableCompanies = companies.filter((c) => !assignedIds.has(c.id));
+  const previewCompanies = assigned.slice(0, 2);
+  const extraCompaniesCount = Math.max(0, assigned.length - previewCompanies.length);
+
+  useEffect(() => {
+    setCommissionPercent(String(typeof rep.commission_percent === "number" ? rep.commission_percent : defaultCommissionPercent));
+  }, [rep.commission_percent, defaultCommissionPercent]);
 
   async function saveRep() {
     setSavingRep(true);
@@ -445,10 +512,70 @@ function RepRow({
     }
   }
 
+  async function saveCommissionPercent() {
+    const parsed = Number(commissionPercent);
+    if (!Number.isFinite(parsed)) return;
+    if (parsed < 0 || parsed > 100) return;
+    setSavingCommission(true);
+    try {
+      await onUpdateCommission(rep.id, parsed);
+    } catch {
+      // Parent handles message display.
+    } finally {
+      setSavingCommission(false);
+    }
+  }
+
+  async function resetCommissionPercent() {
+    setSavingCommission(true);
+    try {
+      await onUpdateCommission(rep.id, null);
+    } catch {
+      // Parent handles message display.
+    } finally {
+      setSavingCommission(false);
+    }
+  }
+
   return (
     <tr style={{ borderTop: "1px solid #e5e7eb" }}>
       <td style={td}>
         <input value={name} onChange={(e) => setName(e.target.value)} style={{ ...inputStyle, minWidth: 170, padding: "6px 8px" }} />
+      </td>
+      <td style={td}>
+        <div style={{ display: "grid", gap: 6, minWidth: 180 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="0.000001"
+              value={commissionPercent}
+              onChange={(e) => setCommissionPercent(e.target.value)}
+              style={{ ...inputStyle, minWidth: 92, padding: "6px 8px" }}
+            />
+            <span style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>%</span>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => void saveCommissionPercent()}
+              disabled={savingCommission}
+              style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}
+            >
+              {savingCommission ? "Saving..." : "Save %"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void resetCommissionPercent()}
+              disabled={savingCommission}
+              style={{ border: "1px solid #c9c7c5", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}
+            >
+              Default
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: "#64748b" }}>Default: {defaultCommissionPercent.toFixed(6)}%</div>
+        </div>
       </td>
       <td style={td}>{rep.email}</td>
       <td style={td}>
@@ -465,39 +592,60 @@ function RepRow({
         />
       </td>
       <td style={td}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {assigned.length === 0 ? <span style={{ color: "#706e6b", fontSize: 12 }}>No companies</span> : null}
-          {assigned.map((c) => (
-            <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #c9c7c5", borderRadius: 16, padding: "3px 8px", fontSize: 12, color: "#3e3e3c", background: "#f8f9fa" }}>
-              {c.name}
-              <button
-                type="button"
-                onClick={() => void onUnassign(rep.id, c.id)}
-                style={{ border: "none", background: "transparent", color: "#ba0517", fontSize: 12, padding: 0, cursor: "pointer" }}
-                title="Remove"
-              >
-                x
-              </button>
-            </span>
-          ))}
-        </div>
-      </td>
-      <td style={td}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <select value={selectedCompanyId} onChange={(e) => setSelectedCompanyId(e.target.value)} style={{ ...inputStyle, minWidth: 220 }}>
-            <option value="">Select company...</option>
-            {availableCompanies.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
+        <div style={{ minWidth: 280 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>{assigned.length} assigned</span>
+            {previewCompanies.map((c) => (
+              <span key={c.id} style={{ border: "1px solid #cbd5e1", borderRadius: 999, padding: "2px 8px", fontSize: 11, color: "#334155", background: "#f8fafc" }}>
+                {c.name}
+              </span>
             ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => void onAssign(rep.id, selectedCompanyId)}
-            disabled={!selectedCompanyId}
-            style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
-          >
-            Assign
-          </button>
+            {extraCompaniesCount > 0 ? <span style={{ fontSize: 11, color: "#64748b" }}>+{extraCompaniesCount} more</span> : null}
+            <button
+              type="button"
+              onClick={() => setShowCompanyManager((v) => !v)}
+              style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}
+            >
+              {showCompanyManager ? "Close" : "Manage"}
+            </button>
+          </div>
+
+          {showCompanyManager ? (
+            <div style={{ marginTop: 8, border: "1px solid #e2e8f0", borderRadius: 8, padding: 8, background: "#f8fafc" }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                {assigned.length === 0 ? <span style={{ color: "#706e6b", fontSize: 12 }}>No companies</span> : null}
+                {assigned.map((c) => (
+                  <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #c9c7c5", borderRadius: 16, padding: "3px 8px", fontSize: 12, color: "#3e3e3c", background: "#fff" }}>
+                    {c.name}
+                    <button
+                      type="button"
+                      onClick={() => void onUnassign(rep.id, c.id)}
+                      style={{ border: "none", background: "transparent", color: "#ba0517", fontSize: 12, padding: 0, cursor: "pointer" }}
+                      title="Remove"
+                    >
+                      x
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <select value={selectedCompanyId} onChange={(e) => setSelectedCompanyId(e.target.value)} style={{ ...inputStyle, minWidth: 220 }}>
+                  <option value="">Select company...</option>
+                  {availableCompanies.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => void onAssign(rep.id, selectedCompanyId)}
+                  disabled={!selectedCompanyId}
+                  style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
+                >
+                  Assign
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </td>
       <td style={td}>

@@ -8,12 +8,15 @@ from sqlalchemy.orm import Session
 
 from auth import hash_password, require_admin, get_current_user
 from database import get_db
-from models import User, Company, UserCompany, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, Lead
+from models import User, Company, UserCompany, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, Lead, AppSetting
 from routes.auth import validate_password_strength
 
 logger = logging.getLogger("moving-crm")
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
+
+COMMISSION_SETTING_KEY_PREFIX = "sales_rep_commission_percent:"
+DEFAULT_REP_COMMISSION_PERCENT = ((1 - 0.035) / 3) * 100
 
 
 class UserCreate(BaseModel):
@@ -35,6 +38,10 @@ class UserUpdate(BaseModel):
 
 class AssignCompany(BaseModel):
     company_id: str
+
+
+class SalesRepCommissionUpdate(BaseModel):
+    percent: Optional[float] = None
 
 
 class AdminUnavailabilityCreate(BaseModel):
@@ -69,6 +76,89 @@ class RepAvailabilityUpdate(BaseModel):
 def _parse_iso_datetime(value: str) -> datetime:
     # Accepts either 2026-04-29T12:00:00 or 2026-04-29T12:00:00Z
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _sales_rep_commission_key(user_id: str) -> str:
+    return f"{COMMISSION_SETTING_KEY_PREFIX}{user_id}"
+
+
+def _read_sales_rep_commission_percent(db: Session, user_id: str) -> Optional[float]:
+    key = _sales_rep_commission_key(user_id)
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    if not row:
+        return None
+    try:
+        value = float((row.value or "").strip())
+        if 0 <= value <= 100:
+            return value
+    except Exception:
+        pass
+    return None
+
+
+@router.get("/sales-rep-commission-settings")
+def list_sales_rep_commission_settings(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    reps = db.query(User).filter(User.role == "sales_rep").order_by(User.name.asc()).all()
+    items = []
+    for rep in reps:
+        configured_percent = _read_sales_rep_commission_percent(db, rep.id)
+        effective_percent = configured_percent if configured_percent is not None else DEFAULT_REP_COMMISSION_PERCENT
+        items.append({
+            "user_id": rep.id,
+            "percent": configured_percent,
+            "effective_percent": effective_percent,
+        })
+    return {
+        "default_percent": DEFAULT_REP_COMMISSION_PERCENT,
+        "items": items,
+    }
+
+
+@router.put("/sales-rep-commission-settings/{user_id}")
+def upsert_sales_rep_commission_setting(
+    user_id: str,
+    body: SalesRepCommissionUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    rep = db.query(User).filter(User.id == user_id).first()
+    if not rep:
+        raise HTTPException(status_code=404, detail="User not found")
+    if rep.role != "sales_rep":
+        raise HTTPException(status_code=400, detail="Commission setting is only supported for sales reps")
+
+    key = _sales_rep_commission_key(user_id)
+    existing = db.query(AppSetting).filter(AppSetting.key == key).first()
+
+    if body.percent is None:
+        if existing:
+            db.delete(existing)
+            db.commit()
+        return {
+            "user_id": user_id,
+            "percent": None,
+            "effective_percent": DEFAULT_REP_COMMISSION_PERCENT,
+        }
+
+    value = float(body.percent)
+    if value < 0 or value > 100:
+        raise HTTPException(status_code=400, detail="percent must be between 0 and 100")
+
+    text_value = str(value)
+    if existing:
+        existing.value = text_value
+    else:
+        db.add(AppSetting(key=key, value=text_value))
+    db.commit()
+
+    return {
+        "user_id": user_id,
+        "percent": value,
+        "effective_percent": value,
+    }
 
 
 @router.get("/mine-reps")
