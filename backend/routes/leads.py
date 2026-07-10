@@ -257,8 +257,9 @@ def _build_smartmoving_jobs_payload(opportunity: dict) -> list[dict]:
     jobs: list[dict] = []
     for job in opportunity.get("jobs") or []:
         addresses = job.get("jobAddresses") or []
-        pickup = str(addresses[0]).strip() if len(addresses) > 0 else ""
-        delivery = str(addresses[1]).strip() if len(addresses) > 1 else ""
+        cleaned_addresses = [str(address).strip() for address in addresses if str(address).strip()]
+        pickups = cleaned_addresses[:1]
+        deliveries = cleaned_addresses[-1:] if len(cleaned_addresses) > 1 else []
         move_date = _format_smartmoving_date(job.get("jobDate") or opportunity.get("serviceDate"))
 
         row = {
@@ -269,10 +270,12 @@ def _build_smartmoving_jobs_payload(opportunity: dict) -> list[dict]:
         sort_order = _smartmoving_job_sort_order(job)
         if sort_order is not None:
             row["sortOrder"] = sort_order
-        if pickup:
-            row["pickup_zip"] = pickup
-        if delivery:
-            row["delivery_zip"] = delivery
+        if pickups:
+            row["pickup_zip"] = pickups[0]
+            row["pickup_addresses"] = pickups
+        if deliveries:
+            row["delivery_zip"] = deliveries[0]
+            row["delivery_addresses"] = deliveries
         if move_date:
             row["move_date"] = move_date
         jobs.append(row)
@@ -2072,6 +2075,8 @@ class LeadUpdateJob(BaseModel):
     smartmoving_job_id: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
+    pickup_addresses: list[str] | None = Field(default=None, alias="pickupAddresses")
+    delivery_addresses: list[str] | None = Field(default=None, alias="deliveryAddresses")
     move_date: str | None = None
     booked_move_date: str | None = None
     price: float | None = None
@@ -2315,6 +2320,50 @@ def update_lead(
 
             if "delivery_zip" in job_payload:
                 target_job.delivery_zip = (job_payload.get("delivery_zip") or "").strip()
+
+            current_pickups = _read_addresses_from_setting(db, _job_pickups_setting_key(target_job.id))
+            current_deliveries = _read_addresses_from_setting(db, _job_deliveries_setting_key(target_job.id))
+            if not current_pickups:
+                fallback_pickup = _clean_optional_text(target_job.pickup_zip)
+                current_pickups = [fallback_pickup] if fallback_pickup else []
+            if not current_deliveries:
+                fallback_delivery = _clean_optional_text(target_job.delivery_zip)
+                current_deliveries = [fallback_delivery] if fallback_delivery else []
+
+            next_pickups = current_pickups
+            next_deliveries = current_deliveries
+            touch_pickups = "pickup_addresses" in job_payload or "pickup_zip" in job_payload
+            touch_deliveries = "delivery_addresses" in job_payload or "delivery_zip" in job_payload
+
+            if "pickup_addresses" in job_payload:
+                next_pickups = _normalize_address_list(
+                    job_payload.get("pickup_addresses") or [],
+                    job_payload.get("pickup_zip") or target_job.pickup_zip,
+                )
+            elif "pickup_zip" in job_payload:
+                next_pickups = _normalize_address_list([], job_payload.get("pickup_zip") or "")
+
+            if "delivery_addresses" in job_payload:
+                next_deliveries = _normalize_address_list(
+                    job_payload.get("delivery_addresses") or [],
+                    job_payload.get("delivery_zip") or target_job.delivery_zip,
+                )
+            elif "delivery_zip" in job_payload:
+                next_deliveries = _normalize_address_list([], job_payload.get("delivery_zip") or "")
+
+            if touch_pickups and not next_pickups:
+                raise HTTPException(status_code=400, detail="At least one pickup address is required")
+            if touch_deliveries and not next_deliveries:
+                raise HTTPException(status_code=400, detail="At least one delivery address is required")
+
+            if touch_pickups or touch_deliveries:
+                if not next_pickups:
+                    raise HTTPException(status_code=400, detail="At least one pickup address is required")
+                if not next_deliveries:
+                    raise HTTPException(status_code=400, detail="At least one delivery address is required")
+                target_job.pickup_zip = next_pickups[0]
+                target_job.delivery_zip = next_deliveries[0]
+                _persist_job_address_lists(db, target_job.id, next_pickups, next_deliveries)
 
             if "move_date" in job_payload:
                 target_job.move_date = _normalize_move_date(job_payload.get("move_date") or "")
