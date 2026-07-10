@@ -234,9 +234,9 @@ function exactPercentText(value: number): string {
   return `${value.toFixed(6)}%`;
 }
 
-function leadRepCommissionStatus(job: SalesCalendarJob): { label: string; background: string; border: string; text: string } {
+function leadRepCommissionStatus(job: SalesCalendarJob): { label: string; background: string; border: string; text: string } | null {
   if ((job.assigned_to_role || "") !== "sales_rep") {
-    return { label: "N/A", background: "#f8fafc", border: "#cbd5e1", text: "#64748b" };
+    return null;
   }
 
   const payments = job.payments || [];
@@ -463,10 +463,13 @@ export default function SalesCalendarPage() {
       for (const job of items) {
         leadCount += 1;
         estimatedTotal += Number(job.estimatedTotal?.finalTotal || 0);
+        for (const payment of job.payments || []) {
+          const paymentAmount = Number(payment.amount || 0);
+          paymentsTotal += paymentAmount;
+        }
         if ((job.assigned_to_role || "") === "sales_rep") {
           for (const payment of job.payments || []) {
             const paymentAmount = Number(payment.amount || 0);
-            paymentsTotal += paymentAmount;
             repCommissionTotal += repPaidCommissionAmount(paymentAmount);
             if (payment.repPaid) {
               repCommissionPaid += repPaidCommissionAmount(paymentAmount);
@@ -935,9 +938,11 @@ export default function SalesCalendarPage() {
                                   {formatMoney(leadDisplayAmount(job) || 0)}
                                 </div>
                               ) : <span />}
-                              <span style={{ fontSize: 10, fontWeight: 700, color: commissionStatus.text, background: commissionStatus.background, border: `1px solid ${commissionStatus.border}`, borderRadius: 999, padding: "1px 6px", whiteSpace: "nowrap" }}>
-                                {commissionStatus.label}
-                              </span>
+                              {commissionStatus ? (
+                                <span style={{ fontSize: 10, fontWeight: 700, color: commissionStatus.text, background: commissionStatus.background, border: `1px solid ${commissionStatus.border}`, borderRadius: 999, padding: "1px 6px", whiteSpace: "nowrap" }}>
+                                  {commissionStatus.label}
+                                </span>
+                              ) : null}
                             </div>
                           </Link>
                         );
@@ -1035,9 +1040,11 @@ export default function SalesCalendarPage() {
                     <div style={{ fontSize: 11, color: repTone.text, fontWeight: 600 }}>{job.status || "booked"}</div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                       {leadDisplayAmount(job) != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>{formatMoney(leadDisplayAmount(job) || 0)}</div> : <span />}
-                      <span style={{ fontSize: 10, fontWeight: 700, color: commissionStatus.text, background: commissionStatus.background, border: `1px solid ${commissionStatus.border}`, borderRadius: 999, padding: "1px 6px", whiteSpace: "nowrap" }}>
-                        {commissionStatus.label}
-                      </span>
+                      {commissionStatus ? (
+                        <span style={{ fontSize: 10, fontWeight: 700, color: commissionStatus.text, background: commissionStatus.background, border: `1px solid ${commissionStatus.border}`, borderRadius: 999, padding: "1px 6px", whiteSpace: "nowrap" }}>
+                          {commissionStatus.label}
+                        </span>
+                      ) : null}
                     </div>
                   </Link>
                 );
