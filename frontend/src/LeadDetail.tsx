@@ -45,6 +45,8 @@ type LeadJobItem = {
   job_order: number;
   pickup_zip: string;
   delivery_zip: string;
+  pickup_addresses: string[];
+  delivery_addresses: string[];
   move_date: string;
   booked_move_date: string;
   price: number | null;
@@ -64,8 +66,8 @@ type LeadJobChargeItem = {
 
 type LeadJobDraft = {
   company_id: string;
-  pickup_zip: string;
-  delivery_zip: string;
+  pickup_addresses: string[];
+  delivery_addresses: string[];
   move_date: string;
   booked_move_date: string;
   price: string;
@@ -153,8 +155,8 @@ export default function LeadDetail() {
   const [jobDrafts, setJobDrafts] = useState<Record<string, LeadJobDraft>>({});
   const [newJobDraft, setNewJobDraft] = useState<LeadJobDraft>({
     company_id: "",
-    pickup_zip: "",
-    delivery_zip: "",
+    pickup_addresses: [""],
+    delivery_addresses: [""],
     move_date: "",
     booked_move_date: "",
     price: "",
@@ -299,10 +301,12 @@ export default function LeadDetail() {
   }
 
   function draftFromJob(item: LeadJobItem): LeadJobDraft {
+    const pickups = item.pickup_addresses.length > 0 ? item.pickup_addresses : (item.pickup_zip ? [item.pickup_zip] : [""]);
+    const deliveries = item.delivery_addresses.length > 0 ? item.delivery_addresses : (item.delivery_zip ? [item.delivery_zip] : [""]);
     return {
       company_id: item.company_id || "",
-      pickup_zip: item.pickup_zip || "",
-      delivery_zip: item.delivery_zip || "",
+      pickup_addresses: pickups,
+      delivery_addresses: deliveries,
       move_date: item.move_date || "",
       booked_move_date: item.booked_move_date || "",
       price: item.price == null ? "" : String(item.price),
@@ -317,6 +321,18 @@ export default function LeadDetail() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { items?: Array<Record<string, unknown>> };
       const rows = Array.isArray(data.items) ? data.items : [];
+      const parseAddressList = (raw: unknown, fallback: string): string[] => {
+        const source = Array.isArray(raw) ? raw : [];
+        const values = source
+          .map((entry) => {
+            if (!entry || typeof entry !== "object") return "";
+            return String((entry as Record<string, unknown>).address || "").trim();
+          })
+          .filter((value) => value);
+        if (values.length > 0) return values;
+        const fallbackText = String(fallback || "").trim();
+        return fallbackText ? [fallbackText] : [];
+      };
       const parsed: LeadJobItem[] = rows.map((item) => ({
         id: String(item.id || ""),
         lead_id: String(item.lead_id || ""),
@@ -325,6 +341,8 @@ export default function LeadDetail() {
         job_order: Number(item.job_order || 0),
         pickup_zip: String(item.pickup_zip || ""),
         delivery_zip: String(item.delivery_zip || ""),
+        pickup_addresses: parseAddressList(item.pickup_addresses, String(item.pickup_zip || "")),
+        delivery_addresses: parseAddressList(item.delivery_addresses, String(item.delivery_zip || "")),
         move_date: String(item.move_date || ""),
         booked_move_date: String(item.booked_move_date || ""),
         price: item.price == null ? null : Number(item.price),
@@ -407,8 +425,8 @@ export default function LeadDetail() {
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
         body: JSON.stringify({
           company_id: draft.company_id,
-          pickup_zip: draft.pickup_zip,
-          delivery_zip: draft.delivery_zip,
+          pickup_addresses: draft.pickup_addresses,
+          delivery_addresses: draft.delivery_addresses,
           move_date: draft.move_date,
           booked_move_date: draft.booked_move_date,
           price: draft.price.trim() === "" ? null : Number(draft.price),
@@ -432,8 +450,8 @@ export default function LeadDetail() {
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
         body: JSON.stringify({
           company_id: newJobDraft.company_id || String(lead?.company_id || ""),
-          pickup_zip: newJobDraft.pickup_zip,
-          delivery_zip: newJobDraft.delivery_zip,
+          pickup_addresses: newJobDraft.pickup_addresses,
+          delivery_addresses: newJobDraft.delivery_addresses,
           move_date: newJobDraft.move_date,
           booked_move_date: newJobDraft.booked_move_date,
           price: newJobDraft.price.trim() === "" ? null : Number(newJobDraft.price),
@@ -442,8 +460,8 @@ export default function LeadDetail() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setNewJobDraft({
         company_id: String(lead?.company_id || ""),
-        pickup_zip: "",
-        delivery_zip: "",
+        pickup_addresses: [""],
+        delivery_addresses: [""],
         move_date: "",
         booked_move_date: "",
         price: "",
@@ -1875,14 +1893,114 @@ export default function LeadDetail() {
                           {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
                         </select>
                       </label>
-                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
-                        Pickup Zip
-                        <input value={draft.pickup_zip} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, pickup_zip: e.target.value } }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
-                      </label>
-                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
-                        Delivery Zip
-                        <input value={draft.delivery_zip} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, delivery_zip: e.target.value } }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
-                      </label>
+                      <div style={{ display: "grid", gap: 6, gridColumn: "1 / -1" }}>
+                        <div style={{ fontSize: 11, color: "#475569", fontWeight: 700 }}>Pickups (ordered)</div>
+                        {draft.pickup_addresses.map((address, index) => (
+                          <div key={`pickup-${index}`} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <span style={{ minWidth: 22, fontSize: 11, color: "#64748b", fontWeight: 700 }}>{index + 1}.</span>
+                            <input
+                              value={address}
+                              onChange={(e) => {
+                                const next = [...draft.pickup_addresses];
+                                next[index] = e.target.value;
+                                setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, pickup_addresses: next } }));
+                              }}
+                              placeholder="Pickup address"
+                              style={{ flex: 1, border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (index === 0) return;
+                                const next = [...draft.pickup_addresses];
+                                [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                                setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, pickup_addresses: next } }));
+                              }}
+                              style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 4, padding: "4px 8px", fontSize: 11 }}
+                            >↑</button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (index === draft.pickup_addresses.length - 1) return;
+                                const next = [...draft.pickup_addresses];
+                                [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                                setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, pickup_addresses: next } }));
+                              }}
+                              style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 4, padding: "4px 8px", fontSize: 11 }}
+                            >↓</button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (draft.pickup_addresses.length <= 1) return;
+                                const next = draft.pickup_addresses.filter((_, i) => i !== index);
+                                setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, pickup_addresses: next } }));
+                              }}
+                              style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "4px 8px", fontSize: 11 }}
+                            >Remove</button>
+                          </div>
+                        ))}
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, pickup_addresses: [...draft.pickup_addresses, ""] } }))}
+                            style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "4px 9px", fontSize: 11, fontWeight: 700 }}
+                          >Add Pickup</button>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gap: 6, gridColumn: "1 / -1" }}>
+                        <div style={{ fontSize: 11, color: "#475569", fontWeight: 700 }}>Deliveries (ordered)</div>
+                        {draft.delivery_addresses.map((address, index) => (
+                          <div key={`delivery-${index}`} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <span style={{ minWidth: 22, fontSize: 11, color: "#64748b", fontWeight: 700 }}>{index + 1}.</span>
+                            <input
+                              value={address}
+                              onChange={(e) => {
+                                const next = [...draft.delivery_addresses];
+                                next[index] = e.target.value;
+                                setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, delivery_addresses: next } }));
+                              }}
+                              placeholder="Delivery address"
+                              style={{ flex: 1, border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (index === 0) return;
+                                const next = [...draft.delivery_addresses];
+                                [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                                setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, delivery_addresses: next } }));
+                              }}
+                              style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 4, padding: "4px 8px", fontSize: 11 }}
+                            >↑</button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (index === draft.delivery_addresses.length - 1) return;
+                                const next = [...draft.delivery_addresses];
+                                [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                                setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, delivery_addresses: next } }));
+                              }}
+                              style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 4, padding: "4px 8px", fontSize: 11 }}
+                            >↓</button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (draft.delivery_addresses.length <= 1) return;
+                                const next = draft.delivery_addresses.filter((_, i) => i !== index);
+                                setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, delivery_addresses: next } }));
+                              }}
+                              style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "4px 8px", fontSize: 11 }}
+                            >Remove</button>
+                          </div>
+                        ))}
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, delivery_addresses: [...draft.delivery_addresses, ""] } }))}
+                            style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "4px 9px", fontSize: 11, fontWeight: 700 }}
+                          >Add Delivery</button>
+                        </div>
+                      </div>
                       <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
                         Move Date
                         <input type="date" value={draft.move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, move_date: e.target.value } }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
@@ -2048,14 +2166,112 @@ export default function LeadDetail() {
                   {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
                 </select>
               </label>
-              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
-                Pickup Zip
-                <input value={newJobDraft.pickup_zip} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, pickup_zip: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
-              </label>
-              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
-                Delivery Zip
-                <input value={newJobDraft.delivery_zip} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, delivery_zip: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
-              </label>
+              <div style={{ display: "grid", gap: 6, gridColumn: "1 / -1" }}>
+                <div style={{ fontSize: 11, color: "#475569", fontWeight: 700 }}>Pickups (ordered)</div>
+                {newJobDraft.pickup_addresses.map((address, index) => (
+                  <div key={`new-pickup-${index}`} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <span style={{ minWidth: 22, fontSize: 11, color: "#64748b", fontWeight: 700 }}>{index + 1}.</span>
+                    <input
+                      value={address}
+                      onChange={(e) => {
+                        const next = [...newJobDraft.pickup_addresses];
+                        next[index] = e.target.value;
+                        setNewJobDraft((prev) => ({ ...prev, pickup_addresses: next }));
+                      }}
+                      placeholder="Pickup address"
+                      style={{ flex: 1, border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (index === 0) return;
+                        const next = [...newJobDraft.pickup_addresses];
+                        [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                        setNewJobDraft((prev) => ({ ...prev, pickup_addresses: next }));
+                      }}
+                      style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 4, padding: "4px 8px", fontSize: 11 }}
+                    >↑</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (index === newJobDraft.pickup_addresses.length - 1) return;
+                        const next = [...newJobDraft.pickup_addresses];
+                        [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                        setNewJobDraft((prev) => ({ ...prev, pickup_addresses: next }));
+                      }}
+                      style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 4, padding: "4px 8px", fontSize: 11 }}
+                    >↓</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (newJobDraft.pickup_addresses.length <= 1) return;
+                        setNewJobDraft((prev) => ({ ...prev, pickup_addresses: prev.pickup_addresses.filter((_, i) => i !== index) }));
+                      }}
+                      style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "4px 8px", fontSize: 11 }}
+                    >Remove</button>
+                  </div>
+                ))}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setNewJobDraft((prev) => ({ ...prev, pickup_addresses: [...prev.pickup_addresses, ""] }))}
+                    style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "4px 9px", fontSize: 11, fontWeight: 700 }}
+                  >Add Pickup</button>
+                </div>
+              </div>
+              <div style={{ display: "grid", gap: 6, gridColumn: "1 / -1" }}>
+                <div style={{ fontSize: 11, color: "#475569", fontWeight: 700 }}>Deliveries (ordered)</div>
+                {newJobDraft.delivery_addresses.map((address, index) => (
+                  <div key={`new-delivery-${index}`} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <span style={{ minWidth: 22, fontSize: 11, color: "#64748b", fontWeight: 700 }}>{index + 1}.</span>
+                    <input
+                      value={address}
+                      onChange={(e) => {
+                        const next = [...newJobDraft.delivery_addresses];
+                        next[index] = e.target.value;
+                        setNewJobDraft((prev) => ({ ...prev, delivery_addresses: next }));
+                      }}
+                      placeholder="Delivery address"
+                      style={{ flex: 1, border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (index === 0) return;
+                        const next = [...newJobDraft.delivery_addresses];
+                        [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                        setNewJobDraft((prev) => ({ ...prev, delivery_addresses: next }));
+                      }}
+                      style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 4, padding: "4px 8px", fontSize: 11 }}
+                    >↑</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (index === newJobDraft.delivery_addresses.length - 1) return;
+                        const next = [...newJobDraft.delivery_addresses];
+                        [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                        setNewJobDraft((prev) => ({ ...prev, delivery_addresses: next }));
+                      }}
+                      style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 4, padding: "4px 8px", fontSize: 11 }}
+                    >↓</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (newJobDraft.delivery_addresses.length <= 1) return;
+                        setNewJobDraft((prev) => ({ ...prev, delivery_addresses: prev.delivery_addresses.filter((_, i) => i !== index) }));
+                      }}
+                      style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "4px 8px", fontSize: 11 }}
+                    >Remove</button>
+                  </div>
+                ))}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setNewJobDraft((prev) => ({ ...prev, delivery_addresses: [...prev.delivery_addresses, ""] }))}
+                    style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "4px 9px", fontSize: 11, fontWeight: 700 }}
+                  >Add Delivery</button>
+                </div>
+              </div>
               <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
                 Move Date
                 <input type="date" value={newJobDraft.move_date} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, move_date: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />

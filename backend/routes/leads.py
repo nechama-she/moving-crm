@@ -22,7 +22,7 @@ from config import get_config
 from database import get_db
 from libs.common.phone import normalize_digits
 from libs.smartmoving.client import get_opportunity, get_opportunity_audit_activity, update_opportunity_salesperson
-from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task
+from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting
 from routes.templates import get_company_template
 
 logger = logging.getLogger("moving-crm")
@@ -1249,6 +1249,8 @@ def _hard_delete_lead(lead: Lead, db: Session) -> None:
 
 
 MAX_ATTACHMENT_SIZE_BYTES = 15 * 1024 * 1024  # 15 MB
+JOB_PICKUPS_SETTING_PREFIX = "lead_job_pickups:"
+JOB_DELIVERIES_SETTING_PREFIX = "lead_job_deliveries:"
 
 
 def _get_visible_lead_or_404(lead_id: str, user: User, db: Session) -> Lead:
@@ -1422,23 +1424,101 @@ def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload | dict
 
 
 class LeadJobCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     company_id: str | None = None
     smartmoving_job_id: str = ""
     pickup_zip: str = ""
     delivery_zip: str = ""
+    pickup_addresses: list[str] = Field(default_factory=list, alias="pickupAddresses")
+    delivery_addresses: list[str] = Field(default_factory=list, alias="deliveryAddresses")
     move_date: str = ""
     booked_move_date: str = ""
     price: float | None = None
 
 
 class LeadJobUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     company_id: str | None = None
     smartmoving_job_id: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
+    pickup_addresses: list[str] | None = Field(default=None, alias="pickupAddresses")
+    delivery_addresses: list[str] | None = Field(default=None, alias="deliveryAddresses")
     move_date: str | None = None
     booked_move_date: str | None = None
     price: float | None = None
+
+
+def _job_pickups_setting_key(job_id: str) -> str:
+    return f"{JOB_PICKUPS_SETTING_PREFIX}{job_id}"
+
+
+def _job_deliveries_setting_key(job_id: str) -> str:
+    return f"{JOB_DELIVERIES_SETTING_PREFIX}{job_id}"
+
+
+def _normalize_address_list(value: list[str] | None, fallback_single: str | None = "") -> list[str]:
+    ordered: list[str] = []
+    for entry in (value or []):
+        text = _clean_optional_text(entry)
+        if text:
+            ordered.append(text)
+    if ordered:
+        return ordered
+    fallback = _clean_optional_text(fallback_single)
+    return [fallback] if fallback else []
+
+
+def _read_addresses_from_setting(db: Session, key: str) -> list[str]:
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    if not row or not (row.value or "").strip():
+        return []
+    try:
+        parsed = json.loads(row.value)
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    out: list[str] = []
+    for entry in parsed:
+        text = _clean_optional_text(str(entry))
+        if text:
+            out.append(text)
+    return out
+
+
+def _write_addresses_to_setting(db: Session, key: str, addresses: list[str]) -> None:
+    existing = db.query(AppSetting).filter(AppSetting.key == key).first()
+    serialized = json.dumps(addresses)
+    if existing:
+        existing.value = serialized
+    else:
+        db.add(AppSetting(key=key, value=serialized))
+
+
+def _persist_job_address_lists(db: Session, job_id: str, pickups: list[str], deliveries: list[str]) -> None:
+    _write_addresses_to_setting(db, _job_pickups_setting_key(job_id), pickups)
+    _write_addresses_to_setting(db, _job_deliveries_setting_key(job_id), deliveries)
+
+
+def _serialize_job_with_addresses(job: LeadJob, db: Session) -> dict:
+    payload = job.to_dict()
+    pickups = _read_addresses_from_setting(db, _job_pickups_setting_key(job.id))
+    deliveries = _read_addresses_from_setting(db, _job_deliveries_setting_key(job.id))
+    if not pickups:
+        fallback_pickup = _clean_optional_text(payload.get("pickup_zip") or "")
+        pickups = [fallback_pickup] if fallback_pickup else []
+    if not deliveries:
+        fallback_delivery = _clean_optional_text(payload.get("delivery_zip") or "")
+        deliveries = [fallback_delivery] if fallback_delivery else []
+
+    payload["pickup_zip"] = pickups[0] if pickups else ""
+    payload["delivery_zip"] = deliveries[0] if deliveries else ""
+    payload["pickup_addresses"] = [{"order": index + 1, "address": address} for index, address in enumerate(pickups)]
+    payload["delivery_addresses"] = [{"order": index + 1, "address": address} for index, address in enumerate(deliveries)]
+    return payload
 
 
 @router.get("/leads/{lead_id}/jobs")
@@ -1457,7 +1537,7 @@ def list_lead_jobs(
         .order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc())
         .all()
     )
-    return {"items": [row.to_dict() for row in rows]}
+    return {"items": [_serialize_job_with_addresses(row, db) for row in rows]}
 
 
 @router.post("/leads/{lead_id}/jobs")
@@ -1497,16 +1577,28 @@ def create_lead_job(
         company_id=company_id,
         job_order=_next_lead_job_order(lead.id, db),
         smartmoving_job_id=(body.smartmoving_job_id or "").strip() or None,
-        pickup_zip=(body.pickup_zip or "").strip(),
-        delivery_zip=(body.delivery_zip or "").strip(),
+        pickup_zip="",
+        delivery_zip="",
         move_date=move_date,
         booked_move_date=booked_date,
         price=price_value,
     )
+
+    pickups = _normalize_address_list(body.pickup_addresses, body.pickup_zip)
+    deliveries = _normalize_address_list(body.delivery_addresses, body.delivery_zip)
+    if not pickups:
+        raise HTTPException(status_code=400, detail="At least one pickup address is required")
+    if not deliveries:
+        raise HTTPException(status_code=400, detail="At least one delivery address is required")
+    row.pickup_zip = pickups[0]
+    row.delivery_zip = deliveries[0]
+
     db.add(row)
+    db.flush()
+    _persist_job_address_lists(db, row.id, pickups, deliveries)
     db.commit()
     db.refresh(row)
-    return row.to_dict()
+    return _serialize_job_with_addresses(row, db)
 
 
 @router.put("/leads/{lead_id}/jobs/{job_id}/charges")
@@ -1529,7 +1621,7 @@ def replace_lead_job_charges(
     _replace_job_charges(row, body.estimated_charges, db)
     db.commit()
     db.refresh(row)
-    return row.to_dict()
+    return _serialize_job_with_addresses(row, db)
 
 
 @router.patch("/leads/{lead_id}/jobs/{job_id}")
@@ -1549,7 +1641,7 @@ def update_lead_job(
     if not row:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    payload = body.dict(exclude_unset=True)
+    payload = body.model_dump(exclude_unset=True, by_alias=False)
     company_ids = _get_user_company_ids(user, db)
 
     if "company_id" in payload:
@@ -1566,10 +1658,35 @@ def update_lead_job(
     if "smartmoving_job_id" in payload:
         row.smartmoving_job_id = (payload.get("smartmoving_job_id") or "").strip() or None
 
-    if "pickup_zip" in payload:
-        row.pickup_zip = (payload.get("pickup_zip") or "").strip()
-    if "delivery_zip" in payload:
-        row.delivery_zip = (payload.get("delivery_zip") or "").strip()
+    current_pickups = _read_addresses_from_setting(db, _job_pickups_setting_key(row.id))
+    current_deliveries = _read_addresses_from_setting(db, _job_deliveries_setting_key(row.id))
+    if not current_pickups:
+        fallback_pickup = _clean_optional_text(row.pickup_zip)
+        current_pickups = [fallback_pickup] if fallback_pickup else []
+    if not current_deliveries:
+        fallback_delivery = _clean_optional_text(row.delivery_zip)
+        current_deliveries = [fallback_delivery] if fallback_delivery else []
+
+    next_pickups = current_pickups
+    next_deliveries = current_deliveries
+
+    if "pickup_addresses" in payload:
+        next_pickups = _normalize_address_list(payload.get("pickup_addresses") or [], payload.get("pickup_zip") or row.pickup_zip)
+    elif "pickup_zip" in payload:
+        next_pickups = _normalize_address_list([], payload.get("pickup_zip") or "")
+
+    if "delivery_addresses" in payload:
+        next_deliveries = _normalize_address_list(payload.get("delivery_addresses") or [], payload.get("delivery_zip") or row.delivery_zip)
+    elif "delivery_zip" in payload:
+        next_deliveries = _normalize_address_list([], payload.get("delivery_zip") or "")
+
+    if not next_pickups:
+        raise HTTPException(status_code=400, detail="At least one pickup address is required")
+    if not next_deliveries:
+        raise HTTPException(status_code=400, detail="At least one delivery address is required")
+
+    row.pickup_zip = next_pickups[0]
+    row.delivery_zip = next_deliveries[0]
     if "move_date" in payload:
         row.move_date = _normalize_move_date(payload.get("move_date") or "")
 
@@ -1596,9 +1713,11 @@ def update_lead_job(
                 raise HTTPException(status_code=400, detail="price must be >= 0")
             row.price = price_value
 
+    _persist_job_address_lists(db, row.id, next_pickups, next_deliveries)
+
     db.commit()
     db.refresh(row)
-    return row.to_dict()
+    return _serialize_job_with_addresses(row, db)
 
 
 @router.delete("/leads/{lead_id}/jobs/{job_id}")
@@ -1618,6 +1737,13 @@ def delete_lead_job(
         raise HTTPException(status_code=404, detail="Job not found")
     if row.job_order == 1:
         raise HTTPException(status_code=400, detail="Cannot delete primary lead job")
+
+    pickups_setting = db.query(AppSetting).filter(AppSetting.key == _job_pickups_setting_key(row.id)).first()
+    if pickups_setting:
+        db.delete(pickups_setting)
+    deliveries_setting = db.query(AppSetting).filter(AppSetting.key == _job_deliveries_setting_key(row.id)).first()
+    if deliveries_setting:
+        db.delete(deliveries_setting)
 
     db.delete(row)
     db.commit()
