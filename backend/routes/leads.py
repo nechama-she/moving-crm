@@ -258,8 +258,9 @@ def _build_smartmoving_jobs_payload(opportunity: dict) -> list[dict]:
     for job in opportunity.get("jobs") or []:
         addresses = job.get("jobAddresses") or []
         cleaned_addresses = [str(address).strip() for address in addresses if str(address).strip()]
-        pickups = cleaned_addresses[:1]
-        deliveries = cleaned_addresses[-1:] if len(cleaned_addresses) > 1 else []
+        pickup = cleaned_addresses[0] if cleaned_addresses else ""
+        delivery = cleaned_addresses[-1] if len(cleaned_addresses) > 1 else ""
+        stops = cleaned_addresses[1:-1] if len(cleaned_addresses) > 2 else []
         move_date = _format_smartmoving_date(job.get("jobDate") or opportunity.get("serviceDate"))
 
         row = {
@@ -270,12 +271,12 @@ def _build_smartmoving_jobs_payload(opportunity: dict) -> list[dict]:
         sort_order = _smartmoving_job_sort_order(job)
         if sort_order is not None:
             row["sortOrder"] = sort_order
-        if pickups:
-            row["pickup_zip"] = pickups[0]
-            row["pickup_addresses"] = pickups
-        if deliveries:
-            row["delivery_zip"] = deliveries[0]
-            row["delivery_addresses"] = deliveries
+        if pickup:
+            row["pickup_zip"] = pickup
+        if delivery:
+            row["delivery_zip"] = delivery
+        if stops:
+            row["stops"] = stops
         if move_date:
             row["move_date"] = move_date
         jobs.append(row)
@@ -1254,6 +1255,7 @@ def _hard_delete_lead(lead: Lead, db: Session) -> None:
 MAX_ATTACHMENT_SIZE_BYTES = 15 * 1024 * 1024  # 15 MB
 JOB_PICKUPS_SETTING_PREFIX = "lead_job_pickups:"
 JOB_DELIVERIES_SETTING_PREFIX = "lead_job_deliveries:"
+JOB_STOPS_SETTING_PREFIX = "lead_job_stops:"
 
 
 def _get_visible_lead_or_404(lead_id: str, user: User, db: Session) -> Lead:
@@ -1433,6 +1435,7 @@ class LeadJobCreate(BaseModel):
     smartmoving_job_id: str = ""
     pickup_zip: str = ""
     delivery_zip: str = ""
+    stops: list[str] = Field(default_factory=list)
     pickup_addresses: list[str] = Field(default_factory=list, alias="pickupAddresses")
     delivery_addresses: list[str] = Field(default_factory=list, alias="deliveryAddresses")
     move_date: str = ""
@@ -1447,6 +1450,7 @@ class LeadJobUpdate(BaseModel):
     smartmoving_job_id: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
+    stops: list[str] | None = None
     pickup_addresses: list[str] | None = Field(default=None, alias="pickupAddresses")
     delivery_addresses: list[str] | None = Field(default=None, alias="deliveryAddresses")
     move_date: str | None = None
@@ -1462,6 +1466,10 @@ def _job_deliveries_setting_key(job_id: str) -> str:
     return f"{JOB_DELIVERIES_SETTING_PREFIX}{job_id}"
 
 
+def _job_stops_setting_key(job_id: str) -> str:
+    return f"{JOB_STOPS_SETTING_PREFIX}{job_id}"
+
+
 def _normalize_address_list(value: list[str] | None, fallback_single: str | None = "") -> list[str]:
     ordered: list[str] = []
     for entry in (value or []):
@@ -1472,6 +1480,15 @@ def _normalize_address_list(value: list[str] | None, fallback_single: str | None
         return ordered
     fallback = _clean_optional_text(fallback_single)
     return [fallback] if fallback else []
+
+
+def _normalize_stops_list(value: list[str] | None) -> list[str]:
+    out: list[str] = []
+    for entry in (value or []):
+        text = _clean_optional_text(entry)
+        if text:
+            out.append(text)
+    return out
 
 
 def _read_addresses_from_setting(db: Session, key: str) -> list[str]:
@@ -1506,21 +1523,38 @@ def _persist_job_address_lists(db: Session, job_id: str, pickups: list[str], del
     _write_addresses_to_setting(db, _job_deliveries_setting_key(job_id), deliveries)
 
 
+def _read_job_route(db: Session, job: LeadJob) -> tuple[str, list[str], str]:
+    pickup = _clean_optional_text(job.pickup_zip)
+    delivery = _clean_optional_text(job.delivery_zip)
+    stops = _read_addresses_from_setting(db, _job_stops_setting_key(job.id))
+
+    if not stops:
+        legacy_pickups = _read_addresses_from_setting(db, _job_pickups_setting_key(job.id))
+        legacy_deliveries = _read_addresses_from_setting(db, _job_deliveries_setting_key(job.id))
+        route = [*legacy_pickups, *legacy_deliveries]
+        if route:
+            if not pickup:
+                pickup = route[0]
+            if not delivery:
+                delivery = route[-1]
+            if len(route) > 2:
+                stops = route[1:-1]
+
+    return pickup, stops, delivery
+
+
+def _persist_job_route(db: Session, job_id: str, pickup: str, stops: list[str], delivery: str) -> None:
+    _write_addresses_to_setting(db, _job_pickups_setting_key(job_id), [pickup] if pickup else [])
+    _write_addresses_to_setting(db, _job_deliveries_setting_key(job_id), [delivery] if delivery else [])
+    _write_addresses_to_setting(db, _job_stops_setting_key(job_id), _normalize_stops_list(stops))
+
+
 def _serialize_job_with_addresses(job: LeadJob, db: Session) -> dict:
     payload = job.to_dict()
-    pickups = _read_addresses_from_setting(db, _job_pickups_setting_key(job.id))
-    deliveries = _read_addresses_from_setting(db, _job_deliveries_setting_key(job.id))
-    if not pickups:
-        fallback_pickup = _clean_optional_text(payload.get("pickup_zip") or "")
-        pickups = [fallback_pickup] if fallback_pickup else []
-    if not deliveries:
-        fallback_delivery = _clean_optional_text(payload.get("delivery_zip") or "")
-        deliveries = [fallback_delivery] if fallback_delivery else []
-
-    payload["pickup_zip"] = pickups[0] if pickups else ""
-    payload["delivery_zip"] = deliveries[0] if deliveries else ""
-    payload["pickup_addresses"] = [{"order": index + 1, "address": address} for index, address in enumerate(pickups)]
-    payload["delivery_addresses"] = [{"order": index + 1, "address": address} for index, address in enumerate(deliveries)]
+    pickup, stops, delivery = _read_job_route(db, job)
+    payload["pickup_zip"] = pickup
+    payload["delivery_zip"] = delivery
+    payload["stops"] = [{"order": index + 1, "address": address} for index, address in enumerate(stops)]
     return payload
 
 
@@ -1587,18 +1621,29 @@ def create_lead_job(
         price=price_value,
     )
 
-    pickups = _normalize_address_list(body.pickup_addresses, body.pickup_zip)
-    deliveries = _normalize_address_list(body.delivery_addresses, body.delivery_zip)
-    if not pickups:
+    pickup = _clean_optional_text(body.pickup_zip)
+    delivery = _clean_optional_text(body.delivery_zip)
+    stops = _normalize_stops_list(body.stops)
+    if body.pickup_addresses or body.delivery_addresses:
+        route = [
+            *_normalize_address_list(body.pickup_addresses, pickup),
+            *_normalize_address_list(body.delivery_addresses, delivery),
+        ]
+        if route:
+            pickup = route[0]
+            delivery = route[-1] if len(route) > 1 else ""
+            stops = route[1:-1] if len(route) > 2 else []
+
+    if not pickup:
         raise HTTPException(status_code=400, detail="At least one pickup address is required")
-    if not deliveries:
+    if not delivery:
         raise HTTPException(status_code=400, detail="At least one delivery address is required")
-    row.pickup_zip = pickups[0]
-    row.delivery_zip = deliveries[0]
+    row.pickup_zip = pickup
+    row.delivery_zip = delivery
 
     db.add(row)
     db.flush()
-    _persist_job_address_lists(db, row.id, pickups, deliveries)
+    _persist_job_route(db, row.id, pickup, stops, delivery)
     db.commit()
     db.refresh(row)
     return _serialize_job_with_addresses(row, db)
@@ -1661,35 +1706,35 @@ def update_lead_job(
     if "smartmoving_job_id" in payload:
         row.smartmoving_job_id = (payload.get("smartmoving_job_id") or "").strip() or None
 
-    current_pickups = _read_addresses_from_setting(db, _job_pickups_setting_key(row.id))
-    current_deliveries = _read_addresses_from_setting(db, _job_deliveries_setting_key(row.id))
-    if not current_pickups:
-        fallback_pickup = _clean_optional_text(row.pickup_zip)
-        current_pickups = [fallback_pickup] if fallback_pickup else []
-    if not current_deliveries:
-        fallback_delivery = _clean_optional_text(row.delivery_zip)
-        current_deliveries = [fallback_delivery] if fallback_delivery else []
+    current_pickup, current_stops, current_delivery = _read_job_route(db, row)
+    next_pickup = current_pickup
+    next_stops = current_stops
+    next_delivery = current_delivery
 
-    next_pickups = current_pickups
-    next_deliveries = current_deliveries
+    if "pickup_zip" in payload:
+        next_pickup = _clean_optional_text(payload.get("pickup_zip") or "")
+    if "delivery_zip" in payload:
+        next_delivery = _clean_optional_text(payload.get("delivery_zip") or "")
+    if "stops" in payload:
+        next_stops = _normalize_stops_list(payload.get("stops") or [])
 
-    if "pickup_addresses" in payload:
-        next_pickups = _normalize_address_list(payload.get("pickup_addresses") or [], payload.get("pickup_zip") or row.pickup_zip)
-    elif "pickup_zip" in payload:
-        next_pickups = _normalize_address_list([], payload.get("pickup_zip") or "")
+    if "pickup_addresses" in payload or "delivery_addresses" in payload:
+        route = [
+            *_normalize_address_list(payload.get("pickup_addresses") or [], next_pickup),
+            *_normalize_address_list(payload.get("delivery_addresses") or [], next_delivery),
+        ]
+        if route:
+            next_pickup = route[0]
+            next_delivery = route[-1] if len(route) > 1 else ""
+            next_stops = route[1:-1] if len(route) > 2 else []
 
-    if "delivery_addresses" in payload:
-        next_deliveries = _normalize_address_list(payload.get("delivery_addresses") or [], payload.get("delivery_zip") or row.delivery_zip)
-    elif "delivery_zip" in payload:
-        next_deliveries = _normalize_address_list([], payload.get("delivery_zip") or "")
-
-    if not next_pickups:
+    if not next_pickup:
         raise HTTPException(status_code=400, detail="At least one pickup address is required")
-    if not next_deliveries:
+    if not next_delivery:
         raise HTTPException(status_code=400, detail="At least one delivery address is required")
 
-    row.pickup_zip = next_pickups[0]
-    row.delivery_zip = next_deliveries[0]
+    row.pickup_zip = next_pickup
+    row.delivery_zip = next_delivery
     if "move_date" in payload:
         row.move_date = _normalize_move_date(payload.get("move_date") or "")
 
@@ -1716,7 +1761,7 @@ def update_lead_job(
                 raise HTTPException(status_code=400, detail="price must be >= 0")
             row.price = price_value
 
-    _persist_job_address_lists(db, row.id, next_pickups, next_deliveries)
+    _persist_job_route(db, row.id, next_pickup, next_stops, next_delivery)
 
     db.commit()
     db.refresh(row)
@@ -1747,6 +1792,9 @@ def delete_lead_job(
     deliveries_setting = db.query(AppSetting).filter(AppSetting.key == _job_deliveries_setting_key(row.id)).first()
     if deliveries_setting:
         db.delete(deliveries_setting)
+    stops_setting = db.query(AppSetting).filter(AppSetting.key == _job_stops_setting_key(row.id)).first()
+    if stops_setting:
+        db.delete(stops_setting)
 
     db.delete(row)
     db.commit()
@@ -2075,6 +2123,7 @@ class LeadUpdateJob(BaseModel):
     smartmoving_job_id: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
+    stops: list[str] | None = None
     pickup_addresses: list[str] | None = Field(default=None, alias="pickupAddresses")
     delivery_addresses: list[str] | None = Field(default=None, alias="deliveryAddresses")
     move_date: str | None = None
@@ -2321,49 +2370,40 @@ def update_lead(
             if "delivery_zip" in job_payload:
                 target_job.delivery_zip = (job_payload.get("delivery_zip") or "").strip()
 
-            current_pickups = _read_addresses_from_setting(db, _job_pickups_setting_key(target_job.id))
-            current_deliveries = _read_addresses_from_setting(db, _job_deliveries_setting_key(target_job.id))
-            if not current_pickups:
-                fallback_pickup = _clean_optional_text(target_job.pickup_zip)
-                current_pickups = [fallback_pickup] if fallback_pickup else []
-            if not current_deliveries:
-                fallback_delivery = _clean_optional_text(target_job.delivery_zip)
-                current_deliveries = [fallback_delivery] if fallback_delivery else []
+            current_pickup, current_stops, current_delivery = _read_job_route(db, target_job)
+            next_pickup = current_pickup
+            next_stops = current_stops
+            next_delivery = current_delivery
+            touch_route = any(
+                key in job_payload
+                for key in ("pickup_zip", "delivery_zip", "stops", "pickup_addresses", "delivery_addresses")
+            )
 
-            next_pickups = current_pickups
-            next_deliveries = current_deliveries
-            touch_pickups = "pickup_addresses" in job_payload or "pickup_zip" in job_payload
-            touch_deliveries = "delivery_addresses" in job_payload or "delivery_zip" in job_payload
+            if "pickup_zip" in job_payload:
+                next_pickup = _clean_optional_text(job_payload.get("pickup_zip") or "")
+            if "delivery_zip" in job_payload:
+                next_delivery = _clean_optional_text(job_payload.get("delivery_zip") or "")
+            if "stops" in job_payload:
+                next_stops = _normalize_stops_list(job_payload.get("stops") or [])
 
-            if "pickup_addresses" in job_payload:
-                next_pickups = _normalize_address_list(
-                    job_payload.get("pickup_addresses") or [],
-                    job_payload.get("pickup_zip") or target_job.pickup_zip,
-                )
-            elif "pickup_zip" in job_payload:
-                next_pickups = _normalize_address_list([], job_payload.get("pickup_zip") or "")
+            if "pickup_addresses" in job_payload or "delivery_addresses" in job_payload:
+                route = [
+                    *_normalize_address_list(job_payload.get("pickup_addresses") or [], next_pickup),
+                    *_normalize_address_list(job_payload.get("delivery_addresses") or [], next_delivery),
+                ]
+                if route:
+                    next_pickup = route[0]
+                    next_delivery = route[-1] if len(route) > 1 else ""
+                    next_stops = route[1:-1] if len(route) > 2 else []
 
-            if "delivery_addresses" in job_payload:
-                next_deliveries = _normalize_address_list(
-                    job_payload.get("delivery_addresses") or [],
-                    job_payload.get("delivery_zip") or target_job.delivery_zip,
-                )
-            elif "delivery_zip" in job_payload:
-                next_deliveries = _normalize_address_list([], job_payload.get("delivery_zip") or "")
-
-            if touch_pickups and not next_pickups:
-                raise HTTPException(status_code=400, detail="At least one pickup address is required")
-            if touch_deliveries and not next_deliveries:
-                raise HTTPException(status_code=400, detail="At least one delivery address is required")
-
-            if touch_pickups or touch_deliveries:
-                if not next_pickups:
+            if touch_route:
+                if not next_pickup:
                     raise HTTPException(status_code=400, detail="At least one pickup address is required")
-                if not next_deliveries:
+                if not next_delivery:
                     raise HTTPException(status_code=400, detail="At least one delivery address is required")
-                target_job.pickup_zip = next_pickups[0]
-                target_job.delivery_zip = next_deliveries[0]
-                _persist_job_address_lists(db, target_job.id, next_pickups, next_deliveries)
+                target_job.pickup_zip = next_pickup
+                target_job.delivery_zip = next_delivery
+                _persist_job_route(db, target_job.id, next_pickup, next_stops, next_delivery)
 
             if "move_date" in job_payload:
                 target_job.move_date = _normalize_move_date(job_payload.get("move_date") or "")
