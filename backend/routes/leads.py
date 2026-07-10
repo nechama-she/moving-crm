@@ -275,7 +275,6 @@ def _build_smartmoving_jobs_payload(opportunity: dict) -> list[dict]:
             row["delivery_zip"] = delivery
         if move_date:
             row["move_date"] = move_date
-            row["booked_move_date"] = move_date
         jobs.append(row)
     return jobs
 
@@ -755,7 +754,7 @@ def get_dispatch_calendar(
                 "company_color": resolve_company_color(company_name, company_color),
                 "full_name": lead.full_name or "",
                 "move_date": job.move_date or "",
-                "booked_move_date": job.move_date or "",
+                "booked_move_date": job.booked_move_date.isoformat() if job.booked_move_date else "",
                 "pickup_zip": job.pickup_zip or "",
                 "delivery_zip": job.delivery_zip or "",
                 "price": float(job.price) if job.price is not None else None,
@@ -1005,7 +1004,7 @@ def search_dispatch_jobs(
                     "company_name": company_name or "",
                     "company_color": resolve_company_color(company_name, company_color),
                     "full_name": lead.full_name or "",
-                    "booked_move_date": job.move_date or "",
+                    "booked_move_date": job.booked_move_date.isoformat() if job.booked_move_date else "",
                     "move_date": job.move_date or "",
                     "pickup_zip": job.pickup_zip or "",
                     "delivery_zip": job.delivery_zip or "",
@@ -1054,7 +1053,7 @@ def search_dispatch_jobs(
                 "company_name": company_name or "",
                 "company_color": resolve_company_color(company_name, company_color),
                 "full_name": lead.full_name or "",
-                "booked_move_date": job.move_date or "",
+                "booked_move_date": job.booked_move_date.isoformat() if job.booked_move_date else "",
                 "move_date": job.move_date or "",
                 "pickup_zip": job.pickup_zip or "",
                 "delivery_zip": job.delivery_zip or "",
@@ -1480,7 +1479,7 @@ def create_lead_job(
 
     move_date = _normalize_move_date(body.move_date)
     booked_date_raw = (body.booked_move_date or "").strip()
-    booked_date = _parse_booked_move_date(booked_date_raw or move_date)
+    booked_date = _parse_booked_move_date(booked_date_raw)
     if booked_date_raw and not booked_date:
         raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
 
@@ -1573,8 +1572,6 @@ def update_lead_job(
         row.delivery_zip = (payload.get("delivery_zip") or "").strip()
     if "move_date" in payload:
         row.move_date = _normalize_move_date(payload.get("move_date") or "")
-        if "booked_move_date" not in payload:
-            row.booked_move_date = _parse_booked_move_date(row.move_date)
 
     if "booked_move_date" in payload:
         booked_raw = (payload.get("booked_move_date") or "").strip()
@@ -2093,8 +2090,6 @@ def update_lead(
         lead.weight = weight_value
     if body.move_date is not None:
         lead.move_date = _normalize_move_date(body.move_date)
-        if body.booked_move_date is None:
-            lead.booked_move_date = _parse_booked_move_date(lead.move_date)
     if body.booked_move_date is not None:
         booked_raw = (body.booked_move_date or "").strip()
         if not booked_raw:
@@ -2197,8 +2192,6 @@ def update_lead(
 
             if "move_date" in job_payload:
                 target_job.move_date = _normalize_move_date(job_payload.get("move_date") or "")
-                if "booked_move_date" not in job_payload:
-                    target_job.booked_move_date = _parse_booked_move_date(target_job.move_date)
 
             if "booked_move_date" in job_payload:
                 booked_raw = (job_payload.get("booked_move_date") or "").strip()
@@ -2609,7 +2602,7 @@ def create_lead(
 
     normalized_move_date = _normalize_move_date(_clean_optional_text(body.move_date))
     booked_raw = _clean_optional_text(body.booked_move_date)
-    parsed_booked_date = _parse_booked_move_date(booked_raw or normalized_move_date)
+    parsed_booked_date = _parse_booked_move_date(booked_raw)
     if booked_raw and not parsed_booked_date:
         raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
 
