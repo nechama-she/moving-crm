@@ -204,6 +204,21 @@ def _map_smartmoving_payments(payments: list | None) -> list[dict]:
     return output
 
 
+def _merge_smartmoving_payments_with_existing(smartmoving_rows: list[dict], existing_rows: list[dict]) -> list[dict]:
+    """Keep CRM-managed payment fields (repPaid/repPaidAt) when refreshing from SmartMoving."""
+    merged: list[dict] = []
+    for index, row in enumerate(smartmoving_rows):
+        existing = existing_rows[index] if index < len(existing_rows) else {}
+        rep_paid = bool(existing.get("repPaid") or False)
+        rep_paid_at = str(existing.get("repPaidAt") or "").strip()
+
+        next_row = dict(row)
+        next_row["repPaid"] = rep_paid
+        next_row["repPaidAt"] = rep_paid_at
+        merged.append(next_row)
+    return merged
+
+
 def _map_smartmoving_estimated_charges(charges: list | None) -> list[dict]:
     output: list[dict] = []
     for charge in charges or []:
@@ -334,7 +349,8 @@ def _build_smartmoving_refresh_payload(opportunity: dict, user: User) -> dict:
         payload["move_date"] = move_date
 
     payload["estimatedTotal"] = _map_smartmoving_estimated_total(opportunity.get("estimatedTotal"))
-    payload["payments"] = _map_smartmoving_payments(opportunity.get("payments") or [])
+    if isinstance(opportunity.get("payments"), list):
+        payload["payments"] = _map_smartmoving_payments(opportunity.get("payments") or [])
     payload["jobs"] = _build_smartmoving_jobs_payload(opportunity)
     return payload
 
@@ -2583,6 +2599,10 @@ def refresh_lead_from_smartmoving(
         raise HTTPException(status_code=502, detail="SmartMoving refresh returned an invalid payload")
 
     payload = _build_smartmoving_refresh_payload(opportunity, user)
+
+    if isinstance(payload.get("payments"), list):
+        existing_payments = _deserialize_payments(lead.payments)
+        payload["payments"] = _merge_smartmoving_payments_with_existing(payload.get("payments") or [], existing_payments)
 
     audit_result = get_opportunity_audit_activity(smartmoving_id)
     if audit_result.get("error"):
