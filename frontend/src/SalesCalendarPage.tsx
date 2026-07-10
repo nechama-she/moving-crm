@@ -512,7 +512,7 @@ export default function SalesCalendarPage() {
 
   const filteredLeadCount = useMemo(() => {
     return new Set(filteredJobs.map((job) => String(job.lead_id || "")).filter(Boolean)).size;
-  }, [filteredJobs, commissionPercentByUserId, defaultCommissionPercent]);
+  }, [filteredJobs]);
 
   const breakdownCompanies = useMemo(() => {
     const companyBuckets = new Map<string, {
@@ -683,6 +683,11 @@ export default function SalesCalendarPage() {
       companies,
     };
   }, [filteredJobs]);
+
+  const summaryGrandTotal = useMemo(
+    () => salesMoneySummary.paymentsTotal + salesMoneySummary.remainingTotal,
+    [salesMoneySummary.paymentsTotal, salesMoneySummary.remainingTotal]
+  );
 
   const year = viewMonth.getFullYear();
   const month = viewMonth.getMonth();
@@ -958,34 +963,44 @@ export default function SalesCalendarPage() {
             ) : null}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginTop: 4 }}>
-            <div style={{ border: "1px solid #cbd5e1", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #eff6ff 0%, #ffffff 100%)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginTop: 4 }}>
+            <div style={{ border: "1px solid #cbd5e1", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #f8fafc 0%, #ffffff 100%)" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#334155", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Leads</div>
+              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{salesMoneySummary.leadCount}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#64748b" }}>visible in current filters</div>
+            </div>
+            <div style={{ border: "1px solid #93c5fd", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #eff6ff 0%, #ffffff 100%)" }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estimated Total</div>
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.estimatedTotal)}</div>
-              <div style={{ marginTop: 4, fontSize: 12, color: "#475569" }}>{salesMoneySummary.leadCount} lead{salesMoneySummary.leadCount === 1 ? "" : "s"}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#475569" }}>quoted job value</div>
             </div>
-            <div style={{ border: "1px solid #bbf7d0", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%)" }}>
+            <div style={{ border: "1px solid #86efac", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #f0fdf4 0%, #ffffff 100%)" }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#15803d", textTransform: "uppercase", letterSpacing: "0.05em" }}>Payments</div>
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.paymentsTotal)}</div>
-              <div style={{ marginTop: 4, fontSize: 12, color: "#166534" }}>{formatPercent(salesMoneySummary.paymentsPercent)}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#166534" }}>{formatPercent(salesMoneySummary.paymentsPercent)} collected</div>
             </div>
-            <div style={{ border: "1px solid #fde68a", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #fffbeb 0%, #ffffff 100%)" }}>
+            <div style={{ border: "1px solid #fcd34d", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #fffbeb 0%, #ffffff 100%)" }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#b45309", textTransform: "uppercase", letterSpacing: "0.05em" }}>Remaining</div>
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.remainingTotal)}</div>
-              <div style={{ marginTop: 4, fontSize: 12, color: "#92400e" }}>{formatPercent(salesMoneySummary.remainingPercent)}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#92400e" }}>{formatPercent(salesMoneySummary.remainingPercent)} pending</div>
             </div>
-            <div style={{ border: "1px solid #c7d2fe", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #eef2ff 0%, #ffffff 100%)" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#4338ca", textTransform: "uppercase", letterSpacing: "0.05em" }}>Rep Paid (per rep setting)</div>
+            <div style={{ border: "1px solid #c4b5fd", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #eef2ff 0%, #ffffff 100%)" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#4338ca", textTransform: "uppercase", letterSpacing: "0.05em" }}>Rep Paid</div>
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.repCommissionPaid)}</div>
               <div style={{ marginTop: 4, fontSize: 12, color: "#4f46e5" }}>of {formatMoney(salesMoneySummary.repCommissionTotal)}</div>
             </div>
-            <div style={{ border: "1px solid #fecaca", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #fff1f2 0%, #ffffff 100%)" }}>
+            <div style={{ border: "1px solid #fda4af", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #fff1f2 0%, #ffffff 100%)" }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#be123c", textTransform: "uppercase", letterSpacing: "0.05em" }}>Rep Remaining</div>
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.repCommissionRemaining)}</div>
-              <div style={{ marginTop: 4, fontSize: 12, color: "#be123c" }}>unpaid commission</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#be123c" }}>unpaid to reps</div>
+            </div>
+            <div style={{ border: "1px solid #7dd3fc", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #ecfeff 0%, #ffffff 100%)" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#0369a1", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Value</div>
+              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(summaryGrandTotal)}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#0c4a6e" }}>payments + remaining</div>
             </div>
             {isAdmin ? (
-              <div style={{ border: "1px solid #a7f3d0", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #ecfdf5 0%, #ffffff 100%)" }}>
+              <div style={{ border: "1px solid #6ee7b7", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #ecfdf5 0%, #ffffff 100%)" }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: "#047857", textTransform: "uppercase", letterSpacing: "0.05em" }}>Company Income</div>
                 <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.companyIncome)}</div>
                 <div style={{ marginTop: 4, fontSize: 12, color: "#047857" }}>payments - 3.5% - rep commissions</div>
@@ -1006,14 +1021,14 @@ export default function SalesCalendarPage() {
               <div style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>{totalsExpanded ? "Hide" : "Show"}</div>
             </button>
             {totalsExpanded ? (
-              <div style={{ padding: 12, display: "grid", gap: 8 }}>
+              <div style={{ padding: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
                 {breakdownCompanies.length === 0 ? (
                   <div style={{ fontSize: 12, color: "#64748b" }}>No companies selected.</div>
                 ) : breakdownCompanies.map((company) => {
                   const tone = toneForCompanyColor(company.companyColor, company.companyName);
                   const checked = selectedCompanyIds.includes(company.companyId);
                   return (
-                    <label key={company.companyId} style={{ border: `1px solid ${checked ? tone.border : "#dbe4ef"}`, background: checked ? tone.tint : "#f8fafc", borderRadius: 12, padding: 12, display: "grid", gap: 6, cursor: "pointer", opacity: checked ? 1 : 0.7 }}>
+                    <label key={company.companyId} style={{ border: `1px solid ${checked ? tone.border : "#dbe4ef"}`, background: checked ? tone.tint : "#f8fafc", borderRadius: 14, padding: 12, display: "grid", gap: 8, cursor: "pointer", boxShadow: checked ? "0 8px 20px rgba(15,23,42,.08)" : "none", opacity: checked ? 1 : 0.72 }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <input
@@ -1028,13 +1043,40 @@ export default function SalesCalendarPage() {
                         </div>
                         <div style={{ fontSize: 11, color: tone.text }}>{company.leadCount} lead{company.leadCount === 1 ? "" : "s"}</div>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
-                        <div style={{ fontSize: 12, color: "#334155" }}>Estimated: <strong>{formatMoney(company.estimatedTotal)}</strong></div>
-                        <div style={{ fontSize: 12, color: "#166534" }}>Payments: <strong>{formatMoney(company.paymentsTotal)}</strong> ({formatPercent(company.paymentsPercent)})</div>
-                        <div style={{ fontSize: 12, color: "#92400e" }}>Remaining: <strong>{formatMoney(company.remainingTotal)}</strong> ({formatPercent(company.remainingPercent)})</div>
-                        <div style={{ fontSize: 12, color: "#4338ca" }}>Rep Paid (per rep setting): <strong>{formatMoney(company.repCommissionPaid)}</strong> of {formatMoney(company.repCommissionTotal)}</div>
-                        <div style={{ fontSize: 12, color: "#be123c" }}>Rep Remaining: <strong>{formatMoney(company.repCommissionRemaining)}</strong></div>
-                        {isAdmin ? <div style={{ fontSize: 12, color: "#047857" }}>Company Income: <strong>{formatMoney(company.companyIncome)}</strong></div> : null}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                        <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
+                          <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Estimated</div>
+                          <div style={{ fontSize: 14, color: "#0f172a", fontWeight: 800 }}>{formatMoney(company.estimatedTotal)}</div>
+                        </div>
+                        <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
+                          <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Payments</div>
+                          <div style={{ fontSize: 14, color: "#166534", fontWeight: 800 }}>{formatMoney(company.paymentsTotal)}</div>
+                          <div style={{ fontSize: 11, color: "#166534" }}>{formatPercent(company.paymentsPercent)}</div>
+                        </div>
+                        <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
+                          <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Remaining</div>
+                          <div style={{ fontSize: 14, color: "#92400e", fontWeight: 800 }}>{formatMoney(company.remainingTotal)}</div>
+                          <div style={{ fontSize: 11, color: "#92400e" }}>{formatPercent(company.remainingPercent)}</div>
+                        </div>
+                        <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
+                          <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Rep Paid</div>
+                          <div style={{ fontSize: 14, color: "#4338ca", fontWeight: 800 }}>{formatMoney(company.repCommissionPaid)}</div>
+                          <div style={{ fontSize: 11, color: "#4f46e5" }}>of {formatMoney(company.repCommissionTotal)}</div>
+                        </div>
+                        <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
+                          <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Rep Remaining</div>
+                          <div style={{ fontSize: 14, color: "#be123c", fontWeight: 800 }}>{formatMoney(company.repCommissionRemaining)}</div>
+                        </div>
+                        <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
+                          <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Total</div>
+                          <div style={{ fontSize: 14, color: "#0f172a", fontWeight: 800 }}>{formatMoney(company.paymentsTotal + company.remainingTotal)}</div>
+                        </div>
+                        {isAdmin ? (
+                          <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px", gridColumn: "1 / -1" }}>
+                            <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Company Income</div>
+                            <div style={{ fontSize: 14, color: "#047857", fontWeight: 800 }}>{formatMoney(company.companyIncome)}</div>
+                          </div>
+                        ) : null}
                       </div>
                     </label>
                   );
