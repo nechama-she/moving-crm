@@ -725,6 +725,7 @@ export default function LeadDetail() {
   if (!lead) return <p style={{ padding: 24 }}>Lead not found.</p>;
   const canEditCompany = user?.role === "admin";
   const isDispatchUser = user?.role === "dispatch";
+  const canEditLead = !isDispatchUser;
   const canEditJobs = !isDispatchUser;
 
   // Extract user_id from inbox_url for chat lookup
@@ -1149,6 +1150,7 @@ export default function LeadDetail() {
         }
 
         async function saveUser() {
+          if (!canEditLead) return;
           setSavingUser(true);
           try {
             const res = await fetch(`${API_BASE}/api/leads/${leadId}`, {
@@ -1173,6 +1175,7 @@ export default function LeadDetail() {
         }
 
         async function saveCompany(nextCompanyId: string) {
+          if (!canEditLead) return;
           if (!nextCompanyId) return;
           if (nextCompanyId === String(lead?.company_id || "")) {
             setCompanyMenuOpen(false);
@@ -1200,6 +1203,7 @@ export default function LeadDetail() {
         }
 
         async function saveStatus(nextStatus: string) {
+          if (!canEditLead) return;
           if (!LEAD_STATUS_OPTIONS.includes(nextStatus)) return;
           if (nextStatus === statusValue) return;
           setSavingStatus(true);
@@ -1221,6 +1225,7 @@ export default function LeadDetail() {
         }
 
         async function saveAssignedTo(nextAssignedTo: string) {
+          if (!canEditLead) return;
           const currentAssignedTo = String(lead?.assigned_to || "");
           if (nextAssignedTo === currentAssignedTo) {
             setAssignMenuOpen(false);
@@ -1245,6 +1250,7 @@ export default function LeadDetail() {
         }
 
         async function refreshFromSmartmoving() {
+          if (!canEditLead) return;
           setRefreshingSmartmoving(true);
           try {
             const res = await fetch(`${API_BASE}/api/leads/${leadId}/refresh-smartmoving`, {
@@ -1352,7 +1358,7 @@ export default function LeadDetail() {
                           type="button"
                           aria-haspopup="menu"
                           aria-expanded={statusMenuOpen}
-                          onClick={() => setStatusMenuOpen((v) => !v)}
+                          onClick={() => canEditLead && setStatusMenuOpen((v) => !v)}
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
@@ -1365,16 +1371,16 @@ export default function LeadDetail() {
                             letterSpacing: "0.04em",
                             textTransform: "uppercase",
                             whiteSpace: "nowrap",
-                            cursor: "pointer",
+                            cursor: canEditLead ? "pointer" : "default",
                             boxShadow: "0 1px 2px rgba(15,23,42,.08)",
                             ...statusStyle,
                           }}
                         >
                           {statusLabel}
-                          <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.9 }}>▾</span>
+                          {canEditLead ? <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.9 }}>▾</span> : null}
                         </button>
                       </div>
-                      {statusMenuOpen && statusMenuRect ? createPortal(
+                      {canEditLead && statusMenuOpen && statusMenuRect ? createPortal(
                         <div
                           ref={statusMenuPopoverRef}
                           role="menu"
@@ -1647,8 +1653,9 @@ export default function LeadDetail() {
                   <button
                     type="button"
                     onClick={startEditUser}
+                    disabled={!canEditLead}
                     title="Edit"
-                    style={{ padding: "5px 10px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: "pointer" }}
+                    style={{ padding: "5px 10px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: canEditLead ? "pointer" : "default", opacity: canEditLead ? 1 : 0.6 }}
                   >
                     ✎ Edit
                   </button>
