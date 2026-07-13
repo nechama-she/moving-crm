@@ -1281,6 +1281,9 @@ export default function LeadDetail() {
             setLead(updated);
             setEditCompanyId(String(updated?.company_id || ""));
             await loadLeadJobs();
+            if (activeJobTabId && activeJobTabId !== "__new__") {
+              await loadAttachments(activeJobTabId);
+            }
           } catch (e) {
             alert(`Failed to refresh from SmartMoving: ${e instanceof Error ? e.message : "error"}`);
           } finally {
