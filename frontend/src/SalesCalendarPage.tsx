@@ -707,6 +707,10 @@ export default function SalesCalendarPage() {
   const panelDayJobs = useMemo(() => {
     const base = dayPanelDay == null ? [] : (jobsByDay.get(dayPanelDay) || []);
     return [...base].sort((left, right) => {
+      const leftCompany = (left.company_name || "").trim().toLowerCase() || "zzz";
+      const rightCompany = (right.company_name || "").trim().toLowerCase() || "zzz";
+      if (leftCompany !== rightCompany) return leftCompany.localeCompare(rightCompany);
+
       const leftRep = (left.assigned_to_name || "").trim().toLowerCase() || "zzz";
       const rightRep = (right.assigned_to_name || "").trim().toLowerCase() || "zzz";
       if (leftRep !== rightRep) return leftRep.localeCompare(rightRep);
@@ -718,6 +722,16 @@ export default function SalesCalendarPage() {
       return String(left.id || "").localeCompare(String(right.id || ""));
     });
   }, [dayPanelDay, jobsByDay]);
+  const panelDayCompanyGroups = useMemo(() => {
+    const map = new Map<string, SalesCalendarJob[]>();
+    for (const job of panelDayJobs) {
+      const key = String(job.company_name || "Unknown company").trim() || "Unknown company";
+      const bucket = map.get(key) || [];
+      bucket.push(job);
+      map.set(key, bucket);
+    }
+    return [...map.entries()].map(([companyName, jobs]) => ({ companyName, jobs }));
+  }, [panelDayJobs]);
   const panelDayTotal = useMemo(
     () => panelDayJobs.reduce((sum, job) => sum + Number(leadDisplayAmount(job) || 0), 0),
     [panelDayJobs]
@@ -1236,45 +1250,51 @@ export default function SalesCalendarPage() {
               </button>
             </div>
             <div style={{ padding: 12, overflowY: "auto", display: "grid", gap: 10 }}>
-              {panelDayJobs.map((job) => {
-                const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
-                const commissionStatus = leadRepCommissionStatus(job);
-                return (
-                  <Link
-                    key={job.id}
-                    to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
-                    state={backState}
-                    onClick={() => setDayPanelDay(null)}
-                    style={{
-                      display: "grid",
-                      gap: 3,
-                      textDecoration: "none",
-                      color: repTone.text,
-                      border: `1px solid ${repTone.border}`,
-                      background: repTone.tint,
-                      borderRadius: 8,
-                      padding: 10,
-                    }}
-                    title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                      <strong style={{ fontSize: 13, color: "#0f172a" }}>{job.full_name || "Unnamed"}</strong>
-                      <span style={{ fontSize: 11, color: repTone.text, fontWeight: 700 }}>{job.assigned_to_name || "Unassigned"}</span>
-                    </div>
-                    <div style={{ fontSize: 12, color: repTone.text, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
-                    <div style={{ fontSize: 12, color: "#334155" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
-                    <div style={{ fontSize: 11, color: repTone.text, fontWeight: 600 }}>{job.status || "booked"}</div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                      {leadDisplayAmount(job) != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>{formatMoney(leadDisplayAmount(job) || 0)}</div> : <span />}
-                      {commissionStatus ? (
-                        <span style={{ fontSize: 10, fontWeight: 700, color: commissionStatus.text, background: commissionStatus.background, border: `1px solid ${commissionStatus.border}`, borderRadius: 999, padding: "1px 6px", whiteSpace: "nowrap" }}>
-                          {commissionStatus.label}
-                        </span>
-                      ) : null}
-                    </div>
-                  </Link>
-                );
-              })}
+              {panelDayCompanyGroups.map((group) => (
+                <div key={group.companyName} style={{ display: "grid", gap: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", padding: "2px 2px", borderBottom: "1px solid #e2e8f0" }}>
+                    {group.companyName}
+                  </div>
+                  {group.jobs.map((job) => {
+                    const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
+                    const commissionStatus = leadRepCommissionStatus(job);
+                    return (
+                      <Link
+                        key={job.id}
+                        to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+                        state={backState}
+                        onClick={() => setDayPanelDay(null)}
+                        style={{
+                          display: "grid",
+                          gap: 3,
+                          textDecoration: "none",
+                          color: repTone.text,
+                          border: `1px solid ${repTone.border}`,
+                          background: repTone.tint,
+                          borderRadius: 8,
+                          padding: 10,
+                        }}
+                        title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                          <strong style={{ fontSize: 13, color: "#0f172a" }}>{job.full_name || "Unnamed"}</strong>
+                          <span style={{ fontSize: 11, color: repTone.text, fontWeight: 700 }}>{job.assigned_to_name || "Unassigned"}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: "#334155" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
+                        <div style={{ fontSize: 11, color: repTone.text, fontWeight: 600 }}>{job.status || "booked"}</div>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                          {leadDisplayAmount(job) != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>{formatMoney(leadDisplayAmount(job) || 0)}</div> : <span />}
+                          {commissionStatus ? (
+                            <span style={{ fontSize: 10, fontWeight: 700, color: commissionStatus.text, background: commissionStatus.background, border: `1px solid ${commissionStatus.border}`, borderRadius: 999, padding: "1px 6px", whiteSpace: "nowrap" }}>
+                              {commissionStatus.label}
+                            </span>
+                          ) : null}
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
           </div>
         </div>
