@@ -622,8 +622,9 @@ export default function LeadDetail() {
 
       const lowerName = (fileName || "").toLowerCase();
       const type = (contentType || blob.type || "").toLowerCase();
+      const signature = await blob.slice(0, 5).text();
       const isImage = type.startsWith("image/") || /\.(png|jpg|jpeg|gif|webp|bmp|svg)$/.test(lowerName);
-      const isPdf = type.includes("pdf") || lowerName.endsWith(".pdf");
+      const isPdf = type.includes("pdf") || lowerName.endsWith(".pdf") || signature === "%PDF-";
       const isText = type.startsWith("text/") || /\.(txt|md|csv|json|log|xml)$/.test(lowerName);
 
       if (isImage) {
@@ -636,8 +637,11 @@ export default function LeadDetail() {
         setPreviewType("text");
         setPreviewText(await blob.text());
       } else {
+        // Fallback for opaque binary responses from external systems.
+        window.open(objectUrl, "_blank", "noopener,noreferrer");
         setPreviewType("none");
-        setPreviewText("Preview not available for this file type.");
+        setPreviewText("");
+        return;
       }
       setPreviewOpen(true);
     } catch (err: unknown) {
