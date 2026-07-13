@@ -1430,6 +1430,13 @@ function CompanyCalendar({
     }
     return [...map.entries()].map(([companyName, jobs]) => ({ companyName, jobs }));
   }, [panelDayJobs]);
+  const panelDayJobFallbackOrderById = useMemo(() => {
+    const map = new Map<string, number>();
+    panelDayJobs.forEach((job, idx) => {
+      map.set(job.id, idx + 1);
+    });
+    return map;
+  }, [panelDayJobs]);
 
   useEffect(() => {
     if (!selectedJobId) return;
@@ -1811,7 +1818,7 @@ function CompanyCalendar({
                   <div style={{ fontSize: 12, fontWeight: 800, color: "#0f172a", padding: "2px 2px", borderBottom: "1px solid #e2e8f0" }}>
                     {group.companyName}
                   </div>
-                  {group.jobs.map((job, idx) => (
+                  {group.jobs.map((job) => (
                     <Link
                       key={job.id}
                       to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
@@ -1832,7 +1839,7 @@ function CompanyCalendar({
                     >
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                         <strong style={{ fontSize: 13, color: "#0f172a" }}>{job.full_name}</strong>
-                        <span style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 700 }}>{`Job ${job.job_order || idx + 1}`}</span>
+                        <span style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 700 }}>{`Job ${job.job_order || panelDayJobFallbackOrderById.get(job.id) || 1}`}</span>
                       </div>
                       <div style={{ fontSize: 12, color: "#334155" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
                       <div style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 600 }}>{job.status || "booked"}</div>
