@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import time
+from urllib.parse import urlparse
 from collections import defaultdict
 from http import HTTPStatus
 from itertools import count
@@ -136,6 +137,110 @@ def get_opportunity_audit_activity(opportunity_id: str) -> dict:
         return {"error": f"HTTP {status}: {body[:300]}"}
     except Exception as e:
         return {"error": str(e)}
+
+
+def get_opportunity_documents(opportunity_id: str) -> dict:
+    """Fetch SmartMoving premium opportunity documents metadata.
+
+    Returns {"data": ...} or {"error": ...}.
+    """
+    url = f"{SMARTMOVING_BASE_URL}/premium/opportunities/{opportunity_id}/documents"
+    try:
+        resp = _request(httpx.get, url, headers=_headers(), timeout=15)
+        resp.raise_for_status()
+        return {"data": resp.json()}
+    except httpx.HTTPError as e:
+        r = getattr(e, "response", None)
+        status = getattr(r, "status_code", None) if r is not None else None
+        body = getattr(r, "text", str(e)) if r is not None else str(e)
+        return {"error": f"HTTP {status}: {body[:300]}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _extract_filename_from_content_disposition(value: str | None) -> str:
+    if not value:
+        return ""
+    match = re.search(r"filename\*=UTF-8''([^;]+)", value, re.IGNORECASE)
+    if match:
+        return match.group(1).strip().strip('"')
+    match = re.search(r"filename=\"?([^\";]+)\"?", value, re.IGNORECASE)
+    if match:
+        return match.group(1).strip().strip('"')
+    return ""
+
+
+def _looks_like_html(content_type: str, body: bytes) -> bool:
+    if "text/html" in (content_type or "").lower():
+        return True
+    snippet = body[:512].decode("utf-8", errors="ignore").lower()
+    return "<html" in snippet or "<!doctype html" in snippet
+
+
+def _fetch_binary(url: str) -> dict:
+    try:
+        resp = _request(httpx.get, url, headers=_headers(), timeout=20, follow_redirects=True)
+        resp.raise_for_status()
+        body = resp.content or b""
+        content_type = resp.headers.get("content-type", "application/octet-stream")
+        if _looks_like_html(content_type, body):
+            return {"ok": False, "error": "HTML response (likely login page)", "status": resp.status_code}
+        file_name = _extract_filename_from_content_disposition(resp.headers.get("content-disposition"))
+        return {
+            "ok": True,
+            "content": body,
+            "content_type": content_type,
+            "file_name": file_name,
+            "status": resp.status_code,
+        }
+    except httpx.HTTPError as e:
+        r = getattr(e, "response", None)
+        status = getattr(r, "status_code", None) if r is not None else None
+        body = getattr(r, "text", str(e)) if r is not None else str(e)
+        return {"ok": False, "error": f"HTTP {status}: {body[:300]}", "status": status}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def download_opportunity_document(opportunity_id: str, document_id: str = "", document_url: str = "") -> dict:
+    """Download SmartMoving document bytes server-side.
+
+    Returns:
+      {"ok": True, "content": bytes, "content_type": str, "file_name": str}
+      or {"ok": False, "error": str}
+    """
+    opp_id = (opportunity_id or "").strip()
+    doc_id = (document_id or "").strip()
+    url = (document_url or "").strip()
+    if not opp_id:
+        return {"ok": False, "error": "Missing opportunity id"}
+
+    candidates: list[str] = []
+    if url and url.lower().startswith(("http://", "https://")):
+        parsed = urlparse(url)
+        # blob: URLs are browser-local and cannot be fetched by server.
+        if parsed.scheme in ("http", "https"):
+            candidates.append(url)
+
+    base = SMARTMOVING_BASE_URL.rstrip("/")
+    if doc_id:
+        candidates.extend([
+            f"{base}/premium/opportunities/{opp_id}/documents/{doc_id}/download",
+            f"{base}/premium/opportunities/{opp_id}/documents/{doc_id}",
+            f"{base}/premium/documents/{doc_id}/download",
+            f"{base}/premium/documents/{doc_id}",
+        ])
+
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        result = _fetch_binary(candidate)
+        if result.get("ok"):
+            return result
+
+    return {"ok": False, "error": "Unable to fetch document content from SmartMoving"}
 
 
 def get_followup(opportunity_id: str, followup_id: str) -> dict:

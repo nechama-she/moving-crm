@@ -34,6 +34,9 @@ type LeadAttachment = {
   content_type: string;
   file_size: number;
   created_at: string;
+  external_url?: string;
+  is_external_link?: boolean;
+  external_source?: string;
   uploaded_by_name?: string;
 };
 
@@ -291,6 +294,9 @@ export default function LeadDetail() {
         content_type: String(row.content_type || "application/octet-stream"),
         file_size: Number(row.file_size || 0),
         created_at: String(row.created_at || ""),
+        external_url: String(row.external_url || ""),
+        is_external_link: Boolean(row.is_external_link),
+        external_source: String(row.external_source || ""),
         uploaded_by_name: String(row.uploaded_by_name || ""),
       })));
     } catch (err: unknown) {
@@ -1077,14 +1083,14 @@ export default function LeadDetail() {
                           onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
                           style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
                         >
-                          Preview
+                          {attachment.is_external_link ? "Open Link" : "Preview"}
                         </button>
                         <button
                           type="button"
                           onClick={() => void downloadAttachment(attachment.id, attachment.file_name)}
                           style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "4px 8px", fontSize: 12, fontWeight: 600 }}
                         >
-                          Download
+                          {attachment.is_external_link ? "Open" : "Download"}
                         </button>
                         {canEditJobs ? (
                           <>

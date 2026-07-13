@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import boto3
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File
-from fastapi.responses import Response
+from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, cast, text
 from sqlalchemy.orm import Session
@@ -21,7 +21,7 @@ from company_colors import resolve_company_color
 from config import get_config
 from database import get_db
 from libs.common.phone import normalize_digits
-from libs.smartmoving.client import get_opportunity, get_opportunity_audit_activity, update_opportunity_salesperson
+from libs.smartmoving.client import get_opportunity, get_opportunity_audit_activity, get_opportunity_documents, download_opportunity_document, update_opportunity_salesperson
 from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting
 from routes.templates import get_company_template
 
@@ -1858,6 +1858,181 @@ def _ensure_attachment_job_column(db: Session) -> None:
         db.rollback()
 
 
+def _ensure_attachment_link_columns(db: Session) -> None:
+    """Ensure link metadata columns exist for external attachments."""
+    try:
+        db.execute(text("ALTER TABLE lead_attachments ADD COLUMN IF NOT EXISTS external_url TEXT"))
+        db.execute(text("ALTER TABLE lead_attachments ADD COLUMN IF NOT EXISTS is_external_link BOOLEAN NOT NULL DEFAULT FALSE"))
+        db.execute(text("ALTER TABLE lead_attachments ADD COLUMN IF NOT EXISTS external_source VARCHAR(50)"))
+        db.execute(text("ALTER TABLE lead_attachments ADD COLUMN IF NOT EXISTS source_external_id VARCHAR(255)"))
+        db.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_attachments_external_source ON lead_attachments (external_source)"))
+        db.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_attachments_source_external_id ON lead_attachments (source_external_id)"))
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+def _extract_smartmoving_document_links(payload: object) -> list[dict[str, str]]:
+    """Extract document links from unknown SmartMoving documents payload shapes."""
+    candidates: list[dict] = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+            return
+        if isinstance(node, dict):
+            lower_keys = {str(key).lower() for key in node.keys()}
+            if any(key in lower_keys for key in ("url", "link", "documenturl", "downloadurl", "fileurl", "publicurl", "href", "uri")):
+                candidates.append(node)
+            for value in node.values():
+                walk(value)
+
+    def pick_text(row: dict, keys: tuple[str, ...]) -> str:
+        for key in keys:
+            for variant in (key, key.lower(), key.upper()):
+                value = row.get(variant)
+                if value not in (None, ""):
+                    text_value = str(value).strip()
+                    if text_value:
+                        return text_value
+        return ""
+
+    walk(payload)
+
+    extracted: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for row in candidates:
+        url = pick_text(row, ("url", "link", "documentUrl", "downloadUrl", "fileUrl", "publicUrl", "href", "uri"))
+        if not url.lower().startswith(("http://", "https://")):
+            continue
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        extracted.append({
+            "external_id": pick_text(row, ("id", "documentId", "fileId", "guid", "documentGuid")),
+            "name": pick_text(row, ("fileName", "name", "title", "documentName")) or "SmartMoving Document",
+            "url": url,
+            "smartmoving_job_id": pick_text(row, ("smartmovingJobId", "jobId", "opportunityJobId")),
+        })
+    return extracted
+
+
+def _sync_smartmoving_document_links(lead: Lead, user: User, db: Session) -> int:
+    """Upsert SmartMoving document links into job attachments without storing blobs."""
+    smartmoving_id = _clean_optional_text(lead.smartmoving_id)
+    if not smartmoving_id:
+        return 0
+
+    result = get_opportunity_documents(smartmoving_id)
+    if result.get("error"):
+        logger.warning("SmartMoving documents sync failed for lead %s: %s", lead.id, result.get("error"))
+        return 0
+
+    documents = _extract_smartmoving_document_links(result.get("data"))
+    if not documents:
+        return 0
+
+    _ensure_attachment_job_column(db)
+    _ensure_attachment_link_columns(db)
+
+    jobs = (
+        db.query(LeadJob)
+        .filter(LeadJob.lead_id == lead.id)
+        .order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc())
+        .all()
+    )
+    if not jobs:
+        return 0
+
+    primary_job = jobs[0]
+    job_by_smartmoving_id = {
+        (row.smartmoving_job_id or "").strip(): row
+        for row in jobs
+        if (row.smartmoving_job_id or "").strip()
+    }
+
+    existing_rows = (
+        db.query(LeadAttachment)
+        .filter(
+            LeadAttachment.lead_id == lead.id,
+            LeadAttachment.external_source == "smartmoving",
+        )
+        .all()
+    )
+    existing_keys = set()
+    for row in existing_rows:
+        key = (
+            row.job_id or "",
+            (row.source_external_id or "").strip() or (row.external_url or "").strip(),
+        )
+        if key[1]:
+            existing_keys.add(key)
+
+    created = 0
+    for doc in documents:
+        target_job = job_by_smartmoving_id.get((doc.get("smartmoving_job_id") or "").strip()) or primary_job
+        key_value = (doc.get("external_id") or "").strip() or (doc.get("url") or "").strip()
+        dedupe_key = (target_job.id, key_value)
+        if not key_value or dedupe_key in existing_keys:
+            continue
+        existing_keys.add(dedupe_key)
+
+        row = LeadAttachment(
+            lead_id=lead.id,
+            job_id=target_job.id,
+            file_name=(doc.get("name") or "SmartMoving Document")[:255],
+            content_type="application/x-smartmoving-link",
+            file_size=0,
+            file_blob=b"",
+            external_url=(doc.get("url") or "")[:2048],
+            is_external_link=True,
+            external_source="smartmoving",
+            source_external_id=(doc.get("external_id") or "")[:255] or None,
+            uploaded_by=user.id,
+        )
+        db.add(row)
+        created += 1
+
+    if created:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to save SmartMoving document links for lead %s", lead.id)
+            return 0
+
+    return created
+
+
+def _download_external_attachment_or_redirect(lead: Lead, row: LeadAttachment) -> Response:
+    external_url = (getattr(row, "external_url", "") or "").strip()
+    is_external = bool(getattr(row, "is_external_link", False))
+    if not is_external or not external_url:
+        safe_name = (row.file_name or "attachment").replace('"', "")
+        headers = {"Content-Disposition": f'attachment; filename="{safe_name}"'}
+        return Response(content=row.file_blob, media_type=row.content_type or "application/octet-stream", headers=headers)
+
+    if (getattr(row, "external_source", "") or "").strip().lower() == "smartmoving":
+        smartmoving_id = _clean_optional_text(lead.smartmoving_id)
+        document_id = (getattr(row, "source_external_id", "") or "").strip()
+        if smartmoving_id:
+            fetched = download_opportunity_document(
+                smartmoving_id,
+                document_id=document_id,
+                document_url=external_url,
+            )
+            if fetched.get("ok"):
+                content = fetched.get("content") or b""
+                content_type = str(fetched.get("content_type") or row.content_type or "application/octet-stream")
+                file_name = str(fetched.get("file_name") or row.file_name or "attachment").replace('"', "")
+                headers = {"Content-Disposition": f'inline; filename="{file_name}"'}
+                return Response(content=content, media_type=content_type, headers=headers)
+
+    # Fallback keeps previous behavior when server-side fetch is not possible.
+    return RedirectResponse(url=external_url, status_code=307)
+
+
 def _backfill_attachment_jobs_for_lead(lead_id: str, db: Session) -> None:
     """Map legacy lead-level attachments to the lead primary job (job_order=1)."""
     primary_job = (
@@ -1889,6 +2064,7 @@ def list_job_attachments(
     db: Session = Depends(get_db),
 ):
     _ensure_attachment_job_column(db)
+    _ensure_attachment_link_columns(db)
     _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     rows = (
@@ -1916,6 +2092,7 @@ def upload_job_attachment(
 ):
     _ensure_not_dispatch_write(user)
     _ensure_attachment_job_column(db)
+    _ensure_attachment_link_columns(db)
     _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
 
@@ -1955,6 +2132,7 @@ def download_job_attachment(
     db: Session = Depends(get_db),
 ):
     _ensure_attachment_job_column(db)
+    _ensure_attachment_link_columns(db)
     _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     row = (
@@ -1964,9 +2142,8 @@ def download_job_attachment(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    safe_name = (row.file_name or "attachment").replace('"', "")
-    headers = {"Content-Disposition": f'attachment; filename="{safe_name}"'}
-    return Response(content=row.file_blob, media_type=row.content_type or "application/octet-stream", headers=headers)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    return _download_external_attachment_or_redirect(lead, row)
 
 
 @router.delete("/leads/{lead_id}/jobs/{job_id}/attachments/{attachment_id}")
@@ -1979,6 +2156,7 @@ def delete_job_attachment(
 ):
     _ensure_not_dispatch_write(user)
     _ensure_attachment_job_column(db)
+    _ensure_attachment_link_columns(db)
     _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     row = (
@@ -2004,6 +2182,7 @@ def rename_job_attachment(
 ):
     _ensure_not_dispatch_write(user)
     _ensure_attachment_job_column(db)
+    _ensure_attachment_link_columns(db)
     _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     row = (
@@ -2028,6 +2207,7 @@ def list_lead_attachments(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_attachment_link_columns(db)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     rows = (
         db.query(LeadAttachment, User)
@@ -2051,6 +2231,7 @@ def upload_lead_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_attachment_link_columns(db)
     lead = _get_visible_lead_or_404(lead_id, user, db)
 
     file_name = (file.filename or "").strip()
@@ -2084,6 +2265,7 @@ def download_lead_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_attachment_link_columns(db)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadAttachment)
@@ -2092,10 +2274,7 @@ def download_lead_attachment(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Attachment not found")
-
-    safe_name = (row.file_name or "attachment").replace('"', "")
-    headers = {"Content-Disposition": f'attachment; filename="{safe_name}"'}
-    return Response(content=row.file_blob, media_type=row.content_type or "application/octet-stream", headers=headers)
+    return _download_external_attachment_or_redirect(lead, row)
 
 
 @router.delete("/leads/{lead_id}/attachments/{attachment_id}")
@@ -2105,6 +2284,7 @@ def delete_lead_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_attachment_link_columns(db)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadAttachment)
@@ -2127,6 +2307,7 @@ def rename_lead_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_attachment_link_columns(db)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadAttachment)
@@ -2624,7 +2805,11 @@ def refresh_lead_from_smartmoving(
             job["booked_move_date"] = booked_iso
 
     body = LeadUpdate.model_validate(payload)
-    return update_lead(lead.id, body, user, db)
+    updated = update_lead(lead.id, body, user, db)
+    created_links = _sync_smartmoving_document_links(lead, user, db)
+    if isinstance(updated, dict):
+        updated["smartmoving_document_links_synced"] = created_links
+    return updated
 
 
 def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:

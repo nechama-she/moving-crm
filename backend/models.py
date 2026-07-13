@@ -287,6 +287,10 @@ class LeadAttachment(Base):
     content_type = Column(String(120), nullable=False, default="application/octet-stream")
     file_size = Column(Integer, nullable=False, default=0)
     file_blob = Column(LargeBinary, nullable=False)
+    external_url = Column(Text)
+    is_external_link = Column(Boolean, nullable=False, default=False)
+    external_source = Column(String(50), index=True)
+    source_external_id = Column(String(255), index=True)
     uploaded_by = Column(String(36), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
 
@@ -298,6 +302,10 @@ class LeadAttachment(Base):
             "file_name": self.file_name or "",
             "content_type": self.content_type or "application/octet-stream",
             "file_size": self.file_size or 0,
+            "external_url": self.external_url or "",
+            "is_external_link": bool(self.is_external_link),
+            "external_source": self.external_source or "",
+            "source_external_id": self.source_external_id or "",
             "uploaded_by": self.uploaded_by or "",
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }
