@@ -50,6 +50,8 @@ type LeadJob = {
   pickup_zip: string;
   delivery_zip: string;
   status: string;
+  volume?: number | null;
+  weight?: number | null;
   price?: number | null;
   estimatedTotal?: EstimatedTotal | null;
   payments?: LeadPayment[];
@@ -248,6 +250,13 @@ function formatMoney(value: number): string {
 
 function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
+}
+
+function formatJobVolumeWeight(job: LeadJob): string {
+  const volume = typeof job.volume === "number" && Number.isFinite(job.volume) ? Math.round(job.volume) : null;
+  const weight = typeof job.weight === "number" && Number.isFinite(job.weight) ? Math.round(job.weight) : null;
+  if (volume == null && weight == null) return "Cuft/Weight: -";
+  return `Cuft/Weight: ${volume ?? "-"} / ${weight ?? "-"}`;
 }
 
 function parseEstimatedTotal(raw: unknown): EstimatedTotal | null {
@@ -643,6 +652,8 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
           pickup_zip: String(item.pickup_zip || ""),
           delivery_zip: String(item.delivery_zip || ""),
           status: String(item.status || ""),
+          volume: item.volume == null ? null : Number(item.volume),
+          weight: item.weight == null ? null : Number(item.weight),
           price: item.price == null ? null : Number(item.price),
           estimatedTotal: parseEstimatedTotal(item.estimatedTotal),
           payments: parsePayments(item.payments),
@@ -1686,7 +1697,7 @@ function CompanyCalendar({
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: getCompanyTone(job).text, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"}{" -> "}{job.delivery_zip || "?"}</div>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: job.id === selectedJobId ? "#1d4ed8" : getCompanyTone(job).text }}>{job.status || "booked"}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: job.id === selectedJobId ? "#1d4ed8" : getCompanyTone(job).text }}>{formatJobVolumeWeight(job)}</div>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{`Job ${job.job_order || idx + 1}`}</div>
                         {job.price != null ? <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e" }}>${job.price.toFixed(2)}</div> : null}
                       </Link>
@@ -1842,7 +1853,7 @@ function CompanyCalendar({
                         <span style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 700 }}>{`Job ${job.job_order || panelDayJobFallbackOrderById.get(job.id) || 1}`}</span>
                       </div>
                       <div style={{ fontSize: 12, color: "#334155" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
-                      <div style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 600 }}>{job.status || "booked"}</div>
+                      <div style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 600 }}>{formatJobVolumeWeight(job)}</div>
                       {job.price != null ? <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700 }}>${job.price.toFixed(2)}</div> : null}
                     </Link>
                   ))}

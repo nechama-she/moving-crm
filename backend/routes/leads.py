@@ -783,6 +783,8 @@ def get_dispatch_calendar(
                 "pickup_zip": job.pickup_zip or "",
                 "delivery_zip": job.delivery_zip or "",
                 "price": float(job.price) if job.price is not None else None,
+                "volume": float(lead.volume) if lead.volume is not None else None,
+                "weight": float(lead.weight) if lead.weight is not None else None,
                 "estimatedTotal": _deserialize_estimated_total(lead.estimated_total),
                 "payments": _deserialize_payments(lead.payments),
                 "status": lead.status or "",
