@@ -2005,6 +2005,33 @@ def _sync_smartmoving_document_links(lead: Lead, user: User, db: Session) -> int
     return created
 
 
+def _serialize_lead_attachments(lead_id: str, db: Session) -> list[dict]:
+    attachments = (
+        db.query(LeadAttachment, User)
+        .outerjoin(User, LeadAttachment.uploaded_by == User.id)
+        .filter(LeadAttachment.lead_id == lead_id)
+        .order_by(LeadAttachment.created_at.desc())
+        .all()
+    )
+    items: list[dict] = []
+    for attachment, uploader in attachments:
+        item = attachment.to_dict()
+        item["uploaded_by_name"] = uploader.name if uploader else ""
+        items.append(item)
+    return items
+
+
+def sync_smartmoving_files(lead: Lead, user: User, db: Session) -> dict:
+    """Sync SmartMoving document links and return the updated attachment list."""
+    created_links = _sync_smartmoving_document_links(lead, user, db)
+    return {
+        "ok": True,
+        "lead_id": lead.id,
+        "created_links": created_links,
+        "items": _serialize_lead_attachments(lead.id, db),
+    }
+
+
 def _download_external_attachment_or_redirect(lead: Lead, row: LeadAttachment) -> Response:
     external_url = (getattr(row, "external_url", "") or "").strip()
     is_external = bool(getattr(row, "is_external_link", False))
@@ -2806,10 +2833,22 @@ def refresh_lead_from_smartmoving(
 
     body = LeadUpdate.model_validate(payload)
     updated = update_lead(lead.id, body, user, db)
-    created_links = _sync_smartmoving_document_links(lead, user, db)
+    sync_result = sync_smartmoving_files(lead, user, db)
     if isinstance(updated, dict):
-        updated["smartmoving_document_links_synced"] = created_links
+        updated["smartmoving_document_links_synced"] = sync_result["created_links"]
     return updated
+
+
+@router.post("/leads/{lead_id}/sync-smartmoving-documents")
+def sync_smartmoving_documents(
+    lead_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Sync SmartMoving document links into CRM attachment rows without running a full lead refresh."""
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    return sync_smartmoving_files(lead, user, db)
 
 
 def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
