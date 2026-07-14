@@ -1291,6 +1291,18 @@ def _get_visible_lead_or_404(lead_id: str, user: User, db: Session) -> Lead:
     return lead
 
 
+def _get_visible_lead_by_smartmoving_or_404(smartmoving_id: str, user: User, db: Session) -> Lead:
+    company_ids = _get_user_company_ids(user, db)
+    lead = (
+        db.query(Lead)
+        .filter(Lead.smartmoving_id == smartmoving_id, Lead.company_id.in_(company_ids))
+        .first()
+    )
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return lead
+
+
 def _next_lead_job_order(lead_id: str, db: Session) -> int:
     max_order = db.query(func.max(LeadJob.job_order)).filter(LeadJob.lead_id == lead_id).scalar()
     return (int(max_order) if max_order is not None else 0) + 1
@@ -2030,6 +2042,11 @@ def sync_smartmoving_files(lead: Lead, user: User, db: Session) -> dict:
         "created_links": created_links,
         "items": _serialize_lead_attachments(lead.id, db),
     }
+
+
+def _sync_smartmoving_documents_for_lead(lead: Lead, user: User, db: Session) -> dict:
+    _ensure_not_dispatch_write(user)
+    return sync_smartmoving_files(lead, user, db)
 
 
 def _download_external_attachment_or_redirect(lead: Lead, row: LeadAttachment) -> Response:
@@ -2846,9 +2863,19 @@ def sync_smartmoving_documents(
     db: Session = Depends(get_db),
 ):
     """Sync SmartMoving document links into CRM attachment rows without running a full lead refresh."""
-    _ensure_not_dispatch_write(user)
     lead = _get_visible_lead_or_404(lead_id, user, db)
-    return sync_smartmoving_files(lead, user, db)
+    return _sync_smartmoving_documents_for_lead(lead, user, db)
+
+
+@router.post("/leads/by-smartmoving/{smartmoving_id}/sync-smartmoving-documents")
+def sync_smartmoving_documents_by_smartmoving_id(
+    smartmoving_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Sync SmartMoving document links by SmartMoving opportunity id."""
+    lead = _get_visible_lead_by_smartmoving_or_404(smartmoving_id, user, db)
+    return _sync_smartmoving_documents_for_lead(lead, user, db)
 
 
 def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
