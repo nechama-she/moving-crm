@@ -461,6 +461,41 @@ export default function SalesCalendarPage() {
     return counts;
   }, [jobs]);
 
+  const monthlyEstimatedByAssignee = useMemo(() => {
+    const totals = new Map<string, number>();
+    const seenLeadKeysByAssignee = new Map<string, Set<string>>();
+
+    for (const job of jobs) {
+      const key = assigneeKey(job);
+      const leadKey = String(job.lead_id || job.id || "");
+      if (!leadKey) continue;
+
+      let seenLeadKeys = seenLeadKeysByAssignee.get(key);
+      if (!seenLeadKeys) {
+        seenLeadKeys = new Set<string>();
+        seenLeadKeysByAssignee.set(key, seenLeadKeys);
+      }
+      if (seenLeadKeys.has(leadKey)) continue;
+      seenLeadKeys.add(leadKey);
+
+      totals.set(key, (totals.get(key) || 0) + Number(job.estimatedTotal?.finalTotal || 0));
+    }
+
+    return totals;
+  }, [jobs]);
+
+  const monthlyEstimatedAllAssignees = useMemo(() => {
+    const seenLeadKeys = new Set<string>();
+    let total = 0;
+    for (const job of jobs) {
+      const leadKey = String(job.lead_id || job.id || "");
+      if (!leadKey || seenLeadKeys.has(leadKey)) continue;
+      seenLeadKeys.add(leadKey);
+      total += Number(job.estimatedTotal?.finalTotal || 0);
+    }
+    return total;
+  }, [jobs]);
+
   const repFilteredJobs = useMemo(() => {
     if (selectedAssigneeKeys.length === 0) return [];
     const selected = new Set(selectedAssigneeKeys);
@@ -868,12 +903,16 @@ export default function SalesCalendarPage() {
               }}
             >
               <span style={{ width: 8, height: 8, borderRadius: 999, background: "#0f766e", display: "inline-block" }} />
-              All ({totalLeadCount})
+              <span style={{ display: "grid", lineHeight: 1.15, textAlign: "left" }}>
+                <span>All ({totalLeadCount})</span>
+                <span style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimatedAllAssignees)}</span>
+              </span>
             </button>
 
             {assigneeOptions.map((assignee) => {
               const checked = selectedAssigneeKeys.includes(assignee.key);
               const count = monthlyCountByAssignee.get(assignee.key) || 0;
+              const estimatedTotal = monthlyEstimatedByAssignee.get(assignee.key) || 0;
               const role = roleLabel(assignee.role);
               const repTone = toneForRepName(assignee.name);
               return (
@@ -898,7 +937,10 @@ export default function SalesCalendarPage() {
                   }}
                 >
                   <span style={{ width: 8, height: 8, borderRadius: 999, background: checked ? repTone.border : "#94a3b8", display: "inline-block" }} />
-                  <span style={{ color: repTone.text, fontWeight: 700 }}>{assignee.name}</span>{role ? ` (${role})` : ""} ({count})
+                  <span style={{ display: "grid", lineHeight: 1.15, textAlign: "left" }}>
+                    <span style={{ color: repTone.text, fontWeight: 700 }}>{assignee.name}</span>{role ? ` (${role})` : ""} ({count})
+                    <span style={{ fontSize: 11, fontWeight: 700, color: repTone.text }}>{formatMoney(estimatedTotal)}</span>
+                  </span>
                 </button>
               );
             })}

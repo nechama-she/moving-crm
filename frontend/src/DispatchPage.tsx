@@ -352,6 +352,43 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     return counts;
   }, [calendarJobs]);
 
+  const monthlyEstimatedByCompanyId = useMemo(() => {
+    const totals = new Map<string, number>();
+    const seenLeadKeysByCompany = new Map<string, Set<string>>();
+
+    for (const job of calendarJobs) {
+      const companyId = String((job as unknown as { company_id?: string }).company_id || "");
+      if (!companyId) continue;
+
+      const leadKey = String(job.lead_id || job.id || "");
+      if (!leadKey) continue;
+
+      let seenLeadKeys = seenLeadKeysByCompany.get(companyId);
+      if (!seenLeadKeys) {
+        seenLeadKeys = new Set<string>();
+        seenLeadKeysByCompany.set(companyId, seenLeadKeys);
+      }
+      if (seenLeadKeys.has(leadKey)) continue;
+      seenLeadKeys.add(leadKey);
+
+      totals.set(companyId, (totals.get(companyId) || 0) + Number(job.estimatedTotal?.finalTotal || 0));
+    }
+
+    return totals;
+  }, [calendarJobs]);
+
+  const monthlyEstimatedAll = useMemo(() => {
+    const seenLeadKeys = new Set<string>();
+    let total = 0;
+    for (const job of calendarJobs) {
+      const leadKey = String(job.lead_id || job.id || "");
+      if (!leadKey || seenLeadKeys.has(leadKey)) continue;
+      seenLeadKeys.add(leadKey);
+      total += Number(job.estimatedTotal?.finalTotal || 0);
+    }
+    return total;
+  }, [calendarJobs]);
+
   const totalLeadCount = useMemo(() => {
     return new Set(calendarJobs.map((job) => String(job.lead_id || "")).filter(Boolean)).size;
   }, [calendarJobs]);
@@ -988,11 +1025,15 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 }}
               >
                 <span style={{ width: 8, height: 8, borderRadius: 999, background: "#0f766e", display: "inline-block" }} />
-                All ({calendarJobs.length})
+                <span style={{ display: "grid", lineHeight: 1.15, textAlign: "left" }}>
+                  <span>All ({calendarJobs.length})</span>
+                  <span style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimatedAll)}</span>
+                </span>
               </button>
               {dispatchCompanies.map((company) => {
                 const checked = selectedDispatchCompanyIds.includes(company.id);
                 const monthlyCount = monthlyJobsByCompanyId.get(company.id) || 0;
+                const monthlyEstimated = monthlyEstimatedByCompanyId.get(company.id) || 0;
                 const tone = toneForCompanyColor(company.color, company.name);
                 return (
                   <button
@@ -1020,7 +1061,10 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                     title={company.name}
                   >
                     <span style={{ width: 8, height: 8, borderRadius: 999, background: tone.border, display: "inline-block" }} />
-                    {company.name} ({monthlyCount})
+                    <span style={{ display: "grid", lineHeight: 1.15, textAlign: "left" }}>
+                      <span>{company.name} ({monthlyCount})</span>
+                      <span style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimated)}</span>
+                    </span>
                   </button>
                 );
               })}
