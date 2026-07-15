@@ -1584,6 +1584,11 @@ def _persist_job_route(db: Session, job_id: str, pickup: str, stops: list[str], 
     _write_addresses_to_setting(db, _job_stops_setting_key(job_id), _normalize_stops_list(stops))
 
 
+def _validate_job_route_has_one_side(pickup: str, delivery: str) -> None:
+    if not pickup and not delivery:
+        raise HTTPException(status_code=400, detail="At least one pickup or delivery address is required")
+
+
 def _serialize_job_with_addresses(job: LeadJob, db: Session) -> dict:
     payload = job.to_dict()
     pickup, stops, delivery = _read_job_route(db, job)
@@ -1670,10 +1675,7 @@ def create_lead_job(
             delivery = route[-1] if len(route) > 1 else ""
             stops = route[1:-1] if len(route) > 2 else []
 
-    if not pickup:
-        raise HTTPException(status_code=400, detail="At least one pickup address is required")
-    if not delivery:
-        raise HTTPException(status_code=400, detail="At least one delivery address is required")
+    _validate_job_route_has_one_side(pickup, delivery)
     row.pickup_zip = pickup
     row.delivery_zip = delivery
 
@@ -2653,10 +2655,7 @@ def update_lead(
                     next_stops = route[1:-1] if len(route) > 2 else []
 
             if touch_route:
-                if not next_pickup:
-                    raise HTTPException(status_code=400, detail="At least one pickup address is required")
-                if not next_delivery:
-                    raise HTTPException(status_code=400, detail="At least one delivery address is required")
+                _validate_job_route_has_one_side(next_pickup, next_delivery)
                 target_job.pickup_zip = next_pickup
                 target_job.delivery_zip = next_delivery
                 _persist_job_route(db, target_job.id, next_pickup, next_stops, next_delivery)
