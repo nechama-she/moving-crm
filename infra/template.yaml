@@ -70,6 +70,7 @@ Conditions:
   IsProd: !Equals [!Ref Environment, "prod"]
   IsDev: !Not [!Equals [!Ref Environment, "prod"]]
   HasDomain: !Not [!Equals [!Ref DomainName, ""]]
+  HasSmartMovingKey: !Not [!Equals [!Ref SmartMovingApiKey, ""]]
 
 Resources:
   # ===========================================================================
@@ -411,6 +412,7 @@ Resources:
 
   SSMSmartMovingApiKey:
     Type: AWS::SSM::Parameter
+    Condition: HasSmartMovingKey
     Properties:
       Name: !Sub /moving-crm/${Environment}/SMARTMOVING_API_KEY
       Type: String
