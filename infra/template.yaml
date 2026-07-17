@@ -1192,9 +1192,16 @@ Resources:
         - SecurityGroupIds: [!Ref LambdaSecurityGroup]
           SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
         - !Ref "AWS::NoValue"
-      Code:
-        S3Bucket: !Ref FrontendBucket
-        S3Key: api-backend/package.zip
+      # Real code comes from S3 once the pipeline has built+uploaded it. During the
+      # initial bootstrap (DeployLambda=false) the zip does not exist yet, so use a
+      # tiny inline placeholder; the pipeline replaces it on the first run.
+      Code: !If
+        - ShouldDeployLambda
+        - S3Bucket: !Ref FrontendBucket
+          S3Key: api-backend/package.zip
+        - ZipFile: |
+            def handler(event, context):
+                return {"statusCode": 503, "body": "bootstrapping"}
       Environment:
         Variables:
           SSM_PREFIX: !Sub /moving-crm/${Environment}/
