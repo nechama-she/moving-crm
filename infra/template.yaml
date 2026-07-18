@@ -54,6 +54,11 @@ Parameters:
     Default: ""
     Description: Route 53 hosted zone ID for DomainName (required when DomainName is set).
 
+  AcmCertificateArn:
+    Type: String
+    Default: ""
+    Description: ACM certificate ARN (us-east-1) for the custom domain. Created out-of-band for cross-account DNS.
+
   GoogleSheetId:
     Type: String
     Default: ""
@@ -71,6 +76,7 @@ Conditions:
   IsDev: !Not [!Equals [!Ref Environment, "prod"]]
   HasDomain: !Not [!Equals [!Ref DomainName, ""]]
   HasSmartMovingKey: !Not [!Equals [!Ref SmartMovingApiKey, ""]]
+  HasCert: !Not [!Equals [!Ref AcmCertificateArn, ""]]
 
 Resources:
   # ===========================================================================
@@ -540,16 +546,8 @@ Resources:
           return request;
         }
 
-  # ACM cert for the custom domain (must be us-east-1 for CloudFront; DNS-validated).
-  SiteCertificate:
-    Type: AWS::CertificateManager::Certificate
-    Condition: HasDomain
-    Properties:
-      DomainName: !Ref DomainName
-      ValidationMethod: DNS
-      DomainValidationOptions:
-        - DomainName: !Ref DomainName
-          HostedZoneId: !Ref HostedZoneId
+  # The ACM cert is supplied via AcmCertificateArn (created out-of-band so cross-account
+  # DNS validation works — the Route 53 zone lives in the management account).
 
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
@@ -558,7 +556,7 @@ Resources:
         Enabled: true
         Comment: !Sub moving-crm-${Environment}
         DefaultRootObject: index.html
-        Aliases: !If [HasDomain, [!Ref DomainName], !Ref "AWS::NoValue"]
+        Aliases: !If [HasCert, [!Ref DomainName], !Ref "AWS::NoValue"]
         WebACLId: !If [IsProd, !GetAtt WebAcl.Arn, !Ref "AWS::NoValue"]
         Origins:
           - Id: S3Origin
@@ -591,24 +589,14 @@ Resources:
             CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
         ViewerCertificate: !If
-          - HasDomain
-          - AcmCertificateArn: !Ref SiteCertificate
+          - HasCert
+          - AcmCertificateArn: !Ref AcmCertificateArn
             SslSupportMethod: sni-only
             MinimumProtocolVersion: TLSv1.2_2021
           - CloudFrontDefaultCertificate: true
 
-  DomainRecord:
-    Type: AWS::Route53::RecordSet
-    Condition: HasDomain
-    Properties:
-      HostedZoneId: !Ref HostedZoneId
-      Name: !Ref DomainName
-      Type: A
-      AliasTarget:
-        DNSName: !GetAtt CloudFrontDistribution.DomainName
-        HostedZoneId: Z2FDTNDATAQYW2
-        EvaluateTargetHealth: false
-
+  # The www.crm alias record is managed manually in the parent Route 53 zone
+  # (management account), pointing at the CloudFront distribution.
 
   CodeBuildRole:
     Type: AWS::IAM::Role
@@ -1041,6 +1029,7 @@ Resources:
                     "SmartMovingApiKey": "${SmartMovingApiKey}",
                     "DomainName": "${DomainName}",
                     "HostedZoneId": "${HostedZoneId}",
+                    "AcmCertificateArn": "${AcmCertificateArn}",
                     "DeployLambda": "true"
                   }
               InputArtifacts:
