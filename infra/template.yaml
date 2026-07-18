@@ -480,6 +480,38 @@ Resources:
         CloudWatchMetricsEnabled: true
         MetricName: !Sub moving-crm-${Environment}-webacl
       Rules:
+        # Only the real domains may serve the app — block the raw *.cloudfront.net host.
+        - Name: BlockNonCanonicalHost
+          Priority: 0
+          Action:
+            Block: {}
+          Statement:
+            NotStatement:
+              Statement:
+                OrStatement:
+                  Statements:
+                    - ByteMatchStatement:
+                        FieldToMatch:
+                          SingleHeader:
+                            Name: host
+                        SearchString: crm.household-goods-moving-and-storage.com
+                        PositionalConstraint: EXACTLY
+                        TextTransformations:
+                          - Priority: 0
+                            Type: LOWERCASE
+                    - ByteMatchStatement:
+                        FieldToMatch:
+                          SingleHeader:
+                            Name: host
+                        SearchString: www.crm.household-goods-moving-and-storage.com
+                        PositionalConstraint: EXACTLY
+                        TextTransformations:
+                          - Priority: 0
+                            Type: LOWERCASE
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: noncanonicalhost
         - Name: AWSManagedCommon
           Priority: 1
           OverrideAction:
