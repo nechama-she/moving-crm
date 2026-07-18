@@ -980,7 +980,7 @@ Resources:
             Push:
               - Branches:
                   Includes:
-                    - main
+                    - !Ref GitHubBranch
       Stages:
         # --- Source: pull from GitHub on merge to main ---
         - Name: Source
