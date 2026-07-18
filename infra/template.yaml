@@ -556,7 +556,7 @@ Resources:
         Enabled: true
         Comment: !Sub moving-crm-${Environment}
         DefaultRootObject: index.html
-        Aliases: !If [HasCert, [!Ref DomainName], !Ref "AWS::NoValue"]
+        Aliases: !If [HasCert, !Split [",", !Ref DomainName], !Ref "AWS::NoValue"]
         WebACLId: !If [IsProd, !GetAtt WebAcl.Arn, !Ref "AWS::NoValue"]
         Origins:
           - Id: S3Origin
