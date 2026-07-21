@@ -11,6 +11,7 @@ Expected SQS message body (JSON):
     }
 """
 
+import functools
 import json
 import logging
 import os
@@ -57,16 +58,33 @@ def _login(api_url: str) -> str:
     return resp.json()["token"]
 
 
-_SMARTMOVING_BRANCH_URLS = {
-    "Top Tier Van Lines": "https://api.smartmoving.com/api/leads/from-provider/v2?providerKey=ce2082b7-b43f-469d-b909-b1eb00df8d37&branchId=b2d21327-bd04-4517-bb9e-b444014996a5",
-    "Movers 95":          "https://api.smartmoving.com/api/leads/from-provider/v2?providerKey=ce2082b7-b43f-469d-b909-b1eb00df8d37&branchId=57392601-1bce-4e65-82e8-b1eb00ddb5e2",
-}
+# SmartMoving provider key + per-company branch IDs are loaded from SSM (never
+# hardcoded / never committed). Param /moving-crm/<env>/SMARTMOVING_DUPLICATE_CONFIG
+# is a SecureString holding JSON:
+#   {"providerKey": "...", "branches": {"<company name>": "<branchId>", ...}}
+@functools.lru_cache(maxsize=1)
+def _get_smartmoving_config() -> dict:
+    ssm_prefix = os.getenv("SSM_PREFIX", "/moving-crm/dev/")
+    name = ssm_prefix.rstrip("/") + "/SMARTMOVING_DUPLICATE_CONFIG"
+    ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
+    resp = ssm.get_parameter(Name=name, WithDecryption=True)
+    return json.loads(resp["Parameter"]["Value"])
+
+
+def _smartmoving_url(target_company_name: str) -> str:
+    cfg = _get_smartmoving_config()
+    provider_key = cfg.get("providerKey", "")
+    branch_id = (cfg.get("branches") or {}).get(target_company_name)
+    if not provider_key or not branch_id:
+        raise ValueError(f"No SmartMoving config for company: {target_company_name}")
+    return (
+        "https://api.smartmoving.com/api/leads/from-provider/v2"
+        f"?providerKey={provider_key}&branchId={branch_id}"
+    )
 
 
 def _create_smartmoving_lead(lead: dict, referral_source: str, target_company_name: str) -> str:
-    url = _SMARTMOVING_BRANCH_URLS.get(target_company_name)
-    if not url:
-        raise ValueError(f"No SmartMoving URL configured for company: {target_company_name}")
+    url = _smartmoving_url(target_company_name)
 
     note = (
         f"email: {lead.get('email', '')}. "

@@ -57,12 +57,13 @@ def ensure_seed_data(session) -> str:
         session.flush()
         logger.info("Created company: Gorilla Haulers")
 
-    admin = session.query(User).filter(User.email == "admin@gorillamove.com").first()
+    admin_email = os.environ.get("ADMIN_SEED_EMAIL", "admin@gorillamove.com")
+    admin = session.query(User).filter(User.email == admin_email).first()
     if not admin:
         admin_password = os.environ.get("ADMIN_SEED_PASSWORD") or secrets.token_urlsafe(16)
 
         admin = User(
-            email="admin@gorillamove.com",
+            email=admin_email,
             name="Admin",
             password_hash=hash_password(admin_password),
             role="admin",
@@ -76,7 +77,7 @@ def ensure_seed_data(session) -> str:
 
         # Store password in SSM so it can be retrieved securely
         _store_admin_password(admin_password)
-        logger.info("Created admin user: admin@gorillamove.com (password stored in SSM)")
+        logger.info("Created admin user: %s (password stored in SSM)", admin_email)
 
     return company.id
 

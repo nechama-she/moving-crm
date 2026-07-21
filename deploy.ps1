@@ -39,9 +39,20 @@ Write-Host "This will create: VPC, RDS PostgreSQL, S3, CodePipeline, CodeBuild" 
 Write-Host "Lambda resources will be created by the pipeline on the first git push." -ForegroundColor Yellow
 Write-Host ""
 
+# The template exceeds CloudFormation's 51 KB inline limit, so stage it in S3.
+$AccountId = (aws sts get-caller-identity --query Account --output text)
+$BootstrapBucket = "moving-crm-cfn-bootstrap-$AccountId"
+aws s3api head-bucket --bucket $BootstrapBucket 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Creating CFN staging bucket $BootstrapBucket" -ForegroundColor Yellow
+    aws s3api create-bucket --bucket $BootstrapBucket --region us-east-1 | Out-Null
+}
+
 aws cloudformation deploy `
     --template-file infra/template.yaml `
     --stack-name $StackName `
+    --s3-bucket $BootstrapBucket `
+    --s3-prefix cfn `
     --capabilities CAPABILITY_NAMED_IAM `
     --parameter-overrides `
         "Environment=$Environment" `
