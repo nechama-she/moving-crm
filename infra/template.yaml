@@ -57,6 +57,7 @@ Parameters:
 
 Conditions:
   ShouldDeployLambda: !Equals [!Ref DeployLambda, "true"]
+  IsProd: !Equals [!Ref Environment, "prod"]
 
 Resources:
   # ===========================================================================
@@ -844,6 +845,7 @@ Resources:
           AWS_REGION_NAME: !Ref AWS::Region
           DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
           SMARTMOVING_API_KEY: !Ref SmartMovingApiKey
+          ENABLE_LEAD_DUPLICATION: !If [IsProd, "true", "false"]
           CORS_ORIGINS: !Join
             - ","
             - - !Sub "https://${CloudFrontDistribution.DomainName}"

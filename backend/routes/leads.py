@@ -563,6 +563,10 @@ def _enqueue_lead_for_duplication(
     Uses EventBridge Scheduler (not SQS) because SQS DelaySeconds is capped at 15 minutes.
     The schedule auto-deletes after firing (ActionAfterCompletion=DELETE).
     """
+    if os.getenv("ENABLE_LEAD_DUPLICATION", "false").strip().lower() != "true":
+        logger.info("Lead duplication disabled; skipping schedule for lead %s", lead_id)
+        return
+
     function_arn = os.getenv("LEAD_DUPLICATE_FUNCTION_ARN", "")
     role_arn = os.getenv("LEAD_DUPLICATE_SCHEDULER_ROLE_ARN", "")
     if not function_arn or not role_arn:
