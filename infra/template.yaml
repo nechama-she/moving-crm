@@ -1230,8 +1230,9 @@ Resources:
           SSM_PREFIX: !Sub /moving-crm/${Environment}/
           AWS_REGION_NAME: !Ref AWS::Region
           DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
-          SMARTMOVING_API_KEY: !Ref SmartMovingApiKey
+          SMARTMOVING_API_KEY: !Sub "{{resolve:ssm:/moving-crm/${Environment}/SMARTMOVING_API_KEY}}"
           JWT_SECRET: !Sub "{{resolve:secretsmanager:${JwtSecret}:SecretString}}"
+          ENABLE_LEAD_DUPLICATION: !If [IsProd, "true", "false"]
           CORS_ORIGINS: !If
             - IsProd
             - !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${CloudFrontDistribution.DomainName}"]
