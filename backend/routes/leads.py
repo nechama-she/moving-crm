@@ -2786,10 +2786,21 @@ def update_lead(
     db.refresh(lead)
 
     # If assignment changed to a new rep, send the rep_assignment SMS.
-    if (
+    will_send_rep_assignment_sms = (
         body.assigned_to is not None
-        and lead.assigned_to
+        and bool(lead.assigned_to)
         and lead.assigned_to != prev_assigned_to
+    )
+    logger.info(
+        "Rep-assignment call check: lead_id=%s body_assigned_to=%r previous_assigned_to=%r current_assigned_to=%r will_call=%s",
+        lead.id,
+        body.assigned_to,
+        prev_assigned_to,
+        lead.assigned_to,
+        will_send_rep_assignment_sms,
+    )
+    if (
+        will_send_rep_assignment_sms
     ):
         try:
             _send_rep_assignment_sms(lead, db)
@@ -2882,6 +2893,12 @@ def sync_smartmoving_documents_by_smartmoving_id(
 
 
 def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
+    logger.info(
+        "ENTER _send_rep_assignment_sms: lead_id=%s assigned_to=%s REP_ASSIGNMENT_SMS_DRY_RUN=%r",
+        lead.id,
+        lead.assigned_to,
+        os.getenv("REP_ASSIGNMENT_SMS_DRY_RUN"),
+    )
     if (lead.status or "").strip().lower() in NO_MESSAGE_STATUSES:
         return
     if not lead.phone:
