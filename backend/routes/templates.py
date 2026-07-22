@@ -1,6 +1,7 @@
 """Per-company SMS message templates."""
 
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -81,6 +82,21 @@ def get_company_template(db: Session, company_id: str, key: str) -> str:
         if value:
             return value
     return DEFAULTS[key]
+
+
+_PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
+
+
+def render_template(template: str, **values: str) -> str:
+    """Safely substitute {placeholder} tokens with the provided values.
+
+    Unlike ``str.format``, this replaces only simple ``{name}`` tokens (no attribute
+    or index access), so an admin-authored template can never be abused as a format
+    string to reach object internals. Unknown placeholders are left untouched.
+    """
+    return _PLACEHOLDER_RE.sub(
+        lambda m: str(values.get(m.group(1), m.group(0))), template
+    )
 
 
 def _resolved_templates(row: CompanyMessageTemplate | None, company_id: str) -> dict:

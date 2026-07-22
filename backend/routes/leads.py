@@ -23,7 +23,7 @@ from database import get_db
 from libs.common.phone import normalize_digits
 from libs.smartmoving.client import get_opportunity, get_opportunity_audit_activity, get_opportunity_documents, download_opportunity_document, update_opportunity_salesperson
 from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting
-from routes.templates import get_company_template
+from routes.templates import get_company_template, render_template
 
 logger = logging.getLogger("moving-crm")
 
@@ -2895,7 +2895,8 @@ def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
 
     template = get_company_template(db, company.id, "rep_assignment_sms")
     first_name = lead.full_name.split()[0] if (lead.full_name or "").strip() else ""
-    message = template.format(
+    message = render_template(
+        template,
         first_name=first_name,
         company_name=company.name,
         company_phone=company.phone or "",
@@ -3234,7 +3235,8 @@ def create_lead(
         from libs.aircall import send_sms, find_number_id
         first_name = lead.full_name.split()[0] if lead.full_name.strip() else ""
         template = get_company_template(db, company.id, "welcome_sms")
-        message = template.format(
+        message = render_template(
+        template,
             first_name=first_name,
             company_name=company.name,
             smartmoving_id=lead.smartmoving_id,

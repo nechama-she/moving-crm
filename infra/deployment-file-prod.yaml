@@ -1,0 +1,21 @@
+# PROD parameter file for the moving-crm stack (deploy in the dedicated PROD account).
+# Fill in the <PLACEHOLDER> values before the first bootstrap. See infra/template.yaml.
+template-file-path: infra/template.yaml
+parameters:
+  Environment: prod
+  # DBInstanceClass is forced to db.t4g.small (Multi-AZ) for prod by the template.
+  DBName: moving_crm
+  DBMasterUsername: crm_admin
+  # RDS is private in prod (no public access); AllowedCIDR is unused but kept for schema parity.
+  AllowedCIDR: "0.0.0.0/0"
+  # Create a NEW CodeConnections GitHub connection IN the prod account (one-time OAuth), paste its ARN:
+  GitHubConnectionArn: "<PROD_ACCOUNT_CODECONNECTIONS_ARN>"
+  GitHubRepo: nechama-she/moving-crm
+  # Use a dedicated prod branch so a push to main does not deploy prod:
+  GitHubBranch: prod
+  # Rotate the old key and supply the prod value (never commit real secrets):
+  SmartMovingApiKey: "<PROD_SMARTMOVING_API_KEY>"
+  # Custom domain (leave both empty to launch on the CloudFront default domain first):
+  DomainName: ""          # e.g. crm.yourdomain.com
+  HostedZoneId: ""        # Route 53 hosted zone ID for the domain above
+tags: {}

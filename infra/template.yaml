@@ -40,8 +40,24 @@ Parameters:
 
   SmartMovingApiKey:
     Type: String
+    Default: ""
     NoEcho: true
-    Description: SmartMoving API key
+    Description: SmartMoving API key — supply via parameter override; rotate the previously committed value
+
+  DomainName:
+    Type: String
+    Default: ""
+    Description: Custom frontend domain (e.g. crm.example.com). Empty = CloudFront default domain only.
+
+  HostedZoneId:
+    Type: String
+    Default: ""
+    Description: Route 53 hosted zone ID for DomainName (required when DomainName is set).
+
+  AcmCertificateArn:
+    Type: String
+    Default: ""
+    Description: ACM certificate ARN (us-east-1) for the custom domain. Created out-of-band for cross-account DNS.
 
   GoogleSheetId:
     Type: String
@@ -57,6 +73,10 @@ Parameters:
 Conditions:
   ShouldDeployLambda: !Equals [!Ref DeployLambda, "true"]
   IsProd: !Equals [!Ref Environment, "prod"]
+  IsDev: !Not [!Equals [!Ref Environment, "prod"]]
+  HasDomain: !Not [!Equals [!Ref DomainName, ""]]
+  HasSmartMovingKey: !Not [!Equals [!Ref SmartMovingApiKey, ""]]
+  HasCert: !Not [!Equals [!Ref AcmCertificateArn, ""]]
 
 Resources:
   # ===========================================================================
@@ -128,20 +148,124 @@ Resources:
       SubnetId: !Ref PublicSubnetB
       RouteTableId: !Ref PublicRouteTable
 
+  # --- Private subnets (RDS + in-VPC Lambda live here in prod) ---
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub moving-crm-private-a-${Environment}
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.12.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub moving-crm-private-b-${Environment}
+
+  # --- NAT for private-subnet egress (prod only) ---
+  NatEip:
+    Type: AWS::EC2::EIP
+    Condition: IsProd
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: IsProd
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnetA
+      Tags:
+        - Key: Name
+          Value: !Sub moving-crm-nat-${Environment}
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: IsProd
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Condition: IsProd
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: IsProd
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: IsProd
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
   # ===========================================================================
   # SECURITY GROUPS
   # ===========================================================================
+  # Compute (Lambda + in-VPC CodeBuild) security group
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Moving CRM compute (Lambda / CodeBuild) security group
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound
   DBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Allow PostgreSQL access
       VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 5432
-          ToPort: 5432
-          CidrIp: !Ref AllowedCIDR
-          Description: PostgreSQL from allowed IP
+
+  # Dev keeps the IP-allowlist ingress; prod allows only the Lambda + RDS Proxy SGs.
+  DBIngressDevCidr:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: IsDev
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      CidrIp: !Ref AllowedCIDR
+      Description: PostgreSQL from allowed IP (dev)
+
+  DBIngressLambda:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: IsProd
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      Description: PostgreSQL from compute SG (prod)
+
+  DBIngressProxy:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: IsProd
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref RDSProxySecurityGroup
+      Description: PostgreSQL from RDS Proxy SG (prod)
 
   # CodeBuild connects to RDS via public endpoint (no VPC config needed, saves NAT Gateway cost)
 
@@ -152,9 +276,10 @@ Resources:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
       DBSubnetGroupDescription: Moving CRM subnets
-      SubnetIds:
-        - !Ref PublicSubnetA
-        - !Ref PublicSubnetB
+      SubnetIds: !If
+        - IsProd
+        - [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+        - [!Ref PublicSubnetA, !Ref PublicSubnetB]
 
   Database:
     Type: AWS::RDS::DBInstance
@@ -163,23 +288,93 @@ Resources:
     Properties:
       DBInstanceIdentifier: !Sub moving-crm-${Environment}
       Engine: postgres
-      EngineVersion: "17.2"
-      DBInstanceClass: !Ref DBInstanceClass
+      EngineVersion: !If [IsProd, "17.10", "17.2"]
+      DBInstanceClass: !If [IsProd, db.t4g.small, !Ref DBInstanceClass]
       AllocatedStorage: 20
       StorageType: gp3
       DBName: !Ref DBName
       MasterUsername: !Ref DBMasterUsername
       ManageMasterUserPassword: true
-      PubliclyAccessible: true
+      PubliclyAccessible: !If [IsProd, false, true]
       DBSubnetGroupName: !Ref DBSubnetGroup
       VPCSecurityGroups:
         - !GetAtt DBSecurityGroup.GroupId
-      BackupRetentionPeriod: 7
-      MultiAZ: false
+      BackupRetentionPeriod: !If [IsProd, 14, 7]
+      MultiAZ: !If [IsProd, true, false]
+      DeletionProtection: !If [IsProd, true, false]
       StorageEncrypted: true
       Tags:
         - Key: Name
           Value: !Sub moving-crm-${Environment}
+
+  # ===========================================================================
+  # RDS PROXY (prod — pooled connections for in-VPC Lambda)
+  # ===========================================================================
+  RDSProxySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: IsProd
+    Properties:
+      GroupDescription: Moving CRM RDS Proxy security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+          Description: From compute SG
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound
+
+  RDSProxyRole:
+    Type: AWS::IAM::Role
+    Condition: IsProd
+    Properties:
+      RoleName: !Sub moving-crm-rds-proxy-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: GetDbSecret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !GetAtt Database.MasterUserSecret.SecretArn
+
+  RDSProxy:
+    Type: AWS::RDS::DBProxy
+    Condition: IsProd
+    Properties:
+      DBProxyName: !Sub moving-crm-${Environment}
+      EngineFamily: POSTGRESQL
+      RoleArn: !GetAtt RDSProxyRole.Arn
+      RequireTLS: true
+      Auth:
+        - AuthScheme: SECRETS
+          IAMAuth: DISABLED
+          SecretArn: !GetAtt Database.MasterUserSecret.SecretArn
+      VpcSubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      VpcSecurityGroupIds:
+        - !Ref RDSProxySecurityGroup
+
+  RDSProxyTargetGroup:
+    Type: AWS::RDS::DBProxyTargetGroup
+    Condition: IsProd
+    Properties:
+      DBProxyName: !Ref RDSProxy
+      TargetGroupName: default
+      DBInstanceIdentifiers:
+        - !Ref Database
 
   # ===========================================================================
   # SSM PARAMETERS — DB connection info for the app + CodeBuild
@@ -189,7 +384,7 @@ Resources:
     Properties:
       Name: !Sub /moving-crm/${Environment}/DB_HOST
       Type: String
-      Value: !GetAtt Database.Endpoint.Address
+      Value: !If [IsProd, !GetAtt RDSProxy.Endpoint, !GetAtt Database.Endpoint.Address]
 
   SSMDBPort:
     Type: AWS::SSM::Parameter
@@ -223,6 +418,7 @@ Resources:
 
   SSMSmartMovingApiKey:
     Type: AWS::SSM::Parameter
+    Condition: HasSmartMovingKey
     Properties:
       Name: !Sub /moving-crm/${Environment}/SMARTMOVING_API_KEY
       Type: String
@@ -270,6 +466,121 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
+  # AWS WAF (prod) — managed rules + per-IP login rate limit. CLOUDFRONT scope.
+  WebAcl:
+    Type: AWS::WAFv2::WebACL
+    Condition: IsProd
+    Properties:
+      Name: !Sub moving-crm-${Environment}
+      Scope: CLOUDFRONT
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub moving-crm-${Environment}-webacl
+      Rules:
+        # Only the real domains may serve the app — block the raw *.cloudfront.net host.
+        - Name: BlockNonCanonicalHost
+          Priority: 0
+          Action:
+            Block: {}
+          Statement:
+            NotStatement:
+              Statement:
+                OrStatement:
+                  Statements:
+                    - ByteMatchStatement:
+                        FieldToMatch:
+                          SingleHeader:
+                            Name: host
+                        SearchString: crm.household-goods-moving-and-storage.com
+                        PositionalConstraint: EXACTLY
+                        TextTransformations:
+                          - Priority: 0
+                            Type: LOWERCASE
+                    - ByteMatchStatement:
+                        FieldToMatch:
+                          SingleHeader:
+                            Name: host
+                        SearchString: www.crm.household-goods-moving-and-storage.com
+                        PositionalConstraint: EXACTLY
+                        TextTransformations:
+                          - Priority: 0
+                            Type: LOWERCASE
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: noncanonicalhost
+        - Name: AWSManagedCommon
+          Priority: 1
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: common
+        - Name: AWSManagedIpReputation
+          Priority: 2
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAmazonIpReputationList
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: iprep
+        - Name: LoginRateLimit
+          Priority: 3
+          Action:
+            Block: {}
+          Statement:
+            RateBasedStatement:
+              Limit: 100
+              AggregateKeyType: IP
+              ScopeDownStatement:
+                ByteMatchStatement:
+                  FieldToMatch:
+                    UriPath: {}
+                  PositionalConstraint: STARTS_WITH
+                  SearchString: /api/auth/login
+                  TextTransformations:
+                    - Priority: 0
+                      Type: NONE
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: loginratelimit
+
+  # SPA routing — rewrite extensionless, non-API paths to /index.html (replaces the
+  # global 403/404 error rewrite so real API error codes pass through unchanged).
+  SpaRoutingFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub moving-crm-spa-${Environment}
+      AutoPublish: true
+      FunctionConfig:
+        Comment: SPA routing for Moving CRM
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var uri = request.uri;
+          if (uri.startsWith('/api/')) { return request; }
+          if (uri.includes('.')) { return request; }
+          request.uri = '/index.html';
+          return request;
+        }
+
+  # The ACM cert is supplied via AcmCertificateArn (created out-of-band so cross-account
+  # DNS validation works — the Route 53 zone lives in the management account).
+
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -277,28 +588,47 @@ Resources:
         Enabled: true
         Comment: !Sub moving-crm-${Environment}
         DefaultRootObject: index.html
+        Aliases: !If [HasCert, !Split [",", !Ref DomainName], !Ref "AWS::NoValue"]
+        WebACLId: !If [IsProd, !GetAtt WebAcl.Arn, !Ref "AWS::NoValue"]
         Origins:
           - Id: S3Origin
             DomainName: !GetAtt FrontendBucket.RegionalDomainName
             OriginAccessControlId: !Ref CloudFrontOAC
             S3OriginConfig:
               OriginAccessIdentity: ""
+          - Id: ApiOrigin
+            DomainName: !Sub "${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
           AllowedMethods: [GET, HEAD]
           CachedMethods: [GET, HEAD]
-          ForwardedValues:
-            QueryString: false
           Compress: true
-        CustomErrorResponses:
-          - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-          - ErrorCode: 403
-            ResponseCode: 200
-            ResponsePagePath: /index.html
+          # Managed CachingOptimized
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SpaRoutingFunction.FunctionMetadata.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: ApiOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            # Managed CachingDisabled + AllViewerExceptHostHeader (forwards Authorization)
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+        ViewerCertificate: !If
+          - HasCert
+          - AcmCertificateArn: !Ref AcmCertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
 
+  # The www.crm alias record is managed manually in the parent Route 53 zone
+  # (management account), pointing at the CloudFront distribution.
 
   CodeBuildRole:
     Type: AWS::IAM::Role
@@ -387,6 +717,21 @@ Resources:
                 Action:
                   - cloudfront:CreateInvalidation
                 Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
+              # VPC ENIs — DeployProject runs migrations inside the VPC in prod
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeDhcpOptions
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterfacePermission
+                Resource: "*"
 
   CodePipelineRole:
     Type: AWS::IAM::Role
@@ -575,6 +920,17 @@ Resources:
                 Action:
                   - codestar-connections:PassConnection
                 Resource: "*"
+              # WAF (prod Web ACL)
+              - Effect: Allow
+                Action:
+                  - wafv2:*
+                Resource: "*"
+              # ACM + Route 53 (custom-domain cert + DNS records)
+              - Effect: Allow
+                Action:
+                  - acm:*
+                  - route53:*
+                Resource: "*"
 
   # ===========================================================================
   # S3 — Pipeline artifacts
@@ -644,7 +1000,7 @@ Resources:
             Push:
               - Branches:
                   Includes:
-                    - main
+                    - !Ref GitHubBranch
       Stages:
         # --- Source: pull from GitHub on merge to main ---
         - Name: Source
@@ -703,6 +1059,9 @@ Resources:
                     "GitHubBranch": "${GitHubBranch}",
                     "AllowedCIDR": "${AllowedCIDR}",
                     "SmartMovingApiKey": "${SmartMovingApiKey}",
+                    "DomainName": "${DomainName}",
+                    "HostedZoneId": "${HostedZoneId}",
+                    "AcmCertificateArn": "${AcmCertificateArn}",
                     "DeployLambda": "true"
                   }
               InputArtifacts:
@@ -731,6 +1090,12 @@ Resources:
       Name: !Sub moving-crm-deploy-${Environment}
       Description: Deploy Moving CRM to production
       ServiceRole: !GetAtt CodeBuildRole.Arn
+      VpcConfig: !If
+        - IsProd
+        - VpcId: !Ref VPC
+          Subnets: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+          SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        - !Ref "AWS::NoValue"
       TimeoutInMinutes: 10
       Source:
         Type: CODEPIPELINE
@@ -778,6 +1143,7 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
       Policies:
         - PolicyName: ApiLambdaPolicy
           PolicyDocument:
@@ -826,6 +1192,15 @@ Resources:
                   StringEquals:
                     iam:PassedToService: scheduler.amazonaws.com
 
+  JwtSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub moving-crm-jwt-secret-${Environment}
+      Description: JWT signing key for the Moving CRM API (generated, never committed)
+      GenerateSecretString:
+        PasswordLength: 48
+        ExcludePunctuation: true
+
   ApiLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -835,20 +1210,35 @@ Resources:
       Timeout: 30
       MemorySize: 512
       Role: !GetAtt ApiLambdaRole.Arn
-      Code:
-        S3Bucket: !Ref FrontendBucket
-        S3Key: api-backend/package.zip
+      VpcConfig: !If
+        - IsProd
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+        - !Ref "AWS::NoValue"
+      # Real code comes from S3 once the pipeline has built+uploaded it. During the
+      # initial bootstrap (DeployLambda=false) the zip does not exist yet, so use a
+      # tiny inline placeholder; the pipeline replaces it on the first run.
+      Code: !If
+        - ShouldDeployLambda
+        - S3Bucket: !Ref FrontendBucket
+          S3Key: api-backend/package.zip
+        - ZipFile: |
+            def handler(event, context):
+                return {"statusCode": 503, "body": "bootstrapping"}
       Environment:
         Variables:
           SSM_PREFIX: !Sub /moving-crm/${Environment}/
           AWS_REGION_NAME: !Ref AWS::Region
           DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
-          SMARTMOVING_API_KEY: !Sub "{{resolve:ssm:/moving-crm/${Environment}/SMARTMOVING_API_KEY}}"
-          ENABLE_LEAD_DUPLICATION: !If [IsProd, "true", "false"]
-          CORS_ORIGINS: !Join
-            - ","
-            - - !Sub "https://${CloudFrontDistribution.DomainName}"
-              - "http://localhost:5173"
+          SMARTMOVING_API_KEY: !Ref SmartMovingApiKey
+          JWT_SECRET: !Sub "{{resolve:secretsmanager:${JwtSecret}:SecretString}}"
+          CORS_ORIGINS: !If
+            - IsProd
+            - !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${CloudFrontDistribution.DomainName}"]
+            - !Join
+              - ","
+              - - !Sub "https://${CloudFrontDistribution.DomainName}"
+                - "http://localhost:5173"
           LEAD_DUPLICATE_QUEUE_URL: !GetAtt LeadDuplicateQueue.QueueUrl
           LEAD_DUPLICATE_FUNCTION_ARN: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-lead-duplicate-${Environment}"
           LEAD_DUPLICATE_SCHEDULER_ROLE_ARN: !GetAtt LeadDuplicateSchedulerRole.Arn
@@ -926,7 +1316,7 @@ Resources:
     Properties:
       Name: !Sub moving-crm-auto-assign-${Environment}
       Description: Runs the backlog assignment engine every 15 minutes
-      ScheduleExpression: "rate(1 minute)"
+      ScheduleExpression: !If [IsProd, "rate(15 minutes)", "rate(1 minute)"]
       FlexibleTimeWindow:
         Mode: "OFF"
       Target:
@@ -951,6 +1341,7 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
       Policies:
         - PolicyName: LeadFollowupPolicy
           PolicyDocument:
@@ -962,7 +1353,7 @@ Resources:
                   - ssm:GetParameters
                   - ssm:GetParametersByPath
                 Resource:
-                  - "arn:aws:ssm:us-east-1:381492064416:parameter/meta-webhook/*"
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/meta-webhook/*"
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/*"
               - Effect: Allow
                 Action:
@@ -979,6 +1370,11 @@ Resources:
       Timeout: 300
       MemorySize: 256
       Role: !GetAtt LeadFollowupRole.Arn
+      VpcConfig: !If
+        - IsProd
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+        - !Ref "AWS::NoValue"
       Code:
         S3Bucket: !Ref FrontendBucket
         S3Key: lead-followup/package.zip
@@ -1198,6 +1594,91 @@ Resources:
       BatchSize: 1
       FunctionResponseTypes:
         - ReportBatchItemFailures
+
+  # ===========================================================================
+  # OBSERVABILITY (prod) — SNS topic + core alarms (subscribe your email post-deploy)
+  # ===========================================================================
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: IsProd
+    Properties:
+      TopicName: !Sub moving-crm-alarms-${Environment}
+
+  RDSCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProd
+    Properties:
+      AlarmName: !Sub moving-crm-${Environment}-rds-cpu
+      AlarmDescription: RDS CPU > 85% for 15 minutes
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref Database
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions: [!Ref AlarmTopic]
+      TreatMissingData: notBreaching
+
+  RDSStorageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProd
+    Properties:
+      AlarmName: !Sub moving-crm-${Environment}-rds-storage
+      AlarmDescription: RDS free storage < 2 GB
+      Namespace: AWS/RDS
+      MetricName: FreeStorageSpace
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref Database
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 2147483648
+      ComparisonOperator: LessThanThreshold
+      AlarmActions: [!Ref AlarmTopic]
+      TreatMissingData: notBreaching
+
+  ApiLambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProd
+    Properties:
+      AlarmName: !Sub moving-crm-${Environment}-api-errors
+      AlarmDescription: API Lambda errors > 5 in 5 minutes
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiLambdaFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions: [!Ref AlarmTopic]
+      TreatMissingData: notBreaching
+
+  LeadDuplicateDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProd
+    Properties:
+      AlarmName: !Sub moving-crm-${Environment}-dlq-depth
+      AlarmDescription: Messages landed in the lead-duplicate dead-letter queue
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt LeadDuplicateDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions: [!Ref AlarmTopic]
+      TreatMissingData: notBreaching
 
 Outputs:
   FrontendURL:
