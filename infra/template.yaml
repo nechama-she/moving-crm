@@ -1380,7 +1380,7 @@ Resources:
         S3Key: lead-followup/package.zip
       Environment:
         Variables:
-          SMARTMOVING_API_KEY: !Ref SmartMovingApiKey
+          SMARTMOVING_API_KEY: !Sub "{{resolve:ssm:/moving-crm/${Environment}/SMARTMOVING_API_KEY}}"
           DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
           DB_HOST: !GetAtt Database.Endpoint.Address
           DB_PORT: !GetAtt Database.Endpoint.Port
