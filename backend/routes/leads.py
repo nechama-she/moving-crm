@@ -2891,8 +2891,6 @@ def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
     if not rep or not company:
         return
 
-    from libs.aircall import send_sms, find_number_id
-
     template = get_company_template(db, company.id, "rep_assignment_sms")
     first_name = lead.full_name.split()[0] if (lead.full_name or "").strip() else ""
     message = render_template(
@@ -2904,16 +2902,28 @@ def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
         rep_name=rep.name or "",
     )
 
-    # Prefer the rep's own Aircall number, fall back to the company's.
-    nid = rep.aircall_number_id or company.aircall_number_id
-    if not nid and company.phone:
-        nid = find_number_id(company.phone)
-        if nid:
-            company.aircall_number_id = nid
-            db.commit()
+    dry_run = os.getenv("REP_ASSIGNMENT_SMS_DRY_RUN", "true").strip().lower() == "true"
+    if dry_run:
+        sms_result = {
+            "ok": False,
+            "dry_run": True,
+            "would_send_to": lead.phone,
+            "message": message,
+        }
+        logger.info("Rep-assignment SMS dry run for lead %s: %s", lead.id, sms_result)
+    else:
+        from libs.aircall import send_sms, find_number_id
 
-    sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
-    logger.info("Rep-assignment SMS for lead %s: %s", lead.id, sms_result)
+        # Prefer the rep's own Aircall number, fall back to the company's.
+        nid = rep.aircall_number_id or company.aircall_number_id
+        if not nid and company.phone:
+            nid = find_number_id(company.phone)
+            if nid:
+                company.aircall_number_id = nid
+                db.commit()
+
+        sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
+        logger.info("Rep-assignment SMS for lead %s: %s", lead.id, sms_result)
 
     try:
         db.add(OutreachEvent(
@@ -2923,12 +2933,12 @@ def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
             note_id="",
             outreach_type="rep_assignment",
             job_id=lead.smartmoving_id or "",
-            qualified=bool(sms_result.get("ok")),
-            qualification_reason="ok" if sms_result.get("ok") else (sms_result.get("error") or "sms_failed"),
+            qualified=bool(sms_result.get("ok")) or dry_run,
+            qualification_reason="dry_run" if dry_run else ("ok" if sms_result.get("ok") else (sms_result.get("error") or "sms_failed")),
             message=message,
             messenger=False,
             aircall=True,
-            dry_run=False,
+            dry_run=dry_run,
         ))
         db.commit()
     except Exception as exc:
@@ -3231,8 +3241,8 @@ def create_lead(
     # Send welcome SMS if phone and smartmoving_id are present
     sms_result = None
     message = ""
+    new_lead_sms_dry_run = os.getenv("NEW_LEAD_SMS_DRY_RUN", "true").strip().lower() == "true"
     if not suppress_new_lead_automation and lead.phone and lead.smartmoving_id:
-        from libs.aircall import send_sms, find_number_id
         first_name = lead.full_name.split()[0] if lead.full_name.strip() else ""
         template = get_company_template(db, company.id, "welcome_sms")
         message = render_template(
@@ -3244,17 +3254,28 @@ def create_lead(
             rep_name="",
         )
 
-        # Resolve Aircall number_id: use cached value or look up and store
-        nid = company.aircall_number_id
-        if not nid and company.phone:
-            nid = find_number_id(company.phone)
-            if nid:
-                company.aircall_number_id = nid
-                db.commit()
-                logger.info("Stored aircall_number_id=%s for company %s", nid, company.name)
+        if new_lead_sms_dry_run:
+            sms_result = {
+                "ok": False,
+                "dry_run": True,
+                "would_send_to": lead.phone,
+                "message": message,
+            }
+            logger.info("Welcome SMS dry run for lead %s: %s", lead.id, sms_result)
+        else:
+            from libs.aircall import send_sms, find_number_id
 
-        sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
-        logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
+            # Resolve Aircall number_id: use cached value or look up and store
+            nid = company.aircall_number_id
+            if not nid and company.phone:
+                nid = find_number_id(company.phone)
+                if nid:
+                    company.aircall_number_id = nid
+                    db.commit()
+                    logger.info("Stored aircall_number_id=%s for company %s", nid, company.name)
+
+            sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
+            logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
 
     # Build assignment note with SmartMoving sync details
     assign_note = _assignment_note(assignment_mode, sync_result)
@@ -3290,7 +3311,7 @@ def create_lead(
                 message=message if lead.phone and lead.smartmoving_id else "",
                 messenger=False,
                 aircall=bool(lead.phone),
-                dry_run=False,
+                dry_run=new_lead_sms_dry_run,
             )
             db.add(outreach_event)
         db.commit()

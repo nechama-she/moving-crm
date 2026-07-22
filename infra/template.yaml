@@ -1233,6 +1233,8 @@ Resources:
           SMARTMOVING_API_KEY: !Sub "{{resolve:ssm:/moving-crm/${Environment}/SMARTMOVING_API_KEY}}"
           JWT_SECRET: !Sub "{{resolve:secretsmanager:${JwtSecret}:SecretString}}"
           ENABLE_LEAD_DUPLICATION: !If [IsProd, "true", "false"]
+          NEW_LEAD_SMS_DRY_RUN: !If [IsProd, "false", "true"]
+          REP_ASSIGNMENT_SMS_DRY_RUN: !If [IsProd, "false", "true"]
           CORS_ORIGINS: !If
             - IsProd
             - !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${CloudFrontDistribution.DomainName}"]
@@ -1409,7 +1411,10 @@ Resources:
       Targets:
         - Id: LeadFollowupLambdaSms
           Arn: !GetAtt LeadFollowupFunction.Arn
-          Input: '{"mode": "day_followup"}'
+          Input: !If
+            - IsProd
+            - '{"mode": "day_followup"}'
+            - '{"mode": "day_followup", "dry_run": true}'
           RetryPolicy:
             MaximumRetryAttempts: 0
 
