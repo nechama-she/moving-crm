@@ -40,7 +40,6 @@ Parameters:
 
   SmartMovingApiKey:
     Type: String
-    Default: f27f1bc13efa41a491eb485eb660f737
     NoEcho: true
     Description: SmartMoving API key
 
@@ -844,7 +843,7 @@ Resources:
           SSM_PREFIX: !Sub /moving-crm/${Environment}/
           AWS_REGION_NAME: !Ref AWS::Region
           DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
-          SMARTMOVING_API_KEY: !Ref SmartMovingApiKey
+          SMARTMOVING_API_KEY: !Sub "{{resolve:ssm:/moving-crm/${Environment}/SMARTMOVING_API_KEY}}"
           ENABLE_LEAD_DUPLICATION: !If [IsProd, "true", "false"]
           CORS_ORIGINS: !Join
             - ","
@@ -985,7 +984,7 @@ Resources:
         S3Key: lead-followup/package.zip
       Environment:
         Variables:
-          SMARTMOVING_API_KEY: !Ref SmartMovingApiKey
+          SMARTMOVING_API_KEY: !Sub "{{resolve:ssm:/moving-crm/${Environment}/SMARTMOVING_API_KEY}}"
           DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
           DB_HOST: !GetAtt Database.Endpoint.Address
           DB_PORT: !GetAtt Database.Endpoint.Port
