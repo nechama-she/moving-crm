@@ -62,7 +62,7 @@ function ProtectedRoutes() {
         <div style={{ display: "flex", flex: 1 }}>
           {isDispatchUser ? (
             <>
-              <NavLink to="/dispatch" style={navLinkStyle}>Dispatcher Calender</NavLink>
+              <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
               <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
             </>
           ) : (
@@ -73,7 +73,7 @@ function ProtectedRoutes() {
               <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
               {user?.role === "admin" && (
                 <>
-                  <NavLink to="/dispatch" style={navLinkStyle}>Dispatcher Calender</NavLink>
+                  <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
                   <NavLink to="/dispatch-users" style={navLinkStyle}>Dispatcher Setup</NavLink>
                 </>
               )}

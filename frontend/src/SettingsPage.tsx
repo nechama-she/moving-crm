@@ -19,7 +19,7 @@ export default function SettingsPage() {
           <div style={actionsRow}>
             <Link to="/admin-users" style={primaryLink}>Manage Admin Users</Link>
             <Link to="/sales-reps" style={primaryLink}>Manage Sales Reps</Link>
-            <Link to="/dispatch" style={ghostLink}>Manage Dispatch</Link>
+            <Link to="/dispatch-users" style={ghostLink}>Manage Dispatch</Link>
           </div>
         </section>
 
