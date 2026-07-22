@@ -74,6 +74,8 @@ function formatDueLabel(due: string): string {
   });
 }
 
+
+
 function formatDateHeader(key: string): string {
   if (key === "No Due Date") return "No Due Date";
   const today = todayISO();
