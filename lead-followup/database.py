@@ -290,9 +290,9 @@ def sync_followup_from_smartmoving(
 
 
 def get_company_template(company_id: str, key: str) -> str | None:
-    """Read a per-company SMS template body from company_message_templates.
+    """Read a company override, falling back to the editable system default.
 
-    Returns the column value if a row exists and the field is non-empty, else None.
+    Returns None only when neither value has been configured.
     """
     if not company_id or key not in {"welcome_sms", "rep_assignment_sms", "day2_followup_sms", "day3_followup_sms"}:
         return None
@@ -301,10 +301,15 @@ def get_company_template(company_id: str, key: str) -> str | None:
     try:
         with engine.connect() as conn:
             row = conn.execute(sql, {"cid": company_id}).fetchone()
-            if not row:
-                return None
-            val = (row[0] or "").strip()
-            return val or None
+            company_value = (row[0] or "").strip() if row else ""
+            if company_value:
+                return company_value
+            system_row = conn.execute(
+                text("SELECT value FROM app_settings WHERE key = :key LIMIT 1"),
+                {"key": f"sms_system_default.{key}"},
+            ).fetchone()
+            system_value = (system_row[0] or "").strip() if system_row else ""
+            return system_value or None
     except Exception as exc:
         logger.warning("get_company_template(%s, %s) failed: %s", company_id, key, exc)
         return None

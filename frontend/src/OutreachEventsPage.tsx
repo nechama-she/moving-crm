@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
 
-type OutreachType = "due" | "day_2" | "day_3" | "new_lead";
+type OutreachType = "due" | "day_2" | "day_3" | "new_lead" | "rep_assignment";
 
 interface FilterCompany {
   id: string;
@@ -41,6 +41,7 @@ const tabs: Array<{ value: OutreachType; label: string }> = [
   { value: "day_2", label: "Day 2" },
   { value: "day_3", label: "Day 3" },
   { value: "new_lead", label: "New Leads" },
+  { value: "rep_assignment", label: "Rep Assignment" },
 ];
 
 function yesNo(value: boolean): string {
@@ -51,6 +52,7 @@ function formatType(value: string): string {
   if (value === "day_2") return "Day 2";
   if (value === "day_3") return "Day 3";
   if (value === "new_lead") return "New Lead";
+  if (value === "rep_assignment") return "Rep Assignment";
   if (value === "due") return "Due";
   return value;
 }

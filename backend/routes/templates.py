@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user, require_admin
 from database import get_db
-from models import Company, CompanyMessageTemplate, User, UserCompany
+from models import AppSetting, Company, CompanyMessageTemplate, User, UserCompany
 
 logger = logging.getLogger("moving-crm")
 
@@ -66,6 +66,20 @@ DEFAULTS = {
 }
 
 TEMPLATE_KEYS = list(DEFAULTS.keys())
+SYSTEM_DEFAULT_PREFIX = "sms_system_default."
+
+
+def _system_defaults(db: Session) -> dict[str, str]:
+    rows = (
+        db.query(AppSetting)
+        .filter(AppSetting.key.in_([f"{SYSTEM_DEFAULT_PREFIX}{key}" for key in TEMPLATE_KEYS]))
+        .all()
+    )
+    saved = {row.key.removeprefix(SYSTEM_DEFAULT_PREFIX): row.value for row in rows}
+    return {
+        key: (saved.get(key) or "").strip() or DEFAULTS[key]
+        for key in TEMPLATE_KEYS
+    }
 
 
 def get_company_template(db: Session, company_id: str, key: str) -> str:
@@ -81,7 +95,7 @@ def get_company_template(db: Session, company_id: str, key: str) -> str:
         value = (getattr(row, key, "") or "").strip()
         if value:
             return value
-    return DEFAULTS[key]
+    return _system_defaults(db)[key]
 
 
 _PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
@@ -99,8 +113,12 @@ def render_template(template: str, **values: str) -> str:
     )
 
 
-def _resolved_templates(row: CompanyMessageTemplate | None, company_id: str) -> dict:
-    out = {"company_id": company_id, "defaults": DEFAULTS}
+def _resolved_templates(
+    row: CompanyMessageTemplate | None,
+    company_id: str,
+    defaults: dict[str, str],
+) -> dict:
+    out = {"company_id": company_id, "defaults": defaults}
     if row:
         body = row.to_dict()
     else:
@@ -130,6 +148,48 @@ class TemplatesUpdate(BaseModel):
     day3_followup_sms: str | None = Field(default=None)
 
 
+@router.get("/templates/defaults", summary="Get system-default SMS templates")
+def get_system_default_templates(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    defaults = _system_defaults(db)
+    return {
+        "company_id": "",
+        **defaults,
+        "defaults": defaults,
+        "updated_by": "",
+        "updated_at": "",
+    }
+
+
+@router.put("/templates/defaults", summary="Update system-default SMS templates (admin)")
+def update_system_default_templates(
+    body: TemplatesUpdate,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    for key in TEMPLATE_KEYS:
+        value = getattr(body, key)
+        if value is None:
+            continue
+        setting_key = f"{SYSTEM_DEFAULT_PREFIX}{key}"
+        row = db.query(AppSetting).filter(AppSetting.key == setting_key).first()
+        if not row:
+            row = AppSetting(key=setting_key)
+            db.add(row)
+        row.value = value.strip() or DEFAULTS[key]
+    db.commit()
+    defaults = _system_defaults(db)
+    return {
+        "company_id": "",
+        **defaults,
+        "defaults": defaults,
+        "updated_by": user.id,
+        "updated_at": "",
+    }
+
+
 @router.get("/{company_id}/templates", summary="Get per-company SMS templates")
 def get_templates(
     company_id: str,
@@ -146,7 +206,7 @@ def get_templates(
         .filter(CompanyMessageTemplate.company_id == company_id)
         .first()
     )
-    return _resolved_templates(row, company_id)
+    return _resolved_templates(row, company_id, _system_defaults(db))
 
 
 @router.put("/{company_id}/templates", summary="Update per-company SMS templates (admin)")
@@ -177,4 +237,4 @@ def update_templates(
     row.updated_by = user.id
     db.commit()
     db.refresh(row)
-    return _resolved_templates(row, company_id)
+    return _resolved_templates(row, company_id, _system_defaults(db))
