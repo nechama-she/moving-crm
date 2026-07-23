@@ -21,6 +21,8 @@ type TemplatesResponse = {
   defaults: Record<TemplateKey, string>;
 };
 
+const SYSTEM_DEFAULT_ID = "__system_default__";
+
 const FIELDS: { key: TemplateKey; label: string; description: string; placeholders: string }[] = [
   {
     key: "welcome_sms",
@@ -53,7 +55,7 @@ export default function CompanyTemplatesPage() {
   const isAdmin = user?.role === "admin";
 
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [companyId, setCompanyId] = useState<string>("");
+  const [companyId, setCompanyId] = useState<string>(SYSTEM_DEFAULT_ID);
   const [data, setData] = useState<TemplatesResponse | null>(null);
   const [values, setValues] = useState<Record<TemplateKey, string>>({
     welcome_sms: "",
@@ -74,7 +76,6 @@ export default function CompanyTemplatesPage() {
         const data = (await res.json()) as Company[];
         const sorted = (data || []).sort((a, b) => a.name.localeCompare(b.name));
         setCompanies(sorted);
-        if (sorted.length && !companyId) setCompanyId(sorted[0].id);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load companies");
       }
@@ -93,7 +94,10 @@ export default function CompanyTemplatesPage() {
     setError("");
     setInfo("");
     try {
-      const res = await fetch(`${API_BASE}/api/companies/${cid}/templates`, { headers: authHeaders(token) });
+      const endpoint = cid === SYSTEM_DEFAULT_ID
+        ? `${API_BASE}/api/companies/templates/defaults`
+        : `${API_BASE}/api/companies/${cid}/templates`;
+      const res = await fetch(endpoint, { headers: authHeaders(token) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const payload = (await res.json()) as TemplatesResponse;
       setData(payload);
@@ -116,7 +120,10 @@ export default function CompanyTemplatesPage() {
     setError("");
     setInfo("");
     try {
-      const res = await fetch(`${API_BASE}/api/companies/${companyId}/templates`, {
+      const endpoint = companyId === SYSTEM_DEFAULT_ID
+        ? `${API_BASE}/api/companies/templates/defaults`
+        : `${API_BASE}/api/companies/${companyId}/templates`;
+      const res = await fetch(endpoint, {
         method: "PUT",
         headers: { ...authHeaders(token), "Content-Type": "application/json" },
         body: JSON.stringify(values),
@@ -142,15 +149,18 @@ export default function CompanyTemplatesPage() {
   }
 
   const selectedCompanyName = useMemo(
-    () => companies.find((c) => c.id === companyId)?.name || "",
+    () => companyId === SYSTEM_DEFAULT_ID
+      ? "System Default"
+      : companies.find((c) => c.id === companyId)?.name || "",
     [companies, companyId],
   );
+  const editingSystemDefault = companyId === SYSTEM_DEFAULT_ID;
 
   return (
     <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>SMS Templates</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b", fontSize: 13 }}>
-        Edit the SMS messages the system sends automatically per company. Leave a field blank to use the system default.
+        Edit the global system defaults or override them for an individual company.
       </p>
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
@@ -160,6 +170,7 @@ export default function CompanyTemplatesPage() {
           onChange={(e) => setCompanyId(e.target.value)}
           style={{ padding: "6px 8px", border: "1px solid #c9c7c5", borderRadius: 4, fontSize: 13, minWidth: 240 }}
         >
+          <option value={SYSTEM_DEFAULT_ID}>System Default (all companies)</option>
           {companies.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
@@ -193,7 +204,7 @@ export default function CompanyTemplatesPage() {
                     </p>
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
-                    {!usingDefault && isAdmin && (
+                    {!editingSystemDefault && !usingDefault && isAdmin && (
                       <button type="button" onClick={() => resetToDefault(f.key)} style={ghostButton}>
                         Reset to default
                       </button>
@@ -208,12 +219,12 @@ export default function CompanyTemplatesPage() {
                   rows={8}
                   style={textarea}
                 />
-                <details style={{ marginTop: 6 }}>
+                {!editingSystemDefault && <details style={{ marginTop: 6 }}>
                   <summary style={{ fontSize: 12, color: "#0176d3", cursor: "pointer" }}>
                     {usingDefault ? "View system default (currently in use)" : "View system default"}
                   </summary>
                   <pre style={defaultPre}>{defaultBody}</pre>
-                </details>
+                </details>}
               </section>
             );
           })}
