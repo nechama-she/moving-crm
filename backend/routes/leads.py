@@ -1772,10 +1772,7 @@ def update_lead_job(
             next_delivery = route[-1] if len(route) > 1 else ""
             next_stops = route[1:-1] if len(route) > 2 else []
 
-    if not next_pickup:
-        raise HTTPException(status_code=400, detail="At least one pickup address is required")
-    if not next_delivery:
-        raise HTTPException(status_code=400, detail="At least one delivery address is required")
+    _validate_job_route_has_one_side(next_pickup, next_delivery)
 
     row.pickup_zip = next_pickup
     row.delivery_zip = next_delivery
