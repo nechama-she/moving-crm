@@ -48,6 +48,16 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        {isAdmin ? (
+          <section style={card}>
+            <h2 style={sectionHeader}>Lead Duplication</h2>
+            <p style={desc}>Review leads waiting to be duplicated and cancel pending schedules.</p>
+            <div style={actionsRow}>
+              <Link to="/settings/pending-duplications" style={primaryLink}>Pending Duplications</Link>
+            </div>
+          </section>
+        ) : null}
+
         <section style={card}>
           <h2 style={sectionHeader}>Profile & Security</h2>
           <p style={desc}>Manage password and account-level security settings.</p>

@@ -1183,6 +1183,10 @@ Resources:
                   - scheduler:GetSchedule
                   - scheduler:DeleteSchedule
                 Resource: !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/lead-dup-*"
+              - Effect: Allow
+                Action:
+                  - scheduler:ListSchedules
+                Resource: "*"
               # Allow passing the scheduler role to EventBridge Scheduler
               - Effect: Allow
                 Action:
