@@ -14,6 +14,7 @@ import SettingsPage from "./SettingsPage";
 import AutoAssignTrackerPage from "./AutoAssignTrackerPage";
 import AdminUsersPage from "./AdminUsersPage";
 import SalesCalendarPage from "./SalesCalendarPage";
+import PendingDuplicationsPage from "./PendingDuplicationsPage";
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -111,6 +112,7 @@ function ProtectedRoutes() {
           <Route path="/dispatch-users" element={<DispatchPage mode="manage" />} />
           <Route path="/settings/companies" element={<CompaniesPage />} />
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
+          <Route path="/settings/pending-duplications" element={<PendingDuplicationsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />
           <Route path="/leads/:leadId" element={<LeadDetail />} />

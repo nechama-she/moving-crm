@@ -7,6 +7,7 @@ from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import boto3
+from botocore.exceptions import ClientError
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File
 from fastapi.responses import Response, RedirectResponse
@@ -550,6 +551,8 @@ def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_id
 
 
 LEAD_DUPLICATE_DELAY_HOURS = 8
+LEAD_DUPLICATE_SCHEDULE_PREFIX = "lead-dup-"
+LEAD_DUPLICATE_SCHEDULE_GROUP = "default"
 
 
 def _enqueue_lead_for_duplication(
@@ -589,7 +592,7 @@ def _enqueue_lead_for_duplication(
     # Schedule name must be unique and <=64 chars, [0-9A-Za-z_.-]
     short_id = lead_id.replace("-", "")[:24]
     epoch = int(fire_at.timestamp())
-    schedule_name = f"lead-dup-{short_id}-{epoch}"
+    schedule_name = f"{LEAD_DUPLICATE_SCHEDULE_PREFIX}{short_id}-{epoch}"
 
     payload = {
         "lead_id": lead_id,
@@ -621,6 +624,102 @@ def _enqueue_lead_for_duplication(
         )
     except Exception as exc:
         logger.warning("Failed to schedule lead %s for duplication: %s", lead_id, exc)
+
+
+@router.get("/lead-duplications/pending")
+def list_pending_lead_duplications(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    scheduler = boto3.client("scheduler", region_name=os.getenv("AWS_REGION_NAME", "us-east-1"))
+    schedules: list[dict] = []
+    next_token = None
+    try:
+        while True:
+            params = {
+                "GroupName": LEAD_DUPLICATE_SCHEDULE_GROUP,
+                "NamePrefix": LEAD_DUPLICATE_SCHEDULE_PREFIX,
+                "State": "ENABLED",
+                "MaxResults": 100,
+            }
+            if next_token:
+                params["NextToken"] = next_token
+            page = scheduler.list_schedules(**params)
+            schedules.extend(page.get("Schedules") or [])
+            next_token = page.get("NextToken")
+            if not next_token:
+                break
+    except ClientError as exc:
+        logger.exception("Failed to list pending lead duplication schedules")
+        raise HTTPException(status_code=502, detail=f"Could not load pending duplications: {exc}")
+
+    items: list[dict] = []
+    for schedule in schedules:
+        schedule_name = schedule.get("Name", "")
+        try:
+            detail = scheduler.get_schedule(
+                GroupName=LEAD_DUPLICATE_SCHEDULE_GROUP,
+                Name=schedule_name,
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+                continue
+            logger.warning("Could not read lead duplication schedule %s: %s", schedule_name, exc)
+            continue
+
+        try:
+            payload = json.loads((detail.get("Target") or {}).get("Input") or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+
+        lead_id = str(payload.get("lead_id") or "")
+        lead = db.query(Lead).filter(Lead.id == lead_id).first() if lead_id else None
+        company = db.query(Company).filter(Company.id == lead.company_id).first() if lead else None
+        expression = detail.get("ScheduleExpression") or schedule.get("ScheduleExpression") or ""
+        fire_at = expression[3:-1] + "Z" if expression.startswith("at(") and expression.endswith(")") else expression
+        items.append({
+            "schedule_name": schedule_name,
+            "lead_id": lead_id,
+            "lead_name": lead.full_name if lead else "",
+            "smartmoving_id": lead.smartmoving_id if lead else "",
+            "source_company_name": company.name if company else "",
+            "target_company_name": payload.get("target_company_name") or "",
+            "target_referral_source": payload.get("target_referral_source") or "",
+            "fire_at": fire_at,
+            "created_at": detail.get("CreationDate") or schedule.get("CreationDate"),
+        })
+
+    items.sort(key=lambda item: item["fire_at"])
+    return {"items": items, "total": len(items)}
+
+
+@router.delete("/lead-duplications/pending/{schedule_name}")
+def delete_pending_lead_duplication(
+    schedule_name: str,
+    user: User = Depends(get_current_user),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if not schedule_name.startswith(LEAD_DUPLICATE_SCHEDULE_PREFIX):
+        raise HTTPException(status_code=400, detail="Invalid lead duplication schedule")
+
+    scheduler = boto3.client("scheduler", region_name=os.getenv("AWS_REGION_NAME", "us-east-1"))
+    try:
+        scheduler.delete_schedule(
+            GroupName=LEAD_DUPLICATE_SCHEDULE_GROUP,
+            Name=schedule_name,
+        )
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+            raise HTTPException(status_code=404, detail="Pending duplication not found")
+        logger.exception("Failed to delete lead duplication schedule %s", schedule_name)
+        raise HTTPException(status_code=502, detail=f"Could not delete pending duplication: {exc}")
+
+    logger.info("Admin %s deleted lead duplication schedule %s", user.id, schedule_name)
+    return {"status": "deleted", "schedule_name": schedule_name}
 
 
 def _send_assignment_webhook_todo(lead: Lead, rep: User | None):
