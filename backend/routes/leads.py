@@ -1478,12 +1478,12 @@ class ExternalLeadUpdateLogRequest(BaseModel):
     method: str = "POST"
     url: str = ""
     headers: dict[str, Any] = Field(default_factory=dict)
-    payload: Any = None
+    payload: dict[str, Any] | list[Any] | None = None
 
 
 class ExternalLeadUpdateLogResponse(BaseModel):
     status_code: int | None = None
-    body: Any = None
+    body: dict[str, Any] | list[Any] | None = None
 
 
 class ExternalLeadUpdateLog(BaseModel):
