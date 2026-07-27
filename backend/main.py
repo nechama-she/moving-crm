@@ -171,6 +171,11 @@ async def audit_lead_mutations(request: Request, call_next):
     else:
         response_payload = None
 
+    if not lead_id and isinstance(response_payload, dict):
+        response_lead_id = str(response_payload.get("lead_id") or "")
+        if re.fullmatch(r"[0-9a-fA-F-]{36}", response_lead_id):
+            lead_id = response_lead_id
+
     record_lead_update_log(
         lead_id=lead_id,
         actor_user_id=actor_user_id,

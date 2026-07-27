@@ -1491,28 +1491,6 @@ class ExternalLeadUpdateLog(BaseModel):
     response: ExternalLeadUpdateLogResponse | None = None
 
 
-def _record_embedded_update_logs(
-    lead_id: str,
-    logs: list[ExternalLeadUpdateLog] | None,
-    user: User | None = None,
-) -> None:
-    for item in logs or []:
-        request_log = item.request or ExternalLeadUpdateLogRequest()
-        response_log = item.response or ExternalLeadUpdateLogResponse()
-        record_lead_update_log(
-            lead_id=lead_id,
-            actor_user_id=user.id if user else None,
-            actor_name=user.name if user else None,
-            source="external",
-            method=(request_log.method or "POST").strip().upper() or "POST",
-            endpoint=(request_log.url or "").strip() or f"/api/leads/{lead_id}",
-            event_type="external_update",
-            request_payload=request_log.model_dump() if item.request else None,
-            external_response=response_log.model_dump() if item.response else None,
-            response_status=response_log.status_code,
-        )
-
-
 class LeadJobChargesBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -1857,7 +1835,6 @@ def create_lead_job(
     _persist_job_route(db, row.id, pickup, stops, delivery)
     db.commit()
     db.refresh(row)
-    _record_embedded_update_logs(lead.id, body.logs, user)
     return _serialize_job_with_addresses(row, db)
 
 
@@ -1882,7 +1859,6 @@ def replace_lead_job_charges(
     _replace_job_charges(row, body.estimated_charges, db)
     db.commit()
     db.refresh(row)
-    _record_embedded_update_logs(lead.id, body.logs, user)
     return _serialize_job_with_addresses(row, db)
 
 
@@ -1975,7 +1951,6 @@ def update_lead_job(
 
     db.commit()
     db.refresh(row)
-    _record_embedded_update_logs(lead.id, body.logs, user)
     return _serialize_job_with_addresses(row, db)
 
 
@@ -2949,9 +2924,6 @@ def update_lead(
             raise HTTPException(status_code=409, detail="Conflicting sortOrder values for this lead")
         raise HTTPException(status_code=500, detail="Failed to update lead")
     db.refresh(lead)
-    _record_embedded_update_logs(lead.id, body.logs, user)
-    for job_patch in body.jobs or []:
-        _record_embedded_update_logs(lead.id, job_patch.logs, user)
 
     # If assignment changed to a new rep, send the rep_assignment SMS.
     will_send_rep_assignment_sms = (
@@ -3436,17 +3408,7 @@ def create_lead(
         raise HTTPException(status_code=400, detail="Database integrity error")
     
     db.refresh(lead)
-    _record_embedded_update_logs(lead.id, body.logs)
     logger.info("Created lead: %s (%s)", lead.full_name, lead.id)
-    record_lead_update_log(
-        lead_id=lead.id,
-        source="api",
-        method="POST",
-        endpoint="/api/leads",
-        event_type="lead_created",
-        request_payload=body.model_dump(by_alias=True),
-        response_status=200,
-    )
 
     suppress_new_lead_automation = lead.status in NO_MESSAGE_STATUSES
     
