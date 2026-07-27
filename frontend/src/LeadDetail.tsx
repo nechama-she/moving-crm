@@ -820,9 +820,22 @@ export default function LeadDetail() {
           takenByUser: String(item.takenByUser ?? "").trim(),
           repPaid: Boolean(item.repPaid ?? false),
           repPaidAt: String(item.repPaidAt ?? "").trim(),
+          thirdPartyCommissionTo: String(item.thirdPartyCommissionTo ?? "").trim(),
+          thirdPartyCommissionAmount: Number(item.thirdPartyCommissionAmount ?? 0),
+          thirdPartyCommissionPaid: Boolean(item.thirdPartyCommissionPaid ?? false),
+          thirdPartyCommissionPaidAt: String(item.thirdPartyCommissionPaidAt ?? "").trim(),
         };
       })
-      .filter((row): row is { amount: number; takenByUser: string; repPaid: boolean; repPaidAt: string } => row !== null);
+      .filter((row): row is {
+        amount: number;
+        takenByUser: string;
+        repPaid: boolean;
+        repPaidAt: string;
+        thirdPartyCommissionTo: string;
+        thirdPartyCommissionAmount: number;
+        thirdPartyCommissionPaid: boolean;
+        thirdPartyCommissionPaidAt: string;
+      } => row !== null);
   })();
   const paymentsTotal = paymentsData.reduce((sum, payment) => sum + payment.amount, 0);
   const canManageRepPayments = user?.role === "admin" || user?.role === "sales_rep";
@@ -909,15 +922,11 @@ export default function LeadDetail() {
       const nextPayments = paymentsData.map((payment, index) => {
         if (index !== paymentIndex) {
           return {
-            amount: payment.amount,
-            takenByUser: payment.takenByUser,
-            repPaid: payment.repPaid,
-            repPaidAt: payment.repPaidAt,
+            ...payment,
           };
         }
         return {
-          amount: payment.amount,
-          takenByUser: payment.takenByUser,
+          ...payment,
           repPaid: nextPaid,
           repPaidAt: nextPaid ? (payment.repPaidAt || new Date().toISOString()) : "",
         };
@@ -936,6 +945,56 @@ export default function LeadDetail() {
     } finally {
       setSavingRepPaymentIndex(null);
     }
+  }
+
+  async function updateThirdPartyPayout(
+    paymentIndex: number,
+    changes: Partial<{
+      thirdPartyCommissionTo: string;
+      thirdPartyCommissionAmount: number;
+      thirdPartyCommissionPaid: boolean;
+      thirdPartyCommissionPaidAt: string;
+    }>,
+  ) {
+    if (!leadId || user?.role !== "admin") return;
+    const nextPayments = paymentsData.map((payment, index) => (
+      index === paymentIndex ? { ...payment, ...changes } : payment
+    ));
+    setSavingRepPaymentIndex(paymentIndex);
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ payments: nextPayments }),
+      });
+      const responseBody = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(responseBody?.detail || `HTTP ${res.status}`);
+      setLead(responseBody);
+    } catch (e) {
+      alert(`Failed to update third-party payout: ${e instanceof Error ? e.message : "error"}`);
+    } finally {
+      setSavingRepPaymentIndex(null);
+    }
+  }
+
+  function addThirdPartyPayout(paymentIndex: number) {
+    const payment = paymentsData[paymentIndex];
+    if (!payment) return;
+    const recipient = window.prompt("Who should receive this third-party payout?", payment.thirdPartyCommissionTo);
+    if (recipient === null) return;
+    const rawAmount = window.prompt("Third-party payout amount", String(payment.thirdPartyCommissionAmount || ""));
+    if (rawAmount === null) return;
+    const amount = Number(rawAmount);
+    if (!Number.isFinite(amount) || amount < 0 || amount > payment.amount) {
+      alert(`Enter an amount between $0 and ${formatMoney(payment.amount)}.`);
+      return;
+    }
+    void updateThirdPartyPayout(paymentIndex, {
+      thirdPartyCommissionTo: recipient.trim(),
+      thirdPartyCommissionAmount: amount,
+      thirdPartyCommissionPaid: amount > 0 ? payment.thirdPartyCommissionPaid : false,
+      thirdPartyCommissionPaidAt: amount > 0 ? payment.thirdPartyCommissionPaidAt : "",
+    });
   }
 
   return (
@@ -1828,6 +1887,52 @@ export default function LeadDetail() {
                     </div>
                     {payment.repPaid && payment.repPaidAt ? (
                       <div style={{ fontSize: 10, color: "#64748b" }}>Paid at: {new Date(payment.repPaidAt).toLocaleString()}</div>
+                    ) : null}
+                    {payment.thirdPartyCommissionAmount > 0 ? (
+                      <div style={{ borderTop: "1px dashed #cbd5e1", paddingTop: 6, display: "grid", gap: 4 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 11 }}>
+                          <span style={{ color: "#475569" }}>
+                            Third-party payout{payment.thirdPartyCommissionTo ? ` — ${payment.thirdPartyCommissionTo}` : ""}
+                          </span>
+                          <strong>{formatMoney(payment.thirdPartyCommissionAmount)}</strong>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                          <span style={{ color: payment.thirdPartyCommissionPaid ? "#15803d" : "#b91c1c", fontSize: 11, fontWeight: 700 }}>
+                            {payment.thirdPartyCommissionPaid ? "Paid" : "Unpaid"}
+                          </span>
+                          {user?.role === "admin" ? (
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button type="button" onClick={() => addThirdPartyPayout(index)} disabled={savingRepPaymentIndex === index}>Edit</button>
+                              <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={payment.thirdPartyCommissionPaid}
+                                  disabled={savingRepPaymentIndex === index}
+                                  onChange={(e) => void updateThirdPartyPayout(index, {
+                                    thirdPartyCommissionPaid: e.target.checked,
+                                    thirdPartyCommissionPaidAt: e.target.checked ? new Date().toISOString() : "",
+                                  })}
+                                />
+                                Paid
+                              </label>
+                            </div>
+                          ) : null}
+                        </div>
+                        {payment.thirdPartyCommissionPaidAt ? (
+                          <div style={{ fontSize: 10, color: "#64748b" }}>
+                            Paid at: {new Date(payment.thirdPartyCommissionPaidAt).toLocaleString()}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : user?.role === "admin" ? (
+                      <button
+                        type="button"
+                        onClick={() => addThirdPartyPayout(index)}
+                        disabled={savingRepPaymentIndex === index}
+                        style={{ justifySelf: "start", fontSize: 11 }}
+                      >
+                        Add third-party payout
+                      </button>
                     ) : null}
                   </div>
                 ))}

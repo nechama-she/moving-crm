@@ -238,6 +238,10 @@ class Lead(Base):
                             "takenByUser": str(row.get("takenByUser") or "").strip(),
                             "repPaid": bool(row.get("repPaid") or False),
                             "repPaidAt": str(row.get("repPaidAt") or "").strip(),
+                            "thirdPartyCommissionTo": str(row.get("thirdPartyCommissionTo") or "").strip(),
+                            "thirdPartyCommissionAmount": float(row.get("thirdPartyCommissionAmount") or 0),
+                            "thirdPartyCommissionPaid": bool(row.get("thirdPartyCommissionPaid") or False),
+                            "thirdPartyCommissionPaidAt": str(row.get("thirdPartyCommissionPaidAt") or "").strip(),
                         })
             except Exception:
                 payments_data = []

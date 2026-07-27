@@ -37,6 +37,10 @@ type LeadPayment = {
   takenByUser: string;
   repPaid?: boolean;
   repPaidAt?: string;
+  thirdPartyCommissionTo?: string;
+  thirdPartyCommissionAmount?: number;
+  thirdPartyCommissionPaid?: boolean;
+  thirdPartyCommissionPaidAt?: string;
 };
 
 type SalesSearchResult = {
@@ -291,6 +295,10 @@ function parsePayments(raw: unknown): LeadPayment[] {
       takenByUser: String(value.takenByUser || ""),
       repPaid: Boolean(value.repPaid || false),
       repPaidAt: String(value.repPaidAt || ""),
+      thirdPartyCommissionTo: String(value.thirdPartyCommissionTo || ""),
+      thirdPartyCommissionAmount: Number(value.thirdPartyCommissionAmount || 0),
+      thirdPartyCommissionPaid: Boolean(value.thirdPartyCommissionPaid || false),
+      thirdPartyCommissionPaidAt: String(value.thirdPartyCommissionPaidAt || ""),
     };
   });
 }
@@ -581,6 +589,8 @@ export default function SalesCalendarPage() {
       let paymentsTotal = 0;
       let repCommissionPaid = 0;
       let repCommissionTotal = 0;
+      let thirdPartyPayoutPaid = 0;
+      let thirdPartyPayoutTotal = 0;
       let leadCount = 0;
       for (const job of items) {
         leadCount += 1;
@@ -588,6 +598,9 @@ export default function SalesCalendarPage() {
         for (const payment of job.payments || []) {
           const paymentAmount = Number(payment.amount || 0);
           paymentsTotal += paymentAmount;
+          const thirdPartyAmount = Number(payment.thirdPartyCommissionAmount || 0);
+          thirdPartyPayoutTotal += thirdPartyAmount;
+          if (payment.thirdPartyCommissionPaid) thirdPartyPayoutPaid += thirdPartyAmount;
         }
         if ((job.assigned_to_role || "") === "sales_rep") {
           const commissionPercent = commissionPercentForJob(job);
@@ -604,7 +617,8 @@ export default function SalesCalendarPage() {
       const paymentsPercent = estimatedTotal > 0 ? (paymentsTotal / estimatedTotal) * 100 : 0;
       const remainingPercent = estimatedTotal > 0 ? (remainingTotal / estimatedTotal) * 100 : 0;
       const repCommissionRemaining = Math.max(0, repCommissionTotal - repCommissionPaid);
-      const companyIncome = paymentsTotal - processingFeeAmount(paymentsTotal) - repCommissionTotal;
+      const thirdPartyPayoutRemaining = Math.max(0, thirdPartyPayoutTotal - thirdPartyPayoutPaid);
+      const companyIncome = paymentsTotal - processingFeeAmount(paymentsTotal) - repCommissionTotal - thirdPartyPayoutTotal;
       return {
         estimatedTotal,
         paymentsTotal,
@@ -614,6 +628,9 @@ export default function SalesCalendarPage() {
         repCommissionTotal,
         repCommissionPaid,
         repCommissionRemaining,
+        thirdPartyPayoutTotal,
+        thirdPartyPayoutPaid,
+        thirdPartyPayoutRemaining,
         companyIncome,
         leadCount,
       };
@@ -666,6 +683,8 @@ export default function SalesCalendarPage() {
       let paymentsTotal = 0;
       let repCommissionPaid = 0;
       let repCommissionTotal = 0;
+      let thirdPartyPayoutPaid = 0;
+      let thirdPartyPayoutTotal = 0;
       let leadCount = 0;
       for (const job of items) {
         leadCount += 1;
@@ -673,6 +692,9 @@ export default function SalesCalendarPage() {
         for (const payment of job.payments || []) {
           const paymentAmount = Number(payment.amount || 0);
           paymentsTotal += paymentAmount;
+          const thirdPartyAmount = Number(payment.thirdPartyCommissionAmount || 0);
+          thirdPartyPayoutTotal += thirdPartyAmount;
+          if (payment.thirdPartyCommissionPaid) thirdPartyPayoutPaid += thirdPartyAmount;
         }
         if ((job.assigned_to_role || "") === "sales_rep") {
           const commissionPercent = commissionPercentForJob(job);
@@ -689,7 +711,8 @@ export default function SalesCalendarPage() {
       const paymentsPercent = estimatedTotal > 0 ? (paymentsTotal / estimatedTotal) * 100 : 0;
       const remainingPercent = estimatedTotal > 0 ? (remainingTotal / estimatedTotal) * 100 : 0;
       const repCommissionRemaining = Math.max(0, repCommissionTotal - repCommissionPaid);
-      const companyIncome = paymentsTotal - processingFeeAmount(paymentsTotal) - repCommissionTotal;
+      const thirdPartyPayoutRemaining = Math.max(0, thirdPartyPayoutTotal - thirdPartyPayoutPaid);
+      const companyIncome = paymentsTotal - processingFeeAmount(paymentsTotal) - repCommissionTotal - thirdPartyPayoutTotal;
       return {
         estimatedTotal,
         paymentsTotal,
@@ -699,6 +722,9 @@ export default function SalesCalendarPage() {
         repCommissionTotal,
         repCommissionPaid,
         repCommissionRemaining,
+        thirdPartyPayoutTotal,
+        thirdPartyPayoutPaid,
+        thirdPartyPayoutRemaining,
         companyIncome,
         leadCount,
       };
@@ -1045,11 +1071,18 @@ export default function SalesCalendarPage() {
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.repCommissionRemaining)}</div>
               <div style={{ marginTop: 4, fontSize: 12, color: "#be123c" }}>unpaid to reps</div>
             </div>
+            <div style={{ border: "1px solid #fdba74", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #fff7ed 0%, #ffffff 100%)" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#c2410c", textTransform: "uppercase", letterSpacing: "0.05em" }}>Third-party Unpaid</div>
+              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.thirdPartyPayoutRemaining)}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#c2410c" }}>
+                {formatMoney(salesMoneySummary.thirdPartyPayoutPaid)} paid of {formatMoney(salesMoneySummary.thirdPartyPayoutTotal)}
+              </div>
+            </div>
             {isAdmin ? (
               <div style={{ border: "1px solid #6ee7b7", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #ecfdf5 0%, #ffffff 100%)" }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: "#047857", textTransform: "uppercase", letterSpacing: "0.05em" }}>Company Income</div>
                 <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.companyIncome)}</div>
-                <div style={{ marginTop: 4, fontSize: 12, color: "#047857" }}>payments - 3.5% - rep commissions</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "#047857" }}>payments - 3.5% - rep commissions - third-party payouts</div>
               </div>
             ) : null}
           </div>
@@ -1112,6 +1145,11 @@ export default function SalesCalendarPage() {
                         <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
                           <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Rep Remaining</div>
                           <div style={{ fontSize: 14, color: "#be123c", fontWeight: 800 }}>{formatMoney(company.repCommissionRemaining)}</div>
+                        </div>
+                        <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
+                          <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Third-party Unpaid</div>
+                          <div style={{ fontSize: 14, color: "#c2410c", fontWeight: 800 }}>{formatMoney(company.thirdPartyPayoutRemaining)}</div>
+                          <div style={{ fontSize: 11, color: "#c2410c" }}>of {formatMoney(company.thirdPartyPayoutTotal)}</div>
                         </div>
                         <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
                           <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Total</div>
