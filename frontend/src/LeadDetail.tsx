@@ -4,6 +4,7 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import ChatMessages from "./ChatMessages";
 import TasksPanel from "./TasksPanel";
+import LeadLogsPanel from "./LeadLogsPanel";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
 
@@ -110,7 +111,7 @@ export default function LeadDetail() {
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<"conversations" | "activity">("conversations");
+  const [activeTab, setActiveTab] = useState<"conversations" | "activity" | "logs">("conversations");
   const [editingUser, setEditingUser] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
@@ -2350,6 +2351,21 @@ export default function LeadDetail() {
             >
               Activity
             </button>
+            <button
+              onClick={() => setActiveTab("logs")}
+              style={{
+                padding: "10px 18px",
+                border: "none",
+                borderBottom: activeTab === "logs" ? "3px solid #0176d3" : "3px solid transparent",
+                background: activeTab === "logs" ? "#fff" : "transparent",
+                fontWeight: 600,
+                fontSize: 13,
+                color: activeTab === "logs" ? "#032d60" : "#3e3e3c",
+                cursor: "pointer",
+              }}
+            >
+              Logs
+            </button>
           </div>
           <div style={{ padding: 16 }}>
             {activeTab === "conversations" ? (
@@ -2367,6 +2383,8 @@ export default function LeadDetail() {
               )
             ) : activeTab === "activity" ? (
               <TasksPanel leadId={leadId!} token={token} />
+            ) : activeTab === "logs" ? (
+              <LeadLogsPanel leadId={leadId!} token={token} />
             ) : null}
           </div>
         </div>

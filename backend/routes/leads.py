@@ -21,9 +21,10 @@ from auth import get_current_user
 from company_colors import resolve_company_color
 from config import get_config
 from database import get_db
+from lead_audit import record_lead_update_log
 from libs.common.phone import normalize_digits
 from libs.smartmoving.client import get_opportunity, get_opportunity_audit_activity, get_opportunity_documents, download_opportunity_document, update_opportunity_salesperson
-from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting
+from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting
 from routes.templates import get_company_template, render_template
 
 logger = logging.getLogger("moving-crm")
@@ -1331,6 +1332,32 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
     return lead.to_dict()
 
 
+@router.get("/leads/{lead_id}/logs")
+def get_lead_update_logs(
+    lead_id: str,
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _get_visible_lead_or_404(lead_id, user, db)
+    query = db.query(LeadUpdateLog).filter(LeadUpdateLog.lead_id == lead_id)
+    total = query.count()
+    rows = (
+        query
+        .order_by(LeadUpdateLog.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return {
+        "items": [row.to_dict() for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
 @router.delete("/leads/{lead_id}")
 def delete_lead(
     lead_id: str,
@@ -1880,9 +1907,7 @@ def update_lead_job(
 
     if "booked_move_date" in payload:
         booked_raw = (payload.get("booked_move_date") or "").strip()
-        if not booked_raw:
-            row.booked_move_date = None
-        else:
+        if booked_raw:
             booked = _parse_booked_move_date(booked_raw)
             if not booked:
                 raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
@@ -2630,9 +2655,7 @@ def update_lead(
         lead.move_date = _normalize_move_date(body.move_date)
     if body.booked_move_date is not None:
         booked_raw = (body.booked_move_date or "").strip()
-        if not booked_raw:
-            lead.booked_move_date = None
-        else:
+        if booked_raw:
             parsed_booked = _parse_booked_move_date(booked_raw)
             if not parsed_booked:
                 raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
@@ -2765,9 +2788,7 @@ def update_lead(
 
             if "booked_move_date" in job_payload:
                 booked_raw = (job_payload.get("booked_move_date") or "").strip()
-                if not booked_raw:
-                    target_job.booked_move_date = None
-                else:
+                if booked_raw:
                     booked = _parse_booked_move_date(booked_raw)
                     if not booked:
                         raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
@@ -2920,6 +2941,19 @@ def refresh_lead_from_smartmoving(
 
     opportunity_result = get_opportunity(smartmoving_id)
     if opportunity_result.get("error"):
+        record_lead_update_log(
+            lead_id=lead.id,
+            actor_user_id=user.id,
+            actor_name=user.name,
+            source="smartmoving",
+            method="POST",
+            endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
+            event_type="smartmoving_refresh",
+            request_payload={"smartmoving_id": smartmoving_id},
+            external_response={"opportunity": opportunity_result},
+            response_status=502,
+            error=str(opportunity_result.get("error") or ""),
+        )
         error_text = str(opportunity_result.get("error") or "")
         lowered = error_text.lower()
         if "http 400" in lowered and "opportunity was not found" in lowered:
@@ -2934,6 +2968,19 @@ def refresh_lead_from_smartmoving(
 
     opportunity = opportunity_result.get("data")
     if not isinstance(opportunity, dict):
+        record_lead_update_log(
+            lead_id=lead.id,
+            actor_user_id=user.id,
+            actor_name=user.name,
+            source="smartmoving",
+            method="POST",
+            endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
+            event_type="smartmoving_refresh",
+            request_payload={"smartmoving_id": smartmoving_id},
+            external_response={"opportunity": opportunity_result},
+            response_status=502,
+            error="SmartMoving refresh returned an invalid payload",
+        )
         raise HTTPException(status_code=502, detail="SmartMoving refresh returned an invalid payload")
 
     payload = _build_smartmoving_refresh_payload(opportunity, user)
@@ -2944,9 +2991,35 @@ def refresh_lead_from_smartmoving(
 
     audit_result = get_opportunity_audit_activity(smartmoving_id)
     if audit_result.get("error"):
+        record_lead_update_log(
+            lead_id=lead.id,
+            actor_user_id=user.id,
+            actor_name=user.name,
+            source="smartmoving",
+            method="POST",
+            endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
+            event_type="smartmoving_refresh",
+            request_payload={"smartmoving_id": smartmoving_id, "mapped_payload": payload},
+            external_response={"opportunity": opportunity_result, "audit_activity": audit_result},
+            response_status=502,
+            error=str(audit_result.get("error") or ""),
+        )
         raise HTTPException(status_code=502, detail=f"SmartMoving audit failed: {audit_result['error']}")
     audit_rows = audit_result.get("data")
     if not isinstance(audit_rows, list):
+        record_lead_update_log(
+            lead_id=lead.id,
+            actor_user_id=user.id,
+            actor_name=user.name,
+            source="smartmoving",
+            method="POST",
+            endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
+            event_type="smartmoving_refresh",
+            request_payload={"smartmoving_id": smartmoving_id, "mapped_payload": payload},
+            external_response={"opportunity": opportunity_result, "audit_activity": audit_result},
+            response_status=502,
+            error="SmartMoving audit returned an invalid payload",
+        )
         raise HTTPException(status_code=502, detail="SmartMoving audit returned an invalid payload")
     company = db.query(Company).filter(Company.id == lead.company_id).first()
     company_timezone = (company.timezone if company else "") or "America/New_York"
@@ -2960,6 +3033,18 @@ def refresh_lead_from_smartmoving(
 
     body = LeadUpdate.model_validate(payload)
     updated = update_lead(lead.id, body, user, db)
+    record_lead_update_log(
+        lead_id=lead.id,
+        actor_user_id=user.id,
+        actor_name=user.name,
+        source="smartmoving",
+        method="POST",
+        endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
+        event_type="smartmoving_refresh",
+        request_payload={"smartmoving_id": smartmoving_id, "mapped_payload": payload},
+        external_response={"opportunity": opportunity_result, "audit_activity": audit_result},
+        response_status=200,
+    )
     sync_result = sync_smartmoving_files(lead, user, db)
     if isinstance(updated, dict):
         updated["smartmoving_document_links_synced"] = sync_result["created_links"]
@@ -3300,6 +3385,15 @@ def create_lead(
     
     db.refresh(lead)
     logger.info("Created lead: %s (%s)", lead.full_name, lead.id)
+    record_lead_update_log(
+        lead_id=lead.id,
+        source="api",
+        method="POST",
+        endpoint="/api/leads",
+        event_type="lead_created",
+        request_payload=body.model_dump(by_alias=True),
+        response_status=200,
+    )
 
     suppress_new_lead_automation = lead.status in NO_MESSAGE_STATUSES
     

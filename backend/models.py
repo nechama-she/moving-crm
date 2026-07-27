@@ -277,6 +277,49 @@ class Lead(Base):
         }
 
 
+class LeadUpdateLog(Base):
+    __tablename__ = "lead_update_logs"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    lead_id = Column(String(36), nullable=False, index=True)
+    actor_user_id = Column(String(36), nullable=True, index=True)
+    actor_name = Column(String(255))
+    source = Column(String(50), nullable=False, default="api", index=True)
+    method = Column(String(10), nullable=False)
+    endpoint = Column(Text, nullable=False)
+    event_type = Column(String(100), nullable=False, default="lead_update")
+    request_payload = Column(Text)
+    external_response = Column(Text)
+    response_status = Column(Integer)
+    error = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+
+    def to_dict(self):
+        def parsed(value):
+            if not value:
+                return None
+            try:
+                return json.loads(value)
+            except Exception:
+                return value
+
+        return {
+            "id": self.id,
+            "lead_id": self.lead_id,
+            "actor_user_id": self.actor_user_id or "",
+            "actor_name": self.actor_name or "",
+            "source": self.source or "api",
+            "method": self.method or "",
+            "endpoint": self.endpoint or "",
+            "event_type": self.event_type or "lead_update",
+            "request_payload": parsed(self.request_payload),
+            "external_response": parsed(self.external_response),
+            "response_status": self.response_status,
+            "error": self.error or "",
+            "created_at": self.created_at.isoformat() if self.created_at else "",
+        }
+
+
 class LeadAttachment(Base):
     __tablename__ = "lead_attachments"
 
