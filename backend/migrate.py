@@ -15,8 +15,13 @@ def migrate() -> None:
     import models  # noqa: F401 - registers all ORM tables on Base.metadata
     from models import Base
     from database import engine
+    from sqlalchemy import text
 
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE lead_update_logs ADD COLUMN IF NOT EXISTS sql_statements TEXT")
+        )
     logger.info("Schema ensured via create_all.")
 
 

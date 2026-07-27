@@ -292,6 +292,7 @@ class LeadUpdateLog(Base):
     external_response = Column(Text)
     response_status = Column(Integer)
     error = Column(Text)
+    sql_statements = Column(Text)
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
 
     def to_dict(self):
@@ -312,10 +313,13 @@ class LeadUpdateLog(Base):
             "method": self.method or "",
             "endpoint": self.endpoint or "",
             "event_type": self.event_type or "lead_update",
+            "request": parsed(self.request_payload),
+            "response": parsed(self.external_response),
             "request_payload": parsed(self.request_payload),
             "external_response": parsed(self.external_response),
             "response_status": self.response_status,
             "error": self.error or "",
+            "sql": parsed(self.sql_statements) or [],
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }
 

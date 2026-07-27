@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+from typing import Any
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -1473,10 +1474,50 @@ class LeadJobChargePayload(BaseModel):
     total_cost: float = Field(default=0, alias="totalCost")
 
 
+class ExternalLeadUpdateLogRequest(BaseModel):
+    method: str = "POST"
+    url: str = ""
+    headers: dict[str, Any] = Field(default_factory=dict)
+    payload: Any = None
+
+
+class ExternalLeadUpdateLogResponse(BaseModel):
+    status_code: int | None = None
+    body: Any = None
+
+
+class ExternalLeadUpdateLog(BaseModel):
+    request: ExternalLeadUpdateLogRequest | None = None
+    response: ExternalLeadUpdateLogResponse | None = None
+
+
+def _record_embedded_update_logs(
+    lead_id: str,
+    logs: list[ExternalLeadUpdateLog] | None,
+    user: User | None = None,
+) -> None:
+    for item in logs or []:
+        request_log = item.request or ExternalLeadUpdateLogRequest()
+        response_log = item.response or ExternalLeadUpdateLogResponse()
+        record_lead_update_log(
+            lead_id=lead_id,
+            actor_user_id=user.id if user else None,
+            actor_name=user.name if user else None,
+            source="external",
+            method=(request_log.method or "POST").strip().upper() or "POST",
+            endpoint=(request_log.url or "").strip() or f"/api/leads/{lead_id}",
+            event_type="external_update",
+            request_payload=request_log.model_dump() if item.request else None,
+            external_response=response_log.model_dump() if item.response else None,
+            response_status=response_log.status_code,
+        )
+
+
 class LeadJobChargesBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     estimated_charges: list[LeadJobChargePayload] = Field(default_factory=list, alias="estimatedCharges")
+    logs: list[ExternalLeadUpdateLog] | None = None
 
 
 class EstimatedTotalPayload(BaseModel):
@@ -1606,6 +1647,7 @@ class LeadJobCreate(BaseModel):
     move_date: str = ""
     booked_move_date: str = ""
     price: float | None = None
+    logs: list[ExternalLeadUpdateLog] | None = None
 
 
 class LeadJobUpdate(BaseModel):
@@ -1621,6 +1663,7 @@ class LeadJobUpdate(BaseModel):
     move_date: str | None = None
     booked_move_date: str | None = None
     price: float | None = None
+    logs: list[ExternalLeadUpdateLog] | None = None
 
 
 def _job_pickups_setting_key(job_id: str) -> str:
@@ -1814,6 +1857,7 @@ def create_lead_job(
     _persist_job_route(db, row.id, pickup, stops, delivery)
     db.commit()
     db.refresh(row)
+    _record_embedded_update_logs(lead.id, body.logs, user)
     return _serialize_job_with_addresses(row, db)
 
 
@@ -1838,6 +1882,7 @@ def replace_lead_job_charges(
     _replace_job_charges(row, body.estimated_charges, db)
     db.commit()
     db.refresh(row)
+    _record_embedded_update_logs(lead.id, body.logs, user)
     return _serialize_job_with_addresses(row, db)
 
 
@@ -1930,6 +1975,7 @@ def update_lead_job(
 
     db.commit()
     db.refresh(row)
+    _record_embedded_update_logs(lead.id, body.logs, user)
     return _serialize_job_with_addresses(row, db)
 
 
@@ -2512,6 +2558,7 @@ class LeadUpdateJob(BaseModel):
     booked_move_date: str | None = None
     price: float | None = None
     estimated_charges: list[LeadJobChargePayload] | None = Field(default=None, alias="estimatedCharges")
+    logs: list[ExternalLeadUpdateLog] | None = None
 
 
 class LeadUpdate(BaseModel):
@@ -2539,6 +2586,7 @@ class LeadUpdate(BaseModel):
     jobs: list[LeadUpdateJob] | None = None
     estimated_total: EstimatedTotalPayload | None = Field(default=None, alias="estimatedTotal")
     payments: list[LeadPaymentPayload] | None = None
+    logs: list[ExternalLeadUpdateLog] | None = None
 
 
 @router.patch("/leads/{lead_id}")
@@ -2901,6 +2949,9 @@ def update_lead(
             raise HTTPException(status_code=409, detail="Conflicting sortOrder values for this lead")
         raise HTTPException(status_code=500, detail="Failed to update lead")
     db.refresh(lead)
+    _record_embedded_update_logs(lead.id, body.logs, user)
+    for job_patch in body.jobs or []:
+        _record_embedded_update_logs(lead.id, job_patch.logs, user)
 
     # If assignment changed to a new rep, send the rep_assignment SMS.
     will_send_rep_assignment_sms = (
@@ -3225,6 +3276,7 @@ class NewLead(BaseModel):
     estimated_charges: list[LeadJobChargePayload] = Field(default_factory=list, alias="estimatedCharges")
     estimated_total: EstimatedTotalPayload | None = Field(default=None, alias="estimatedTotal")
     payments: list[LeadPaymentPayload] = Field(default_factory=list)
+    logs: list[ExternalLeadUpdateLog] | None = None
     company_name: str
     source: str
 
@@ -3384,6 +3436,7 @@ def create_lead(
         raise HTTPException(status_code=400, detail="Database integrity error")
     
     db.refresh(lead)
+    _record_embedded_update_logs(lead.id, body.logs)
     logger.info("Created lead: %s (%s)", lead.full_name, lead.id)
     record_lead_update_log(
         lead_id=lead.id,

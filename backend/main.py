@@ -3,13 +3,13 @@ import json
 import os
 import re
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from auth import decode_access_token, get_current_user, is_token_valid, require_admin
 from config import get_config
 from database import SessionLocal
-from lead_audit import record_lead_update_log
+from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
 from models import Lead, User
 from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates
 from routes.meta import messenger, instagram
@@ -135,9 +135,11 @@ async def audit_lead_mutations(request: Request, call_next):
     if request.url.query:
         endpoint += f"?{request.url.query}"
 
+    sql_capture_token = begin_sql_capture()
     try:
         response = await call_next(request)
     except Exception as exc:
+        sql_statements = finish_sql_capture(sql_capture_token)
         record_lead_update_log(
             lead_id=lead_id,
             actor_user_id=actor_user_id,
@@ -147,8 +149,27 @@ async def audit_lead_mutations(request: Request, call_next):
             request_payload=request_payload,
             response_status=500,
             error=str(exc),
+            sql_statements=sql_statements,
         )
         raise
+    sql_statements = finish_sql_capture(sql_capture_token)
+
+    response_body = b"".join([chunk async for chunk in response.body_iterator])
+    response_content_type = response.headers.get("content-type") or ""
+    if response_body:
+        if "application/json" in response_content_type:
+            try:
+                response_payload = json.loads(response_body)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                response_payload = {"body": response_body.decode("utf-8", errors="replace")}
+        else:
+            response_payload = {
+                "content_type": response_content_type,
+                "body_size": len(response_body),
+                "body": response_body.decode("utf-8", errors="replace"),
+            }
+    else:
+        response_payload = None
 
     record_lead_update_log(
         lead_id=lead_id,
@@ -157,9 +178,17 @@ async def audit_lead_mutations(request: Request, call_next):
         method=request.method,
         endpoint=endpoint,
         request_payload=request_payload,
+        external_response=response_payload,
         response_status=response.status_code,
+        sql_statements=sql_statements,
     )
-    return response
+    return Response(
+        content=response_body,
+        status_code=response.status_code,
+        headers=dict(response.headers),
+        media_type=response.media_type,
+        background=response.background,
+    )
 
 
 app.add_middleware(
