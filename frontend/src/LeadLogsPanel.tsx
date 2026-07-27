@@ -152,8 +152,8 @@ export default function LeadLogsPanel({ leadId, token }: { leadId: string; token
                 ) : (
                   <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
                     {nestedRequests.map((entry, index) => (
-                      <div key={index} style={nestedCard}>
-                        <div style={nestedHeader}>
+                      <details key={index} style={nestedCard}>
+                        <summary style={{ ...nestedHeader, cursor: "pointer", listStylePosition: "inside" }}>
                           <code style={methodBadge}>{entry.request?.method || "REQUEST"}</code>
                           <strong>{entry.request?.url || "URL not supplied"}</strong>
                           {entry.response?.status_code !== null && entry.response?.status_code !== undefined ? (
@@ -161,7 +161,7 @@ export default function LeadLogsPanel({ leadId, token }: { leadId: string; token
                               {entry.response.status_code}
                             </span>
                           ) : null}
-                        </div>
+                        </summary>
                         <div style={nestedColumns}>
                           <div>
                             <div style={sectionLabel}>Request</div>
@@ -172,7 +172,7 @@ export default function LeadLogsPanel({ leadId, token }: { leadId: string; token
                             <pre style={jsonBlock}>{pretty(entry.response) || "{}"}</pre>
                           </div>
                         </div>
-                      </div>
+                      </details>
                     ))}
                   </div>
                 )}
