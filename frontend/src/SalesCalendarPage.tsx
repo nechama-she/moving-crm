@@ -1071,10 +1071,10 @@ export default function SalesCalendarPage() {
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.repCommissionRemaining)}</div>
               <div style={{ marginTop: 4, fontSize: 12, color: "#be123c" }}>unpaid to reps</div>
             </div>
-            <div style={{ border: "1px solid #fdba74", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #fff7ed 0%, #ffffff 100%)" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#c2410c", textTransform: "uppercase", letterSpacing: "0.05em" }}>Third-party Unpaid</div>
+            <div style={{ border: "1px solid #fe9339", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #fff7e6 0%, #ffffff 100%)" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#8c4b02", textTransform: "uppercase", letterSpacing: "0.05em" }}>Third-party Unpaid</div>
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.thirdPartyPayoutRemaining)}</div>
-              <div style={{ marginTop: 4, fontSize: 12, color: "#c2410c" }}>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#8c4b02" }}>
                 {formatMoney(salesMoneySummary.thirdPartyPayoutPaid)} paid of {formatMoney(salesMoneySummary.thirdPartyPayoutTotal)}
               </div>
             </div>
@@ -1148,8 +1148,8 @@ export default function SalesCalendarPage() {
                         </div>
                         <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
                           <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Third-party Unpaid</div>
-                          <div style={{ fontSize: 14, color: "#c2410c", fontWeight: 800 }}>{formatMoney(company.thirdPartyPayoutRemaining)}</div>
-                          <div style={{ fontSize: 11, color: "#c2410c" }}>of {formatMoney(company.thirdPartyPayoutTotal)}</div>
+                          <div style={{ fontSize: 14, color: "#8c4b02", fontWeight: 800 }}>{formatMoney(company.thirdPartyPayoutRemaining)}</div>
+                          <div style={{ fontSize: 11, color: "#8c4b02" }}>of {formatMoney(company.thirdPartyPayoutTotal)}</div>
                         </div>
                         <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
                           <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Total</div>
