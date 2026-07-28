@@ -40,6 +40,14 @@ export default function SettingsPage() {
         </section>
 
         <section style={card}>
+          <h2 style={sectionHeader}>Pricing Books</h2>
+          <p style={desc}>Review company rates, pricing exceptions, and additional services in one place.</p>
+          <div style={actionsRow}>
+            <Link to="/pricing" style={primaryLink}>Open Pricing</Link>
+          </div>
+        </section>
+
+        <section style={card}>
           <h2 style={sectionHeader}>Lead Assignment</h2>
           <p style={desc}>Configure admin unavailability windows and which reps are available during those windows.</p>
           <div style={actionsRow}>

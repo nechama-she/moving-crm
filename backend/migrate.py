@@ -22,7 +22,15 @@ def migrate() -> None:
         connection.execute(
             text("ALTER TABLE lead_update_logs ADD COLUMN IF NOT EXISTS sql_statements TEXT")
         )
-    logger.info("Schema ensured via create_all.")
+    from database import SessionLocal
+    from pricing_seed import seed_pricing
+
+    db = SessionLocal()
+    try:
+        seeded = seed_pricing(db)
+    finally:
+        db.close()
+    logger.info("Schema ensured via create_all; seeded %s pricing plans.", seeded)
 
 
 if __name__ == "__main__":
