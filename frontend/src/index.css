@@ -231,19 +231,27 @@ input, select, textarea, button {
   .lead-profile-header {
     display: grid !important;
     grid-template-columns: 48px minmax(0, 1fr) !important;
+    position: relative;
     align-items: start !important;
-    gap: 12px !important;
+    gap: 10px !important;
+  }
+
+  .lead-profile-card {
+    padding: 12px !important;
   }
 
   .lead-profile-meta {
     display: grid !important;
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    gap: 8px !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 6px !important;
   }
 
-  .lead-profile-name,
-  .lead-profile-assignee {
-    grid-column: 1 / -1;
+  .lead-profile-name {
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    padding-right: 82px;
+    font-size: 17px !important;
   }
 
   .lead-profile-selector,
@@ -252,20 +260,87 @@ input, select, textarea, button {
     max-width: none !important;
   }
 
+  .lead-profile-selector {
+    margin-left: -58px;
+    width: calc(100% + 58px);
+  }
+
   .lead-profile-selector > button {
     justify-content: space-between;
-    min-height: 34px;
+    min-height: 32px;
+    padding: 5px 10px !important;
+  }
+
+  .lead-profile-selector > button > span {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    text-align: left;
   }
 
   .lead-profile-actions {
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: flex !important;
+    gap: 6px !important;
+    z-index: 2;
+  }
+
+  .lead-profile-edit-actions {
     grid-column: 1 / -1;
+    display: flex !important;
+    justify-content: flex-end;
+    gap: 6px !important;
+  }
+
+  .lead-profile-actions > .lead-profile-action-button {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+    padding: 0 !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-size: 0 !important;
+  }
+
+  .lead-profile-refresh-button::before,
+  .lead-profile-edit-button::before {
+    font-size: 19px;
+    line-height: 1;
+  }
+
+  .lead-profile-refresh-button::before {
+    content: "↻";
+  }
+
+  .lead-profile-edit-button::before {
+    content: "✎";
+  }
+
+  .lead-profile-assignee-label {
+    display: none;
+  }
+
+  .lead-contact-tiles {
     display: grid !important;
-    grid-template-columns: minmax(0, 1fr) auto !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 6px !important;
+  }
+
+  .lead-info-tile {
+    min-width: 0 !important;
+    padding: 8px 10px !important;
+    border-radius: 4px !important;
     gap: 8px !important;
   }
 
-  .lead-profile-actions > button {
-    min-height: 38px;
+  .lead-info-tile > span {
+    width: 26px;
+    text-align: center;
+    font-size: 16px !important;
   }
 
   .crm-main [style*="justify-content: space-between"] {

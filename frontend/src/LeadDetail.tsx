@@ -1455,7 +1455,7 @@ export default function LeadDetail() {
         const assignedToName = String(lead.assigned_to_name || "").trim() || "Unassigned";
 
         return (
-          <div style={{ ...sectionStyle, padding: 18, overflow: "visible", position: "relative" }}>
+          <div className="lead-profile-card" style={{ ...sectionStyle, padding: 18, overflow: "visible", position: "relative" }}>
             <div className="lead-profile-header" style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
               <div
                 style={{
@@ -1690,7 +1690,7 @@ export default function LeadDetail() {
                           }}
                           title={assignedToName}
                         >
-                          <span style={{ color: "#64748b" }}>Assign To</span>
+                          <span className="lead-profile-assignee-label" style={{ color: "#64748b" }}>Assign To</span>
                           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1e293b" }}>
                             {savingAssignedTo ? "Updating..." : assignedToName}
                           </span>
@@ -1765,7 +1765,7 @@ export default function LeadDetail() {
                 )}
               </div>
               {editingUser ? (
-                <div className="lead-profile-actions" style={{ display: "flex", gap: 6 }}>
+                <div className="lead-profile-edit-actions" style={{ display: "flex", gap: 6 }}>
                   <button
                     type="button"
                     onClick={() => setEditingUser(false)}
@@ -1784,9 +1784,10 @@ export default function LeadDetail() {
                   </button>
                 </div>
               ) : (
-                <div className="lead-profile-actions" style={{ display: "flex", gap: 6 }}>
+                <div className="lead-profile-actions lead-profile-view-actions" style={{ display: "flex", gap: 6 }}>
                   <button
                     type="button"
+                    className="lead-profile-action-button lead-profile-refresh-button"
                     onClick={() => void refreshFromSmartmoving()}
                     disabled={refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
                     title="Refresh from SmartMoving"
@@ -1796,6 +1797,7 @@ export default function LeadDetail() {
                   </button>
                   <button
                     type="button"
+                    className="lead-profile-action-button lead-profile-edit-button"
                     onClick={startEditUser}
                     disabled={!canEditLead}
                     title="Edit"
@@ -1807,8 +1809,8 @@ export default function LeadDetail() {
               )}
             </div>
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              <div style={tile}>
+            <div className="lead-contact-tiles" style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              <div className="lead-info-tile" style={tile}>
                 <span style={{ fontSize: 18 }}>📞</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={tileLabel}>Phone</div>
@@ -1828,7 +1830,7 @@ export default function LeadDetail() {
                   )}
                 </div>
               </div>
-              <div style={tile}>
+              <div className="lead-info-tile" style={tile}>
                 <span style={{ fontSize: 18 }}>✉️</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={tileLabel}>Email</div>
@@ -1848,7 +1850,7 @@ export default function LeadDetail() {
                   )}
                 </div>
               </div>
-              <div style={tile}>
+              <div className="lead-info-tile" style={tile}>
                 <span style={{ fontSize: 18 }}>📦</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={tileLabel}>Move Size</div>
@@ -1866,7 +1868,7 @@ export default function LeadDetail() {
                   )}
                 </div>
               </div>
-              <div style={tile}>
+              <div className="lead-info-tile" style={tile}>
                 <span style={{ fontSize: 18 }}>⚖️</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={tileLabel}>Volume / Weight</div>
