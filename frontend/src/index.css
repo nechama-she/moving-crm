@@ -849,9 +849,12 @@ button:focus-visible {
 .pricing-services article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 4px; border-bottom: 1px solid #e5e5e5; }
 .pricing-services article > div { min-width: 0; }
 .pricing-services strong { font-size: 13px; }
+.pricing-services strong em { margin-left: 6px; padding: 2px 6px; border-radius: 999px; background: #fff1d6; color: #8c4b02; font-size: 9px; font-style: normal; text-transform: uppercase; }
 .pricing-services small { display: block; color: #706e6b; margin-top: 2px; }
 .pricing-services b { color: #2e844a; font-size: 13px; text-align: right; }
 .pricing-services article input { width: 100%; }
+.pricing-services article textarea { width: 100%; min-height: 64px; resize: vertical; border: 1px solid #c9c7c5; border-radius: 4px; padding: 7px 9px; box-sizing: border-box; }
+.pricing-services article.pricing-service-rule { border-left: 3px solid #fe9339; padding-left: 10px; }
 
 @media (max-width: 900px) {
   .pricing-page { padding: 16px; }

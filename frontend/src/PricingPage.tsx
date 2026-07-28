@@ -32,18 +32,29 @@ type Calculation = {
 };
 type JobContext = {
   lead: { id: string; full_name: string; volume: number | null; weight: number | null };
-  job: { id: string; job_order: number; company_name: string; pickup_zip: string; delivery_zip: string; move_date: string; booked_move_date: string };
+  job: { id: string; job_order: number; company_name: string; pickup_zip: string; delivery_zip: string; pickup_state: string; pickup_zip_code: string; delivery_state: string; delivery_zip_code: string; move_date: string; booked_move_date: string };
   plans: PlanSummary[];
+  recommended_plan_id: string;
 };
 
 const money = (value: number | null | undefined) =>
   value == null ? "—" : value.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
-function destinationFromAddress(address: string, options: string[]): string {
-  const state = address.toUpperCase().match(/(?:,\s*|\b)([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?|\b)/)?.[1];
+function destinationFromAddress(address: string, options: string[], resolvedState = "", resolvedZip = ""): string {
+  const state = resolvedState || address.toUpperCase().match(/(?:,\s*|\b)([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?|\b)/)?.[1];
   if (!state) return "";
-  return options.find((option) => option.toUpperCase() === state)
-    || options.find((option) => option.toUpperCase().startsWith(`${state} `))
+  const zip = resolvedZip || address.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1] || "";
+  const zipPrefix = zip ? Number(zip.slice(0, 2)) : null;
+  const stateOptions = options.filter((option) => option.toUpperCase() === state || option.toUpperCase().startsWith(`${state} `) || option.toUpperCase().startsWith(`${state} (`));
+  if (zipPrefix != null) {
+    const ranged = stateOptions.find((option) => {
+      const range = option.match(/(\d{2})\s*x{3}\s*-\s*(\d{2})\s*x{3}/i);
+      return range ? zipPrefix >= Number(range[1]) && zipPrefix <= Number(range[2]) : false;
+    });
+    if (ranged) return ranged;
+  }
+  return stateOptions.find((option) => option.toUpperCase() === state)
+    || stateOptions[0]
     || "";
 }
 
@@ -67,7 +78,7 @@ export default function PricingPage() {
   const [selectedCharges, setSelectedCharges] = useState<Record<string, boolean>>({});
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [manualAmounts, setManualAmounts] = useState<Record<string, number>>({});
-  const [openSections, setOpenSections] = useState({ rules: true, rates: true, services: true });
+  const [openSections, setOpenSections] = useState({ rates: true, services: true });
 
   useEffect(() => {
     void fetch(`${API_BASE}/api/pricing`, { headers: authHeaders(token) })
@@ -95,7 +106,7 @@ export default function PricingPage() {
       .then((context: JobContext) => {
         setJobContext(context);
         setPlans(context.plans);
-        setSelectedId(context.plans[0]?.id || "");
+        setSelectedId(context.recommended_plan_id || context.plans[0]?.id || "");
         setCubicFeet(context.lead.volume == null ? "" : String(context.lead.volume));
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load job pricing"));
@@ -116,7 +127,12 @@ export default function PricingPage() {
         setPlan(row);
         setDraft(structuredClone(row));
         const options = Array.from(new Set(row.rates.map((rate) => rate.destination)));
-        setDestination(destinationFromAddress(jobContext?.job.delivery_zip || "", options) || options[0] || "");
+        setDestination(destinationFromAddress(
+          jobContext?.job.delivery_zip || "",
+          options,
+          jobContext?.job.delivery_state || "",
+          jobContext?.job.delivery_zip_code || "",
+        ) || options[0] || "");
         setSelectedCharges({});
         setQuantities({});
         setManualAmounts({});
@@ -137,7 +153,12 @@ export default function PricingPage() {
   useEffect(() => {
     if (!plan || !jobContext) return;
     const options = Array.from(new Set(plan.rates.map((rate) => rate.destination)));
-    const inferred = destinationFromAddress(jobContext.job.delivery_zip, options);
+    const inferred = destinationFromAddress(
+      jobContext.job.delivery_zip,
+      options,
+      jobContext.job.delivery_state,
+      jobContext.job.delivery_zip_code,
+    );
     if (inferred) setDestination(inferred);
   }, [jobContext, plan]);
   const rateRows = useMemo(() => {
@@ -146,6 +167,18 @@ export default function PricingPage() {
       .filter((name) => !query || name.toLowerCase().includes(query))
       .map((name) => ({ name, rates: (active?.rates || []).filter((row) => row.destination === name) }));
   }, [active, destinations, search]);
+  const catalogRules = useMemo(() => {
+    if (!active) return [];
+    const serviceNames = active.services.map((service) => service.name.toLowerCase());
+    return active.rules.filter((rule) => {
+      const text = rule.description.toLowerCase();
+      if (text.includes("destination & origin") && serviceNames.some((name) => name.includes("destination & origin"))) return false;
+      if (text.includes("company & fuel") && !text.includes("$")) return false;
+      if ((text.includes("pick up from") || text.includes("rates period") || text.includes("to area")) && !/(add|take off|reduce|ask|fee|not included)/i.test(text)) return false;
+      if (/^(rates period|exceptions?)$/i.test(rule.description.trim())) return false;
+      return true;
+    });
+  }, [active]);
 
   function patchDraft(patch: Partial<Plan>) {
     setDraft((current) => current ? { ...current, ...patch } : current);
@@ -192,14 +225,14 @@ export default function PricingPage() {
   }
 
   async function calculate(overrides?: { selected?: Record<string, boolean>; quantities?: Record<string, number>; manual?: Record<string, number> }) {
-    if (!active || !destination || !cubicFeet) return;
+    if (!active || !destination) return;
     setError("");
     const response = await fetch(`${API_BASE}/api/pricing/${active.id}/calculate`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
       body: JSON.stringify({
         destination,
-        cubic_feet: Number(cubicFeet),
+        cubic_feet: Number(cubicFeet || 0),
         move_date: jobContext?.job.move_date || "",
         selected_charges: overrides?.selected || selectedCharges,
         quantities: overrides?.quantities || quantities,
@@ -214,6 +247,14 @@ export default function PricingPage() {
     setQuote(result);
     setSelectedCharges(Object.fromEntries(result.charges.map((charge) => [charge.id, charge.selected])));
   }
+
+  useEffect(() => {
+    if (!plan || !destination || editing) return;
+    void calculate();
+    // Load the unified selectable charge catalog whenever the pricing book changes.
+    // User selections are preserved by subsequent checkbox-triggered calculations.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan?.id, destination, editing]);
 
   return (
     <div className="pricing-page">
@@ -360,23 +401,6 @@ export default function PricingPage() {
                 ) : null}
               </section>
 
-              <PricingSection title="Rules & exceptions" count={active.rules.length} open={openSections.rules} toggle={() => setOpenSections((s) => ({ ...s, rules: !s.rules }))}>
-                <div className="pricing-rules">
-                  {active.rules.map((rule, index) => (
-                    <article key={rule.id || index} className={rule.category === "exception" ? "exception" : ""}>
-                      {editing ? (
-                        <>
-                          <input value={rule.title} onChange={(e) => patchRule(index, { title: e.target.value })} />
-                          <textarea value={rule.description} onChange={(e) => patchRule(index, { description: e.target.value })} />
-                          <button className="text-danger" onClick={() => patchDraft({ rules: draft!.rules.filter((_, idx) => idx !== index) })}>Remove</button>
-                        </>
-                      ) : <><strong>{rule.title}</strong><p>{rule.description}</p></>}
-                    </article>
-                  ))}
-                  {editing ? <button className="add-row" onClick={() => patchDraft({ rules: [...draft!.rules, { category: "general", title: "Pricing rule", description: "" }] })}>+ Add rule</button> : null}
-                </div>
-              </PricingSection>
-
               <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))}>
                 <div className="pricing-table-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search destination or ZIP area" /><span>{bands.length} cubic-foot bands</span></div>
                 <div className="pricing-rate-table-wrap">
@@ -398,7 +422,7 @@ export default function PricingPage() {
                 </div>
               </PricingSection>
 
-              <PricingSection title="Additional services" count={active.services.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))}>
+              <PricingSection title="Additional services & adjustments" count={active.services.length + catalogRules.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))}>
                 <div className="pricing-services">
                   {active.services.map((service, index) => (
                     <article key={service.id || index}>
@@ -412,7 +436,27 @@ export default function PricingPage() {
                       ) : <><div><strong>{service.name}</strong>{service.comments ? <small>{service.comments}</small> : null}</div><b>{service.rate_text || "See note"}</b></>}
                     </article>
                   ))}
+                  {catalogRules.map((rule) => {
+                    const index = active.rules.indexOf(rule);
+                    return (
+                    <article key={rule.id || `rule-${index}`} className="pricing-service-rule">
+                      {editing ? (
+                        <>
+                          <input value={rule.title} onChange={(e) => patchRule(index, { title: e.target.value })} />
+                          <textarea value={rule.description} onChange={(e) => patchRule(index, { description: e.target.value })} />
+                          <button className="text-danger" onClick={() => patchDraft({ rules: draft!.rules.filter((_, idx) => idx !== index) })}>Remove</button>
+                        </>
+                      ) : (
+                        <>
+                          <div><strong>{rule.title || "Pricing adjustment"} <em>Adjustment</em></strong><small>{rule.description}</small></div>
+                          <b>{rule.category === "exception" ? "Conditional" : "Included rule"}</b>
+                        </>
+                      )}
+                    </article>
+                    );
+                  })}
                   {editing ? <button className="add-row" onClick={() => patchDraft({ services: [...draft!.services, { name: "", rate_text: "", comments: "" }] })}>+ Add service</button> : null}
+                  {editing ? <button className="add-row" onClick={() => patchDraft({ rules: [...draft!.rules, { category: "general", title: "Pricing adjustment", description: "" }] })}>+ Add adjustment</button> : null}
                 </div>
               </PricingSection>
             </>

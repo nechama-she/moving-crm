@@ -22,6 +22,7 @@ from models import (
     User,
     UserCompany,
 )
+from zip_state import delivery_location
 
 router = APIRouter(prefix="/api/pricing", tags=["Pricing"])
 
@@ -287,6 +288,16 @@ def get_job_pricing_context(
     )
     if not plans:
         raise HTTPException(status_code=404, detail="No pricing book is configured for this job company")
+    pickup_state, pickup_zip_code = delivery_location(job.pickup_zip)
+    delivery_state, delivery_zip_code = delivery_location(job.delivery_zip)
+
+    def plan_matches_pickup(plan: PricingPlan) -> bool:
+        if not pickup_state:
+            return False
+        coverage = f"{plan.pickup_regions} {plan.name}".upper()
+        return re.search(rf"\b{re.escape(pickup_state)}\b", coverage) is not None
+
+    recommended = next((plan for plan in plans if plan_matches_pickup(plan)), plans[0])
     return {
         "lead": {
             "id": lead.id,
@@ -294,8 +305,15 @@ def get_job_pricing_context(
             "volume": float(lead.volume) if lead.volume is not None else None,
             "weight": float(lead.weight) if lead.weight is not None else None,
         },
-        "job": job.to_dict(),
+        "job": {
+            **job.to_dict(),
+            "pickup_state": pickup_state,
+            "pickup_zip_code": pickup_zip_code,
+            "delivery_state": delivery_state,
+            "delivery_zip_code": delivery_zip_code,
+        },
         "plans": [plan.summary_dict() for plan in plans],
+        "recommended_plan_id": recommended.id,
     }
 
 
