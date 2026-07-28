@@ -825,13 +825,20 @@ button:focus-visible {
   border: 1px solid #c9c7c5; border-radius: 4px; padding: 7px 9px; background: #fff; color: #181818; box-sizing: border-box;
 }
 .pricing-calc-fields input, .pricing-calc-fields select { height: 36px; }
-.pricing-quote { margin-top: 13px; background: #eef4ff; border: 1px solid #aacbff; border-radius: 6px; padding: 12px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-.pricing-quote > div { display: grid; gap: 2px; }
-.pricing-quote strong { color: #032d60; font-size: 17px; }
-.pricing-quote strong.discount { color: #ba0517; }
-.pricing-quote small { color: #706e6b; font-size: 10px; line-height: 1.35; white-space: normal; }
-.pricing-quote .total strong { color: #2e844a; }
-.pricing-quote p { grid-column: 1 / -1; margin: 0; color: #8e030f; font-size: 12px; }
+.pricing-quote { margin-top: 13px; background: #fff; border: 1px solid #aacbff; border-radius: 8px; overflow: hidden; }
+.pricing-quote-header { padding: 11px 13px; display: flex; align-items: center; justify-content: space-between; gap: 14px; background: #eef4ff; border-bottom: 1px solid #aacbff; }
+.pricing-quote-header h3 { margin: 2px 0 0; color: #032d60; font-size: 16px; }
+.pricing-quote-header > strong { color: #2e844a; font-size: 21px; }
+.pricing-quote-lines { padding: 3px 13px 8px; }
+.pricing-quote-line { min-height: 48px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; border-bottom: 1px solid #e5e5e5; }
+.pricing-quote-line > div { min-width: 0; }
+.pricing-quote-line strong { display: block; color: #181818; font-size: 13px; }
+.pricing-quote-line small { display: block; margin-top: 2px; color: #706e6b; font-size: 11px; line-height: 1.35; white-space: normal; }
+.pricing-quote-line > b { color: #032d60; font-size: 14px; text-align: right; }
+.pricing-quote-line > b.discount { color: #ba0517; }
+.pricing-quote-total { min-height: 45px; display: flex; align-items: center; justify-content: space-between; gap: 14px; color: #032d60; font-size: 16px; }
+.pricing-quote-total b { color: #2e844a; font-size: 18px; }
+.pricing-quote > p { margin: 0; padding: 9px 13px; border-top: 1px solid #fecaca; background: #fef2f2; color: #8e030f; font-size: 12px; }
 .pricing-charge-picker { margin-top: 12px; border: 1px solid #dddbda; border-radius: 6px; overflow: hidden; }
 .pricing-charge-heading { padding: 10px 12px; display: flex; justify-content: space-between; gap: 10px; background: #fafaf9; border-bottom: 1px solid #dddbda; }
 .pricing-charge-heading strong { color: #032d60; font-size: 13px; }
@@ -916,7 +923,8 @@ button:focus-visible {
   .pricing-kpis strong { font-size: 15px; }
   .pricing-calc-fields { grid-template-columns: 1fr 1fr; }
   .pricing-calc-fields button { grid-column: 1 / -1; }
-  .pricing-quote { grid-template-columns: 1fr 1fr; }
+  .pricing-quote-header > strong { font-size: 18px; }
+  .pricing-quote-lines { padding-left: 10px; padding-right: 10px; }
   .pricing-charge-heading { display: grid; }
   .pricing-charge-picker article { grid-template-columns: minmax(0, 1fr) 82px; }
   .pricing-charge-picker article > input { grid-column: 1 / 2; margin-left: 25px; width: calc(100% - 25px); }

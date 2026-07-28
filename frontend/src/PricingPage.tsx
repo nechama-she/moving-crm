@@ -361,19 +361,30 @@ export default function PricingPage() {
                 {quote ? (
                   <>
                     <div className="pricing-quote">
-                      <div>
-                        <span>{quote.match?.destination || "Transportation"}</span>
-                        <strong>{money(quote.base_price)}</strong>
-                        <small>{quote.match ? `${quote.match.band_label} · ${Number(cubicFeet || 0).toLocaleString()} cf · ${quote.match.rate == null ? quote.match.rate_text || "Manual rate" : `${money(quote.match.rate)} / cf`}${quote.minimum_applied ? " · minimum applied" : ""}` : "No transportation rate matched"}</small>
+                      <div className="pricing-quote-header">
+                        <div><span className="eyebrow">Price breakdown</span><h3>Detailed Price</h3></div>
+                        <strong>{money(quote.total)}</strong>
                       </div>
-                      {quote.charges.filter((charge) => charge.selected).map((charge) => (
-                        <div key={`summary-${charge.id}`}>
-                          <span>{charge.name}</span>
-                          <strong className={charge.amount < 0 ? "discount" : ""}>{money(charge.amount)}</strong>
-                          <small>{charge.description}</small>
+                      <div className="pricing-quote-lines">
+                        <div className="pricing-quote-line">
+                          <div>
+                            <strong>{quote.match?.destination || "Transportation"}</strong>
+                            <small>
+                              {quote.match
+                                ? `${Number(cubicFeet || 0).toLocaleString()} cf × ${quote.match.rate == null ? quote.match.rate_text || "manual rate" : `${money(quote.match.rate)} / cf`} · ${quote.match.band_label}${quote.minimum_applied ? ` · ${money(quote.minimum)} minimum applied` : ""}`
+                                : "No transportation rate matched"}
+                            </small>
+                          </div>
+                          <b>{money(quote.base_price)}</b>
                         </div>
-                      ))}
-                      <div className="total"><span>Calculated total</span><strong>{money(quote.total)}</strong></div>
+                        {quote.charges.filter((charge) => charge.selected).map((charge) => (
+                          <div className="pricing-quote-line" key={`summary-${charge.id}`}>
+                            <div><strong>{charge.name}</strong><small>{charge.description}</small></div>
+                            <b className={charge.amount < 0 ? "discount" : ""}>{money(charge.amount)}</b>
+                          </div>
+                        ))}
+                        <div className="pricing-quote-total"><strong>Total</strong><b>{money(quote.total)}</b></div>
+                      </div>
                       {quote.warning ? <p>{quote.warning}</p> : null}
                     </div>
                     <div className="pricing-charge-picker">
