@@ -265,6 +265,10 @@ input, select, textarea, button {
     width: calc(100% + 58px);
   }
 
+  .lead-profile-name + .lead-profile-selector {
+    margin-top: 8px;
+  }
+
   .lead-profile-selector > button {
     justify-content: space-between;
     min-height: 32px;
