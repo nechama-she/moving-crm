@@ -297,7 +297,13 @@ def get_job_pricing_context(
         coverage = f"{plan.pickup_regions} {plan.name}".upper()
         return re.search(rf"\b{re.escape(pickup_state)}\b", coverage) is not None
 
-    recommended = next((plan for plan in plans if plan_matches_pickup(plan)), plans[0])
+    recommended = next((plan for plan in plans if plan_matches_pickup(plan)), None)
+    if not pickup_state:
+        serviceability = "unknown_pickup"
+    elif recommended is None:
+        serviceability = "unsupported_pickup"
+    else:
+        serviceability = "supported"
     return {
         "lead": {
             "id": lead.id,
@@ -313,7 +319,8 @@ def get_job_pricing_context(
             "delivery_zip_code": delivery_zip_code,
         },
         "plans": [plan.summary_dict() for plan in plans],
-        "recommended_plan_id": recommended.id,
+        "recommended_plan_id": recommended.id if recommended else "",
+        "serviceability": serviceability,
     }
 
 

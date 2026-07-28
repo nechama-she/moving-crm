@@ -35,6 +35,7 @@ type JobContext = {
   job: { id: string; job_order: number; company_name: string; pickup_zip: string; delivery_zip: string; pickup_state: string; pickup_zip_code: string; delivery_state: string; delivery_zip_code: string; move_date: string; booked_move_date: string };
   plans: PlanSummary[];
   recommended_plan_id: string;
+  serviceability: "supported" | "unknown_pickup" | "unsupported_pickup";
 };
 
 const money = (value: number | null | undefined) =>
@@ -88,11 +89,13 @@ export default function PricingPage() {
       })
       .then((rows: PlanSummary[]) => {
         setPlans(rows);
-        setSelectedId((current) => current || rows[0]?.id || "");
+        if (!searchParams.get("lead_id") || !searchParams.get("job_id")) {
+          setSelectedId((current) => current || rows[0]?.id || "");
+        }
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load pricing"))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [searchParams, token]);
 
   useEffect(() => {
     const leadId = searchParams.get("lead_id");
@@ -106,7 +109,11 @@ export default function PricingPage() {
       .then((context: JobContext) => {
         setJobContext(context);
         setPlans(context.plans);
-        setSelectedId(context.recommended_plan_id || context.plans[0]?.id || "");
+        setSelectedId(context.recommended_plan_id || "");
+        if (!context.recommended_plan_id) {
+          setPlan(null);
+          setDraft(null);
+        }
         setCubicFeet(context.lead.volume == null ? "" : String(context.lead.volume));
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load job pricing"));
@@ -127,12 +134,13 @@ export default function PricingPage() {
         setPlan(row);
         setDraft(structuredClone(row));
         const options = Array.from(new Set(row.rates.map((rate) => rate.destination)));
-        setDestination(destinationFromAddress(
+        const inferredDestination = destinationFromAddress(
           jobContext?.job.delivery_zip || "",
           options,
           jobContext?.job.delivery_state || "",
           jobContext?.job.delivery_zip_code || "",
-        ) || options[0] || "");
+        );
+        setDestination(inferredDestination || (jobContext ? "" : options[0] || ""));
         setSelectedCharges({});
         setQuantities({});
         setManualAmounts({});
@@ -295,7 +303,21 @@ export default function PricingPage() {
         </aside>
 
         <main className="pricing-content">
-          {loading || !active ? <div className="pricing-card">Loading pricing…</div> : (
+          {jobContext && jobContext.serviceability !== "supported" ? (
+            <section className="pricing-card pricing-unavailable">
+              <div className="pricing-unavailable-icon" aria-hidden="true">⌖</div>
+              <div>
+                <span className="eyebrow">Service area check</span>
+                <h2>{jobContext.serviceability === "unsupported_pickup" ? "This pickup is outside our current service area" : "We couldn’t confirm the pickup service area"}</h2>
+                <p>
+                  {jobContext.serviceability === "unsupported_pickup"
+                    ? `We don’t currently have a pricing book for pickups in ${jobContext.job.pickup_state}. Please confirm availability with dispatch before quoting this move.`
+                    : "Add a valid pickup address or five-digit ZIP code to the job, then try Calculate Price again."}
+                </p>
+                <Link to={`/leads/${jobContext.lead.id}?job_id=${encodeURIComponent(jobContext.job.id)}`}>Return to the lead</Link>
+              </div>
+            </section>
+          ) : loading || !active ? <div className="pricing-card">Loading pricing…</div> : (
             <>
               {jobContext ? (
                 <section className="pricing-card pricing-job-context">
@@ -325,10 +347,16 @@ export default function PricingPage() {
 
               <section className="pricing-card pricing-calculator">
                 <div><span className="eyebrow">Job pricing</span><h2>Calculate price</h2></div>
+                {jobContext?.job.delivery_state && !destination ? (
+                  <div className="pricing-inline-unavailable">
+                    <strong>Delivery area not available</strong>
+                    <span>There is no destination rate for {jobContext.job.delivery_state} in this pricing book. Please confirm the route with dispatch.</span>
+                  </div>
+                ) : null}
                 <div className="pricing-calc-fields">
-                  <label>Destination<select value={destination} onChange={(e) => { setDestination(e.target.value); setQuote(null); }}>{destinations.map((name) => <option key={name}>{name}</option>)}</select></label>
+                  <label>Destination<select value={destination} onChange={(e) => { setDestination(e.target.value); setQuote(null); }}><option value="">Select a supported destination</option>{destinations.map((name) => <option key={name}>{name}</option>)}</select></label>
                   <label>Cubic feet<input type="number" min="0" value={cubicFeet} onChange={(e) => { setCubicFeet(e.target.value); setQuote(null); }} placeholder="e.g. 650" /></label>
-                  <button className="slds-button primary" onClick={() => void calculate()}>Calculate</button>
+                  <button className="slds-button primary" disabled={!destination} onClick={() => void calculate()}>Calculate</button>
                 </div>
                 {quote ? (
                   <>
