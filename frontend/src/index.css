@@ -25,6 +25,7 @@ html, body {
   color: var(--text);
   background: var(--page-bg);
   height: 100%;
+  min-width: 0;
 }
 
 #root {
@@ -46,6 +47,201 @@ button {
   font-family: inherit;
   cursor: pointer;
   font-size: 14px;
+}
+
+img, svg, video, canvas {
+  max-width: 100%;
+}
+
+input, select, textarea, button {
+  max-width: 100%;
+}
+
+.crm-main,
+.crm-main > * {
+  min-width: 0;
+}
+
+.mobile-calendar {
+  display: none;
+}
+
+.crm-mobile-menu-button,
+.crm-mobile-menu,
+.crm-mobile-menu-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .crm-nav {
+    height: auto !important;
+    min-height: 52px;
+    padding: 8px 12px !important;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+  }
+
+  .crm-brand {
+    margin-right: auto !important;
+  }
+
+  .crm-mobile-menu-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid rgba(255,255,255,.5);
+    border-radius: 4px;
+    padding: 6px 10px;
+    background: transparent;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .crm-mobile-menu-button > span {
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .crm-user-actions {
+    display: none !important;
+  }
+
+  .crm-nav-links {
+    display: none !important;
+  }
+
+  .crm-mobile-menu-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 199;
+    border: 0;
+    background: rgba(8, 7, 7, .48);
+  }
+
+  .crm-mobile-menu {
+    display: flex;
+    position: fixed;
+    z-index: 200;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(86vw, 360px);
+    flex-direction: column;
+    background: #fff;
+    box-shadow: -4px 0 16px rgba(0,0,0,.24);
+  }
+
+  .crm-mobile-menu-user {
+    display: grid;
+    gap: 2px;
+    padding: 18px 16px;
+    color: #fff;
+    background: #032d60;
+  }
+
+  .crm-mobile-menu-user strong {
+    font-size: 16px;
+  }
+
+  .crm-mobile-menu-user span {
+    color: #9dc9e8;
+    font-size: 12px;
+    text-transform: capitalize;
+  }
+
+  .crm-mobile-menu-links {
+    display: grid;
+    overflow-y: auto;
+  }
+
+  .crm-mobile-menu-links a {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    border-bottom: 1px solid #ecebea;
+    color: #181818;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .crm-mobile-menu-links a.active {
+    border-left: 4px solid #0176d3;
+    padding-left: 12px;
+    color: #014486;
+    background: #eef4ff;
+  }
+
+  .crm-mobile-signout {
+    margin: auto 16px 16px;
+    min-height: 42px;
+    border: 1px solid #c9c7c5;
+    border-radius: 4px;
+    background: #fff;
+    color: #ba0517;
+    font-weight: 700;
+  }
+}
+
+@media (max-width: 640px) {
+  html, body {
+    font-size: 13px;
+    overflow-x: hidden;
+  }
+
+  .crm-shell {
+    height: 100dvh !important;
+  }
+
+  .crm-main {
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+  }
+
+  /* Inline page layouts use CSS grids extensively. Collapse them safely on phones. */
+  .crm-main [style*="grid-template-columns"]:not(.calendar-week-grid) {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .crm-main .calendar-week-grid {
+    min-width: 700px;
+  }
+
+  .crm-main .calendar-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .desktop-calendar {
+    display: none !important;
+  }
+
+  .mobile-calendar {
+    display: block;
+  }
+
+  .crm-main [style*="justify-content: space-between"] {
+    flex-wrap: wrap;
+  }
+
+  .crm-main table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .crm-main pre {
+    max-width: calc(100vw - 32px);
+    overflow-x: auto;
+  }
+
+  .crm-main [style*="position: fixed"] {
+    max-width: calc(100vw - 16px) !important;
+    max-height: calc(100dvh - 16px) !important;
+  }
 }
 button:focus-visible {
   outline: 2px solid var(--brand);

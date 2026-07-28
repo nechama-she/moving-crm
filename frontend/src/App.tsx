@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation, NavLink } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./AuthContext";
 import LoginPage from "./LoginPage";
 import ChangePasswordPage from "./ChangePasswordPage";
@@ -32,6 +33,8 @@ const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties 
 function ProtectedRoutes() {
   const { token, loading, logout, user } = useAuth();
   const location = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  useEffect(() => setMobileMenuOpen(false), [location.pathname]);
   const isDispatchUser = user?.role === "dispatch";
   const isDispatchAllowedPath =
     location.pathname === "/dispatch" ||
@@ -47,8 +50,8 @@ function ProtectedRoutes() {
     return <Navigate to="/dispatch" replace />;
   }
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      <nav style={{
+    <div className="crm-shell" style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+      <nav className="crm-nav" style={{
         background: "#032d60",
         display: "flex",
         alignItems: "center",
@@ -57,10 +60,20 @@ function ProtectedRoutes() {
         flexShrink: 0,
         boxShadow: "0 2px 4px rgba(0,0,0,.25)",
       }}>
-        <span style={{ color: "#fff", fontWeight: 700, fontSize: 16, marginRight: 24, letterSpacing: "-0.2px", whiteSpace: "nowrap" }}>
+        <span className="crm-brand" style={{ color: "#fff", fontWeight: 700, fontSize: 16, marginRight: 24, letterSpacing: "-0.2px", whiteSpace: "nowrap" }}>
           Moving CRM
         </span>
-        <div style={{ display: "flex", flex: 1 }}>
+        <button
+          type="button"
+          className="crm-mobile-menu-button"
+          aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+          aria-expanded={mobileMenuOpen}
+          onClick={() => setMobileMenuOpen((open) => !open)}
+        >
+          <span aria-hidden="true">{mobileMenuOpen ? "×" : "☰"}</span>
+          Menu
+        </button>
+        <div className="crm-nav-links" style={{ display: "flex", flex: 1 }}>
           {isDispatchUser ? (
             <>
               <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
@@ -81,7 +94,7 @@ function ProtectedRoutes() {
             </>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div className="crm-user-actions" style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {user && <span style={{ color: "#9dc9e8", fontSize: 13 }}>{user.name}</span>}
           {!isDispatchUser ? (
             <NavLink to="/change-password" style={({ isActive }) => ({ ...navLinkStyle({ isActive }), padding: "0 8px", fontSize: 13 })}>
@@ -100,7 +113,46 @@ function ProtectedRoutes() {
           </button>
         </div>
       </nav>
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      {mobileMenuOpen ? (
+        <>
+          <button
+            type="button"
+            className="crm-mobile-menu-backdrop"
+            aria-label="Close navigation menu"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+          <aside className="crm-mobile-menu" aria-label="Main navigation">
+            <div className="crm-mobile-menu-user">
+              <strong>{user?.name || "User"}</strong>
+              <span>{user?.role || ""}</span>
+            </div>
+            <div className="crm-mobile-menu-links">
+              {isDispatchUser ? (
+                <>
+                  <NavLink to="/dispatch">Dispatch Calendar</NavLink>
+                  <NavLink to="/sales-calendar">Sales Calendar</NavLink>
+                </>
+              ) : (
+                <>
+                  <NavLink to="/">Leads</NavLink>
+                  <NavLink to="/sales-calendar">Sales Calendar</NavLink>
+                  <NavLink to="/outreach">Outreach</NavLink>
+                  <NavLink to="/settings">Settings</NavLink>
+                  {user?.role === "admin" ? (
+                    <>
+                      <NavLink to="/dispatch">Dispatch Calendar</NavLink>
+                      <NavLink to="/dispatch-users">Dispatcher Setup</NavLink>
+                    </>
+                  ) : null}
+                  <NavLink to="/change-password">Change Password</NavLink>
+                </>
+              )}
+            </div>
+            <button type="button" className="crm-mobile-signout" onClick={logout}>Sign Out</button>
+          </aside>
+        </>
+      ) : null}
+      <div className="crm-main" style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
         <Routes>
           <Route path="/" element={<LeadsList />} />
           <Route path="/outreach" element={<OutreachEventsPage />} />

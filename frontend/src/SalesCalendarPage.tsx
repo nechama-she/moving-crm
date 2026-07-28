@@ -311,6 +311,7 @@ export default function SalesCalendarPage() {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
+  const [mobileSelectedDay, setMobileSelectedDay] = useState(() => new Date().getDate());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<SalesCalendarJob[]>([]);
@@ -750,6 +751,12 @@ export default function SalesCalendarPage() {
   const firstWeekday = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthLabel = viewMonth.toLocaleString(undefined, { month: "long", year: "numeric" });
+  useEffect(() => {
+    const now = new Date();
+    setMobileSelectedDay(
+      now.getFullYear() === year && now.getMonth() === month ? now.getDate() : 1,
+    );
+  }, [year, month]);
 
   const jobsByDay = useMemo(() => {
     const map = new Map<number, SalesCalendarJob[]>();
@@ -1186,8 +1193,8 @@ export default function SalesCalendarPage() {
 
         {loading ? <p style={{ padding: 10, color: "#3e3e3c", fontSize: 13 }}>Loading calendar...</p> : null}
 
-        <div style={{ padding: 10 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
+        <div className="calendar-scroll desktop-calendar" style={{ padding: 10 }}>
+          <div className="calendar-week-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
             {weekdayLabels.map((label) => (
               <div key={label} style={{ fontSize: 11, color: "#64748b", fontWeight: 700, textTransform: "uppercase", textAlign: "center" }}>
                 {label}
@@ -1195,7 +1202,7 @@ export default function SalesCalendarPage() {
             ))}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
+          <div className="calendar-week-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
             {Array.from({ length: firstWeekday }).map((_, i) => (
               <div key={`blank-${i}`} style={calendarBlankCell} />
             ))}
@@ -1284,6 +1291,102 @@ export default function SalesCalendarPage() {
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        <div className="mobile-calendar" style={{ padding: 10 }}>
+          <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, scrollSnapType: "x proximity" }}>
+            {Array.from({ length: daysInMonth }).map((_, index) => {
+              const day = index + 1;
+              const date = new Date(year, month, day);
+              const selected = day === mobileSelectedDay;
+              const count = (jobsByDay.get(day) || []).length;
+              return (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => setMobileSelectedDay(day)}
+                  style={{
+                    flex: "0 0 54px",
+                    scrollSnapAlign: "start",
+                    border: `1px solid ${selected ? "#0176d3" : "#c9c7c5"}`,
+                    borderRadius: 4,
+                    padding: "6px 4px",
+                    background: selected ? "#0176d3" : "#fff",
+                    color: selected ? "#fff" : "#181818",
+                    textAlign: "center",
+                  }}
+                >
+                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>
+                    {date.toLocaleDateString(undefined, { weekday: "short" })}
+                  </div>
+                  <div style={{ fontSize: 17, fontWeight: 800 }}>{day}</div>
+                  <div style={{ fontSize: 9, minHeight: 14 }}>{count ? `${count} job${count === 1 ? "" : "s"}` : ""}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ borderTop: "1px solid #dddbda", paddingTop: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+              <strong style={{ color: "#032d60", fontSize: 14 }}>
+                {new Date(year, month, mobileSelectedDay).toLocaleDateString(undefined, {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
+                })}
+              </strong>
+              <span style={{ color: "#706e6b", fontSize: 12 }}>
+                {(jobsByDay.get(mobileSelectedDay) || []).length} jobs
+              </span>
+            </div>
+            {(jobsByDay.get(mobileSelectedDay) || []).length === 0 ? (
+              <div style={{ border: "1px dashed #c9c7c5", borderRadius: 4, padding: 18, textAlign: "center", color: "#706e6b" }}>
+                No jobs scheduled
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {(jobsByDay.get(mobileSelectedDay) || []).map((job) => {
+                  const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
+                  const commissionStatus = leadRepCommissionStatus(job);
+                  return (
+                    <Link
+                      key={job.id}
+                      to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+                      state={backState}
+                      style={{
+                        display: "grid",
+                        gap: 5,
+                        padding: 12,
+                        border: `1px solid ${repTone.border}`,
+                        borderLeft: `4px solid ${repTone.border}`,
+                        borderRadius: 4,
+                        background: repTone.tint,
+                        color: "#181818",
+                        textDecoration: "none",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <strong style={{ fontSize: 14 }}>{job.full_name || "Unnamed"}</strong>
+                        <span style={{ color: repTone.text, fontSize: 11, fontWeight: 700 }}>{job.assigned_to_name || "Unassigned"}</span>
+                      </div>
+                      <div style={{ color: repTone.text, fontSize: 12, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
+                      <div style={{ color: "#3e3e3c", fontSize: 12 }}>{job.pickup_zip || "?"} → {job.delivery_zip || "?"}</div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <span style={{ color: "#0f766e", fontSize: 12, fontWeight: 800 }}>
+                          {leadDisplayAmount(job) == null ? "" : formatMoney(leadDisplayAmount(job) || 0)}
+                        </span>
+                        {commissionStatus ? (
+                          <span style={{ fontSize: 10, fontWeight: 700, color: commissionStatus.text, background: commissionStatus.background, border: `1px solid ${commissionStatus.border}`, borderRadius: 999, padding: "2px 7px" }}>
+                            {commissionStatus.label}
+                          </span>
+                        ) : null}
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </section>

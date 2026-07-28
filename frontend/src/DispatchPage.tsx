@@ -1629,8 +1629,8 @@ function CompanyCalendar({
         </div>
       </div>
 
-      <div style={{ padding: 10 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
+      <div className="calendar-scroll" style={{ padding: 10 }}>
+        <div className="calendar-week-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
           {weekdayLabels.map((label) => (
             <div key={label} style={{ fontSize: 11, color: "#64748b", fontWeight: 700, textTransform: "uppercase", textAlign: "center" }}>
               {label}
@@ -1638,7 +1638,7 @@ function CompanyCalendar({
           ))}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
+        <div className="calendar-week-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
           {Array.from({ length: firstWeekday }).map((_, i) => (
             <div key={`blank-${i}`} style={calendarBlankCell} />
           ))}
