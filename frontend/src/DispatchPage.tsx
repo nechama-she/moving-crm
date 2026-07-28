@@ -1009,8 +1009,9 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                   : ""}
               </div>
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <div className="mobile-filter-rail" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               <button
+                className="mobile-filter-pill"
                 type="button"
                 onClick={() => {
                   const allIds = dispatchCompanies.map((c) => c.id);
@@ -1040,7 +1041,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 <span style={{ width: 8, height: 8, borderRadius: 999, background: "#0f766e", display: "inline-block" }} />
                 <span style={{ display: "grid", lineHeight: 1.15, textAlign: "left" }}>
                   <span>All ({calendarJobs.length})</span>
-                  <span style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimatedAll)}</span>
+                  <span className="mobile-filter-secondary" style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimatedAll)}</span>
                 </span>
               </button>
               {dispatchCompanies.map((company) => {
@@ -1050,6 +1051,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 const tone = toneForCompanyColor(company.color, company.name);
                 return (
                   <button
+                    className="mobile-filter-pill"
                     type="button"
                     key={company.id}
                     onClick={() => {
@@ -1076,7 +1078,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                     <span style={{ width: 8, height: 8, borderRadius: 999, background: tone.border, display: "inline-block" }} />
                     <span style={{ display: "grid", lineHeight: 1.15, textAlign: "left" }}>
                       <span>{company.name} ({monthlyCount})</span>
-                      <span style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimated)}</span>
+                      <span className="mobile-filter-secondary" style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimated)}</span>
                     </span>
                   </button>
                 );
@@ -1092,7 +1094,10 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
               aria-expanded={mobileSummaryExpanded}
               onClick={() => setMobileSummaryExpanded((expanded) => !expanded)}
             >
-              <span>Totals</span>
+              <span className="mobile-totals-summary">
+                <strong>Totals</strong>
+                <span>{calendarMoneySummary.leadCount} leads · {formatMoney(calendarMoneySummary.estimatedTotal)}</span>
+              </span>
               <span>{mobileSummaryExpanded ? "Hide ▴" : "Show ▾"}</span>
             </button>
             <div className={`calendar-summary-totals${mobileSummaryExpanded ? " mobile-summary-visible" : ""}`} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginTop: 4 }}>

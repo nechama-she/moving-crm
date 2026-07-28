@@ -193,6 +193,35 @@ input, select, textarea, button {
     color: #ba0517;
     font-weight: 700;
   }
+
+  .mobile-filter-rail {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 6px !important;
+    padding: 2px 1px 6px;
+    scrollbar-width: thin;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mobile-filter-pill {
+    flex: 0 0 auto;
+    min-height: 34px;
+    padding: 5px 9px !important;
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
+
+  .mobile-filter-pill > span:nth-child(2) {
+    display: flex !important;
+    align-items: center;
+    line-height: 1 !important;
+  }
+
+  .mobile-filter-secondary {
+    display: none !important;
+  }
 }
 
 @media (max-width: 640px) {
@@ -269,6 +298,23 @@ input, select, textarea, button {
     color: #032d60;
     font-size: 12px;
     font-weight: 700;
+  }
+
+  .mobile-totals-summary {
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    text-align: left;
+  }
+
+  .mobile-totals-summary > span {
+    overflow: hidden;
+    color: #706e6b;
+    font-size: 11px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .calendar-summary-totals:not(.mobile-summary-visible) {

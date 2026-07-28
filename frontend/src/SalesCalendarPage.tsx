@@ -921,8 +921,9 @@ export default function SalesCalendarPage() {
             </div>
           </div>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <div className="mobile-filter-rail" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             <button
+              className="mobile-filter-pill"
               type="button"
               onClick={() => {
                 const allKeys = assigneeOptions.map((a) => a.key);
@@ -952,7 +953,7 @@ export default function SalesCalendarPage() {
               <span style={{ width: 8, height: 8, borderRadius: 999, background: "#0f766e", display: "inline-block" }} />
               <span style={{ display: "grid", lineHeight: 1.15, textAlign: "left" }}>
                 <span>All ({totalLeadCount})</span>
-                <span style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimatedAllAssignees)}</span>
+                <span className="mobile-filter-secondary" style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimatedAllAssignees)}</span>
               </span>
             </button>
 
@@ -964,6 +965,7 @@ export default function SalesCalendarPage() {
               const repTone = toneForRepName(assignee.name);
               return (
                 <button
+                  className="mobile-filter-pill"
                   key={assignee.key}
                   type="button"
                   onClick={() => {
@@ -986,7 +988,7 @@ export default function SalesCalendarPage() {
                   <span style={{ width: 8, height: 8, borderRadius: 999, background: checked ? repTone.border : "#94a3b8", display: "inline-block" }} />
                   <span style={{ display: "grid", lineHeight: 1.15, textAlign: "left" }}>
                     <span style={{ color: repTone.text, fontWeight: 700 }}>{assignee.name}</span>{role ? ` (${role})` : ""} ({count})
-                    <span style={{ fontSize: 11, fontWeight: 700, color: repTone.text }}>{formatMoney(estimatedTotal)}</span>
+                    <span className="mobile-filter-secondary" style={{ fontSize: 11, fontWeight: 700, color: repTone.text }}>{formatMoney(estimatedTotal)}</span>
                   </span>
                 </button>
               );
@@ -1067,7 +1069,10 @@ export default function SalesCalendarPage() {
             aria-expanded={mobileSummaryExpanded}
             onClick={() => setMobileSummaryExpanded((expanded) => !expanded)}
           >
-            <span>Totals</span>
+            <span className="mobile-totals-summary">
+              <strong>Totals</strong>
+              <span>{salesMoneySummary.leadCount} leads · {formatMoney(salesMoneySummary.estimatedTotal)}</span>
+            </span>
             <span>{mobileSummaryExpanded ? "Hide ▴" : "Show ▾"}</span>
           </button>
           <div className={`calendar-summary-totals${mobileSummaryExpanded ? " mobile-summary-visible" : ""}`} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginTop: 4 }}>
