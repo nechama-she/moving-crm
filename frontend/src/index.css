@@ -222,6 +222,52 @@ input, select, textarea, button {
     display: block;
   }
 
+  .lead-detail-page {
+    height: auto !important;
+    min-height: 100%;
+    padding: 16px 12px 28px !important;
+  }
+
+  .lead-profile-header {
+    display: grid !important;
+    grid-template-columns: 48px minmax(0, 1fr) !important;
+    align-items: start !important;
+    gap: 12px !important;
+  }
+
+  .lead-profile-meta {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .lead-profile-name,
+  .lead-profile-assignee {
+    grid-column: 1 / -1;
+  }
+
+  .lead-profile-selector,
+  .lead-profile-selector > button {
+    width: 100%;
+    max-width: none !important;
+  }
+
+  .lead-profile-selector > button {
+    justify-content: space-between;
+    min-height: 34px;
+  }
+
+  .lead-profile-actions {
+    grid-column: 1 / -1;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    gap: 8px !important;
+  }
+
+  .lead-profile-actions > button {
+    min-height: 38px;
+  }
+
   .crm-main [style*="justify-content: space-between"] {
     flex-wrap: wrap;
   }

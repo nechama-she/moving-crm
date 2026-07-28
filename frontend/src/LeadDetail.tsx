@@ -1069,7 +1069,7 @@ export default function LeadDetail() {
   }
 
   return (
-    <div style={{ width: "100%", height: "calc(100vh - 52px)", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "24px clamp(16px, 3vw, 28px) 40px", background: "#f6f8fb", fontFamily: "inherit" }}>
+    <div className="lead-detail-page" style={{ width: "100%", height: "calc(100vh - 52px)", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "24px clamp(16px, 3vw, 28px) 40px", background: "#f6f8fb", fontFamily: "inherit" }}>
       <div style={{ width: "100%", maxWidth: 1120, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 14 }}>
         <button
@@ -1456,7 +1456,7 @@ export default function LeadDetail() {
 
         return (
           <div style={{ ...sectionStyle, padding: 18, overflow: "visible", position: "relative" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+            <div className="lead-profile-header" style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
               <div
                 style={{
                   width: 48,
@@ -1492,11 +1492,11 @@ export default function LeadDetail() {
                   />
                 ) : (
                   <div style={{ display: "grid", gap: 4 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <div style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
+                    <div className="lead-profile-meta" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <div className="lead-profile-name" style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
                         {name || "—"}
                       </div>
-                      <div ref={statusMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <div className="lead-profile-selector" ref={statusMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
                         <button
                           ref={statusButtonRef}
                           type="button"
@@ -1585,7 +1585,7 @@ export default function LeadDetail() {
                         </div>,
                         document.body
                       ) : null}
-                      <div ref={companyMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <div className="lead-profile-selector" ref={companyMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
                       <button
                         type="button"
                         onClick={() => canEditCompany && setCompanyMenuOpen((v) => !v)}
@@ -1665,7 +1665,7 @@ export default function LeadDetail() {
                         </div>
                       ) : null}
                       </div>
-                      <div ref={assignMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <div className="lead-profile-selector lead-profile-assignee" ref={assignMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
                         <button
                           type="button"
                           onClick={() => user?.role === "admin" && setAssignMenuOpen((v) => !v)}
@@ -1765,7 +1765,7 @@ export default function LeadDetail() {
                 )}
               </div>
               {editingUser ? (
-                <div style={{ display: "flex", gap: 6 }}>
+                <div className="lead-profile-actions" style={{ display: "flex", gap: 6 }}>
                   <button
                     type="button"
                     onClick={() => setEditingUser(false)}
@@ -1784,7 +1784,7 @@ export default function LeadDetail() {
                   </button>
                 </div>
               ) : (
-                <div style={{ display: "flex", gap: 6 }}>
+                <div className="lead-profile-actions" style={{ display: "flex", gap: 6 }}>
                   <button
                     type="button"
                     onClick={() => void refreshFromSmartmoving()}
