@@ -32,6 +32,7 @@ type CommissionSettingsResponse = {
 
 type LeadAttachment = {
   id: string;
+  job_id: string;
   file_name: string;
   content_type: string;
   file_size: number;
@@ -222,6 +223,8 @@ export default function LeadDetail() {
   const [attachmentsSort, setAttachmentsSort] = useState<"newest" | "name" | "size">("newest");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [filesModalOpen, setFilesModalOpen] = useState(false);
+  const [groupedAttachments, setGroupedAttachments] = useState<Record<string, LeadAttachment[]>>({});
+  const [groupedAttachmentsLoading, setGroupedAttachmentsLoading] = useState(false);
   const [previewTitle, setPreviewTitle] = useState("");
   const [previewType, setPreviewType] = useState<"image" | "pdf" | "text" | "none">("none");
   const [previewText, setPreviewText] = useState("");
@@ -374,6 +377,7 @@ export default function LeadDetail() {
       const rows = Array.isArray(data.items) ? data.items : [];
       setAttachments(rows.map((row) => ({
         id: String(row.id || ""),
+        job_id: String(row.job_id || targetJobId),
         file_name: String(row.file_name || ""),
         content_type: String(row.content_type || "application/octet-stream"),
         file_size: Number(row.file_size || 0),
@@ -593,14 +597,14 @@ export default function LeadDetail() {
     }
   }
 
-  async function uploadAttachments(files: File[]) {
+  async function uploadAttachments(files: File[], jobId = activeJobTabId) {
     if (user?.role === "dispatch") {
       setAttachmentsError("Dispatch users are read-only");
       return;
     }
     if (files.length === 0) return;
-    if (!activeJobTabId || activeJobTabId === "__new__") {
-      setAttachmentsError("Please select a job tab before uploading files.");
+    if (!jobId || jobId === "__new__") {
+      setAttachmentsError("Please select a job before uploading files.");
       return;
     }
     setUploadingCount(files.length);
@@ -609,7 +613,7 @@ export default function LeadDetail() {
       for (const file of files) {
         const form = new FormData();
         form.append("file", file);
-        const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${activeJobTabId}/attachments`, {
+        const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments`, {
           method: "POST",
           headers: authHeaders(token),
           body: form,
@@ -620,7 +624,8 @@ export default function LeadDetail() {
         }
         setUploadingCount((v) => Math.max(0, v - 1));
       }
-      await loadAttachments();
+      await loadAttachments(jobId);
+      if (filesModalOpen) await loadAllJobAttachments();
     } catch (err: unknown) {
       setAttachmentsError(err instanceof Error ? err.message : "Failed to upload attachment");
     } finally {
@@ -628,10 +633,10 @@ export default function LeadDetail() {
     }
   }
 
-  async function downloadAttachment(attachmentId: string, fileName: string) {
+  async function downloadAttachment(attachmentId: string, fileName: string, jobId = activeJobTabId) {
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${activeJobTabId}/attachments/${attachmentId}/download`, {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments/${attachmentId}/download`, {
         headers: authHeaders(token),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -649,25 +654,26 @@ export default function LeadDetail() {
     }
   }
 
-  async function deleteAttachment(attachmentId: string) {
+  async function deleteAttachment(attachmentId: string, jobId = activeJobTabId) {
     if (user?.role === "dispatch") {
       setAttachmentsError("Dispatch users are read-only");
       return;
     }
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${activeJobTabId}/attachments/${attachmentId}`, {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments/${attachmentId}`, {
         method: "DELETE",
         headers: authHeaders(token),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      await loadAttachments();
+      await loadAttachments(jobId);
+      if (filesModalOpen) await loadAllJobAttachments();
     } catch (err: unknown) {
       setAttachmentsError(err instanceof Error ? err.message : "Failed to delete attachment");
     }
   }
 
-  async function renameAttachment(attachmentId: string, fileName: string) {
+  async function renameAttachment(attachmentId: string, fileName: string, jobId = activeJobTabId) {
     if (user?.role === "dispatch") {
       setAttachmentsError("Dispatch users are read-only");
       return;
@@ -676,13 +682,14 @@ export default function LeadDetail() {
     if (!nextName) return;
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${activeJobTabId}/attachments/${attachmentId}`, {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments/${attachmentId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
         body: JSON.stringify({ file_name: nextName }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      await loadAttachments();
+      await loadAttachments(jobId);
+      if (filesModalOpen) await loadAllJobAttachments();
       setRenamingId("");
       setRenameValue("");
     } catch (err: unknown) {
@@ -690,10 +697,10 @@ export default function LeadDetail() {
     }
   }
 
-  async function openPreview(attachmentId: string, fileName: string, contentType: string) {
+  async function openPreview(attachmentId: string, fileName: string, contentType: string, jobId = activeJobTabId) {
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${activeJobTabId}/attachments/${attachmentId}/download`, {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments/${attachmentId}/download`, {
         headers: authHeaders(token),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -772,6 +779,21 @@ export default function LeadDetail() {
       .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
       .slice(0, 6);
   }, [attachments]);
+
+  const groupedFilesForDisplay = useMemo(() => {
+    const q = attachmentsQuery.trim().toLowerCase();
+    return leadJobs.map((job) => {
+      let rows = [...(groupedAttachments[job.id] || [])].filter((attachment) => {
+        if (!q) return true;
+        return attachment.file_name.toLowerCase().includes(q)
+          || (attachment.uploaded_by_name || "").toLowerCase().includes(q);
+      });
+      if (attachmentsSort === "name") rows.sort((a, b) => a.file_name.localeCompare(b.file_name));
+      if (attachmentsSort === "size") rows.sort((a, b) => (b.file_size || 0) - (a.file_size || 0));
+      if (attachmentsSort === "newest") rows.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+      return { job, attachments: rows };
+    });
+  }, [attachmentsQuery, attachmentsSort, groupedAttachments, leadJobs]);
 
   useEffect(() => {
     function onDocMouseDown(event: MouseEvent) {
@@ -1038,6 +1060,36 @@ export default function LeadDetail() {
     }
   }
 
+  async function loadAllJobAttachments() {
+    setGroupedAttachmentsLoading(true);
+    setAttachmentsError("");
+    try {
+      const entries = await Promise.all(leadJobs.map(async (job) => {
+        const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${job.id}/attachments`, { headers: authHeaders(token) });
+        if (!res.ok) throw new Error(`Could not load files for Job ${job.job_order}`);
+        const data = (await res.json()) as { items?: Array<Record<string, unknown>> };
+        const rows = Array.isArray(data.items) ? data.items : [];
+        return [job.id, rows.map((row) => ({
+          id: String(row.id || ""),
+          job_id: job.id,
+          file_name: String(row.file_name || ""),
+          content_type: String(row.content_type || "application/octet-stream"),
+          file_size: Number(row.file_size || 0),
+          created_at: String(row.created_at || ""),
+          external_url: String(row.external_url || ""),
+          is_external_link: Boolean(row.is_external_link),
+          external_source: String(row.external_source || ""),
+          uploaded_by_name: String(row.uploaded_by_name || ""),
+        }))] as const;
+      }));
+      setGroupedAttachments(Object.fromEntries(entries));
+    } catch (err: unknown) {
+      setAttachmentsError(err instanceof Error ? err.message : "Failed to load files");
+    } finally {
+      setGroupedAttachmentsLoading(false);
+    }
+  }
+
   async function updateThirdPartyPayout(
     paymentIndex: number,
     changes: Partial<{
@@ -1110,11 +1162,13 @@ export default function LeadDetail() {
 
       {previewOpen ? (
         <div
+          className="lead-files-backdrop"
           role="presentation"
           onClick={closePreview}
           style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.55)", zIndex: 95, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
         >
           <div
+            className="lead-files-drawer"
             role="dialog"
             aria-modal="true"
             onClick={(e) => e.stopPropagation()}
@@ -1159,7 +1213,10 @@ export default function LeadDetail() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
-              <strong style={{ fontSize: 13, color: "#0f172a" }}>All Files</strong>
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <span aria-hidden="true" style={{ width: 30, height: 30, borderRadius: 6, display: "grid", placeItems: "center", background: "#0176d3", color: "#fff" }}>📎</span>
+                <div><strong style={{ display: "block", fontSize: 14, color: "#032d60" }}>Files</strong><small style={{ color: "#706e6b", fontSize: 11 }}>Grouped by job</small></div>
+              </div>
               <button type="button" onClick={() => setFilesModalOpen(false)} style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}>Close</button>
             </div>
             <div style={{ padding: 12, overflowY: "auto", flex: 1 }}>
@@ -1181,9 +1238,64 @@ export default function LeadDetail() {
                 </select>
               </div>
 
-              {attachmentsLoading ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>Loading files...</p> : null}
-              {!attachmentsLoading && filteredAttachments.length === 0 ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>No files found.</p> : null}
-              {!attachmentsLoading && filteredAttachments.length > 0 ? (
+              {attachmentsError ? <p style={{ margin: "0 0 10px", fontSize: 12, color: "#ba0517" }}>{attachmentsError}</p> : null}
+              {groupedAttachmentsLoading ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>Loading files...</p> : null}
+              {!groupedAttachmentsLoading ? (
+                <div className="lead-files-groups">
+                  {groupedFilesForDisplay.map(({ job, attachments: jobAttachments }) => (
+                    <section key={job.id} className="lead-files-job-group">
+                      <header>
+                        <div>
+                          <span className="lead-files-job-icon" aria-hidden="true">📁</span>
+                          <div><strong>Job {job.job_order}</strong><small>{job.company_name} · {jobAttachments.length} file{jobAttachments.length === 1 ? "" : "s"}</small></div>
+                        </div>
+                        {canEditJobs ? (
+                          <label className="lead-files-upload">
+                            <input type="file" multiple disabled={uploadingCount > 0} onChange={(event) => {
+                              const files = Array.from(event.target.files || []);
+                              event.target.value = "";
+                              void uploadAttachments(files, job.id);
+                            }} />
+                            {uploadingCount > 0 ? "Uploading…" : "Upload files"}
+                          </label>
+                        ) : null}
+                      </header>
+                      {jobAttachments.length === 0 ? <div className="lead-files-empty">No files attached to this job.</div> : (
+                        <div className="lead-files-list">
+                          {jobAttachments.map((attachment) => (
+                            <article key={attachment.id}>
+                              <span className="lead-file-type">{fileIcon(attachment.file_name)}</span>
+                              <div className="lead-file-info">
+                                {renamingId === attachment.id ? (
+                                  <div className="lead-file-rename">
+                                    <input value={renameValue} onChange={(event) => setRenameValue(event.target.value)} />
+                                    <button type="button" onClick={() => void renameAttachment(attachment.id, renameValue, job.id)}>Save</button>
+                                    <button type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }}>Cancel</button>
+                                  </div>
+                                ) : <strong title={attachment.file_name}>{attachment.file_name}</strong>}
+                                <small>{Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB{attachment.created_at ? ` · ${new Date(attachment.created_at).toLocaleString()}` : ""}{attachment.uploaded_by_name ? ` · ${attachment.uploaded_by_name}` : ""}</small>
+                              </div>
+                              <div className="lead-file-actions">
+                                <button type="button" onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type, job.id)}>{attachment.is_external_link ? "Open" : "Preview"}</button>
+                                <button type="button" onClick={() => void downloadAttachment(attachment.id, attachment.file_name, job.id)}>{attachment.is_external_link ? "Open link" : "Download"}</button>
+                                {canEditJobs ? (
+                                  <>
+                                    <button type="button" onClick={() => { setRenamingId(attachment.id); setRenameValue(attachment.file_name); }}>Rename</button>
+                                    <button type="button" className="danger" onClick={() => { if (window.confirm("Delete this file?")) void deleteAttachment(attachment.id, job.id); }}>Delete</button>
+                                  </>
+                                ) : null}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  ))}
+                </div>
+              ) : null}
+              {false && attachmentsLoading ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>Loading files...</p> : null}
+              {false && !attachmentsLoading && filteredAttachments.length === 0 ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>No files found.</p> : null}
+              {false && !attachmentsLoading && filteredAttachments.length > 0 ? (
                 <div style={{ display: "grid", gap: 8 }}>
                   {filteredAttachments.map((attachment) => (
                     <div key={attachment.id} style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", background: "#fff", flexWrap: "wrap" }}>
@@ -1787,6 +1899,20 @@ export default function LeadDetail() {
                 <div className="lead-profile-actions lead-profile-view-actions" style={{ display: "flex", gap: 6 }}>
                   <button
                     type="button"
+                    className="lead-profile-action-button lead-profile-files-button"
+                    onClick={() => {
+                      setFilesModalOpen(true);
+                      void loadAllJobAttachments();
+                    }}
+                    title="Files"
+                    aria-label="Files grouped by job"
+                    style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: "pointer" }}
+                  >
+                    <span aria-hidden="true">📎</span>
+                    <span className="lead-profile-action-label"> Files</span>
+                  </button>
+                  <button
+                    type="button"
                     className="lead-profile-action-button lead-profile-refresh-button"
                     onClick={() => void refreshFromSmartmoving()}
                     disabled={refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
@@ -2234,7 +2360,7 @@ export default function LeadDetail() {
                       </div>
                     ) : null}
 
-                    <div style={{ marginTop: 12, border: "1px solid #d8dde6", borderRadius: 8, background: "#f8fafc" }}>
+                    <div className="lead-job-files-legacy" style={{ marginTop: 12, border: "1px solid #d8dde6", borderRadius: 8, background: "#f8fafc" }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px", borderBottom: "1px solid #e2e8f0" }}>
                         <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                           <span style={{ fontSize: 14 }}>📎</span>

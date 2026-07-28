@@ -549,10 +549,29 @@ input, select, textarea, button {
     font-size: 0 !important;
   }
 
+  .lead-profile-files-button > span:first-child {
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .lead-profile-files-button .lead-profile-action-label {
+    display: none;
+  }
+
   .lead-profile-refresh-button::before,
   .lead-profile-edit-button::before {
     font-size: 19px;
     line-height: 1;
+  }
+
+  .lead-files-list article {
+    grid-template-columns: 34px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .lead-file-actions {
+    grid-column: 2;
+    justify-content: flex-start;
   }
 
   .lead-profile-refresh-button::before {
@@ -925,3 +944,28 @@ button:focus-visible {
   .pricing-rate-table-wrap { max-height: 70vh; }
   .pricing-services article { grid-template-columns: minmax(0, 1fr) auto; padding: 9px 2px; }
 }
+.lead-job-files-legacy { display: none !important; }
+.lead-profile-files-button { display: inline-flex; align-items: center; gap: 4px; }
+.lead-files-backdrop { background: rgb(8 21 38 / 42%); }
+.lead-files-groups { display: grid; gap: 14px; }
+.lead-files-job-group { border: 1px solid #dddbda; border-radius: 8px; background: #fff; overflow: hidden; box-shadow: 0 1px 2px rgb(0 0 0 / 6%); }
+.lead-files-job-group > header { min-height: 48px; padding: 9px 11px; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #f3f3f3; border-bottom: 1px solid #dddbda; }
+.lead-files-job-group > header > div { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.lead-files-job-group header strong { display: block; color: #032d60; font-size: 13px; }
+.lead-files-job-group header small { display: block; margin-top: 1px; color: #706e6b; font-size: 10px; }
+.lead-files-job-icon { width: 30px; height: 30px; border-radius: 6px; display: grid; place-items: center; background: #d8edff; font-size: 15px; }
+.lead-files-upload { border: 1px solid #0176d3; border-radius: 4px; background: #fff; color: #0176d3; padding: 5px 9px; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.lead-files-upload input { display: none; }
+.lead-files-empty { padding: 14px; color: #706e6b; font-size: 12px; text-align: center; }
+.lead-files-list { display: grid; }
+.lead-files-list article { min-width: 0; padding: 10px 11px; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 10px; border-bottom: 1px solid #e5e5e5; }
+.lead-files-list article:last-child { border-bottom: 0; }
+.lead-file-type { width: 38px; height: 28px; border-radius: 5px; display: grid; place-items: center; background: #eef4ff; color: #032d60; font-size: 9px; font-weight: 800; }
+.lead-file-info { min-width: 0; }
+.lead-file-info > strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #181818; font-size: 12px; }
+.lead-file-info > small { display: block; margin-top: 2px; color: #706e6b; font-size: 10px; white-space: normal; }
+.lead-file-actions { display: flex; align-items: center; justify-content: flex-end; gap: 5px; flex-wrap: wrap; }
+.lead-file-actions button, .lead-file-rename button { border: 1px solid #c9c7c5; border-radius: 4px; padding: 4px 7px; background: #fff; color: #0176d3; font-size: 10px; font-weight: 700; }
+.lead-file-actions button.danger { color: #ba0517; }
+.lead-file-rename { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.lead-file-rename input { min-width: 0; width: 180px; border: 1px solid #c9c7c5; border-radius: 4px; padding: 5px 7px; }
