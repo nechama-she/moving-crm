@@ -2089,6 +2089,15 @@ export default function LeadDetail() {
                         >
                           📅
                         </button>
+                        {user?.role !== "dispatch" ? (
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/pricing?lead_id=${encodeURIComponent(leadId || "")}&job_id=${encodeURIComponent(job.id)}`)}
+                            style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "3px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                          >
+                            Calculate Price
+                          </button>
+                        ) : null}
                         {primary ? <span style={{ fontSize: 11, color: "#1d4ed8", fontWeight: 700 }}>Primary</span> : null}
                       </div>
                     </div>

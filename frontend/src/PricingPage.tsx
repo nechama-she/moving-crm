@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
@@ -19,12 +20,36 @@ type Plan = PlanSummary & {
   active: boolean; source_file: string; source_sheet: string;
   rules: Rule[]; rates: Rate[]; services: Service[];
 };
+type CalculatedCharge = {
+  id: string; name: string; description: string; calculation_type: string;
+  rate: number; default_selected: boolean; automatic: boolean; applies: boolean;
+  quantity_label: string; selected: boolean; amount: number;
+};
+type Calculation = {
+  match: Rate | null; transport: number | null; minimum: number | null;
+  minimum_applied: boolean; base_price: number | null; charges: CalculatedCharge[];
+  total: number; warning: string;
+};
+type JobContext = {
+  lead: { id: string; full_name: string; volume: number | null; weight: number | null };
+  job: { id: string; job_order: number; company_name: string; pickup_zip: string; delivery_zip: string; move_date: string; booked_move_date: string };
+  plans: PlanSummary[];
+};
 
 const money = (value: number | null | undefined) =>
   value == null ? "—" : value.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
+function destinationFromAddress(address: string, options: string[]): string {
+  const state = address.toUpperCase().match(/(?:,\s*|\b)([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?|\b)/)?.[1];
+  if (!state) return "";
+  return options.find((option) => option.toUpperCase() === state)
+    || options.find((option) => option.toUpperCase().startsWith(`${state} `))
+    || "";
+}
+
 export default function PricingPage() {
   const { token, user } = useAuth();
+  const [searchParams] = useSearchParams();
   const [plans, setPlans] = useState<PlanSummary[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -37,7 +62,11 @@ export default function PricingPage() {
   const [search, setSearch] = useState("");
   const [destination, setDestination] = useState("");
   const [cubicFeet, setCubicFeet] = useState("");
-  const [quote, setQuote] = useState<Record<string, unknown> | null>(null);
+  const [quote, setQuote] = useState<Calculation | null>(null);
+  const [jobContext, setJobContext] = useState<JobContext | null>(null);
+  const [selectedCharges, setSelectedCharges] = useState<Record<string, boolean>>({});
+  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [manualAmounts, setManualAmounts] = useState<Record<string, number>>({});
   const [openSections, setOpenSections] = useState({ rules: true, rates: true, services: true });
 
   useEffect(() => {
@@ -55,6 +84,24 @@ export default function PricingPage() {
   }, [token]);
 
   useEffect(() => {
+    const leadId = searchParams.get("lead_id");
+    const jobId = searchParams.get("job_id");
+    if (!leadId || !jobId) return;
+    void fetch(`${API_BASE}/api/pricing/context?lead_id=${encodeURIComponent(leadId)}&job_id=${encodeURIComponent(jobId)}`, { headers: authHeaders(token) })
+      .then(async (response) => {
+        if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Failed to load job pricing");
+        return response.json();
+      })
+      .then((context: JobContext) => {
+        setJobContext(context);
+        setPlans(context.plans);
+        setSelectedId(context.plans[0]?.id || "");
+        setCubicFeet(context.lead.volume == null ? "" : String(context.lead.volume));
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load job pricing"));
+  }, [searchParams, token]);
+
+  useEffect(() => {
     if (!selectedId) return;
     setLoading(true);
     setError("");
@@ -68,7 +115,11 @@ export default function PricingPage() {
       .then((row: Plan) => {
         setPlan(row);
         setDraft(structuredClone(row));
-        setDestination(row.rates[0]?.destination || "");
+        const options = Array.from(new Set(row.rates.map((rate) => rate.destination)));
+        setDestination(destinationFromAddress(jobContext?.job.delivery_zip || "", options) || options[0] || "");
+        setSelectedCharges({});
+        setQuantities({});
+        setManualAmounts({});
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load pricing plan"))
       .finally(() => setLoading(false));
@@ -83,6 +134,12 @@ export default function PricingPage() {
     () => Array.from(new Set((active?.rates || []).map((row) => row.band_label))),
     [active],
   );
+  useEffect(() => {
+    if (!plan || !jobContext) return;
+    const options = Array.from(new Set(plan.rates.map((rate) => rate.destination)));
+    const inferred = destinationFromAddress(jobContext.job.delivery_zip, options);
+    if (inferred) setDestination(inferred);
+  }, [jobContext, plan]);
   const rateRows = useMemo(() => {
     const query = search.trim().toLowerCase();
     return destinations
@@ -134,16 +191,28 @@ export default function PricingPage() {
     }
   }
 
-  async function calculate() {
+  async function calculate(overrides?: { selected?: Record<string, boolean>; quantities?: Record<string, number>; manual?: Record<string, number> }) {
     if (!active || !destination || !cubicFeet) return;
     setError("");
-    const params = new URLSearchParams({ destination, cubic_feet: cubicFeet });
-    const response = await fetch(`${API_BASE}/api/pricing/${active.id}/quote?${params}`, { headers: authHeaders(token) });
+    const response = await fetch(`${API_BASE}/api/pricing/${active.id}/calculate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({
+        destination,
+        cubic_feet: Number(cubicFeet),
+        move_date: jobContext?.job.move_date || "",
+        selected_charges: overrides?.selected || selectedCharges,
+        quantities: overrides?.quantities || quantities,
+        manual_amounts: overrides?.manual || manualAmounts,
+      }),
+    });
     if (!response.ok) {
       setError((await response.json().catch(() => ({}))).detail || "Could not calculate pricing");
       return;
     }
-    setQuote(await response.json());
+    const result: Calculation = await response.json();
+    setQuote(result);
+    setSelectedCharges(Object.fromEntries(result.charges.map((charge) => [charge.id, charge.selected])));
   }
 
   return (
@@ -187,6 +256,19 @@ export default function PricingPage() {
         <main className="pricing-content">
           {loading || !active ? <div className="pricing-card">Loading pricing…</div> : (
             <>
+              {jobContext ? (
+                <section className="pricing-card pricing-job-context">
+                  <div>
+                    <span className="eyebrow">Pricing Job {jobContext.job.job_order}</span>
+                    <h2>{jobContext.lead.full_name}</h2>
+                    <p>{jobContext.job.pickup_zip || "Pickup not provided"} → {jobContext.job.delivery_zip || "Delivery not provided"}</p>
+                  </div>
+                  <div>
+                    <span>{jobContext.job.move_date || "No move date"}</span>
+                    <Link to={`/leads/${jobContext.lead.id}?job_id=${encodeURIComponent(jobContext.job.id)}`}>Back to lead</Link>
+                  </div>
+                </section>
+              ) : null}
               <section className="pricing-card pricing-overview">
                 <div>
                   <span className="eyebrow">{active.company_name}</span>
@@ -201,20 +283,80 @@ export default function PricingPage() {
               </section>
 
               <section className="pricing-card pricing-calculator">
-                <div><span className="eyebrow">Quick estimate</span><h2>Rate lookup</h2></div>
+                <div><span className="eyebrow">Job pricing</span><h2>Calculate price</h2></div>
                 <div className="pricing-calc-fields">
                   <label>Destination<select value={destination} onChange={(e) => { setDestination(e.target.value); setQuote(null); }}>{destinations.map((name) => <option key={name}>{name}</option>)}</select></label>
                   <label>Cubic feet<input type="number" min="0" value={cubicFeet} onChange={(e) => { setCubicFeet(e.target.value); setQuote(null); }} placeholder="e.g. 650" /></label>
                   <button className="slds-button primary" onClick={() => void calculate()}>Calculate</button>
                 </div>
                 {quote ? (
-                  <div className="pricing-quote">
-                    <div><span>Rate</span><strong>{(quote.match as Rate | null)?.rate == null ? (quote.match as Rate | null)?.rate_text || "Manual" : `${money((quote.match as Rate).rate)}/cf`}</strong></div>
-                    <div><span>Base / minimum</span><strong>{money(quote.base_price as number | null)}</strong></div>
-                    <div><span>Fuel</span><strong>{money(quote.fuel as number | null)}</strong></div>
-                    <div className="total"><span>Before services</span><strong>{money(quote.total_before_services as number | null)}</strong></div>
-                    {quote.warning ? <p>{String(quote.warning)}</p> : null}
-                  </div>
+                  <>
+                    <div className="pricing-quote">
+                      <div><span>Rate</span><strong>{quote.match?.rate == null ? quote.match?.rate_text || "Manual" : `${money(quote.match.rate)}/cf`}</strong></div>
+                      <div><span>Transportation</span><strong>{money(quote.transport)}</strong></div>
+                      <div><span>{quote.minimum_applied ? "Minimum applied" : "Base price"}</span><strong>{money(quote.base_price)}</strong></div>
+                      <div className="total"><span>Calculated total</span><strong>{money(quote.total)}</strong></div>
+                      {quote.warning ? <p>{quote.warning}</p> : null}
+                    </div>
+                    <div className="pricing-charge-picker">
+                      <div className="pricing-charge-heading">
+                        <strong>Charges and adjustments</strong>
+                        <span>Default charges are already selected</span>
+                      </div>
+                      {quote.charges.map((charge) => (
+                        <article key={charge.id} className={charge.selected ? "selected" : ""}>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={charge.selected}
+                              disabled={charge.automatic && !charge.applies}
+                              onChange={(event) => {
+                                const next = { ...selectedCharges, [charge.id]: event.target.checked };
+                                setSelectedCharges(next);
+                                void calculate({ selected: next });
+                              }}
+                            />
+                            <span>
+                              <strong>
+                                {charge.name}
+                                {charge.automatic ? <em>Automatic</em> : charge.default_selected ? <em>Default</em> : null}
+                              </strong>
+                              <small>{charge.description}</small>
+                            </span>
+                          </label>
+                          {charge.calculation_type === "per_unit" || charge.calculation_type === "per_cf_month" ? (
+                            <input
+                              type="number"
+                              min="0"
+                              value={quantities[charge.id] ?? 1}
+                              aria-label={charge.quantity_label || "Quantity"}
+                              title={charge.quantity_label || "Quantity"}
+                              onChange={(event) => {
+                                const next = { ...quantities, [charge.id]: Number(event.target.value) };
+                                setQuantities(next);
+                                void calculate({ quantities: next });
+                              }}
+                            />
+                          ) : null}
+                          {charge.calculation_type === "manual" && charge.selected ? (
+                            <input
+                              type="number"
+                              min="0"
+                              value={manualAmounts[charge.id] ?? 0}
+                              aria-label="Manual amount"
+                              title="Manual amount"
+                              onChange={(event) => {
+                                const next = { ...manualAmounts, [charge.id]: Number(event.target.value) };
+                                setManualAmounts(next);
+                                void calculate({ manual: next });
+                              }}
+                            />
+                          ) : null}
+                          <b>{charge.selected ? money(charge.amount) : "Not added"}</b>
+                        </article>
+                      ))}
+                    </div>
+                  </>
                 ) : null}
               </section>
 
