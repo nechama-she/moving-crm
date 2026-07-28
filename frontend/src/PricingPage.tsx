@@ -425,6 +425,35 @@ export default function PricingPage() {
                         </article>
                       ))}
                     </div>
+                    <div className="pricing-price-details">
+                      <div className="pricing-price-details-title">
+                        <div>
+                          <span className="eyebrow">Calculation breakdown</span>
+                          <h3>Price Details</h3>
+                        </div>
+                        <strong>{money(quote.total)}</strong>
+                      </div>
+                      <dl>
+                        <div>
+                          <dt>
+                            <strong>{quote.match?.destination || "Transportation"}</strong>
+                            <small>
+                              {quote.match
+                                ? `${quote.match.band_label} · ${Number(cubicFeet || 0).toLocaleString()} cf${quote.minimum_applied ? " · minimum applied" : ""}`
+                                : "Transportation pricing"}
+                            </small>
+                          </dt>
+                          <dd>{money(quote.base_price)}</dd>
+                        </div>
+                        {quote.charges.filter((charge) => charge.selected).map((charge) => (
+                          <div key={`detail-${charge.id}`}>
+                            <dt><strong>{charge.name}</strong><small>{charge.description}</small></dt>
+                            <dd className={charge.amount < 0 ? "discount" : ""}>{money(charge.amount)}</dd>
+                          </div>
+                        ))}
+                        <div className="pricing-price-details-total"><dt>Calculated total</dt><dd>{money(quote.total)}</dd></div>
+                      </dl>
+                    </div>
                   </>
                 ) : null}
               </section>
