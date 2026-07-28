@@ -70,6 +70,10 @@ input, select, textarea, button {
   display: none;
 }
 
+.mobile-totals-toggle {
+  display: none;
+}
+
 .crm-mobile-menu-button,
 .crm-mobile-menu,
 .crm-mobile-menu-backdrop {
@@ -92,10 +96,12 @@ input, select, textarea, button {
   .crm-mobile-menu-button {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
     border: 1px solid rgba(255,255,255,.5);
     border-radius: 4px;
-    padding: 6px 10px;
+    padding: 0;
     background: transparent;
     color: #fff;
     font-size: 13px;
@@ -247,6 +253,55 @@ input, select, textarea, button {
     display: inline;
     color: #0176d3;
     font-size: 11px;
+  }
+
+  .mobile-totals-toggle {
+    width: 100%;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 4px;
+    padding: 0 12px;
+    border: 1px solid #dddbda;
+    border-radius: 4px;
+    background: #fff;
+    color: #032d60;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .calendar-summary-totals:not(.mobile-summary-visible) {
+    display: none !important;
+  }
+
+  .crm-main .calendar-summary-totals.mobile-summary-visible {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+  }
+
+  .calendar-summary-totals > div {
+    min-width: 0;
+    padding: 8px 9px !important;
+    border-radius: 4px !important;
+  }
+
+  .calendar-summary-totals > div > div:first-child {
+    font-size: 9px !important;
+    letter-spacing: .03em !important;
+  }
+
+  .calendar-summary-totals > div > div:nth-child(2) {
+    margin-top: 3px !important;
+    font-size: clamp(16px, 4vw, 19px) !important;
+    line-height: 1.2 !important;
+    overflow-wrap: anywhere;
+  }
+
+  .calendar-summary-totals > div > div:nth-child(3) {
+    margin-top: 2px !important;
+    font-size: 10px !important;
+    line-height: 1.25 !important;
   }
 
   .lead-detail-page {

@@ -324,10 +324,14 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const [jobSearchError, setJobSearchError] = useState("");
   const [jobSearchOpen, setJobSearchOpen] = useState(false);
   const [totalsExpanded, setTotalsExpanded] = useState(false);
+  const [mobileSummaryExpanded, setMobileSummaryExpanded] = useState(false);
   useEffect(() => {
     const mobileQuery = window.matchMedia("(max-width: 640px)");
     const collapseCompanyTotals = () => {
-      if (mobileQuery.matches) setTotalsExpanded(false);
+      if (mobileQuery.matches) {
+        setTotalsExpanded(false);
+        setMobileSummaryExpanded(false);
+      }
     };
     collapseCompanyTotals();
     mobileQuery.addEventListener("change", collapseCompanyTotals);
@@ -1082,7 +1086,16 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
               Day settings default to the current company filter. If multiple companies are checked, save applies to all selected companies.
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginTop: 4 }}>
+            <button
+              type="button"
+              className="mobile-totals-toggle"
+              aria-expanded={mobileSummaryExpanded}
+              onClick={() => setMobileSummaryExpanded((expanded) => !expanded)}
+            >
+              <span>Totals</span>
+              <span>{mobileSummaryExpanded ? "Hide ▴" : "Show ▾"}</span>
+            </button>
+            <div className={`calendar-summary-totals${mobileSummaryExpanded ? " mobile-summary-visible" : ""}`} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginTop: 4 }}>
               <div style={{ border: "1px solid #cbd5e1", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #eff6ff 0%, #ffffff 100%)" }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estimated Total</div>
                 <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(calendarMoneySummary.estimatedTotal)}</div>

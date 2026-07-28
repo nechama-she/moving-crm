@@ -71,7 +71,6 @@ function ProtectedRoutes() {
           onClick={() => setMobileMenuOpen((open) => !open)}
         >
           <span aria-hidden="true">{mobileMenuOpen ? "×" : "☰"}</span>
-          Menu
         </button>
         <div className="crm-nav-links" style={{ display: "flex", flex: 1 }}>
           {isDispatchUser ? (
