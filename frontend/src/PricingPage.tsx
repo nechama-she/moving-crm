@@ -23,13 +23,15 @@ type Plan = PlanSummary & {
 type CalculatedCharge = {
   id: string; name: string; description: string; calculation_type: string;
   rate: number; default_selected: boolean; automatic: boolean; applies: boolean;
-  quantity_label: string; selected: boolean; amount: number;
+  quantity_label: string; free_months?: number; selected: boolean; amount: number;
 };
 type Calculation = {
   match: Rate | null; transport: number | null; minimum: number | null;
   minimum_applied: boolean; base_price: number | null; charges: CalculatedCharge[];
   total: number; warning: string;
 };
+type CustomCharge = { id: string; title: string; amount: number };
+type CustomDiscount = { id: string; targetId: string; title: string; type: "amount" | "percent"; value: number };
 type JobContext = {
   lead: { id: string; full_name: string; volume: number | null; weight: number | null };
   job: { id: string; job_order: number; company_name: string; pickup_zip: string; delivery_zip: string; pickup_state: string; pickup_zip_code: string; delivery_state: string; delivery_zip_code: string; move_date: string; booked_move_date: string };
@@ -79,6 +81,8 @@ export default function PricingPage() {
   const [selectedCharges, setSelectedCharges] = useState<Record<string, boolean>>({});
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [manualAmounts, setManualAmounts] = useState<Record<string, number>>({});
+  const [customCharges, setCustomCharges] = useState<CustomCharge[]>([]);
+  const [customDiscounts, setCustomDiscounts] = useState<CustomDiscount[]>([]);
   const [openSections, setOpenSections] = useState({ rates: true, services: true });
 
   useEffect(() => {
@@ -187,9 +191,42 @@ export default function PricingPage() {
       return true;
     });
   }, [active]);
+  const customChargeTotal = useMemo(
+    () => customCharges.reduce((sum, charge) => sum + Math.max(0, Number(charge.amount) || 0), 0),
+    [customCharges],
+  );
+  const discountBase = (quote?.total || 0) + customChargeTotal;
+  const discountTargets = useMemo(() => {
+    const targets: Record<string, number> = { transportation: Math.max(0, quote?.base_price || 0) };
+    quote?.charges.filter((charge) => charge.selected).forEach((charge) => { targets[`charge:${charge.id}`] = Math.max(0, charge.amount); });
+    customCharges.forEach((charge) => { targets[`custom:${charge.id}`] = Math.max(0, Number(charge.amount) || 0); });
+    return targets;
+  }, [quote, customCharges]);
+  const calculatedDiscounts = useMemo(
+    () => customDiscounts.map((discount) => {
+      const targetExists = Object.prototype.hasOwnProperty.call(discountTargets, discount.targetId);
+      return {
+        ...discount,
+        amount: !targetExists ? 0 : discount.type === "percent"
+          ? (discountTargets[discount.targetId] || 0) * Math.max(0, Number(discount.value) || 0) / 100
+          : Math.max(0, Number(discount.value) || 0),
+      };
+    }),
+    [customDiscounts, discountTargets],
+  );
+  const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
+  const detailedTotal = Math.max(0, discountBase - discountTotal);
 
   function patchDraft(patch: Partial<Plan>) {
     setDraft((current) => current ? { ...current, ...patch } : current);
+  }
+  function addLineDiscount(targetId: string) {
+    setCustomDiscounts((rows) => [...rows, {
+      id: crypto.randomUUID(), targetId, title: "", type: "amount", value: 0,
+    }]);
+  }
+  function lineDiscounts(targetId: string) {
+    return calculatedDiscounts.filter((discount) => discount.targetId === targetId);
   }
   function patchRule(index: number, patch: Partial<Rule>) {
     if (!draft) return;
@@ -363,7 +400,7 @@ export default function PricingPage() {
                     <div className="pricing-quote">
                       <div className="pricing-quote-header">
                         <div><span className="eyebrow">Price breakdown</span><h3>Detailed Price</h3></div>
-                        <strong>{money(quote.total)}</strong>
+                        <strong>{money(detailedTotal)}</strong>
                       </div>
                       <div className="pricing-quote-lines">
                         <div className="pricing-quote-line">
@@ -375,15 +412,37 @@ export default function PricingPage() {
                                 : "No transportation rate matched"}
                             </small>
                           </div>
-                          <b>{money(quote.base_price)}</b>
+                          <div className="pricing-line-price"><b>{money(quote.base_price)}</b><button type="button" onClick={() => addLineDiscount("transportation")}>+ Discount</button></div>
                         </div>
+                        {lineDiscounts("transportation").map((discount) => (
+                          <DiscountRow key={discount.id} discount={discount} originalAmount={discountTargets.transportation || 0} setDiscounts={setCustomDiscounts} />
+                        ))}
                         {quote.charges.filter((charge) => charge.selected).map((charge) => (
-                          <div className="pricing-quote-line" key={`summary-${charge.id}`}>
-                            <div><strong>{charge.name}</strong><small>{charge.description}</small></div>
-                            <b className={charge.amount < 0 ? "discount" : ""}>{money(charge.amount)}</b>
+                          <div key={`summary-${charge.id}`}>
+                            <div className="pricing-quote-line">
+                              <div>
+                                <strong>{charge.name}</strong>
+                                <small>{charge.description}{charge.free_months ? ` · First ${charge.free_months === 1 ? "month is" : `${charge.free_months} months are`} free` : ""}</small>
+                              </div>
+                              <div className="pricing-line-price"><b className={charge.amount < 0 ? "discount" : ""}>{money(charge.amount)}</b><button type="button" onClick={() => addLineDiscount(`charge:${charge.id}`)}>+ Discount</button></div>
+                            </div>
+                            {lineDiscounts(`charge:${charge.id}`).map((discount) => (
+                              <DiscountRow key={discount.id} discount={discount} originalAmount={discountTargets[`charge:${charge.id}`] || 0} setDiscounts={setCustomDiscounts} />
+                            ))}
                           </div>
                         ))}
-                        <div className="pricing-quote-total"><strong>Total</strong><b>{money(quote.total)}</b></div>
+                        {customCharges.map((charge) => (
+                          <div key={`custom-summary-${charge.id}`}>
+                            <div className="pricing-quote-line">
+                              <div><strong>{charge.title.trim() || "Custom charge"}</strong><small>Custom charge</small></div>
+                              <div className="pricing-line-price"><b>{money(Math.max(0, Number(charge.amount) || 0))}</b><button type="button" onClick={() => addLineDiscount(`custom:${charge.id}`)}>+ Discount</button></div>
+                            </div>
+                            {lineDiscounts(`custom:${charge.id}`).map((discount) => (
+                              <DiscountRow key={discount.id} discount={discount} originalAmount={discountTargets[`custom:${charge.id}`] || 0} setDiscounts={setCustomDiscounts} />
+                            ))}
+                          </div>
+                        ))}
+                        <div className="pricing-quote-total"><strong>Estimated Total</strong><b>{money(detailedTotal)}</b></div>
                       </div>
                       {quote.warning ? <p>{quote.warning}</p> : null}
                     </div>
@@ -414,18 +473,23 @@ export default function PricingPage() {
                             </span>
                           </label>
                           {charge.calculation_type === "per_unit" || charge.calculation_type === "per_cf_month" ? (
-                            <input
-                              type="number"
-                              min="0"
-                              value={quantities[charge.id] ?? 1}
-                              aria-label={charge.quantity_label || "Quantity"}
-                              title={charge.quantity_label || "Quantity"}
-                              onChange={(event) => {
-                                const next = { ...quantities, [charge.id]: Number(event.target.value) };
-                                setQuantities(next);
-                                void calculate({ quantities: next });
-                              }}
-                            />
+                            <div className="pricing-charge-quantity">
+                              <label>{charge.quantity_label || "Quantity"}</label>
+                              <input
+                                type="number"
+                                min={charge.calculation_type === "per_cf_month" ? "1" : "0"}
+                                step="1"
+                                value={quantities[charge.id] ?? 1}
+                                aria-label={charge.quantity_label || "Quantity"}
+                                title={charge.quantity_label || "Quantity"}
+                                onChange={(event) => {
+                                  const next = { ...quantities, [charge.id]: Math.max(charge.calculation_type === "per_cf_month" ? 1 : 0, Number(event.target.value)) };
+                                  setQuantities(next);
+                                  void calculate({ quantities: next });
+                                }}
+                              />
+                              {charge.free_months ? <small>{charge.free_months === 1 ? "1st month free" : `${charge.free_months} months free`}</small> : null}
+                            </div>
                           ) : null}
                           {charge.calculation_type === "manual" && charge.selected ? (
                             <input
@@ -444,6 +508,21 @@ export default function PricingPage() {
                           <b>{charge.selected ? money(charge.amount) : "Not added"}</b>
                         </article>
                       ))}
+                      <div className="pricing-manual-adjustments">
+                        <div className="pricing-manual-group">
+                          <div className="pricing-manual-title">
+                            <div><strong>Custom charges</strong><small>Add any charge that is not listed above.</small></div>
+                            <button type="button" onClick={() => setCustomCharges((rows) => [...rows, { id: crypto.randomUUID(), title: "", amount: 0 }])}>+ Add charge</button>
+                          </div>
+                          {customCharges.map((charge) => (
+                            <div className="pricing-manual-row custom-charge" key={charge.id}>
+                              <label>Title<input value={charge.title} placeholder="Charge title" onChange={(event) => setCustomCharges((rows) => rows.map((row) => row.id === charge.id ? { ...row, title: event.target.value } : row))} /></label>
+                              <label>Amount<input type="number" min="0" step="0.01" value={charge.amount || ""} placeholder="0.00" onChange={(event) => setCustomCharges((rows) => rows.map((row) => row.id === charge.id ? { ...row, amount: Number(event.target.value) } : row))} /></label>
+                              <button type="button" className="text-danger" aria-label="Remove custom charge" onClick={() => setCustomCharges((rows) => rows.filter((row) => row.id !== charge.id))}>Remove</button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   </>
                 ) : null}
@@ -511,6 +590,44 @@ export default function PricingPage() {
           )}
         </main>
       </div>
+    </div>
+  );
+}
+
+function DiscountRow({
+  discount,
+  originalAmount,
+  setDiscounts,
+}: {
+  discount: CustomDiscount & { amount: number };
+  originalAmount: number;
+  setDiscounts: React.Dispatch<React.SetStateAction<CustomDiscount[]>>;
+}) {
+  const patch = (change: Partial<CustomDiscount>) =>
+    setDiscounts((rows) => rows.map((row) => row.id === discount.id ? { ...row, ...change } : row));
+
+  return (
+    <div className="pricing-line-discount">
+      <label>
+        Discount title
+        <input value={discount.title} placeholder="Discount title" onChange={(event) => patch({ title: event.target.value })} />
+      </label>
+      <label>
+        Type
+        <select value={discount.type} onChange={(event) => patch({ type: event.target.value as "amount" | "percent" })}>
+          <option value="amount">Amount ($)</option>
+          <option value="percent">Percentage (%)</option>
+        </select>
+      </label>
+      <label>
+        {discount.type === "percent" ? "Percent" : "Amount"}
+        <input type="number" min="0" step="0.01" value={discount.value || ""} placeholder="0.00" onChange={(event) => patch({ value: Number(event.target.value) })} />
+      </label>
+      <div className="pricing-line-discount-value">
+        <small>{discount.type === "percent" ? `${Number(discount.value) || 0}% of original ${money(originalAmount)}` : "Fixed discount"}</small>
+        <b>−{money(discount.amount)}</b>
+      </div>
+      <button type="button" className="text-danger" aria-label="Remove discount" onClick={() => setDiscounts((rows) => rows.filter((row) => row.id !== discount.id))}>Remove</button>
     </div>
   );
 }
