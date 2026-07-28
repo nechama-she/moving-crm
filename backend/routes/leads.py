@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, TypeVar
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -31,6 +31,7 @@ from routes.templates import get_company_template, render_template
 logger = logging.getLogger("moving-crm")
 
 router = APIRouter(prefix="/api", tags=["Leads"])
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 # Statuses that dispatch can see (booked and beyond)
 DISPATCH_STATUSES = {"booked", "scheduled", "completed"}
@@ -1596,6 +1597,20 @@ def _deserialize_payments(raw: str | None) -> list[dict[str, object]]:
     return payments
 
 
+def _merge_partial_models(
+    updates: list[ModelT],
+    existing_rows: list[dict[str, object]],
+) -> list[ModelT]:
+    """Apply only explicitly submitted model fields; preserve every omitted value."""
+    return [
+        type(update).model_validate({
+            **(existing_rows[index] if index < len(existing_rows) else {}),
+            **update.model_dump(by_alias=True, exclude_unset=True),
+        })
+        for index, update in enumerate(updates)
+    ]
+
+
 def _to_money_decimal(value: float | int | str | None, field_name: str) -> Decimal:
     try:
         amount = Decimal(str(value if value is not None else 0)).quantize(Decimal("0.01"))
@@ -2704,11 +2719,24 @@ def update_lead(
     if body.referral_source is not None:
         lead.referral_source = body.referral_source.strip() or None
     if body.estimated_total is not None:
-        lead.estimated_total = _serialize_estimated_total(body.estimated_total)
+        current_total = _deserialize_estimated_total(lead.estimated_total) or {}
+        merged_total = _merge_partial_models([body.estimated_total], [current_total])[0]
+        lead.estimated_total = _serialize_estimated_total(merged_total)
     if body.payments is not None:
+        existing_payments = _deserialize_payments(lead.payments)
         if user.role not in ("admin", "sales_rep"):
-            if any(payment.rep_paid or (payment.rep_paid_at or "").strip() for payment in body.payments):
-                raise HTTPException(status_code=403, detail="Only admin and sales reps can mark rep payments")
+            for index, payment in enumerate(body.payments):
+                existing = existing_payments[index] if index < len(existing_payments) else {}
+                submitted = (bool(payment.rep_paid), (payment.rep_paid_at or "").strip())
+                current = (
+                    bool(existing.get("repPaid") or False),
+                    str(existing.get("repPaidAt") or "").strip(),
+                )
+                if (
+                    {"rep_paid", "rep_paid_at"}.intersection(payment.model_fields_set)
+                    and submitted != current
+                ):
+                    raise HTTPException(status_code=403, detail="Only admin and sales reps can mark rep payments")
         if user.role != "admin":
             third_party_fields = {
                 "third_party_commission_to",
@@ -2716,7 +2744,6 @@ def update_lead(
                 "third_party_commission_paid",
                 "third_party_commission_paid_at",
             }
-            existing_payments = _deserialize_payments(lead.payments)
             for index, payment in enumerate(body.payments):
                 existing = existing_payments[index] if index < len(existing_payments) else {}
                 submitted_third_party = (
@@ -2736,11 +2763,8 @@ def update_lead(
                     and submitted_third_party != existing_third_party
                 ):
                     raise HTTPException(status_code=403, detail="Only admins can manage third-party payouts")
-                payment.third_party_commission_to = str(existing.get("thirdPartyCommissionTo") or "")
-                payment.third_party_commission_amount = float(existing.get("thirdPartyCommissionAmount") or 0)
-                payment.third_party_commission_paid = bool(existing.get("thirdPartyCommissionPaid") or False)
-                payment.third_party_commission_paid_at = str(existing.get("thirdPartyCommissionPaidAt") or "")
-        for payment in body.payments:
+        merged_payments = _merge_partial_models(body.payments, existing_payments)
+        for payment in merged_payments:
             if payment.third_party_commission_amount < 0:
                 raise HTTPException(status_code=400, detail="thirdPartyCommissionAmount must be >= 0")
             if payment.third_party_commission_amount > payment.amount:
@@ -2748,7 +2772,7 @@ def update_lead(
                     status_code=400,
                     detail="thirdPartyCommissionAmount cannot exceed the payment amount",
                 )
-        lead.payments = _serialize_payments(body.payments)
+        lead.payments = _serialize_payments(merged_payments)
 
     primary_job = _get_or_create_primary_lead_job(lead, db)
     if next_company_id is not None:
