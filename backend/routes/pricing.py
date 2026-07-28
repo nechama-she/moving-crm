@@ -154,6 +154,8 @@ def _service_charge(service: PricingService) -> dict:
     elif re.fullmatch(r"\s*\$?\s*\d+(?:\.\d+)?\s*", service.rate_text):
         calc_type = "fixed"
         rate = float(_number(service.rate_text) or 0)
+    minimum_amount = re.search(r"minimum\s*\$?\s*(\d+(?:\.\d+)?)", service.comments, re.IGNORECASE)
+    minimum_cubic_feet = re.search(r"min(?:imum)?\s*(\d+(?:\.\d+)?)\s*(?:cf|cu-?ft)", service.comments, re.IGNORECASE)
     return {
         "id": f"service:{service.id}",
         "name": service.name,
@@ -165,14 +167,17 @@ def _service_charge(service: PricingService) -> dict:
         "applies": True,
         "quantity_label": quantity_label,
         "free_months": free_months,
+        "minimum_amount": float(minimum_amount.group(1)) if minimum_amount else 0,
+        "minimum_cubic_feet": float(minimum_cubic_feet.group(1)) if minimum_cubic_feet else 0,
     }
 
 
 def _packing_service_charges(
     services: list[PricingService],
     cubic_feet: int,
+    quantities: dict[str, float],
 ) -> list[dict]:
-    """Collapse imported packing rate tiers into one calculated choice per packing type."""
+    """Collapse imported rate tiers into simple job-level packing and storage choices."""
     packing_groups: dict[str, list[PricingService]] = {"full": [], "partial": []}
     remaining: list[PricingService] = []
     for service in services:
@@ -181,6 +186,13 @@ def _packing_service_charges(
             packing_groups[match.group(1).lower()].append(service)
         else:
             remaining.append(service)
+
+    storage_services = [
+        service for service in remaining
+        if re.match(r"\s*(?:long\s+term\s+)?storage\b", service.name, re.IGNORECASE)
+    ]
+    if len(storage_services) > 1:
+        remaining = [service for service in remaining if service not in storage_services]
 
     charges = [_service_charge(service) for service in remaining]
     for packing_type, tiers in packing_groups.items():
@@ -210,8 +222,36 @@ def _packing_service_charges(
             ),
             "quantity_label": "",
         })
-        minimum = re.search(r"minimum\s*\$?\s*(\d+(?:\.\d+)?)", selected_tier.comments, re.IGNORECASE)
-        charge["minimum_amount"] = float(minimum.group(1)) if minimum else 0
+        charges.append(charge)
+
+    if len(storage_services) > 1:
+        months = max(1, quantities.get("storage", 1))
+        regular = next(
+            (service for service in storage_services if not re.match(r"\s*long\s+term\b", service.name, re.IGNORECASE)),
+            storage_services[0],
+        )
+        long_term_tiers: list[tuple[int, PricingService]] = []
+        for service in storage_services:
+            threshold = re.search(r"(\d+)\s*(?:months?|mnths?)", service.name, re.IGNORECASE)
+            if threshold:
+                long_term_tiers.append((int(threshold.group(1)), service))
+        eligible = [tier for tier in long_term_tiers if months >= tier[0]]
+        selected_storage = max(eligible, key=lambda tier: tier[0])[1] if eligible else regular
+        charge = _service_charge(selected_storage)
+        regular_charge = _service_charge(regular)
+        charge.update({
+            "id": "storage",
+            "name": "Storage",
+            "description": (
+                f"{selected_storage.name} · {selected_storage.rate_text}"
+                + (f" · {selected_storage.comments}" if selected_storage.comments else "")
+            ),
+            "calculation_type": "per_cf_month",
+            "quantity_label": "Months",
+            "free_months": regular_charge.get("free_months", 0),
+            "minimum_amount": max(charge.get("minimum_amount", 0), regular_charge.get("minimum_amount", 0)),
+            "minimum_cubic_feet": max(charge.get("minimum_cubic_feet", 0), regular_charge.get("minimum_cubic_feet", 0)),
+        })
         charges.append(charge)
     return charges
 
@@ -295,20 +335,22 @@ def _rule_charges(rule: PricingRule) -> list[dict]:
 def _charge_amount(charge: dict, cubic_feet: int, quantity: float, manual: float) -> Decimal:
     rate = Decimal(str(charge["rate"]))
     kind = charge["calculation_type"]
+    billable_cubic_feet = max(
+        Decimal(cubic_feet),
+        Decimal(str(charge.get("minimum_cubic_feet", 0))),
+    )
+    minimum_amount = Decimal(str(charge.get("minimum_amount", 0)))
     if kind == "fixed":
         return rate
     if kind == "per_cf":
-        return max(
-            rate * cubic_feet,
-            Decimal(str(charge.get("minimum_amount", 0))),
-        )
+        return max(rate * billable_cubic_feet, minimum_amount)
     if kind == "per_cf_month":
         months = max(Decimal(0), Decimal(str(quantity)))
         billable_months = max(
             Decimal(0),
             months - Decimal(str(charge.get("free_months", 0))),
         )
-        return rate * cubic_feet * billable_months
+        return max(rate * billable_cubic_feet * billable_months, minimum_amount if billable_months else Decimal(0))
     if kind == "per_unit":
         return rate * Decimal(str(quantity or 0))
     return Decimal(str(manual or 0))
@@ -430,7 +472,7 @@ def calculate_pricing(
     seasonal = _seasonal_charge(plan, _parsed_move_date(body.move_date))
     if seasonal:
         charges.append(seasonal)
-    charges.extend(_packing_service_charges(list(plan.services), body.cubic_feet))
+    charges.extend(_packing_service_charges(list(plan.services), body.cubic_feet, body.quantities))
     charges.extend(charge for rule in plan.rules for charge in _rule_charges(rule))
 
     # The same all-jobs fee can appear in both the notes and additional services.
