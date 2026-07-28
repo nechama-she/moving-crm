@@ -6,7 +6,7 @@ export default function SettingsPage() {
   const isAdmin = user?.role === "admin";
 
   return (
-    <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
+    <div className="user-setup-page" style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Settings</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
         Central setup for users, assignment rules, and account preferences.

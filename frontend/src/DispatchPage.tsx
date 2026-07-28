@@ -1275,13 +1275,13 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   }
 
   return (
-    <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
+    <div className="user-setup-page" style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Dispatcher Setup</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
         Create dispatch users and map them to the companies they can access.
       </p>
 
-      <div style={{ border: "1px solid #dddbda", borderRadius: 4, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
+      <div className="user-setup-create-card" style={{ border: "1px solid #dddbda", borderRadius: 4, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
         <h2 style={sectionHeader}>Create Dispatch User</h2>
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
           <label style={fieldLabel}>
@@ -1370,8 +1370,8 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
       {error ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{error}</p> : null}
       {info ? <p style={{ marginBottom: 10, color: "#2e844a", fontSize: 13 }}>{info}</p> : null}
 
-      <div style={{ border: "1px solid #dddbda", borderRadius: 4, overflow: "auto", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+      <div className="user-setup-list" style={{ border: "1px solid #dddbda", borderRadius: 4, overflow: "auto", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
+        <table className="user-setup-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
           <thead>
             <tr>
               <th style={th}>Name</th>
@@ -1442,6 +1442,7 @@ function CompanyCalendar({
   const [panelError, setPanelError] = useState("");
   const [mobileSelectedDay, setMobileSelectedDay] = useState(() => new Date().getDate());
   const [mobileMonthExpanded, setMobileMonthExpanded] = useState(false);
+  const mobileDateRailRef = useRef<HTMLDivElement | null>(null);
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
   const firstWeekday = new Date(year, month, 1).getDay();
@@ -1453,6 +1454,12 @@ function CompanyCalendar({
       now.getFullYear() === year && now.getMonth() === month ? now.getDate() : 1,
     );
   }, [year, month]);
+  useEffect(() => {
+    const selectedButton = mobileDateRailRef.current?.querySelector<HTMLElement>(
+      `[data-mobile-day="${mobileSelectedDay}"]`,
+    );
+    selectedButton?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
+  }, [mobileSelectedDay, year, month]);
   const dispatchBackState = useMemo(
     () => ({
       backTo: `${location.pathname}${location.search}`,
@@ -1819,7 +1826,7 @@ function CompanyCalendar({
       </div>
 
       <div className={`mobile-calendar${mobileMonthExpanded ? " mobile-agenda-hidden" : ""}`} style={{ padding: 10 }}>
-        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, scrollSnapType: "x proximity" }}>
+        <div ref={mobileDateRailRef} style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, scrollSnapType: "x proximity" }}>
           {Array.from({ length: daysInMonth }).map((_, index) => {
             const day = index + 1;
             const date = new Date(year, month, day);
@@ -1828,6 +1835,7 @@ function CompanyCalendar({
             return (
               <button
                 key={day}
+                data-mobile-day={day}
                 type="button"
                 onClick={() => setMobileSelectedDay(day)}
                 style={{
@@ -2097,11 +2105,11 @@ function DispatchRow({
   const availableCompanies = companies.filter((c) => !assignedIds.has(c.id));
 
   return (
-    <tr style={{ borderTop: "1px solid #e5e7eb" }}>
-      <td style={td}>{dispatchUser.name}</td>
-      <td style={td}>{dispatchUser.email}</td>
-      <td style={td}>{dispatchUser.phone || ""}</td>
-      <td style={td}>
+    <tr className="user-setup-record" style={{ borderTop: "1px solid #e5e7eb" }}>
+      <td data-label="Name" style={td}>{dispatchUser.name}</td>
+      <td data-label="Email" style={td}>{dispatchUser.email}</td>
+      <td data-label="Phone" style={td}>{dispatchUser.phone || ""}</td>
+      <td data-label="Companies" style={td}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {assigned.length === 0 ? <span style={{ color: "#706e6b", fontSize: 12 }}>No companies</span> : null}
           {assigned.map((c) => (
@@ -2119,7 +2127,7 @@ function DispatchRow({
           ))}
         </div>
       </td>
-      <td style={td}>
+      <td data-label="Assign Company" style={td}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <select value={selectedCompanyId} onChange={(e) => setSelectedCompanyId(e.target.value)} style={{ ...inputStyle, minWidth: 220 }}>
             <option value="">Select company...</option>

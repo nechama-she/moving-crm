@@ -313,6 +313,7 @@ export default function SalesCalendarPage() {
   });
   const [mobileSelectedDay, setMobileSelectedDay] = useState(() => new Date().getDate());
   const [mobileMonthExpanded, setMobileMonthExpanded] = useState(false);
+  const mobileDateRailRef = useRef<HTMLDivElement | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<SalesCalendarJob[]>([]);
@@ -771,6 +772,12 @@ export default function SalesCalendarPage() {
       now.getFullYear() === year && now.getMonth() === month ? now.getDate() : 1,
     );
   }, [year, month]);
+  useEffect(() => {
+    const selectedButton = mobileDateRailRef.current?.querySelector<HTMLElement>(
+      `[data-mobile-day="${mobileSelectedDay}"]`,
+    );
+    selectedButton?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
+  }, [mobileSelectedDay, year, month]);
 
   const jobsByDay = useMemo(() => {
     const map = new Map<number, SalesCalendarJob[]>();
@@ -1333,7 +1340,7 @@ export default function SalesCalendarPage() {
         </div>
 
         <div className={`mobile-calendar${mobileMonthExpanded ? " mobile-agenda-hidden" : ""}`} style={{ padding: 10 }}>
-          <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, scrollSnapType: "x proximity" }}>
+          <div ref={mobileDateRailRef} style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, scrollSnapType: "x proximity" }}>
             {Array.from({ length: daysInMonth }).map((_, index) => {
               const day = index + 1;
               const date = new Date(year, month, day);
@@ -1342,6 +1349,7 @@ export default function SalesCalendarPage() {
               return (
                 <button
                   key={day}
+                  data-mobile-day={day}
                   type="button"
                   onClick={() => setMobileSelectedDay(day)}
                   style={{

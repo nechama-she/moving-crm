@@ -307,13 +307,13 @@ export default function SalesRepsPage() {
   }
 
   return (
-    <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
+    <div className="user-setup-page" style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Sales Reps</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
         Add reps and map them to companies for assignment and routing.
       </p>
 
-      <div style={{ border: "1px solid #dddbda", borderRadius: 4, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
+      <div className="user-setup-create-card" style={{ border: "1px solid #dddbda", borderRadius: 4, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
         <h2 style={sectionHeader}>Create Sales Rep</h2>
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
           <label style={fieldLabel}>
@@ -410,8 +410,8 @@ export default function SalesRepsPage() {
       {error ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{error}</p> : null}
       {info ? <p style={{ marginBottom: 10, color: "#2e844a", fontSize: 13 }}>{info}</p> : null}
 
-      <div style={{ border: "1px solid #dddbda", borderRadius: 4, overflow: "auto", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+      <div className="user-setup-list" style={{ border: "1px solid #dddbda", borderRadius: 4, overflow: "auto", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
+        <table className="user-setup-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
           <thead>
             <tr>
               <th style={th}>Rep</th>
@@ -538,11 +538,11 @@ function RepRow({
   }
 
   return (
-    <tr style={{ borderTop: "1px solid #e5e7eb" }}>
-      <td style={td}>
+    <tr className="user-setup-record" style={{ borderTop: "1px solid #e5e7eb" }}>
+      <td data-label="Rep" style={td}>
         <input value={name} onChange={(e) => setName(e.target.value)} style={{ ...inputStyle, minWidth: 170, padding: "6px 8px" }} />
       </td>
-      <td style={td}>
+      <td data-label="Commission" style={td}>
         <div style={{ display: "grid", gap: 6, minWidth: 180 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input
@@ -577,21 +577,21 @@ function RepRow({
           <div style={{ fontSize: 11, color: "#64748b" }}>Default: {defaultCommissionPercent.toFixed(6)}%</div>
         </div>
       </td>
-      <td style={td}>{rep.email}</td>
-      <td style={td}>
+      <td data-label="Email" style={td}>{rep.email}</td>
+      <td data-label="Phone" style={td}>
         <input value={phone} onChange={(e) => setPhone(e.target.value)} style={{ ...inputStyle, minWidth: 130, padding: "6px 8px" }} />
       </td>
-      <td style={td}>
+      <td data-label="SmartMoving Rep ID" style={td}>
         <input value={smartmovingRepId} onChange={(e) => setSmartmovingRepId(e.target.value)} style={{ ...inputStyle, minWidth: 170, padding: "6px 8px" }} />
       </td>
-      <td style={td}>
+      <td data-label="Aircall Number ID" style={td}>
         <input
           value={aircallNumberId}
           onChange={(e) => setAircallNumberId(e.target.value)}
           style={{ ...inputStyle, minWidth: 170, padding: "6px 8px" }}
         />
       </td>
-      <td style={td}>
+      <td data-label="Companies" style={td}>
         <div style={{ minWidth: 280 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>{assigned.length} assigned</span>
@@ -648,7 +648,7 @@ function RepRow({
           ) : null}
         </div>
       </td>
-      <td style={td}>
+      <td data-label="Actions" style={td}>
         <div style={{ display: "flex", gap: 8 }}>
           <button
             type="button"

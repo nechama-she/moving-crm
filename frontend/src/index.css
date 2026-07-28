@@ -74,6 +74,64 @@ input, select, textarea, button {
   display: none;
 }
 
+.user-setup-page {
+  width: 100%;
+  background: #f3f3f3;
+}
+
+.user-setup-create-card,
+.user-setup-list {
+  max-width: 1440px;
+}
+
+.user-setup-create-card {
+  border-top: 3px solid #0176d3 !important;
+}
+
+.user-setup-create-card > h2 {
+  color: #032d60 !important;
+  font-size: 14px !important;
+  letter-spacing: .02em !important;
+}
+
+.user-setup-list {
+  border-radius: 4px !important;
+}
+
+.user-setup-table th {
+  height: 38px;
+  color: #3e3e3c !important;
+  background: #f3f3f3 !important;
+  border-bottom: 1px solid #c9c7c5 !important;
+  font-size: 11px !important;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
+.user-setup-table td {
+  vertical-align: top;
+}
+
+.user-setup-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f3f3f3;
+}
+
+.user-setup-table tbody tr:hover {
+  background: #f8fbff;
+}
+
+.user-setup-table button {
+  min-height: 30px;
+}
+
+.user-setup-table input,
+.user-setup-table select {
+  min-height: 34px;
+}
+
 .crm-mobile-menu-button,
 .crm-mobile-menu,
 .crm-mobile-menu-backdrop {
@@ -473,6 +531,116 @@ input, select, textarea, button {
     width: 26px;
     text-align: center;
     font-size: 16px !important;
+  }
+
+  .user-setup-page {
+    height: auto !important;
+    min-height: 100%;
+    padding: 16px 12px 28px !important;
+  }
+
+  .user-setup-page > h1 {
+    font-size: 18px !important;
+  }
+
+  .user-setup-page > p {
+    margin-bottom: 12px !important;
+    font-size: 12px;
+  }
+
+  .user-setup-create-card {
+    padding: 12px !important;
+    margin-bottom: 10px !important;
+  }
+
+  .user-setup-create-card input,
+  .user-setup-create-card select {
+    width: 100%;
+    min-width: 0 !important;
+  }
+
+  .user-setup-create-card > div:last-child > button {
+    width: 100%;
+    min-height: 40px;
+  }
+
+  .user-setup-create-card [style*="minmax(220px"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .user-setup-list {
+    overflow: visible !important;
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .crm-main .user-setup-table {
+    display: block;
+    width: 100% !important;
+    min-width: 0 !important;
+    overflow: visible;
+  }
+
+  .user-setup-table thead {
+    display: none;
+  }
+
+  .user-setup-table tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .user-setup-table .user-setup-record {
+    display: grid;
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid #dddbda !important;
+    border-radius: 4px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0,0,0,.08);
+  }
+
+  .user-setup-table .user-setup-record > td {
+    min-width: 0 !important;
+    display: grid;
+    grid-template-columns: minmax(92px, .36fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    padding: 9px 10px !important;
+    border-bottom: 1px solid #ecebea;
+    white-space: normal !important;
+  }
+
+  .user-setup-table .user-setup-record > td:last-child {
+    border-bottom: none;
+  }
+
+  .user-setup-table .user-setup-record > td::before {
+    content: attr(data-label);
+    padding-top: 7px;
+    color: #706e6b;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+
+  .user-setup-table input,
+  .user-setup-table select,
+  .user-setup-table [style*="min-width"] {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .user-setup-table .user-setup-record > td[data-label="Companies"],
+  .user-setup-table .user-setup-record > td[data-label="Actions"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .user-setup-table .user-setup-record > td[data-label="Companies"]::before,
+  .user-setup-table .user-setup-record > td[data-label="Actions"]::before {
+    padding-top: 0;
   }
 
   .crm-main [style*="justify-content: space-between"] {
