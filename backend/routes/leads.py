@@ -3596,7 +3596,7 @@ def create_lead(
         db.rollback()
         logger.warning("Non-fatal outreach event write failure for lead %s: %s", lead.id, exc)
 
-    # Duplicate lead to Top Tier Van Lines after a 10-minute delay
+    # Duplicate matching Gorilla leads to Top Tier or Movers 95 based on referral source.
     if company.name == "Gorilla Haulers" and not status_provided and not suppress_new_lead_automation:
         if lead.referral_source == "Facebook-Gorilla-HHG-Nationwide":
             _enqueue_lead_for_duplication(
@@ -3616,6 +3616,16 @@ def create_lead(
                 lead_id=lead.id,
                 target_company_name="Movers 95",
                 target_referral_source="Facebook-Movers95-HHG-Local",
+            )
+
+    # Duplicate Wilson Bros FL/GA/NC leads to Top Tier after 120 minutes.
+    if company.name == "Wilson Bros Van Lines" and not status_provided and not suppress_new_lead_automation:
+        if lead.referral_source == "Facebook-WilsonBros-HHG-FL-GA-NC":
+            _enqueue_lead_for_duplication(
+                lead_id=lead.id,
+                target_company_name="Top Tier Van Lines",
+                target_referral_source="Facebook-TTVL-HHG-FL-GA-NC",
+                delay_minutes=120,
             )
 
     return {
