@@ -24,6 +24,7 @@ type CalculatedCharge = {
   id: string; name: string; description: string; calculation_type: string;
   rate: number; default_selected: boolean; automatic: boolean; applies: boolean;
   quantity_label: string; free_months?: number; selected: boolean; amount: number;
+  breakdown?: { label: string; amount: number }[];
 };
 type Calculation = {
   match: Rate | null; transport: number | null; minimum: number | null;
@@ -422,7 +423,12 @@ export default function PricingPage() {
                             <div className="pricing-quote-line">
                               <div>
                                 <strong>{charge.name}</strong>
-                                <small>{charge.description}{charge.free_months ? ` · First ${charge.free_months === 1 ? "month is" : `${charge.free_months} months are`} free` : ""}</small>
+                                <small>{charge.description}</small>
+                                {charge.breakdown?.map((line, index) => (
+                                  <span className="pricing-charge-breakdown" key={`${charge.id}-breakdown-${index}`}>
+                                    <span>{line.label}</span><b>{money(line.amount)}</b>
+                                  </span>
+                                ))}
                               </div>
                               <div className="pricing-line-price"><b className={charge.amount < 0 ? "discount" : ""}>{money(charge.amount)}</b><button type="button" onClick={() => addLineDiscount(`charge:${charge.id}`)}>+ Discount</button></div>
                             </div>

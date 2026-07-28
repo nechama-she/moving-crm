@@ -834,6 +834,8 @@ button:focus-visible {
 .pricing-quote-line > div { min-width: 0; }
 .pricing-quote-line strong { display: block; color: #181818; font-size: 13px; }
 .pricing-quote-line small { display: block; margin-top: 2px; color: #706e6b; font-size: 11px; line-height: 1.35; white-space: normal; }
+.pricing-charge-breakdown { max-width: 420px; margin-top: 3px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #3e3e3c; font-size: 11px; }
+.pricing-charge-breakdown > b { flex: 0 0 auto; color: #032d60; font-size: 11px; }
 .pricing-quote-line > b { color: #032d60; font-size: 14px; text-align: right; }
 .pricing-quote-line > b.discount { color: #ba0517; }
 .pricing-line-price { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }

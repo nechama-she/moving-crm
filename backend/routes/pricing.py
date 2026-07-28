@@ -492,6 +492,7 @@ def calculate_pricing(
     total = base or Decimal(0)
     calculated = []
     for charge in deduped:
+        quantity = body.quantities.get(charge["id"], 1)
         selected = body.selected_charges.get(
             charge["id"],
             bool(charge["default_selected"] and charge["applies"]),
@@ -504,12 +505,35 @@ def calculate_pricing(
             amount = _charge_amount(
                 charge,
                 body.cubic_feet,
-                body.quantities.get(charge["id"], 1),
+                quantity,
                 body.manual_amounts.get(charge["id"], 0),
             )
         if selected:
             total += amount
-        calculated.append({**charge, "selected": selected, "amount": float(amount)})
+        description = charge["description"]
+        breakdown = []
+        if charge["calculation_type"] == "per_cf_month":
+            months = max(0, quantity)
+            billable_months = max(0, months - charge.get("free_months", 0))
+            free_months = min(months, charge.get("free_months", 0))
+            description = f"${charge['rate']:g} / CF"
+            if free_months:
+                breakdown.append({
+                    "label": f"Storage · {free_months:g} free month{'s' if free_months != 1 else ''}",
+                    "amount": 0,
+                })
+            if billable_months:
+                breakdown.append({
+                    "label": f"Storage · {billable_months:g} billable month{'s' if billable_months != 1 else ''}",
+                    "amount": float(amount),
+                })
+        calculated.append({
+            **charge,
+            "description": description,
+            "breakdown": breakdown,
+            "selected": selected,
+            "amount": float(amount),
+        })
 
     return {
         "match": matched.to_dict() if matched else None,
