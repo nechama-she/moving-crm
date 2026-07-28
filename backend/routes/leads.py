@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+from typing import Any
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -21,9 +22,10 @@ from auth import get_current_user
 from company_colors import resolve_company_color
 from config import get_config
 from database import get_db
+from lead_audit import record_lead_update_log
 from libs.common.phone import normalize_digits
 from libs.smartmoving.client import get_opportunity, get_opportunity_audit_activity, get_opportunity_documents, download_opportunity_document, update_opportunity_salesperson
-from models import Lead, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting
+from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting
 from routes.templates import get_company_template, render_template
 
 logger = logging.getLogger("moving-crm")
@@ -206,7 +208,7 @@ def _map_smartmoving_payments(payments: list | None) -> list[dict]:
 
 
 def _merge_smartmoving_payments_with_existing(smartmoving_rows: list[dict], existing_rows: list[dict]) -> list[dict]:
-    """Keep CRM-managed payment fields (repPaid/repPaidAt) when refreshing from SmartMoving."""
+    """Keep CRM-managed payout fields when refreshing from SmartMoving."""
     merged: list[dict] = []
     for index, row in enumerate(smartmoving_rows):
         existing = existing_rows[index] if index < len(existing_rows) else {}
@@ -216,6 +218,10 @@ def _merge_smartmoving_payments_with_existing(smartmoving_rows: list[dict], exis
         next_row = dict(row)
         next_row["repPaid"] = rep_paid
         next_row["repPaidAt"] = rep_paid_at
+        next_row["thirdPartyCommissionTo"] = str(existing.get("thirdPartyCommissionTo") or "").strip()
+        next_row["thirdPartyCommissionAmount"] = float(existing.get("thirdPartyCommissionAmount") or 0)
+        next_row["thirdPartyCommissionPaid"] = bool(existing.get("thirdPartyCommissionPaid") or False)
+        next_row["thirdPartyCommissionPaidAt"] = str(existing.get("thirdPartyCommissionPaidAt") or "").strip()
         merged.append(next_row)
     return merged
 
@@ -1331,6 +1337,32 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
     return lead.to_dict()
 
 
+@router.get("/leads/{lead_id}/logs")
+def get_lead_update_logs(
+    lead_id: str,
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _get_visible_lead_or_404(lead_id, user, db)
+    query = db.query(LeadUpdateLog).filter(LeadUpdateLog.lead_id == lead_id)
+    total = query.count()
+    rows = (
+        query
+        .order_by(LeadUpdateLog.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return {
+        "items": [row.to_dict() for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
 @router.delete("/leads/{lead_id}")
 def delete_lead(
     lead_id: str,
@@ -1446,10 +1478,28 @@ class LeadJobChargePayload(BaseModel):
     total_cost: float = Field(default=0, alias="totalCost")
 
 
+class ExternalLeadUpdateLogRequest(BaseModel):
+    method: str = "POST"
+    url: str = ""
+    headers: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, Any] | list[Any] | None = None
+
+
+class ExternalLeadUpdateLogResponse(BaseModel):
+    status_code: int | None = None
+    body: dict[str, Any] | list[Any] | None = None
+
+
+class ExternalLeadUpdateLog(BaseModel):
+    request: ExternalLeadUpdateLogRequest | None = None
+    response: ExternalLeadUpdateLogResponse | None = None
+
+
 class LeadJobChargesBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     estimated_charges: list[LeadJobChargePayload] = Field(default_factory=list, alias="estimatedCharges")
+    logs: list[ExternalLeadUpdateLog] | None = None
 
 
 class EstimatedTotalPayload(BaseModel):
@@ -1468,6 +1518,10 @@ class LeadPaymentPayload(BaseModel):
     taken_by_user: str = Field(default="", alias="takenByUser")
     rep_paid: bool = Field(default=False, alias="repPaid")
     rep_paid_at: str = Field(default="", alias="repPaidAt")
+    third_party_commission_to: str = Field(default="", alias="thirdPartyCommissionTo")
+    third_party_commission_amount: float = Field(default=0, alias="thirdPartyCommissionAmount")
+    third_party_commission_paid: bool = Field(default=False, alias="thirdPartyCommissionPaid")
+    third_party_commission_paid_at: str = Field(default="", alias="thirdPartyCommissionPaidAt")
 
 
 def _serialize_estimated_total(payload: EstimatedTotalPayload | None) -> str | None:
@@ -1490,6 +1544,10 @@ def _serialize_payments(payments: list[LeadPaymentPayload] | None) -> str | None
             "takenByUser": (payment.taken_by_user or "").strip(),
             "repPaid": bool(payment.rep_paid),
             "repPaidAt": (payment.rep_paid_at or "").strip(),
+            "thirdPartyCommissionTo": (payment.third_party_commission_to or "").strip(),
+            "thirdPartyCommissionAmount": float(payment.third_party_commission_amount),
+            "thirdPartyCommissionPaid": bool(payment.third_party_commission_paid),
+            "thirdPartyCommissionPaidAt": (payment.third_party_commission_paid_at or "").strip(),
         }
         for payment in payments
     ])
@@ -1530,6 +1588,10 @@ def _deserialize_payments(raw: str | None) -> list[dict[str, object]]:
             "takenByUser": str(row.get("takenByUser") or "").strip(),
             "repPaid": bool(row.get("repPaid") or False),
             "repPaidAt": str(row.get("repPaidAt") or "").strip(),
+            "thirdPartyCommissionTo": str(row.get("thirdPartyCommissionTo") or "").strip(),
+            "thirdPartyCommissionAmount": float(row.get("thirdPartyCommissionAmount") or 0),
+            "thirdPartyCommissionPaid": bool(row.get("thirdPartyCommissionPaid") or False),
+            "thirdPartyCommissionPaidAt": str(row.get("thirdPartyCommissionPaidAt") or "").strip(),
         })
     return payments
 
@@ -1579,6 +1641,7 @@ class LeadJobCreate(BaseModel):
     move_date: str = ""
     booked_move_date: str = ""
     price: float | None = None
+    logs: list[ExternalLeadUpdateLog] | None = None
 
 
 class LeadJobUpdate(BaseModel):
@@ -1594,6 +1657,7 @@ class LeadJobUpdate(BaseModel):
     move_date: str | None = None
     booked_move_date: str | None = None
     price: float | None = None
+    logs: list[ExternalLeadUpdateLog] | None = None
 
 
 def _job_pickups_setting_key(job_id: str) -> str:
@@ -1880,9 +1944,7 @@ def update_lead_job(
 
     if "booked_move_date" in payload:
         booked_raw = (payload.get("booked_move_date") or "").strip()
-        if not booked_raw:
-            row.booked_move_date = None
-        else:
+        if booked_raw:
             booked = _parse_booked_move_date(booked_raw)
             if not booked:
                 raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
@@ -2487,6 +2549,7 @@ class LeadUpdateJob(BaseModel):
     booked_move_date: str | None = None
     price: float | None = None
     estimated_charges: list[LeadJobChargePayload] | None = Field(default=None, alias="estimatedCharges")
+    logs: list[ExternalLeadUpdateLog] | None = None
 
 
 class LeadUpdate(BaseModel):
@@ -2514,6 +2577,7 @@ class LeadUpdate(BaseModel):
     jobs: list[LeadUpdateJob] | None = None
     estimated_total: EstimatedTotalPayload | None = Field(default=None, alias="estimatedTotal")
     payments: list[LeadPaymentPayload] | None = None
+    logs: list[ExternalLeadUpdateLog] | None = None
 
 
 @router.patch("/leads/{lead_id}")
@@ -2630,9 +2694,7 @@ def update_lead(
         lead.move_date = _normalize_move_date(body.move_date)
     if body.booked_move_date is not None:
         booked_raw = (body.booked_move_date or "").strip()
-        if not booked_raw:
-            lead.booked_move_date = None
-        else:
+        if booked_raw:
             parsed_booked = _parse_booked_move_date(booked_raw)
             if not parsed_booked:
                 raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
@@ -2647,6 +2709,45 @@ def update_lead(
         if user.role not in ("admin", "sales_rep"):
             if any(payment.rep_paid or (payment.rep_paid_at or "").strip() for payment in body.payments):
                 raise HTTPException(status_code=403, detail="Only admin and sales reps can mark rep payments")
+        if user.role != "admin":
+            third_party_fields = {
+                "third_party_commission_to",
+                "third_party_commission_amount",
+                "third_party_commission_paid",
+                "third_party_commission_paid_at",
+            }
+            existing_payments = _deserialize_payments(lead.payments)
+            for index, payment in enumerate(body.payments):
+                existing = existing_payments[index] if index < len(existing_payments) else {}
+                submitted_third_party = (
+                    (payment.third_party_commission_to or "").strip(),
+                    float(payment.third_party_commission_amount or 0),
+                    bool(payment.third_party_commission_paid),
+                    (payment.third_party_commission_paid_at or "").strip(),
+                )
+                existing_third_party = (
+                    str(existing.get("thirdPartyCommissionTo") or "").strip(),
+                    float(existing.get("thirdPartyCommissionAmount") or 0),
+                    bool(existing.get("thirdPartyCommissionPaid") or False),
+                    str(existing.get("thirdPartyCommissionPaidAt") or "").strip(),
+                )
+                if (
+                    third_party_fields.intersection(payment.model_fields_set)
+                    and submitted_third_party != existing_third_party
+                ):
+                    raise HTTPException(status_code=403, detail="Only admins can manage third-party payouts")
+                payment.third_party_commission_to = str(existing.get("thirdPartyCommissionTo") or "")
+                payment.third_party_commission_amount = float(existing.get("thirdPartyCommissionAmount") or 0)
+                payment.third_party_commission_paid = bool(existing.get("thirdPartyCommissionPaid") or False)
+                payment.third_party_commission_paid_at = str(existing.get("thirdPartyCommissionPaidAt") or "")
+        for payment in body.payments:
+            if payment.third_party_commission_amount < 0:
+                raise HTTPException(status_code=400, detail="thirdPartyCommissionAmount must be >= 0")
+            if payment.third_party_commission_amount > payment.amount:
+                raise HTTPException(
+                    status_code=400,
+                    detail="thirdPartyCommissionAmount cannot exceed the payment amount",
+                )
         lead.payments = _serialize_payments(body.payments)
 
     primary_job = _get_or_create_primary_lead_job(lead, db)
@@ -2765,9 +2866,7 @@ def update_lead(
 
             if "booked_move_date" in job_payload:
                 booked_raw = (job_payload.get("booked_move_date") or "").strip()
-                if not booked_raw:
-                    target_job.booked_move_date = None
-                else:
+                if booked_raw:
                     booked = _parse_booked_move_date(booked_raw)
                     if not booked:
                         raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
@@ -2920,6 +3019,19 @@ def refresh_lead_from_smartmoving(
 
     opportunity_result = get_opportunity(smartmoving_id)
     if opportunity_result.get("error"):
+        record_lead_update_log(
+            lead_id=lead.id,
+            actor_user_id=user.id,
+            actor_name=user.name,
+            source="smartmoving",
+            method="POST",
+            endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
+            event_type="smartmoving_refresh",
+            request_payload={"smartmoving_id": smartmoving_id},
+            external_response={"opportunity": opportunity_result},
+            response_status=502,
+            error=str(opportunity_result.get("error") or ""),
+        )
         error_text = str(opportunity_result.get("error") or "")
         lowered = error_text.lower()
         if "http 400" in lowered and "opportunity was not found" in lowered:
@@ -2934,6 +3046,19 @@ def refresh_lead_from_smartmoving(
 
     opportunity = opportunity_result.get("data")
     if not isinstance(opportunity, dict):
+        record_lead_update_log(
+            lead_id=lead.id,
+            actor_user_id=user.id,
+            actor_name=user.name,
+            source="smartmoving",
+            method="POST",
+            endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
+            event_type="smartmoving_refresh",
+            request_payload={"smartmoving_id": smartmoving_id},
+            external_response={"opportunity": opportunity_result},
+            response_status=502,
+            error="SmartMoving refresh returned an invalid payload",
+        )
         raise HTTPException(status_code=502, detail="SmartMoving refresh returned an invalid payload")
 
     payload = _build_smartmoving_refresh_payload(opportunity, user)
@@ -2944,9 +3069,35 @@ def refresh_lead_from_smartmoving(
 
     audit_result = get_opportunity_audit_activity(smartmoving_id)
     if audit_result.get("error"):
+        record_lead_update_log(
+            lead_id=lead.id,
+            actor_user_id=user.id,
+            actor_name=user.name,
+            source="smartmoving",
+            method="POST",
+            endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
+            event_type="smartmoving_refresh",
+            request_payload={"smartmoving_id": smartmoving_id, "mapped_payload": payload},
+            external_response={"opportunity": opportunity_result, "audit_activity": audit_result},
+            response_status=502,
+            error=str(audit_result.get("error") or ""),
+        )
         raise HTTPException(status_code=502, detail=f"SmartMoving audit failed: {audit_result['error']}")
     audit_rows = audit_result.get("data")
     if not isinstance(audit_rows, list):
+        record_lead_update_log(
+            lead_id=lead.id,
+            actor_user_id=user.id,
+            actor_name=user.name,
+            source="smartmoving",
+            method="POST",
+            endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
+            event_type="smartmoving_refresh",
+            request_payload={"smartmoving_id": smartmoving_id, "mapped_payload": payload},
+            external_response={"opportunity": opportunity_result, "audit_activity": audit_result},
+            response_status=502,
+            error="SmartMoving audit returned an invalid payload",
+        )
         raise HTTPException(status_code=502, detail="SmartMoving audit returned an invalid payload")
     company = db.query(Company).filter(Company.id == lead.company_id).first()
     company_timezone = (company.timezone if company else "") or "America/New_York"
@@ -2960,6 +3111,18 @@ def refresh_lead_from_smartmoving(
 
     body = LeadUpdate.model_validate(payload)
     updated = update_lead(lead.id, body, user, db)
+    record_lead_update_log(
+        lead_id=lead.id,
+        actor_user_id=user.id,
+        actor_name=user.name,
+        source="smartmoving",
+        method="POST",
+        endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
+        event_type="smartmoving_refresh",
+        request_payload={"smartmoving_id": smartmoving_id, "mapped_payload": payload},
+        external_response={"opportunity": opportunity_result, "audit_activity": audit_result},
+        response_status=200,
+    )
     sync_result = sync_smartmoving_files(lead, user, db)
     if isinstance(updated, dict):
         updated["smartmoving_document_links_synced"] = sync_result["created_links"]
@@ -3140,6 +3303,7 @@ class NewLead(BaseModel):
     estimated_charges: list[LeadJobChargePayload] = Field(default_factory=list, alias="estimatedCharges")
     estimated_total: EstimatedTotalPayload | None = Field(default=None, alias="estimatedTotal")
     payments: list[LeadPaymentPayload] = Field(default_factory=list)
+    logs: list[ExternalLeadUpdateLog] | None = None
     company_name: str
     source: str
 
@@ -3432,7 +3596,7 @@ def create_lead(
         db.rollback()
         logger.warning("Non-fatal outreach event write failure for lead %s: %s", lead.id, exc)
 
-    # Duplicate lead to Top Tier Van Lines after a 10-minute delay
+    # Duplicate matching Gorilla leads to Top Tier or Movers 95 based on referral source.
     if company.name == "Gorilla Haulers" and not status_provided and not suppress_new_lead_automation:
         if lead.referral_source == "Facebook-Gorilla-HHG-Nationwide":
             _enqueue_lead_for_duplication(
@@ -3452,6 +3616,16 @@ def create_lead(
                 lead_id=lead.id,
                 target_company_name="Movers 95",
                 target_referral_source="Facebook-Movers95-HHG-Local",
+            )
+
+    # Duplicate Wilson Bros FL/GA/NC leads to Top Tier after 120 minutes.
+    if company.name == "Wilson Bros Van Lines" and not status_provided and not suppress_new_lead_automation:
+        if lead.referral_source == "Facebook-WilsonBros-HHG-FL-GA-NC":
+            _enqueue_lead_for_duplication(
+                lead_id=lead.id,
+                target_company_name="Top Tier Van Lines",
+                target_referral_source="Facebook-TTVL-HHG-FL-GA-NC",
+                delay_minutes=120,
             )
 
     return {

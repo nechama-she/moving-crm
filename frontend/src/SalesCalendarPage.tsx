@@ -37,6 +37,10 @@ type LeadPayment = {
   takenByUser: string;
   repPaid?: boolean;
   repPaidAt?: string;
+  thirdPartyCommissionTo?: string;
+  thirdPartyCommissionAmount?: number;
+  thirdPartyCommissionPaid?: boolean;
+  thirdPartyCommissionPaidAt?: string;
 };
 
 type SalesSearchResult = {
@@ -291,6 +295,10 @@ function parsePayments(raw: unknown): LeadPayment[] {
       takenByUser: String(value.takenByUser || ""),
       repPaid: Boolean(value.repPaid || false),
       repPaidAt: String(value.repPaidAt || ""),
+      thirdPartyCommissionTo: String(value.thirdPartyCommissionTo || ""),
+      thirdPartyCommissionAmount: Number(value.thirdPartyCommissionAmount || 0),
+      thirdPartyCommissionPaid: Boolean(value.thirdPartyCommissionPaid || false),
+      thirdPartyCommissionPaidAt: String(value.thirdPartyCommissionPaidAt || ""),
     };
   });
 }
@@ -303,12 +311,28 @@ export default function SalesCalendarPage() {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
+  const [mobileSelectedDay, setMobileSelectedDay] = useState(() => new Date().getDate());
+  const [mobileMonthExpanded, setMobileMonthExpanded] = useState(false);
+  const mobileDateRailRef = useRef<HTMLDivElement | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<SalesCalendarJob[]>([]);
   const [selectedAssigneeKeys, setSelectedAssigneeKeys] = useState<string[]>([]);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
   const [totalsExpanded, setTotalsExpanded] = useState(false);
+  const [mobileSummaryExpanded, setMobileSummaryExpanded] = useState(false);
+  useEffect(() => {
+    const mobileQuery = window.matchMedia("(max-width: 640px)");
+    const collapseCompanyTotals = () => {
+      if (mobileQuery.matches) {
+        setTotalsExpanded(false);
+        setMobileSummaryExpanded(false);
+      }
+    };
+    collapseCompanyTotals();
+    mobileQuery.addEventListener("change", collapseCompanyTotals);
+    return () => mobileQuery.removeEventListener("change", collapseCompanyTotals);
+  }, []);
   const [dayPanelDay, setDayPanelDay] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SalesSearchResult[]>([]);
@@ -581,6 +605,8 @@ export default function SalesCalendarPage() {
       let paymentsTotal = 0;
       let repCommissionPaid = 0;
       let repCommissionTotal = 0;
+      let thirdPartyPayoutPaid = 0;
+      let thirdPartyPayoutTotal = 0;
       let leadCount = 0;
       for (const job of items) {
         leadCount += 1;
@@ -588,6 +614,9 @@ export default function SalesCalendarPage() {
         for (const payment of job.payments || []) {
           const paymentAmount = Number(payment.amount || 0);
           paymentsTotal += paymentAmount;
+          const thirdPartyAmount = Number(payment.thirdPartyCommissionAmount || 0);
+          thirdPartyPayoutTotal += thirdPartyAmount;
+          if (payment.thirdPartyCommissionPaid) thirdPartyPayoutPaid += thirdPartyAmount;
         }
         if ((job.assigned_to_role || "") === "sales_rep") {
           const commissionPercent = commissionPercentForJob(job);
@@ -604,7 +633,8 @@ export default function SalesCalendarPage() {
       const paymentsPercent = estimatedTotal > 0 ? (paymentsTotal / estimatedTotal) * 100 : 0;
       const remainingPercent = estimatedTotal > 0 ? (remainingTotal / estimatedTotal) * 100 : 0;
       const repCommissionRemaining = Math.max(0, repCommissionTotal - repCommissionPaid);
-      const companyIncome = paymentsTotal - processingFeeAmount(paymentsTotal) - repCommissionTotal;
+      const thirdPartyPayoutRemaining = Math.max(0, thirdPartyPayoutTotal - thirdPartyPayoutPaid);
+      const companyIncome = paymentsTotal - processingFeeAmount(paymentsTotal) - repCommissionTotal - thirdPartyPayoutTotal;
       return {
         estimatedTotal,
         paymentsTotal,
@@ -614,6 +644,9 @@ export default function SalesCalendarPage() {
         repCommissionTotal,
         repCommissionPaid,
         repCommissionRemaining,
+        thirdPartyPayoutTotal,
+        thirdPartyPayoutPaid,
+        thirdPartyPayoutRemaining,
         companyIncome,
         leadCount,
       };
@@ -666,6 +699,8 @@ export default function SalesCalendarPage() {
       let paymentsTotal = 0;
       let repCommissionPaid = 0;
       let repCommissionTotal = 0;
+      let thirdPartyPayoutPaid = 0;
+      let thirdPartyPayoutTotal = 0;
       let leadCount = 0;
       for (const job of items) {
         leadCount += 1;
@@ -673,6 +708,9 @@ export default function SalesCalendarPage() {
         for (const payment of job.payments || []) {
           const paymentAmount = Number(payment.amount || 0);
           paymentsTotal += paymentAmount;
+          const thirdPartyAmount = Number(payment.thirdPartyCommissionAmount || 0);
+          thirdPartyPayoutTotal += thirdPartyAmount;
+          if (payment.thirdPartyCommissionPaid) thirdPartyPayoutPaid += thirdPartyAmount;
         }
         if ((job.assigned_to_role || "") === "sales_rep") {
           const commissionPercent = commissionPercentForJob(job);
@@ -689,7 +727,8 @@ export default function SalesCalendarPage() {
       const paymentsPercent = estimatedTotal > 0 ? (paymentsTotal / estimatedTotal) * 100 : 0;
       const remainingPercent = estimatedTotal > 0 ? (remainingTotal / estimatedTotal) * 100 : 0;
       const repCommissionRemaining = Math.max(0, repCommissionTotal - repCommissionPaid);
-      const companyIncome = paymentsTotal - processingFeeAmount(paymentsTotal) - repCommissionTotal;
+      const thirdPartyPayoutRemaining = Math.max(0, thirdPartyPayoutTotal - thirdPartyPayoutPaid);
+      const companyIncome = paymentsTotal - processingFeeAmount(paymentsTotal) - repCommissionTotal - thirdPartyPayoutTotal;
       return {
         estimatedTotal,
         paymentsTotal,
@@ -699,6 +738,9 @@ export default function SalesCalendarPage() {
         repCommissionTotal,
         repCommissionPaid,
         repCommissionRemaining,
+        thirdPartyPayoutTotal,
+        thirdPartyPayoutPaid,
+        thirdPartyPayoutRemaining,
         companyIncome,
         leadCount,
       };
@@ -724,6 +766,18 @@ export default function SalesCalendarPage() {
   const firstWeekday = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthLabel = viewMonth.toLocaleString(undefined, { month: "long", year: "numeric" });
+  useEffect(() => {
+    const now = new Date();
+    setMobileSelectedDay(
+      now.getFullYear() === year && now.getMonth() === month ? now.getDate() : 1,
+    );
+  }, [year, month]);
+  useEffect(() => {
+    const selectedButton = mobileDateRailRef.current?.querySelector<HTMLElement>(
+      `[data-mobile-day="${mobileSelectedDay}"]`,
+    );
+    selectedButton?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
+  }, [mobileSelectedDay, year, month]);
 
   const jobsByDay = useMemo(() => {
     const map = new Map<number, SalesCalendarJob[]>();
@@ -874,8 +928,9 @@ export default function SalesCalendarPage() {
             </div>
           </div>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <div className="mobile-filter-rail" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             <button
+              className="mobile-filter-pill"
               type="button"
               onClick={() => {
                 const allKeys = assigneeOptions.map((a) => a.key);
@@ -905,7 +960,7 @@ export default function SalesCalendarPage() {
               <span style={{ width: 8, height: 8, borderRadius: 999, background: "#0f766e", display: "inline-block" }} />
               <span style={{ display: "grid", lineHeight: 1.15, textAlign: "left" }}>
                 <span>All ({totalLeadCount})</span>
-                <span style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimatedAllAssignees)}</span>
+                <span className="mobile-filter-secondary" style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimatedAllAssignees)}</span>
               </span>
             </button>
 
@@ -917,6 +972,7 @@ export default function SalesCalendarPage() {
               const repTone = toneForRepName(assignee.name);
               return (
                 <button
+                  className="mobile-filter-pill"
                   key={assignee.key}
                   type="button"
                   onClick={() => {
@@ -939,7 +995,7 @@ export default function SalesCalendarPage() {
                   <span style={{ width: 8, height: 8, borderRadius: 999, background: checked ? repTone.border : "#94a3b8", display: "inline-block" }} />
                   <span style={{ display: "grid", lineHeight: 1.15, textAlign: "left" }}>
                     <span style={{ color: repTone.text, fontWeight: 700 }}>{assignee.name}</span>{role ? ` (${role})` : ""} ({count})
-                    <span style={{ fontSize: 11, fontWeight: 700, color: repTone.text }}>{formatMoney(estimatedTotal)}</span>
+                    <span className="mobile-filter-secondary" style={{ fontSize: 11, fontWeight: 700, color: repTone.text }}>{formatMoney(estimatedTotal)}</span>
                   </span>
                 </button>
               );
@@ -1014,7 +1070,19 @@ export default function SalesCalendarPage() {
             ) : null}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginTop: 4 }}>
+          <button
+            type="button"
+            className="mobile-totals-toggle"
+            aria-expanded={mobileSummaryExpanded}
+            onClick={() => setMobileSummaryExpanded((expanded) => !expanded)}
+          >
+            <span className="mobile-totals-summary">
+              <strong>Totals</strong>
+              <span>{salesMoneySummary.leadCount} leads · {formatMoney(salesMoneySummary.estimatedTotal)}</span>
+            </span>
+            <span>{mobileSummaryExpanded ? "Hide ▴" : "Show ▾"}</span>
+          </button>
+          <div className={`calendar-summary-totals${mobileSummaryExpanded ? " mobile-summary-visible" : ""}`} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginTop: 4 }}>
             <div style={{ border: "1px solid #cbd5e1", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #f8fafc 0%, #ffffff 100%)" }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: "#334155", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Leads</div>
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{salesMoneySummary.leadCount}</div>
@@ -1045,11 +1113,18 @@ export default function SalesCalendarPage() {
               <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.repCommissionRemaining)}</div>
               <div style={{ marginTop: 4, fontSize: 12, color: "#be123c" }}>unpaid to reps</div>
             </div>
+            <div style={{ border: "1px solid #fe9339", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #fff7e6 0%, #ffffff 100%)" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#8c4b02", textTransform: "uppercase", letterSpacing: "0.05em" }}>Third-party Unpaid</div>
+              <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.thirdPartyPayoutRemaining)}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#8c4b02" }}>
+                {formatMoney(salesMoneySummary.thirdPartyPayoutPaid)} paid of {formatMoney(salesMoneySummary.thirdPartyPayoutTotal)}
+              </div>
+            </div>
             {isAdmin ? (
               <div style={{ border: "1px solid #6ee7b7", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(145deg, #ecfdf5 0%, #ffffff 100%)" }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: "#047857", textTransform: "uppercase", letterSpacing: "0.05em" }}>Company Income</div>
                 <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(salesMoneySummary.companyIncome)}</div>
-                <div style={{ marginTop: 4, fontSize: 12, color: "#047857" }}>payments - 3.5% - rep commissions</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "#047857" }}>payments - 3.5% - rep commissions - third-party payouts</div>
               </div>
             ) : null}
           </div>
@@ -1114,6 +1189,11 @@ export default function SalesCalendarPage() {
                           <div style={{ fontSize: 14, color: "#be123c", fontWeight: 800 }}>{formatMoney(company.repCommissionRemaining)}</div>
                         </div>
                         <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
+                          <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Third-party Unpaid</div>
+                          <div style={{ fontSize: 14, color: "#8c4b02", fontWeight: 800 }}>{formatMoney(company.thirdPartyPayoutRemaining)}</div>
+                          <div style={{ fontSize: 11, color: "#8c4b02" }}>of {formatMoney(company.thirdPartyPayoutTotal)}</div>
+                        </div>
+                        <div style={{ border: "1px solid #dbe4ef", background: "#fff", borderRadius: 10, padding: "7px 8px" }}>
                           <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>Total</div>
                           <div style={{ fontSize: 14, color: "#0f172a", fontWeight: 800 }}>{formatMoney(company.paymentsTotal + company.remainingTotal)}</div>
                         </div>
@@ -1141,15 +1221,25 @@ export default function SalesCalendarPage() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button type="button" onClick={() => setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))} style={calendarNavBtn}>◀</button>
-            <strong style={{ minWidth: 150, textAlign: "center", fontSize: 13, color: "#0f172a" }}>{monthLabel}</strong>
+            <button
+              type="button"
+              className="calendar-month-toggle"
+              aria-expanded={mobileMonthExpanded}
+              title={mobileMonthExpanded ? "Show day agenda" : "Show full month"}
+              onClick={() => setMobileMonthExpanded((expanded) => !expanded)}
+              style={{ minWidth: 150, textAlign: "center", fontSize: 13, color: "#0f172a", border: "none", background: "transparent", fontWeight: 700, padding: "6px 8px" }}
+            >
+              {monthLabel}
+              <span className="calendar-view-caret" aria-hidden="true">{mobileMonthExpanded ? " ▴" : " ▾"}</span>
+            </button>
             <button type="button" onClick={() => setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))} style={calendarNavBtn}>▶</button>
           </div>
         </div>
 
         {loading ? <p style={{ padding: 10, color: "#3e3e3c", fontSize: 13 }}>Loading calendar...</p> : null}
 
-        <div style={{ padding: 10 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
+        <div className={`calendar-scroll desktop-calendar${mobileMonthExpanded ? " mobile-month-visible" : ""}`} style={{ padding: 10 }}>
+          <div className="calendar-week-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
             {weekdayLabels.map((label) => (
               <div key={label} style={{ fontSize: 11, color: "#64748b", fontWeight: 700, textTransform: "uppercase", textAlign: "center" }}>
                 {label}
@@ -1157,7 +1247,7 @@ export default function SalesCalendarPage() {
             ))}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
+          <div className="calendar-week-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
             {Array.from({ length: firstWeekday }).map((_, i) => (
               <div key={`blank-${i}`} style={calendarBlankCell} />
             ))}
@@ -1246,6 +1336,103 @@ export default function SalesCalendarPage() {
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        <div className={`mobile-calendar${mobileMonthExpanded ? " mobile-agenda-hidden" : ""}`} style={{ padding: 10 }}>
+          <div ref={mobileDateRailRef} style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, scrollSnapType: "x proximity" }}>
+            {Array.from({ length: daysInMonth }).map((_, index) => {
+              const day = index + 1;
+              const date = new Date(year, month, day);
+              const selected = day === mobileSelectedDay;
+              const count = (jobsByDay.get(day) || []).length;
+              return (
+                <button
+                  key={day}
+                  data-mobile-day={day}
+                  type="button"
+                  onClick={() => setMobileSelectedDay(day)}
+                  style={{
+                    flex: "0 0 54px",
+                    scrollSnapAlign: "start",
+                    border: `1px solid ${selected ? "#0176d3" : "#c9c7c5"}`,
+                    borderRadius: 4,
+                    padding: "6px 4px",
+                    background: selected ? "#0176d3" : "#fff",
+                    color: selected ? "#fff" : "#181818",
+                    textAlign: "center",
+                  }}
+                >
+                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>
+                    {date.toLocaleDateString(undefined, { weekday: "short" })}
+                  </div>
+                  <div style={{ fontSize: 17, fontWeight: 800 }}>{day}</div>
+                  <div style={{ fontSize: 9, minHeight: 14 }}>{count ? `${count} job${count === 1 ? "" : "s"}` : ""}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ borderTop: "1px solid #dddbda", paddingTop: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+              <strong style={{ color: "#032d60", fontSize: 14 }}>
+                {new Date(year, month, mobileSelectedDay).toLocaleDateString(undefined, {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
+                })}
+              </strong>
+              <span style={{ color: "#706e6b", fontSize: 12 }}>
+                {(jobsByDay.get(mobileSelectedDay) || []).length} jobs
+              </span>
+            </div>
+            {(jobsByDay.get(mobileSelectedDay) || []).length === 0 ? (
+              <div style={{ border: "1px dashed #c9c7c5", borderRadius: 4, padding: 18, textAlign: "center", color: "#706e6b" }}>
+                No jobs scheduled
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {(jobsByDay.get(mobileSelectedDay) || []).map((job) => {
+                  const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
+                  const commissionStatus = leadRepCommissionStatus(job);
+                  return (
+                    <Link
+                      key={job.id}
+                      to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+                      state={backState}
+                      style={{
+                        display: "grid",
+                        gap: 5,
+                        padding: 12,
+                        border: `1px solid ${repTone.border}`,
+                        borderLeft: `4px solid ${repTone.border}`,
+                        borderRadius: 4,
+                        background: repTone.tint,
+                        color: "#181818",
+                        textDecoration: "none",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <strong style={{ fontSize: 14 }}>{job.full_name || "Unnamed"}</strong>
+                        <span style={{ color: repTone.text, fontSize: 11, fontWeight: 700 }}>{job.assigned_to_name || "Unassigned"}</span>
+                      </div>
+                      <div style={{ color: repTone.text, fontSize: 12, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
+                      <div style={{ color: "#3e3e3c", fontSize: 12 }}>{job.pickup_zip || "?"} → {job.delivery_zip || "?"}</div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <span style={{ color: "#0f766e", fontSize: 12, fontWeight: 800 }}>
+                          {leadDisplayAmount(job) == null ? "" : formatMoney(leadDisplayAmount(job) || 0)}
+                        </span>
+                        {commissionStatus ? (
+                          <span style={{ fontSize: 10, fontWeight: 700, color: commissionStatus.text, background: commissionStatus.background, border: `1px solid ${commissionStatus.border}`, borderRadius: 999, padding: "2px 7px" }}>
+                            {commissionStatus.label}
+                          </span>
+                        ) : null}
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </section>

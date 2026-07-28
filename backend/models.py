@@ -238,6 +238,10 @@ class Lead(Base):
                             "takenByUser": str(row.get("takenByUser") or "").strip(),
                             "repPaid": bool(row.get("repPaid") or False),
                             "repPaidAt": str(row.get("repPaidAt") or "").strip(),
+                            "thirdPartyCommissionTo": str(row.get("thirdPartyCommissionTo") or "").strip(),
+                            "thirdPartyCommissionAmount": float(row.get("thirdPartyCommissionAmount") or 0),
+                            "thirdPartyCommissionPaid": bool(row.get("thirdPartyCommissionPaid") or False),
+                            "thirdPartyCommissionPaidAt": str(row.get("thirdPartyCommissionPaidAt") or "").strip(),
                         })
             except Exception:
                 payments_data = []
@@ -247,6 +251,7 @@ class Lead(Base):
             "company_id": self.company_id,
             "assigned_to": self.assigned_to or "",
             "assigned_to_name": self.assignee.name if self.assignee else "",
+            "assigned_to_role": self.assignee.role if self.assignee else "",
             "company_name": self.company.name if self.company else "",
             "company_phone": self.company.phone if self.company else "",
             "aircall_number_id": self.company.aircall_number_id if self.company else "",
@@ -274,6 +279,53 @@ class Lead(Base):
             "notes": self.notes or "",
             "estimatedTotal": estimated_total_data,
             "payments": payments_data,
+        }
+
+
+class LeadUpdateLog(Base):
+    __tablename__ = "lead_update_logs"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    lead_id = Column(String(36), nullable=False, index=True)
+    actor_user_id = Column(String(36), nullable=True, index=True)
+    actor_name = Column(String(255))
+    source = Column(String(50), nullable=False, default="api", index=True)
+    method = Column(String(10), nullable=False)
+    endpoint = Column(Text, nullable=False)
+    event_type = Column(String(100), nullable=False, default="lead_update")
+    request_payload = Column(Text)
+    external_response = Column(Text)
+    response_status = Column(Integer)
+    error = Column(Text)
+    sql_statements = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+
+    def to_dict(self):
+        def parsed(value):
+            if not value:
+                return None
+            try:
+                return json.loads(value)
+            except Exception:
+                return value
+
+        return {
+            "id": self.id,
+            "lead_id": self.lead_id,
+            "actor_user_id": self.actor_user_id or "",
+            "actor_name": self.actor_name or "",
+            "source": self.source or "api",
+            "method": self.method or "",
+            "endpoint": self.endpoint or "",
+            "event_type": self.event_type or "lead_update",
+            "request": parsed(self.request_payload),
+            "response": parsed(self.external_response),
+            "request_payload": parsed(self.request_payload),
+            "external_response": parsed(self.external_response),
+            "response_status": self.response_status,
+            "error": self.error or "",
+            "sql": parsed(self.sql_statements) or [],
+            "created_at": self.created_at.isoformat() if self.created_at else "",
         }
 
 
@@ -618,4 +670,133 @@ class CompanyMessageTemplate(Base):
             "day3_followup_sms": self.day3_followup_sms or "",
             "updated_by": self.updated_by or "",
             "updated_at": self.updated_at.isoformat() if self.updated_at else "",
+        }
+
+
+# ---------------------------------------------------------------------------
+# Company pricing books
+# ---------------------------------------------------------------------------
+class PricingPlan(Base):
+    __tablename__ = "pricing_plans"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
+    company_name = Column(String(255), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    source_key = Column(String(500), nullable=False, unique=True)
+    source_file = Column(String(255), nullable=False, default="")
+    source_sheet = Column(String(255), nullable=False, default="")
+    pickup_regions = Column(Text, nullable=False, default="")
+    fuel_percent = Column(Numeric(7, 3))
+    active = Column(Boolean, nullable=False, default=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    company = relationship("Company", foreign_keys=[company_id])
+    rules = relationship(
+        "PricingRule", cascade="all, delete-orphan", order_by="PricingRule.sort_order"
+    )
+    rates = relationship(
+        "PricingRate", cascade="all, delete-orphan", order_by="PricingRate.sort_order"
+    )
+    services = relationship(
+        "PricingService", cascade="all, delete-orphan", order_by="PricingService.sort_order"
+    )
+
+    def summary_dict(self):
+        return {
+            "id": self.id,
+            "company_id": self.company_id or "",
+            "company_name": self.company_name,
+            "name": self.name,
+            "source_file": self.source_file,
+            "source_sheet": self.source_sheet,
+            "pickup_regions": self.pickup_regions,
+            "fuel_percent": float(self.fuel_percent) if self.fuel_percent is not None else None,
+            "active": bool(self.active),
+            "rate_count": len(self.rates),
+            "rule_count": len(self.rules),
+            "service_count": len(self.services),
+            "updated_at": self.updated_at.isoformat() if self.updated_at else "",
+        }
+
+    def to_dict(self):
+        return {
+            **self.summary_dict(),
+            "rules": [row.to_dict() for row in self.rules],
+            "rates": [row.to_dict() for row in self.rates],
+            "services": [row.to_dict() for row in self.services],
+        }
+
+
+class PricingRule(Base):
+    __tablename__ = "pricing_rules"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id"), nullable=False, index=True)
+    category = Column(String(50), nullable=False, default="general")
+    title = Column(String(255), nullable=False, default="Pricing rule")
+    description = Column(Text, nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "category": self.category,
+            "title": self.title,
+            "description": self.description,
+            "sort_order": self.sort_order,
+        }
+
+
+class PricingRate(Base):
+    __tablename__ = "pricing_rates"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id"), nullable=False, index=True)
+    destination = Column(String(255), nullable=False, index=True)
+    destination_group = Column(String(100), nullable=False, default="")
+    minimum_price = Column(Numeric(12, 2))
+    minimum_text = Column(String(100), nullable=False, default="")
+    band_label = Column(String(100), nullable=False)
+    cubic_feet_min = Column(Integer)
+    cubic_feet_max = Column(Integer)
+    rate = Column(Numeric(12, 4))
+    rate_text = Column(String(100), nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "destination": self.destination,
+            "destination_group": self.destination_group,
+            "minimum_price": float(self.minimum_price) if self.minimum_price is not None else None,
+            "minimum_text": self.minimum_text,
+            "band_label": self.band_label,
+            "cubic_feet_min": self.cubic_feet_min,
+            "cubic_feet_max": self.cubic_feet_max,
+            "rate": float(self.rate) if self.rate is not None else None,
+            "rate_text": self.rate_text,
+            "sort_order": self.sort_order,
+        }
+
+
+class PricingService(Base):
+    __tablename__ = "pricing_services"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id"), nullable=False, index=True)
+    name = Column(String(500), nullable=False)
+    rate_text = Column(String(255), nullable=False, default="")
+    comments = Column(Text, nullable=False, default="")
+    sort_order = Column(Integer, nullable=False, default=0)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "rate_text": self.rate_text,
+            "comments": self.comments,
+            "sort_order": self.sort_order,
         }

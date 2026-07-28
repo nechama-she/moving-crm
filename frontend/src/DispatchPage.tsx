@@ -324,6 +324,19 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const [jobSearchError, setJobSearchError] = useState("");
   const [jobSearchOpen, setJobSearchOpen] = useState(false);
   const [totalsExpanded, setTotalsExpanded] = useState(false);
+  const [mobileSummaryExpanded, setMobileSummaryExpanded] = useState(false);
+  useEffect(() => {
+    const mobileQuery = window.matchMedia("(max-width: 640px)");
+    const collapseCompanyTotals = () => {
+      if (mobileQuery.matches) {
+        setTotalsExpanded(false);
+        setMobileSummaryExpanded(false);
+      }
+    };
+    collapseCompanyTotals();
+    mobileQuery.addEventListener("change", collapseCompanyTotals);
+    return () => mobileQuery.removeEventListener("change", collapseCompanyTotals);
+  }, []);
   const jobSearchRef = useRef<HTMLDivElement | null>(null);
 
   const [name, setName] = useState("");
@@ -332,6 +345,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
+  const [showInitialCompanyPicker, setShowInitialCompanyPicker] = useState(false);
   const handledRouteJobIdRef = useRef("");
   const singleSelectedDispatchCompanyId = selectedDispatchCompanyIds.length === 1 ? selectedDispatchCompanyIds[0] : "";
 
@@ -996,8 +1010,9 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                   : ""}
               </div>
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <div className="mobile-filter-rail" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               <button
+                className="mobile-filter-pill"
                 type="button"
                 onClick={() => {
                   const allIds = dispatchCompanies.map((c) => c.id);
@@ -1027,7 +1042,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 <span style={{ width: 8, height: 8, borderRadius: 999, background: "#0f766e", display: "inline-block" }} />
                 <span style={{ display: "grid", lineHeight: 1.15, textAlign: "left" }}>
                   <span>All ({calendarJobs.length})</span>
-                  <span style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimatedAll)}</span>
+                  <span className="mobile-filter-secondary" style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimatedAll)}</span>
                 </span>
               </button>
               {dispatchCompanies.map((company) => {
@@ -1037,6 +1052,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 const tone = toneForCompanyColor(company.color, company.name);
                 return (
                   <button
+                    className="mobile-filter-pill"
                     type="button"
                     key={company.id}
                     onClick={() => {
@@ -1063,7 +1079,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                     <span style={{ width: 8, height: 8, borderRadius: 999, background: tone.border, display: "inline-block" }} />
                     <span style={{ display: "grid", lineHeight: 1.15, textAlign: "left" }}>
                       <span>{company.name} ({monthlyCount})</span>
-                      <span style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimated)}</span>
+                      <span className="mobile-filter-secondary" style={{ fontSize: 11, fontWeight: 700 }}>{formatMoney(monthlyEstimated)}</span>
                     </span>
                   </button>
                 );
@@ -1073,7 +1089,19 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
               Day settings default to the current company filter. If multiple companies are checked, save applies to all selected companies.
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginTop: 4 }}>
+            <button
+              type="button"
+              className="mobile-totals-toggle"
+              aria-expanded={mobileSummaryExpanded}
+              onClick={() => setMobileSummaryExpanded((expanded) => !expanded)}
+            >
+              <span className="mobile-totals-summary">
+                <strong>Totals</strong>
+                <span>{calendarMoneySummary.leadCount} leads · {formatMoney(calendarMoneySummary.estimatedTotal)}</span>
+              </span>
+              <span>{mobileSummaryExpanded ? "Hide ▴" : "Show ▾"}</span>
+            </button>
+            <div className={`calendar-summary-totals${mobileSummaryExpanded ? " mobile-summary-visible" : ""}`} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginTop: 4 }}>
               <div style={{ border: "1px solid #cbd5e1", borderRadius: 14, padding: "12px 14px", background: "linear-gradient(135deg, #eff6ff 0%, #ffffff 100%)" }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estimated Total</div>
                 <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{formatMoney(calendarMoneySummary.estimatedTotal)}</div>
@@ -1248,13 +1276,13 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   }
 
   return (
-    <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
+    <div className="user-setup-page" style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Dispatcher Setup</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
         Create dispatch users and map them to the companies they can access.
       </p>
 
-      <div style={{ border: "1px solid #dddbda", borderRadius: 4, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
+      <div className="user-setup-create-card" style={{ border: "1px solid #dddbda", borderRadius: 4, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
         <h2 style={sectionHeader}>Create Dispatch User</h2>
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
           <label style={fieldLabel}>
@@ -1304,7 +1332,16 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
 
         <div style={{ marginTop: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#3e3e3c", marginBottom: 6 }}>Assign Companies</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <div className="user-access-summary">
+            <div>
+              <strong>{selectedCompanyIds.length === 0 ? "No companies selected" : `${selectedCompanyIds.length} selected`}</strong>
+              <span>{selectedCompanyIds.length === 0 ? "Choose the companies this dispatcher can access" : "Access limited to selected companies"}</span>
+            </div>
+            <button type="button" onClick={() => setShowInitialCompanyPicker((open) => !open)}>
+              {showInitialCompanyPicker ? "Done" : "Choose companies"}
+            </button>
+          </div>
+          {showInitialCompanyPicker ? <div className="user-access-picker" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {companies.map((company) => {
               const checked = selectedCompanyIds.includes(company.id);
               return (
@@ -1325,7 +1362,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 </button>
               );
             })}
-          </div>
+          </div> : null}
         </div>
 
         <div style={{ marginTop: 14 }}>
@@ -1343,8 +1380,8 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
       {error ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{error}</p> : null}
       {info ? <p style={{ marginBottom: 10, color: "#2e844a", fontSize: 13 }}>{info}</p> : null}
 
-      <div style={{ border: "1px solid #dddbda", borderRadius: 4, overflow: "auto", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+      <div className="user-setup-list" style={{ border: "1px solid #dddbda", borderRadius: 4, overflow: "auto", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
+        <table className="user-setup-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
           <thead>
             <tr>
               <th style={th}>Name</th>
@@ -1413,11 +1450,26 @@ function CompanyCalendar({
   const [panelLoading, setPanelLoading] = useState(false);
   const [panelSaving, setPanelSaving] = useState(false);
   const [panelError, setPanelError] = useState("");
+  const [mobileSelectedDay, setMobileSelectedDay] = useState(() => new Date().getDate());
+  const [mobileMonthExpanded, setMobileMonthExpanded] = useState(false);
+  const mobileDateRailRef = useRef<HTMLDivElement | null>(null);
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
   const firstWeekday = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthLabel = viewDate.toLocaleString(undefined, { month: "long", year: "numeric" });
+  useEffect(() => {
+    const now = new Date();
+    setMobileSelectedDay(
+      now.getFullYear() === year && now.getMonth() === month ? now.getDate() : 1,
+    );
+  }, [year, month]);
+  useEffect(() => {
+    const selectedButton = mobileDateRailRef.current?.querySelector<HTMLElement>(
+      `[data-mobile-day="${mobileSelectedDay}"]`,
+    );
+    selectedButton?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
+  }, [mobileSelectedDay, year, month]);
   const dispatchBackState = useMemo(
     () => ({
       backTo: `${location.pathname}${location.search}`,
@@ -1624,13 +1676,23 @@ function CompanyCalendar({
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button type="button" onClick={onPrevMonth} style={calendarNavBtn}>◀</button>
-          <strong style={{ minWidth: 150, textAlign: "center", fontSize: 13, color: "#0f172a" }}>{monthLabel}</strong>
+          <button
+            type="button"
+            className="calendar-month-toggle"
+            aria-expanded={mobileMonthExpanded}
+            title={mobileMonthExpanded ? "Show day agenda" : "Show full month"}
+            onClick={() => setMobileMonthExpanded((expanded) => !expanded)}
+            style={{ minWidth: 150, textAlign: "center", fontSize: 13, color: "#0f172a", border: "none", background: "transparent", fontWeight: 700, padding: "6px 8px" }}
+          >
+            {monthLabel}
+            <span className="calendar-view-caret" aria-hidden="true">{mobileMonthExpanded ? " ▴" : " ▾"}</span>
+          </button>
           <button type="button" onClick={onNextMonth} style={calendarNavBtn}>▶</button>
         </div>
       </div>
 
-      <div style={{ padding: 10 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
+      <div className={`calendar-scroll desktop-calendar${mobileMonthExpanded ? " mobile-month-visible" : ""}`} style={{ padding: 10 }}>
+        <div className="calendar-week-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
           {weekdayLabels.map((label) => (
             <div key={label} style={{ fontSize: 11, color: "#64748b", fontWeight: 700, textTransform: "uppercase", textAlign: "center" }}>
               {label}
@@ -1638,7 +1700,7 @@ function CompanyCalendar({
           ))}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
+        <div className="calendar-week-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
           {Array.from({ length: firstWeekday }).map((_, i) => (
             <div key={`blank-${i}`} style={calendarBlankCell} />
           ))}
@@ -1770,6 +1832,96 @@ function CompanyCalendar({
               </div>
             );
           })}
+        </div>
+      </div>
+
+      <div className={`mobile-calendar${mobileMonthExpanded ? " mobile-agenda-hidden" : ""}`} style={{ padding: 10 }}>
+        <div ref={mobileDateRailRef} style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, scrollSnapType: "x proximity" }}>
+          {Array.from({ length: daysInMonth }).map((_, index) => {
+            const day = index + 1;
+            const date = new Date(year, month, day);
+            const selected = day === mobileSelectedDay;
+            const count = (jobsByDay.get(day) || []).length;
+            return (
+              <button
+                key={day}
+                data-mobile-day={day}
+                type="button"
+                onClick={() => setMobileSelectedDay(day)}
+                style={{
+                  flex: "0 0 54px",
+                  scrollSnapAlign: "start",
+                  border: `1px solid ${selected ? "#0176d3" : "#c9c7c5"}`,
+                  borderRadius: 4,
+                  padding: "6px 4px",
+                  background: selected ? "#0176d3" : "#fff",
+                  color: selected ? "#fff" : "#181818",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>
+                  {date.toLocaleDateString(undefined, { weekday: "short" })}
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 800 }}>{day}</div>
+                <div style={{ fontSize: 9, minHeight: 14 }}>{count ? `${count} job${count === 1 ? "" : "s"}` : ""}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ borderTop: "1px solid #dddbda", paddingTop: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <div>
+              <strong style={{ color: "#032d60", fontSize: 14 }}>
+                {new Date(year, month, mobileSelectedDay).toLocaleDateString(undefined, {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
+                })}
+              </strong>
+              <div style={{ color: "#706e6b", fontSize: 11 }}>{(jobsByDay.get(mobileSelectedDay) || []).length} jobs</div>
+            </div>
+            <button type="button" onClick={() => openDayPanel(mobileSelectedDay)} style={{ ...calendarNavBtn, width: "auto", padding: "6px 9px", fontSize: 11 }}>
+              Day settings
+            </button>
+          </div>
+
+          {(jobsByDay.get(mobileSelectedDay) || []).length === 0 ? (
+            <div style={{ border: "1px dashed #c9c7c5", borderRadius: 4, padding: 18, textAlign: "center", color: "#706e6b" }}>No jobs scheduled</div>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {(jobsByDay.get(mobileSelectedDay) || []).map((job, index) => {
+                const tone = getCompanyTone(job);
+                return (
+                  <Link
+                    key={job.id}
+                    to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+                    state={dispatchBackState}
+                    style={{
+                      display: "grid",
+                      gap: 5,
+                      padding: 12,
+                      border: `1px solid ${job.id === selectedJobId ? "#2563eb" : tone.border}`,
+                      borderLeft: `4px solid ${job.id === selectedJobId ? "#2563eb" : tone.border}`,
+                      borderRadius: 4,
+                      background: job.id === selectedJobId ? "#eff6ff" : tone.tint,
+                      color: "#181818",
+                      textDecoration: "none",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                      <strong style={{ fontSize: 14 }}>{job.full_name || "Unnamed"}</strong>
+                      <span style={{ color: tone.text, fontSize: 11, fontWeight: 700 }}>Job {job.job_order || index + 1}</span>
+                    </div>
+                    <div style={{ color: tone.text, fontSize: 12, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
+                    <div style={{ color: "#3e3e3c", fontSize: 12 }}>{job.pickup_zip || "?"} → {job.delivery_zip || "?"}</div>
+                    <div style={{ color: "#706e6b", fontSize: 11 }}>{formatJobVolumeWeight(job)}</div>
+                    {job.price != null ? <div style={{ color: "#0f766e", fontSize: 12, fontWeight: 800 }}>${job.price.toFixed(2)}</div> : null}
+                  </Link>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1958,18 +2110,27 @@ function DispatchRow({
   onUnassign: (userId: string, companyId: string) => Promise<void>;
 }) {
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [showCompanyManager, setShowCompanyManager] = useState(false);
   const assigned = dispatchUser.companies || [];
   const assignedIds = new Set(assigned.map((c) => c.id));
   const availableCompanies = companies.filter((c) => !assignedIds.has(c.id));
 
   return (
-    <tr style={{ borderTop: "1px solid #e5e7eb" }}>
-      <td style={td}>{dispatchUser.name}</td>
-      <td style={td}>{dispatchUser.email}</td>
-      <td style={td}>{dispatchUser.phone || ""}</td>
-      <td style={td}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {assigned.length === 0 ? <span style={{ color: "#706e6b", fontSize: 12 }}>No companies</span> : null}
+    <tr className="user-setup-record" style={{ borderTop: "1px solid #e5e7eb" }}>
+      <td data-label="Name" style={td}>{dispatchUser.name}</td>
+      <td data-label="Email" style={td}>{dispatchUser.email}</td>
+      <td data-label="Phone" style={td}>{dispatchUser.phone || ""}</td>
+      <td data-label="Companies" style={td}>
+        <div className="user-access-summary">
+          <div>
+            <strong>{assigned.length === 0 ? "No companies" : `${assigned.length} companies`}</strong>
+            <span>{assigned.length === 0 ? "No company access" : assigned.slice(0, 2).map((company) => company.name).join(", ")}{assigned.length > 2 ? ` +${assigned.length - 2}` : ""}</span>
+          </div>
+          <button type="button" onClick={() => setShowCompanyManager((open) => !open)}>
+            {showCompanyManager ? "Done" : "Manage access"}
+          </button>
+        </div>
+        {showCompanyManager ? <div className="user-access-picker" style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {assigned.map((c) => (
             <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #c9c7c5", borderRadius: 16, padding: "3px 8px", fontSize: 12, color: "#3e3e3c", background: "#f8f9fa" }}>
               {c.name}
@@ -1983,10 +2144,10 @@ function DispatchRow({
               </button>
             </span>
           ))}
-        </div>
+        </div> : null}
       </td>
-      <td style={td}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <td className={showCompanyManager ? "" : "user-access-assign-collapsed"} data-label="Assign Company" style={td}>
+        {showCompanyManager ? <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <select value={selectedCompanyId} onChange={(e) => setSelectedCompanyId(e.target.value)} style={{ ...inputStyle, minWidth: 220 }}>
             <option value="">Select company...</option>
             {availableCompanies.map((c) => (
@@ -2001,7 +2162,7 @@ function DispatchRow({
           >
             Assign
           </button>
-        </div>
+        </div> : <span style={{ color: "#706e6b", fontSize: 12 }}>Use Manage access</span>}
       </td>
     </tr>
   );

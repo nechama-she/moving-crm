@@ -464,13 +464,13 @@ export default function PeriodAssignPage() {
   }
 
   return (
-    <div style={{ padding: "20px 24px", fontFamily: "inherit", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
+    <div className="user-setup-page" style={{ padding: "20px 24px", fontFamily: "inherit", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Assignment Availability Rules</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
         Configure when admins are unavailable and which reps are available to receive auto-assignment during that time.
       </p>
 
-      <div style={{ marginBottom: 14, border: "1px solid #dddbda", borderRadius: 4, padding: 14, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
+      <div className="user-setup-create-card" style={{ marginBottom: 14, border: "1px solid #dddbda", borderRadius: 4, padding: 14, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
         <h2 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#3e3e3c" }}>
           Admin Unavailability + Available Reps
         </h2>

@@ -4,6 +4,7 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import ChatMessages from "./ChatMessages";
 import TasksPanel from "./TasksPanel";
+import LeadLogsPanel from "./LeadLogsPanel";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
 
@@ -17,6 +18,7 @@ type CompanyOption = {
 type UserOption = {
   id: string;
   name: string;
+  role: string;
 };
 
 type CommissionSettingsResponse = {
@@ -66,6 +68,87 @@ type LeadJobChargeItem = {
   total_cost: number;
 };
 
+type ThirdPartyPayout = {
+  thirdPartyCommissionTo: string;
+  thirdPartyCommissionAmount: number;
+  thirdPartyCommissionPaid: boolean;
+  thirdPartyCommissionPaidAt: string;
+};
+
+function ThirdPartyPayoutEditor({
+  payout,
+  paymentAmount,
+  saving,
+  onSave,
+}: {
+  payout: ThirdPartyPayout;
+  paymentAmount: number;
+  saving: boolean;
+  onSave: (changes: Partial<ThirdPartyPayout>) => Promise<void>;
+}) {
+  const [recipient, setRecipient] = useState(payout.thirdPartyCommissionTo);
+  const [amount, setAmount] = useState(payout.thirdPartyCommissionAmount ? String(payout.thirdPartyCommissionAmount) : "");
+
+  useEffect(() => {
+    setRecipient(payout.thirdPartyCommissionTo);
+    setAmount(payout.thirdPartyCommissionAmount ? String(payout.thirdPartyCommissionAmount) : "");
+  }, [payout.thirdPartyCommissionTo, payout.thirdPartyCommissionAmount]);
+
+  const parsedAmount = Number(amount || 0);
+  const invalid = !Number.isFinite(parsedAmount) || parsedAmount < 0 || parsedAmount > paymentAmount;
+  const hasPayout = payout.thirdPartyCommissionAmount > 0;
+
+  return (
+    <div style={{ marginTop: 4, border: "1px solid #dddbda", borderLeft: `4px solid ${payout.thirdPartyCommissionPaid ? "#2e844a" : "#fe9339"}`, borderRadius: 4, background: "#ffffff", padding: 12, display: "grid", gap: 10, boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+        <div>
+          <div style={{ color: "#181818", fontSize: 13, fontWeight: 700 }}>Third-Party Payout</div>
+          <div style={{ color: "#706e6b", fontSize: 11, marginTop: 2 }}>Deducted from company income</div>
+        </div>
+        {hasPayout ? (
+          <span style={{ borderRadius: 999, padding: "3px 9px", fontSize: 10, fontWeight: 700, color: payout.thirdPartyCommissionPaid ? "#194e31" : "#181818", background: payout.thirdPartyCommissionPaid ? "#cdefc4" : "#fe9339" }}>
+            {payout.thirdPartyCommissionPaid ? "PAID" : "UNPAID"}
+          </span>
+        ) : null}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 1fr) minmax(120px, .45fr)", gap: 8 }}>
+        <label style={{ display: "grid", gap: 4, color: "#3e3e3c", fontSize: 12, fontWeight: 600 }}>
+          Recipient
+          <input value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder="Person or company" style={{ border: "1px solid #c9c7c5", borderRadius: 4, padding: "8px 12px", background: "#fff", color: "#181818", boxShadow: "inset 0 1px 2px rgba(0,0,0,.05)" }} />
+        </label>
+        <label style={{ display: "grid", gap: 4, color: "#3e3e3c", fontSize: 12, fontWeight: 600 }}>
+          Amount
+          <div style={{ position: "relative" }}>
+            <span style={{ position: "absolute", left: 12, top: 8, color: "#706e6b" }}>$</span>
+            <input type="number" min={0} max={paymentAmount} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${invalid ? "#ea001e" : "#c9c7c5"}`, borderRadius: 4, padding: "8px 12px 8px 25px", background: "#fff", color: "#181818", boxShadow: "inset 0 1px 2px rgba(0,0,0,.05)" }} />
+          </div>
+        </label>
+      </div>
+      {invalid ? <div style={{ color: "#ba0517", fontSize: 11 }}>Amount must be between $0 and ${paymentAmount.toFixed(2)}.</div> : null}
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <button type="button" disabled={saving || invalid} onClick={() => void onSave({
+          thirdPartyCommissionTo: recipient.trim(),
+          thirdPartyCommissionAmount: parsedAmount,
+          ...(parsedAmount === 0 ? { thirdPartyCommissionPaid: false, thirdPartyCommissionPaidAt: "" } : {}),
+        })} style={{ border: "1px solid #0176d3", borderRadius: 4, padding: "7px 12px", background: "#0176d3", color: "#fff", fontSize: 12, fontWeight: 700 }}>
+          {saving ? "Saving…" : "Save payout"}
+        </button>
+        {hasPayout ? (
+          <>
+            <button type="button" disabled={saving} onClick={() => void onSave({ thirdPartyCommissionPaid: !payout.thirdPartyCommissionPaid, thirdPartyCommissionPaidAt: !payout.thirdPartyCommissionPaid ? new Date().toISOString() : "" })} style={{ border: "1px solid #c9c7c5", borderRadius: 4, padding: "7px 12px", background: "#fff", color: "#0176d3", fontSize: 12, fontWeight: 700 }}>
+              Mark {payout.thirdPartyCommissionPaid ? "unpaid" : "paid"}
+            </button>
+            <button type="button" disabled={saving} onClick={() => void onSave({ thirdPartyCommissionTo: "", thirdPartyCommissionAmount: 0, thirdPartyCommissionPaid: false, thirdPartyCommissionPaidAt: "" })} style={{ border: "1px solid #c9c7c5", borderRadius: 4, background: "#fff", color: "#ba0517", padding: "7px 12px", fontSize: 12, fontWeight: 700 }}>
+              Remove
+            </button>
+          </>
+        ) : null}
+        {payout.thirdPartyCommissionPaidAt ? <span style={{ marginLeft: "auto", color: "#64748b", fontSize: 10 }}>Paid {new Date(payout.thirdPartyCommissionPaidAt).toLocaleString()}</span> : null}
+      </div>
+    </div>
+  );
+}
+
 type LeadJobDraft = {
   company_id: string;
   pickup_zip: string;
@@ -110,7 +193,7 @@ export default function LeadDetail() {
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<"conversations" | "activity">("conversations");
+  const [activeTab, setActiveTab] = useState<"conversations" | "activity" | "logs">("conversations");
   const [editingUser, setEditingUser] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
@@ -265,6 +348,7 @@ export default function LeadDetail() {
               return {
                 id: String(item.id || ""),
                 name: String(item.name || ""),
+                role: String(item.role || ""),
               };
             })
             .filter((item) => item.id)
@@ -819,18 +903,38 @@ export default function LeadDetail() {
           takenByUser: String(item.takenByUser ?? "").trim(),
           repPaid: Boolean(item.repPaid ?? false),
           repPaidAt: String(item.repPaidAt ?? "").trim(),
+          thirdPartyCommissionTo: String(item.thirdPartyCommissionTo ?? "").trim(),
+          thirdPartyCommissionAmount: Number(item.thirdPartyCommissionAmount ?? 0),
+          thirdPartyCommissionPaid: Boolean(item.thirdPartyCommissionPaid ?? false),
+          thirdPartyCommissionPaidAt: String(item.thirdPartyCommissionPaidAt ?? "").trim(),
         };
       })
-      .filter((row): row is { amount: number; takenByUser: string; repPaid: boolean; repPaidAt: string } => row !== null);
+      .filter((row): row is {
+        amount: number;
+        takenByUser: string;
+        repPaid: boolean;
+        repPaidAt: string;
+        thirdPartyCommissionTo: string;
+        thirdPartyCommissionAmount: number;
+        thirdPartyCommissionPaid: boolean;
+        thirdPartyCommissionPaidAt: string;
+      } => row !== null);
   })();
   const paymentsTotal = paymentsData.reduce((sum, payment) => sum + payment.amount, 0);
-  const canManageRepPayments = user?.role === "admin" || user?.role === "sales_rep";
+  const assignedToRole = String(
+    lead.assigned_to_role
+    || users.find((item) => item.id === String(lead.assigned_to || ""))?.role
+    || "",
+  );
+  const hasRepCommission = assignedToRole === "sales_rep";
+  const canManageRepPayments = hasRepCommission && (user?.role === "admin" || user?.role === "sales_rep");
 
   function formatMoney(value: number): string {
     return `$${value.toFixed(2)}`;
   }
 
   function repPaidCommissionAmount(paymentAmount: number): number {
+    if (!hasRepCommission) return 0;
     const assignedTo = String(lead?.assigned_to || "").trim();
     const commissionPercent = assignedTo
       ? (commissionPercentByUserId.get(assignedTo) ?? defaultCommissionPercent)
@@ -839,6 +943,7 @@ export default function LeadDetail() {
   }
 
   function repPaidCommissionRatePercent(): number {
+    if (!hasRepCommission) return 0;
     const assignedTo = String(lead?.assigned_to || "").trim();
     if (!assignedTo) return defaultCommissionPercent;
     return commissionPercentByUserId.get(assignedTo) ?? defaultCommissionPercent;
@@ -908,15 +1013,11 @@ export default function LeadDetail() {
       const nextPayments = paymentsData.map((payment, index) => {
         if (index !== paymentIndex) {
           return {
-            amount: payment.amount,
-            takenByUser: payment.takenByUser,
-            repPaid: payment.repPaid,
-            repPaidAt: payment.repPaidAt,
+            ...payment,
           };
         }
         return {
-          amount: payment.amount,
-          takenByUser: payment.takenByUser,
+          ...payment,
           repPaid: nextPaid,
           repPaidAt: nextPaid ? (payment.repPaidAt || new Date().toISOString()) : "",
         };
@@ -937,8 +1038,38 @@ export default function LeadDetail() {
     }
   }
 
+  async function updateThirdPartyPayout(
+    paymentIndex: number,
+    changes: Partial<{
+      thirdPartyCommissionTo: string;
+      thirdPartyCommissionAmount: number;
+      thirdPartyCommissionPaid: boolean;
+      thirdPartyCommissionPaidAt: string;
+    }>,
+  ) {
+    if (!leadId || user?.role !== "admin") return;
+    const nextPayments = paymentsData.map((payment, index) => (
+      index === paymentIndex ? { ...payment, ...changes } : payment
+    ));
+    setSavingRepPaymentIndex(paymentIndex);
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ payments: nextPayments }),
+      });
+      const responseBody = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(responseBody?.detail || `HTTP ${res.status}`);
+      setLead(responseBody);
+    } catch (e) {
+      alert(`Failed to update third-party payout: ${e instanceof Error ? e.message : "error"}`);
+    } finally {
+      setSavingRepPaymentIndex(null);
+    }
+  }
+
   return (
-    <div style={{ width: "100%", height: "calc(100vh - 52px)", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "24px clamp(16px, 3vw, 28px) 40px", background: "#f6f8fb", fontFamily: "inherit" }}>
+    <div className="lead-detail-page" style={{ width: "100%", height: "calc(100vh - 52px)", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "24px clamp(16px, 3vw, 28px) 40px", background: "#f6f8fb", fontFamily: "inherit" }}>
       <div style={{ width: "100%", maxWidth: 1120, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 14 }}>
         <button
@@ -1324,8 +1455,8 @@ export default function LeadDetail() {
         const assignedToName = String(lead.assigned_to_name || "").trim() || "Unassigned";
 
         return (
-          <div style={{ ...sectionStyle, padding: 18, overflow: "visible", position: "relative" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+          <div className="lead-profile-card" style={{ ...sectionStyle, padding: 18, overflow: "visible", position: "relative" }}>
+            <div className="lead-profile-header" style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
               <div
                 style={{
                   width: 48,
@@ -1361,11 +1492,11 @@ export default function LeadDetail() {
                   />
                 ) : (
                   <div style={{ display: "grid", gap: 4 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <div style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
+                    <div className="lead-profile-meta" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <div className="lead-profile-name" style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
                         {name || "—"}
                       </div>
-                      <div ref={statusMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <div className="lead-profile-selector" ref={statusMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
                         <button
                           ref={statusButtonRef}
                           type="button"
@@ -1454,7 +1585,7 @@ export default function LeadDetail() {
                         </div>,
                         document.body
                       ) : null}
-                      <div ref={companyMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <div className="lead-profile-selector" ref={companyMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
                       <button
                         type="button"
                         onClick={() => canEditCompany && setCompanyMenuOpen((v) => !v)}
@@ -1534,7 +1665,7 @@ export default function LeadDetail() {
                         </div>
                       ) : null}
                       </div>
-                      <div ref={assignMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <div className="lead-profile-selector lead-profile-assignee" ref={assignMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
                         <button
                           type="button"
                           onClick={() => user?.role === "admin" && setAssignMenuOpen((v) => !v)}
@@ -1559,7 +1690,7 @@ export default function LeadDetail() {
                           }}
                           title={assignedToName}
                         >
-                          <span style={{ color: "#64748b" }}>Assign To</span>
+                          <span className="lead-profile-assignee-label" style={{ color: "#64748b" }}>Assign To</span>
                           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1e293b" }}>
                             {savingAssignedTo ? "Updating..." : assignedToName}
                           </span>
@@ -1634,7 +1765,7 @@ export default function LeadDetail() {
                 )}
               </div>
               {editingUser ? (
-                <div style={{ display: "flex", gap: 6 }}>
+                <div className="lead-profile-edit-actions" style={{ display: "flex", gap: 6 }}>
                   <button
                     type="button"
                     onClick={() => setEditingUser(false)}
@@ -1653,9 +1784,10 @@ export default function LeadDetail() {
                   </button>
                 </div>
               ) : (
-                <div style={{ display: "flex", gap: 6 }}>
+                <div className="lead-profile-actions lead-profile-view-actions" style={{ display: "flex", gap: 6 }}>
                   <button
                     type="button"
+                    className="lead-profile-action-button lead-profile-refresh-button"
                     onClick={() => void refreshFromSmartmoving()}
                     disabled={refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
                     title="Refresh from SmartMoving"
@@ -1665,6 +1797,7 @@ export default function LeadDetail() {
                   </button>
                   <button
                     type="button"
+                    className="lead-profile-action-button lead-profile-edit-button"
                     onClick={startEditUser}
                     disabled={!canEditLead}
                     title="Edit"
@@ -1676,8 +1809,8 @@ export default function LeadDetail() {
               )}
             </div>
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              <div style={tile}>
+            <div className="lead-contact-tiles" style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              <div className="lead-info-tile" style={tile}>
                 <span style={{ fontSize: 18 }}>📞</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={tileLabel}>Phone</div>
@@ -1697,7 +1830,7 @@ export default function LeadDetail() {
                   )}
                 </div>
               </div>
-              <div style={tile}>
+              <div className="lead-info-tile" style={tile}>
                 <span style={{ fontSize: 18 }}>✉️</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={tileLabel}>Email</div>
@@ -1717,7 +1850,7 @@ export default function LeadDetail() {
                   )}
                 </div>
               </div>
-              <div style={tile}>
+              <div className="lead-info-tile" style={tile}>
                 <span style={{ fontSize: 18 }}>📦</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={tileLabel}>Move Size</div>
@@ -1735,7 +1868,7 @@ export default function LeadDetail() {
                   )}
                 </div>
               </div>
-              <div style={tile}>
+              <div className="lead-info-tile" style={tile}>
                 <span style={{ fontSize: 18 }}>⚖️</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={tileLabel}>Volume / Weight</div>
@@ -1805,7 +1938,7 @@ export default function LeadDetail() {
                       <span>{payment.takenByUser || `Payment ${index + 1}`}</span>
                       <strong>{formatMoney(payment.amount)}</strong>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 11 }}>
+                    {hasRepCommission ? <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 11 }}>
                       <span style={{ color: "#475569" }}>Rep paid ({repPaidCommissionRatePercent().toFixed(6)}%): <strong>{formatMoney(repPaidCommissionAmount(payment.amount))}</strong></span>
                       {canManageRepPayments ? (
                         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, color: payment.repPaid ? "#15803d" : "#92400e", fontWeight: 700 }}>
@@ -1824,9 +1957,36 @@ export default function LeadDetail() {
                           {payment.repPaid ? "Paid to rep" : "Unpaid to rep"}
                         </span>
                       )}
-                    </div>
-                    {payment.repPaid && payment.repPaidAt ? (
+                    </div> : null}
+                    {hasRepCommission && payment.repPaid && payment.repPaidAt ? (
                       <div style={{ fontSize: 10, color: "#64748b" }}>Paid at: {new Date(payment.repPaidAt).toLocaleString()}</div>
+                    ) : null}
+                    {user?.role === "admin" ? (
+                      <ThirdPartyPayoutEditor
+                        payout={payment}
+                        paymentAmount={payment.amount}
+                        saving={savingRepPaymentIndex === index}
+                        onSave={(changes) => updateThirdPartyPayout(index, changes)}
+                      />
+                    ) : payment.thirdPartyCommissionAmount > 0 ? (
+                      <div style={{ borderTop: "1px dashed #cbd5e1", paddingTop: 6, display: "grid", gap: 4 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 11 }}>
+                          <span style={{ color: "#475569" }}>
+                            Third-party payout{payment.thirdPartyCommissionTo ? ` — ${payment.thirdPartyCommissionTo}` : ""}
+                          </span>
+                          <strong>{formatMoney(payment.thirdPartyCommissionAmount)}</strong>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                          <span style={{ color: payment.thirdPartyCommissionPaid ? "#15803d" : "#b91c1c", fontSize: 11, fontWeight: 700 }}>
+                            {payment.thirdPartyCommissionPaid ? "Paid" : "Unpaid"}
+                          </span>
+                        </div>
+                        {payment.thirdPartyCommissionPaidAt ? (
+                          <div style={{ fontSize: 10, color: "#64748b" }}>
+                            Paid at: {new Date(payment.thirdPartyCommissionPaidAt).toLocaleString()}
+                          </div>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 ))}
@@ -2350,6 +2510,21 @@ export default function LeadDetail() {
             >
               Activity
             </button>
+            <button
+              onClick={() => setActiveTab("logs")}
+              style={{
+                padding: "10px 18px",
+                border: "none",
+                borderBottom: activeTab === "logs" ? "3px solid #0176d3" : "3px solid transparent",
+                background: activeTab === "logs" ? "#fff" : "transparent",
+                fontWeight: 600,
+                fontSize: 13,
+                color: activeTab === "logs" ? "#032d60" : "#3e3e3c",
+                cursor: "pointer",
+              }}
+            >
+              Logs
+            </button>
           </div>
           <div style={{ padding: 16 }}>
             {activeTab === "conversations" ? (
@@ -2367,6 +2542,8 @@ export default function LeadDetail() {
               )
             ) : activeTab === "activity" ? (
               <TasksPanel leadId={leadId!} token={token} />
+            ) : activeTab === "logs" ? (
+              <LeadLogsPanel leadId={leadId!} token={token} />
             ) : null}
           </div>
         </div>

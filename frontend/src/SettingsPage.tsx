@@ -6,7 +6,7 @@ export default function SettingsPage() {
   const isAdmin = user?.role === "admin";
 
   return (
-    <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
+    <div className="user-setup-page" style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Settings</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
         Central setup for users, assignment rules, and account preferences.
@@ -36,6 +36,14 @@ export default function SettingsPage() {
           <p style={desc}>Edit the welcome, rep-assignment, and day 2/3 followup SMS bodies per company.</p>
           <div style={actionsRow}>
             <Link to="/settings/templates" style={primaryLink}>Manage Templates</Link>
+          </div>
+        </section>
+
+        <section style={card}>
+          <h2 style={sectionHeader}>Pricing Books</h2>
+          <p style={desc}>Review company rates, pricing exceptions, and additional services in one place.</p>
+          <div style={actionsRow}>
+            <Link to="/pricing" style={primaryLink}>Open Pricing</Link>
           </div>
         </section>
 

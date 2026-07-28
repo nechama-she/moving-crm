@@ -15,9 +15,22 @@ def migrate() -> None:
     import models  # noqa: F401 - registers all ORM tables on Base.metadata
     from models import Base
     from database import engine
+    from sqlalchemy import text
 
     Base.metadata.create_all(bind=engine)
-    logger.info("Schema ensured via create_all.")
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE lead_update_logs ADD COLUMN IF NOT EXISTS sql_statements TEXT")
+        )
+    from database import SessionLocal
+    from pricing_seed import seed_pricing
+
+    db = SessionLocal()
+    try:
+        seeded = seed_pricing(db)
+    finally:
+        db.close()
+    logger.info("Schema ensured via create_all; seeded %s pricing plans.", seeded)
 
 
 if __name__ == "__main__":
