@@ -345,6 +345,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
+  const [showInitialCompanyPicker, setShowInitialCompanyPicker] = useState(false);
   const handledRouteJobIdRef = useRef("");
   const singleSelectedDispatchCompanyId = selectedDispatchCompanyIds.length === 1 ? selectedDispatchCompanyIds[0] : "";
 
@@ -1331,7 +1332,16 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
 
         <div style={{ marginTop: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#3e3e3c", marginBottom: 6 }}>Assign Companies</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <div className="user-access-summary">
+            <div>
+              <strong>{selectedCompanyIds.length === 0 ? "No companies selected" : `${selectedCompanyIds.length} selected`}</strong>
+              <span>{selectedCompanyIds.length === 0 ? "Choose the companies this dispatcher can access" : "Access limited to selected companies"}</span>
+            </div>
+            <button type="button" onClick={() => setShowInitialCompanyPicker((open) => !open)}>
+              {showInitialCompanyPicker ? "Done" : "Choose companies"}
+            </button>
+          </div>
+          {showInitialCompanyPicker ? <div className="user-access-picker" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {companies.map((company) => {
               const checked = selectedCompanyIds.includes(company.id);
               return (
@@ -1352,7 +1362,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 </button>
               );
             })}
-          </div>
+          </div> : null}
         </div>
 
         <div style={{ marginTop: 14 }}>
@@ -2100,6 +2110,7 @@ function DispatchRow({
   onUnassign: (userId: string, companyId: string) => Promise<void>;
 }) {
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [showCompanyManager, setShowCompanyManager] = useState(false);
   const assigned = dispatchUser.companies || [];
   const assignedIds = new Set(assigned.map((c) => c.id));
   const availableCompanies = companies.filter((c) => !assignedIds.has(c.id));
@@ -2110,8 +2121,16 @@ function DispatchRow({
       <td data-label="Email" style={td}>{dispatchUser.email}</td>
       <td data-label="Phone" style={td}>{dispatchUser.phone || ""}</td>
       <td data-label="Companies" style={td}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {assigned.length === 0 ? <span style={{ color: "#706e6b", fontSize: 12 }}>No companies</span> : null}
+        <div className="user-access-summary">
+          <div>
+            <strong>{assigned.length === 0 ? "No companies" : `${assigned.length} companies`}</strong>
+            <span>{assigned.length === 0 ? "No company access" : assigned.slice(0, 2).map((company) => company.name).join(", ")}{assigned.length > 2 ? ` +${assigned.length - 2}` : ""}</span>
+          </div>
+          <button type="button" onClick={() => setShowCompanyManager((open) => !open)}>
+            {showCompanyManager ? "Done" : "Manage access"}
+          </button>
+        </div>
+        {showCompanyManager ? <div className="user-access-picker" style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {assigned.map((c) => (
             <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #c9c7c5", borderRadius: 16, padding: "3px 8px", fontSize: 12, color: "#3e3e3c", background: "#f8f9fa" }}>
               {c.name}
@@ -2125,10 +2144,10 @@ function DispatchRow({
               </button>
             </span>
           ))}
-        </div>
+        </div> : null}
       </td>
-      <td data-label="Assign Company" style={td}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <td className={showCompanyManager ? "" : "user-access-assign-collapsed"} data-label="Assign Company" style={td}>
+        {showCompanyManager ? <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <select value={selectedCompanyId} onChange={(e) => setSelectedCompanyId(e.target.value)} style={{ ...inputStyle, minWidth: 220 }}>
             <option value="">Select company...</option>
             {availableCompanies.map((c) => (
@@ -2143,7 +2162,7 @@ function DispatchRow({
           >
             Assign
           </button>
-        </div>
+        </div> : <span style={{ color: "#706e6b", fontSize: 12 }}>Use Manage access</span>}
       </td>
     </tr>
   );

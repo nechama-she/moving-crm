@@ -127,6 +127,59 @@ input, select, textarea, button {
   min-height: 30px;
 }
 
+.user-access-summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #dddbda;
+  border-radius: 4px;
+  background: #f8f9fa;
+}
+
+.user-access-summary > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.user-access-summary strong {
+  color: #181818;
+  font-size: 12px;
+}
+
+.user-access-summary span {
+  overflow: hidden;
+  color: #706e6b;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-access-summary button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  border: 1px solid #0176d3;
+  border-radius: 4px;
+  padding: 5px 9px;
+  background: #fff;
+  color: #0176d3;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.user-access-picker {
+  max-height: 190px;
+  overflow-y: auto;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid #dddbda;
+  border-radius: 4px;
+  background: #fff;
+}
+
 .user-setup-table input,
 .user-setup-table select {
   min-height: 34px;
@@ -636,6 +689,18 @@ input, select, textarea, button {
   .user-setup-table .user-setup-record > td[data-label="Companies"],
   .user-setup-table .user-setup-record > td[data-label="Actions"] {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .user-access-summary {
+    padding: 7px 8px;
+  }
+
+  .user-access-picker {
+    max-height: 150px;
+  }
+
+  .user-access-assign-collapsed {
+    display: none !important;
   }
 
   .user-setup-table .user-setup-record > td[data-label="Companies"]::before,

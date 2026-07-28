@@ -58,6 +58,7 @@ export default function SalesRepsPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
+  const [showInitialCompanyPicker, setShowInitialCompanyPicker] = useState(false);
 
   const salesReps = useMemo(
     () => users.filter((u) => u.role === "sales_rep").sort((a, b) => a.name.localeCompare(b.name)),
@@ -371,7 +372,16 @@ export default function SalesRepsPage() {
 
         <div style={{ marginTop: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#3e3e3c", marginBottom: 6 }}>Assign Companies</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <div className="user-access-summary">
+            <div>
+              <strong>{selectedCompanyIds.length === 0 ? "No companies selected" : `${selectedCompanyIds.length} selected`}</strong>
+              <span>{selectedCompanyIds.length === 0 ? "Choose the companies this rep can access" : "Access limited to selected companies"}</span>
+            </div>
+            <button type="button" onClick={() => setShowInitialCompanyPicker((open) => !open)}>
+              {showInitialCompanyPicker ? "Done" : "Choose companies"}
+            </button>
+          </div>
+          {showInitialCompanyPicker ? <div className="user-access-picker" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {companies.map((company) => {
               const checked = selectedCompanyIds.includes(company.id);
               return (
@@ -392,7 +402,7 @@ export default function SalesRepsPage() {
                 </button>
               );
             })}
-          </div>
+          </div> : null}
         </div>
 
         <div style={{ marginTop: 14 }}>
