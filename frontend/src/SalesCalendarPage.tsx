@@ -312,12 +312,22 @@ export default function SalesCalendarPage() {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [mobileSelectedDay, setMobileSelectedDay] = useState(() => new Date().getDate());
+  const [mobileMonthExpanded, setMobileMonthExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<SalesCalendarJob[]>([]);
   const [selectedAssigneeKeys, setSelectedAssigneeKeys] = useState<string[]>([]);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
   const [totalsExpanded, setTotalsExpanded] = useState(false);
+  useEffect(() => {
+    const mobileQuery = window.matchMedia("(max-width: 640px)");
+    const collapseCompanyTotals = () => {
+      if (mobileQuery.matches) setTotalsExpanded(false);
+    };
+    collapseCompanyTotals();
+    mobileQuery.addEventListener("change", collapseCompanyTotals);
+    return () => mobileQuery.removeEventListener("change", collapseCompanyTotals);
+  }, []);
   const [dayPanelDay, setDayPanelDay] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SalesSearchResult[]>([]);
@@ -1186,14 +1196,24 @@ export default function SalesCalendarPage() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button type="button" onClick={() => setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))} style={calendarNavBtn}>◀</button>
-            <strong style={{ minWidth: 150, textAlign: "center", fontSize: 13, color: "#0f172a" }}>{monthLabel}</strong>
+            <button
+              type="button"
+              className="calendar-month-toggle"
+              aria-expanded={mobileMonthExpanded}
+              title={mobileMonthExpanded ? "Show day agenda" : "Show full month"}
+              onClick={() => setMobileMonthExpanded((expanded) => !expanded)}
+              style={{ minWidth: 150, textAlign: "center", fontSize: 13, color: "#0f172a", border: "none", background: "transparent", fontWeight: 700, padding: "6px 8px" }}
+            >
+              {monthLabel}
+              <span className="calendar-view-caret" aria-hidden="true">{mobileMonthExpanded ? " ▴" : " ▾"}</span>
+            </button>
             <button type="button" onClick={() => setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))} style={calendarNavBtn}>▶</button>
           </div>
         </div>
 
         {loading ? <p style={{ padding: 10, color: "#3e3e3c", fontSize: 13 }}>Loading calendar...</p> : null}
 
-        <div className="calendar-scroll desktop-calendar" style={{ padding: 10 }}>
+        <div className={`calendar-scroll desktop-calendar${mobileMonthExpanded ? " mobile-month-visible" : ""}`} style={{ padding: 10 }}>
           <div className="calendar-week-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
             {weekdayLabels.map((label) => (
               <div key={label} style={{ fontSize: 11, color: "#64748b", fontWeight: 700, textTransform: "uppercase", textAlign: "center" }}>
@@ -1294,7 +1314,7 @@ export default function SalesCalendarPage() {
           </div>
         </div>
 
-        <div className="mobile-calendar" style={{ padding: 10 }}>
+        <div className={`mobile-calendar${mobileMonthExpanded ? " mobile-agenda-hidden" : ""}`} style={{ padding: 10 }}>
           <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, scrollSnapType: "x proximity" }}>
             {Array.from({ length: daysInMonth }).map((_, index) => {
               const day = index + 1;

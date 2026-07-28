@@ -66,6 +66,10 @@ input, select, textarea, button {
   display: none;
 }
 
+.calendar-view-caret {
+  display: none;
+}
+
 .crm-mobile-menu-button,
 .crm-mobile-menu,
 .crm-mobile-menu-backdrop {
@@ -220,6 +224,29 @@ input, select, textarea, button {
 
   .mobile-calendar {
     display: block;
+  }
+
+  .desktop-calendar.mobile-month-visible {
+    display: block !important;
+  }
+
+  .mobile-calendar.mobile-agenda-hidden {
+    display: none !important;
+  }
+
+  .calendar-month-toggle {
+    border: 1px solid transparent !important;
+    border-radius: 4px;
+  }
+
+  .calendar-month-toggle:active {
+    background: #eef4ff !important;
+  }
+
+  .calendar-view-caret {
+    display: inline;
+    color: #0176d3;
+    font-size: 11px;
   }
 
   .lead-detail-page {

@@ -324,6 +324,15 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const [jobSearchError, setJobSearchError] = useState("");
   const [jobSearchOpen, setJobSearchOpen] = useState(false);
   const [totalsExpanded, setTotalsExpanded] = useState(false);
+  useEffect(() => {
+    const mobileQuery = window.matchMedia("(max-width: 640px)");
+    const collapseCompanyTotals = () => {
+      if (mobileQuery.matches) setTotalsExpanded(false);
+    };
+    collapseCompanyTotals();
+    mobileQuery.addEventListener("change", collapseCompanyTotals);
+    return () => mobileQuery.removeEventListener("change", collapseCompanyTotals);
+  }, []);
   const jobSearchRef = useRef<HTMLDivElement | null>(null);
 
   const [name, setName] = useState("");
@@ -1413,11 +1422,19 @@ function CompanyCalendar({
   const [panelLoading, setPanelLoading] = useState(false);
   const [panelSaving, setPanelSaving] = useState(false);
   const [panelError, setPanelError] = useState("");
+  const [mobileSelectedDay, setMobileSelectedDay] = useState(() => new Date().getDate());
+  const [mobileMonthExpanded, setMobileMonthExpanded] = useState(false);
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
   const firstWeekday = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const monthLabel = viewDate.toLocaleString(undefined, { month: "long", year: "numeric" });
+  useEffect(() => {
+    const now = new Date();
+    setMobileSelectedDay(
+      now.getFullYear() === year && now.getMonth() === month ? now.getDate() : 1,
+    );
+  }, [year, month]);
   const dispatchBackState = useMemo(
     () => ({
       backTo: `${location.pathname}${location.search}`,
@@ -1624,12 +1641,22 @@ function CompanyCalendar({
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button type="button" onClick={onPrevMonth} style={calendarNavBtn}>◀</button>
-          <strong style={{ minWidth: 150, textAlign: "center", fontSize: 13, color: "#0f172a" }}>{monthLabel}</strong>
+          <button
+            type="button"
+            className="calendar-month-toggle"
+            aria-expanded={mobileMonthExpanded}
+            title={mobileMonthExpanded ? "Show day agenda" : "Show full month"}
+            onClick={() => setMobileMonthExpanded((expanded) => !expanded)}
+            style={{ minWidth: 150, textAlign: "center", fontSize: 13, color: "#0f172a", border: "none", background: "transparent", fontWeight: 700, padding: "6px 8px" }}
+          >
+            {monthLabel}
+            <span className="calendar-view-caret" aria-hidden="true">{mobileMonthExpanded ? " ▴" : " ▾"}</span>
+          </button>
           <button type="button" onClick={onNextMonth} style={calendarNavBtn}>▶</button>
         </div>
       </div>
 
-      <div className="calendar-scroll" style={{ padding: 10 }}>
+      <div className={`calendar-scroll desktop-calendar${mobileMonthExpanded ? " mobile-month-visible" : ""}`} style={{ padding: 10 }}>
         <div className="calendar-week-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
           {weekdayLabels.map((label) => (
             <div key={label} style={{ fontSize: 11, color: "#64748b", fontWeight: 700, textTransform: "uppercase", textAlign: "center" }}>
@@ -1770,6 +1797,95 @@ function CompanyCalendar({
               </div>
             );
           })}
+        </div>
+      </div>
+
+      <div className={`mobile-calendar${mobileMonthExpanded ? " mobile-agenda-hidden" : ""}`} style={{ padding: 10 }}>
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, scrollSnapType: "x proximity" }}>
+          {Array.from({ length: daysInMonth }).map((_, index) => {
+            const day = index + 1;
+            const date = new Date(year, month, day);
+            const selected = day === mobileSelectedDay;
+            const count = (jobsByDay.get(day) || []).length;
+            return (
+              <button
+                key={day}
+                type="button"
+                onClick={() => setMobileSelectedDay(day)}
+                style={{
+                  flex: "0 0 54px",
+                  scrollSnapAlign: "start",
+                  border: `1px solid ${selected ? "#0176d3" : "#c9c7c5"}`,
+                  borderRadius: 4,
+                  padding: "6px 4px",
+                  background: selected ? "#0176d3" : "#fff",
+                  color: selected ? "#fff" : "#181818",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>
+                  {date.toLocaleDateString(undefined, { weekday: "short" })}
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 800 }}>{day}</div>
+                <div style={{ fontSize: 9, minHeight: 14 }}>{count ? `${count} job${count === 1 ? "" : "s"}` : ""}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ borderTop: "1px solid #dddbda", paddingTop: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <div>
+              <strong style={{ color: "#032d60", fontSize: 14 }}>
+                {new Date(year, month, mobileSelectedDay).toLocaleDateString(undefined, {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
+                })}
+              </strong>
+              <div style={{ color: "#706e6b", fontSize: 11 }}>{(jobsByDay.get(mobileSelectedDay) || []).length} jobs</div>
+            </div>
+            <button type="button" onClick={() => openDayPanel(mobileSelectedDay)} style={{ ...calendarNavBtn, width: "auto", padding: "6px 9px", fontSize: 11 }}>
+              Day settings
+            </button>
+          </div>
+
+          {(jobsByDay.get(mobileSelectedDay) || []).length === 0 ? (
+            <div style={{ border: "1px dashed #c9c7c5", borderRadius: 4, padding: 18, textAlign: "center", color: "#706e6b" }}>No jobs scheduled</div>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {(jobsByDay.get(mobileSelectedDay) || []).map((job, index) => {
+                const tone = getCompanyTone(job);
+                return (
+                  <Link
+                    key={job.id}
+                    to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+                    state={dispatchBackState}
+                    style={{
+                      display: "grid",
+                      gap: 5,
+                      padding: 12,
+                      border: `1px solid ${job.id === selectedJobId ? "#2563eb" : tone.border}`,
+                      borderLeft: `4px solid ${job.id === selectedJobId ? "#2563eb" : tone.border}`,
+                      borderRadius: 4,
+                      background: job.id === selectedJobId ? "#eff6ff" : tone.tint,
+                      color: "#181818",
+                      textDecoration: "none",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                      <strong style={{ fontSize: 14 }}>{job.full_name || "Unnamed"}</strong>
+                      <span style={{ color: tone.text, fontSize: 11, fontWeight: 700 }}>Job {job.job_order || index + 1}</span>
+                    </div>
+                    <div style={{ color: tone.text, fontSize: 12, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
+                    <div style={{ color: "#3e3e3c", fontSize: 12 }}>{job.pickup_zip || "?"} → {job.delivery_zip || "?"}</div>
+                    <div style={{ color: "#706e6b", fontSize: 11 }}>{formatJobVolumeWeight(job)}</div>
+                    {job.price != null ? <div style={{ color: "#0f766e", fontSize: 12, fontWeight: 800 }}>${job.price.toFixed(2)}</div> : null}
+                  </Link>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
