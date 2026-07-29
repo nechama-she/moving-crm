@@ -7,6 +7,7 @@ type AppUser = {
   name: string;
   email: string;
   role: string;
+  smartmoving_rep_id?: string;
   must_change_password?: boolean;
   companies?: { id: string; name: string }[];
 };
@@ -30,6 +31,7 @@ export default function AdminUsersPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [smartmovingRepId, setSmartmovingRepId] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
   const [showInitialCompanyPicker, setShowInitialCompanyPicker] = useState(false);
@@ -124,6 +126,27 @@ export default function AdminUsersPage() {
     }
   }
 
+  async function updateSmartmovingRepId(userId: string, smartmoving_rep_id: string) {
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/users/${userId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ smartmoving_rep_id: smartmoving_rep_id.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Failed to update SmartMoving ID" }));
+        throw new Error(err.detail || "Failed to update SmartMoving ID");
+      }
+      setInfo("SmartMoving ID updated.");
+      await loadUsers();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to update SmartMoving ID");
+      throw err;
+    }
+  }
+
   async function createAdmin() {
     setError("");
     setInfo("");
@@ -142,6 +165,7 @@ export default function AdminUsersPage() {
           email: email.trim(),
           password,
           role: "admin",
+          smartmoving_rep_id: smartmovingRepId.trim(),
         }),
       });
 
@@ -168,6 +192,7 @@ export default function AdminUsersPage() {
       setName("");
       setEmail("");
       setPassword("");
+      setSmartmovingRepId("");
       setShowPassword(false);
       setSelectedCompanyIds([]);
       await loadUsers();
@@ -236,6 +261,10 @@ export default function AdminUsersPage() {
               </span>
             </div>
           </label>
+          <label style={fieldLabel}>
+            SmartMoving User ID
+            <input value={smartmovingRepId} onChange={(e) => setSmartmovingRepId(e.target.value)} style={inputStyle} />
+          </label>
         </div>
 
         <div style={{ marginTop: 12 }}>
@@ -295,6 +324,7 @@ export default function AdminUsersPage() {
               <th style={th}>Name</th>
               <th style={th}>Email</th>
               <th style={th}>Role</th>
+              <th style={th}>SmartMoving User ID</th>
               <th style={th}>Companies</th>
               <th style={th}>Assign Company</th>
               <th style={th}>Password Reset Pending</th>
@@ -303,12 +333,12 @@ export default function AdminUsersPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={6}>Loading...</td>
+                <td style={td} colSpan={7}>Loading...</td>
               </tr>
             ) : null}
             {!loading && admins.length === 0 ? (
               <tr>
-                <td style={td} colSpan={6}>No admin users yet.</td>
+                <td style={td} colSpan={7}>No admin users yet.</td>
               </tr>
             ) : null}
             {!loading && admins.map((admin) => (
@@ -316,6 +346,7 @@ export default function AdminUsersPage() {
                 key={admin.id}
                 adminUser={admin}
                 companies={companies}
+                onUpdateSmartmovingId={updateSmartmovingRepId}
                 onAssign={assignCompany}
                 onUnassign={unassignCompany}
               />
@@ -377,23 +408,57 @@ function AdminRow({
   companies,
   onAssign,
   onUnassign,
+  onUpdateSmartmovingId,
 }: {
   adminUser: AppUser;
   companies: Company[];
   onAssign: (userId: string, companyId: string) => Promise<void>;
   onUnassign: (userId: string, companyId: string) => Promise<void>;
+  onUpdateSmartmovingId: (userId: string, smartmovingRepId: string) => Promise<void>;
 }) {
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [showCompanyManager, setShowCompanyManager] = useState(false);
+  const [smartmovingRepId, setSmartmovingRepId] = useState(adminUser.smartmoving_rep_id || "");
+  const [savingSmartmovingId, setSavingSmartmovingId] = useState(false);
   const assigned = adminUser.companies || [];
   const assignedIds = new Set(assigned.map((c) => c.id));
   const availableCompanies = companies.filter((c) => !assignedIds.has(c.id));
+
+  useEffect(() => {
+    setSmartmovingRepId(adminUser.smartmoving_rep_id || "");
+  }, [adminUser.smartmoving_rep_id]);
 
   return (
     <tr className="user-setup-record" style={{ borderTop: "1px solid #e5e7eb" }}>
       <td data-label="Name" style={td}>{adminUser.name}</td>
       <td data-label="Email" style={td}>{adminUser.email}</td>
       <td data-label="Role" style={td}>{adminUser.role}</td>
+      <td data-label="SmartMoving User ID" style={td}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <input
+            value={smartmovingRepId}
+            onChange={(e) => setSmartmovingRepId(e.target.value)}
+            style={{ ...inputStyle, minWidth: 180, padding: "6px 8px" }}
+          />
+          <button
+            type="button"
+            disabled={savingSmartmovingId || smartmovingRepId.trim() === (adminUser.smartmoving_rep_id || "").trim()}
+            onClick={async () => {
+              setSavingSmartmovingId(true);
+              try {
+                await onUpdateSmartmovingId(adminUser.id, smartmovingRepId);
+              } catch {
+                // The parent displays the API error.
+              } finally {
+                setSavingSmartmovingId(false);
+              }
+            }}
+            style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 9px", fontSize: 12, fontWeight: 600 }}
+          >
+            {savingSmartmovingId ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </td>
       <td data-label="Companies" style={td}>
         <div className="user-access-summary">
           <div>
