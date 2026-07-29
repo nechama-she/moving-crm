@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -15,9 +17,12 @@ from models import (
     PricingRate,
     PricingRule,
     PricingService,
+    Lead,
+    LeadJob,
     User,
     UserCompany,
 )
+from zip_state import delivery_location
 
 router = APIRouter(prefix="/api/pricing", tags=["Pricing"])
 
@@ -76,6 +81,281 @@ class PlanUpdate(BaseModel):
     services: list[ServiceInput]
 
 
+class CalculationInput(BaseModel):
+    destination: str
+    cubic_feet: int = Field(ge=0)
+    move_date: str = ""
+    selected_charges: dict[str, bool] = Field(default_factory=dict)
+    quantities: dict[str, float] = Field(default_factory=dict)
+    manual_amounts: dict[str, float] = Field(default_factory=dict)
+
+
+def _number(value: str) -> Decimal | None:
+    match = re.search(r"\$?\s*(\d+(?:\.\d+)?)", value.replace(",", ""))
+    return Decimal(match.group(1)) if match else None
+
+
+def _parsed_move_date(value: str) -> date | None:
+    try:
+        return date.fromisoformat((value or "").strip()[:10])
+    except ValueError:
+        return None
+
+
+def _seasonal_charge(plan: PricingPlan, move_date: date | None) -> dict | None:
+    if not move_date:
+        return None
+    for rule in plan.rules:
+        description = rule.description
+        match = re.search(
+            r"(?:after|of)\s+(Sep(?:tember)?|Oct(?:ober)?)\s+(\d{1,2})(?:st|nd|rd|th)?"
+            r".*?(?:reduce|take)\s+\$?(\d+(?:\.\d+)?)\s*(?:off|per)?\s*(?:the\s+rate|per\s*cf|/cf)?",
+            description,
+            re.IGNORECASE,
+        )
+        if not match:
+            continue
+        month = 9 if match.group(1).lower().startswith("sep") else 10
+        threshold = date(move_date.year, month, int(match.group(2)))
+        applies = move_date >= threshold
+        return {
+            "id": f"seasonal:{rule.id}",
+            "name": "Seasonal rate adjustment",
+            "description": description,
+            "calculation_type": "per_cf",
+            "rate": -float(match.group(3)),
+            "default_selected": applies,
+            "automatic": True,
+            "applies": applies,
+            "quantity_label": "",
+        }
+    return None
+
+
+def _service_charge(service: PricingService) -> dict:
+    combined = f"{service.rate_text} {service.comments}".strip()
+    lower = combined.lower()
+    service_context = f"{service.name} {combined}".lower()
+    calc_type = "manual"
+    rate = 0.0
+    quantity_label = ""
+    free_months = 0
+    if re.fullmatch(r"\s*free\s*", service.rate_text, re.IGNORECASE):
+        calc_type = "fixed"
+    elif re.search(r"/\s*(?:cf|cu-?ft)", lower):
+        parsed = _number(combined)
+        if parsed is not None:
+            is_monthly = bool(re.search(r"\b(?:months?|mnths?)\b", service_context))
+            calc_type = "per_cf_month" if is_monthly else "per_cf"
+            rate = float(parsed)
+            quantity_label = "Months" if calc_type == "per_cf_month" else ""
+            if is_monthly and re.search(r"\b(?:1st|first)\s+month\s+free\b", service_context):
+                free_months = 1
+    elif re.fullmatch(r"\s*\$?\s*\d+(?:\.\d+)?\s*", service.rate_text):
+        calc_type = "fixed"
+        rate = float(_number(service.rate_text) or 0)
+    minimum_amount = re.search(r"minimum\s*\$?\s*(\d+(?:\.\d+)?)", service.comments, re.IGNORECASE)
+    minimum_cubic_feet = re.search(r"min(?:imum)?\s*(\d+(?:\.\d+)?)\s*(?:cf|cu-?ft)", service.comments, re.IGNORECASE)
+    return {
+        "id": f"service:{service.id}",
+        "name": service.name,
+        "description": " · ".join(value for value in (service.rate_text, service.comments) if value),
+        "calculation_type": calc_type,
+        "rate": rate,
+        "default_selected": "all jobs" in service.name.lower(),
+        "automatic": False,
+        "applies": True,
+        "quantity_label": quantity_label,
+        "free_months": free_months,
+        "minimum_amount": float(minimum_amount.group(1)) if minimum_amount else 0,
+        "minimum_cubic_feet": float(minimum_cubic_feet.group(1)) if minimum_cubic_feet else 0,
+    }
+
+
+def _packing_service_charges(
+    services: list[PricingService],
+    cubic_feet: int,
+    quantities: dict[str, float],
+) -> list[dict]:
+    """Collapse imported rate tiers into simple job-level packing and storage choices."""
+    packing_groups: dict[str, list[PricingService]] = {"full": [], "partial": []}
+    remaining: list[PricingService] = []
+    for service in services:
+        match = re.match(r"\s*(full|partial)\s+packing\b", service.name, re.IGNORECASE)
+        if match and re.search(r"(?:up\s+to|\d+\s*-\s*\d+|&\s*up)", service.name, re.IGNORECASE):
+            packing_groups[match.group(1).lower()].append(service)
+        else:
+            remaining.append(service)
+
+    storage_services = [
+        service for service in remaining
+        if re.match(r"\s*(?:long\s+term\s+)?storage\b", service.name, re.IGNORECASE)
+    ]
+    if len(storage_services) > 1:
+        remaining = [service for service in remaining if service not in storage_services]
+
+    charges = [_service_charge(service) for service in remaining]
+    for packing_type, tiers in packing_groups.items():
+        if not tiers:
+            continue
+
+        def tier_rank(service: PricingService) -> int:
+            name = service.name.lower()
+            if "up to" in name:
+                return 0
+            if re.search(r"\d+\s*-\s*\d+", name):
+                return 1
+            return 2
+
+        desired_rank = 0 if cubic_feet <= 500 else 1 if cubic_feet <= 1000 else 2
+        selected_tier = next(
+            (service for service in tiers if tier_rank(service) == desired_rank),
+            sorted(tiers, key=lambda service: abs(tier_rank(service) - desired_rank))[0],
+        )
+        charge = _service_charge(selected_tier)
+        charge.update({
+            "id": f"packing:{packing_type}",
+            "name": f"{packing_type.title()} packing",
+            "description": (
+                f"{selected_tier.name} · {selected_tier.rate_text}"
+                + (f" · {selected_tier.comments}" if selected_tier.comments else "")
+            ),
+            "quantity_label": "",
+        })
+        charges.append(charge)
+
+    if len(storage_services) > 1:
+        months = max(1, quantities.get("storage", 1))
+        regular = next(
+            (service for service in storage_services if not re.match(r"\s*long\s+term\b", service.name, re.IGNORECASE)),
+            storage_services[0],
+        )
+        long_term_tiers: list[tuple[int, PricingService]] = []
+        for service in storage_services:
+            threshold = re.search(r"(\d+)\s*(?:months?|mnths?)", service.name, re.IGNORECASE)
+            if threshold:
+                long_term_tiers.append((int(threshold.group(1)), service))
+        eligible = [tier for tier in long_term_tiers if months >= tier[0]]
+        selected_storage = max(eligible, key=lambda tier: tier[0])[1] if eligible else regular
+        charge = _service_charge(selected_storage)
+        regular_charge = _service_charge(regular)
+        charge.update({
+            "id": "storage",
+            "name": "Storage",
+            "description": (
+                f"{selected_storage.name} · {selected_storage.rate_text}"
+                + (f" · {selected_storage.comments}" if selected_storage.comments else "")
+            ),
+            "calculation_type": "per_cf_month",
+            "quantity_label": "Months",
+            "free_months": regular_charge.get("free_months", 0),
+            "minimum_amount": max(charge.get("minimum_amount", 0), regular_charge.get("minimum_amount", 0)),
+            "minimum_cubic_feet": max(charge.get("minimum_cubic_feet", 0), regular_charge.get("minimum_cubic_feet", 0)),
+        })
+        charges.append(charge)
+    return charges
+
+
+def _rule_charges(rule: PricingRule) -> list[dict]:
+    text = rule.description
+    lower = text.lower()
+    charges: list[dict] = []
+    all_jobs = re.search(
+        r"destination\s*&\s*origin\s*\(all jobs\)\s*\$?\s*(\d+(?:\.\d+)?)",
+        text,
+        re.IGNORECASE,
+    )
+    if all_jobs:
+        charges.append({
+            "id": f"rule:{rule.id}:all-jobs",
+            "name": "DESTINATION & ORIGIN (All Jobs)",
+            "description": text,
+            "calculation_type": "fixed",
+            "rate": float(all_jobs.group(1)),
+            "default_selected": True,
+            "automatic": False,
+            "applies": True,
+            "quantity_label": "",
+        })
+    adjustment_pattern = re.compile(
+        r"(add|take off|reduce).*?\$?(\d+(?:\.\d+)?)\s*(?:/|per\s+)(cf|mile)",
+        re.IGNORECASE,
+    )
+    seasonal_text = ("after" in lower or "move dates of" in lower) and (
+        "sep" in lower or "oct" in lower
+    )
+    for index, match in enumerate(adjustment_pattern.finditer(text)):
+        if seasonal_text and match.group(1).lower() == "reduce":
+            continue
+        rate = float(match.group(2)) * (-1 if match.group(1).lower() != "add" else 1)
+        unit = match.group(3).lower()
+        charges.append({
+            "id": f"rule:{rule.id}:adjustment:{index}",
+            "name": "Cubic-foot adjustment" if unit == "cf" else "Mileage adjustment",
+            "description": text,
+            "calculation_type": "per_cf" if unit == "cf" else "per_unit",
+            "rate": rate,
+            "default_selected": False,
+            "automatic": False,
+            "applies": True,
+            "quantity_label": "" if unit == "cf" else "Extra miles",
+        })
+    origin_fee = re.search(
+        r"(?:add\s+(?:a\s+)?)\$?(\d+(?:\.\d+)?)\s+origin fee",
+        text,
+        re.IGNORECASE,
+    )
+    if origin_fee:
+        charges.append({
+            "id": f"rule:{rule.id}:origin",
+            "name": "Origin fee",
+            "description": text,
+            "calculation_type": "fixed",
+            "rate": float(origin_fee.group(1)),
+            "default_selected": "all jobs" in lower,
+            "automatic": False,
+            "applies": True,
+            "quantity_label": "",
+        })
+    if ("ask" in lower or "not included" in lower) and not charges:
+        charges.append({
+            "id": f"rule:{rule.id}:manual",
+            "name": rule.title or "Manual pricing rule",
+            "description": text,
+            "calculation_type": "manual",
+            "rate": 0.0,
+            "default_selected": False,
+            "automatic": False,
+            "applies": True,
+            "quantity_label": "Amount",
+        })
+    return charges
+
+
+def _charge_amount(charge: dict, cubic_feet: int, quantity: float, manual: float) -> Decimal:
+    rate = Decimal(str(charge["rate"]))
+    kind = charge["calculation_type"]
+    billable_cubic_feet = max(
+        Decimal(cubic_feet),
+        Decimal(str(charge.get("minimum_cubic_feet", 0))),
+    )
+    minimum_amount = Decimal(str(charge.get("minimum_amount", 0)))
+    if kind == "fixed":
+        return rate
+    if kind == "per_cf":
+        return max(rate * billable_cubic_feet, minimum_amount)
+    if kind == "per_cf_month":
+        months = max(Decimal(0), Decimal(str(quantity)))
+        billable_months = max(
+            Decimal(0),
+            months - Decimal(str(charge.get("free_months", 0))),
+        )
+        return max(rate * billable_cubic_feet * billable_months, minimum_amount if billable_months else Decimal(0))
+    if kind == "per_unit":
+        return rate * Decimal(str(quantity or 0))
+    return Decimal(str(manual or 0))
+
+
 @router.get("")
 def list_pricing_plans(
     user: User = Depends(get_current_user),
@@ -87,6 +367,186 @@ def list_pricing_plans(
         .all()
     )
     return [plan.summary_dict() for plan in plans]
+
+
+@router.get("/context")
+def get_job_pricing_context(
+    lead_id: str,
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    job = (
+        db.query(LeadJob)
+        .filter(LeadJob.id == job_id, LeadJob.lead_id == lead_id)
+        .first()
+    )
+    if not lead or not job:
+        raise HTTPException(status_code=404, detail="Lead job not found")
+    plans = (
+        _accessible_query(db, user)
+        .filter(PricingPlan.company_id == job.company_id, PricingPlan.active.is_(True))
+        .order_by(PricingPlan.sort_order, PricingPlan.name)
+        .all()
+    )
+    if not plans:
+        raise HTTPException(status_code=404, detail="No pricing book is configured for this job company")
+    pickup_state, pickup_zip_code = delivery_location(job.pickup_zip)
+    delivery_state, delivery_zip_code = delivery_location(job.delivery_zip)
+
+    def plan_matches_pickup(plan: PricingPlan) -> bool:
+        if not pickup_state:
+            return False
+        coverage = f"{plan.pickup_regions} {plan.name}".upper()
+        return re.search(rf"\b{re.escape(pickup_state)}\b", coverage) is not None
+
+    recommended = next((plan for plan in plans if plan_matches_pickup(plan)), None)
+    if not pickup_state:
+        serviceability = "unknown_pickup"
+    elif recommended is None:
+        serviceability = "unsupported_pickup"
+    else:
+        serviceability = "supported"
+    return {
+        "lead": {
+            "id": lead.id,
+            "full_name": lead.full_name,
+            "volume": float(lead.volume) if lead.volume is not None else None,
+            "weight": float(lead.weight) if lead.weight is not None else None,
+        },
+        "job": {
+            **job.to_dict(),
+            "pickup_state": pickup_state,
+            "pickup_zip_code": pickup_zip_code,
+            "delivery_state": delivery_state,
+            "delivery_zip_code": delivery_zip_code,
+        },
+        "plans": [plan.summary_dict() for plan in plans],
+        "recommended_plan_id": recommended.id if recommended else "",
+        "serviceability": serviceability,
+    }
+
+
+@router.post("/{plan_id}/calculate")
+def calculate_pricing(
+    plan_id: str,
+    body: CalculationInput,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    plan = _plan_or_404(db, user, plan_id)
+    normalized = body.destination.strip().lower()
+    candidates = [
+        row
+        for row in plan.rates
+        if row.destination.strip().lower() == normalized
+        and (row.cubic_feet_min is None or body.cubic_feet >= row.cubic_feet_min)
+        and (row.cubic_feet_max is None or body.cubic_feet <= row.cubic_feet_max)
+    ]
+    matched = candidates[0] if candidates else None
+    transport = (
+        Decimal(body.cubic_feet) * matched.rate
+        if matched and matched.rate is not None
+        else None
+    )
+    minimum = matched.minimum_price if matched else None
+    if transport is not None and minimum is not None:
+        base = max(transport, minimum)
+    else:
+        base = transport if transport is not None else minimum
+
+    charges: list[dict] = []
+    if plan.fuel_percent is not None:
+        charges.append({
+            "id": "fuel",
+            "name": "Fuel surcharge",
+            "description": f"{float(plan.fuel_percent):g}% of transportation/minimum",
+            "calculation_type": "percent",
+            "rate": float(plan.fuel_percent),
+            "default_selected": True,
+            "automatic": False,
+            "applies": True,
+            "quantity_label": "",
+        })
+    seasonal = _seasonal_charge(plan, _parsed_move_date(body.move_date))
+    if seasonal:
+        charges.append(seasonal)
+    charges.extend(_packing_service_charges(list(plan.services), body.cubic_feet, body.quantities))
+    charges.extend(charge for rule in plan.rules for charge in _rule_charges(rule))
+
+    # The same all-jobs fee can appear in both the notes and additional services.
+    # Keep the structured service entry and suppress repeated normalized descriptions.
+    deduped: list[dict] = []
+    seen = set()
+    for charge in charges:
+        identity = charge["name"]
+        if identity.lower() in {"pricing rule", "exception", "manual pricing rule"}:
+            identity = charge["description"]
+        key = re.sub(r"[^a-z0-9]+", " ", identity.lower()).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(charge)
+
+    total = base or Decimal(0)
+    calculated = []
+    for charge in deduped:
+        quantity = body.quantities.get(charge["id"], 1)
+        selected = body.selected_charges.get(
+            charge["id"],
+            bool(charge["default_selected"] and charge["applies"]),
+        )
+        if charge["automatic"] and not charge["applies"]:
+            selected = False
+        if charge["calculation_type"] == "percent":
+            amount = (base or Decimal(0)) * Decimal(str(charge["rate"])) / Decimal(100)
+        else:
+            amount = _charge_amount(
+                charge,
+                body.cubic_feet,
+                quantity,
+                body.manual_amounts.get(charge["id"], 0),
+            )
+        if selected:
+            total += amount
+        description = charge["description"]
+        breakdown = []
+        if charge["calculation_type"] == "per_cf_month":
+            months = max(0, quantity)
+            billable_months = max(0, months - charge.get("free_months", 0))
+            free_months = min(months, charge.get("free_months", 0))
+            description = f"${charge['rate']:g} / CF"
+            if free_months:
+                breakdown.append({
+                    "label": f"Storage · {free_months:g} free month{'s' if free_months != 1 else ''}",
+                    "amount": 0,
+                })
+            if billable_months:
+                breakdown.append({
+                    "label": f"Storage · {billable_months:g} billable month{'s' if billable_months != 1 else ''}",
+                    "amount": float(amount),
+                })
+        calculated.append({
+            **charge,
+            "description": description,
+            "breakdown": breakdown,
+            "selected": selected,
+            "amount": float(amount),
+        })
+
+    return {
+        "match": matched.to_dict() if matched else None,
+        "transport": float(transport) if transport is not None else None,
+        "minimum": float(minimum) if minimum is not None else None,
+        "minimum_applied": bool(
+            transport is not None and minimum is not None and minimum > transport
+        ),
+        "base_price": float(base) if base is not None else None,
+        "charges": calculated,
+        "total": float(total),
+        "warning": "" if matched and matched.rate is not None else "No numeric transportation rate matched. Select another destination or enter manual pricing.",
+    }
 
 
 @router.get("/{plan_id}")

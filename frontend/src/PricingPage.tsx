@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
@@ -19,12 +20,51 @@ type Plan = PlanSummary & {
   active: boolean; source_file: string; source_sheet: string;
   rules: Rule[]; rates: Rate[]; services: Service[];
 };
+type CalculatedCharge = {
+  id: string; name: string; description: string; calculation_type: string;
+  rate: number; default_selected: boolean; automatic: boolean; applies: boolean;
+  quantity_label: string; free_months?: number; selected: boolean; amount: number;
+  breakdown?: { label: string; amount: number }[];
+};
+type Calculation = {
+  match: Rate | null; transport: number | null; minimum: number | null;
+  minimum_applied: boolean; base_price: number | null; charges: CalculatedCharge[];
+  total: number; warning: string;
+};
+type CustomCharge = { id: string; title: string; amount: number };
+type CustomDiscount = { id: string; targetId: string; title: string; type: "amount" | "percent"; value: number };
+type JobContext = {
+  lead: { id: string; full_name: string; volume: number | null; weight: number | null };
+  job: { id: string; job_order: number; company_name: string; pickup_zip: string; delivery_zip: string; pickup_state: string; pickup_zip_code: string; delivery_state: string; delivery_zip_code: string; move_date: string; booked_move_date: string };
+  plans: PlanSummary[];
+  recommended_plan_id: string;
+  serviceability: "supported" | "unknown_pickup" | "unsupported_pickup";
+};
 
 const money = (value: number | null | undefined) =>
   value == null ? "—" : value.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
+function destinationFromAddress(address: string, options: string[], resolvedState = "", resolvedZip = ""): string {
+  const state = resolvedState || address.toUpperCase().match(/(?:,\s*|\b)([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?|\b)/)?.[1];
+  if (!state) return "";
+  const zip = resolvedZip || address.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1] || "";
+  const zipPrefix = zip ? Number(zip.slice(0, 2)) : null;
+  const stateOptions = options.filter((option) => option.toUpperCase() === state || option.toUpperCase().startsWith(`${state} `) || option.toUpperCase().startsWith(`${state} (`));
+  if (zipPrefix != null) {
+    const ranged = stateOptions.find((option) => {
+      const range = option.match(/(\d{2})\s*x{3}\s*-\s*(\d{2})\s*x{3}/i);
+      return range ? zipPrefix >= Number(range[1]) && zipPrefix <= Number(range[2]) : false;
+    });
+    if (ranged) return ranged;
+  }
+  return stateOptions.find((option) => option.toUpperCase() === state)
+    || stateOptions[0]
+    || "";
+}
+
 export default function PricingPage() {
   const { token, user } = useAuth();
+  const [searchParams] = useSearchParams();
   const [plans, setPlans] = useState<PlanSummary[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -37,8 +77,14 @@ export default function PricingPage() {
   const [search, setSearch] = useState("");
   const [destination, setDestination] = useState("");
   const [cubicFeet, setCubicFeet] = useState("");
-  const [quote, setQuote] = useState<Record<string, unknown> | null>(null);
-  const [openSections, setOpenSections] = useState({ rules: true, rates: true, services: true });
+  const [quote, setQuote] = useState<Calculation | null>(null);
+  const [jobContext, setJobContext] = useState<JobContext | null>(null);
+  const [selectedCharges, setSelectedCharges] = useState<Record<string, boolean>>({});
+  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [manualAmounts, setManualAmounts] = useState<Record<string, number>>({});
+  const [customCharges, setCustomCharges] = useState<CustomCharge[]>([]);
+  const [customDiscounts, setCustomDiscounts] = useState<CustomDiscount[]>([]);
+  const [openSections, setOpenSections] = useState({ rates: true, services: true });
 
   useEffect(() => {
     void fetch(`${API_BASE}/api/pricing`, { headers: authHeaders(token) })
@@ -48,11 +94,35 @@ export default function PricingPage() {
       })
       .then((rows: PlanSummary[]) => {
         setPlans(rows);
-        setSelectedId((current) => current || rows[0]?.id || "");
+        if (!searchParams.get("lead_id") || !searchParams.get("job_id")) {
+          setSelectedId((current) => current || rows[0]?.id || "");
+        }
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load pricing"))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [searchParams, token]);
+
+  useEffect(() => {
+    const leadId = searchParams.get("lead_id");
+    const jobId = searchParams.get("job_id");
+    if (!leadId || !jobId) return;
+    void fetch(`${API_BASE}/api/pricing/context?lead_id=${encodeURIComponent(leadId)}&job_id=${encodeURIComponent(jobId)}`, { headers: authHeaders(token) })
+      .then(async (response) => {
+        if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Failed to load job pricing");
+        return response.json();
+      })
+      .then((context: JobContext) => {
+        setJobContext(context);
+        setPlans(context.plans);
+        setSelectedId(context.recommended_plan_id || "");
+        if (!context.recommended_plan_id) {
+          setPlan(null);
+          setDraft(null);
+        }
+        setCubicFeet(context.lead.volume == null ? "" : String(context.lead.volume));
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load job pricing"));
+  }, [searchParams, token]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -68,7 +138,17 @@ export default function PricingPage() {
       .then((row: Plan) => {
         setPlan(row);
         setDraft(structuredClone(row));
-        setDestination(row.rates[0]?.destination || "");
+        const options = Array.from(new Set(row.rates.map((rate) => rate.destination)));
+        const inferredDestination = destinationFromAddress(
+          jobContext?.job.delivery_zip || "",
+          options,
+          jobContext?.job.delivery_state || "",
+          jobContext?.job.delivery_zip_code || "",
+        );
+        setDestination(inferredDestination || (jobContext ? "" : options[0] || ""));
+        setSelectedCharges({});
+        setQuantities({});
+        setManualAmounts({});
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load pricing plan"))
       .finally(() => setLoading(false));
@@ -83,15 +163,71 @@ export default function PricingPage() {
     () => Array.from(new Set((active?.rates || []).map((row) => row.band_label))),
     [active],
   );
+  useEffect(() => {
+    if (!plan || !jobContext) return;
+    const options = Array.from(new Set(plan.rates.map((rate) => rate.destination)));
+    const inferred = destinationFromAddress(
+      jobContext.job.delivery_zip,
+      options,
+      jobContext.job.delivery_state,
+      jobContext.job.delivery_zip_code,
+    );
+    if (inferred) setDestination(inferred);
+  }, [jobContext, plan]);
   const rateRows = useMemo(() => {
     const query = search.trim().toLowerCase();
     return destinations
       .filter((name) => !query || name.toLowerCase().includes(query))
       .map((name) => ({ name, rates: (active?.rates || []).filter((row) => row.destination === name) }));
   }, [active, destinations, search]);
+  const catalogRules = useMemo(() => {
+    if (!active) return [];
+    const serviceNames = active.services.map((service) => service.name.toLowerCase());
+    return active.rules.filter((rule) => {
+      const text = rule.description.toLowerCase();
+      if (text.includes("destination & origin") && serviceNames.some((name) => name.includes("destination & origin"))) return false;
+      if (text.includes("company & fuel") && !text.includes("$")) return false;
+      if ((text.includes("pick up from") || text.includes("rates period") || text.includes("to area")) && !/(add|take off|reduce|ask|fee|not included)/i.test(text)) return false;
+      if (/^(rates period|exceptions?)$/i.test(rule.description.trim())) return false;
+      return true;
+    });
+  }, [active]);
+  const customChargeTotal = useMemo(
+    () => customCharges.reduce((sum, charge) => sum + Math.max(0, Number(charge.amount) || 0), 0),
+    [customCharges],
+  );
+  const discountBase = (quote?.total || 0) + customChargeTotal;
+  const discountTargets = useMemo(() => {
+    const targets: Record<string, number> = { transportation: Math.max(0, quote?.base_price || 0) };
+    quote?.charges.filter((charge) => charge.selected).forEach((charge) => { targets[`charge:${charge.id}`] = Math.max(0, charge.amount); });
+    customCharges.forEach((charge) => { targets[`custom:${charge.id}`] = Math.max(0, Number(charge.amount) || 0); });
+    return targets;
+  }, [quote, customCharges]);
+  const calculatedDiscounts = useMemo(
+    () => customDiscounts.map((discount) => {
+      const targetExists = Object.prototype.hasOwnProperty.call(discountTargets, discount.targetId);
+      return {
+        ...discount,
+        amount: !targetExists ? 0 : discount.type === "percent"
+          ? (discountTargets[discount.targetId] || 0) * Math.max(0, Number(discount.value) || 0) / 100
+          : Math.max(0, Number(discount.value) || 0),
+      };
+    }),
+    [customDiscounts, discountTargets],
+  );
+  const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
+  const detailedTotal = Math.max(0, discountBase - discountTotal);
 
   function patchDraft(patch: Partial<Plan>) {
     setDraft((current) => current ? { ...current, ...patch } : current);
+  }
+  function addLineDiscount(targetId: string) {
+    setCustomDiscounts((rows) => [...rows, {
+      id: crypto.randomUUID(), targetId, title: "", type: "amount", value: 0,
+    }]);
+  }
+  function lineDiscounts(targetId: string) {
+    return calculatedDiscounts.filter((discount) => discount.targetId === targetId);
   }
   function patchRule(index: number, patch: Partial<Rule>) {
     if (!draft) return;
@@ -134,17 +270,37 @@ export default function PricingPage() {
     }
   }
 
-  async function calculate() {
-    if (!active || !destination || !cubicFeet) return;
+  async function calculate(overrides?: { selected?: Record<string, boolean>; quantities?: Record<string, number>; manual?: Record<string, number> }) {
+    if (!active || !destination) return;
     setError("");
-    const params = new URLSearchParams({ destination, cubic_feet: cubicFeet });
-    const response = await fetch(`${API_BASE}/api/pricing/${active.id}/quote?${params}`, { headers: authHeaders(token) });
+    const response = await fetch(`${API_BASE}/api/pricing/${active.id}/calculate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({
+        destination,
+        cubic_feet: Number(cubicFeet || 0),
+        move_date: jobContext?.job.move_date || "",
+        selected_charges: overrides?.selected || selectedCharges,
+        quantities: overrides?.quantities || quantities,
+        manual_amounts: overrides?.manual || manualAmounts,
+      }),
+    });
     if (!response.ok) {
       setError((await response.json().catch(() => ({}))).detail || "Could not calculate pricing");
       return;
     }
-    setQuote(await response.json());
+    const result: Calculation = await response.json();
+    setQuote(result);
+    setSelectedCharges(Object.fromEntries(result.charges.map((charge) => [charge.id, charge.selected])));
   }
+
+  useEffect(() => {
+    if (!plan || !destination || editing) return;
+    void calculate();
+    // Load the unified selectable charge catalog whenever the pricing book changes.
+    // User selections are preserved by subsequent checkbox-triggered calculations.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan?.id, destination, editing]);
 
   return (
     <div className="pricing-page">
@@ -185,8 +341,35 @@ export default function PricingPage() {
         </aside>
 
         <main className="pricing-content">
-          {loading || !active ? <div className="pricing-card">Loading pricing…</div> : (
+          {jobContext && jobContext.serviceability !== "supported" ? (
+            <section className="pricing-card pricing-unavailable">
+              <div className="pricing-unavailable-icon" aria-hidden="true">⌖</div>
+              <div>
+                <span className="eyebrow">Service area check</span>
+                <h2>{jobContext.serviceability === "unsupported_pickup" ? "This pickup is outside our current service area" : "We couldn’t confirm the pickup service area"}</h2>
+                <p>
+                  {jobContext.serviceability === "unsupported_pickup"
+                    ? `We don’t currently have a pricing book for pickups in ${jobContext.job.pickup_state}. Please confirm availability with dispatch before quoting this move.`
+                    : "Add a valid pickup address or five-digit ZIP code to the job, then try Calculate Price again."}
+                </p>
+                <Link to={`/leads/${jobContext.lead.id}?job_id=${encodeURIComponent(jobContext.job.id)}`}>Return to the lead</Link>
+              </div>
+            </section>
+          ) : loading || !active ? <div className="pricing-card">Loading pricing…</div> : (
             <>
+              {jobContext ? (
+                <section className="pricing-card pricing-job-context">
+                  <div>
+                    <span className="eyebrow">Pricing Job {jobContext.job.job_order}</span>
+                    <h2>{jobContext.lead.full_name}</h2>
+                    <p>{jobContext.job.pickup_zip || "Pickup not provided"} → {jobContext.job.delivery_zip || "Delivery not provided"}</p>
+                  </div>
+                  <div>
+                    <span>{jobContext.job.move_date || "No move date"}</span>
+                    <Link to={`/leads/${jobContext.lead.id}?job_id=${encodeURIComponent(jobContext.job.id)}`}>Back to lead</Link>
+                  </div>
+                </section>
+              ) : null}
               <section className="pricing-card pricing-overview">
                 <div>
                   <span className="eyebrow">{active.company_name}</span>
@@ -201,39 +384,155 @@ export default function PricingPage() {
               </section>
 
               <section className="pricing-card pricing-calculator">
-                <div><span className="eyebrow">Quick estimate</span><h2>Rate lookup</h2></div>
-                <div className="pricing-calc-fields">
-                  <label>Destination<select value={destination} onChange={(e) => { setDestination(e.target.value); setQuote(null); }}>{destinations.map((name) => <option key={name}>{name}</option>)}</select></label>
-                  <label>Cubic feet<input type="number" min="0" value={cubicFeet} onChange={(e) => { setCubicFeet(e.target.value); setQuote(null); }} placeholder="e.g. 650" /></label>
-                  <button className="slds-button primary" onClick={() => void calculate()}>Calculate</button>
-                </div>
-                {quote ? (
-                  <div className="pricing-quote">
-                    <div><span>Rate</span><strong>{(quote.match as Rate | null)?.rate == null ? (quote.match as Rate | null)?.rate_text || "Manual" : `${money((quote.match as Rate).rate)}/cf`}</strong></div>
-                    <div><span>Base / minimum</span><strong>{money(quote.base_price as number | null)}</strong></div>
-                    <div><span>Fuel</span><strong>{money(quote.fuel as number | null)}</strong></div>
-                    <div className="total"><span>Before services</span><strong>{money(quote.total_before_services as number | null)}</strong></div>
-                    {quote.warning ? <p>{String(quote.warning)}</p> : null}
+                <div><span className="eyebrow">Job pricing</span><h2>Calculate price</h2></div>
+                {jobContext?.job.delivery_state && !destination ? (
+                  <div className="pricing-inline-unavailable">
+                    <strong>Delivery area not available</strong>
+                    <span>There is no destination rate for {jobContext.job.delivery_state} in this pricing book. Please confirm the route with dispatch.</span>
                   </div>
                 ) : null}
-              </section>
-
-              <PricingSection title="Rules & exceptions" count={active.rules.length} open={openSections.rules} toggle={() => setOpenSections((s) => ({ ...s, rules: !s.rules }))}>
-                <div className="pricing-rules">
-                  {active.rules.map((rule, index) => (
-                    <article key={rule.id || index} className={rule.category === "exception" ? "exception" : ""}>
-                      {editing ? (
-                        <>
-                          <input value={rule.title} onChange={(e) => patchRule(index, { title: e.target.value })} />
-                          <textarea value={rule.description} onChange={(e) => patchRule(index, { description: e.target.value })} />
-                          <button className="text-danger" onClick={() => patchDraft({ rules: draft!.rules.filter((_, idx) => idx !== index) })}>Remove</button>
-                        </>
-                      ) : <><strong>{rule.title}</strong><p>{rule.description}</p></>}
-                    </article>
-                  ))}
-                  {editing ? <button className="add-row" onClick={() => patchDraft({ rules: [...draft!.rules, { category: "general", title: "Pricing rule", description: "" }] })}>+ Add rule</button> : null}
+                <div className="pricing-calc-fields">
+                  <label>Destination<select value={destination} onChange={(e) => { setDestination(e.target.value); setQuote(null); }}><option value="">Select a supported destination</option>{destinations.map((name) => <option key={name}>{name}</option>)}</select></label>
+                  <label>Cubic feet<input type="number" min="0" value={cubicFeet} onChange={(e) => { setCubicFeet(e.target.value); setQuote(null); }} placeholder="e.g. 650" /></label>
+                  <button className="slds-button primary" disabled={!destination} onClick={() => void calculate()}>Calculate</button>
                 </div>
-              </PricingSection>
+                {quote ? (
+                  <>
+                    <div className="pricing-quote">
+                      <div className="pricing-quote-header">
+                        <div><span className="eyebrow">Price breakdown</span><h3>Detailed Price</h3></div>
+                        <strong>{money(detailedTotal)}</strong>
+                      </div>
+                      <div className="pricing-quote-lines">
+                        <div className="pricing-quote-line">
+                          <div>
+                            <strong>{quote.match?.destination || "Transportation"}</strong>
+                            <small>
+                              {quote.match
+                                ? `${Number(cubicFeet || 0).toLocaleString()} cf × ${quote.match.rate == null ? quote.match.rate_text || "manual rate" : `${money(quote.match.rate)} / cf`} · ${quote.match.band_label}${quote.minimum_applied ? ` · ${money(quote.minimum)} minimum applied` : ""}`
+                                : "No transportation rate matched"}
+                            </small>
+                          </div>
+                          <div className="pricing-line-price"><b>{money(quote.base_price)}</b><button type="button" onClick={() => addLineDiscount("transportation")}>+ Discount</button></div>
+                        </div>
+                        {lineDiscounts("transportation").map((discount) => (
+                          <DiscountRow key={discount.id} discount={discount} originalAmount={discountTargets.transportation || 0} setDiscounts={setCustomDiscounts} />
+                        ))}
+                        {quote.charges.filter((charge) => charge.selected).map((charge) => (
+                          <div key={`summary-${charge.id}`}>
+                            <div className="pricing-quote-line">
+                              <div>
+                                <strong>{charge.name}</strong>
+                                <small>{charge.description}</small>
+                                {charge.breakdown?.map((line, index) => (
+                                  <span className="pricing-charge-breakdown" key={`${charge.id}-breakdown-${index}`}>
+                                    <span>{line.label}</span><b>{money(line.amount)}</b>
+                                  </span>
+                                ))}
+                              </div>
+                              <div className="pricing-line-price"><b className={charge.amount < 0 ? "discount" : ""}>{money(charge.amount)}</b><button type="button" onClick={() => addLineDiscount(`charge:${charge.id}`)}>+ Discount</button></div>
+                            </div>
+                            {lineDiscounts(`charge:${charge.id}`).map((discount) => (
+                              <DiscountRow key={discount.id} discount={discount} originalAmount={discountTargets[`charge:${charge.id}`] || 0} setDiscounts={setCustomDiscounts} />
+                            ))}
+                          </div>
+                        ))}
+                        {customCharges.map((charge) => (
+                          <div key={`custom-summary-${charge.id}`}>
+                            <div className="pricing-quote-line">
+                              <div><strong>{charge.title.trim() || "Custom charge"}</strong><small>Custom charge</small></div>
+                              <div className="pricing-line-price"><b>{money(Math.max(0, Number(charge.amount) || 0))}</b><button type="button" onClick={() => addLineDiscount(`custom:${charge.id}`)}>+ Discount</button></div>
+                            </div>
+                            {lineDiscounts(`custom:${charge.id}`).map((discount) => (
+                              <DiscountRow key={discount.id} discount={discount} originalAmount={discountTargets[`custom:${charge.id}`] || 0} setDiscounts={setCustomDiscounts} />
+                            ))}
+                          </div>
+                        ))}
+                        <div className="pricing-quote-total"><strong>Estimated Total</strong><b>{money(detailedTotal)}</b></div>
+                      </div>
+                      {quote.warning ? <p>{quote.warning}</p> : null}
+                    </div>
+                    <div className="pricing-charge-picker">
+                      <div className="pricing-charge-heading">
+                        <strong>Charges and adjustments</strong>
+                        <span>Default charges are already selected</span>
+                      </div>
+                      {quote.charges.map((charge) => (
+                        <article key={charge.id} className={charge.selected ? "selected" : ""}>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={charge.selected}
+                              disabled={charge.automatic && !charge.applies}
+                              onChange={(event) => {
+                                const next = { ...selectedCharges, [charge.id]: event.target.checked };
+                                setSelectedCharges(next);
+                                void calculate({ selected: next });
+                              }}
+                            />
+                            <span>
+                              <strong>
+                                {charge.name}
+                                {charge.automatic ? <em>Automatic</em> : charge.default_selected ? <em>Default</em> : null}
+                              </strong>
+                              <small>{charge.description}</small>
+                            </span>
+                          </label>
+                          {charge.calculation_type === "per_unit" || charge.calculation_type === "per_cf_month" ? (
+                            <div className="pricing-charge-quantity">
+                              <label>{charge.quantity_label || "Quantity"}</label>
+                              <input
+                                type="number"
+                                min={charge.calculation_type === "per_cf_month" ? "1" : "0"}
+                                step="1"
+                                value={quantities[charge.id] ?? 1}
+                                aria-label={charge.quantity_label || "Quantity"}
+                                title={charge.quantity_label || "Quantity"}
+                                onChange={(event) => {
+                                  const next = { ...quantities, [charge.id]: Math.max(charge.calculation_type === "per_cf_month" ? 1 : 0, Number(event.target.value)) };
+                                  setQuantities(next);
+                                  void calculate({ quantities: next });
+                                }}
+                              />
+                              {charge.free_months ? <small>{charge.free_months === 1 ? "1st month free" : `${charge.free_months} months free`}</small> : null}
+                            </div>
+                          ) : null}
+                          {charge.calculation_type === "manual" && charge.selected ? (
+                            <input
+                              type="number"
+                              min="0"
+                              value={manualAmounts[charge.id] ?? 0}
+                              aria-label="Manual amount"
+                              title="Manual amount"
+                              onChange={(event) => {
+                                const next = { ...manualAmounts, [charge.id]: Number(event.target.value) };
+                                setManualAmounts(next);
+                                void calculate({ manual: next });
+                              }}
+                            />
+                          ) : null}
+                          <b>{charge.selected ? money(charge.amount) : "Not added"}</b>
+                        </article>
+                      ))}
+                      <div className="pricing-manual-adjustments">
+                        <div className="pricing-manual-group">
+                          <div className="pricing-manual-title">
+                            <div><strong>Custom charges</strong><small>Add any charge that is not listed above.</small></div>
+                            <button type="button" onClick={() => setCustomCharges((rows) => [...rows, { id: crypto.randomUUID(), title: "", amount: 0 }])}>+ Add charge</button>
+                          </div>
+                          {customCharges.map((charge) => (
+                            <div className="pricing-manual-row custom-charge" key={charge.id}>
+                              <label>Title<input value={charge.title} placeholder="Charge title" onChange={(event) => setCustomCharges((rows) => rows.map((row) => row.id === charge.id ? { ...row, title: event.target.value } : row))} /></label>
+                              <label>Amount<input type="number" min="0" step="0.01" value={charge.amount || ""} placeholder="0.00" onChange={(event) => setCustomCharges((rows) => rows.map((row) => row.id === charge.id ? { ...row, amount: Number(event.target.value) } : row))} /></label>
+                              <button type="button" className="text-danger" aria-label="Remove custom charge" onClick={() => setCustomCharges((rows) => rows.filter((row) => row.id !== charge.id))}>Remove</button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </section>
 
               <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))}>
                 <div className="pricing-table-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search destination or ZIP area" /><span>{bands.length} cubic-foot bands</span></div>
@@ -256,7 +555,7 @@ export default function PricingPage() {
                 </div>
               </PricingSection>
 
-              <PricingSection title="Additional services" count={active.services.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))}>
+              <PricingSection title="Additional services & adjustments" count={active.services.length + catalogRules.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))}>
                 <div className="pricing-services">
                   {active.services.map((service, index) => (
                     <article key={service.id || index}>
@@ -270,13 +569,71 @@ export default function PricingPage() {
                       ) : <><div><strong>{service.name}</strong>{service.comments ? <small>{service.comments}</small> : null}</div><b>{service.rate_text || "See note"}</b></>}
                     </article>
                   ))}
+                  {catalogRules.map((rule) => {
+                    const index = active.rules.indexOf(rule);
+                    return (
+                    <article key={rule.id || `rule-${index}`} className="pricing-service-rule">
+                      {editing ? (
+                        <>
+                          <input value={rule.title} onChange={(e) => patchRule(index, { title: e.target.value })} />
+                          <textarea value={rule.description} onChange={(e) => patchRule(index, { description: e.target.value })} />
+                          <button className="text-danger" onClick={() => patchDraft({ rules: draft!.rules.filter((_, idx) => idx !== index) })}>Remove</button>
+                        </>
+                      ) : (
+                        <>
+                          <div><strong>{rule.title || "Pricing adjustment"} <em>Adjustment</em></strong><small>{rule.description}</small></div>
+                          <b>{rule.category === "exception" ? "Conditional" : "Included rule"}</b>
+                        </>
+                      )}
+                    </article>
+                    );
+                  })}
                   {editing ? <button className="add-row" onClick={() => patchDraft({ services: [...draft!.services, { name: "", rate_text: "", comments: "" }] })}>+ Add service</button> : null}
+                  {editing ? <button className="add-row" onClick={() => patchDraft({ rules: [...draft!.rules, { category: "general", title: "Pricing adjustment", description: "" }] })}>+ Add adjustment</button> : null}
                 </div>
               </PricingSection>
             </>
           )}
         </main>
       </div>
+    </div>
+  );
+}
+
+function DiscountRow({
+  discount,
+  originalAmount,
+  setDiscounts,
+}: {
+  discount: CustomDiscount & { amount: number };
+  originalAmount: number;
+  setDiscounts: React.Dispatch<React.SetStateAction<CustomDiscount[]>>;
+}) {
+  const patch = (change: Partial<CustomDiscount>) =>
+    setDiscounts((rows) => rows.map((row) => row.id === discount.id ? { ...row, ...change } : row));
+
+  return (
+    <div className="pricing-line-discount">
+      <label>
+        Discount title
+        <input value={discount.title} placeholder="Discount title" onChange={(event) => patch({ title: event.target.value })} />
+      </label>
+      <label>
+        Type
+        <select value={discount.type} onChange={(event) => patch({ type: event.target.value as "amount" | "percent" })}>
+          <option value="amount">Amount ($)</option>
+          <option value="percent">Percentage (%)</option>
+        </select>
+      </label>
+      <label>
+        {discount.type === "percent" ? "Percent" : "Amount"}
+        <input type="number" min="0" step="0.01" value={discount.value || ""} placeholder="0.00" onChange={(event) => patch({ value: Number(event.target.value) })} />
+      </label>
+      <div className="pricing-line-discount-value">
+        <small>{discount.type === "percent" ? `${Number(discount.value) || 0}% of original ${money(originalAmount)}` : "Fixed discount"}</small>
+        <b>−{money(discount.amount)}</b>
+      </div>
+      <button type="button" className="text-danger" aria-label="Remove discount" onClick={() => setDiscounts((rows) => rows.filter((row) => row.id !== discount.id))}>Remove</button>
     </div>
   );
 }
