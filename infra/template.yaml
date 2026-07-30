@@ -437,6 +437,37 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
+  AttachmentBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub moving-crm-attachments-${Environment}-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods:
+              - GET
+              - HEAD
+            AllowedOrigins:
+              - "*"
+            AllowedHeaders:
+              - "*"
+            ExposedHeaders:
+              - Content-Disposition
+              - Content-Length
+              - Content-Type
+              - ETag
+            MaxAge: 300
+
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -520,6 +551,10 @@ Resources:
             ManagedRuleGroupStatement:
               VendorName: AWS
               Name: AWSManagedRulesCommonRuleSet
+              RuleActionOverrides:
+                - Name: SizeRestrictions_BODY
+                  ActionToUse:
+                    Count: {}
           VisibilityConfig:
             SampledRequestsEnabled: true
             CloudWatchMetricsEnabled: true
@@ -1176,6 +1211,12 @@ Resources:
                 Action:
                   - sqs:SendMessage
                 Resource: !GetAtt LeadDuplicateQueue.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub "${AttachmentBucket.Arn}/*"
               # EventBridge Scheduler — create one-time delayed schedules for lead duplication
               - Effect: Allow
                 Action:
@@ -1247,6 +1288,7 @@ Resources:
               - - !Sub "https://${CloudFrontDistribution.DomainName}"
                 - "http://localhost:5173"
           LEAD_DUPLICATE_QUEUE_URL: !GetAtt LeadDuplicateQueue.QueueUrl
+          ATTACHMENTS_BUCKET: !Ref AttachmentBucket
           LEAD_DUPLICATE_FUNCTION_ARN: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-lead-duplicate-${Environment}"
           LEAD_DUPLICATE_SCHEDULER_ROLE_ARN: !GetAtt LeadDuplicateSchedulerRole.Arn
 

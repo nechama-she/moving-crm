@@ -23,11 +23,14 @@ _REQUEST_BY_ENDPOINT = defaultdict(int)
 _OPPORTUNITY_INCLUDE_PARAMS = {
     "IncludeTripInfo": "true",
     "IncludePayments": "true",
+    "IncludeSurveys": "true",
     "IncludeJobAddresses": "true",
+    "IncludeTasks": "true",
     "IncludeFiles": "true",
     "IncludePhotos": "true",
     "IncludeDocuments": "true",
     "IncludeCharges": "true",
+    "IncludeDispatchInfo": "true",
 }
 
 
@@ -241,6 +244,33 @@ def download_opportunity_document(opportunity_id: str, document_id: str = "", do
             return result
 
     return {"ok": False, "error": "Unable to fetch document content from SmartMoving"}
+
+
+def download_opportunity_file(file_url: str) -> dict:
+    """Download an opportunityFiles blob without forwarding the SmartMoving API key."""
+    url = (file_url or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or (parsed.hostname or "").lower() != "smfilestore.blob.core.windows.net":
+        return {"ok": False, "error": "Unsupported SmartMoving opportunity file URL"}
+    try:
+        resp = _request(httpx.get, url, timeout=20, follow_redirects=True)
+        resp.raise_for_status()
+        body = resp.content or b""
+        content_type = resp.headers.get("content-type", "application/octet-stream")
+        if _looks_like_html(content_type, body):
+            return {"ok": False, "error": "HTML response received instead of file"}
+        return {
+            "ok": True,
+            "content": body,
+            "content_type": content_type,
+            "file_name": _extract_filename_from_content_disposition(resp.headers.get("content-disposition")),
+        }
+    except httpx.HTTPError as exc:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None) if response is not None else None
+        return {"ok": False, "error": f"HTTP {status}: {str(exc)[:300]}"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def get_followup(opportunity_id: str, followup_id: str) -> dict:
