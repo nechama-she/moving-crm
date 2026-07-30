@@ -1,22 +1,23 @@
+import hashlib
 import json
 import logging
 import os
 import re
-from typing import Any, TypeVar
-from decimal import Decimal, InvalidOperation
 from datetime import datetime, date, timedelta, timezone
+from decimal import Decimal, InvalidOperation
+from typing import Any, TypeVar
+from urllib.parse import unquote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import boto3
 from botocore.exceptions import ClientError
-
+from dateutil import parser as date_parser
 from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, cast, text
-from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from dateutil import parser as date_parser
+from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from company_colors import resolve_company_color
@@ -24,7 +25,14 @@ from config import get_config
 from database import get_db
 from lead_audit import record_lead_update_log
 from libs.common.phone import normalize_digits
-from libs.smartmoving.client import get_opportunity, get_opportunity_audit_activity, get_opportunity_documents, download_opportunity_document, update_opportunity_salesperson
+from libs.smartmoving.client import (
+    download_opportunity_document,
+    download_opportunity_file,
+    get_opportunity,
+    get_opportunity_audit_activity,
+    get_opportunity_documents,
+    update_opportunity_salesperson,
+)
 from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting
 from routes.templates import get_company_template, render_template
 
@@ -1392,6 +1400,8 @@ def _hard_delete_lead(lead: Lead, db: Session) -> None:
         if job_ids:
             db.query(LeadJobCharge).filter(LeadJobCharge.job_id.in_(job_ids)).delete(synchronize_session=False)
 
+        for attachment in db.query(LeadAttachment).filter(LeadAttachment.lead_id == resolved_lead_id).all():
+            _delete_s3_attachment(attachment)
         db.query(LeadAttachment).filter(LeadAttachment.lead_id == resolved_lead_id).delete(synchronize_session=False)
         db.query(LeadJob).filter(LeadJob.lead_id == resolved_lead_id).delete(synchronize_session=False)
         db.query(Task).filter(Task.lead_id == resolved_lead_id).delete(synchronize_session=False)
@@ -2109,6 +2119,160 @@ def _extract_smartmoving_document_links(payload: object) -> list[dict[str, str]]
     return extracted
 
 
+def _extract_opportunity_files(payload: object) -> list[dict[str, str]]:
+    """Extract the URL strings returned in SmartMoving opportunityFiles arrays."""
+    extracted: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+
+    def walk(node: object, smartmoving_job_id: str = "") -> None:
+        if isinstance(node, list):
+            for item in node:
+                walk(item, smartmoving_job_id)
+            return
+        if not isinstance(node, dict):
+            return
+
+        nested_job_id = _clean_optional_text(
+            node.get("smartmovingJobId")
+            or node.get("opportunityJobId")
+            or node.get("jobId")
+        ) or smartmoving_job_id
+        for key, value in node.items():
+            if str(key).lower() == "opportunityfiles" and isinstance(value, list):
+                for raw_url in value:
+                    url = _clean_optional_text(raw_url)
+                    if not url or url in seen_urls:
+                        continue
+                    parsed = urlparse(url)
+                    if parsed.scheme != "https" or (parsed.hostname or "").lower() != "smfilestore.blob.core.windows.net":
+                        continue
+                    seen_urls.add(url)
+                    file_name = re.sub(
+                        r'[\\/\r\n"]+',
+                        "_",
+                        unquote(parsed.path.rsplit("/", 1)[-1]).strip(),
+                    ) or "SmartMoving File"
+                    extracted.append({
+                        "url": url,
+                        "name": file_name,
+                        "smartmoving_job_id": nested_job_id,
+                    })
+            else:
+                walk(value, nested_job_id)
+
+    walk(payload)
+    return extracted
+
+
+def _sync_opportunity_files_to_s3(
+    lead: Lead,
+    opportunity: dict,
+    user: User,
+    db: Session,
+) -> int:
+    bucket = (os.getenv("ATTACHMENTS_BUCKET") or "").strip()
+    files = _extract_opportunity_files(opportunity)
+    if not bucket or not files:
+        if files and not bucket:
+            logger.warning("Skipping SmartMoving opportunityFiles: ATTACHMENTS_BUCKET is not configured")
+        return 0
+
+    _ensure_attachment_job_column(db)
+    _ensure_attachment_link_columns(db)
+    jobs = (
+        db.query(LeadJob)
+        .filter(LeadJob.lead_id == lead.id)
+        .order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc())
+        .all()
+    )
+    if not jobs:
+        return 0
+
+    primary_job = jobs[0]
+    job_by_smartmoving_id = {
+        (job.smartmoving_job_id or "").strip(): job
+        for job in jobs
+        if (job.smartmoving_job_id or "").strip()
+    }
+    source_hashes = {
+        (row.source_external_id or "").strip()
+        for row in db.query(LeadAttachment)
+        .filter(
+            LeadAttachment.lead_id == lead.id,
+            LeadAttachment.external_source == "smartmoving_s3",
+        )
+        .all()
+        if (row.source_external_id or "").strip()
+    }
+
+    s3 = boto3.client("s3")
+    created = 0
+    uploaded_keys: list[str] = []
+    for item in files:
+        source_hash = hashlib.sha256(item["url"].encode("utf-8")).hexdigest()
+        if source_hash in source_hashes:
+            continue
+        fetched = download_opportunity_file(item["url"])
+        if not fetched.get("ok"):
+            logger.warning("Could not download SmartMoving opportunity file %s: %s", item["url"], fetched.get("error"))
+            continue
+        content = fetched.get("content") or b""
+        if not content or len(content) > MAX_ATTACHMENT_SIZE_BYTES:
+            logger.warning("Skipping SmartMoving opportunity file with invalid size: %s", item["url"])
+            continue
+
+        target_job = job_by_smartmoving_id.get(item.get("smartmoving_job_id", "")) or primary_job
+        file_name = re.sub(
+            r'[\\/\r\n"]+',
+            "_",
+            _clean_optional_text(fetched.get("file_name")) or item["name"],
+        )[:255]
+        content_type = _clean_optional_text(fetched.get("content_type")) or "application/octet-stream"
+        object_key = f"leads/{lead.id}/jobs/{target_job.id}/smartmoving/{source_hash}/{file_name}"
+        try:
+            s3.put_object(
+                Bucket=bucket,
+                Key=object_key,
+                Body=content,
+                ContentType=content_type,
+                ServerSideEncryption="AES256",
+            )
+            uploaded_keys.append(object_key)
+        except Exception:
+            logger.exception("Failed uploading SmartMoving opportunity file to S3: %s", item["url"])
+            continue
+
+        db.add(LeadAttachment(
+            lead_id=lead.id,
+            job_id=target_job.id,
+            file_name=file_name,
+            content_type=content_type,
+            file_size=len(content),
+            file_blob=b"",
+            external_url=f"s3://{bucket}/{object_key}",
+            is_external_link=True,
+            external_source="smartmoving_s3",
+            source_external_id=source_hash,
+            uploaded_by=user.id,
+        ))
+        source_hashes.add(source_hash)
+        created += 1
+
+    if created:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            for object_key in uploaded_keys:
+                try:
+                    s3.delete_object(Bucket=bucket, Key=object_key)
+                except Exception:
+                    logger.exception("Failed cleaning orphaned S3 attachment %s", object_key)
+            logger.exception("Failed saving SmartMoving S3 attachment rows for lead %s", lead.id)
+            return 0
+    return created
+
+
 def _sync_smartmoving_document_links(lead: Lead, user: User, db: Session) -> int:
     """Upsert SmartMoving document links into job attachments without storing blobs."""
     smartmoving_id = _clean_optional_text(lead.smartmoving_id)
@@ -2212,13 +2376,27 @@ def _serialize_lead_attachments(lead_id: str, db: Session) -> list[dict]:
     return items
 
 
-def sync_smartmoving_files(lead: Lead, user: User, db: Session) -> dict:
-    """Sync SmartMoving document links and return the updated attachment list."""
-    created_links = _sync_smartmoving_document_links(lead, user, db)
+def sync_smartmoving_files(
+    lead: Lead,
+    user: User,
+    db: Session,
+    opportunity: dict | None = None,
+) -> dict:
+    """Sync SmartMoving documents plus opportunityFiles into CRM attachments."""
+    created_document_links = _sync_smartmoving_document_links(lead, user, db)
+    if opportunity is None:
+        opportunity_result = get_opportunity(_clean_optional_text(lead.smartmoving_id))
+        opportunity = opportunity_result.get("data") if not opportunity_result.get("error") else None
+    created_s3_files = (
+        _sync_opportunity_files_to_s3(lead, opportunity, user, db)
+        if isinstance(opportunity, dict)
+        else 0
+    )
     return {
         "ok": True,
         "lead_id": lead.id,
-        "created_links": created_links,
+        "created_links": created_document_links,
+        "created_s3_files": created_s3_files,
         "items": _serialize_lead_attachments(lead.id, db),
     }
 
@@ -2236,7 +2414,25 @@ def _download_external_attachment_or_redirect(lead: Lead, row: LeadAttachment) -
         headers = {"Content-Disposition": f'attachment; filename="{safe_name}"'}
         return Response(content=row.file_blob, media_type=row.content_type or "application/octet-stream", headers=headers)
 
-    if (getattr(row, "external_source", "") or "").strip().lower() == "smartmoving":
+    external_source = (getattr(row, "external_source", "") or "").strip().lower()
+    if external_source == "smartmoving_s3":
+        parsed = urlparse(external_url)
+        configured_bucket = (os.getenv("ATTACHMENTS_BUCKET") or "").strip()
+        if parsed.scheme != "s3" or not configured_bucket or parsed.netloc != configured_bucket:
+            raise HTTPException(status_code=500, detail="Attachment storage is not configured")
+        object_key = parsed.path.lstrip("/")
+        signed_url = boto3.client("s3").generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": configured_bucket,
+                "Key": object_key,
+                "ResponseContentDisposition": f'inline; filename="{(row.file_name or "attachment").replace(chr(34), "")}"',
+            },
+            ExpiresIn=300,
+        )
+        return RedirectResponse(url=signed_url, status_code=307)
+
+    if external_source == "smartmoving":
         smartmoving_id = _clean_optional_text(lead.smartmoving_id)
         document_id = (getattr(row, "source_external_id", "") or "").strip()
         if smartmoving_id:
@@ -2254,6 +2450,19 @@ def _download_external_attachment_or_redirect(lead: Lead, row: LeadAttachment) -
 
     # Fallback keeps previous behavior when server-side fetch is not possible.
     return RedirectResponse(url=external_url, status_code=307)
+
+
+def _delete_s3_attachment(row: LeadAttachment) -> None:
+    if (row.external_source or "").strip().lower() != "smartmoving_s3":
+        return
+    parsed = urlparse((row.external_url or "").strip())
+    configured_bucket = (os.getenv("ATTACHMENTS_BUCKET") or "").strip()
+    if parsed.scheme != "s3" or not configured_bucket or parsed.netloc != configured_bucket:
+        return
+    try:
+        boto3.client("s3").delete_object(Bucket=configured_bucket, Key=parsed.path.lstrip("/"))
+    except Exception:
+        logger.exception("Failed deleting S3 attachment %s", row.id)
 
 
 def _backfill_attachment_jobs_for_lead(lead_id: str, db: Session) -> None:
@@ -2389,6 +2598,7 @@ def delete_job_attachment(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Attachment not found")
+    _delete_s3_attachment(row)
     db.delete(row)
     db.commit()
     return {"ok": True}
@@ -2517,6 +2727,7 @@ def delete_lead_attachment(
     if not row:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
+    _delete_s3_attachment(row)
     db.delete(row)
     db.commit()
     return {"ok": True}
@@ -3147,9 +3358,10 @@ def refresh_lead_from_smartmoving(
         external_response={"opportunity": opportunity_result, "audit_activity": audit_result},
         response_status=200,
     )
-    sync_result = sync_smartmoving_files(lead, user, db)
+    sync_result = sync_smartmoving_files(lead, user, db, opportunity)
     if isinstance(updated, dict):
         updated["smartmoving_document_links_synced"] = sync_result["created_links"]
+        updated["smartmoving_opportunity_files_saved"] = sync_result["created_s3_files"]
     return updated
 
 
