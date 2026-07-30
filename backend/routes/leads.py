@@ -7,6 +7,7 @@ from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, TypeVar
 from urllib.parse import unquote, urlparse
+from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import boto3
@@ -1390,6 +1391,7 @@ def delete_lead(
 def _hard_delete_lead(lead: Lead, db: Session) -> None:
     smartmoving_id = (lead.smartmoving_id or "").strip()
     resolved_lead_id = lead.id
+    s3_urls_to_delete: list[str] = []
 
     try:
         job_ids = [
@@ -1400,8 +1402,11 @@ def _hard_delete_lead(lead: Lead, db: Session) -> None:
         if job_ids:
             db.query(LeadJobCharge).filter(LeadJobCharge.job_id.in_(job_ids)).delete(synchronize_session=False)
 
-        for attachment in db.query(LeadAttachment).filter(LeadAttachment.lead_id == resolved_lead_id).all():
-            _delete_s3_attachment(attachment)
+        s3_urls_to_delete = [
+            attachment.external_url or ""
+            for attachment in db.query(LeadAttachment).filter(LeadAttachment.lead_id == resolved_lead_id).all()
+            if (attachment.external_source or "").strip().lower().endswith("_s3")
+        ]
         db.query(LeadAttachment).filter(LeadAttachment.lead_id == resolved_lead_id).delete(synchronize_session=False)
         db.query(LeadJob).filter(LeadJob.lead_id == resolved_lead_id).delete(synchronize_session=False)
         db.query(Task).filter(Task.lead_id == resolved_lead_id).delete(synchronize_session=False)
@@ -1415,6 +1420,11 @@ def _hard_delete_lead(lead: Lead, db: Session) -> None:
 
         db.delete(lead)
         db.commit()
+        for external_url in s3_urls_to_delete:
+            try:
+                _delete_s3_url(external_url)
+            except Exception:
+                logger.exception("Failed cleaning S3 file after deleting lead %s", resolved_lead_id)
     except Exception:
         db.rollback()
         logger.exception("Failed to hard-delete lead %s", resolved_lead_id)
@@ -2073,6 +2083,80 @@ def _ensure_attachment_link_columns(db: Session) -> None:
         db.rollback()
 
 
+def _safe_attachment_name(value: str) -> str:
+    return re.sub(r'[\\/\r\n"]+', "_", (value or "").strip())[:255] or "attachment"
+
+
+def _upload_attachment_bytes_to_s3(
+    lead_id: str,
+    job_id: str | None,
+    file_name: str,
+    content: bytes,
+    content_type: str,
+    source: str,
+) -> str:
+    bucket = (os.getenv("ATTACHMENTS_BUCKET") or "").strip()
+    if not bucket:
+        raise HTTPException(status_code=500, detail="Attachment storage is not configured")
+    safe_name = _safe_attachment_name(file_name)
+    job_path = job_id or "lead"
+    object_key = f"leads/{lead_id}/jobs/{job_path}/{source}/{uuid4()}/{safe_name}"
+    boto3.client("s3").put_object(
+        Bucket=bucket,
+        Key=object_key,
+        Body=content,
+        ContentType=content_type or "application/octet-stream",
+        ServerSideEncryption="AES256",
+    )
+    return f"s3://{bucket}/{object_key}"
+
+
+def _migrate_stored_attachment_blobs_to_s3(lead_id: str, db: Session) -> int:
+    """Move legacy database-backed attachments to S3 without changing their IDs."""
+    rows = (
+        db.query(LeadAttachment)
+        .filter(
+            LeadAttachment.lead_id == lead_id,
+            LeadAttachment.is_external_link.is_(False),
+        )
+        .all()
+    )
+    migrated = 0
+    uploaded_urls: list[str] = []
+    for row in rows:
+        content = bytes(row.file_blob or b"")
+        if not content:
+            continue
+        try:
+            row.external_url = _upload_attachment_bytes_to_s3(
+                lead_id=row.lead_id,
+                job_id=row.job_id,
+                file_name=row.file_name,
+                content=content,
+                content_type=row.content_type,
+                source="crm",
+            )
+            uploaded_urls.append(row.external_url)
+            row.is_external_link = True
+            row.external_source = "crm_s3"
+            row.file_blob = b""
+            migrated += 1
+        except Exception:
+            logger.exception("Failed migrating attachment %s to S3", row.id)
+    if migrated:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            for external_url in uploaded_urls:
+                try:
+                    _delete_s3_url(external_url)
+                except Exception:
+                    logger.exception("Failed cleaning orphaned migrated attachment %s", external_url)
+            raise
+    return migrated
+
+
 def _extract_smartmoving_document_links(payload: object) -> list[dict[str, str]]:
     """Extract document links from unknown SmartMoving documents payload shapes."""
     candidates: list[dict] = []
@@ -2273,8 +2357,8 @@ def _sync_opportunity_files_to_s3(
     return created
 
 
-def _sync_smartmoving_document_links(lead: Lead, user: User, db: Session) -> int:
-    """Upsert SmartMoving document links into job attachments without storing blobs."""
+def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> int:
+    """Download SmartMoving documents into S3 and upsert their attachment rows."""
     smartmoving_id = _clean_optional_text(lead.smartmoving_id)
     if not smartmoving_id:
         return 0
@@ -2307,57 +2391,95 @@ def _sync_smartmoving_document_links(lead: Lead, user: User, db: Session) -> int
         if (row.smartmoving_job_id or "").strip()
     }
 
-    existing_rows = (
-        db.query(LeadAttachment)
-        .filter(
-            LeadAttachment.lead_id == lead.id,
-            LeadAttachment.external_source == "smartmoving",
-        )
-        .all()
-    )
-    existing_keys = set()
-    for row in existing_rows:
-        key = (
-            row.job_id or "",
-            (row.source_external_id or "").strip() or (row.external_url or "").strip(),
-        )
-        if key[1]:
-            existing_keys.add(key)
+    existing_rows = db.query(LeadAttachment).filter(
+        LeadAttachment.lead_id == lead.id,
+        LeadAttachment.external_source.in_(["smartmoving", "smartmoving_document_s3"]),
+    ).all()
+    existing_by_id = {
+        (row.job_id or "", (row.source_external_id or "").strip()): row
+        for row in existing_rows
+        if (row.source_external_id or "").strip()
+    }
+    existing_by_url = {
+        (row.job_id or "", (row.external_url or "").strip()): row
+        for row in existing_rows
+        if (row.external_url or "").strip() and not (row.external_url or "").startswith("s3://")
+    }
 
-    created = 0
+    stored = 0
+    uploaded_urls: list[str] = []
     for doc in documents:
         target_job = job_by_smartmoving_id.get((doc.get("smartmoving_job_id") or "").strip()) or primary_job
-        key_value = (doc.get("external_id") or "").strip() or (doc.get("url") or "").strip()
-        dedupe_key = (target_job.id, key_value)
-        if not key_value or dedupe_key in existing_keys:
+        document_id = (doc.get("external_id") or "").strip()
+        document_url = (doc.get("url") or "").strip()
+        existing = (
+            existing_by_id.get((target_job.id, document_id))
+            if document_id
+            else None
+        ) or existing_by_url.get((target_job.id, document_url))
+        if existing and (existing.external_source or "").strip() == "smartmoving_document_s3":
             continue
-        existing_keys.add(dedupe_key)
+        fetched = download_opportunity_document(
+            smartmoving_id,
+            document_id=document_id,
+            document_url=document_url,
+        )
+        content = fetched.get("content") or b""
+        if not fetched.get("ok") or not content or len(content) > MAX_ATTACHMENT_SIZE_BYTES:
+            logger.warning("Could not store SmartMoving document %s in S3: %s", document_id or document_url, fetched.get("error"))
+            continue
+        file_name = _safe_attachment_name(
+            _clean_optional_text(fetched.get("file_name"))
+            or doc.get("name")
+            or "SmartMoving Document"
+        )
+        content_type = _clean_optional_text(fetched.get("content_type")) or "application/octet-stream"
+        try:
+            s3_url = _upload_attachment_bytes_to_s3(
+                lead_id=lead.id,
+                job_id=target_job.id,
+                file_name=file_name,
+                content=content,
+                content_type=content_type,
+                source="smartmoving-documents",
+            )
+        except Exception:
+            logger.exception("Failed uploading SmartMoving document %s to S3", document_id or document_url)
+            continue
+        uploaded_urls.append(s3_url)
 
-        row = LeadAttachment(
+        row = existing or LeadAttachment(
             lead_id=lead.id,
             job_id=target_job.id,
-            file_name=(doc.get("name") or "SmartMoving Document")[:255],
-            content_type="application/x-smartmoving-link",
-            file_size=0,
             file_blob=b"",
-            external_url=(doc.get("url") or "")[:2048],
-            is_external_link=True,
-            external_source="smartmoving",
-            source_external_id=(doc.get("external_id") or "")[:255] or None,
             uploaded_by=user.id,
         )
-        db.add(row)
-        created += 1
+        row.file_name = file_name
+        row.content_type = content_type
+        row.file_size = len(content)
+        row.file_blob = b""
+        row.external_url = s3_url
+        row.is_external_link = True
+        row.external_source = "smartmoving_document_s3"
+        row.source_external_id = document_id[:255] or hashlib.sha256(document_url.encode("utf-8")).hexdigest()
+        if not existing:
+            db.add(row)
+        stored += 1
 
-    if created:
+    if stored:
         try:
             db.commit()
         except Exception:
             db.rollback()
-            logger.exception("Failed to save SmartMoving document links for lead %s", lead.id)
+            for s3_url in uploaded_urls:
+                try:
+                    _delete_s3_url(s3_url)
+                except Exception:
+                    logger.exception("Failed cleaning orphaned SmartMoving document %s", s3_url)
+            logger.exception("Failed to save SmartMoving documents for lead %s", lead.id)
             return 0
 
-    return created
+    return stored
 
 
 def _serialize_lead_attachments(lead_id: str, db: Session) -> list[dict]:
@@ -2383,7 +2505,8 @@ def sync_smartmoving_files(
     opportunity: dict | None = None,
 ) -> dict:
     """Sync SmartMoving documents plus opportunityFiles into CRM attachments."""
-    created_document_links = _sync_smartmoving_document_links(lead, user, db)
+    migrated_legacy_files = _migrate_stored_attachment_blobs_to_s3(lead.id, db)
+    created_document_links = _sync_smartmoving_documents_to_s3(lead, user, db)
     if opportunity is None:
         opportunity_result = get_opportunity(_clean_optional_text(lead.smartmoving_id))
         opportunity = opportunity_result.get("data") if not opportunity_result.get("error") else None
@@ -2397,6 +2520,7 @@ def sync_smartmoving_files(
         "lead_id": lead.id,
         "created_links": created_document_links,
         "created_s3_files": created_s3_files,
+        "migrated_legacy_files": migrated_legacy_files,
         "items": _serialize_lead_attachments(lead.id, db),
     }
 
@@ -2415,7 +2539,7 @@ def _download_external_attachment_or_redirect(lead: Lead, row: LeadAttachment) -
         return Response(content=row.file_blob, media_type=row.content_type or "application/octet-stream", headers=headers)
 
     external_source = (getattr(row, "external_source", "") or "").strip().lower()
-    if external_source == "smartmoving_s3":
+    if external_url.startswith("s3://") and external_source.endswith("_s3"):
         parsed = urlparse(external_url)
         configured_bucket = (os.getenv("ATTACHMENTS_BUCKET") or "").strip()
         if parsed.scheme != "s3" or not configured_bucket or parsed.netloc != configured_bucket:
@@ -2452,17 +2576,12 @@ def _download_external_attachment_or_redirect(lead: Lead, row: LeadAttachment) -
     return RedirectResponse(url=external_url, status_code=307)
 
 
-def _delete_s3_attachment(row: LeadAttachment) -> None:
-    if (row.external_source or "").strip().lower() != "smartmoving_s3":
-        return
-    parsed = urlparse((row.external_url or "").strip())
+def _delete_s3_url(external_url: str) -> None:
+    parsed = urlparse((external_url or "").strip())
     configured_bucket = (os.getenv("ATTACHMENTS_BUCKET") or "").strip()
     if parsed.scheme != "s3" or not configured_bucket or parsed.netloc != configured_bucket:
         return
-    try:
-        boto3.client("s3").delete_object(Bucket=configured_bucket, Key=parsed.path.lstrip("/"))
-    except Exception:
-        logger.exception("Failed deleting S3 attachment %s", row.id)
+    boto3.client("s3").delete_object(Bucket=configured_bucket, Key=parsed.path.lstrip("/"))
 
 
 def _backfill_attachment_jobs_for_lead(lead_id: str, db: Session) -> None:
@@ -2499,6 +2618,7 @@ def list_job_attachments(
     _ensure_attachment_link_columns(db)
     _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
+    _migrate_stored_attachment_blobs_to_s3(lead_id, db)
     rows = (
         db.query(LeadAttachment, User)
         .outerjoin(User, LeadAttachment.uploaded_by == User.id)
@@ -2538,17 +2658,34 @@ def upload_job_attachment(
     if len(payload) > MAX_ATTACHMENT_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="File is too large (max 15 MB)")
 
-    row = LeadAttachment(
+    content_type = file.content_type or "application/octet-stream"
+    external_url = _upload_attachment_bytes_to_s3(
         lead_id=lead_id,
         job_id=job.id,
         file_name=file_name,
-        content_type=(file.content_type or "application/octet-stream"),
+        content=payload,
+        content_type=content_type,
+        source="crm",
+    )
+    row = LeadAttachment(
+        lead_id=lead_id,
+        job_id=job.id,
+        file_name=_safe_attachment_name(file_name),
+        content_type=content_type,
         file_size=len(payload),
-        file_blob=payload,
+        file_blob=b"",
+        external_url=external_url,
+        is_external_link=True,
+        external_source="crm_s3",
         uploaded_by=user.id,
     )
-    db.add(row)
-    db.commit()
+    try:
+        db.add(row)
+        db.commit()
+    except Exception:
+        db.rollback()
+        _delete_s3_url(external_url)
+        raise
     db.refresh(row)
     item = row.to_dict()
     item["uploaded_by_name"] = user.name if user else ""
@@ -2598,9 +2735,15 @@ def delete_job_attachment(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    _delete_s3_attachment(row)
+    external_url = row.external_url or ""
+    should_delete_s3 = (row.external_source or "").strip().lower().endswith("_s3")
     db.delete(row)
     db.commit()
+    if should_delete_s3:
+        try:
+            _delete_s3_url(external_url)
+        except Exception:
+            logger.exception("Failed cleaning S3 file after deleting attachment %s", attachment_id)
     return {"ok": True}
 
 
@@ -2642,6 +2785,7 @@ def list_lead_attachments(
 ):
     _ensure_attachment_link_columns(db)
     lead = _get_visible_lead_or_404(lead_id, user, db)
+    _migrate_stored_attachment_blobs_to_s3(lead.id, db)
     rows = (
         db.query(LeadAttachment, User)
         .outerjoin(User, LeadAttachment.uploaded_by == User.id)
@@ -2677,16 +2821,33 @@ def upload_lead_attachment(
     if len(payload) > MAX_ATTACHMENT_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="File is too large (max 15 MB)")
 
+    content_type = file.content_type or "application/octet-stream"
+    external_url = _upload_attachment_bytes_to_s3(
+        lead_id=lead.id,
+        job_id=None,
+        file_name=file_name,
+        content=payload,
+        content_type=content_type,
+        source="crm",
+    )
     row = LeadAttachment(
         lead_id=lead.id,
-        file_name=file_name,
-        content_type=(file.content_type or "application/octet-stream"),
+        file_name=_safe_attachment_name(file_name),
+        content_type=content_type,
         file_size=len(payload),
-        file_blob=payload,
+        file_blob=b"",
+        external_url=external_url,
+        is_external_link=True,
+        external_source="crm_s3",
         uploaded_by=user.id,
     )
-    db.add(row)
-    db.commit()
+    try:
+        db.add(row)
+        db.commit()
+    except Exception:
+        db.rollback()
+        _delete_s3_url(external_url)
+        raise
     db.refresh(row)
     return row.to_dict()
 
@@ -2727,9 +2888,15 @@ def delete_lead_attachment(
     if not row:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    _delete_s3_attachment(row)
+    external_url = row.external_url or ""
+    should_delete_s3 = (row.external_source or "").strip().lower().endswith("_s3")
     db.delete(row)
     db.commit()
+    if should_delete_s3:
+        try:
+            _delete_s3_url(external_url)
+        except Exception:
+            logger.exception("Failed cleaning S3 file after deleting attachment %s", attachment_id)
     return {"ok": True}
 
 
