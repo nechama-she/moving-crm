@@ -450,6 +450,21 @@ Resources:
         IgnorePublicAcls: true
         BlockPublicPolicy: true
         RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods:
+              - GET
+              - HEAD
+            AllowedOrigins:
+              - "*"
+            AllowedHeaders:
+              - "*"
+            ExposedHeaders:
+              - Content-Disposition
+              - Content-Length
+              - Content-Type
+              - ETag
+            MaxAge: 300
 
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
