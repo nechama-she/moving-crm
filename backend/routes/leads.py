@@ -1009,6 +1009,96 @@ def get_sales_calendar(
     }
 
 
+@router.get("/sales-performance")
+def get_sales_performance(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return 12 months of cumulative daily booked sales for each visible rep."""
+    if user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="Sales performance access required")
+
+    allowed_company_ids = _get_user_company_ids(user, db)
+    if not allowed_company_ids:
+        return {"months": [], "reps": []}
+
+    local_today = datetime.now(ZoneInfo("America/New_York")).date()
+    current_month = local_today.replace(day=1)
+    months: list[date] = []
+    cursor = current_month
+    for _ in range(12):
+        months.append(cursor)
+        cursor = date(cursor.year - 1, 12, 1) if cursor.month == 1 else date(cursor.year, cursor.month - 1, 1)
+    months.reverse()
+    range_start = months[0]
+    range_end = date(current_month.year + 1, 1, 1) if current_month.month == 12 else date(current_month.year, current_month.month + 1, 1)
+
+    rows = (
+        db.query(
+            LeadJob.booked_move_date,
+            Lead.estimated_total,
+            User.id.label("assigned_to"),
+            User.name.label("assigned_to_name"),
+        )
+        .join(Lead, Lead.id == LeadJob.lead_id)
+        .join(User, User.id == Lead.assigned_to)
+        .filter(LeadJob.company_id.in_(allowed_company_ids))
+        .filter(LeadJob.job_order == 1)
+        .filter(LeadJob.booked_move_date.isnot(None))
+        .filter(LeadJob.booked_move_date >= range_start)
+        .filter(LeadJob.booked_move_date < range_end)
+        .filter(Lead.status.in_(DISPATCH_STATUSES))
+    )
+    if user.role == "sales_rep":
+        rows = rows.filter(Lead.assigned_to == user.id)
+
+    month_keys = [month.strftime("%Y-%m") for month in months]
+    rep_totals: dict[str, dict[str, Any]] = {}
+    for booked_date, estimated_total, assigned_to, assigned_to_name in rows.all():
+        rep = rep_totals.setdefault(
+            assigned_to,
+            {
+                "id": assigned_to,
+                "name": assigned_to_name or "Unnamed salesperson",
+                "months": {key: [0.0] * 31 for key in month_keys},
+            },
+        )
+        total = _deserialize_estimated_total(estimated_total)
+        amount = float((total or {}).get("finalTotal") or 0)
+        rep["months"][booked_date.strftime("%Y-%m")][booked_date.day - 1] += amount
+
+    reps = []
+    for rep in rep_totals.values():
+        series = []
+        for month, key in zip(months, month_keys):
+            running_total = 0.0
+            cumulative = []
+            next_month = date(month.year + 1, 1, 1) if month.month == 12 else date(month.year, month.month + 1, 1)
+            final_day = (next_month - timedelta(days=1)).day
+            if month == current_month:
+                final_day = local_today.day
+            for day_index, daily_total in enumerate(rep["months"][key], start=1):
+                running_total += daily_total
+                cumulative.append(round(running_total, 2) if day_index <= final_day else None)
+            series.append({
+                "month": key,
+                "label": month.strftime("%b %Y"),
+                "values": cumulative,
+                "total": round(running_total, 2),
+            })
+        reps.append({
+            "id": rep["id"],
+            "name": rep["name"],
+            "series": series,
+        })
+
+    reps.sort(key=lambda rep: rep["name"].lower())
+    return {
+        "months": [{"month": key, "label": month.strftime("%b %Y")} for month, key in zip(months, month_keys)],
+        "reps": reps,
+    }
+
+
 @router.get("/dispatch-calendar-days")
 def get_dispatch_calendar_days(
     company_id: str = Query(default=""),
