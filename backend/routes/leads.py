@@ -1479,6 +1479,7 @@ def copy_lead(
     if not provider_key:
         raise HTTPException(status_code=500, detail="SmartMoving lead-copy provider is not configured")
 
+    referral_source = f"Facebook-{target_company.name}-HHG"
     smartmoving_payload = {
         "fullName": source_lead.full_name or "",
         "phoneNumber": source_lead.phone or "",
@@ -1487,7 +1488,7 @@ def copy_lead(
         "destinationZip": source_lead.delivery_zip or "",
         "moveDate": source_lead.move_date or "",
         "notes": f"Copied from Moving CRM lead {source_lead.id}",
-        "referralSource": "Moving CRM Copy",
+        "referralSource": referral_source,
         "serviceType": "Moving",
         "moveSize": source_lead.move_size or "Room or Less",
     }
@@ -1504,7 +1505,7 @@ def copy_lead(
         full_name=source_lead.full_name or "",
         email=source_lead.email or "",
         phone=source_lead.phone or "",
-        source="crm_copy",
+        source="Facebook",
         smartmoving_id=_clean_optional_text(smartmoving_result.get("lead_id")) or None,
         pickup_zip=source_lead.pickup_zip or "",
         delivery_zip=source_lead.delivery_zip or "",
@@ -1512,6 +1513,7 @@ def copy_lead(
         move_date=source_lead.move_date or "",
         status="new",
         notes=f"Copied from Moving CRM lead {source_lead.id}",
+        referral_source=referral_source,
         service_type="Moving",
     )
     try:
