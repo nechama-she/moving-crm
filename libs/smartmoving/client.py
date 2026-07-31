@@ -120,6 +120,39 @@ def get_opportunity(opportunity_id: str) -> dict:
         return {"error": str(e)}
 
 
+def create_provider_lead(provider_key: str, branch_id: str, payload: dict) -> dict:
+    """Create a lead through SmartMoving's provider API."""
+    provider = (provider_key or "").strip()
+    branch = (branch_id or "").strip()
+    if not provider or not branch:
+        return {"ok": False, "error": "SmartMoving provider or branch is not configured"}
+
+    url = "https://api.smartmoving.com/api/leads/from-provider/v2"
+    params = {"providerKey": provider, "branchId": branch}
+    try:
+        resp = _request(
+            httpx.post,
+            url,
+            params=params,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        response_data = resp.json()
+        lead_id = response_data.get("leadId", "") if isinstance(response_data, dict) else str(response_data).strip('"')
+        if not lead_id:
+            return {"ok": False, "status": resp.status_code, "error": "SmartMoving did not return a lead id"}
+        return {"ok": True, "status": resp.status_code, "lead_id": lead_id, "response": response_data}
+    except httpx.HTTPError as exc:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None) if response is not None else None
+        body = getattr(response, "text", str(exc)) if response is not None else str(exc)
+        return {"ok": False, "status": status, "error": f"HTTP {status}: {body[:500]}"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def get_opportunity_audit_activity(opportunity_id: str) -> dict:
     """Fetch audit activity rows for an opportunity.
 

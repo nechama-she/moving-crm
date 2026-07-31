@@ -27,6 +27,7 @@ from database import get_db
 from lead_audit import record_lead_update_log
 from libs.common.phone import normalize_digits
 from libs.smartmoving.client import (
+    create_provider_lead,
     download_opportunity_document,
     download_opportunity_file,
     get_opportunity,
@@ -775,6 +776,18 @@ def _get_user_company_ids(user: User, db: Session) -> list[str]:
     return [r[0] for r in rows]
 
 
+def _smartmoving_provider_key() -> str:
+    raw = get_config().get("SMARTMOVING_DUPLICATE_CONFIG", "")
+    if isinstance(raw, dict):
+        config = raw
+    else:
+        try:
+            config = json.loads(raw or "{}")
+        except (TypeError, json.JSONDecodeError):
+            config = {}
+    return _clean_optional_text(config.get("providerKey"))
+
+
 def _lookup_sender_id(lead: Lead) -> str | None:
     """Try to find a matching sender_id from DynamoDB sender_info table."""
     from boto3.dynamodb.conditions import Attr
@@ -1435,6 +1448,105 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
             logger.info("Matched sender_id %s for lead %s", sender_id, lead.id)
 
     return lead.to_dict()
+
+
+class CopyLeadRequest(BaseModel):
+    company_id: str
+
+
+@router.post("/leads/{lead_id}/copy")
+def copy_lead(
+    lead_id: str,
+    body: CopyLeadRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_not_dispatch_write(user)
+    source_lead = _get_visible_lead_or_404(lead_id, user, db)
+
+    allowed_company_ids = _get_user_company_ids(user, db)
+    target_company_id = _clean_optional_text(body.company_id)
+    if target_company_id not in allowed_company_ids:
+        raise HTTPException(status_code=403, detail="You do not have access to the selected company")
+
+    target_company = db.query(Company).filter(Company.id == target_company_id).first()
+    if not target_company:
+        raise HTTPException(status_code=404, detail="Selected company not found")
+    branch_id = _clean_optional_text(target_company.samrtmoving_branch_id)
+    provider_key = _smartmoving_provider_key()
+    if not branch_id:
+        raise HTTPException(status_code=400, detail=f"{target_company.name} does not have a SmartMoving branch configured")
+    if not provider_key:
+        raise HTTPException(status_code=500, detail="SmartMoving lead-copy provider is not configured")
+
+    smartmoving_payload = {
+        "fullName": source_lead.full_name or "",
+        "phoneNumber": source_lead.phone or "",
+        "email": source_lead.email or "",
+        "originZip": source_lead.pickup_zip or "",
+        "destinationZip": source_lead.delivery_zip or "",
+        "moveDate": source_lead.move_date or "",
+        "notes": f"Copied from Moving CRM lead {source_lead.id}",
+        "referralSource": "Moving CRM Copy",
+        "serviceType": "Moving",
+        "moveSize": source_lead.move_size or "Room or Less",
+    }
+    smartmoving_result = create_provider_lead(provider_key, branch_id, smartmoving_payload)
+    if not smartmoving_result.get("ok"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"SmartMoving could not create the copied lead: {smartmoving_result.get('error', 'unknown error')}",
+        )
+
+    copied_lead = Lead(
+        company_id=target_company.id,
+        assigned_to=None,
+        full_name=source_lead.full_name or "",
+        email=source_lead.email or "",
+        phone=source_lead.phone or "",
+        source="crm_copy",
+        smartmoving_id=_clean_optional_text(smartmoving_result.get("lead_id")) or None,
+        pickup_zip=source_lead.pickup_zip or "",
+        delivery_zip=source_lead.delivery_zip or "",
+        move_size=source_lead.move_size or "",
+        move_date=source_lead.move_date or "",
+        status="new",
+        notes=f"Copied from Moving CRM lead {source_lead.id}",
+        service_type="Moving",
+    )
+    try:
+        db.add(copied_lead)
+        db.flush()
+        db.add(LeadJob(
+            lead_id=copied_lead.id,
+            company_id=target_company.id,
+            job_order=1,
+            pickup_zip=copied_lead.pickup_zip,
+            delivery_zip=copied_lead.delivery_zip,
+            move_date=copied_lead.move_date,
+        ))
+        db.commit()
+        db.refresh(copied_lead)
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "SmartMoving lead %s was created, but CRM copy failed for source lead %s",
+            smartmoving_result.get("lead_id"),
+            source_lead.id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "SmartMoving created the lead, but Moving CRM could not save it. "
+                f"SmartMoving ID: {smartmoving_result.get('lead_id')}"
+            ),
+        )
+
+    return {
+        "ok": True,
+        "lead": copied_lead.to_dict(),
+        "source_lead_id": source_lead.id,
+    }
 
 
 @router.get("/leads/{lead_id}/logs")

@@ -236,6 +236,10 @@ export default function LeadDetail() {
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [statusMenuRect, setStatusMenuRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const [deletingLead, setDeletingLead] = useState(false);
+  const [copyModalOpen, setCopyModalOpen] = useState(false);
+  const [copyCompanyId, setCopyCompanyId] = useState("");
+  const [copyingLead, setCopyingLead] = useState(false);
+  const [copyLeadError, setCopyLeadError] = useState("");
   const [defaultCommissionPercent, setDefaultCommissionPercent] = useState<number>(((1 - 0.035) / 3) * 100);
   const [commissionPercentByUserId, setCommissionPercentByUserId] = useState<Map<string, number>>(new Map());
   const [leadJobs, setLeadJobs] = useState<LeadJobItem[]>([]);
@@ -1120,6 +1124,29 @@ export default function LeadDetail() {
     }
   }
 
+  async function copyLead() {
+    if (!leadId || !copyCompanyId || !canEditLead) return;
+    setCopyingLead(true);
+    setCopyLeadError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/copy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ company_id: copyCompanyId }),
+      });
+      const responseBody = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(responseBody?.detail || `HTTP ${res.status}`);
+      const copiedLeadId = String(responseBody?.lead?.id || "");
+      if (!copiedLeadId) throw new Error("The lead was copied, but no CRM lead id was returned");
+      setCopyModalOpen(false);
+      navigate(`/leads/${copiedLeadId}`);
+    } catch (err: unknown) {
+      setCopyLeadError(err instanceof Error ? err.message : "Failed to copy lead");
+    } finally {
+      setCopyingLead(false);
+    }
+  }
+
   return (
     <div className="lead-detail-page" style={{ width: "100%", height: "calc(100vh - 52px)", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "24px clamp(16px, 3vw, 28px) 40px", background: "#f6f8fb", fontFamily: "inherit" }}>
       <div style={{ width: "100%", maxWidth: 1120, margin: "0 auto" }}>
@@ -1185,6 +1212,44 @@ export default function LeadDetail() {
               {previewType === "none" ? <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>{previewText}</p> : null}
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {copyModalOpen ? (
+        <div className="copy-lead-backdrop" role="presentation" onClick={() => !copyingLead && setCopyModalOpen(false)}>
+          <section className="copy-lead-modal" role="dialog" aria-modal="true" aria-labelledby="copy-lead-title" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <span className="copy-lead-icon" aria-hidden="true">⧉</span>
+                <div>
+                  <h2 id="copy-lead-title">Copy Lead</h2>
+                  <p>Create a new lead in Moving CRM and SmartMoving.</p>
+                </div>
+              </div>
+              <button type="button" aria-label="Close" disabled={copyingLead} onClick={() => setCopyModalOpen(false)}>×</button>
+            </header>
+            <div className="copy-lead-body">
+              <div className="copy-lead-summary">
+                <strong>{String(lead?.full_name || "Lead")}</strong>
+                <span>{String(lead?.phone_number || "No phone")} · {String(lead?.email || "No email")}</span>
+                <small>Copies name, phone, email, move size, pickup, delivery, and move date.</small>
+              </div>
+              <label>
+                Copy to company
+                <select value={copyCompanyId} onChange={(event) => { setCopyCompanyId(event.target.value); setCopyLeadError(""); }} autoFocus>
+                  <option value="">Select a company</option>
+                  {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+                </select>
+              </label>
+              {copyLeadError ? <div className="copy-lead-error">{copyLeadError}</div> : null}
+            </div>
+            <footer>
+              <button type="button" disabled={copyingLead} onClick={() => setCopyModalOpen(false)}>Cancel</button>
+              <button type="button" className="copy-lead-submit" disabled={copyingLead || !copyCompanyId} onClick={() => void copyLead()}>
+                {copyingLead ? "Creating in SmartMoving…" : "Copy Lead"}
+              </button>
+            </footer>
+          </section>
         </div>
       ) : null}
 
@@ -1897,6 +1962,20 @@ export default function LeadDetail() {
                 </div>
               ) : (
                 <div className="lead-profile-actions lead-profile-view-actions" style={{ display: "flex", gap: 6 }}>
+                  <button
+                    type="button"
+                    className="lead-profile-action-button lead-profile-copy-button"
+                    onClick={() => {
+                      setCopyCompanyId("");
+                      setCopyLeadError("");
+                      setCopyModalOpen(true);
+                    }}
+                    disabled={!canEditLead}
+                    title="Copy lead to another company"
+                    style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: canEditLead ? "pointer" : "default" }}
+                  >
+                    <span aria-hidden="true">⧉</span><span className="lead-profile-action-label"> Copy Lead</span>
+                  </button>
                   <button
                     type="button"
                     className="lead-profile-action-button lead-profile-files-button"
