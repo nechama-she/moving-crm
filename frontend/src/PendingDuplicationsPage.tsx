@@ -43,6 +43,8 @@ export default function PendingDuplicationsPage() {
   const [runItem, setRunItem] = useState<PendingDuplication | null>(null);
   const [runCompanyId, setRunCompanyId] = useState("");
   const [runReferralSource, setRunReferralSource] = useState("");
+  const [runError, setRunError] = useState("");
+  const [runResult, setRunResult] = useState<Record<string, unknown> | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,12 +107,16 @@ export default function PendingDuplicationsPage() {
     setRunItem(item);
     setRunCompanyId(matchingCompany?.id || "");
     setRunReferralSource(item.target_referral_source || "");
+    setRunError("");
+    setRunResult(null);
     setError("");
   }
 
   async function duplicateNow() {
     if (!runItem || !runCompanyId || !runReferralSource.trim()) return;
     setRunning(runItem.schedule_name);
+    setRunError("");
+    setRunResult(null);
     setError("");
     try {
       const response = await fetch(
@@ -122,10 +128,11 @@ export default function PendingDuplicationsPage() {
         },
       );
       if (!response.ok) throw new Error(await responseError(response));
+      const responseBody = await response.json();
       setItems((current) => current.filter((row) => row.schedule_name !== runItem.schedule_name));
-      setRunItem(null);
+      setRunResult((responseBody?.result || {}) as Record<string, unknown>);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start duplication");
+      setRunError(err instanceof Error ? err.message : "Could not complete duplication");
     } finally {
       setRunning("");
     }
@@ -160,13 +167,26 @@ export default function PendingDuplicationsPage() {
                 <input value={runReferralSource} onChange={(event) => setRunReferralSource(event.target.value)} placeholder="Facebook-Company-HHG" style={fieldInput} />
               </label>
               <p style={{ margin: 0, color: "#706e6b", fontSize: 11 }}>This starts the duplication immediately and removes its pending schedule.</p>
+              {runError ? <div style={modalError}><strong>Duplication failed</strong><span>{runError}</span></div> : null}
+              {runResult ? (
+                <div style={modalSuccess}>
+                  <strong>Duplication completed</strong>
+                  <span>SmartMoving and Moving CRM returned successfully.</span>
+                  <details>
+                    <summary>View complete responses</summary>
+                    <pre style={{ maxHeight: 220, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(runResult, null, 2)}</pre>
+                  </details>
+                </div>
+              ) : null}
               {runItem.is_sample ? <div style={demoNotice}>Dev preview only — this sample cannot create or delete anything.</div> : null}
             </div>
             <footer className="pending-dup-modal-footer" style={modalFooter}>
-              <button type="button" disabled={Boolean(running)} onClick={() => setRunItem(null)} style={secondaryButton}>Cancel</button>
-              <button type="button" disabled={runItem.is_sample || Boolean(running) || !runCompanyId || !runReferralSource.trim()} onClick={() => void duplicateNow()} style={primaryButton}>
-                {runItem.is_sample ? "Preview Only" : running ? "Starting..." : "Duplicate Now"}
-              </button>
+              <button type="button" disabled={Boolean(running)} onClick={() => setRunItem(null)} style={secondaryButton}>{runResult ? "Close" : "Cancel"}</button>
+              {!runResult ? (
+                <button type="button" disabled={runItem.is_sample || Boolean(running) || !runCompanyId || !runReferralSource.trim()} onClick={() => void duplicateNow()} style={primaryButton}>
+                  {runItem.is_sample ? "Preview Only" : running ? "Waiting for responses..." : "Duplicate Now"}
+                </button>
+              ) : null}
             </footer>
           </section>
         </div>
@@ -350,6 +370,8 @@ const primaryButton: React.CSSProperties = {
 };
 const demoBadge: React.CSSProperties = { display: "inline-block", marginTop: 5, marginLeft: 6, padding: "2px 6px", borderRadius: 999, background: "#fff1d6", color: "#8c4b02", fontSize: 9, fontWeight: 800, letterSpacing: ".04em" };
 const demoNotice: React.CSSProperties = { padding: "9px 10px", border: "1px solid #fe9339", borderRadius: 4, background: "#fff7ed", color: "#8c4b02", fontSize: 11, fontWeight: 700 };
+const modalError: React.CSSProperties = { padding: "10px 11px", display: "grid", gap: 4, border: "1px solid #ea001e", borderRadius: 4, background: "#fef1ee", color: "#ba0517", fontSize: 11, overflowWrap: "anywhere" };
+const modalSuccess: React.CSSProperties = { padding: "10px 11px", display: "grid", gap: 4, border: "1px solid #2e844a", borderRadius: 4, background: "#f3fdf6", color: "#194e31", fontSize: 11 };
 const modalBackdrop: React.CSSProperties = { position: "fixed", inset: 0, zIndex: 100, padding: 16, display: "grid", placeItems: "center", background: "rgba(8, 21, 38, .52)" };
 const modal: React.CSSProperties = { width: "min(500px, 100%)", overflow: "hidden", border: "1px solid #dddbda", borderRadius: 8, background: "#fff", boxShadow: "0 14px 45px rgba(0,0,0,.25)" };
 const modalHeader: React.CSSProperties = { padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, borderBottom: "1px solid #dddbda", background: "#f3f3f3" };

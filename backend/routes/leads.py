@@ -807,11 +807,16 @@ def run_pending_lead_duplication_now(
     try:
         response = boto3.client("lambda", region_name=region).invoke(
             FunctionName=function_arn,
-            InvocationType="Event",
+            InvocationType="RequestResponse",
             Payload=json.dumps(payload).encode("utf-8"),
         )
-        if response.get("StatusCode") != 202:
+        if response.get("StatusCode") != 200:
             raise RuntimeError(f"Lambda returned status {response.get('StatusCode')}")
+        raw_result = response.get("Payload").read().decode("utf-8") if response.get("Payload") else "{}"
+        invocation_result = json.loads(raw_result or "{}")
+        if response.get("FunctionError") or not invocation_result.get("ok"):
+            error_message = invocation_result.get("errorMessage") or invocation_result.get("error") or raw_result
+            raise RuntimeError(str(error_message)[:1500])
     except Exception as exc:
         logger.exception("Failed to invoke pending lead duplication %s", schedule_name)
         raise HTTPException(status_code=502, detail=f"Could not start duplication: {exc}")
@@ -830,6 +835,7 @@ def run_pending_lead_duplication_now(
         "lead_id": payload.get("lead_id"),
         "target_company_name": target_company.name,
         "target_referral_source": referral_source,
+        "result": invocation_result.get("result") or {},
     }
 
 
