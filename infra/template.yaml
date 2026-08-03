@@ -1228,6 +1228,10 @@ Resources:
                 Action:
                   - scheduler:ListSchedules
                 Resource: "*"
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-lead-duplicate-${Environment}"
               # Allow passing the scheduler role to EventBridge Scheduler
               - Effect: Allow
                 Action:

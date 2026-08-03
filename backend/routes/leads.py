@@ -27,6 +27,7 @@ from database import get_db
 from lead_audit import record_lead_update_log
 from libs.common.phone import normalize_digits
 from libs.smartmoving.client import (
+    create_provider_lead,
     download_opportunity_document,
     download_opportunity_file,
     get_opportunity,
@@ -738,6 +739,84 @@ def delete_pending_lead_duplication(
     return {"status": "deleted", "schedule_name": schedule_name}
 
 
+class RunPendingDuplicationNowRequest(BaseModel):
+    company_id: str
+    referral_source: str
+
+
+@router.post("/lead-duplications/pending/{schedule_name}/run-now")
+def run_pending_lead_duplication_now(
+    schedule_name: str,
+    body: RunPendingDuplicationNowRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if not schedule_name.startswith(LEAD_DUPLICATE_SCHEDULE_PREFIX):
+        raise HTTPException(status_code=400, detail="Invalid lead duplication schedule")
+
+    company_id = _clean_optional_text(body.company_id)
+    referral_source = _clean_optional_text(body.referral_source)
+    if not referral_source:
+        raise HTTPException(status_code=400, detail="Referral Source is required")
+    allowed_company_ids = _get_user_company_ids(user, db)
+    if company_id not in allowed_company_ids:
+        raise HTTPException(status_code=403, detail="You do not have access to the selected company")
+    target_company = db.query(Company).filter(Company.id == company_id).first()
+    if not target_company:
+        raise HTTPException(status_code=404, detail="Selected company not found")
+
+    region = os.getenv("AWS_REGION_NAME", "us-east-1")
+    scheduler = boto3.client("scheduler", region_name=region)
+    try:
+        schedule = scheduler.get_schedule(GroupName=LEAD_DUPLICATE_SCHEDULE_GROUP, Name=schedule_name)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+            raise HTTPException(status_code=404, detail="Pending duplication not found")
+        logger.exception("Failed to read lead duplication schedule %s", schedule_name)
+        raise HTTPException(status_code=502, detail=f"Could not read pending duplication: {exc}")
+
+    target = schedule.get("Target") or {}
+    function_arn = _clean_optional_text(target.get("Arn"))
+    try:
+        payload = json.loads(target.get("Input") or "{}")
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=502, detail="Pending duplication has an invalid payload")
+    if not function_arn or not isinstance(payload, dict) or not payload.get("lead_id"):
+        raise HTTPException(status_code=502, detail="Pending duplication is incomplete")
+    payload["target_company_name"] = target_company.name
+    payload["target_referral_source"] = referral_source
+
+    try:
+        response = boto3.client("lambda", region_name=region).invoke(
+            FunctionName=function_arn,
+            InvocationType="Event",
+            Payload=json.dumps(payload).encode("utf-8"),
+        )
+        if response.get("StatusCode") != 202:
+            raise RuntimeError(f"Lambda returned status {response.get('StatusCode')}")
+    except Exception as exc:
+        logger.exception("Failed to invoke pending lead duplication %s", schedule_name)
+        raise HTTPException(status_code=502, detail=f"Could not start duplication: {exc}")
+
+    try:
+        scheduler.delete_schedule(GroupName=LEAD_DUPLICATE_SCHEDULE_GROUP, Name=schedule_name)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") != "ResourceNotFoundException":
+            logger.exception("Duplication started but schedule %s could not be deleted", schedule_name)
+            raise HTTPException(status_code=502, detail="Duplication started, but its pending schedule could not be removed")
+
+    logger.info("Admin %s started duplication %s immediately", user.id, schedule_name)
+    return {
+        "status": "started",
+        "schedule_name": schedule_name,
+        "lead_id": payload.get("lead_id"),
+        "target_company_name": target_company.name,
+        "target_referral_source": referral_source,
+    }
+
+
 def _send_assignment_webhook_todo(lead: Lead, rep: User | None):
     if not rep:
         return
@@ -773,6 +852,18 @@ def _get_user_company_ids(user: User, db: Session) -> list[str]:
         return [row[0] for row in db.query(Company.id).all()]
     rows = db.query(UserCompany.company_id).filter(UserCompany.user_id == user.id).all()
     return [r[0] for r in rows]
+
+
+def _smartmoving_provider_key() -> str:
+    raw = get_config().get("SMARTMOVING_DUPLICATE_CONFIG", "")
+    if isinstance(raw, dict):
+        config = raw
+    else:
+        try:
+            config = json.loads(raw or "{}")
+        except (TypeError, json.JSONDecodeError):
+            config = {}
+    return _clean_optional_text(config.get("providerKey"))
 
 
 def _lookup_sender_id(lead: Lead) -> str | None:
@@ -1006,6 +1097,96 @@ def get_sales_calendar(
             }
             for job, lead, company_name, company_color, assigned_to_id, assigned_to_name, assigned_to_role, effective_date in filtered
         ]
+    }
+
+
+@router.get("/sales-performance")
+def get_sales_performance(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return 12 months of cumulative daily booked sales for each visible rep."""
+    if user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="Sales performance access required")
+
+    allowed_company_ids = _get_user_company_ids(user, db)
+    if not allowed_company_ids:
+        return {"months": [], "reps": []}
+
+    local_today = datetime.now(ZoneInfo("America/New_York")).date()
+    current_month = local_today.replace(day=1)
+    months: list[date] = []
+    cursor = current_month
+    for _ in range(12):
+        months.append(cursor)
+        cursor = date(cursor.year - 1, 12, 1) if cursor.month == 1 else date(cursor.year, cursor.month - 1, 1)
+    months.reverse()
+    range_start = months[0]
+    range_end = date(current_month.year + 1, 1, 1) if current_month.month == 12 else date(current_month.year, current_month.month + 1, 1)
+
+    rows = (
+        db.query(
+            LeadJob.booked_move_date,
+            Lead.estimated_total,
+            User.id.label("assigned_to"),
+            User.name.label("assigned_to_name"),
+        )
+        .join(Lead, Lead.id == LeadJob.lead_id)
+        .join(User, User.id == Lead.assigned_to)
+        .filter(LeadJob.company_id.in_(allowed_company_ids))
+        .filter(LeadJob.job_order == 1)
+        .filter(LeadJob.booked_move_date.isnot(None))
+        .filter(LeadJob.booked_move_date >= range_start)
+        .filter(LeadJob.booked_move_date < range_end)
+        .filter(Lead.status.in_(DISPATCH_STATUSES))
+    )
+    if user.role == "sales_rep":
+        rows = rows.filter(Lead.assigned_to == user.id)
+
+    month_keys = [month.strftime("%Y-%m") for month in months]
+    rep_totals: dict[str, dict[str, Any]] = {}
+    for booked_date, estimated_total, assigned_to, assigned_to_name in rows.all():
+        rep = rep_totals.setdefault(
+            assigned_to,
+            {
+                "id": assigned_to,
+                "name": assigned_to_name or "Unnamed salesperson",
+                "months": {key: [0.0] * 31 for key in month_keys},
+            },
+        )
+        total = _deserialize_estimated_total(estimated_total)
+        amount = float((total or {}).get("finalTotal") or 0)
+        rep["months"][booked_date.strftime("%Y-%m")][booked_date.day - 1] += amount
+
+    reps = []
+    for rep in rep_totals.values():
+        series = []
+        for month, key in zip(months, month_keys):
+            running_total = 0.0
+            cumulative = []
+            next_month = date(month.year + 1, 1, 1) if month.month == 12 else date(month.year, month.month + 1, 1)
+            final_day = (next_month - timedelta(days=1)).day
+            if month == current_month:
+                final_day = local_today.day
+            for day_index, daily_total in enumerate(rep["months"][key], start=1):
+                running_total += daily_total
+                cumulative.append(round(running_total, 2) if day_index <= final_day else None)
+            series.append({
+                "month": key,
+                "label": month.strftime("%b %Y"),
+                "values": cumulative,
+                "total": round(running_total, 2),
+            })
+        reps.append({
+            "id": rep["id"],
+            "name": rep["name"],
+            "series": series,
+        })
+
+    reps.sort(key=lambda rep: rep["name"].lower())
+    return {
+        "months": [{"month": key, "label": month.strftime("%b %Y")} for month, key in zip(months, month_keys)],
+        "reps": reps,
     }
 
 
@@ -1345,6 +1526,107 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
             logger.info("Matched sender_id %s for lead %s", sender_id, lead.id)
 
     return lead.to_dict()
+
+
+class CopyLeadRequest(BaseModel):
+    company_id: str
+
+
+@router.post("/leads/{lead_id}/copy")
+def copy_lead(
+    lead_id: str,
+    body: CopyLeadRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_not_dispatch_write(user)
+    source_lead = _get_visible_lead_or_404(lead_id, user, db)
+
+    allowed_company_ids = _get_user_company_ids(user, db)
+    target_company_id = _clean_optional_text(body.company_id)
+    if target_company_id not in allowed_company_ids:
+        raise HTTPException(status_code=403, detail="You do not have access to the selected company")
+
+    target_company = db.query(Company).filter(Company.id == target_company_id).first()
+    if not target_company:
+        raise HTTPException(status_code=404, detail="Selected company not found")
+    branch_id = _clean_optional_text(target_company.samrtmoving_branch_id)
+    provider_key = _smartmoving_provider_key()
+    if not branch_id:
+        raise HTTPException(status_code=400, detail=f"{target_company.name} does not have a SmartMoving branch configured")
+    if not provider_key:
+        raise HTTPException(status_code=500, detail="SmartMoving lead-copy provider is not configured")
+
+    referral_source = f"Facebook-{target_company.name}-HHG"
+    smartmoving_payload = {
+        "fullName": source_lead.full_name or "",
+        "phoneNumber": source_lead.phone or "",
+        "email": source_lead.email or "",
+        "originZip": source_lead.pickup_zip or "",
+        "destinationZip": source_lead.delivery_zip or "",
+        "moveDate": source_lead.move_date or "",
+        "notes": f"Copied from Moving CRM lead {source_lead.id}",
+        "referralSource": referral_source,
+        "serviceType": "Moving",
+        "moveSize": source_lead.move_size or "Room or Less",
+    }
+    smartmoving_result = create_provider_lead(provider_key, branch_id, smartmoving_payload)
+    if not smartmoving_result.get("ok"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"SmartMoving could not create the copied lead: {smartmoving_result.get('error', 'unknown error')}",
+        )
+
+    copied_lead = Lead(
+        company_id=target_company.id,
+        assigned_to=None,
+        full_name=source_lead.full_name or "",
+        email=source_lead.email or "",
+        phone=source_lead.phone or "",
+        source="Facebook",
+        smartmoving_id=_clean_optional_text(smartmoving_result.get("lead_id")) or None,
+        pickup_zip=source_lead.pickup_zip or "",
+        delivery_zip=source_lead.delivery_zip or "",
+        move_size=source_lead.move_size or "",
+        move_date=source_lead.move_date or "",
+        status="new",
+        notes=f"Copied from Moving CRM lead {source_lead.id}",
+        referral_source=referral_source,
+        service_type="Moving",
+    )
+    try:
+        db.add(copied_lead)
+        db.flush()
+        db.add(LeadJob(
+            lead_id=copied_lead.id,
+            company_id=target_company.id,
+            job_order=1,
+            pickup_zip=copied_lead.pickup_zip,
+            delivery_zip=copied_lead.delivery_zip,
+            move_date=copied_lead.move_date,
+        ))
+        db.commit()
+        db.refresh(copied_lead)
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "SmartMoving lead %s was created, but CRM copy failed for source lead %s",
+            smartmoving_result.get("lead_id"),
+            source_lead.id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "SmartMoving created the lead, but Moving CRM could not save it. "
+                f"SmartMoving ID: {smartmoving_result.get('lead_id')}"
+            ),
+        )
+
+    return {
+        "ok": True,
+        "lead": copied_lead.to_dict(),
+        "source_lead_id": source_lead.id,
+    }
 
 
 @router.get("/leads/{lead_id}/logs")

@@ -9,7 +9,7 @@ import httpx
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "libs"))
 
-from smartmoving.client import download_opportunity_file, get_opportunity
+from smartmoving.client import create_provider_lead, download_opportunity_file, get_opportunity
 
 
 class TestGetOpportunity:
@@ -67,3 +67,27 @@ def test_opportunity_file_download_rejects_untrusted_hosts():
 
     assert result["ok"] is False
     mock_get.assert_not_called()
+
+
+def test_create_provider_lead_returns_smartmoving_lead_id():
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {"leadId": "new-smartmoving-id"}
+
+    with patch("smartmoving.client._request", return_value=response) as mock_request:
+        result = create_provider_lead("provider-key", "branch-id", {"fullName": "Test Lead"})
+
+    assert result["ok"] is True
+    assert result["lead_id"] == "new-smartmoving-id"
+    assert mock_request.call_args.kwargs["params"] == {
+        "providerKey": "provider-key",
+        "branchId": "branch-id",
+    }
+
+
+def test_create_provider_lead_requires_configuration():
+    with patch("smartmoving.client._request") as mock_request:
+        result = create_provider_lead("", "branch-id", {})
+
+    assert result["ok"] is False
+    mock_request.assert_not_called()

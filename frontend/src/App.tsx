@@ -17,6 +17,7 @@ import AdminUsersPage from "./AdminUsersPage";
 import SalesCalendarPage from "./SalesCalendarPage";
 import PendingDuplicationsPage from "./PendingDuplicationsPage";
 import PricingPage from "./PricingPage";
+import SalesPerformancePage from "./SalesPerformancePage";
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -83,6 +84,7 @@ function ProtectedRoutes() {
             <>
               <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
               <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
+              <NavLink to="/sales-performance" style={navLinkStyle}>Performance</NavLink>
               <NavLink to="/outreach" style={navLinkStyle}>Outreach</NavLink>
                   <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
                   <NavLink to="/pricing" style={navLinkStyle}>Pricing</NavLink>
@@ -136,6 +138,7 @@ function ProtectedRoutes() {
                 <>
                   <NavLink to="/">Leads</NavLink>
                   <NavLink to="/sales-calendar">Sales Calendar</NavLink>
+                  <NavLink to="/sales-performance">Sales Performance</NavLink>
                   <NavLink to="/outreach">Outreach</NavLink>
                   <NavLink to="/settings">Settings</NavLink>
                   <NavLink to="/pricing">Pricing</NavLink>
@@ -157,6 +160,7 @@ function ProtectedRoutes() {
           <Route path="/" element={<LeadsList />} />
           <Route path="/outreach" element={<OutreachEventsPage />} />
           <Route path="/sales-calendar" element={<SalesCalendarPage />} />
+          <Route path="/sales-performance" element={<SalesPerformancePage />} />
           <Route path="/assign-period" element={<PeriodAssignPage />} />
           <Route path="/sales-reps" element={<SalesRepsPage />} />
           <Route path="/admin-users" element={<AdminUsersPage />} />
