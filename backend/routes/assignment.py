@@ -7,6 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
+from assignment_conflicts import find_assignment_conflicts
 from config import get_config
 from database import get_db
 from libs.smartmoving.client import update_opportunity_salesperson
@@ -605,7 +606,37 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
         start_idx = _next_round_robin_start_index(company_id, rep_ids, db)
 
         for idx, lead in enumerate(company_leads):
-            rep = active_reps[(start_idx + idx) % len(active_reps)]
+            conflicts = find_assignment_conflicts(
+                db,
+                company_id=lead.company_id,
+                phone=lead.phone,
+                email=lead.email,
+                exclude_lead_id=lead.id,
+            )
+            if conflicts.same_company_match:
+                queued_count += _queue_backlog_leads(
+                    [lead],
+                    assignment_reason="matching_assigned_lead_same_company",
+                    note="Not auto-assigned because the same phone or email is already assigned in this company",
+                    latest_events_by_lead=latest_events_by_lead,
+                    lead_ids_with_queued_event=lead_ids_with_queued_event,
+                    db=db,
+                )
+                continue
+
+            eligible_reps = [rep for rep in active_reps if rep.id not in conflicts.excluded_rep_ids]
+            if not eligible_reps:
+                queued_count += _queue_backlog_leads(
+                    [lead],
+                    assignment_reason="matching_lead_other_company_excluded_all_reps",
+                    note="Not auto-assigned because matching leads in other companies are assigned to every eligible rep",
+                    latest_events_by_lead=latest_events_by_lead,
+                    lead_ids_with_queued_event=lead_ids_with_queued_event,
+                    db=db,
+                )
+                continue
+
+            rep = eligible_reps[(start_idx + idx) % len(eligible_reps)]
             dry_run_reason = DRY_RUN_BACKLOG_REASON
             if dry_run:
                 latest_event = latest_events_by_lead.get(lead.id)
@@ -677,7 +708,11 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
                     f"SmartMoving sync ok (status={sync_result.get('status', 'n/a')} body={sync_result.get('body', '(empty)')})"
                 )
             else:
-                success_note = "DRY RUN: would assign from queued backlog"
+                excluded_note = (
+                    f"; excluded {len(conflicts.excluded_rep_ids)} rep(s) assigned to matching leads in other companies"
+                    if conflicts.excluded_rep_ids else ""
+                )
+                success_note = f"DRY RUN: would assign from queued backlog{excluded_note}"
             db.add(
                 AutoAssignEvent(
                     lead_id=lead.id,

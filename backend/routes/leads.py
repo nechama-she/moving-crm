@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
+from assignment_conflicts import find_assignment_conflicts
 from company_colors import resolve_company_color
 from config import get_config
 from database import get_db
@@ -4086,14 +4087,33 @@ def create_lead(
     # Auto-assign only while all admins are unavailable and no explicit assignee was provided.
     if not assigned_to_user_id and not _any_admin_available_now(db):
         available_rep_ids = _active_available_rep_ids(db)
-        rep = _pick_round_robin_rep_for_company(company.id, db, available_rep_ids)
-        if rep:
-            assigned_to_user_id = rep.id
-            assignment_mode = "auto"
-            assignment_reason = "all_admins_unavailable_round_robin"
-        else:
+        conflicts = find_assignment_conflicts(
+            db,
+            company_id=company.id,
+            phone=body.phone_number,
+            email=body.email,
+        )
+        if conflicts.same_company_match:
             assignment_mode = "queued"
-            assignment_reason = "all_admins_unavailable_no_available_rep"
+            assignment_reason = "matching_assigned_lead_same_company"
+        else:
+            eligible_rep_ids = available_rep_ids - conflicts.excluded_rep_ids
+            rep = _pick_round_robin_rep_for_company(company.id, db, eligible_rep_ids)
+            if rep:
+                assigned_to_user_id = rep.id
+                assignment_mode = "auto"
+                assignment_reason = (
+                    "matching_lead_other_company_excluded_previous_rep"
+                    if conflicts.excluded_rep_ids
+                    else "all_admins_unavailable_round_robin"
+                )
+            else:
+                assignment_mode = "queued"
+                assignment_reason = (
+                    "matching_lead_other_company_excluded_all_reps"
+                    if conflicts.excluded_rep_ids
+                    else "all_admins_unavailable_no_available_rep"
+                )
 
     raw_move_type = _clean_optional_text(body.move_type).lower()
     raw_status = _clean_optional_text(body.status).lower()
@@ -4272,8 +4292,17 @@ def create_lead(
             logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
 
     # Build assignment note with SmartMoving sync details
-    if assignment_mode == "auto" and auto_assignment_dry_run:
-        assign_note = f"DRY RUN: would auto assign new lead to {assigned_rep.name if assigned_rep else 'unknown rep'}"
+    if assignment_reason == "matching_assigned_lead_same_company":
+        assign_note = "Not auto-assigned because the same phone or email is already assigned in this company"
+    elif assignment_reason == "matching_lead_other_company_excluded_all_reps":
+        assign_note = "Not auto-assigned because matching leads in other companies are assigned to every eligible rep"
+    elif assignment_mode == "auto" and auto_assignment_dry_run:
+        excluded_note = (
+            "; excluded reps already assigned to matching leads in other companies"
+            if assignment_reason == "matching_lead_other_company_excluded_previous_rep"
+            else ""
+        )
+        assign_note = f"DRY RUN: would auto assign new lead to {assigned_rep.name if assigned_rep else 'unknown rep'}{excluded_note}"
     else:
         assign_note = _assignment_note(assignment_mode, sync_result)
     logger.info(
