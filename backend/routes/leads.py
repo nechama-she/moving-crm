@@ -710,6 +710,22 @@ def list_pending_lead_duplications(
         })
 
     items.sort(key=lambda item: item["fire_at"])
+    if os.getenv("ENABLE_LEAD_DUPLICATION", "false").strip().lower() != "true":
+        sample_companies = db.query(Company).order_by(Company.name).limit(2).all()
+        source_company = sample_companies[0].name if sample_companies else "Sample Moving Company"
+        target_company = sample_companies[-1].name if sample_companies else "Destination Moving Company"
+        items.insert(0, {
+            "schedule_name": "__dev_sample_duplication__",
+            "lead_id": "",
+            "lead_name": "Sample Lead (Design Preview)",
+            "smartmoving_id": "sample-smartmoving-id",
+            "source_company_name": source_company,
+            "target_company_name": target_company,
+            "target_referral_source": f"Facebook-{target_company}-HHG",
+            "fire_at": (_utcnow() + timedelta(hours=8)).isoformat(),
+            "created_at": _utcnow().isoformat(),
+            "is_sample": True,
+        })
     return {"items": items, "total": len(items)}
 
 

@@ -13,6 +13,7 @@ type PendingDuplication = {
   target_referral_source: string;
   fire_at: string;
   created_at: string;
+  is_sample?: boolean;
 };
 
 type CompanyOption = {
@@ -135,10 +136,10 @@ export default function PendingDuplicationsPage() {
   }
 
   return (
-    <div style={page}>
+    <div className="pending-dup-page" style={page}>
       {runItem ? (
-        <div style={modalBackdrop} role="presentation" onClick={() => !running && setRunItem(null)}>
-          <section style={modal} role="dialog" aria-modal="true" aria-labelledby="duplicate-now-title" onClick={(event) => event.stopPropagation()}>
+        <div className="pending-dup-modal-backdrop" style={modalBackdrop} role="presentation" onClick={() => !running && setRunItem(null)}>
+          <section className="pending-dup-modal" style={modal} role="dialog" aria-modal="true" aria-labelledby="duplicate-now-title" onClick={(event) => event.stopPropagation()}>
             <header style={modalHeader}>
               <div>
                 <h2 id="duplicate-now-title" style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Duplicate Now</h2>
@@ -159,17 +160,18 @@ export default function PendingDuplicationsPage() {
                 <input value={runReferralSource} onChange={(event) => setRunReferralSource(event.target.value)} placeholder="Facebook-Company-HHG" style={fieldInput} />
               </label>
               <p style={{ margin: 0, color: "#706e6b", fontSize: 11 }}>This starts the duplication immediately and removes its pending schedule.</p>
+              {runItem.is_sample ? <div style={demoNotice}>Dev preview only — this sample cannot create or delete anything.</div> : null}
             </div>
-            <footer style={modalFooter}>
+            <footer className="pending-dup-modal-footer" style={modalFooter}>
               <button type="button" disabled={Boolean(running)} onClick={() => setRunItem(null)} style={secondaryButton}>Cancel</button>
-              <button type="button" disabled={Boolean(running) || !runCompanyId || !runReferralSource.trim()} onClick={() => void duplicateNow()} style={primaryButton}>
-                {running ? "Starting..." : "Duplicate Now"}
+              <button type="button" disabled={runItem.is_sample || Boolean(running) || !runCompanyId || !runReferralSource.trim()} onClick={() => void duplicateNow()} style={primaryButton}>
+                {runItem.is_sample ? "Preview Only" : running ? "Starting..." : "Duplicate Now"}
               </button>
             </footer>
           </section>
         </div>
       ) : null}
-      <div style={headerRow}>
+      <div className="pending-dup-header" style={headerRow}>
         <div>
           <h1 style={title}>Pending Lead Duplications</h1>
           <p style={subtitle}>Leads waiting for their scheduled copy to another company.</p>
@@ -181,9 +183,12 @@ export default function PendingDuplicationsPage() {
 
       {error ? <div style={errorBox}>{error}</div> : null}
 
-      <section style={card}>
-        <div style={cardHeader}>
-          <strong>{items.length} pending</strong>
+      <section className="pending-dup-card" style={card}>
+        <div className="pending-dup-card-header" style={cardHeader}>
+          <strong>
+            {items.filter((item) => !item.is_sample).length} pending
+            {items.some((item) => item.is_sample) ? " · 1 dev preview" : ""}
+          </strong>
           <span style={{ color: "#706e6b", fontSize: 12 }}>Schedules disappear automatically after they run.</span>
         </div>
 
@@ -192,8 +197,8 @@ export default function PendingDuplicationsPage() {
         ) : items.length === 0 ? (
           <p style={emptyState}>No leads are waiting for duplication.</p>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={table}>
+          <div className="pending-dup-table-wrap" style={{ overflowX: "auto" }}>
+            <table className="pending-dup-table" style={table}>
               <thead>
                 <tr>
                   <th style={th}>Lead</th>
@@ -213,7 +218,8 @@ export default function PendingDuplicationsPage() {
                         <Link to={`/leads/${item.lead_id}`} style={leadLink}>
                           {item.lead_name || item.lead_id}
                         </Link>
-                      ) : "Unknown lead"}
+                      ) : <strong>{item.lead_name || "Unknown lead"}</strong>}
+                      {item.is_sample ? <span style={demoBadge}>DEV SAMPLE</span> : null}
                       {item.lead_id ? (
                         <div style={idText}>
                           <Link to={`/leads/${item.lead_id}`} style={idLink}>
@@ -223,7 +229,7 @@ export default function PendingDuplicationsPage() {
                       ) : null}
                     </td>
                     <td style={td}>
-                      {item.smartmoving_id ? (
+                      {item.smartmoving_id && !item.is_sample ? (
                         <a
                           href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(item.smartmoving_id)}`}
                           target="_blank"
@@ -238,7 +244,7 @@ export default function PendingDuplicationsPage() {
                     <td style={td}><strong>{item.target_company_name || "—"}</strong></td>
                     <td style={td}>{item.target_referral_source || "—"}</td>
                     <td style={td}>{formatDate(item.fire_at)}</td>
-                    <td style={{ ...td, textAlign: "right" }}>
+                    <td className="pending-dup-actions" style={{ ...td, textAlign: "right" }}>
                       <button
                         type="button"
                         onClick={() => openDuplicateNow(item)}
@@ -250,7 +256,8 @@ export default function PendingDuplicationsPage() {
                       <button
                         type="button"
                         onClick={() => void deleteSchedule(item)}
-                        disabled={deleting === item.schedule_name || running === item.schedule_name}
+                        disabled={item.is_sample || deleting === item.schedule_name || running === item.schedule_name}
+                        title={item.is_sample ? "Dev preview rows cannot be deleted" : "Delete pending duplication"}
                         style={dangerButton}
                       >
                         {deleting === item.schedule_name ? "Deleting…" : "Delete"}
@@ -341,6 +348,8 @@ const primaryButton: React.CSSProperties = {
   fontWeight: 700,
   cursor: "pointer",
 };
+const demoBadge: React.CSSProperties = { display: "inline-block", marginTop: 5, marginLeft: 6, padding: "2px 6px", borderRadius: 999, background: "#fff1d6", color: "#8c4b02", fontSize: 9, fontWeight: 800, letterSpacing: ".04em" };
+const demoNotice: React.CSSProperties = { padding: "9px 10px", border: "1px solid #fe9339", borderRadius: 4, background: "#fff7ed", color: "#8c4b02", fontSize: 11, fontWeight: 700 };
 const modalBackdrop: React.CSSProperties = { position: "fixed", inset: 0, zIndex: 100, padding: 16, display: "grid", placeItems: "center", background: "rgba(8, 21, 38, .52)" };
 const modal: React.CSSProperties = { width: "min(500px, 100%)", overflow: "hidden", border: "1px solid #dddbda", borderRadius: 8, background: "#fff", boxShadow: "0 14px 45px rgba(0,0,0,.25)" };
 const modalHeader: React.CSSProperties = { padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, borderBottom: "1px solid #dddbda", background: "#f3f3f3" };

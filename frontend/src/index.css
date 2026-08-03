@@ -1004,6 +1004,39 @@ button:focus-visible {
 .copy-lead-modal footer .copy-lead-submit { border-color: #0176d3; background: #0176d3; color: #fff; }
 .copy-lead-modal footer button:disabled { cursor: default; opacity: .55; }
 
+.pending-dup-page { background: #f3f3f3; }
+.pending-dup-card { overflow: hidden; box-shadow: 0 1px 3px rgb(0 0 0 / 8%); }
+.pending-dup-table tbody tr:hover { background: #f8fbff; }
+.pending-dup-actions button:disabled { cursor: default !important; opacity: .55; }
+
+@media (max-width: 760px) {
+  .pending-dup-page { height: auto !important; min-height: calc(100vh - 52px); padding: 16px 10px 30px !important; }
+  .pending-dup-header { align-items: stretch !important; flex-direction: column; gap: 10px !important; }
+  .pending-dup-header > button { width: 100%; min-height: 38px; }
+  .pending-dup-card { border: 0 !important; background: transparent !important; box-shadow: none; }
+  .pending-dup-card-header { padding: 10px 2px !important; align-items: flex-start; flex-direction: column; border: 0 !important; }
+  .pending-dup-table-wrap { overflow: visible !important; }
+  .pending-dup-table, .pending-dup-table tbody, .pending-dup-table tr, .pending-dup-table td { display: block; width: 100%; box-sizing: border-box; }
+  .pending-dup-table thead { display: none; }
+  .pending-dup-table tbody { display: grid; gap: 10px; }
+  .pending-dup-table tr { overflow: hidden; border: 1px solid #dddbda; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / 7%); }
+  .pending-dup-table td { min-width: 0; padding: 9px 12px !important; display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 10px; text-align: left !important; overflow-wrap: anywhere; }
+  .pending-dup-table td::before { color: #706e6b; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+  .pending-dup-table td:nth-child(1)::before { content: "Lead"; }
+  .pending-dup-table td:nth-child(2)::before { content: "SmartMoving ID"; }
+  .pending-dup-table td:nth-child(3)::before { content: "From"; }
+  .pending-dup-table td:nth-child(4)::before { content: "Duplicate to"; }
+  .pending-dup-table td:nth-child(5)::before { content: "Referral Source"; }
+  .pending-dup-table td:nth-child(6)::before { content: "Scheduled for"; }
+  .pending-dup-table td:first-child { padding-top: 12px !important; background: #f8fbff; }
+  .pending-dup-table td:last-child { padding: 10px 12px 12px !important; display: flex; justify-content: stretch; gap: 7px; background: #fafaf9; }
+  .pending-dup-actions button { min-height: 38px; flex: 1; margin: 0 !important; }
+  .pending-dup-modal-backdrop { padding: 10px 10px 0 !important; align-items: end !important; }
+  .pending-dup-modal { width: 100% !important; border-radius: 10px 10px 0 0 !important; }
+  .pending-dup-modal-footer { display: grid !important; grid-template-columns: 1fr 1fr; }
+  .pending-dup-modal-footer button { width: 100%; min-height: 40px; }
+}
+
 @media (max-width: 640px) {
   .copy-lead-backdrop { padding: 10px; align-items: end; }
   .copy-lead-modal { width: 100%; border-radius: 10px 10px 0 0; }
