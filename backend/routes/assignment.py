@@ -23,6 +23,10 @@ QUEUE_REASONS_MANAGED_BY_BACKLOG = {
 router = APIRouter(prefix="/api", tags=["Assignment"])
 
 
+def _auto_assign_dry_run_only() -> bool:
+    return os.getenv("AUTO_ASSIGN_DRY_RUN_ONLY", "false").strip().lower() == "true"
+
+
 def _get_user_company_ids(user: User, db: Session) -> list[str]:
     if user.role == "admin":
         admin_rows = db.query(UserCompany.company_id).filter(UserCompany.user_id == user.id).all()
@@ -440,6 +444,9 @@ def get_auto_assign_events(
 
 def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
     """Core backlog runner — callable internally (scheduler) or via HTTP endpoint."""
+    if _auto_assign_dry_run_only() and not dry_run:
+        logger.warning("Live auto assignment requested while AUTO_ASSIGN_DRY_RUN_ONLY is enabled; forcing dry run")
+        dry_run = True
     now = _utcnow()
     logger.info("Backlog run started: dry_run=%s now=%s", dry_run, now.isoformat())
     if _any_admin_available_now(db, now=now):
@@ -731,8 +738,9 @@ def get_auto_assign_mode(
 ):
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
-    mode = _get_default_run_mode(db)
-    return {"mode": mode, "dry_run": mode == "dry"}
+    dry_run_only = _auto_assign_dry_run_only()
+    mode = "dry" if dry_run_only else _get_default_run_mode(db)
+    return {"mode": mode, "dry_run": mode == "dry", "dry_run_only": dry_run_only}
 
 
 @router.put("/auto-assign-mode")
@@ -746,8 +754,10 @@ def set_auto_assign_mode(
     normalized = mode.strip().lower()
     if normalized not in {"dry", "live"}:
         raise HTTPException(status_code=400, detail="mode must be 'dry' or 'live'")
+    if normalized == "live" and _auto_assign_dry_run_only():
+        raise HTTPException(status_code=403, detail="Live auto assignment is disabled in this environment")
     _set_default_run_mode(normalized, db)
-    return {"ok": True, "mode": normalized, "dry_run": normalized == "dry"}
+    return {"ok": True, "mode": normalized, "dry_run": normalized == "dry", "dry_run_only": _auto_assign_dry_run_only()}
 
 
 @router.post("/auto-assign-run-ui")

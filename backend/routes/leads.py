@@ -1546,6 +1546,7 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
 
 class CopyLeadRequest(BaseModel):
     company_id: str
+    referral_source: str = ""
 
 
 @router.post("/leads/{lead_id}/copy")
@@ -1573,7 +1574,7 @@ def copy_lead(
     if not provider_key:
         raise HTTPException(status_code=500, detail="SmartMoving lead-copy provider is not configured")
 
-    referral_source = f"Facebook-{target_company.name}-HHG"
+    referral_source = _clean_optional_text(body.referral_source) or f"Facebook-{target_company.name}-HHG"
     smartmoving_payload = {
         "fullName": source_lead.full_name or "",
         "phoneNumber": source_lead.phone or "",
@@ -4112,9 +4113,12 @@ def create_lead(
         if weight_value < 0:
             raise HTTPException(status_code=400, detail="weight must be >= 0")
 
+    auto_assignment_dry_run = os.getenv("AUTO_ASSIGN_DRY_RUN_ONLY", "false").strip().lower() == "true"
+    persisted_assignee_id = None if assignment_mode == "auto" and auto_assignment_dry_run else assigned_to_user_id
+
     lead = Lead(
         company_id=company.id,
-        assigned_to=assigned_to_user_id,
+        assigned_to=persisted_assignee_id,
         full_name=body.full_name.strip(),
         email=_clean_optional_text(body.email),
         phone=_normalize_phone(body.phone_number),
@@ -4184,7 +4188,13 @@ def create_lead(
     )
     
     if assignment_mode == "auto":
-        if not assigned_rep:
+        if auto_assignment_dry_run:
+            logger.info(
+                "DEV dry run: would auto-assign lead %s to rep %s; CRM and SmartMoving unchanged",
+                lead.id,
+                assigned_rep.id if assigned_rep else None,
+            )
+        elif not assigned_rep:
             assignment_mode = "error"
             lead.assigned_to = None
             db.commit()
@@ -4256,7 +4266,10 @@ def create_lead(
             logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
 
     # Build assignment note with SmartMoving sync details
-    assign_note = _assignment_note(assignment_mode, sync_result)
+    if assignment_mode == "auto" and auto_assignment_dry_run:
+        assign_note = f"DRY RUN: would auto assign new lead to {assigned_rep.name if assigned_rep else 'unknown rep'}"
+    else:
+        assign_note = _assignment_note(assignment_mode, sync_result)
     logger.info(
         "Lead auto-assign note: lead_id=%s mode=%s note=%s sync_result=%s",
         lead.id,
@@ -4269,7 +4282,7 @@ def create_lead(
         assign_event = AutoAssignEvent(
             lead_id=lead.id,
             company_id=company.id,
-            assigned_to=lead.assigned_to,
+            assigned_to=assigned_rep.id if assignment_mode == "auto" and auto_assignment_dry_run and assigned_rep else lead.assigned_to,
             assignment_mode=assignment_mode,
             assignment_reason=assignment_reason,
             note=assign_note,

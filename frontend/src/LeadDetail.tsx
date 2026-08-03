@@ -238,6 +238,8 @@ export default function LeadDetail() {
   const [deletingLead, setDeletingLead] = useState(false);
   const [copyModalOpen, setCopyModalOpen] = useState(false);
   const [copyCompanyId, setCopyCompanyId] = useState("");
+  const [copyReferralSource, setCopyReferralSource] = useState("");
+  const [copyReferralEdited, setCopyReferralEdited] = useState(false);
   const [copyingLead, setCopyingLead] = useState(false);
   const [copyLeadError, setCopyLeadError] = useState("");
   const [defaultCommissionPercent, setDefaultCommissionPercent] = useState<number>(((1 - 0.035) / 3) * 100);
@@ -1125,14 +1127,14 @@ export default function LeadDetail() {
   }
 
   async function copyLead() {
-    if (!leadId || !copyCompanyId || !canEditLead) return;
+    if (!leadId || !copyCompanyId || !copyReferralSource.trim() || !canEditLead) return;
     setCopyingLead(true);
     setCopyLeadError("");
     try {
       const res = await fetch(`${API_BASE}/api/leads/${leadId}/copy`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
-        body: JSON.stringify({ company_id: copyCompanyId }),
+        body: JSON.stringify({ company_id: copyCompanyId, referral_source: copyReferralSource.trim() }),
       });
       const responseBody = await res.json().catch(() => null);
       if (!res.ok) throw new Error(responseBody?.detail || `HTTP ${res.status}`);
@@ -1236,16 +1238,36 @@ export default function LeadDetail() {
               </div>
               <label>
                 Copy to company
-                <select value={copyCompanyId} onChange={(event) => { setCopyCompanyId(event.target.value); setCopyLeadError(""); }} autoFocus>
+                <select value={copyCompanyId} onChange={(event) => {
+                  const companyId = event.target.value;
+                  setCopyCompanyId(companyId);
+                  if (!copyReferralEdited) {
+                    const company = companies.find((item) => item.id === companyId);
+                    setCopyReferralSource(company ? `Facebook-${company.name}-HHG` : "");
+                  }
+                  setCopyLeadError("");
+                }} autoFocus>
                   <option value="">Select a company</option>
                   {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
                 </select>
+              </label>
+              <label>
+                Referral Source
+                <input
+                  value={copyReferralSource}
+                  onChange={(event) => {
+                    setCopyReferralSource(event.target.value);
+                    setCopyReferralEdited(true);
+                    setCopyLeadError("");
+                  }}
+                  placeholder="Facebook-Company-HHG"
+                />
               </label>
               {copyLeadError ? <div className="copy-lead-error">{copyLeadError}</div> : null}
             </div>
             <footer>
               <button type="button" disabled={copyingLead} onClick={() => setCopyModalOpen(false)}>Cancel</button>
-              <button type="button" className="copy-lead-submit" disabled={copyingLead || !copyCompanyId} onClick={() => void copyLead()}>
+              <button type="button" className="copy-lead-submit" disabled={copyingLead || !copyCompanyId || !copyReferralSource.trim()} onClick={() => void copyLead()}>
                 {copyingLead ? "Creating in SmartMoving…" : "Copy Lead"}
               </button>
             </footer>
@@ -1967,6 +1989,8 @@ export default function LeadDetail() {
                     className="lead-profile-action-button lead-profile-copy-button"
                     onClick={() => {
                       setCopyCompanyId("");
+                      setCopyReferralSource("");
+                      setCopyReferralEdited(false);
                       setCopyLeadError("");
                       setCopyModalOpen(true);
                     }}
