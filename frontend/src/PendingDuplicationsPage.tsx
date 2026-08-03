@@ -15,6 +15,11 @@ type PendingDuplication = {
   created_at: string;
 };
 
+type CompanyOption = {
+  id: string;
+  name: string;
+};
+
 async function responseError(response: Response): Promise<string> {
   const body = await response.json().catch(() => null);
   return body?.detail || `Request failed (${response.status})`;
@@ -32,6 +37,11 @@ export default function PendingDuplicationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState("");
+  const [running, setRunning] = useState("");
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [runItem, setRunItem] = useState<PendingDuplication | null>(null);
+  const [runCompanyId, setRunCompanyId] = useState("");
+  const [runReferralSource, setRunReferralSource] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -54,6 +64,21 @@ export default function PendingDuplicationsPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await responseError(response));
+        return response.json();
+      })
+      .then((rows: Array<Record<string, unknown>>) => {
+        setCompanies((Array.isArray(rows) ? rows : []).map((row) => ({
+          id: String(row.id || ""),
+          name: String(row.name || ""),
+        })).filter((company) => company.id && company.name));
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Could not load companies"));
+  }, [token]);
+
   async function deleteSchedule(item: PendingDuplication) {
     const label = item.lead_name || item.lead_id || item.schedule_name;
     if (!window.confirm(`Cancel the pending duplication for ${label}?`)) return;
@@ -74,12 +99,76 @@ export default function PendingDuplicationsPage() {
     }
   }
 
+  function openDuplicateNow(item: PendingDuplication) {
+    const matchingCompany = companies.find((company) => company.name === item.target_company_name);
+    setRunItem(item);
+    setRunCompanyId(matchingCompany?.id || "");
+    setRunReferralSource(item.target_referral_source || "");
+    setError("");
+  }
+
+  async function duplicateNow() {
+    if (!runItem || !runCompanyId || !runReferralSource.trim()) return;
+    setRunning(runItem.schedule_name);
+    setError("");
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/lead-duplications/pending/${encodeURIComponent(runItem.schedule_name)}/run-now`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders(token) },
+          body: JSON.stringify({ company_id: runCompanyId, referral_source: runReferralSource.trim() }),
+        },
+      );
+      if (!response.ok) throw new Error(await responseError(response));
+      setItems((current) => current.filter((row) => row.schedule_name !== runItem.schedule_name));
+      setRunItem(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start duplication");
+    } finally {
+      setRunning("");
+    }
+  }
+
   if (user?.role !== "admin") {
     return <div style={page}><p style={errorBox}>Admin access is required.</p></div>;
   }
 
   return (
     <div style={page}>
+      {runItem ? (
+        <div style={modalBackdrop} role="presentation" onClick={() => !running && setRunItem(null)}>
+          <section style={modal} role="dialog" aria-modal="true" aria-labelledby="duplicate-now-title" onClick={(event) => event.stopPropagation()}>
+            <header style={modalHeader}>
+              <div>
+                <h2 id="duplicate-now-title" style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Duplicate Now</h2>
+                <p style={{ margin: "3px 0 0", color: "#706e6b", fontSize: 12 }}>{runItem.lead_name || runItem.lead_id}</p>
+              </div>
+              <button type="button" aria-label="Close" disabled={Boolean(running)} onClick={() => setRunItem(null)} style={closeButton}>×</button>
+            </header>
+            <div style={modalBody}>
+              <label style={fieldLabel}>
+                Company
+                <select value={runCompanyId} onChange={(event) => setRunCompanyId(event.target.value)} style={fieldInput} autoFocus>
+                  <option value="">Select a company</option>
+                  {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+                </select>
+              </label>
+              <label style={fieldLabel}>
+                Referral Source
+                <input value={runReferralSource} onChange={(event) => setRunReferralSource(event.target.value)} placeholder="Facebook-Company-HHG" style={fieldInput} />
+              </label>
+              <p style={{ margin: 0, color: "#706e6b", fontSize: 11 }}>This starts the duplication immediately and removes its pending schedule.</p>
+            </div>
+            <footer style={modalFooter}>
+              <button type="button" disabled={Boolean(running)} onClick={() => setRunItem(null)} style={secondaryButton}>Cancel</button>
+              <button type="button" disabled={Boolean(running) || !runCompanyId || !runReferralSource.trim()} onClick={() => void duplicateNow()} style={primaryButton}>
+                {running ? "Starting..." : "Duplicate Now"}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
       <div style={headerRow}>
         <div>
           <h1 style={title}>Pending Lead Duplications</h1>
@@ -152,8 +241,16 @@ export default function PendingDuplicationsPage() {
                     <td style={{ ...td, textAlign: "right" }}>
                       <button
                         type="button"
+                        onClick={() => openDuplicateNow(item)}
+                        disabled={running === item.schedule_name || deleting === item.schedule_name}
+                        style={{ ...primaryButton, marginRight: 6 }}
+                      >
+                        {running === item.schedule_name ? "Starting..." : "Duplicate Now"}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => void deleteSchedule(item)}
-                        disabled={deleting === item.schedule_name}
+                        disabled={deleting === item.schedule_name || running === item.schedule_name}
                         style={dangerButton}
                       >
                         {deleting === item.schedule_name ? "Deleting…" : "Delete"}
@@ -235,3 +332,20 @@ const dangerButton: React.CSSProperties = {
   fontWeight: 600,
   cursor: "pointer",
 };
+const primaryButton: React.CSSProperties = {
+  padding: "6px 10px",
+  border: "1px solid #0176d3",
+  borderRadius: 4,
+  background: "#0176d3",
+  color: "#fff",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+const modalBackdrop: React.CSSProperties = { position: "fixed", inset: 0, zIndex: 100, padding: 16, display: "grid", placeItems: "center", background: "rgba(8, 21, 38, .52)" };
+const modal: React.CSSProperties = { width: "min(500px, 100%)", overflow: "hidden", border: "1px solid #dddbda", borderRadius: 8, background: "#fff", boxShadow: "0 14px 45px rgba(0,0,0,.25)" };
+const modalHeader: React.CSSProperties = { padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, borderBottom: "1px solid #dddbda", background: "#f3f3f3" };
+const closeButton: React.CSSProperties = { border: 0, background: "transparent", color: "#706e6b", fontSize: 24, cursor: "pointer" };
+const modalBody: React.CSSProperties = { padding: 16, display: "grid", gap: 14 };
+const fieldLabel: React.CSSProperties = { display: "grid", gap: 5, color: "#3e3e3c", fontSize: 12, fontWeight: 700 };
+const fieldInput: React.CSSProperties = { width: "100%", height: 40, boxSizing: "border-box", border: "1px solid #c9c7c5", borderRadius: 4, padding: "0 10px", background: "#fff", color: "#181818", font: "inherit" };
+const modalFooter: React.CSSProperties = { padding: "12px 16px", display: "flex", justifyContent: "flex-end", gap: 8, borderTop: "1px solid #dddbda", background: "#fafaf9" };

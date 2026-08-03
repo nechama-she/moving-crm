@@ -739,6 +739,84 @@ def delete_pending_lead_duplication(
     return {"status": "deleted", "schedule_name": schedule_name}
 
 
+class RunPendingDuplicationNowRequest(BaseModel):
+    company_id: str
+    referral_source: str
+
+
+@router.post("/lead-duplications/pending/{schedule_name}/run-now")
+def run_pending_lead_duplication_now(
+    schedule_name: str,
+    body: RunPendingDuplicationNowRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if not schedule_name.startswith(LEAD_DUPLICATE_SCHEDULE_PREFIX):
+        raise HTTPException(status_code=400, detail="Invalid lead duplication schedule")
+
+    company_id = _clean_optional_text(body.company_id)
+    referral_source = _clean_optional_text(body.referral_source)
+    if not referral_source:
+        raise HTTPException(status_code=400, detail="Referral Source is required")
+    allowed_company_ids = _get_user_company_ids(user, db)
+    if company_id not in allowed_company_ids:
+        raise HTTPException(status_code=403, detail="You do not have access to the selected company")
+    target_company = db.query(Company).filter(Company.id == company_id).first()
+    if not target_company:
+        raise HTTPException(status_code=404, detail="Selected company not found")
+
+    region = os.getenv("AWS_REGION_NAME", "us-east-1")
+    scheduler = boto3.client("scheduler", region_name=region)
+    try:
+        schedule = scheduler.get_schedule(GroupName=LEAD_DUPLICATE_SCHEDULE_GROUP, Name=schedule_name)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+            raise HTTPException(status_code=404, detail="Pending duplication not found")
+        logger.exception("Failed to read lead duplication schedule %s", schedule_name)
+        raise HTTPException(status_code=502, detail=f"Could not read pending duplication: {exc}")
+
+    target = schedule.get("Target") or {}
+    function_arn = _clean_optional_text(target.get("Arn"))
+    try:
+        payload = json.loads(target.get("Input") or "{}")
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=502, detail="Pending duplication has an invalid payload")
+    if not function_arn or not isinstance(payload, dict) or not payload.get("lead_id"):
+        raise HTTPException(status_code=502, detail="Pending duplication is incomplete")
+    payload["target_company_name"] = target_company.name
+    payload["target_referral_source"] = referral_source
+
+    try:
+        response = boto3.client("lambda", region_name=region).invoke(
+            FunctionName=function_arn,
+            InvocationType="Event",
+            Payload=json.dumps(payload).encode("utf-8"),
+        )
+        if response.get("StatusCode") != 202:
+            raise RuntimeError(f"Lambda returned status {response.get('StatusCode')}")
+    except Exception as exc:
+        logger.exception("Failed to invoke pending lead duplication %s", schedule_name)
+        raise HTTPException(status_code=502, detail=f"Could not start duplication: {exc}")
+
+    try:
+        scheduler.delete_schedule(GroupName=LEAD_DUPLICATE_SCHEDULE_GROUP, Name=schedule_name)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") != "ResourceNotFoundException":
+            logger.exception("Duplication started but schedule %s could not be deleted", schedule_name)
+            raise HTTPException(status_code=502, detail="Duplication started, but its pending schedule could not be removed")
+
+    logger.info("Admin %s started duplication %s immediately", user.id, schedule_name)
+    return {
+        "status": "started",
+        "schedule_name": schedule_name,
+        "lead_id": payload.get("lead_id"),
+        "target_company_name": target_company.name,
+        "target_referral_source": referral_source,
+    }
+
+
 def _send_assignment_webhook_todo(lead: Lead, rep: User | None):
     if not rep:
         return
