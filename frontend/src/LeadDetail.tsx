@@ -961,13 +961,14 @@ export default function LeadDetail() {
     return `$${value.toFixed(2)}`;
   }
 
-  function repPaidCommissionAmount(paymentAmount: number): number {
+  function repPaidCommissionAmount(paymentAmount: number, thirdPartyAmount = 0): number {
     if (!hasRepCommission) return 0;
     const assignedTo = String(lead?.assigned_to || "").trim();
     const commissionPercent = assignedTo
       ? (commissionPercentByUserId.get(assignedTo) ?? defaultCommissionPercent)
       : defaultCommissionPercent;
-    return paymentAmount * (commissionPercent / 100);
+    const commissionableAmount = Math.max(0, paymentAmount - Math.max(0, thirdPartyAmount));
+    return commissionableAmount * (commissionPercent / 100);
   }
 
   function repPaidCommissionRatePercent(): number {
@@ -2168,7 +2169,11 @@ export default function LeadDetail() {
                       <strong>{formatMoney(payment.amount)}</strong>
                     </div>
                     {hasRepCommission ? <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 11 }}>
-                      <span style={{ color: "#475569" }}>Rep paid ({repPaidCommissionRatePercent().toFixed(6)}%): <strong>{formatMoney(repPaidCommissionAmount(payment.amount))}</strong></span>
+                      <span style={{ color: "#475569" }}>
+                        Rep paid ({repPaidCommissionRatePercent().toFixed(6)}%
+                        {payment.thirdPartyCommissionAmount > 0 ? ` of ${formatMoney(Math.max(0, payment.amount - payment.thirdPartyCommissionAmount))} after third-party` : ""}):{" "}
+                        <strong>{formatMoney(repPaidCommissionAmount(payment.amount, payment.thirdPartyCommissionAmount))}</strong>
+                      </span>
                       {canManageRepPayments ? (
                         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, color: payment.repPaid ? "#15803d" : "#92400e", fontWeight: 700 }}>
                           <input
