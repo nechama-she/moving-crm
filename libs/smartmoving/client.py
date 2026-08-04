@@ -4,6 +4,9 @@ import logging
 import os
 import re
 import time
+import json
+from contextvars import ContextVar, Token
+from typing import Any
 from urllib.parse import urlparse
 from collections import defaultdict
 from http import HTTPStatus
@@ -20,6 +23,10 @@ _REQUEST_TOTAL = 0
 _REQUEST_BY_STATUS = defaultdict(int)
 _REQUEST_BY_METHOD = defaultdict(int)
 _REQUEST_BY_ENDPOINT = defaultdict(int)
+_CAPTURED_REQUESTS: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "smartmoving_captured_requests",
+    default=None,
+)
 _OPPORTUNITY_INCLUDE_PARAMS = {
     "IncludeTripInfo": "true",
     "IncludePayments": "true",
@@ -54,6 +61,71 @@ def get_request_counters() -> dict:
     }
 
 
+def begin_request_capture() -> tuple[Token, list[dict[str, Any]]]:
+    """Capture outbound calls made during one CRM operation."""
+    captured: list[dict[str, Any]] = []
+    return _CAPTURED_REQUESTS.set(captured), captured
+
+
+def finish_request_capture(token: Token) -> None:
+    _CAPTURED_REQUESTS.reset(token)
+
+
+def _json_or_text_response(resp: httpx.Response) -> Any:
+    content_type = (resp.headers.get("content-type") or "").lower()
+    content = resp.content or b""
+    if not content:
+        return None
+    try:
+        return resp.json()
+    except Exception:
+        pass
+    if content_type.startswith("text/") or any(
+        marker in content_type for marker in ("xml", "html", "javascript", "form-urlencoded")
+    ):
+        try:
+            return content.decode(resp.encoding or "utf-8", errors="replace")
+        except Exception:
+            pass
+    return {
+        "binary": True,
+        "content_type": content_type or "application/octet-stream",
+        "size_bytes": len(content),
+    }
+
+
+def _request_payload(req: httpx.Request) -> Any:
+    content = req.content or b""
+    if not content:
+        return None
+    try:
+        return json.loads(content.decode("utf-8"))
+    except Exception:
+        return content.decode("utf-8", errors="replace")
+
+
+def _capture_http_request(resp: httpx.Response) -> None:
+    captured = _CAPTURED_REQUESTS.get()
+    if captured is None:
+        return
+    req = resp.request
+    captured.append(
+        {
+            "request": {
+                "method": req.method.upper(),
+                "url": str(req.url),
+                # Never persist the SmartMoving API key or other authorization headers.
+                "headers": {},
+                "payload": _request_payload(req),
+            },
+            "response": {
+                "status_code": int(resp.status_code),
+                "body": _json_or_text_response(resp),
+            },
+        }
+    )
+
+
 def _log_http_request(resp: httpx.Response) -> None:
     """Log outbound SmartMoving request with a per-invocation sequence number."""
     global _REQUEST_TOTAL
@@ -74,6 +146,7 @@ def _log_http_request(resp: httpx.Response) -> None:
 
     seq = next(_REQUEST_SEQ)
     logger.info('%d. HTTP Request: %s %s "HTTP/1.1 %d %s"', seq, method, url, status_code, reason)
+    _capture_http_request(resp)
 
 
 def _headers() -> dict:

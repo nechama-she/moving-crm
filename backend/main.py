@@ -154,6 +154,12 @@ async def audit_lead_mutations(request: Request, call_next):
         raise
     sql_statements = finish_sql_capture(sql_capture_token)
 
+    # Some endpoints generate the meaningful update payload server-side. Let the
+    # handler replace an empty inbound body with that payload in the same audit row.
+    audit_request_payload = getattr(request.state, "audit_request_payload", None)
+    if audit_request_payload is not None:
+        request_payload = audit_request_payload
+
     response_body = b"".join([chunk async for chunk in response.body_iterator])
     response_content_type = response.headers.get("content-type") or ""
     if response_body:
