@@ -29,7 +29,16 @@ async function responseError(response: Response): Promise<string> {
 function formatDate(value: string): string {
   if (!value) return "—";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("en-US", {
+    timeZone: "America/New_York",
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  });
 }
 
 export default function PendingDuplicationsPage() {

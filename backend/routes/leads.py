@@ -740,7 +740,9 @@ def list_pending_lead_duplications(
             "source_company_name": source_company,
             "target_company_name": target_company,
             "target_referral_source": f"Facebook-{target_company}-HHG",
-            "fire_at": (_utcnow() + timedelta(hours=8)).isoformat(),
+            "fire_at": _move_duplication_into_business_hours(
+                _utcnow() + timedelta(hours=8)
+            ).isoformat(),
             "created_at": _utcnow().isoformat(),
             "is_sample": True,
         })
