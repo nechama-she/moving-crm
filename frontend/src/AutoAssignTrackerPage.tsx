@@ -76,6 +76,7 @@ export default function AutoAssignTrackerPage() {
   const [repIdFilter, setRepIdFilter] = useState("");
   const [modeFilter, setModeFilter] = useState<AssignmentMode>("");
   const [runMode, setRunMode] = useState<"dry" | "live">("dry");
+  const [dryRunOnly, setDryRunOnly] = useState(false);
   const [runBusy, setRunBusy] = useState(false);
   const [runMessage, setRunMessage] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
@@ -106,7 +107,10 @@ export default function AutoAssignTrackerPage() {
         const res = await fetch(`${API_BASE}/api/auto-assign-mode`, { headers: authHeaders(token) });
         if (!res.ok) return;
         const data = await res.json();
-        if (!cancelled) setRunMode(data?.mode === "live" ? "live" : "dry");
+        if (!cancelled) {
+          setDryRunOnly(Boolean(data?.dry_run_only));
+          setRunMode(data?.dry_run_only ? "dry" : data?.mode === "live" ? "live" : "dry");
+        }
       } catch {
         // Keep default dry mode if mode settings endpoint is unavailable.
       }
@@ -118,6 +122,7 @@ export default function AutoAssignTrackerPage() {
   }, [token]);
 
   async function setRunModePersisted(next: "dry" | "live") {
+    if (dryRunOnly && next === "live") return;
     setRunMode(next);
     try {
       const res = await fetch(`${API_BASE}/api/auto-assign-mode?mode=${next}`, {
@@ -221,14 +226,17 @@ export default function AutoAssignTrackerPage() {
         <button
           type="button"
           onClick={() => void setRunModePersisted("live")}
+          disabled={dryRunOnly}
+          title={dryRunOnly ? "Live auto assignment is disabled in dev" : "Use live auto assignment"}
           style={{
             border: runMode === "live" ? "1px solid #b91c1c" : "1px solid #cbd5e1",
             background: runMode === "live" ? "#fff1f2" : "#fff",
             color: "#7f1d1d",
             borderRadius: 6,
             padding: "6px 10px",
-            cursor: "pointer",
+            cursor: dryRunOnly ? "not-allowed" : "pointer",
             fontWeight: 700,
+            opacity: dryRunOnly ? 0.45 : 1,
           }}
         >
           Live
@@ -250,7 +258,9 @@ export default function AutoAssignTrackerPage() {
           {runBusy ? "Running..." : `Run Now (${runMode === "dry" ? "Dry" : "Live"})`}
         </button>
         <span style={{ fontSize: 12, color: runMode === "live" ? "#b91c1c" : "#0369a1", fontWeight: 700 }}>
-          {runMode === "live"
+          {dryRunOnly
+            ? "DEV SAFETY: dry run only. No assignments or SmartMoving updates can be written."
+            : runMode === "live"
             ? "Live mode updates assignments and SmartMoving."
             : "Dry mode is simulation only; no assignment or SmartMoving updates are written."}
         </span>

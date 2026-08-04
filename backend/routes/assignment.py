@@ -7,6 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
+from assignment_conflicts import find_assignment_conflicts
 from config import get_config
 from database import get_db
 from libs.smartmoving.client import update_opportunity_salesperson
@@ -21,6 +22,10 @@ QUEUE_REASONS_MANAGED_BY_BACKLOG = {
 }
 
 router = APIRouter(prefix="/api", tags=["Assignment"])
+
+
+def _auto_assign_dry_run_only() -> bool:
+    return os.getenv("AUTO_ASSIGN_DRY_RUN_ONLY", "false").strip().lower() == "true"
 
 
 def _get_user_company_ids(user: User, db: Session) -> list[str]:
@@ -440,6 +445,9 @@ def get_auto_assign_events(
 
 def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
     """Core backlog runner — callable internally (scheduler) or via HTTP endpoint."""
+    if _auto_assign_dry_run_only() and not dry_run:
+        logger.warning("Live auto assignment requested while AUTO_ASSIGN_DRY_RUN_ONLY is enabled; forcing dry run")
+        dry_run = True
     now = _utcnow()
     logger.info("Backlog run started: dry_run=%s now=%s", dry_run, now.isoformat())
     if _any_admin_available_now(db, now=now):
@@ -598,7 +606,37 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
         start_idx = _next_round_robin_start_index(company_id, rep_ids, db)
 
         for idx, lead in enumerate(company_leads):
-            rep = active_reps[(start_idx + idx) % len(active_reps)]
+            conflicts = find_assignment_conflicts(
+                db,
+                company_id=lead.company_id,
+                phone=lead.phone,
+                email=lead.email,
+                exclude_lead_id=lead.id,
+            )
+            if conflicts.same_company_match:
+                queued_count += _queue_backlog_leads(
+                    [lead],
+                    assignment_reason="matching_assigned_lead_same_company",
+                    note="Not auto-assigned because the same phone or email is already assigned in this company",
+                    latest_events_by_lead=latest_events_by_lead,
+                    lead_ids_with_queued_event=lead_ids_with_queued_event,
+                    db=db,
+                )
+                continue
+
+            eligible_reps = [rep for rep in active_reps if rep.id not in conflicts.excluded_rep_ids]
+            if not eligible_reps:
+                queued_count += _queue_backlog_leads(
+                    [lead],
+                    assignment_reason="matching_lead_other_company_excluded_all_reps",
+                    note="Not auto-assigned because matching leads in other companies are assigned to every eligible rep",
+                    latest_events_by_lead=latest_events_by_lead,
+                    lead_ids_with_queued_event=lead_ids_with_queued_event,
+                    db=db,
+                )
+                continue
+
+            rep = eligible_reps[(start_idx + idx) % len(eligible_reps)]
             dry_run_reason = DRY_RUN_BACKLOG_REASON
             if dry_run:
                 latest_event = latest_events_by_lead.get(lead.id)
@@ -670,7 +708,11 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
                     f"SmartMoving sync ok (status={sync_result.get('status', 'n/a')} body={sync_result.get('body', '(empty)')})"
                 )
             else:
-                success_note = "DRY RUN: would assign from queued backlog"
+                excluded_note = (
+                    f"; excluded {len(conflicts.excluded_rep_ids)} rep(s) assigned to matching leads in other companies"
+                    if conflicts.excluded_rep_ids else ""
+                )
+                success_note = f"DRY RUN: would assign from queued backlog{excluded_note}"
             db.add(
                 AutoAssignEvent(
                     lead_id=lead.id,
@@ -731,8 +773,9 @@ def get_auto_assign_mode(
 ):
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
-    mode = _get_default_run_mode(db)
-    return {"mode": mode, "dry_run": mode == "dry"}
+    dry_run_only = _auto_assign_dry_run_only()
+    mode = "dry" if dry_run_only else _get_default_run_mode(db)
+    return {"mode": mode, "dry_run": mode == "dry", "dry_run_only": dry_run_only}
 
 
 @router.put("/auto-assign-mode")
@@ -746,8 +789,10 @@ def set_auto_assign_mode(
     normalized = mode.strip().lower()
     if normalized not in {"dry", "live"}:
         raise HTTPException(status_code=400, detail="mode must be 'dry' or 'live'")
+    if normalized == "live" and _auto_assign_dry_run_only():
+        raise HTTPException(status_code=403, detail="Live auto assignment is disabled in this environment")
     _set_default_run_mode(normalized, db)
-    return {"ok": True, "mode": normalized, "dry_run": normalized == "dry"}
+    return {"ok": True, "mode": normalized, "dry_run": normalized == "dry", "dry_run_only": _auto_assign_dry_run_only()}
 
 
 @router.post("/auto-assign-run-ui")

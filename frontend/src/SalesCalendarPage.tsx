@@ -240,8 +240,9 @@ function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
-function repPaidCommissionAmount(paymentAmount: number, commissionPercent: number): number {
-  return paymentAmount * (commissionPercent / 100);
+function repPaidCommissionAmount(paymentAmount: number, commissionPercent: number, thirdPartyAmount = 0): number {
+  const commissionableAmount = Math.max(0, paymentAmount - Math.max(0, thirdPartyAmount));
+  return commissionableAmount * (commissionPercent / 100);
 }
 
 function processingFeeAmount(paymentsTotal: number): number {
@@ -622,9 +623,10 @@ export default function SalesCalendarPage() {
           const commissionPercent = commissionPercentForJob(job);
           for (const payment of job.payments || []) {
             const paymentAmount = Number(payment.amount || 0);
-            repCommissionTotal += repPaidCommissionAmount(paymentAmount, commissionPercent);
+            const thirdPartyAmount = Number(payment.thirdPartyCommissionAmount || 0);
+            repCommissionTotal += repPaidCommissionAmount(paymentAmount, commissionPercent, thirdPartyAmount);
             if (payment.repPaid) {
-              repCommissionPaid += repPaidCommissionAmount(paymentAmount, commissionPercent);
+              repCommissionPaid += repPaidCommissionAmount(paymentAmount, commissionPercent, thirdPartyAmount);
             }
           }
         }
@@ -716,9 +718,10 @@ export default function SalesCalendarPage() {
           const commissionPercent = commissionPercentForJob(job);
           for (const payment of job.payments || []) {
             const paymentAmount = Number(payment.amount || 0);
-            repCommissionTotal += repPaidCommissionAmount(paymentAmount, commissionPercent);
+            const thirdPartyAmount = Number(payment.thirdPartyCommissionAmount || 0);
+            repCommissionTotal += repPaidCommissionAmount(paymentAmount, commissionPercent, thirdPartyAmount);
             if (payment.repPaid) {
-              repCommissionPaid += repPaidCommissionAmount(paymentAmount, commissionPercent);
+              repCommissionPaid += repPaidCommissionAmount(paymentAmount, commissionPercent, thirdPartyAmount);
             }
           }
         }

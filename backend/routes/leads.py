@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
+from assignment_conflicts import find_assignment_conflicts
 from company_colors import resolve_company_color
 from config import get_config
 from database import get_db
@@ -710,6 +711,22 @@ def list_pending_lead_duplications(
         })
 
     items.sort(key=lambda item: item["fire_at"])
+    if os.getenv("ENABLE_LEAD_DUPLICATION", "false").strip().lower() != "true":
+        sample_companies = db.query(Company).order_by(Company.name).limit(2).all()
+        source_company = sample_companies[0].name if sample_companies else "Sample Moving Company"
+        target_company = sample_companies[-1].name if sample_companies else "Destination Moving Company"
+        items.insert(0, {
+            "schedule_name": "__dev_sample_duplication__",
+            "lead_id": "",
+            "lead_name": "Sample Lead (Design Preview)",
+            "smartmoving_id": "sample-smartmoving-id",
+            "source_company_name": source_company,
+            "target_company_name": target_company,
+            "target_referral_source": f"Facebook-{target_company}-HHG",
+            "fire_at": (_utcnow() + timedelta(hours=8)).isoformat(),
+            "created_at": _utcnow().isoformat(),
+            "is_sample": True,
+        })
     return {"items": items, "total": len(items)}
 
 
@@ -791,11 +808,16 @@ def run_pending_lead_duplication_now(
     try:
         response = boto3.client("lambda", region_name=region).invoke(
             FunctionName=function_arn,
-            InvocationType="Event",
+            InvocationType="RequestResponse",
             Payload=json.dumps(payload).encode("utf-8"),
         )
-        if response.get("StatusCode") != 202:
+        if response.get("StatusCode") != 200:
             raise RuntimeError(f"Lambda returned status {response.get('StatusCode')}")
+        raw_result = response.get("Payload").read().decode("utf-8") if response.get("Payload") else "{}"
+        invocation_result = json.loads(raw_result or "{}")
+        if response.get("FunctionError") or not invocation_result.get("ok"):
+            error_message = invocation_result.get("errorMessage") or invocation_result.get("error") or raw_result
+            raise RuntimeError(str(error_message)[:1500])
     except Exception as exc:
         logger.exception("Failed to invoke pending lead duplication %s", schedule_name)
         raise HTTPException(status_code=502, detail=f"Could not start duplication: {exc}")
@@ -814,6 +836,7 @@ def run_pending_lead_duplication_now(
         "lead_id": payload.get("lead_id"),
         "target_company_name": target_company.name,
         "target_referral_source": referral_source,
+        "result": invocation_result.get("result") or {},
     }
 
 
@@ -1530,6 +1553,7 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
 
 class CopyLeadRequest(BaseModel):
     company_id: str
+    referral_source: str = ""
 
 
 @router.post("/leads/{lead_id}/copy")
@@ -1557,7 +1581,7 @@ def copy_lead(
     if not provider_key:
         raise HTTPException(status_code=500, detail="SmartMoving lead-copy provider is not configured")
 
-    referral_source = f"Facebook-{target_company.name}-HHG"
+    referral_source = _clean_optional_text(body.referral_source) or f"Facebook-{target_company.name}-HHG"
     smartmoving_payload = {
         "fullName": source_lead.full_name or "",
         "phoneNumber": source_lead.phone or "",
@@ -4063,14 +4087,33 @@ def create_lead(
     # Auto-assign only while all admins are unavailable and no explicit assignee was provided.
     if not assigned_to_user_id and not _any_admin_available_now(db):
         available_rep_ids = _active_available_rep_ids(db)
-        rep = _pick_round_robin_rep_for_company(company.id, db, available_rep_ids)
-        if rep:
-            assigned_to_user_id = rep.id
-            assignment_mode = "auto"
-            assignment_reason = "all_admins_unavailable_round_robin"
-        else:
+        conflicts = find_assignment_conflicts(
+            db,
+            company_id=company.id,
+            phone=body.phone_number,
+            email=body.email,
+        )
+        if conflicts.same_company_match:
             assignment_mode = "queued"
-            assignment_reason = "all_admins_unavailable_no_available_rep"
+            assignment_reason = "matching_assigned_lead_same_company"
+        else:
+            eligible_rep_ids = available_rep_ids - conflicts.excluded_rep_ids
+            rep = _pick_round_robin_rep_for_company(company.id, db, eligible_rep_ids)
+            if rep:
+                assigned_to_user_id = rep.id
+                assignment_mode = "auto"
+                assignment_reason = (
+                    "matching_lead_other_company_excluded_previous_rep"
+                    if conflicts.excluded_rep_ids
+                    else "all_admins_unavailable_round_robin"
+                )
+            else:
+                assignment_mode = "queued"
+                assignment_reason = (
+                    "matching_lead_other_company_excluded_all_reps"
+                    if conflicts.excluded_rep_ids
+                    else "all_admins_unavailable_no_available_rep"
+                )
 
     raw_move_type = _clean_optional_text(body.move_type).lower()
     raw_status = _clean_optional_text(body.status).lower()
@@ -4096,9 +4139,12 @@ def create_lead(
         if weight_value < 0:
             raise HTTPException(status_code=400, detail="weight must be >= 0")
 
+    auto_assignment_dry_run = os.getenv("AUTO_ASSIGN_DRY_RUN_ONLY", "false").strip().lower() == "true"
+    persisted_assignee_id = None if assignment_mode == "auto" and auto_assignment_dry_run else assigned_to_user_id
+
     lead = Lead(
         company_id=company.id,
-        assigned_to=assigned_to_user_id,
+        assigned_to=persisted_assignee_id,
         full_name=body.full_name.strip(),
         email=_clean_optional_text(body.email),
         phone=_normalize_phone(body.phone_number),
@@ -4168,7 +4214,13 @@ def create_lead(
     )
     
     if assignment_mode == "auto":
-        if not assigned_rep:
+        if auto_assignment_dry_run:
+            logger.info(
+                "DEV dry run: would auto-assign lead %s to rep %s; CRM and SmartMoving unchanged",
+                lead.id,
+                assigned_rep.id if assigned_rep else None,
+            )
+        elif not assigned_rep:
             assignment_mode = "error"
             lead.assigned_to = None
             db.commit()
@@ -4240,7 +4292,19 @@ def create_lead(
             logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
 
     # Build assignment note with SmartMoving sync details
-    assign_note = _assignment_note(assignment_mode, sync_result)
+    if assignment_reason == "matching_assigned_lead_same_company":
+        assign_note = "Not auto-assigned because the same phone or email is already assigned in this company"
+    elif assignment_reason == "matching_lead_other_company_excluded_all_reps":
+        assign_note = "Not auto-assigned because matching leads in other companies are assigned to every eligible rep"
+    elif assignment_mode == "auto" and auto_assignment_dry_run:
+        excluded_note = (
+            "; excluded reps already assigned to matching leads in other companies"
+            if assignment_reason == "matching_lead_other_company_excluded_previous_rep"
+            else ""
+        )
+        assign_note = f"DRY RUN: would auto assign new lead to {assigned_rep.name if assigned_rep else 'unknown rep'}{excluded_note}"
+    else:
+        assign_note = _assignment_note(assignment_mode, sync_result)
     logger.info(
         "Lead auto-assign note: lead_id=%s mode=%s note=%s sync_result=%s",
         lead.id,
@@ -4253,7 +4317,7 @@ def create_lead(
         assign_event = AutoAssignEvent(
             lead_id=lead.id,
             company_id=company.id,
-            assigned_to=lead.assigned_to,
+            assigned_to=assigned_rep.id if assignment_mode == "auto" and auto_assignment_dry_run and assigned_rep else lead.assigned_to,
             assignment_mode=assignment_mode,
             assignment_reason=assignment_reason,
             note=assign_note,

@@ -83,7 +83,7 @@ def _smartmoving_url(target_company_name: str) -> str:
     )
 
 
-def _create_smartmoving_lead(lead: dict, referral_source: str, target_company_name: str) -> str:
+def _create_smartmoving_lead(lead: dict, referral_source: str, target_company_name: str) -> dict:
     url = _smartmoving_url(target_company_name)
 
     note = (
@@ -110,11 +110,14 @@ def _create_smartmoving_lead(lead: dict, referral_source: str, target_company_na
     logger.info("Creating SmartMoving lead payload=%s", payload)
     resp = httpx.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=15)
     logger.info("SmartMoving response: status=%d body=%s", resp.status_code, resp.text[:300])
-    resp.raise_for_status()
+    if not resp.is_success:
+        raise RuntimeError(f"SmartMoving HTTP {resp.status_code}: {resp.text[:1000]}")
     result = resp.json()
     smartmoving_id = result.get("leadId", "") if isinstance(result, dict) else resp.text.strip('"')
+    if not smartmoving_id:
+        raise RuntimeError(f"SmartMoving returned no leadId: {resp.text[:1000]}")
     logger.info("SmartMoving leadId=%s", smartmoving_id)
-    return smartmoving_id
+    return {"lead_id": smartmoving_id, "status_code": resp.status_code, "response": result}
 
 
 def handler(event, context):
@@ -122,11 +125,11 @@ def handler(event, context):
     if not isinstance(event, dict) or "Records" not in event:
         logger.info("lead-duplicate handler invoked via direct event")
         try:
-            _process(event)
+            result = _process(event)
         except Exception:
             logger.exception("Failed to process direct event")
             raise
-        return {"ok": True}
+        return {"ok": True, "result": result}
 
     # SQS invocation (legacy path; kept for in-flight messages).
     records = event.get("Records", [])
@@ -146,7 +149,7 @@ def handler(event, context):
         return {"batchItemFailures": failures}
 
 
-def _process(body: dict) -> None:
+def _process(body: dict) -> dict:
     lead_id = body["lead_id"]
     target_company_name = body["target_company_name"]
     target_referral_source = body["target_referral_source"]
@@ -170,17 +173,13 @@ def _process(body: dict) -> None:
     )
     logger.info("GET %s → status=%d body=%s", get_url, get_resp.status_code, get_resp.text[:300])
     if get_resp.status_code == 404:
-        logger.warning("Source lead %s not found; skipping", lead_id)
-        return
+        raise RuntimeError(f"Source lead {lead_id} was not found in Moving CRM")
     get_resp.raise_for_status()
     lead = get_resp.json()
 
     # ── Create lead in SmartMoving first ───────────────────────────────────
-    smartmoving_id = ""
-    try:
-        smartmoving_id = _create_smartmoving_lead(lead, target_referral_source, target_company_name)
-    except Exception:
-        logger.exception("SmartMoving lead creation failed for lead %s; continuing without smartmoving_id", lead_id)
+    smartmoving_result = _create_smartmoving_lead(lead, target_referral_source, target_company_name)
+    smartmoving_id = smartmoving_result["lead_id"]
 
     # ── Submit duplicate lead to CRM ────────────────────────────────────────
     payload = {
@@ -209,7 +208,8 @@ def _process(body: dict) -> None:
         headers={"x-api-secret": api_secret},
         timeout=15,
     )
-    post_resp.raise_for_status()
+    if not post_resp.is_success:
+        raise RuntimeError(f"Moving CRM HTTP {post_resp.status_code}: {post_resp.text[:1000]}")
     result = post_resp.json()
 
     if result.get("status") == "skipped":
@@ -217,10 +217,20 @@ def _process(body: dict) -> None:
             "Lead %s already exists at company %s (reason=%s); skipping",
             lead_id, target_company_name, result.get("reason"),
         )
-        return
+        return {
+            "status": "skipped",
+            "reason": result.get("reason"),
+            "smartmoving": smartmoving_result,
+            "moving_crm": {"status_code": post_resp.status_code, "response": result},
+        }
 
     logger.info(
         "Duplicated lead %s → new lead %s at company %s",
         lead_id, result.get("lead_id"), target_company_name,
     )
+    return {
+        "status": "created",
+        "smartmoving": smartmoving_result,
+        "moving_crm": {"status_code": post_resp.status_code, "response": result},
+    }
 
