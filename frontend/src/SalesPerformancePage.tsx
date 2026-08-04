@@ -32,6 +32,7 @@ const money = new Intl.NumberFormat("en-US", {
 });
 
 function SalesChart({ rep, visibleMonths, onToggleMonth }: { rep: RepPerformance; visibleMonths: Set<string>; onToggleMonth: (month: string) => void }) {
+  const [activeDay, setActiveDay] = useState<number | null>(null);
   const width = 1000;
   const height = 390;
   const margin = { top: 24, right: 24, bottom: 44, left: 76 };
@@ -43,6 +44,13 @@ function SalesChart({ rep, visibleMonths, onToggleMonth }: { rep: RepPerformance
   const x = (day: number) => margin.left + ((day - 1) / 30) * plotWidth;
   const y = (value: number) => margin.top + plotHeight - (value / gridMax) * plotHeight;
   const currentMonth = rep.series[rep.series.length - 1];
+  const activeValues = activeDay === null
+    ? []
+    : [...displayedSeries].reverse().map((series) => ({
+        series,
+        value: series.values[activeDay - 1],
+        colorIndex: rep.series.findIndex((item) => item.month === series.month),
+      })).filter((item): item is typeof item & { value: number } => item.value !== null);
 
   return (
     <article className="performance-card">
@@ -57,7 +65,7 @@ function SalesChart({ rep, visibleMonths, onToggleMonth }: { rep: RepPerformance
         <strong>{money.format(currentMonth?.total || 0)} <small>this month</small></strong>
       </header>
 
-      <div className="performance-chart-scroll">
+      <div className="performance-chart-scroll" onPointerLeave={() => setActiveDay(null)}>
         <svg className="performance-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${rep.name} cumulative sales for the last 12 months`}>
           {[0, 1, 2, 3, 4].map((step) => {
             const value = (gridMax / 4) * step;
@@ -83,7 +91,50 @@ function SalesChart({ rep, visibleMonths, onToggleMonth }: { rep: RepPerformance
               .join(" ");
             return <polyline key={series.month} points={points} fill="none" stroke={COLORS[originalIndex]} strokeWidth={originalIndex === rep.series.length - 1 ? 4 : 2.4} strokeLinecap="round" strokeLinejoin="round" opacity={originalIndex === rep.series.length - 1 ? 1 : 0.78} />;
           })}
+          {activeDay !== null ? (
+            <>
+              <line x1={x(activeDay)} x2={x(activeDay)} y1={margin.top} y2={height - margin.bottom} stroke="#032d60" strokeWidth="1.5" strokeDasharray="5 5" />
+              {activeValues.map(({ series, value, colorIndex }) => (
+                <circle key={series.month} cx={x(activeDay)} cy={y(value)} r="6" fill="#fff" stroke={COLORS[colorIndex]} strokeWidth="3" />
+              ))}
+            </>
+          ) : null}
+          {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => {
+            const left = day === 1 ? margin.left : (x(day - 1) + x(day)) / 2;
+            const right = day === 31 ? width - margin.right : (x(day) + x(day + 1)) / 2;
+            return (
+              <rect
+                key={`hit-${day}`}
+                x={left}
+                y={margin.top}
+                width={right - left}
+                height={plotHeight}
+                fill="transparent"
+                style={{ cursor: "crosshair", touchAction: "pan-y" }}
+                onPointerEnter={() => setActiveDay(day)}
+                onPointerDown={() => setActiveDay(day)}
+                aria-label={`Day ${day}`}
+              />
+            );
+          })}
         </svg>
+        {activeDay !== null ? (
+          <div
+            className="performance-tooltip"
+            style={{ left: `${Math.min(82, Math.max(18, ((activeDay - 1) / 30) * 100))}%` }}
+          >
+            <strong>Day {activeDay}</strong>
+            <div>
+              {activeValues.map(({ series, value, colorIndex }) => (
+                <span key={series.month}>
+                  <i style={{ background: COLORS[colorIndex] }} />
+                  <b>{series.label}</b>
+                  <em>{money.format(value)}</em>
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="performance-legend">
