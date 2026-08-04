@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import boto3
 from botocore.exceptions import ClientError
 from dateutil import parser as date_parser
-from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File, Request
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, cast, text
@@ -28,12 +28,14 @@ from database import get_db
 from lead_audit import record_lead_update_log
 from libs.common.phone import normalize_digits
 from libs.smartmoving.client import (
+    begin_request_capture,
     create_provider_lead,
     download_opportunity_document,
     download_opportunity_file,
     get_opportunity,
     get_opportunity_audit_activity,
     get_opportunity_documents,
+    finish_request_capture,
     update_opportunity_salesperson,
 )
 from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting
@@ -3716,8 +3718,23 @@ def update_lead(
 @router.post("/leads/{lead_id}/refresh-smartmoving")
 def refresh_lead_from_smartmoving(
     lead_id: str,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+):
+    capture_token, outbound_logs = begin_request_capture()
+    try:
+        return _refresh_lead_from_smartmoving(lead_id, request, user, db, outbound_logs)
+    finally:
+        finish_request_capture(capture_token)
+
+
+def _refresh_lead_from_smartmoving(
+    lead_id: str,
+    request: Request,
+    user: User,
+    db: Session,
+    outbound_logs: list[dict[str, Any]],
 ):
     _ensure_not_dispatch_write(user)
     lead = _get_visible_lead_or_404(lead_id, user, db)
@@ -3735,7 +3752,7 @@ def refresh_lead_from_smartmoving(
             method="POST",
             endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
             event_type="smartmoving_refresh",
-            request_payload={"smartmoving_id": smartmoving_id},
+            request_payload={"smartmoving_id": smartmoving_id, "logs": outbound_logs},
             external_response={"opportunity": opportunity_result},
             response_status=502,
             error=str(opportunity_result.get("error") or ""),
@@ -3762,7 +3779,7 @@ def refresh_lead_from_smartmoving(
             method="POST",
             endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
             event_type="smartmoving_refresh",
-            request_payload={"smartmoving_id": smartmoving_id},
+            request_payload={"smartmoving_id": smartmoving_id, "logs": outbound_logs},
             external_response={"opportunity": opportunity_result},
             response_status=502,
             error="SmartMoving refresh returned an invalid payload",
@@ -3785,7 +3802,7 @@ def refresh_lead_from_smartmoving(
             method="POST",
             endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
             event_type="smartmoving_refresh",
-            request_payload={"smartmoving_id": smartmoving_id, "mapped_payload": payload},
+            request_payload={"smartmoving_id": smartmoving_id, "mapped_payload": payload, "logs": outbound_logs},
             external_response={"opportunity": opportunity_result, "audit_activity": audit_result},
             response_status=502,
             error=str(audit_result.get("error") or ""),
@@ -3801,7 +3818,7 @@ def refresh_lead_from_smartmoving(
             method="POST",
             endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
             event_type="smartmoving_refresh",
-            request_payload={"smartmoving_id": smartmoving_id, "mapped_payload": payload},
+            request_payload={"smartmoving_id": smartmoving_id, "mapped_payload": payload, "logs": outbound_logs},
             external_response={"opportunity": opportunity_result, "audit_activity": audit_result},
             response_status=502,
             error="SmartMoving audit returned an invalid payload",
@@ -3819,19 +3836,12 @@ def refresh_lead_from_smartmoving(
 
     body = LeadUpdate.model_validate(payload)
     updated = update_lead(lead.id, body, user, db)
-    record_lead_update_log(
-        lead_id=lead.id,
-        actor_user_id=user.id,
-        actor_name=user.name,
-        source="smartmoving",
-        method="POST",
-        endpoint=f"/api/leads/{lead.id}/refresh-smartmoving",
-        event_type="smartmoving_refresh",
-        request_payload={"smartmoving_id": smartmoving_id, "mapped_payload": payload},
-        external_response={"opportunity": opportunity_result, "audit_activity": audit_result},
-        response_status=200,
-    )
     sync_result = sync_smartmoving_files(lead, user, db, opportunity)
+    request.state.audit_request_payload = {
+        "smartmoving_id": smartmoving_id,
+        "mapped_payload": payload,
+        "logs": outbound_logs,
+    }
     if isinstance(updated, dict):
         updated["smartmoving_document_links_synced"] = sync_result["created_links"]
         updated["smartmoving_opportunity_files_saved"] = sync_result["created_s3_files"]

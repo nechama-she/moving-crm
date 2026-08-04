@@ -9,7 +9,13 @@ import httpx
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "libs"))
 
-from smartmoving.client import create_provider_lead, download_opportunity_file, get_opportunity
+from smartmoving.client import (
+    begin_request_capture,
+    create_provider_lead,
+    download_opportunity_file,
+    finish_request_capture,
+    get_opportunity,
+)
 
 
 class TestGetOpportunity:
@@ -91,3 +97,33 @@ def test_create_provider_lead_requires_configuration():
 
     assert result["ok"] is False
     mock_request.assert_not_called()
+
+
+def test_captures_full_outbound_json_without_secret_headers():
+    request = httpx.Request("GET", "https://api-public.smartmoving.com/v1/api/opportunities/opp-1")
+    response = httpx.Response(
+        200,
+        request=request,
+        headers={"content-type": "application/json"},
+        json={"id": "opp-1", "jobs": [{"id": "job-1"}]},
+    )
+    token, logs = begin_request_capture()
+    try:
+        with patch("smartmoving.client.httpx.get", return_value=response):
+            result = get_opportunity("opp-1")
+    finally:
+        finish_request_capture(token)
+
+    assert result["data"]["id"] == "opp-1"
+    assert logs == [{
+        "request": {
+            "method": "GET",
+            "url": "https://api-public.smartmoving.com/v1/api/opportunities/opp-1",
+            "headers": {},
+            "payload": None,
+        },
+        "response": {
+            "status_code": 200,
+            "body": {"id": "opp-1", "jobs": [{"id": "job-1"}]},
+        },
+    }]

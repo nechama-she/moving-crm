@@ -31,13 +31,14 @@ const money = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
-function SalesChart({ rep }: { rep: RepPerformance }) {
+function SalesChart({ rep, visibleMonths, onToggleMonth }: { rep: RepPerformance; visibleMonths: Set<string>; onToggleMonth: (month: string) => void }) {
   const width = 1000;
   const height = 390;
   const margin = { top: 24, right: 24, bottom: 44, left: 76 };
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
-  const maxValue = Math.max(1, ...rep.series.flatMap((series) => series.values.filter((value): value is number => value !== null)));
+  const displayedSeries = rep.series.filter((series) => visibleMonths.has(series.month));
+  const maxValue = Math.max(1, ...displayedSeries.flatMap((series) => series.values.filter((value): value is number => value !== null)));
   const gridMax = Math.ceil(maxValue / 4 / 100) * 400 || 400;
   const x = (day: number) => margin.left + ((day - 1) / 30) * plotWidth;
   const y = (value: number) => margin.top + plotHeight - (value / gridMax) * plotHeight;
@@ -74,12 +75,13 @@ function SalesChart({ rep }: { rep: RepPerformance }) {
             </g>
           ))}
           <text className="performance-axis-title" x={margin.left + plotWidth / 2} y={height - 2} textAnchor="middle">Day of month</text>
-          {rep.series.map((series, index) => {
+          {displayedSeries.map((series) => {
+            const originalIndex = rep.series.findIndex((item) => item.month === series.month);
             const points = series.values
               .map((value, dayIndex) => value === null ? null : `${x(dayIndex + 1)},${y(value)}`)
               .filter((point): point is string => point !== null)
               .join(" ");
-            return <polyline key={series.month} points={points} fill="none" stroke={COLORS[index]} strokeWidth={index === rep.series.length - 1 ? 4 : 2.4} strokeLinecap="round" strokeLinejoin="round" opacity={index === rep.series.length - 1 ? 1 : 0.78} />;
+            return <polyline key={series.month} points={points} fill="none" stroke={COLORS[originalIndex]} strokeWidth={originalIndex === rep.series.length - 1 ? 4 : 2.4} strokeLinecap="round" strokeLinejoin="round" opacity={originalIndex === rep.series.length - 1 ? 1 : 0.78} />;
           })}
         </svg>
       </div>
@@ -88,11 +90,11 @@ function SalesChart({ rep }: { rep: RepPerformance }) {
         {[...rep.series].reverse().map((series, reverseIndex) => {
           const colorIndex = rep.series.length - 1 - reverseIndex;
           return (
-            <div key={series.month}>
+            <button type="button" key={series.month} className={visibleMonths.has(series.month) ? "active" : ""} onClick={() => onToggleMonth(series.month)} title={`${visibleMonths.has(series.month) ? "Hide" : "Show"} ${series.label}`}>
               <i style={{ background: COLORS[colorIndex] }} />
               <span>{series.label}</span>
               <strong>{money.format(series.total)}</strong>
-            </div>
+            </button>
           );
         })}
       </div>
@@ -105,6 +107,7 @@ export default function SalesPerformancePage() {
   const [data, setData] = useState<PerformanceResponse>({ months: [], reps: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [visibleMonths, setVisibleMonths] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let active = true;
@@ -118,7 +121,10 @@ export default function SalesPerformancePage() {
         return response.json();
       })
       .then((body: PerformanceResponse) => {
-        if (active) setData(body);
+        if (active) {
+          setData(body);
+          setVisibleMonths(new Set(body.months.map((month) => month.month)));
+        }
       })
       .catch((reason) => {
         if (active) setError(reason instanceof Error ? reason.message : "Unable to load sales performance");
@@ -134,18 +140,30 @@ export default function SalesPerformancePage() {
     [data.reps],
   );
 
+  function toggleMonth(month: string) {
+    setVisibleMonths((current) => {
+      const next = new Set(current);
+      if (next.has(month) && next.size > 1) next.delete(month);
+      else next.add(month);
+      return next;
+    });
+  }
+
   return (
     <main className="performance-page">
       <section className="performance-heading">
         <div>
           <span className="performance-eyebrow">SALES</span>
           <h1>Sales Performance</h1>
-          <p>Compare cumulative booked sales, day by day, across the last 12 months.</p>
+          <p>Compare cumulative booked sales from the beginning of each month through the same calendar day.</p>
         </div>
-        <div className="performance-summary">
-          <span>Current month</span>
-          <strong>{money.format(total)}</strong>
-          <small>{data.reps.length} salesperson{data.reps.length === 1 ? "" : "s"}</small>
+        <div className="performance-heading-actions">
+          {visibleMonths.size < data.months.length ? <button type="button" className="performance-show-all" onClick={() => setVisibleMonths(new Set(data.months.map((month) => month.month)))}>Show all months</button> : null}
+          <div className="performance-summary">
+            <span>Current month</span>
+            <strong>{money.format(total)}</strong>
+            <small>{data.reps.length} salesperson{data.reps.length === 1 ? "" : "s"}</small>
+          </div>
         </div>
       </section>
 
@@ -154,7 +172,7 @@ export default function SalesPerformancePage() {
       {!loading && !error && data.reps.length === 0 ? (
         <div className="performance-state">No booked sales were found for the last 12 months.</div>
       ) : null}
-      {!loading && !error ? <section className="performance-grid">{data.reps.map((rep) => <SalesChart key={rep.id} rep={rep} />)}</section> : null}
+      {!loading && !error ? <section className="performance-grid">{data.reps.map((rep) => <SalesChart key={rep.id} rep={rep} visibleMonths={visibleMonths} onToggleMonth={toggleMonth} />)}</section> : null}
     </main>
   );
 }
