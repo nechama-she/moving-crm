@@ -1,24 +1,25 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation, NavLink } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./AuthContext";
-import LoginPage from "./LoginPage";
-import ChangePasswordPage from "./ChangePasswordPage";
-import LeadsList from "./LeadsList";
-import LeadDetail from "./LeadDetail";
-import OutreachEventsPage from "./OutreachEventsPage";
-import PeriodAssignPage from "./PeriodAssignPage";
-import SalesRepsPage from "./SalesRepsPage";
-import DispatchPage from "./DispatchPage";
-import CompaniesPage from "./CompaniesPage";
-import CompanyTemplatesPage from "./CompanyTemplatesPage";
-import SettingsPage from "./SettingsPage";
-import AutoAssignTrackerPage from "./AutoAssignTrackerPage";
-import AdminUsersPage from "./AdminUsersPage";
-import SalesCalendarPage from "./SalesCalendarPage";
-import PendingDuplicationsPage from "./PendingDuplicationsPage";
-import PricingPage from "./PricingPage";
-import SalesPerformancePage from "./SalesPerformancePage";
-import ForemenPage from "./ForemenPage";
+
+const LoginPage = lazy(() => import("./LoginPage"));
+const ChangePasswordPage = lazy(() => import("./ChangePasswordPage"));
+const LeadsList = lazy(() => import("./LeadsList"));
+const LeadDetail = lazy(() => import("./LeadDetail"));
+const OutreachEventsPage = lazy(() => import("./OutreachEventsPage"));
+const PeriodAssignPage = lazy(() => import("./PeriodAssignPage"));
+const SalesRepsPage = lazy(() => import("./SalesRepsPage"));
+const DispatchPage = lazy(() => import("./DispatchPage"));
+const CompaniesPage = lazy(() => import("./CompaniesPage"));
+const CompanyTemplatesPage = lazy(() => import("./CompanyTemplatesPage"));
+const SettingsPage = lazy(() => import("./SettingsPage"));
+const AutoAssignTrackerPage = lazy(() => import("./AutoAssignTrackerPage"));
+const AdminUsersPage = lazy(() => import("./AdminUsersPage"));
+const SalesCalendarPage = lazy(() => import("./SalesCalendarPage"));
+const PendingDuplicationsPage = lazy(() => import("./PendingDuplicationsPage"));
+const PricingPage = lazy(() => import("./PricingPage"));
+const SalesPerformancePage = lazy(() => import("./SalesPerformancePage"));
+const ForemenPage = lazy(() => import("./ForemenPage"));
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -207,10 +208,12 @@ function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/*" element={<ProtectedRoutes />} />
-        </Routes>
+        <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/*" element={<ProtectedRoutes />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </AuthProvider>
   );

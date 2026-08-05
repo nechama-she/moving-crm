@@ -382,6 +382,7 @@ class LeadJob(Base):
 
     lead = relationship("Lead", foreign_keys=[lead_id])
     company = relationship("Company", foreign_keys=[company_id])
+    foreman = relationship("User", foreign_keys=[foreman_id])
     charges = relationship("LeadJobCharge", back_populates="job", cascade="all, delete-orphan", order_by="LeadJobCharge.sort_order.asc(), LeadJobCharge.created_at.asc()")
 
     __table_args__ = (
@@ -697,7 +698,6 @@ class PricingPlan(Base):
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
     company = relationship("Company", foreign_keys=[company_id])
-    foreman = relationship("User", foreign_keys=[foreman_id])
     rules = relationship(
         "PricingRule", cascade="all, delete-orphan", order_by="PricingRule.sort_order"
     )
