@@ -1698,6 +1698,8 @@ def get_lead_update_logs(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="Lead logs are not available for this role")
     _get_visible_lead_or_404(lead_id, user, db)
     query = db.query(LeadUpdateLog).filter(LeadUpdateLog.lead_id == lead_id)
     total = query.count()
@@ -2031,6 +2033,7 @@ class LeadJobCreate(BaseModel):
     move_date: str = ""
     booked_move_date: str = ""
     price: float | None = None
+    notes: str = ""
     logs: list[ExternalLeadUpdateLog] | None = None
 
 
@@ -2048,6 +2051,7 @@ class LeadJobUpdate(BaseModel):
     booked_move_date: str | None = None
     price: float | None = None
     foreman_id: str | None = None
+    notes: str | None = None
     logs: list[ExternalLeadUpdateLog] | None = None
 
 
@@ -2219,6 +2223,7 @@ def create_lead_job(
         delivery_zip="",
         move_date=move_date,
         booked_move_date=booked_date,
+        notes=(body.notes or "").strip() or None,
         price=price_value,
     )
 
@@ -2326,6 +2331,9 @@ def update_lead_job(
             if not foreman_company:
                 raise HTTPException(status_code=400, detail="Foreman is not assigned to this job's company")
             row.foreman_id = foreman.id
+
+    if "notes" in payload:
+        row.notes = (payload.get("notes") or "").strip() or None
 
     current_pickup, current_stops, current_delivery = _read_job_route(db, row)
     next_pickup = current_pickup
@@ -3315,6 +3323,7 @@ class LeadUpdateJob(BaseModel):
     sort_order: int | None = Field(default=None, alias="sortOrder")
     smartmoving_job_id: str | None = None
     foreman_id: str | None = None
+    notes: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
     stops: list[str] | None = None
@@ -3612,6 +3621,9 @@ def update_lead(
                     if not foreman_company:
                         raise HTTPException(status_code=400, detail="Foreman is not assigned to this job's company")
                     target_job.foreman_id = foreman.id
+
+            if "notes" in job_payload:
+                target_job.notes = (job_payload.get("notes") or "").strip() or None
 
             if "sort_order" in job_payload:
                 next_sort_order = job_payload.get("sort_order")

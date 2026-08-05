@@ -51,6 +51,7 @@ type LeadJobItem = {
   job_order: number;
   foreman_id: string;
   foreman_name: string;
+  notes: string;
   pickup_zip: string;
   delivery_zip: string;
   stops: string[];
@@ -160,6 +161,7 @@ type LeadJobDraft = {
   move_date: string;
   booked_move_date: string;
   price: string;
+  notes: string;
 };
 
 type ForemanOption = { id: string; name: string; companies?: Array<{ id: string; name: string }> };
@@ -262,6 +264,7 @@ export default function LeadDetail() {
     move_date: "",
     booked_move_date: "",
     price: "",
+    notes: "",
   });
   const [addingJob, setAddingJob] = useState(false);
   const [savingJobId, setSavingJobId] = useState("");
@@ -416,6 +419,7 @@ export default function LeadDetail() {
       move_date: item.move_date || "",
       booked_move_date: item.booked_move_date || "",
       price: item.price == null ? "" : String(item.price),
+      notes: item.notes || "",
     };
   }
 
@@ -445,6 +449,7 @@ export default function LeadDetail() {
         job_order: Number(item.job_order || 0),
         foreman_id: String(item.foreman_id || ""),
         foreman_name: String(item.foreman_name || ""),
+        notes: String(item.notes || ""),
         pickup_zip: String(item.pickup_zip || ""),
         delivery_zip: String(item.delivery_zip || ""),
         stops: parseStops(item.stops),
@@ -568,6 +573,7 @@ export default function LeadDetail() {
           move_date: draft.move_date,
           booked_move_date: draft.booked_move_date,
           price: draft.price.trim() === "" ? null : Number(draft.price),
+          notes: draft.notes,
         }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -598,6 +604,7 @@ export default function LeadDetail() {
           move_date: newJobDraft.move_date,
           booked_move_date: newJobDraft.booked_move_date,
           price: newJobDraft.price.trim() === "" ? null : Number(newJobDraft.price),
+          notes: newJobDraft.notes,
         }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -609,6 +616,7 @@ export default function LeadDetail() {
         move_date: "",
         booked_move_date: "",
         price: "",
+        notes: "",
       });
       await loadLeadJobs();
     } catch (err: unknown) {
@@ -884,6 +892,7 @@ export default function LeadDetail() {
   const canEditCompany = user?.role === "admin";
   const isDispatchUser = user?.role === "dispatch";
   const isForemanUser = user?.role === "foreman";
+  const canViewLeadCommunications = user?.role === "admin" || user?.role === "sales_rep";
   const canEditLead = !isDispatchUser && !isForemanUser;
   const canEditJobs = !isDispatchUser && !isForemanUser;
 
@@ -2507,6 +2516,29 @@ export default function LeadDetail() {
                       </div>
                     </div>
 
+                    <section className="lead-notes-card" aria-label={`Job ${job.job_order} notes`}>
+                      <div className="lead-notes-card__header">
+                        <div>
+                          <span className="lead-notes-card__icon" aria-hidden="true">✎</span>
+                          <strong>{`Job ${job.job_order} Notes`}</strong>
+                        </div>
+                        {!canEditJobs ? <span className="lead-notes-card__badge">Read only</span> : null}
+                      </div>
+                      {canEditJobs ? (
+                        <textarea
+                          className="lead-notes-card__input"
+                          value={draft.notes}
+                          onChange={(event) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, notes: event.target.value } }))}
+                          placeholder="Add notes for this job…"
+                          rows={4}
+                        />
+                      ) : (
+                        <div className={draft.notes.trim() ? "lead-notes-card__body" : "lead-notes-card__body lead-notes-card__body--empty"}>
+                          {draft.notes.trim() || "No notes have been added to this job."}
+                        </div>
+                      )}
+                    </section>
+
                     {canEditJobs ? (
                       <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
                         <button type="button" onClick={() => void saveJob(job.id)} disabled={busy} style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}>
@@ -2763,6 +2795,21 @@ export default function LeadDetail() {
                 </div>
               </div>
             </div>
+            <section className="lead-notes-card" aria-label="New job notes">
+              <div className="lead-notes-card__header">
+                <div>
+                  <span className="lead-notes-card__icon" aria-hidden="true">✎</span>
+                  <strong>Job Notes</strong>
+                </div>
+              </div>
+              <textarea
+                className="lead-notes-card__input"
+                value={newJobDraft.notes}
+                onChange={(event) => setNewJobDraft((prev) => ({ ...prev, notes: event.target.value }))}
+                placeholder="Add notes for this job…"
+                rows={4}
+              />
+            </section>
             <div>
               <button type="button" onClick={() => void addJob()} disabled={addingJob} style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "6px 12px", fontSize: 12, fontWeight: 600 }}>
                 {addingJob ? "Adding..." : "Add Job"}
@@ -2777,7 +2824,7 @@ export default function LeadDetail() {
         (otherFields.length > 0 || META_FIELDS.some((k) => allKeys.includes(k))) &&
         renderSection("Other Info", [...META_FIELDS, ...otherFields])}
 
-      {!isDispatchUser ? (
+      {canViewLeadCommunications ? (
         <div style={{ marginTop: 32, border: "1px solid #dddbda", borderRadius: 4, background: "#fff", overflow: "hidden" }}>
           <div style={{ display: "flex", borderBottom: "1px solid #dddbda", background: "#f3f2f2" }}>
             <button
