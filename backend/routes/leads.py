@@ -1148,7 +1148,7 @@ def get_sales_performance(
     db: Session = Depends(get_db),
 ):
     """Return 12 months of cumulative daily booked sales for each visible rep."""
-    if user.role not in ("admin", "sales_rep"):
+    if user.role not in ("admin", "sales_rep", "dispatch"):
         raise HTTPException(status_code=403, detail="Sales performance access required")
 
     allowed_company_ids = _get_user_company_ids(user, db)
@@ -1182,7 +1182,7 @@ def get_sales_performance(
         .filter(LeadJob.booked_move_date < range_end)
         .filter(Lead.status.in_(DISPATCH_STATUSES))
     )
-    if user.role == "sales_rep":
+    if user.role in ("sales_rep", "dispatch"):
         rows = rows.filter(Lead.assigned_to == user.id)
 
     month_keys = [month.strftime("%Y-%m") for month in months]
