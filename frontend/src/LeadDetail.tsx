@@ -1128,7 +1128,7 @@ export default function LeadDetail() {
   }
 
   async function copyLead() {
-    if (!leadId || !copyCompanyId || !copyReferralSource.trim() || !canEditLead) return;
+    if (!leadId || !copyCompanyId || !copyReferralSource.trim() || user?.role !== "admin") return;
     setCopyingLead(true);
     setCopyLeadError("");
     try {
@@ -1218,7 +1218,7 @@ export default function LeadDetail() {
         </div>
       ) : null}
 
-      {copyModalOpen ? (
+      {copyModalOpen && user?.role === "admin" ? (
         <div className="copy-lead-backdrop" role="presentation" onClick={() => !copyingLead && setCopyModalOpen(false)}>
           <section className="copy-lead-modal" role="dialog" aria-modal="true" aria-labelledby="copy-lead-title" onClick={(event) => event.stopPropagation()}>
             <header>
@@ -1985,7 +1985,7 @@ export default function LeadDetail() {
                 </div>
               ) : (
                 <div className="lead-profile-actions lead-profile-view-actions" style={{ display: "flex", gap: 6 }}>
-                  <button
+                  {user?.role === "admin" ? <button
                     type="button"
                     className="lead-profile-action-button lead-profile-copy-button"
                     onClick={() => {
@@ -1995,12 +1995,11 @@ export default function LeadDetail() {
                       setCopyLeadError("");
                       setCopyModalOpen(true);
                     }}
-                    disabled={!canEditLead}
                     title="Copy lead to another company"
-                    style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: canEditLead ? "pointer" : "default" }}
+                    style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: "pointer" }}
                   >
                     <span aria-hidden="true">⧉</span><span className="lead-profile-action-label"> Copy Lead</span>
-                  </button>
+                  </button> : null}
                   <button
                     type="button"
                     className="lead-profile-action-button lead-profile-files-button"

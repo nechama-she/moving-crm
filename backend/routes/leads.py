@@ -1582,7 +1582,8 @@ def copy_lead(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _ensure_not_dispatch_write(user)
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can copy leads")
     source_lead = _get_visible_lead_or_404(lead_id, user, db)
 
     allowed_company_ids = _get_user_company_ids(user, db)
