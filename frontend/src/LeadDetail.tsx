@@ -2348,7 +2348,7 @@ export default function LeadDetail() {
                 const chargesTotal = job.charges.reduce((sum, charge) => sum + charge.total_cost, 0);
                 return (
                   <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: primary ? "#f8fbff" : "#fff" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <button
                           type="button"
@@ -2370,25 +2370,9 @@ export default function LeadDetail() {
                         ) : null}
                         {primary ? <span style={{ fontSize: 11, color: "#1d4ed8", fontWeight: 700 }}>Primary</span> : null}
                       </div>
-                      {["admin", "dispatch"].includes(user?.role || "") ? (
-                        <label style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, color: "#475569", fontSize: 11, fontWeight: 700 }}>
-                          Foreman
-                          <select
-                            value={job.foreman_id}
-                            disabled={savingForemanJobId === job.id}
-                            onChange={(event) => void assignJobForeman(job.id, event.target.value)}
-                            style={{ minWidth: 150, maxWidth: 220, border: "1px solid #cbd5e1", borderRadius: 4, padding: "5px 7px", background: "#fff", color: "#0f172a", fontSize: 12 }}
-                          >
-                            <option value="">Unassigned</option>
-                            {foremen.filter((foreman) => (foreman.companies || []).some((company) => company.id === job.company_id)).map((foreman) => (
-                              <option key={foreman.id} value={foreman.id}>{foreman.name}</option>
-                            ))}
-                          </select>
-                        </label>
-                      ) : job.foreman_name ? <span style={{ marginLeft: "auto", color: "#475569", fontSize: 11, fontWeight: 700 }}>Foreman: {job.foreman_name}</span> : null}
                     </div>
 
-                    <div style={{ display: "grid", gap: 8, gridTemplateColumns: "minmax(220px, 1fr) 170px 170px" }}>
+                    <div className="lead-job-summary-grid">
                       <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
                         Company
                         <select
@@ -2400,6 +2384,27 @@ export default function LeadDetail() {
                           {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
                         </select>
                       </label>
+                      {["admin", "dispatch"].includes(user?.role || "") ? (
+                        <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                          Foreman
+                          <select
+                            value={job.foreman_id}
+                            disabled={savingForemanJobId === job.id}
+                            onChange={(event) => void assignJobForeman(job.id, event.target.value)}
+                            style={{ minWidth: 0, width: "100%", border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", background: "#fff", color: "#0f172a", fontSize: 12 }}
+                          >
+                            <option value="">Unassigned</option>
+                            {foremen.filter((foreman) => (foreman.companies || []).some((company) => company.id === job.company_id)).map((foreman) => (
+                              <option key={foreman.id} value={foreman.id}>{foreman.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : job.foreman_name ? (
+                        <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                          Foreman
+                          <span style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", background: "#f8fafc", color: "#0f172a", fontSize: 12 }}>{job.foreman_name}</span>
+                        </label>
+                      ) : null}
                       <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
                         Move Date
                         <input type="date" value={draft.move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, move_date: e.target.value } }))} disabled={!canEditJobs} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
