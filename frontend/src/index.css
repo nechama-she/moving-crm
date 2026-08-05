@@ -475,21 +475,25 @@ input, select, textarea, button {
     gap: 10px !important;
   }
 
+  .lead-profile-header > div:nth-child(2) {
+    display: contents;
+  }
+
   .lead-profile-card {
     padding: 12px !important;
   }
 
   .lead-profile-meta {
-    display: grid !important;
-    grid-template-columns: minmax(0, 1fr) !important;
-    gap: 6px !important;
+    display: contents !important;
   }
 
   .lead-profile-name {
+    grid-column: 2;
+    grid-row: 1;
     min-height: 36px;
     display: flex;
     align-items: center;
-    padding-right: 82px;
+    padding-right: 0;
     font-size: 17px !important;
   }
 
@@ -500,8 +504,9 @@ input, select, textarea, button {
   }
 
   .lead-profile-selector {
-    margin-left: -58px;
-    width: calc(100% + 58px);
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-left: 0;
   }
 
   .lead-profile-name + .lead-profile-selector {
@@ -522,10 +527,12 @@ input, select, textarea, button {
   }
 
   .lead-profile-actions {
-    position: absolute;
-    top: 0;
-    right: 0;
+    position: static;
+    grid-column: 1 / -1;
+    grid-row: 2;
     display: flex !important;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 6px !important;
     z-index: 2;
   }
@@ -1261,6 +1268,8 @@ button:focus-visible {
 .lead-files-job-group > header > div { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .lead-files-job-group header strong { display: block; color: #032d60; font-size: 13px; }
 .lead-files-job-group header small { display: block; margin-top: 1px; color: #706e6b; font-size: 10px; }
+.lead-files-list article[draggable="true"] { cursor: grab; }
+.lead-files-list article[draggable="true"]:active { cursor: grabbing; opacity: .72; }
 .lead-files-job-icon { width: 30px; height: 30px; border-radius: 6px; display: grid; place-items: center; background: #d8edff; font-size: 15px; }
 .lead-files-upload { border: 1px solid #0176d3; border-radius: 4px; background: #fff; color: #0176d3; padding: 5px 9px; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .lead-files-upload input { display: none; }

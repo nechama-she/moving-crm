@@ -1138,6 +1138,37 @@ export default function LeadDetail() {
     }
   }
 
+  async function moveAttachmentToJob(attachmentId: string, targetJobId: string) {
+    if (user?.role !== "admin" || !attachmentId || !targetJobId) return;
+    setAttachmentsError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}/job`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ job_id: targetJobId === "__general__" ? null : targetJobId }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.detail || `HTTP ${response.status}`);
+      await loadAllJobAttachments();
+      if (activeJobTabId && activeJobTabId !== "__new__") await loadAttachments(activeJobTabId);
+    } catch (reason) {
+      setAttachmentsError(reason instanceof Error ? reason.message : "Failed to move file");
+    }
+  }
+
+  function startAttachmentDrag(event: React.DragEvent, attachmentId: string) {
+    if (user?.role !== "admin") return;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-moving-crm-attachment", attachmentId);
+  }
+
+  function dropAttachment(event: React.DragEvent, targetJobId: string) {
+    if (user?.role !== "admin") return;
+    event.preventDefault();
+    const attachmentId = event.dataTransfer.getData("application/x-moving-crm-attachment");
+    if (attachmentId) void moveAttachmentToJob(attachmentId, targetJobId);
+  }
+
   async function saveJobNotes(jobId: string, field: "notes" | "foreman_notes") {
     const draft = jobDrafts[jobId];
     if (!draft) return;
@@ -1412,7 +1443,7 @@ export default function LeadDetail() {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
                 <span aria-hidden="true" style={{ width: 30, height: 30, borderRadius: 6, display: "grid", placeItems: "center", background: "#0176d3", color: "#fff" }}>📎</span>
-                <div><strong style={{ display: "block", fontSize: 14, color: "#032d60" }}>Files</strong><small style={{ color: "#706e6b", fontSize: 11 }}>Grouped by job</small></div>
+                <div><strong style={{ display: "block", fontSize: 14, color: "#032d60" }}>Files</strong><small style={{ color: "#706e6b", fontSize: 11 }}>Lead and job files</small></div>
               </div>
               <button type="button" onClick={() => setFilesModalOpen(false)} style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}>Close</button>
             </div>
@@ -1439,11 +1470,15 @@ export default function LeadDetail() {
               {groupedAttachmentsLoading ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>Loading files...</p> : null}
               {!groupedAttachmentsLoading ? (
                 <div className="lead-files-groups">
-                  <section className="lead-files-job-group lead-files-general-group">
+                  <section
+                    className="lead-files-job-group lead-files-general-group"
+                    onDragOver={(event) => { if (user?.role === "admin") event.preventDefault(); }}
+                    onDrop={(event) => dropAttachment(event, "__general__")}
+                  >
                     <header>
                       <div>
                         <span className="lead-files-job-icon" aria-hidden="true">📁</span>
-                        <div><strong>General Files</strong><small>{generalFilesForDisplay.length} file{generalFilesForDisplay.length === 1 ? "" : "s"} not assigned to a job</small></div>
+                        <div><strong>Lead Files</strong><small>{generalFilesForDisplay.length} file{generalFilesForDisplay.length === 1 ? "" : "s"} attached to the lead</small></div>
                       </div>
                       <label className="lead-files-upload">
                         <input type="file" multiple disabled={uploadingCount > 0} onChange={(event) => {
@@ -1454,10 +1489,10 @@ export default function LeadDetail() {
                         {uploadingCount > 0 ? "Uploading…" : "Upload files"}
                       </label>
                     </header>
-                    {generalFilesForDisplay.length === 0 ? <div className="lead-files-empty">No general files.</div> : (
+                    {generalFilesForDisplay.length === 0 ? <div className="lead-files-empty">No files attached directly to this lead.{user?.role === "admin" ? " Drag a job file here to move it." : ""}</div> : (
                       <div className="lead-files-list">
                         {generalFilesForDisplay.map((attachment) => (
-                          <article key={attachment.id}>
+                          <article key={attachment.id} draggable={user?.role === "admin"} onDragStart={(event) => startAttachmentDrag(event, attachment.id)}>
                             <span className="lead-file-type">{fileIcon(attachment.file_name)}</span>
                             <div className="lead-file-info">
                               {renamingId === attachment.id ? (
@@ -1485,11 +1520,16 @@ export default function LeadDetail() {
                     )}
                   </section>
                   {groupedFilesForDisplay.map(({ job, attachments: jobAttachments }) => (
-                    <section key={job.id} className="lead-files-job-group">
+                    <section
+                      key={job.id}
+                      className="lead-files-job-group"
+                      onDragOver={(event) => { if (user?.role === "admin") event.preventDefault(); }}
+                      onDrop={(event) => dropAttachment(event, job.id)}
+                    >
                       <header>
                         <div>
                           <span className="lead-files-job-icon" aria-hidden="true">📁</span>
-                          <div><strong>Job {job.job_order}</strong><small>{job.company_name} · {jobAttachments.length} file{jobAttachments.length === 1 ? "" : "s"}</small></div>
+                          <div><strong>{`Job ${job.job_order} Files`}</strong><small>{job.company_name}{job.move_date ? ` · ${job.move_date}` : ""} · {jobAttachments.length} file{jobAttachments.length === 1 ? "" : "s"}</small></div>
                         </div>
                         <label className="lead-files-upload">
                             <input type="file" multiple disabled={uploadingCount > 0} onChange={(event) => {
@@ -1500,10 +1540,10 @@ export default function LeadDetail() {
                             {uploadingCount > 0 ? "Uploading…" : "Upload files"}
                         </label>
                       </header>
-                      {jobAttachments.length === 0 ? <div className="lead-files-empty">No files attached to this job.</div> : (
+                      {jobAttachments.length === 0 ? <div className="lead-files-empty">No files attached to this job.{user?.role === "admin" ? " Drag a file here to move it." : ""}</div> : (
                         <div className="lead-files-list">
                           {jobAttachments.map((attachment) => (
-                            <article key={attachment.id}>
+                            <article key={attachment.id} draggable={user?.role === "admin"} onDragStart={(event) => startAttachmentDrag(event, attachment.id)}>
                               <span className="lead-file-type">{fileIcon(attachment.file_name)}</span>
                               <div className="lead-file-info">
                                 {renamingId === attachment.id ? (
@@ -2654,7 +2694,7 @@ export default function LeadDetail() {
                       <div className="lead-notes-card__header lead-notes-card__header--foreman">
                         <div>
                           <span className="lead-notes-card__icon lead-notes-card__icon--foreman" aria-hidden="true">✎</span>
-                          <strong>Foreman Notes</strong>
+                          <strong>{`Job ${job.job_order} Foreman Notes`}</strong>
                         </div>
                       </div>
                         <textarea
@@ -2944,7 +2984,7 @@ export default function LeadDetail() {
               <div className="lead-notes-card__header lead-notes-card__header--foreman">
                 <div>
                   <span className="lead-notes-card__icon lead-notes-card__icon--foreman" aria-hidden="true">✎</span>
-                  <strong>Foreman Notes</strong>
+                  <strong>New Job Foreman Notes</strong>
                 </div>
               </div>
               <textarea

@@ -2441,6 +2441,10 @@ class AttachmentRenameBody(BaseModel):
     file_name: str
 
 
+class AttachmentMoveBody(BaseModel):
+    job_id: str | None = None
+
+
 def _get_job_or_404(lead_id: str, job_id: str, user: User, db: Session) -> "LeadJob":
     lead = _get_visible_lead_or_404(lead_id, user, db)
     job = (
@@ -3166,6 +3170,39 @@ def list_lead_attachments(
         item["uploaded_by_name"] = uploader.name if uploader else ""
         items.append(item)
     return {"items": items}
+
+
+@router.patch("/leads/{lead_id}/attachments/{attachment_id}/job")
+def move_attachment_to_job(
+    lead_id: str,
+    attachment_id: str,
+    body: AttachmentMoveBody,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin users can move files between jobs")
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    target_job_id = (body.job_id or "").strip()
+    if target_job_id:
+        target_job = (
+            db.query(LeadJob)
+            .filter(LeadJob.id == target_job_id, LeadJob.lead_id == lead.id)
+            .first()
+        )
+        if not target_job:
+            raise HTTPException(status_code=404, detail="Target job not found")
+    row = (
+        db.query(LeadAttachment)
+        .filter(LeadAttachment.id == attachment_id, LeadAttachment.lead_id == lead.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    row.job_id = target_job_id or None
+    db.commit()
+    db.refresh(row)
+    return row.to_dict()
 
 
 @router.post("/leads/{lead_id}/attachments")
