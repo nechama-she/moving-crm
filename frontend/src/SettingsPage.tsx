@@ -4,6 +4,8 @@ import { useAuth } from "./AuthContext";
 export default function SettingsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const isDispatch = user?.role === "dispatch";
+  const canViewPricing = isAdmin || user?.role === "sales_rep";
   const canManageForemen = user?.role === "admin" || user?.role === "dispatch";
 
   return (
@@ -14,49 +16,49 @@ export default function SettingsPage() {
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
-        <section style={card}>
+        {canManageForemen ? <section style={card}>
           <h2 style={sectionHeader}>User Management</h2>
-          <p style={desc}>Create and maintain users who work leads in the CRM.</p>
+          <p style={desc}>{isDispatch ? "Create foremen and manage their company access." : "Create and maintain users who work in the CRM."}</p>
           <div style={actionsRow}>
             {isAdmin ? <Link to="/admin-users" style={primaryLink}>Manage Admin Users</Link> : null}
             {isAdmin ? <Link to="/sales-reps" style={primaryLink}>Manage Sales Reps</Link> : null}
             {isAdmin ? <Link to="/dispatch-users" style={ghostLink}>Manage Dispatch</Link> : null}
             {canManageForemen ? <Link to="/foremen" style={ghostLink}>Manage Foremen</Link> : null}
           </div>
-        </section>
+        </section> : null}
 
-        <section style={card}>
+        {isAdmin ? <section style={card}>
           <h2 style={sectionHeader}>Company Management</h2>
           <p style={desc}>Add, edit, and delete companies with communication and SmartMoving settings.</p>
           <div style={actionsRow}>
             <Link to="/settings/companies" style={primaryLink}>Manage Companies</Link>
           </div>
-        </section>
+        </section> : null}
 
-        <section style={card}>
+        {isAdmin ? <section style={card}>
           <h2 style={sectionHeader}>SMS Templates</h2>
           <p style={desc}>Edit the welcome, rep-assignment, and day 2/3 followup SMS bodies per company.</p>
           <div style={actionsRow}>
             <Link to="/settings/templates" style={primaryLink}>Manage Templates</Link>
           </div>
-        </section>
+        </section> : null}
 
-        <section style={card}>
+        {canViewPricing ? <section style={card}>
           <h2 style={sectionHeader}>Pricing Books</h2>
           <p style={desc}>Review company rates, pricing exceptions, and additional services in one place.</p>
           <div style={actionsRow}>
             <Link to="/pricing" style={primaryLink}>Open Pricing</Link>
           </div>
-        </section>
+        </section> : null}
 
-        <section style={card}>
+        {isAdmin ? <section style={card}>
           <h2 style={sectionHeader}>Lead Assignment</h2>
           <p style={desc}>Configure admin unavailability windows and which reps are available during those windows.</p>
           <div style={actionsRow}>
             <Link to="/assign-period" style={primaryLink}>Open Assignment Rules</Link>
             <Link to="/auto-assign-tracker" style={ghostLink}>Open Assignment Tracker</Link>
           </div>
-        </section>
+        </section> : null}
 
         {isAdmin ? (
           <section style={card}>
@@ -77,14 +79,6 @@ export default function SettingsPage() {
         </section>
       </div>
 
-      {!isAdmin ? (
-        <div style={{ marginTop: 16, border: "1px solid #dddbda", borderRadius: 4, background: "#fff", padding: 12 }}>
-          <strong style={{ color: "#ba0517", fontSize: 13 }}>Admin Required:</strong>
-          <span style={{ marginLeft: 8, color: "#3e3e3c", fontSize: 13 }}>
-            Some setup actions are only available for admin users.
-          </span>
-        </div>
-      ) : null}
     </div>
   );
 }

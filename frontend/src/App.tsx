@@ -56,6 +56,7 @@ function ProtectedRoutes() {
   }
   const isForemanAllowedPath =
     location.pathname === "/dispatch" ||
+    location.pathname === "/settings" ||
     location.pathname === "/change-password" ||
     /^\/leads\/[^/]+$/.test(location.pathname);
   if (isDispatchUser && !isDispatchAllowedPath) {
@@ -89,7 +90,10 @@ function ProtectedRoutes() {
         </button>
         <div className="crm-nav-links" style={{ display: "flex", flex: 1 }}>
           {isForemanUser ? (
-            <NavLink to="/dispatch" style={navLinkStyle}>My Jobs</NavLink>
+            <>
+              <NavLink to="/dispatch" style={navLinkStyle}>My Jobs</NavLink>
+              <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
+            </>
           ) : isDispatchUser ? (
             <>
               <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
@@ -147,7 +151,11 @@ function ProtectedRoutes() {
             </div>
             <div className="crm-mobile-menu-links">
               {isForemanUser ? (
-                <NavLink to="/dispatch">My Jobs</NavLink>
+                <>
+                  <NavLink to="/dispatch">My Jobs</NavLink>
+                  <NavLink to="/settings">Settings</NavLink>
+                  <NavLink to="/change-password">Change Password</NavLink>
+                </>
               ) : isDispatchUser ? (
                 <>
                   <NavLink to="/dispatch">Dispatch Calendar</NavLink>
