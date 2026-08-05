@@ -54,6 +54,15 @@ async def enforce_authentication(request: Request) -> None:
     auth_header = request.headers.get("Authorization") or ""
     scheme, _, token = auth_header.partition(" ")
     if scheme.lower() == "bearer" and token.strip() and is_token_valid(token.strip()):
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and request.url.path != "/api/auth/change-password":
+            payload = decode_access_token(token.strip())
+            db = SessionLocal()
+            try:
+                actor = db.query(User).filter(User.id == str(payload.get("sub") or "")).first()
+                if actor and actor.role == "foreman":
+                    raise HTTPException(status_code=403, detail="Foreman users are read-only")
+            finally:
+                db.close()
         return
 
     raise HTTPException(status_code=401, detail="Not authenticated")

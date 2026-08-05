@@ -18,6 +18,7 @@ import SalesCalendarPage from "./SalesCalendarPage";
 import PendingDuplicationsPage from "./PendingDuplicationsPage";
 import PricingPage from "./PricingPage";
 import SalesPerformancePage from "./SalesPerformancePage";
+import ForemenPage from "./ForemenPage";
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -38,10 +39,12 @@ function ProtectedRoutes() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   useEffect(() => setMobileMenuOpen(false), [location.pathname]);
   const isDispatchUser = user?.role === "dispatch";
+  const isForemanUser = user?.role === "foreman";
   const isDispatchAllowedPath =
     location.pathname === "/dispatch" ||
     location.pathname === "/sales-calendar" ||
     location.pathname === "/sales-performance" ||
+    location.pathname === "/foremen" ||
     location.pathname === "/change-password" ||
     /^\/leads\/[^/]+$/.test(location.pathname);
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
@@ -49,7 +52,14 @@ function ProtectedRoutes() {
   if (user?.must_change_password && location.pathname !== "/change-password") {
     return <Navigate to="/change-password" replace />;
   }
+  const isForemanAllowedPath =
+    location.pathname === "/dispatch" ||
+    location.pathname === "/change-password" ||
+    /^\/leads\/[^/]+$/.test(location.pathname);
   if (isDispatchUser && !isDispatchAllowedPath) {
+    return <Navigate to="/dispatch" replace />;
+  }
+  if (isForemanUser && !isForemanAllowedPath) {
     return <Navigate to="/dispatch" replace />;
   }
   return (
@@ -76,11 +86,14 @@ function ProtectedRoutes() {
           <span aria-hidden="true">{mobileMenuOpen ? "×" : "☰"}</span>
         </button>
         <div className="crm-nav-links" style={{ display: "flex", flex: 1 }}>
-          {isDispatchUser ? (
+          {isForemanUser ? (
+            <NavLink to="/dispatch" style={navLinkStyle}>My Jobs</NavLink>
+          ) : isDispatchUser ? (
             <>
               <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
               <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
               <NavLink to="/sales-performance" style={navLinkStyle}>Performance</NavLink>
+              <NavLink to="/foremen" style={navLinkStyle}>Foremen</NavLink>
             </>
           ) : (
             <>
@@ -93,6 +106,7 @@ function ProtectedRoutes() {
               {user?.role === "admin" && (
                 <>
                   <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
+                  <NavLink to="/foremen" style={navLinkStyle}>Foremen</NavLink>
                 </>
               )}
             </>
@@ -131,11 +145,14 @@ function ProtectedRoutes() {
               <span>{user?.role || ""}</span>
             </div>
             <div className="crm-mobile-menu-links">
-              {isDispatchUser ? (
+              {isForemanUser ? (
+                <NavLink to="/dispatch">My Jobs</NavLink>
+              ) : isDispatchUser ? (
                 <>
                   <NavLink to="/dispatch">Dispatch Calendar</NavLink>
                   <NavLink to="/sales-calendar">Sales Calendar</NavLink>
                   <NavLink to="/sales-performance">Sales Performance</NavLink>
+                  <NavLink to="/foremen">Foremen</NavLink>
                 </>
               ) : (
                 <>
@@ -148,6 +165,7 @@ function ProtectedRoutes() {
                   {user?.role === "admin" ? (
                     <>
                       <NavLink to="/dispatch">Dispatch Calendar</NavLink>
+                      <NavLink to="/foremen">Foremen</NavLink>
                     </>
                   ) : null}
                   <NavLink to="/change-password">Change Password</NavLink>
@@ -169,6 +187,7 @@ function ProtectedRoutes() {
           <Route path="/admin-users" element={<AdminUsersPage />} />
           <Route path="/dispatch" element={<DispatchPage mode="calendar" />} />
           <Route path="/dispatch-users" element={<DispatchPage mode="manage" />} />
+          <Route path="/foremen" element={<ForemenPage />} />
           <Route path="/settings/companies" element={<CompaniesPage />} />
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
           <Route path="/settings/pending-duplications" element={<PendingDuplicationsPage />} />
@@ -177,7 +196,7 @@ function ProtectedRoutes() {
           <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />
           <Route path="/leads/:leadId" element={<LeadDetail />} />
           <Route path="/change-password" element={<ChangePasswordPage />} />
-          <Route path="*" element={<Navigate to={isDispatchUser ? "/dispatch" : "/"} replace />} />
+          <Route path="*" element={<Navigate to={isDispatchUser || isForemanUser ? "/dispatch" : "/"} replace />} />
         </Routes>
       </div>
     </div>

@@ -938,8 +938,8 @@ def _lookup_sender_id(lead: Lead) -> str | None:
 
 
 def _ensure_not_dispatch_write(user: User) -> None:
-    if user.role == "dispatch":
-        raise HTTPException(status_code=403, detail="Dispatch users are read-only")
+    if user.role in ("dispatch", "foreman"):
+        raise HTTPException(status_code=403, detail=f"{user.role.title()} users are read-only")
 
 
 def _effective_dispatch_date(lead: Lead) -> date | None:
@@ -979,7 +979,7 @@ def get_dispatch_calendar(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if user.role not in ("admin", "dispatch"):
+    if user.role not in ("admin", "dispatch", "foreman"):
         raise HTTPException(status_code=403, detail="Dispatch access required")
 
     if not move_month:
@@ -998,15 +998,16 @@ def get_dispatch_calendar(
         target_company_ids = [company_id]
 
     # Dispatch calendar groups jobs by the job-level move_date.
-    rows = (
+    rows_query = (
         db.query(LeadJob, Lead, Company.name.label("company_name"), Company.color.label("company_color"))
         .join(Lead, Lead.id == LeadJob.lead_id)
         .join(Company, Company.id == LeadJob.company_id)
         .filter(LeadJob.company_id.in_(target_company_ids))
         .filter(Lead.status.in_(DISPATCH_STATUSES))
-        .order_by(LeadJob.created_at.asc())
-        .all()
     )
+    if user.role == "foreman":
+        rows_query = rows_query.filter(LeadJob.foreman_id == user.id)
+    rows = rows_query.order_by(LeadJob.created_at.asc()).all()
 
     filtered: list[tuple[LeadJob, Lead, str, str | None, date]] = []
     for job, lead, company_name, company_color in rows:
@@ -1025,6 +1026,8 @@ def get_dispatch_calendar(
                 "lead_id": lead.id,
                 "smartmoving_id": lead.smartmoving_id or "",
                 "smartmoving_job_id": job.smartmoving_job_id or "",
+                "foreman_id": job.foreman_id or "",
+                "foreman_name": job.foreman.name if job.foreman else "",
                 "job_order": int(job.job_order or 0),
                 "company_id": job.company_id,
                 "company_name": company_name,
@@ -1333,7 +1336,7 @@ def search_dispatch_jobs(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if user.role not in ("admin", "dispatch", "sales_rep"):
+    if user.role not in ("admin", "dispatch", "sales_rep", "foreman"):
         raise HTTPException(status_code=403, detail="Access denied")
 
     search = query.strip()
@@ -1359,6 +1362,8 @@ def search_dispatch_jobs(
     if exact_row:
         job, lead, company_name, company_color = exact_row
         if user.role == "sales_rep" and lead.assigned_to != user.id:
+            return {"items": []}
+        if user.role == "foreman" and job.foreman_id != user.id:
             return {"items": []}
         effective_date = _effective_job_date(job)
         if not effective_date:
@@ -1407,6 +1412,8 @@ def search_dispatch_jobs(
 
     if user.role == "sales_rep":
         rows = [(job, lead, company_name, company_color) for job, lead, company_name, company_color in rows if lead.assigned_to == user.id]
+    elif user.role == "foreman":
+        rows = [(job, lead, company_name, company_color) for job, lead, company_name, company_color in rows if job.foreman_id == user.id]
 
     items: list[dict] = []
     for job, lead, company_name, company_color in rows:
@@ -1528,6 +1535,11 @@ def get_lead_by_smartmoving(smartmoving_id: str, user: User = Depends(get_curren
     lead = db.query(Lead).filter(Lead.smartmoving_id == smartmoving_id, Lead.company_id.in_(company_ids)).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    if user.role == "foreman" and not db.query(LeadJob.id).filter(
+        LeadJob.lead_id == lead.id,
+        LeadJob.foreman_id == user.id,
+    ).first():
+        raise HTTPException(status_code=404, detail="Lead not found")
     return lead.to_dict()
 
 
@@ -1558,9 +1570,14 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
         lead = db.query(Lead).filter(Lead.leadgen_id == lead_id, Lead.company_id.in_(company_ids)).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    if user.role == "foreman" and not db.query(LeadJob.id).filter(
+        LeadJob.lead_id == lead.id,
+        LeadJob.foreman_id == user.id,
+    ).first():
+        raise HTTPException(status_code=404, detail="Lead not found")
 
     # If facebook_user_id is missing, try to find it from sender_info
-    if not lead.facebook_user_id:
+    if user.role != "foreman" and not lead.facebook_user_id:
         sender_id = _lookup_sender_id(lead)
         if sender_id:
             lead.facebook_user_id = sender_id
@@ -1770,6 +1787,13 @@ def _get_visible_lead_or_404(lead_id: str, user: User, db: Session) -> Lead:
         lead = db.query(Lead).filter(Lead.leadgen_id == lead_id, Lead.company_id.in_(company_ids)).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    if user.role == "foreman":
+        assigned_job = db.query(LeadJob.id).filter(
+            LeadJob.lead_id == lead.id,
+            LeadJob.foreman_id == user.id,
+        ).first()
+        if not assigned_job:
+            raise HTTPException(status_code=404, detail="Lead not found")
     return lead
 
 
@@ -1781,6 +1805,11 @@ def _get_visible_lead_by_smartmoving_or_404(smartmoving_id: str, user: User, db:
         .first()
     )
     if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if user.role == "foreman" and not db.query(LeadJob.id).filter(
+        LeadJob.lead_id == lead.id,
+        LeadJob.foreman_id == user.id,
+    ).first():
         raise HTTPException(status_code=404, detail="Lead not found")
     return lead
 
@@ -2018,6 +2047,7 @@ class LeadJobUpdate(BaseModel):
     move_date: str | None = None
     booked_move_date: str | None = None
     price: float | None = None
+    foreman_id: str | None = None
     logs: list[ExternalLeadUpdateLog] | None = None
 
 
@@ -2133,15 +2163,17 @@ def list_lead_jobs(
     db: Session = Depends(get_db),
 ):
     lead = _get_visible_lead_or_404(lead_id, user, db)
-    _get_or_create_primary_lead_job(lead, db)
-    db.commit()
+    if user.role != "foreman":
+        _get_or_create_primary_lead_job(lead, db)
+        db.commit()
 
-    rows = (
+    rows_query = (
         db.query(LeadJob)
         .filter(LeadJob.lead_id == lead.id)
-        .order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc())
-        .all()
     )
+    if user.role == "foreman":
+        rows_query = rows_query.filter(LeadJob.foreman_id == user.id)
+    rows = rows_query.order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc()).all()
     return {"items": [_serialize_job_with_addresses(row, db) for row in rows]}
 
 
@@ -2247,7 +2279,11 @@ def update_lead_job(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _ensure_not_dispatch_write(user)
+    payload = body.model_dump(exclude_unset=True, by_alias=False)
+    if user.role == "foreman":
+        raise HTTPException(status_code=403, detail="Foreman users are read-only")
+    if user.role == "dispatch" and set(payload) != {"foreman_id"}:
+        raise HTTPException(status_code=403, detail="Dispatch users can only assign a foreman")
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadJob)
@@ -2257,7 +2293,6 @@ def update_lead_job(
     if not row:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    payload = body.model_dump(exclude_unset=True, by_alias=False)
     company_ids = _get_user_company_ids(user, db)
 
     if "company_id" in payload:
@@ -2273,6 +2308,24 @@ def update_lead_job(
 
     if "smartmoving_job_id" in payload:
         row.smartmoving_job_id = (payload.get("smartmoving_job_id") or "").strip() or None
+
+    if "foreman_id" in payload:
+        if user.role not in ("admin", "dispatch"):
+            raise HTTPException(status_code=403, detail="Only admin or dispatch can assign a foreman")
+        next_foreman_id = (payload.get("foreman_id") or "").strip()
+        if not next_foreman_id:
+            row.foreman_id = None
+        else:
+            foreman = db.query(User).filter(User.id == next_foreman_id, User.role == "foreman").first()
+            if not foreman:
+                raise HTTPException(status_code=404, detail="Foreman not found")
+            foreman_company = db.query(UserCompany).filter(
+                UserCompany.user_id == foreman.id,
+                UserCompany.company_id == row.company_id,
+            ).first()
+            if not foreman_company:
+                raise HTTPException(status_code=400, detail="Foreman is not assigned to this job's company")
+            row.foreman_id = foreman.id
 
     current_pickup, current_stops, current_delivery = _read_job_route(db, row)
     next_pickup = current_pickup
@@ -2381,6 +2434,8 @@ def _get_job_or_404(lead_id: str, job_id: str, user: User, db: Session) -> "Lead
         .first()
     )
     if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if user.role == "foreman" and job.foreman_id != user.id:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
 
@@ -3259,6 +3314,7 @@ class LeadUpdateJob(BaseModel):
     id: str | None = None
     sort_order: int | None = Field(default=None, alias="sortOrder")
     smartmoving_job_id: str | None = None
+    foreman_id: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
     stops: list[str] | None = None
@@ -3538,6 +3594,24 @@ def update_lead(
 
             if "smartmoving_job_id" in job_payload:
                 target_job.smartmoving_job_id = (job_payload.get("smartmoving_job_id") or "").strip() or None
+
+            if "foreman_id" in job_payload:
+                if user.role not in ("admin", "dispatch"):
+                    raise HTTPException(status_code=403, detail="Only admin or dispatch can assign a foreman")
+                next_foreman_id = (job_payload.get("foreman_id") or "").strip()
+                if not next_foreman_id:
+                    target_job.foreman_id = None
+                else:
+                    foreman = db.query(User).filter(User.id == next_foreman_id, User.role == "foreman").first()
+                    if not foreman:
+                        raise HTTPException(status_code=404, detail="Foreman not found")
+                    foreman_company = db.query(UserCompany).filter(
+                        UserCompany.user_id == foreman.id,
+                        UserCompany.company_id == target_job.company_id,
+                    ).first()
+                    if not foreman_company:
+                        raise HTTPException(status_code=400, detail="Foreman is not assigned to this job's company")
+                    target_job.foreman_id = foreman.id
 
             if "sort_order" in job_payload:
                 next_sort_order = job_payload.get("sort_order")

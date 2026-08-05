@@ -72,7 +72,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False, default="sales_rep")
     must_change_password = Column(Boolean, nullable=False, default=False)
-    # roles: admin, sales_rep, dispatch
+    # roles: admin, sales_rep, dispatch, foreman
     created_at = Column(DateTime(timezone=True), default=_now)
 
     companies = relationship("UserCompany", back_populates="user")
@@ -375,6 +375,7 @@ class LeadJob(Base):
     move_date = Column(Text)
     booked_move_date = Column(Date)
     smartmoving_job_id = Column(String(100), index=True)
+    foreman_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     price = Column(Numeric(12, 2))
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
@@ -392,6 +393,8 @@ class LeadJob(Base):
             "id": self.id,
             "lead_id": self.lead_id,
             "smartmoving_job_id": self.smartmoving_job_id or "",
+            "foreman_id": self.foreman_id or "",
+            "foreman_name": self.foreman.name if self.foreman else "",
             "company_id": self.company_id,
             "company_name": self.company.name if self.company else "",
             "job_order": self.job_order,
@@ -694,6 +697,7 @@ class PricingPlan(Base):
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
     company = relationship("Company", foreign_keys=[company_id])
+    foreman = relationship("User", foreign_keys=[foreman_id])
     rules = relationship(
         "PricingRule", cascade="all, delete-orphan", order_by="PricingRule.sort_order"
     )
