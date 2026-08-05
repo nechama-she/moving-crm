@@ -573,6 +573,22 @@ def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_id
 LEAD_DUPLICATE_DELAY_HOURS = 8
 LEAD_DUPLICATE_SCHEDULE_PREFIX = "lead-dup-"
 LEAD_DUPLICATE_SCHEDULE_GROUP = "default"
+LEAD_DUPLICATE_TIMEZONE = ZoneInfo("America/New_York")
+
+
+def _move_duplication_into_business_hours(fire_at: datetime) -> datetime:
+    """Keep automatic lead copies inside the 8 AM-8 PM Eastern window."""
+    eastern = fire_at.astimezone(LEAD_DUPLICATE_TIMEZONE)
+    if eastern.hour < 8:
+        eastern = eastern.replace(hour=8, minute=0, second=0, microsecond=0)
+    elif eastern.hour >= 20:
+        eastern = (eastern + timedelta(days=1)).replace(
+            hour=8,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    return eastern.astimezone(timezone.utc)
 
 
 def _enqueue_lead_for_duplication(
@@ -600,12 +616,11 @@ def _enqueue_lead_for_duplication(
         )
         return
 
-    from datetime import timedelta
-
     if delay_minutes is not None:
         fire_at = _utcnow() + timedelta(minutes=delay_minutes)
     else:
         fire_at = _utcnow() + timedelta(hours=LEAD_DUPLICATE_DELAY_HOURS)
+    fire_at = _move_duplication_into_business_hours(fire_at)
     # Scheduler expects naive UTC ISO8601 (no offset, no microseconds).
     schedule_at = fire_at.replace(microsecond=0, tzinfo=None).isoformat()
 
@@ -725,7 +740,9 @@ def list_pending_lead_duplications(
             "source_company_name": source_company,
             "target_company_name": target_company,
             "target_referral_source": f"Facebook-{target_company}-HHG",
-            "fire_at": (_utcnow() + timedelta(hours=8)).isoformat(),
+            "fire_at": _move_duplication_into_business_hours(
+                _utcnow() + timedelta(hours=8)
+            ).isoformat(),
             "created_at": _utcnow().isoformat(),
             "is_sample": True,
         })
