@@ -2034,6 +2034,7 @@ class LeadJobCreate(BaseModel):
     booked_move_date: str = ""
     price: float | None = None
     notes: str = ""
+    foreman_notes: str = ""
     logs: list[ExternalLeadUpdateLog] | None = None
 
 
@@ -2052,6 +2053,7 @@ class LeadJobUpdate(BaseModel):
     price: float | None = None
     foreman_id: str | None = None
     notes: str | None = None
+    foreman_notes: str | None = None
     logs: list[ExternalLeadUpdateLog] | None = None
 
 
@@ -2224,6 +2226,7 @@ def create_lead_job(
         move_date=move_date,
         booked_move_date=booked_date,
         notes=(body.notes or "").strip() or None,
+        foreman_notes=(body.foreman_notes or "").strip() or None,
         price=price_value,
     )
 
@@ -2285,10 +2288,10 @@ def update_lead_job(
     db: Session = Depends(get_db),
 ):
     payload = body.model_dump(exclude_unset=True, by_alias=False)
-    if user.role == "foreman":
-        raise HTTPException(status_code=403, detail="Foreman users are read-only")
-    if user.role == "dispatch" and set(payload) != {"foreman_id"}:
-        raise HTTPException(status_code=403, detail="Dispatch users can only assign a foreman")
+    if user.role == "foreman" and set(payload) != {"foreman_notes"}:
+        raise HTTPException(status_code=403, detail="Foreman users can only update foreman notes")
+    if user.role == "dispatch" and (not payload or not set(payload).issubset({"foreman_id", "notes", "foreman_notes"})):
+        raise HTTPException(status_code=403, detail="Dispatch users can only assign a foreman or update job notes")
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadJob)
@@ -2297,6 +2300,8 @@ def update_lead_job(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Job not found")
+    if user.role == "foreman" and row.foreman_id != user.id:
+        raise HTTPException(status_code=403, detail="This job is not assigned to you")
 
     company_ids = _get_user_company_ids(user, db)
 
@@ -2334,6 +2339,8 @@ def update_lead_job(
 
     if "notes" in payload:
         row.notes = (payload.get("notes") or "").strip() or None
+    if "foreman_notes" in payload:
+        row.foreman_notes = (payload.get("foreman_notes") or "").strip() or None
 
     current_pickup, current_stops, current_delivery = _read_job_route(db, row)
     next_pickup = current_pickup
@@ -2973,29 +2980,6 @@ def _delete_s3_url(external_url: str) -> None:
     boto3.client("s3").delete_object(Bucket=configured_bucket, Key=parsed.path.lstrip("/"))
 
 
-def _backfill_attachment_jobs_for_lead(lead_id: str, db: Session) -> None:
-    """Map legacy lead-level attachments to the lead primary job (job_order=1)."""
-    primary_job = (
-        db.query(LeadJob)
-        .filter(LeadJob.lead_id == lead_id, LeadJob.job_order == 1)
-        .first()
-    )
-    if not primary_job:
-        return
-    try:
-        db.execute(
-            text(
-                "UPDATE lead_attachments "
-                "SET job_id = :job_id "
-                "WHERE lead_id = :lead_id AND (job_id IS NULL OR job_id = '')"
-            ),
-            {"job_id": primary_job.id, "lead_id": lead_id},
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-
-
 @router.get("/leads/{lead_id}/jobs/{job_id}/attachments")
 def list_job_attachments(
     lead_id: str,
@@ -3005,7 +2989,6 @@ def list_job_attachments(
 ):
     _ensure_attachment_job_column(db)
     _ensure_attachment_link_columns(db)
-    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     _migrate_stored_attachment_blobs_to_s3(lead_id, db)
     rows = (
@@ -3031,10 +3014,8 @@ def upload_job_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _ensure_not_dispatch_write(user)
     _ensure_attachment_job_column(db)
     _ensure_attachment_link_columns(db)
-    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
 
     file_name = (file.filename or "").strip()
@@ -3091,7 +3072,6 @@ def download_job_attachment(
 ):
     _ensure_attachment_job_column(db)
     _ensure_attachment_link_columns(db)
-    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     row = (
         db.query(LeadAttachment)
@@ -3115,7 +3095,6 @@ def delete_job_attachment(
     _ensure_not_dispatch_write(user)
     _ensure_attachment_job_column(db)
     _ensure_attachment_link_columns(db)
-    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     row = (
         db.query(LeadAttachment)
@@ -3148,7 +3127,6 @@ def rename_job_attachment(
     _ensure_not_dispatch_write(user)
     _ensure_attachment_job_column(db)
     _ensure_attachment_link_columns(db)
-    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     row = (
         db.query(LeadAttachment)
@@ -3267,6 +3245,8 @@ def delete_lead_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="This role cannot delete files")
     _ensure_attachment_link_columns(db)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
@@ -3297,6 +3277,8 @@ def rename_lead_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="This role cannot rename files")
     _ensure_attachment_link_columns(db)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
@@ -3324,6 +3306,7 @@ class LeadUpdateJob(BaseModel):
     smartmoving_job_id: str | None = None
     foreman_id: str | None = None
     notes: str | None = None
+    foreman_notes: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
     stops: list[str] | None = None
@@ -3624,6 +3607,8 @@ def update_lead(
 
             if "notes" in job_payload:
                 target_job.notes = (job_payload.get("notes") or "").strip() or None
+            if "foreman_notes" in job_payload:
+                target_job.foreman_notes = (job_payload.get("foreman_notes") or "").strip() or None
 
             if "sort_order" in job_payload:
                 next_sort_order = job_payload.get("sort_order")

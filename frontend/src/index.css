@@ -1017,6 +1017,11 @@ button:focus-visible {
   gap: 8px;
 }
 
+.lead-notes-card__header--foreman {
+  background: #fff7ed;
+  color: #8a3b12;
+}
+
 .lead-notes-card__icon {
   width: 24px;
   height: 24px;
@@ -1026,6 +1031,10 @@ button:focus-visible {
   background: #0176d3;
   color: #fff;
   font-size: 14px;
+}
+
+.lead-notes-card__icon--foreman {
+  background: #dd7a01;
 }
 
 .lead-notes-card__badge {
@@ -1074,6 +1083,30 @@ button:focus-visible {
 
 .lead-notes-card__input:focus {
   box-shadow: inset 0 0 0 2px #1b96ff;
+}
+
+.lead-notes-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid #ecebea;
+  background: #fafaf9;
+}
+
+.lead-notes-card__actions button {
+  border: 1px solid #0176d3;
+  border-radius: 4px;
+  padding: 6px 11px;
+  background: #0176d3;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lead-notes-card__actions button:disabled {
+  opacity: .6;
+  cursor: default;
 }
 
 @media (max-width: 760px) {

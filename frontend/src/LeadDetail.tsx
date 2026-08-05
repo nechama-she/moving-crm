@@ -52,6 +52,7 @@ type LeadJobItem = {
   foreman_id: string;
   foreman_name: string;
   notes: string;
+  foreman_notes: string;
   pickup_zip: string;
   delivery_zip: string;
   stops: string[];
@@ -162,6 +163,7 @@ type LeadJobDraft = {
   booked_move_date: string;
   price: string;
   notes: string;
+  foreman_notes: string;
 };
 
 type ForemanOption = { id: string; name: string; companies?: Array<{ id: string; name: string }> };
@@ -265,9 +267,11 @@ export default function LeadDetail() {
     booked_move_date: "",
     price: "",
     notes: "",
+    foreman_notes: "",
   });
   const [addingJob, setAddingJob] = useState(false);
   const [savingJobId, setSavingJobId] = useState("");
+  const [savingNoteJobId, setSavingNoteJobId] = useState("");
   const [deletingJobId, setDeletingJobId] = useState("");
   const [activeJobTabId, setActiveJobTabId] = useState("");
   const consumedRouteJobRef = useRef("");
@@ -420,6 +424,7 @@ export default function LeadDetail() {
       booked_move_date: item.booked_move_date || "",
       price: item.price == null ? "" : String(item.price),
       notes: item.notes || "",
+      foreman_notes: item.foreman_notes || "",
     };
   }
 
@@ -450,6 +455,7 @@ export default function LeadDetail() {
         foreman_id: String(item.foreman_id || ""),
         foreman_name: String(item.foreman_name || ""),
         notes: String(item.notes || ""),
+        foreman_notes: String(item.foreman_notes || ""),
         pickup_zip: String(item.pickup_zip || ""),
         delivery_zip: String(item.delivery_zip || ""),
         stops: parseStops(item.stops),
@@ -574,6 +580,7 @@ export default function LeadDetail() {
           booked_move_date: draft.booked_move_date,
           price: draft.price.trim() === "" ? null : Number(draft.price),
           notes: draft.notes,
+          foreman_notes: draft.foreman_notes,
         }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -605,6 +612,7 @@ export default function LeadDetail() {
           booked_move_date: newJobDraft.booked_move_date,
           price: newJobDraft.price.trim() === "" ? null : Number(newJobDraft.price),
           notes: newJobDraft.notes,
+          foreman_notes: newJobDraft.foreman_notes,
         }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -617,6 +625,7 @@ export default function LeadDetail() {
         booked_move_date: "",
         price: "",
         notes: "",
+        foreman_notes: "",
       });
       await loadLeadJobs();
     } catch (err: unknown) {
@@ -648,10 +657,6 @@ export default function LeadDetail() {
   }
 
   async function uploadAttachments(files: File[], jobId = activeJobTabId) {
-    if (user?.role === "dispatch") {
-      setAttachmentsError("Dispatch users are read-only");
-      return;
-    }
     if (files.length === 0) return;
     if (!jobId || jobId === "__new__") {
       setAttachmentsError("Please select a job before uploading files.");
@@ -663,7 +668,10 @@ export default function LeadDetail() {
       for (const file of files) {
         const form = new FormData();
         form.append("file", file);
-        const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments`, {
+        const uploadUrl = jobId === "__general__"
+          ? `${API_BASE}/api/leads/${leadId}/attachments`
+          : `${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments`;
+        const res = await fetch(uploadUrl, {
           method: "POST",
           headers: authHeaders(token),
           body: form,
@@ -674,7 +682,7 @@ export default function LeadDetail() {
         }
         setUploadingCount((v) => Math.max(0, v - 1));
       }
-      await loadAttachments(jobId);
+      if (jobId !== "__general__") await loadAttachments(jobId);
       if (filesModalOpen) await loadAllJobAttachments();
     } catch (err: unknown) {
       setAttachmentsError(err instanceof Error ? err.message : "Failed to upload attachment");
@@ -686,7 +694,10 @@ export default function LeadDetail() {
   async function downloadAttachment(attachmentId: string, fileName: string, jobId = activeJobTabId) {
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments/${attachmentId}/download`, {
+      const downloadUrl = jobId === "__general__"
+        ? `${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}/download`
+        : `${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments/${attachmentId}/download`;
+      const res = await fetch(downloadUrl, {
         headers: authHeaders(token),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -705,18 +716,17 @@ export default function LeadDetail() {
   }
 
   async function deleteAttachment(attachmentId: string, jobId = activeJobTabId) {
-    if (user?.role === "dispatch") {
-      setAttachmentsError("Dispatch users are read-only");
-      return;
-    }
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments/${attachmentId}`, {
+      const deleteUrl = jobId === "__general__"
+        ? `${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}`
+        : `${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments/${attachmentId}`;
+      const res = await fetch(deleteUrl, {
         method: "DELETE",
         headers: authHeaders(token),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      await loadAttachments(jobId);
+      if (jobId !== "__general__") await loadAttachments(jobId);
       if (filesModalOpen) await loadAllJobAttachments();
     } catch (err: unknown) {
       setAttachmentsError(err instanceof Error ? err.message : "Failed to delete attachment");
@@ -724,21 +734,20 @@ export default function LeadDetail() {
   }
 
   async function renameAttachment(attachmentId: string, fileName: string, jobId = activeJobTabId) {
-    if (user?.role === "dispatch") {
-      setAttachmentsError("Dispatch users are read-only");
-      return;
-    }
     const nextName = fileName.trim();
     if (!nextName) return;
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments/${attachmentId}`, {
+      const renameUrl = jobId === "__general__"
+        ? `${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}`
+        : `${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments/${attachmentId}`;
+      const res = await fetch(renameUrl, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
         body: JSON.stringify({ file_name: nextName }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      await loadAttachments(jobId);
+      if (jobId !== "__general__") await loadAttachments(jobId);
       if (filesModalOpen) await loadAllJobAttachments();
       setRenamingId("");
       setRenameValue("");
@@ -750,7 +759,10 @@ export default function LeadDetail() {
   async function openPreview(attachmentId: string, fileName: string, contentType: string, jobId = activeJobTabId) {
     setAttachmentsError("");
     try {
-      const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments/${attachmentId}/download`, {
+      const previewEndpoint = jobId === "__general__"
+        ? `${API_BASE}/api/leads/${leadId}/attachments/${attachmentId}/download`
+        : `${API_BASE}/api/leads/${leadId}/jobs/${jobId}/attachments/${attachmentId}/download`;
+      const res = await fetch(previewEndpoint, {
         headers: authHeaders(token),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -844,6 +856,19 @@ export default function LeadDetail() {
       return { job, attachments: rows };
     });
   }, [attachmentsQuery, attachmentsSort, groupedAttachments, leadJobs]);
+
+  const generalFilesForDisplay = useMemo(() => {
+    const q = attachmentsQuery.trim().toLowerCase();
+    const rows = [...(groupedAttachments.__general__ || [])].filter((attachment) => {
+      if (!q) return true;
+      return attachment.file_name.toLowerCase().includes(q)
+        || (attachment.uploaded_by_name || "").toLowerCase().includes(q);
+    });
+    if (attachmentsSort === "name") rows.sort((a, b) => a.file_name.localeCompare(b.file_name));
+    if (attachmentsSort === "size") rows.sort((a, b) => (b.file_size || 0) - (a.file_size || 0));
+    if (attachmentsSort === "newest") rows.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+    return rows;
+  }, [attachmentsQuery, attachmentsSort, groupedAttachments]);
 
   useEffect(() => {
     function onDocMouseDown(event: MouseEvent) {
@@ -1113,6 +1138,27 @@ export default function LeadDetail() {
     }
   }
 
+  async function saveJobNotes(jobId: string, field: "notes" | "foreman_notes") {
+    const draft = jobDrafts[jobId];
+    if (!draft) return;
+    setSavingNoteJobId(jobId);
+    setJobsError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ [field]: draft[field] }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.detail || `HTTP ${response.status}`);
+      await loadLeadJobs();
+    } catch (reason) {
+      setJobsError(reason instanceof Error ? reason.message : "Failed to save job notes");
+    } finally {
+      setSavingNoteJobId("");
+    }
+  }
+
   async function loadAllJobAttachments() {
     setGroupedAttachmentsLoading(true);
     setAttachmentsError("");
@@ -1135,7 +1181,24 @@ export default function LeadDetail() {
           uploaded_by_name: String(row.uploaded_by_name || ""),
         }))] as const;
       }));
-      setGroupedAttachments(Object.fromEntries(entries));
+      const generalResponse = await fetch(`${API_BASE}/api/leads/${leadId}/attachments`, { headers: authHeaders(token) });
+      if (!generalResponse.ok) throw new Error("Could not load general files");
+      const generalData = (await generalResponse.json()) as { items?: Array<Record<string, unknown>> };
+      const generalRows = (Array.isArray(generalData.items) ? generalData.items : [])
+        .filter((row) => !String(row.job_id || "").trim())
+        .map((row) => ({
+          id: String(row.id || ""),
+          job_id: "",
+          file_name: String(row.file_name || ""),
+          content_type: String(row.content_type || "application/octet-stream"),
+          file_size: Number(row.file_size || 0),
+          created_at: String(row.created_at || ""),
+          external_url: String(row.external_url || ""),
+          is_external_link: Boolean(row.is_external_link),
+          external_source: String(row.external_source || ""),
+          uploaded_by_name: String(row.uploaded_by_name || ""),
+        }));
+      setGroupedAttachments({ ...Object.fromEntries(entries), __general__: generalRows });
     } catch (err: unknown) {
       setAttachmentsError(err instanceof Error ? err.message : "Failed to load files");
     } finally {
@@ -1376,6 +1439,51 @@ export default function LeadDetail() {
               {groupedAttachmentsLoading ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>Loading files...</p> : null}
               {!groupedAttachmentsLoading ? (
                 <div className="lead-files-groups">
+                  <section className="lead-files-job-group lead-files-general-group">
+                    <header>
+                      <div>
+                        <span className="lead-files-job-icon" aria-hidden="true">📁</span>
+                        <div><strong>General Files</strong><small>{generalFilesForDisplay.length} file{generalFilesForDisplay.length === 1 ? "" : "s"} not assigned to a job</small></div>
+                      </div>
+                      <label className="lead-files-upload">
+                        <input type="file" multiple disabled={uploadingCount > 0} onChange={(event) => {
+                          const files = Array.from(event.target.files || []);
+                          event.target.value = "";
+                          void uploadAttachments(files, "__general__");
+                        }} />
+                        {uploadingCount > 0 ? "Uploading…" : "Upload files"}
+                      </label>
+                    </header>
+                    {generalFilesForDisplay.length === 0 ? <div className="lead-files-empty">No general files.</div> : (
+                      <div className="lead-files-list">
+                        {generalFilesForDisplay.map((attachment) => (
+                          <article key={attachment.id}>
+                            <span className="lead-file-type">{fileIcon(attachment.file_name)}</span>
+                            <div className="lead-file-info">
+                              {renamingId === attachment.id ? (
+                                <div className="lead-file-rename">
+                                  <input value={renameValue} onChange={(event) => setRenameValue(event.target.value)} />
+                                  <button type="button" onClick={() => void renameAttachment(attachment.id, renameValue, "__general__")}>Save</button>
+                                  <button type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }}>Cancel</button>
+                                </div>
+                              ) : <strong title={attachment.file_name}>{attachment.file_name}</strong>}
+                              <small>{Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB{attachment.created_at ? ` · ${new Date(attachment.created_at).toLocaleString()}` : ""}{attachment.uploaded_by_name ? ` · ${attachment.uploaded_by_name}` : ""}</small>
+                            </div>
+                            <div className="lead-file-actions">
+                              <button type="button" onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type, "__general__")}>{attachment.is_external_link ? "Open" : "Preview"}</button>
+                              <button type="button" onClick={() => void downloadAttachment(attachment.id, attachment.file_name, "__general__")}>{attachment.is_external_link ? "Open link" : "Download"}</button>
+                              {canEditJobs ? (
+                                <>
+                                  <button type="button" onClick={() => { setRenamingId(attachment.id); setRenameValue(attachment.file_name); }}>Rename</button>
+                                  <button type="button" className="danger" onClick={() => { if (window.confirm("Delete this file?")) void deleteAttachment(attachment.id, "__general__"); }}>Delete</button>
+                                </>
+                              ) : null}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </section>
                   {groupedFilesForDisplay.map(({ job, attachments: jobAttachments }) => (
                     <section key={job.id} className="lead-files-job-group">
                       <header>
@@ -1383,16 +1491,14 @@ export default function LeadDetail() {
                           <span className="lead-files-job-icon" aria-hidden="true">📁</span>
                           <div><strong>Job {job.job_order}</strong><small>{job.company_name} · {jobAttachments.length} file{jobAttachments.length === 1 ? "" : "s"}</small></div>
                         </div>
-                        {canEditJobs ? (
-                          <label className="lead-files-upload">
+                        <label className="lead-files-upload">
                             <input type="file" multiple disabled={uploadingCount > 0} onChange={(event) => {
                               const files = Array.from(event.target.files || []);
                               event.target.value = "";
                               void uploadAttachments(files, job.id);
                             }} />
                             {uploadingCount > 0 ? "Uploading…" : "Upload files"}
-                          </label>
-                        ) : null}
+                        </label>
                       </header>
                       {jobAttachments.length === 0 ? <div className="lead-files-empty">No files attached to this job.</div> : (
                         <div className="lead-files-list">
@@ -2522,21 +2628,45 @@ export default function LeadDetail() {
                           <span className="lead-notes-card__icon" aria-hidden="true">✎</span>
                           <strong>{`Job ${job.job_order} Notes`}</strong>
                         </div>
-                        {!canEditJobs ? <span className="lead-notes-card__badge">Read only</span> : null}
+                        {isForemanUser ? <span className="lead-notes-card__badge">Read only</span> : null}
                       </div>
-                      {canEditJobs ? (
-                        <textarea
-                          className="lead-notes-card__input"
-                          value={draft.notes}
-                          onChange={(event) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, notes: event.target.value } }))}
-                          placeholder="Add notes for this job…"
-                          rows={4}
-                        />
+                      {!isForemanUser ? (
+                        <>
+                          <textarea
+                            className="lead-notes-card__input"
+                            value={draft.notes}
+                            onChange={(event) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, notes: event.target.value } }))}
+                            placeholder="Add notes for this job…"
+                            rows={4}
+                          />
+                          <div className="lead-notes-card__actions">
+                            <button type="button" onClick={() => void saveJobNotes(job.id, "notes")} disabled={savingNoteJobId === job.id}>Save Notes</button>
+                          </div>
+                        </>
                       ) : (
                         <div className={draft.notes.trim() ? "lead-notes-card__body" : "lead-notes-card__body lead-notes-card__body--empty"}>
                           {draft.notes.trim() || "No notes have been added to this job."}
                         </div>
                       )}
+                    </section>
+
+                    <section className="lead-notes-card" aria-label={`Job ${job.job_order} foreman notes`}>
+                      <div className="lead-notes-card__header lead-notes-card__header--foreman">
+                        <div>
+                          <span className="lead-notes-card__icon lead-notes-card__icon--foreman" aria-hidden="true">✎</span>
+                          <strong>Foreman Notes</strong>
+                        </div>
+                      </div>
+                        <textarea
+                          className="lead-notes-card__input"
+                          value={draft.foreman_notes}
+                          onChange={(event) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, foreman_notes: event.target.value } }))}
+                          placeholder="Add notes for the foreman…"
+                          rows={4}
+                        />
+                      <div className="lead-notes-card__actions">
+                        <button type="button" onClick={() => void saveJobNotes(job.id, "foreman_notes")} disabled={savingNoteJobId === job.id}>Save Foreman Notes</button>
+                      </div>
                     </section>
 
                     {canEditJobs ? (
@@ -2807,6 +2937,21 @@ export default function LeadDetail() {
                 value={newJobDraft.notes}
                 onChange={(event) => setNewJobDraft((prev) => ({ ...prev, notes: event.target.value }))}
                 placeholder="Add notes for this job…"
+                rows={4}
+              />
+            </section>
+            <section className="lead-notes-card" aria-label="New job foreman notes">
+              <div className="lead-notes-card__header lead-notes-card__header--foreman">
+                <div>
+                  <span className="lead-notes-card__icon lead-notes-card__icon--foreman" aria-hidden="true">✎</span>
+                  <strong>Foreman Notes</strong>
+                </div>
+              </div>
+              <textarea
+                className="lead-notes-card__input"
+                value={newJobDraft.foreman_notes}
+                onChange={(event) => setNewJobDraft((prev) => ({ ...prev, foreman_notes: event.target.value }))}
+                placeholder="Add notes for the foreman…"
                 rows={4}
               />
             </section>
