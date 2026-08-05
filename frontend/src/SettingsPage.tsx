@@ -4,6 +4,7 @@ import { useAuth } from "./AuthContext";
 export default function SettingsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const canManageForemen = user?.role === "admin" || user?.role === "dispatch";
 
   return (
     <div className="user-setup-page" style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
@@ -17,9 +18,10 @@ export default function SettingsPage() {
           <h2 style={sectionHeader}>User Management</h2>
           <p style={desc}>Create and maintain users who work leads in the CRM.</p>
           <div style={actionsRow}>
-            <Link to="/admin-users" style={primaryLink}>Manage Admin Users</Link>
-            <Link to="/sales-reps" style={primaryLink}>Manage Sales Reps</Link>
-            <Link to="/dispatch-users" style={ghostLink}>Manage Dispatch</Link>
+            {isAdmin ? <Link to="/admin-users" style={primaryLink}>Manage Admin Users</Link> : null}
+            {isAdmin ? <Link to="/sales-reps" style={primaryLink}>Manage Sales Reps</Link> : null}
+            {isAdmin ? <Link to="/dispatch-users" style={ghostLink}>Manage Dispatch</Link> : null}
+            {canManageForemen ? <Link to="/foremen" style={ghostLink}>Manage Foremen</Link> : null}
           </div>
         </section>
 

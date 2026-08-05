@@ -80,9 +80,9 @@ export default function ForemenPage() {
       <h2 style={sectionTitle}>Create Foreman</h2>
       <div style={formGrid}>
         <label style={label}>Name<input style={input} value={name} onChange={(e) => setName(e.target.value)} /></label>
-        <label style={label}>Email<input style={input} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-        <label style={label}>Phone (optional)<input style={input} value={phone} onChange={(e) => setPhone(e.target.value)} /></label>
-        <label style={label}>Temporary Password<input style={input} type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+        <label style={label}>Email<input style={input} type="email" name="new-foreman-email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+        <label style={label}>Phone (optional)<input style={input} type="tel" name="new-foreman-phone" autoComplete="off" value={phone} onChange={(e) => setPhone(e.target.value)} /></label>
+        <label style={label}>Temporary Password<input style={input} type="password" name="new-foreman-password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
       </div>
       <div style={{ marginTop: 12 }}><strong style={{ fontSize: 12, color: "#3e3e3c" }}>Companies</strong><div style={chips}>
         {companies.map((company) => <button type="button" key={company.id} onClick={() => toggleCompany(company.id)} style={companyIds.includes(company.id) ? selectedChip : chip}>{company.name}</button>)}

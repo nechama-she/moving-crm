@@ -46,6 +46,7 @@ function ProtectedRoutes() {
     location.pathname === "/sales-calendar" ||
     location.pathname === "/sales-performance" ||
     location.pathname === "/foremen" ||
+    location.pathname === "/settings" ||
     location.pathname === "/change-password" ||
     /^\/leads\/[^/]+$/.test(location.pathname);
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
@@ -94,7 +95,7 @@ function ProtectedRoutes() {
               <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
               <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
               <NavLink to="/sales-performance" style={navLinkStyle}>Performance</NavLink>
-              <NavLink to="/foremen" style={navLinkStyle}>Foremen</NavLink>
+              <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
             </>
           ) : (
             <>
@@ -107,7 +108,6 @@ function ProtectedRoutes() {
               {user?.role === "admin" && (
                 <>
                   <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
-                  <NavLink to="/foremen" style={navLinkStyle}>Foremen</NavLink>
                 </>
               )}
             </>
@@ -153,7 +153,7 @@ function ProtectedRoutes() {
                   <NavLink to="/dispatch">Dispatch Calendar</NavLink>
                   <NavLink to="/sales-calendar">Sales Calendar</NavLink>
                   <NavLink to="/sales-performance">Sales Performance</NavLink>
-                  <NavLink to="/foremen">Foremen</NavLink>
+                  <NavLink to="/settings">Settings</NavLink>
                 </>
               ) : (
                 <>
@@ -166,7 +166,6 @@ function ProtectedRoutes() {
                   {user?.role === "admin" ? (
                     <>
                       <NavLink to="/dispatch">Dispatch Calendar</NavLink>
-                      <NavLink to="/foremen">Foremen</NavLink>
                     </>
                   ) : null}
                   <NavLink to="/change-password">Change Password</NavLink>

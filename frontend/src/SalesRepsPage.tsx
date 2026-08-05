@@ -323,11 +323,11 @@ export default function SalesRepsPage() {
           </label>
           <label style={fieldLabel}>
             Email
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
+            <input type="email" name="new-sales-rep-email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
           </label>
           <label style={fieldLabel}>
             Phone
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} />
+            <input type="tel" name="new-sales-rep-phone" autoComplete="off" value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} />
           </label>
           <label style={fieldLabel}>
             SmartMoving Rep ID
@@ -343,6 +343,8 @@ export default function SalesRepsPage() {
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input
                 type={showPassword ? "text" : "password"}
+                name="new-sales-rep-password"
+                autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 style={{ ...inputStyle, flex: 1, height: 34 }}
