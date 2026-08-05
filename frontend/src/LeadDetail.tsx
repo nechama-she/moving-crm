@@ -49,6 +49,8 @@ type LeadJobItem = {
   company_id: string;
   company_name: string;
   job_order: number;
+  foreman_id: string;
+  foreman_name: string;
   pickup_zip: string;
   delivery_zip: string;
   stops: string[];
@@ -160,6 +162,8 @@ type LeadJobDraft = {
   price: string;
 };
 
+type ForemanOption = { id: string; name: string; companies?: Array<{ id: string; name: string }> };
+
 type LeadDetailNavigationState = {
   backTo?: string;
   backLabel?: string;
@@ -245,6 +249,8 @@ export default function LeadDetail() {
   const [defaultCommissionPercent, setDefaultCommissionPercent] = useState<number>(((1 - 0.035) / 3) * 100);
   const [commissionPercentByUserId, setCommissionPercentByUserId] = useState<Map<string, number>>(new Map());
   const [leadJobs, setLeadJobs] = useState<LeadJobItem[]>([]);
+  const [foremen, setForemen] = useState<ForemanOption[]>([]);
+  const [savingForemanJobId, setSavingForemanJobId] = useState("");
   const [jobsLoading, setJobsLoading] = useState(true);
   const [jobsError, setJobsError] = useState("");
   const [jobDrafts, setJobDrafts] = useState<Record<string, LeadJobDraft>>({});
@@ -267,7 +273,7 @@ export default function LeadDetail() {
     return (params.get("job_id") || "").trim();
   }, [location.search]);
   const navigationState = (location.state as LeadDetailNavigationState | null) || null;
-  const backTo = navigationState?.backTo || (user?.role === "dispatch" ? "/dispatch" : "/");
+  const backTo = navigationState?.backTo || (["dispatch", "foreman"].includes(user?.role || "") ? "/dispatch" : "/");
   const backLabel = navigationState?.backLabel || (user?.role === "dispatch" ? "← Back to Dispatch" : "← Back to Leads");
 
   async function loadLead() {
@@ -437,6 +443,8 @@ export default function LeadDetail() {
         company_id: String(item.company_id || ""),
         company_name: String(item.company_name || ""),
         job_order: Number(item.job_order || 0),
+        foreman_id: String(item.foreman_id || ""),
+        foreman_name: String(item.foreman_name || ""),
         pickup_zip: String(item.pickup_zip || ""),
         delivery_zip: String(item.delivery_zip || ""),
         stops: parseStops(item.stops),
@@ -486,6 +494,34 @@ export default function LeadDetail() {
   useEffect(() => {
     void loadLeadJobs();
   }, [leadId, token]);
+
+  useEffect(() => {
+    if (!user || !["admin", "dispatch"].includes(user.role)) return;
+    fetch(`${API_BASE}/api/users/foremen`, { headers: authHeaders(token) })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
+      .then((rows: ForemanOption[]) => setForemen(Array.isArray(rows) ? rows : []))
+      .catch(() => setForemen([]));
+  }, [token, user?.role]);
+
+  async function assignJobForeman(jobId: string, foremanId: string) {
+    if (!user || !["admin", "dispatch"].includes(user.role)) return;
+    setSavingForemanJobId(jobId);
+    setJobsError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ foreman_id: foremanId || null }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.detail || `HTTP ${response.status}`);
+      await loadLeadJobs();
+    } catch (reason) {
+      setJobsError(reason instanceof Error ? reason.message : "Could not assign foreman");
+    } finally {
+      setSavingForemanJobId("");
+    }
+  }
 
   useEffect(() => {
     setNewJobDraft((prev) => ({ ...prev, company_id: prev.company_id || String(lead?.company_id || "") }));
@@ -847,8 +883,9 @@ export default function LeadDetail() {
   if (!lead) return <p style={{ padding: 24 }}>Lead not found.</p>;
   const canEditCompany = user?.role === "admin";
   const isDispatchUser = user?.role === "dispatch";
-  const canEditLead = !isDispatchUser;
-  const canEditJobs = !isDispatchUser;
+  const isForemanUser = user?.role === "foreman";
+  const canEditLead = !isDispatchUser && !isForemanUser;
+  const canEditJobs = !isDispatchUser && !isForemanUser;
 
   // Extract user_id from inbox_url for chat lookup
   const inboxUrl = lead.inbox_url ? String(lead.inbox_url) : "";
@@ -2311,7 +2348,7 @@ export default function LeadDetail() {
                 const chargesTotal = job.charges.reduce((sum, charge) => sum + charge.total_cost, 0);
                 return (
                   <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: primary ? "#f8fbff" : "#fff" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <button
                           type="button"
@@ -2335,7 +2372,7 @@ export default function LeadDetail() {
                       </div>
                     </div>
 
-                    <div style={{ display: "grid", gap: 8, gridTemplateColumns: "minmax(220px, 1fr) 170px 170px" }}>
+                    <div className="lead-job-summary-grid">
                       <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
                         Company
                         <select
@@ -2347,6 +2384,27 @@ export default function LeadDetail() {
                           {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
                         </select>
                       </label>
+                      {["admin", "dispatch"].includes(user?.role || "") ? (
+                        <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                          Foreman
+                          <select
+                            value={job.foreman_id}
+                            disabled={savingForemanJobId === job.id}
+                            onChange={(event) => void assignJobForeman(job.id, event.target.value)}
+                            style={{ minWidth: 0, width: "100%", border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", background: "#fff", color: "#0f172a", fontSize: 12 }}
+                          >
+                            <option value="">Unassigned</option>
+                            {foremen.filter((foreman) => (foreman.companies || []).some((company) => company.id === job.company_id)).map((foreman) => (
+                              <option key={foreman.id} value={foreman.id}>{foreman.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : job.foreman_name ? (
+                        <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                          Foreman
+                          <span style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", background: "#f8fafc", color: "#0f172a", fontSize: 12 }}>{job.foreman_name}</span>
+                        </label>
+                      ) : null}
                       <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
                         Move Date
                         <input type="date" value={draft.move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, move_date: e.target.value } }))} disabled={!canEditJobs} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />

@@ -981,6 +981,33 @@ button:focus-visible {
   .pricing-services article { grid-template-columns: minmax(0, 1fr) auto; padding: 9px 2px; }
 }
 .lead-job-files-legacy { display: none !important; }
+
+.lead-job-summary-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.6fr) minmax(150px, 0.8fr) 150px 150px;
+  gap: 8px;
+  align-items: end;
+}
+
+@media (max-width: 760px) {
+  .lead-job-summary-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .lead-job-summary-grid > label:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 480px) {
+  .lead-job-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lead-job-summary-grid > label:first-child {
+    grid-column: auto;
+  }
+}
 .lead-profile-files-button { display: inline-flex; align-items: center; gap: 4px; }
 .lead-profile-copy-button { display: inline-flex; align-items: center; gap: 4px; }
 .copy-lead-backdrop { position: fixed; inset: 0; z-index: 110; padding: 18px; display: grid; place-items: center; background: rgb(8 21 38 / 52%); }

@@ -1,23 +1,25 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation, NavLink } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./AuthContext";
-import LoginPage from "./LoginPage";
-import ChangePasswordPage from "./ChangePasswordPage";
-import LeadsList from "./LeadsList";
-import LeadDetail from "./LeadDetail";
-import OutreachEventsPage from "./OutreachEventsPage";
-import PeriodAssignPage from "./PeriodAssignPage";
-import SalesRepsPage from "./SalesRepsPage";
-import DispatchPage from "./DispatchPage";
-import CompaniesPage from "./CompaniesPage";
-import CompanyTemplatesPage from "./CompanyTemplatesPage";
-import SettingsPage from "./SettingsPage";
-import AutoAssignTrackerPage from "./AutoAssignTrackerPage";
-import AdminUsersPage from "./AdminUsersPage";
-import SalesCalendarPage from "./SalesCalendarPage";
-import PendingDuplicationsPage from "./PendingDuplicationsPage";
-import PricingPage from "./PricingPage";
-import SalesPerformancePage from "./SalesPerformancePage";
+
+const LoginPage = lazy(() => import("./LoginPage"));
+const ChangePasswordPage = lazy(() => import("./ChangePasswordPage"));
+const LeadsList = lazy(() => import("./LeadsList"));
+const LeadDetail = lazy(() => import("./LeadDetail"));
+const OutreachEventsPage = lazy(() => import("./OutreachEventsPage"));
+const PeriodAssignPage = lazy(() => import("./PeriodAssignPage"));
+const SalesRepsPage = lazy(() => import("./SalesRepsPage"));
+const DispatchPage = lazy(() => import("./DispatchPage"));
+const CompaniesPage = lazy(() => import("./CompaniesPage"));
+const CompanyTemplatesPage = lazy(() => import("./CompanyTemplatesPage"));
+const SettingsPage = lazy(() => import("./SettingsPage"));
+const AutoAssignTrackerPage = lazy(() => import("./AutoAssignTrackerPage"));
+const AdminUsersPage = lazy(() => import("./AdminUsersPage"));
+const SalesCalendarPage = lazy(() => import("./SalesCalendarPage"));
+const PendingDuplicationsPage = lazy(() => import("./PendingDuplicationsPage"));
+const PricingPage = lazy(() => import("./PricingPage"));
+const SalesPerformancePage = lazy(() => import("./SalesPerformancePage"));
+const ForemenPage = lazy(() => import("./ForemenPage"));
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -38,10 +40,13 @@ function ProtectedRoutes() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   useEffect(() => setMobileMenuOpen(false), [location.pathname]);
   const isDispatchUser = user?.role === "dispatch";
+  const isForemanUser = user?.role === "foreman";
   const isDispatchAllowedPath =
     location.pathname === "/dispatch" ||
     location.pathname === "/sales-calendar" ||
     location.pathname === "/sales-performance" ||
+    location.pathname === "/foremen" ||
+    location.pathname === "/settings" ||
     location.pathname === "/change-password" ||
     /^\/leads\/[^/]+$/.test(location.pathname);
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
@@ -49,7 +54,15 @@ function ProtectedRoutes() {
   if (user?.must_change_password && location.pathname !== "/change-password") {
     return <Navigate to="/change-password" replace />;
   }
+  const isForemanAllowedPath =
+    location.pathname === "/dispatch" ||
+    location.pathname === "/settings" ||
+    location.pathname === "/change-password" ||
+    /^\/leads\/[^/]+$/.test(location.pathname);
   if (isDispatchUser && !isDispatchAllowedPath) {
+    return <Navigate to="/dispatch" replace />;
+  }
+  if (isForemanUser && !isForemanAllowedPath) {
     return <Navigate to="/dispatch" replace />;
   }
   return (
@@ -76,11 +89,17 @@ function ProtectedRoutes() {
           <span aria-hidden="true">{mobileMenuOpen ? "×" : "☰"}</span>
         </button>
         <div className="crm-nav-links" style={{ display: "flex", flex: 1 }}>
-          {isDispatchUser ? (
+          {isForemanUser ? (
+            <>
+              <NavLink to="/dispatch" style={navLinkStyle}>My Jobs</NavLink>
+              <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
+            </>
+          ) : isDispatchUser ? (
             <>
               <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
               <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
               <NavLink to="/sales-performance" style={navLinkStyle}>Performance</NavLink>
+              <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
             </>
           ) : (
             <>
@@ -131,11 +150,18 @@ function ProtectedRoutes() {
               <span>{user?.role || ""}</span>
             </div>
             <div className="crm-mobile-menu-links">
-              {isDispatchUser ? (
+              {isForemanUser ? (
+                <>
+                  <NavLink to="/dispatch">My Jobs</NavLink>
+                  <NavLink to="/settings">Settings</NavLink>
+                  <NavLink to="/change-password">Change Password</NavLink>
+                </>
+              ) : isDispatchUser ? (
                 <>
                   <NavLink to="/dispatch">Dispatch Calendar</NavLink>
                   <NavLink to="/sales-calendar">Sales Calendar</NavLink>
                   <NavLink to="/sales-performance">Sales Performance</NavLink>
+                  <NavLink to="/settings">Settings</NavLink>
                 </>
               ) : (
                 <>
@@ -169,6 +195,7 @@ function ProtectedRoutes() {
           <Route path="/admin-users" element={<AdminUsersPage />} />
           <Route path="/dispatch" element={<DispatchPage mode="calendar" />} />
           <Route path="/dispatch-users" element={<DispatchPage mode="manage" />} />
+          <Route path="/foremen" element={<ForemenPage />} />
           <Route path="/settings/companies" element={<CompaniesPage />} />
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
           <Route path="/settings/pending-duplications" element={<PendingDuplicationsPage />} />
@@ -177,7 +204,7 @@ function ProtectedRoutes() {
           <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />
           <Route path="/leads/:leadId" element={<LeadDetail />} />
           <Route path="/change-password" element={<ChangePasswordPage />} />
-          <Route path="*" element={<Navigate to={isDispatchUser ? "/dispatch" : "/"} replace />} />
+          <Route path="*" element={<Navigate to={isDispatchUser || isForemanUser ? "/dispatch" : "/"} replace />} />
         </Routes>
       </div>
     </div>
@@ -188,10 +215,12 @@ function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/*" element={<ProtectedRoutes />} />
-        </Routes>
+        <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/*" element={<ProtectedRoutes />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </AuthProvider>
   );

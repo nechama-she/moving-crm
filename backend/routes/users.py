@@ -3,12 +3,12 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from auth import hash_password, require_admin, get_current_user
 from database import get_db
-from models import User, Company, UserCompany, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, Lead, AppSetting
+from models import User, Company, UserCompany, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, Lead, LeadJob, AppSetting
 from routes.auth import validate_password_strength
 
 logger = logging.getLogger("moving-crm")
@@ -26,7 +26,19 @@ class UserCreate(BaseModel):
     smartmoving_rep_id: str = ""
     aircall_number_id: str = ""
     password: str
-    role: str = "sales_rep"  # admin, sales_rep, dispatch
+    role: str = "sales_rep"  # admin, sales_rep, dispatch, foreman
+
+
+class ForemanCreate(BaseModel):
+    email: str
+    name: str
+    phone: str = ""
+    password: str
+    company_ids: List[str] = Field(default_factory=list)
+
+
+class ForemanCompaniesUpdate(BaseModel):
+    company_ids: List[str] = Field(default_factory=list)
 
 
 class UserUpdate(BaseModel):
@@ -191,6 +203,107 @@ def list_my_reps(user: User = Depends(get_current_user), db: Session = Depends(g
         .all()
     )
     return [{"id": r.id, "name": r.name} for r in reps]
+
+
+def _manageable_company_ids(actor: User, db: Session) -> set[str]:
+    rows = db.query(UserCompany.company_id).filter(UserCompany.user_id == actor.id).all()
+    if actor.role == "admin" and not rows:
+        return {row[0] for row in db.query(Company.id).all()}
+    return {row[0] for row in rows}
+
+
+def _require_foreman_manager(actor: User) -> None:
+    if actor.role not in ("admin", "dispatch"):
+        raise HTTPException(status_code=403, detail="Only admin or dispatch can manage foremen")
+
+
+@router.get("/foremen")
+def list_foremen(
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_foreman_manager(actor)
+    company_ids = _manageable_company_ids(actor, db)
+    if not company_ids:
+        return []
+    visible_ids = db.query(UserCompany.user_id).filter(UserCompany.company_id.in_(company_ids)).distinct().subquery()
+    rows = db.query(User).filter(User.role == "foreman", User.id.in_(visible_ids)).order_by(User.name).all()
+    items = []
+    for row in rows:
+        item = row.to_dict()
+        item["companies"] = [company for company in item.get("companies", []) if company.get("id") in company_ids]
+        items.append(item)
+    return items
+
+
+@router.post("/foremen")
+def create_foreman(
+    body: ForemanCreate,
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_foreman_manager(actor)
+    allowed = _manageable_company_ids(actor, db)
+    requested = {company_id.strip() for company_id in body.company_ids if company_id.strip()}
+    if not requested:
+        raise HTTPException(status_code=400, detail="Select at least one company")
+    if not requested.issubset(allowed):
+        raise HTTPException(status_code=403, detail="You can only assign companies you can access")
+    validate_password_strength(body.password)
+    if db.query(User).filter(User.email == body.email.strip()).first():
+        raise HTTPException(status_code=409, detail="Email already registered")
+    foreman = User(
+        email=body.email.strip(),
+        name=body.name.strip(),
+        phone=body.phone.strip(),
+        password_hash=hash_password(body.password),
+        role="foreman",
+        must_change_password=True,
+    )
+    db.add(foreman)
+    db.flush()
+    for company_id in requested:
+        db.add(UserCompany(user_id=foreman.id, company_id=company_id))
+    db.commit()
+    db.refresh(foreman)
+    return foreman.to_dict()
+
+
+@router.put("/foremen/{foreman_id}/companies")
+def replace_foreman_companies(
+    foreman_id: str,
+    body: ForemanCompaniesUpdate,
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_foreman_manager(actor)
+    allowed = _manageable_company_ids(actor, db)
+    foreman = db.query(User).filter(User.id == foreman_id, User.role == "foreman").first()
+    if not foreman:
+        raise HTTPException(status_code=404, detail="Foreman not found")
+    existing = {row[0] for row in db.query(UserCompany.company_id).filter(UserCompany.user_id == foreman.id).all()}
+    if actor.role == "dispatch" and not existing.intersection(allowed):
+        raise HTTPException(status_code=403, detail="Foreman is outside your company access")
+    requested = {company_id.strip() for company_id in body.company_ids if company_id.strip()}
+    if not requested:
+        raise HTTPException(status_code=400, detail="Select at least one company")
+    if not requested.issubset(allowed):
+        raise HTTPException(status_code=403, detail="You can only assign companies you can access")
+    removed_company_ids = (existing.intersection(allowed) if actor.role == "dispatch" else existing) - requested
+    if removed_company_ids:
+        db.query(LeadJob).filter(
+            LeadJob.foreman_id == foreman.id,
+            LeadJob.company_id.in_(removed_company_ids),
+        ).update({LeadJob.foreman_id: None}, synchronize_session=False)
+    delete_query = db.query(UserCompany).filter(UserCompany.user_id == foreman.id)
+    if actor.role == "dispatch":
+        delete_query = delete_query.filter(UserCompany.company_id.in_(allowed))
+    delete_query.delete(synchronize_session=False)
+    for company_id in requested:
+        db.add(UserCompany(user_id=foreman.id, company_id=company_id))
+    db.commit()
+    db.refresh(foreman)
+    return foreman.to_dict()
 
 
 @router.get("")

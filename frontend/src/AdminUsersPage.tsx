@@ -228,7 +228,7 @@ export default function AdminUsersPage() {
           </label>
           <label style={fieldLabel}>
             Email
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
+            <input type="email" name="new-admin-email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
           </label>
           <label style={fieldLabel}>
             Temporary Password
@@ -236,6 +236,8 @@ export default function AdminUsersPage() {
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input
                   type={showPassword ? "text" : "password"}
+                  name="new-admin-password"
+                  autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   style={{ ...inputStyle, flex: 1, height: 34 }}

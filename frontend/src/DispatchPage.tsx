@@ -44,6 +44,8 @@ type LeadJob = {
   company_name?: string;
   company_color?: string;
   job_order?: number;
+  foreman_id?: string;
+  foreman_name?: string;
   full_name: string;
   move_date: string;
   booked_move_date: string;
@@ -291,6 +293,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   );
   const isAdmin = user?.role === "admin";
   const isDispatch = user?.role === "dispatch";
+  const isForeman = user?.role === "foreman";
   const effectiveMode: DispatchPageMode = mode || (isDispatch ? "calendar" : "manage");
   const showCalendar = effectiveMode === "calendar";
   const showManage = effectiveMode === "manage";
@@ -548,13 +551,13 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   ]);
 
   useEffect(() => {
-    if (!showCalendar || !singleSelectedDispatchCompanyId) {
+    if (!showCalendar || isForeman || !singleSelectedDispatchCompanyId) {
       setDaySettings({});
       setDaySettingsError("");
       return;
     }
     void loadDispatchCalendarDaySettings(singleSelectedDispatchCompanyId, dispatchMonth);
-  }, [token, showCalendar, singleSelectedDispatchCompanyId, dispatchMonth]);
+  }, [token, showCalendar, isForeman, singleSelectedDispatchCompanyId, dispatchMonth]);
 
   useEffect(() => {
     if (!showCalendar || dispatchCompanies.length === 0) return;
@@ -991,9 +994,9 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   if (showCalendar) {
     return (
       <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
-        <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Dispatcher Calender</h1>
+        <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>{isForeman ? "My Jobs Calendar" : "Dispatcher Calender"}</h1>
         <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
-          Jobs grouped by booked move date for all checked companies in the selected month.
+          {isForeman ? "Only jobs assigned to you are shown." : "Jobs grouped by booked move date for all checked companies in the selected month."}
         </p>
 
         {calendarError ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{calendarError}</p> : null}
@@ -1242,7 +1245,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
               : selectedDispatchCompanyIds.length === 1
                 ? (dispatchCompanies.find((c) => c.id === selectedDispatchCompanyIds[0])?.name || "Company")
                 : `${selectedDispatchCompanyIds.length} Companies`}
-            daySettingCompanies={dispatchCompanies.filter((c) => selectedDispatchCompanyIds.includes(c.id))}
+            daySettingCompanies={isForeman ? [] : dispatchCompanies.filter((c) => selectedDispatchCompanyIds.includes(c.id))}
             jobs={filteredCalendarJobs}
             daySettings={daySettings}
             viewDate={dispatchMonth}
@@ -1291,11 +1294,11 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
           </label>
           <label style={fieldLabel}>
             Email
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
+            <input type="email" name="new-dispatch-email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
           </label>
           <label style={fieldLabel}>
             Phone (optional)
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} />
+            <input type="tel" name="new-dispatch-phone" autoComplete="off" value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} />
           </label>
           <label style={fieldLabel}>
             Temporary Password
@@ -1303,6 +1306,8 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input
                   type={showPassword ? "text" : "password"}
+                  name="new-dispatch-password"
+                  autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   style={{ ...inputStyle, flex: 1, height: 34 }}
