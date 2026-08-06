@@ -98,6 +98,8 @@ def list_tasks(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="Lead activity is not available for this role")
     lead = _get_lead_or_404(lead_id, db)
     if not _can_see_lead(user, lead, db):
         raise HTTPException(status_code=403, detail="Access denied")

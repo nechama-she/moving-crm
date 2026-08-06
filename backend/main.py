@@ -59,7 +59,18 @@ async def enforce_authentication(request: Request) -> None:
             db = SessionLocal()
             try:
                 actor = db.query(User).filter(User.id == str(payload.get("sub") or "")).first()
-                if actor and actor.role == "foreman":
+                foreman_job_patch = (
+                    request.method == "PATCH"
+                    and re.fullmatch(r"/api/leads/[^/]+/jobs/[^/]+", request.url.path) is not None
+                )
+                foreman_file_upload = (
+                    request.method == "POST"
+                    and (
+                        re.fullmatch(r"/api/leads/[^/]+/attachments", request.url.path) is not None
+                        or re.fullmatch(r"/api/leads/[^/]+/jobs/[^/]+/attachments", request.url.path) is not None
+                    )
+                )
+                if actor and actor.role == "foreman" and not (foreman_job_patch or foreman_file_upload):
                     raise HTTPException(status_code=403, detail="Foreman users are read-only")
             finally:
                 db.close()

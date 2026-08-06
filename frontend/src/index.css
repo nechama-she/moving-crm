@@ -489,7 +489,7 @@ input, select, textarea, button {
     min-height: 36px;
     display: flex;
     align-items: center;
-    padding-right: 82px;
+    padding-right: 0;
     font-size: 17px !important;
   }
 
@@ -522,10 +522,12 @@ input, select, textarea, button {
   }
 
   .lead-profile-actions {
-    position: absolute;
-    top: 0;
-    right: 0;
+    position: static;
+    grid-column: 1 / -1;
+    grid-row: 2;
     display: flex !important;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 6px !important;
     z-index: 2;
   }
@@ -549,9 +551,16 @@ input, select, textarea, button {
     font-size: 0 !important;
   }
 
+  .lead-profile-copy-button > span:first-child,
   .lead-profile-files-button > span:first-child {
     font-size: 18px;
     line-height: 1;
+  }
+
+  .lead-profile-copy-button .lead-profile-action-icon {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
   }
 
   .lead-profile-files-button .lead-profile-action-label {
@@ -989,6 +998,126 @@ button:focus-visible {
   align-items: end;
 }
 
+.lead-notes-card {
+  margin-top: 20px;
+  border: 1px solid #dddbda;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
+}
+
+.lead-notes-card__header {
+  min-height: 42px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #dddbda;
+  background: #f3f3f3;
+  color: #032d60;
+  font-size: 13px;
+}
+
+.lead-notes-card__header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lead-notes-card__header--foreman {
+  background: #fff7ed;
+  color: #8a3b12;
+}
+
+.lead-notes-card__icon {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 4px;
+  background: #0176d3;
+  color: #fff;
+  font-size: 14px;
+}
+
+.lead-notes-card__icon--foreman {
+  background: #dd7a01;
+}
+
+.lead-notes-card__badge {
+  padding: 3px 7px;
+  border: 1px solid #c9c7c5;
+  border-radius: 999px;
+  background: #fff;
+  color: #706e6b;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.lead-notes-card__body {
+  min-height: 72px;
+  padding: 14px;
+  color: #181818;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.lead-notes-card__body--empty {
+  color: #706e6b;
+  font-style: italic;
+}
+
+.lead-notes-card__input {
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  padding: 12px 14px;
+  border: 0;
+  outline: 0;
+  resize: vertical;
+  box-sizing: border-box;
+  background: #fff;
+  color: #181818;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.lead-notes-card__input:focus {
+  box-shadow: inset 0 0 0 2px #1b96ff;
+}
+
+.lead-notes-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid #ecebea;
+  background: #fafaf9;
+}
+
+.lead-notes-card__actions button {
+  border: 1px solid #0176d3;
+  border-radius: 4px;
+  padding: 6px 11px;
+  background: #0176d3;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lead-notes-card__actions button:disabled {
+  opacity: .6;
+  cursor: default;
+}
+
 @media (max-width: 760px) {
   .lead-job-summary-grid {
     grid-template-columns: 1fr 1fr;
@@ -1141,6 +1270,8 @@ button:focus-visible {
 .lead-files-job-group > header > div { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .lead-files-job-group header strong { display: block; color: #032d60; font-size: 13px; }
 .lead-files-job-group header small { display: block; margin-top: 1px; color: #706e6b; font-size: 10px; }
+.lead-files-list article[draggable="true"] { cursor: grab; }
+.lead-files-list article[draggable="true"]:active { cursor: grabbing; opacity: .72; }
 .lead-files-job-icon { width: 30px; height: 30px; border-radius: 6px; display: grid; place-items: center; background: #d8edff; font-size: 15px; }
 .lead-files-upload { border: 1px solid #0176d3; border-radius: 4px; background: #fff; color: #0176d3; padding: 5px 9px; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .lead-files-upload input { display: none; }

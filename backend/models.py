@@ -376,6 +376,8 @@ class LeadJob(Base):
     booked_move_date = Column(Date)
     smartmoving_job_id = Column(String(100), index=True)
     foreman_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    notes = Column(Text)
+    foreman_notes = Column(Text)
     price = Column(Numeric(12, 2))
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
@@ -396,6 +398,8 @@ class LeadJob(Base):
             "smartmoving_job_id": self.smartmoving_job_id or "",
             "foreman_id": self.foreman_id or "",
             "foreman_name": self.foreman.name if self.foreman else "",
+            "notes": self.notes or "",
+            "foreman_notes": self.foreman_notes or "",
             "company_id": self.company_id,
             "company_name": self.company.name if self.company else "",
             "job_order": self.job_order,

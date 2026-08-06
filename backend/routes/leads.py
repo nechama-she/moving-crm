@@ -1698,6 +1698,8 @@ def get_lead_update_logs(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="Lead logs are not available for this role")
     _get_visible_lead_or_404(lead_id, user, db)
     query = db.query(LeadUpdateLog).filter(LeadUpdateLog.lead_id == lead_id)
     total = query.count()
@@ -2031,6 +2033,8 @@ class LeadJobCreate(BaseModel):
     move_date: str = ""
     booked_move_date: str = ""
     price: float | None = None
+    notes: str = ""
+    foreman_notes: str = ""
     logs: list[ExternalLeadUpdateLog] | None = None
 
 
@@ -2048,6 +2052,8 @@ class LeadJobUpdate(BaseModel):
     booked_move_date: str | None = None
     price: float | None = None
     foreman_id: str | None = None
+    notes: str | None = None
+    foreman_notes: str | None = None
     logs: list[ExternalLeadUpdateLog] | None = None
 
 
@@ -2219,6 +2225,8 @@ def create_lead_job(
         delivery_zip="",
         move_date=move_date,
         booked_move_date=booked_date,
+        notes=(body.notes or "").strip() or None,
+        foreman_notes=(body.foreman_notes or "").strip() or None,
         price=price_value,
     )
 
@@ -2280,10 +2288,10 @@ def update_lead_job(
     db: Session = Depends(get_db),
 ):
     payload = body.model_dump(exclude_unset=True, by_alias=False)
-    if user.role == "foreman":
-        raise HTTPException(status_code=403, detail="Foreman users are read-only")
-    if user.role == "dispatch" and set(payload) != {"foreman_id"}:
-        raise HTTPException(status_code=403, detail="Dispatch users can only assign a foreman")
+    if user.role == "foreman" and set(payload) != {"foreman_notes"}:
+        raise HTTPException(status_code=403, detail="Foreman users can only update foreman notes")
+    if user.role == "dispatch" and (not payload or not set(payload).issubset({"foreman_id", "notes", "foreman_notes"})):
+        raise HTTPException(status_code=403, detail="Dispatch users can only assign a foreman or update job notes")
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadJob)
@@ -2292,6 +2300,8 @@ def update_lead_job(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Job not found")
+    if user.role == "foreman" and row.foreman_id != user.id:
+        raise HTTPException(status_code=403, detail="This job is not assigned to you")
 
     company_ids = _get_user_company_ids(user, db)
 
@@ -2326,6 +2336,11 @@ def update_lead_job(
             if not foreman_company:
                 raise HTTPException(status_code=400, detail="Foreman is not assigned to this job's company")
             row.foreman_id = foreman.id
+
+    if "notes" in payload:
+        row.notes = (payload.get("notes") or "").strip() or None
+    if "foreman_notes" in payload:
+        row.foreman_notes = (payload.get("foreman_notes") or "").strip() or None
 
     current_pickup, current_stops, current_delivery = _read_job_route(db, row)
     next_pickup = current_pickup
@@ -2424,6 +2439,10 @@ def delete_lead_job(
 
 class AttachmentRenameBody(BaseModel):
     file_name: str
+
+
+class AttachmentMoveBody(BaseModel):
+    job_id: str | None = None
 
 
 def _get_job_or_404(lead_id: str, job_id: str, user: User, db: Session) -> "LeadJob":
@@ -2653,14 +2672,13 @@ def _sync_opportunity_files_to_s3(
     if not jobs:
         return 0
 
-    primary_job = jobs[0]
     job_by_smartmoving_id = {
         (job.smartmoving_job_id or "").strip(): job
         for job in jobs
         if (job.smartmoving_job_id or "").strip()
     }
-    source_hashes = {
-        (row.source_external_id or "").strip()
+    existing_by_hash = {
+        (row.source_external_id or "").strip(): row
         for row in db.query(LeadAttachment)
         .filter(
             LeadAttachment.lead_id == lead.id,
@@ -2672,10 +2690,17 @@ def _sync_opportunity_files_to_s3(
 
     s3 = boto3.client("s3")
     created = 0
+    reassigned = 0
     uploaded_keys: list[str] = []
     for item in files:
         source_hash = hashlib.sha256(item["url"].encode("utf-8")).hexdigest()
-        if source_hash in source_hashes:
+        target_job = job_by_smartmoving_id.get((item.get("smartmoving_job_id") or "").strip())
+        target_job_id = target_job.id if target_job else None
+        existing_row = existing_by_hash.get(source_hash)
+        if source_hash in existing_by_hash:
+            if existing_row and existing_row.job_id != target_job_id:
+                existing_row.job_id = target_job_id
+                reassigned += 1
             continue
         fetched = download_opportunity_file(item["url"])
         if not fetched.get("ok"):
@@ -2686,14 +2711,14 @@ def _sync_opportunity_files_to_s3(
             logger.warning("Skipping SmartMoving opportunity file with invalid size: %s", item["url"])
             continue
 
-        target_job = job_by_smartmoving_id.get(item.get("smartmoving_job_id", "")) or primary_job
         file_name = re.sub(
             r'[\\/\r\n"]+',
             "_",
             _clean_optional_text(fetched.get("file_name")) or item["name"],
         )[:255]
         content_type = _clean_optional_text(fetched.get("content_type")) or "application/octet-stream"
-        object_key = f"leads/{lead.id}/jobs/{target_job.id}/smartmoving/{source_hash}/{file_name}"
+        file_scope = f"jobs/{target_job.id}" if target_job else "lead"
+        object_key = f"leads/{lead.id}/{file_scope}/smartmoving/{source_hash}/{file_name}"
         try:
             s3.put_object(
                 Bucket=bucket,
@@ -2709,7 +2734,7 @@ def _sync_opportunity_files_to_s3(
 
         db.add(LeadAttachment(
             lead_id=lead.id,
-            job_id=target_job.id,
+            job_id=target_job_id,
             file_name=file_name,
             content_type=content_type,
             file_size=len(content),
@@ -2720,10 +2745,10 @@ def _sync_opportunity_files_to_s3(
             source_external_id=source_hash,
             uploaded_by=user.id,
         ))
-        source_hashes.add(source_hash)
+        existing_by_hash[source_hash] = None
         created += 1
 
-    if created:
+    if created or reassigned:
         try:
             db.commit()
         except Exception:
@@ -2765,7 +2790,6 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
     if not jobs:
         return 0
 
-    primary_job = jobs[0]
     job_by_smartmoving_id = {
         (row.smartmoving_job_id or "").strip(): row
         for row in jobs
@@ -2790,15 +2814,28 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
     stored = 0
     uploaded_urls: list[str] = []
     for doc in documents:
-        target_job = job_by_smartmoving_id.get((doc.get("smartmoving_job_id") or "").strip()) or primary_job
+        target_job = job_by_smartmoving_id.get((doc.get("smartmoving_job_id") or "").strip())
+        target_job_id = target_job.id if target_job else ""
         document_id = (doc.get("external_id") or "").strip()
         document_url = (doc.get("url") or "").strip()
         existing = (
-            existing_by_id.get((target_job.id, document_id))
+            existing_by_id.get((target_job_id, document_id))
             if document_id
             else None
-        ) or existing_by_url.get((target_job.id, document_url))
+        ) or existing_by_url.get((target_job_id, document_url))
+        if not existing and not target_job:
+            existing = next(
+                (
+                    row for row in existing_rows
+                    if (document_id and (row.source_external_id or "").strip() == document_id)
+                    or (document_url and (row.external_url or "").strip() == document_url)
+                ),
+                None,
+            )
         if existing and (existing.external_source or "").strip() == "smartmoving_document_s3":
+            if existing.job_id:
+                existing.job_id = None
+                stored += 1
             continue
         fetched = download_opportunity_document(
             smartmoving_id,
@@ -2818,7 +2855,7 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
         try:
             s3_url = _upload_attachment_bytes_to_s3(
                 lead_id=lead.id,
-                job_id=target_job.id,
+                job_id=target_job.id if target_job else None,
                 file_name=file_name,
                 content=content,
                 content_type=content_type,
@@ -2831,7 +2868,7 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
 
         row = existing or LeadAttachment(
             lead_id=lead.id,
-            job_id=target_job.id,
+            job_id=target_job.id if target_job else None,
             file_blob=b"",
             uploaded_by=user.id,
         )
@@ -2843,6 +2880,7 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
         row.is_external_link = True
         row.external_source = "smartmoving_document_s3"
         row.source_external_id = document_id[:255] or hashlib.sha256(document_url.encode("utf-8")).hexdigest()
+        row.job_id = target_job.id if target_job else None
         if not existing:
             db.add(row)
         stored += 1
@@ -2965,29 +3003,6 @@ def _delete_s3_url(external_url: str) -> None:
     boto3.client("s3").delete_object(Bucket=configured_bucket, Key=parsed.path.lstrip("/"))
 
 
-def _backfill_attachment_jobs_for_lead(lead_id: str, db: Session) -> None:
-    """Map legacy lead-level attachments to the lead primary job (job_order=1)."""
-    primary_job = (
-        db.query(LeadJob)
-        .filter(LeadJob.lead_id == lead_id, LeadJob.job_order == 1)
-        .first()
-    )
-    if not primary_job:
-        return
-    try:
-        db.execute(
-            text(
-                "UPDATE lead_attachments "
-                "SET job_id = :job_id "
-                "WHERE lead_id = :lead_id AND (job_id IS NULL OR job_id = '')"
-            ),
-            {"job_id": primary_job.id, "lead_id": lead_id},
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-
-
 @router.get("/leads/{lead_id}/jobs/{job_id}/attachments")
 def list_job_attachments(
     lead_id: str,
@@ -2997,7 +3012,6 @@ def list_job_attachments(
 ):
     _ensure_attachment_job_column(db)
     _ensure_attachment_link_columns(db)
-    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     _migrate_stored_attachment_blobs_to_s3(lead_id, db)
     rows = (
@@ -3023,10 +3037,8 @@ def upload_job_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _ensure_not_dispatch_write(user)
     _ensure_attachment_job_column(db)
     _ensure_attachment_link_columns(db)
-    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
 
     file_name = (file.filename or "").strip()
@@ -3083,7 +3095,6 @@ def download_job_attachment(
 ):
     _ensure_attachment_job_column(db)
     _ensure_attachment_link_columns(db)
-    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     row = (
         db.query(LeadAttachment)
@@ -3107,7 +3118,6 @@ def delete_job_attachment(
     _ensure_not_dispatch_write(user)
     _ensure_attachment_job_column(db)
     _ensure_attachment_link_columns(db)
-    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     row = (
         db.query(LeadAttachment)
@@ -3140,7 +3150,6 @@ def rename_job_attachment(
     _ensure_not_dispatch_write(user)
     _ensure_attachment_job_column(db)
     _ensure_attachment_link_columns(db)
-    _backfill_attachment_jobs_for_lead(lead_id, db)
     job = _get_job_or_404(lead_id, job_id, user, db)
     row = (
         db.query(LeadAttachment)
@@ -3180,6 +3189,39 @@ def list_lead_attachments(
         item["uploaded_by_name"] = uploader.name if uploader else ""
         items.append(item)
     return {"items": items}
+
+
+@router.patch("/leads/{lead_id}/attachments/{attachment_id}/job")
+def move_attachment_to_job(
+    lead_id: str,
+    attachment_id: str,
+    body: AttachmentMoveBody,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin users can move files between jobs")
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    target_job_id = (body.job_id or "").strip()
+    if target_job_id:
+        target_job = (
+            db.query(LeadJob)
+            .filter(LeadJob.id == target_job_id, LeadJob.lead_id == lead.id)
+            .first()
+        )
+        if not target_job:
+            raise HTTPException(status_code=404, detail="Target job not found")
+    row = (
+        db.query(LeadAttachment)
+        .filter(LeadAttachment.id == attachment_id, LeadAttachment.lead_id == lead.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    row.job_id = target_job_id or None
+    db.commit()
+    db.refresh(row)
+    return row.to_dict()
 
 
 @router.post("/leads/{lead_id}/attachments")
@@ -3259,6 +3301,8 @@ def delete_lead_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="This role cannot delete files")
     _ensure_attachment_link_columns(db)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
@@ -3289,6 +3333,8 @@ def rename_lead_attachment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="This role cannot rename files")
     _ensure_attachment_link_columns(db)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
@@ -3315,6 +3361,8 @@ class LeadUpdateJob(BaseModel):
     sort_order: int | None = Field(default=None, alias="sortOrder")
     smartmoving_job_id: str | None = None
     foreman_id: str | None = None
+    notes: str | None = None
+    foreman_notes: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
     stops: list[str] | None = None
@@ -3362,7 +3410,19 @@ def update_lead(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _ensure_not_dispatch_write(user)
+    return _apply_lead_update(lead_id, body, user, db)
+
+
+def _apply_lead_update(
+    lead_id: str,
+    body: LeadUpdate,
+    user: User,
+    db: Session,
+    *,
+    allow_dispatch_smartmoving_refresh: bool = False,
+):
+    if not (allow_dispatch_smartmoving_refresh and user.role == "dispatch"):
+        _ensure_not_dispatch_write(user)
     company_ids = _get_user_company_ids(user, db)
     lead = db.query(Lead).filter(Lead.id == lead_id, Lead.company_id.in_(company_ids)).first()
     if not lead:
@@ -3613,6 +3673,11 @@ def update_lead(
                         raise HTTPException(status_code=400, detail="Foreman is not assigned to this job's company")
                     target_job.foreman_id = foreman.id
 
+            if "notes" in job_payload:
+                target_job.notes = (job_payload.get("notes") or "").strip() or None
+            if "foreman_notes" in job_payload:
+                target_job.foreman_notes = (job_payload.get("foreman_notes") or "").strip() or None
+
             if "sort_order" in job_payload:
                 next_sort_order = job_payload.get("sort_order")
                 if next_sort_order is None:
@@ -3828,7 +3893,8 @@ def _refresh_lead_from_smartmoving(
     db: Session,
     outbound_logs: list[dict[str, Any]],
 ):
-    _ensure_not_dispatch_write(user)
+    if user.role not in ("admin", "sales_rep", "dispatch"):
+        raise HTTPException(status_code=403, detail="This role cannot refresh SmartMoving data")
     lead = _get_visible_lead_or_404(lead_id, user, db)
     smartmoving_id = _clean_optional_text(lead.smartmoving_id)
     if not smartmoving_id:
@@ -3852,6 +3918,11 @@ def _refresh_lead_from_smartmoving(
         error_text = str(opportunity_result.get("error") or "")
         lowered = error_text.lower()
         if "http 400" in lowered and "opportunity was not found" in lowered:
+            if user.role == "dispatch":
+                raise HTTPException(
+                    status_code=502,
+                    detail="SmartMoving opportunity was not found; the CRM lead was not changed",
+                )
             resolved_lead_id = lead.id
             _hard_delete_lead(lead, db)
             return {
@@ -3927,7 +3998,13 @@ def _refresh_lead_from_smartmoving(
             job["booked_move_date"] = booked_iso
 
     body = LeadUpdate.model_validate(payload)
-    updated = update_lead(lead.id, body, user, db)
+    updated = _apply_lead_update(
+        lead.id,
+        body,
+        user,
+        db,
+        allow_dispatch_smartmoving_refresh=True,
+    )
     sync_result = sync_smartmoving_files(lead, user, db, opportunity)
     request.state.audit_request_payload = {
         "smartmoving_id": smartmoving_id,

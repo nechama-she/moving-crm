@@ -113,7 +113,7 @@ def list_sales_rep_commission_settings(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if user.role not in ("admin", "dispatch", "sales_rep"):
+    if user.role not in ("admin", "sales_rep"):
         raise HTTPException(status_code=403, detail="Access denied")
 
     reps_query = db.query(User).filter(User.role == "sales_rep")
