@@ -557,6 +557,12 @@ input, select, textarea, button {
     line-height: 1;
   }
 
+  .lead-profile-copy-button .lead-profile-action-icon {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+  }
+
   .lead-profile-files-button .lead-profile-action-label {
     display: none;
   }
