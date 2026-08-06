@@ -46,6 +46,12 @@ class ForemanManagerUpdate(BaseModel):
     dispatcher_id: str
 
 
+class ManagedUserUpdate(BaseModel):
+    name: str
+    email: str
+    phone: str = ""
+
+
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
@@ -344,6 +350,91 @@ def replace_foreman_companies(
     db.commit()
     db.refresh(foreman)
     return foreman.to_dict()
+
+
+def _apply_managed_user_update(row: User, body: ManagedUserUpdate, db: Session) -> None:
+    name = body.name.strip()
+    email = body.email.strip().lower()
+    if not name or not email:
+        raise HTTPException(status_code=400, detail="Name and email are required")
+    duplicate = db.query(User.id).filter(User.email == email, User.id != row.id).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Email already registered")
+    row.name = name
+    row.email = email
+    row.phone = body.phone.strip()
+
+
+@router.put("/dispatchers/{dispatcher_id}")
+def update_dispatcher(
+    dispatcher_id: str,
+    body: ManagedUserUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    row = db.query(User).filter(User.id == dispatcher_id, User.role == "dispatch").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Dispatcher not found")
+    _apply_managed_user_update(row, body, db)
+    db.commit()
+    db.refresh(row)
+    return row.to_dict()
+
+
+@router.delete("/dispatchers/{dispatcher_id}")
+def delete_dispatcher(
+    dispatcher_id: str,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    row = db.query(User).filter(User.id == dispatcher_id, User.role == "dispatch").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Dispatcher not found")
+    if db.query(User.id).filter(User.manager_dispatch_id == row.id, User.role == "foreman").first():
+        raise HTTPException(status_code=409, detail="Reassign this dispatcher's foremen before deleting the dispatcher")
+    db.query(UserCompany).filter(UserCompany.user_id == row.id).delete(synchronize_session=False)
+    db.query(Lead).filter(Lead.assigned_to == row.id).update({Lead.assigned_to: None}, synchronize_session=False)
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@router.put("/foremen/{foreman_id}")
+def update_foreman(
+    foreman_id: str,
+    body: ManagedUserUpdate,
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_foreman_manager(actor)
+    row = db.query(User).filter(User.id == foreman_id, User.role == "foreman").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Foreman not found")
+    if actor.role == "dispatch" and row.manager_dispatch_id != actor.id:
+        raise HTTPException(status_code=403, detail="This foreman belongs to another dispatcher")
+    _apply_managed_user_update(row, body, db)
+    db.commit()
+    db.refresh(row)
+    return row.to_dict()
+
+
+@router.delete("/foremen/{foreman_id}")
+def delete_foreman(
+    foreman_id: str,
+    actor: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_foreman_manager(actor)
+    row = db.query(User).filter(User.id == foreman_id, User.role == "foreman").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Foreman not found")
+    if actor.role == "dispatch" and row.manager_dispatch_id != actor.id:
+        raise HTTPException(status_code=403, detail="This foreman belongs to another dispatcher")
+    db.query(LeadJob).filter(LeadJob.foreman_id == row.id).update({LeadJob.foreman_id: None}, synchronize_session=False)
+    db.query(UserCompany).filter(UserCompany.user_id == row.id).delete(synchronize_session=False)
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("")

@@ -18,6 +18,10 @@ export default function ForemenPage() {
   const [password, setPassword] = useState("");
   const [companyIds, setCompanyIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [editingForemanId, setEditingForemanId] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editPhone, setEditPhone] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -97,6 +101,29 @@ export default function ForemenPage() {
     } finally { setBusy(false); }
   }
 
+  async function saveForeman(foreman: Foreman) {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await fetch(`${API_BASE}/api/users/foremen/${foreman.id}`, { method: "PUT", headers: { "Content-Type": "application/json", ...authHeaders(token) }, body: JSON.stringify({ name: editName, email: editEmail, phone: editPhone }) });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.detail || `Request failed (${response.status})`);
+      setEditingForemanId(""); setMessage("Foreman updated."); await load();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update foreman"); }
+    finally { setBusy(false); }
+  }
+
+  async function deleteForeman(foreman: Foreman) {
+    if (!window.confirm(`Delete ${foreman.name}? Assigned jobs will become unassigned.`)) return;
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await fetch(`${API_BASE}/api/users/foremen/${foreman.id}`, { method: "DELETE", headers: authHeaders(token) });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.detail || `Request failed (${response.status})`);
+      setMessage("Foreman deleted."); await load();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not delete foreman"); }
+    finally { setBusy(false); }
+  }
+
   if (!user || !["admin", "dispatch"].includes(user.role)) return <main style={page}><p>Access denied.</p></main>;
 
   const createCompanies = user.role === "admin"
@@ -124,8 +151,10 @@ export default function ForemenPage() {
       {foremen.map((foreman) => {
         const assigned = new Set((foreman.companies || []).map((company) => company.id));
         const availableCompanies = user.role === "admin" ? (dispatchers.find((dispatcher) => dispatcher.id === foreman.manager_dispatch_id)?.companies || []) : companies;
+        const editing = editingForemanId === foreman.id;
         return <article key={foreman.id} style={card}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}><div><h2 style={{ ...sectionTitle, marginBottom: 2 }}>{foreman.name}</h2><span style={{ color: "#706e6b", fontSize: 12 }}>{foreman.email}</span></div><span style={badge}>READ ONLY</span></div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}><div>{editing ? <div style={formGrid}><label style={label}>Name<input style={input} value={editName} onChange={(event) => setEditName(event.target.value)} /></label><label style={label}>Email<input style={input} value={editEmail} onChange={(event) => setEditEmail(event.target.value)} /></label><label style={label}>Phone<input style={input} value={editPhone} onChange={(event) => setEditPhone(event.target.value)} /></label></div> : <><h2 style={{ ...sectionTitle, marginBottom: 2 }}>{foreman.name}</h2><span style={{ color: "#706e6b", fontSize: 12 }}>{foreman.email}{foreman.phone ? ` · ${foreman.phone}` : ""}</span></>}</div><span style={badge}>READ ONLY</span></div>
+          <div className="user-row-actions" style={{ marginTop: 10 }}>{editing ? <><button type="button" disabled={busy} onClick={() => void saveForeman(foreman)}>Save</button><button type="button" onClick={() => setEditingForemanId("")}>Cancel</button></> : <button type="button" onClick={() => { setEditingForemanId(foreman.id); setEditName(foreman.name); setEditEmail(foreman.email); setEditPhone(foreman.phone || ""); }}>Edit</button>}<button type="button" className="danger" disabled={busy} onClick={() => void deleteForeman(foreman)}>Delete</button></div>
           {user.role === "admin" ? <label style={{ ...label, maxWidth: 360, marginTop: 12 }}>Dispatcher<select style={input} value={foreman.manager_dispatch_id || ""} disabled={busy} onChange={(event) => void saveDispatcher(foreman, event.target.value)}><option value="">Unassigned</option>{dispatchers.map((dispatcher) => <option key={dispatcher.id} value={dispatcher.id}>{dispatcher.name}</option>)}</select></label> : null}
           <div style={chips}>{availableCompanies.map((company) => {
             const checked = assigned.has(company.id);
