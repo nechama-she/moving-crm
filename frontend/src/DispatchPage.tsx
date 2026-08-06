@@ -1314,7 +1314,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
       <div className="user-setup-create-card" style={{ border: "1px solid #dddbda", borderRadius: 4, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
         <h2 style={sectionHeader}>Create Dispatch User</h2>
         <div className="dispatch-user-create-grid">
-          <label className="dispatch-password-field" style={fieldLabel}>
+          <label style={fieldLabel}>
             Name
             <input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
           </label>
@@ -1326,7 +1326,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
             Phone (optional)
             <input type="tel" name="new-dispatch-phone" autoComplete="off" value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} />
           </label>
-          <label style={fieldLabel}>
+          <label className="dispatch-password-field" style={fieldLabel}>
             Temporary Password
             <div style={{ display: "grid", gap: 4 }}>
               <div className="dispatch-password-controls">
@@ -1419,19 +1419,18 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
               <th style={th}>Email</th>
               <th style={th}>Phone</th>
               <th style={th}>Companies</th>
-              <th style={th}>Assign Company</th>
               <th style={th}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={6}>Loading...</td>
+                <td style={td} colSpan={5}>Loading...</td>
               </tr>
             ) : null}
             {!loading && dispatchUsers.length === 0 ? (
               <tr>
-                <td style={td} colSpan={6}>No dispatch users yet.</td>
+                <td style={td} colSpan={5}>No dispatch users yet.</td>
               </tr>
             ) : null}
 
@@ -2147,8 +2146,10 @@ function DispatchRow({
   onUpdate: (userId: string, values: { name: string; email: string; phone: string }) => Promise<void>;
   onDelete: (user: AppUser) => Promise<void>;
 }) {
-  const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [showCompanyManager, setShowCompanyManager] = useState(false);
+  const [companySearch, setCompanySearch] = useState("");
+  const [draftCompanyIds, setDraftCompanyIds] = useState<string[]>([]);
+  const [savingCompanies, setSavingCompanies] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(dispatchUser.name);
   const [editEmail, setEditEmail] = useState(dispatchUser.email);
@@ -2156,7 +2157,19 @@ function DispatchRow({
   const [savingEdit, setSavingEdit] = useState(false);
   const assigned = dispatchUser.companies || [];
   const assignedIds = new Set(assigned.map((c) => c.id));
-  const availableCompanies = companies.filter((c) => !assignedIds.has(c.id));
+  const filteredCompanies = companies.filter((company) => company.name.toLowerCase().includes(companySearch.trim().toLowerCase()));
+
+  async function saveCompanyAccess() {
+    setSavingCompanies(true);
+    try {
+      const draftIds = new Set(draftCompanyIds);
+      const additions = companies.filter((company) => draftIds.has(company.id) && !assignedIds.has(company.id));
+      const removals = assigned.filter((company) => !draftIds.has(company.id));
+      for (const company of additions) await onAssign(dispatchUser.id, company.id);
+      for (const company of removals) await onUnassign(dispatchUser.id, company.id);
+      setShowCompanyManager(false);
+    } finally { setSavingCompanies(false); }
+  }
 
   return (
     <tr className="user-setup-record" style={{ borderTop: "1px solid #e5e7eb" }}>
@@ -2169,48 +2182,20 @@ function DispatchRow({
             <strong>{assigned.length === 0 ? "No companies" : `${assigned.length} companies`}</strong>
             <span>{assigned.length === 0 ? "No company access" : assigned.slice(0, 2).map((company) => company.name).join(", ")}{assigned.length > 2 ? ` +${assigned.length - 2}` : ""}</span>
           </div>
-          <button type="button" onClick={() => setShowCompanyManager((open) => !open)}>
-            {showCompanyManager ? "Done" : "Manage access"}
+          <button type="button" onClick={() => { setDraftCompanyIds(assigned.map((company) => company.id)); setCompanySearch(""); setShowCompanyManager(true); }}>
+            Manage Companies
           </button>
         </div>
-        {showCompanyManager ? <div className="user-access-picker" style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {assigned.map((c) => (
-            <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #c9c7c5", borderRadius: 16, padding: "3px 8px", fontSize: 12, color: "#3e3e3c", background: "#f8f9fa" }}>
-              {c.name}
-              <button
-                type="button"
-                onClick={() => void onUnassign(dispatchUser.id, c.id)}
-                style={{ border: "none", background: "transparent", color: "#ba0517", fontSize: 12, padding: 0, cursor: "pointer" }}
-                title="Remove"
-              >
-                x
-              </button>
-            </span>
-          ))}
-        </div> : null}
-      </td>
-      <td className={showCompanyManager ? "" : "user-access-assign-collapsed"} data-label="Assign Company" style={td}>
-        {showCompanyManager ? <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <select value={selectedCompanyId} onChange={(e) => setSelectedCompanyId(e.target.value)} style={{ ...inputStyle, minWidth: 220 }}>
-            <option value="">Select company...</option>
-            {availableCompanies.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => void onAssign(dispatchUser.id, selectedCompanyId)}
-            disabled={!selectedCompanyId}
-            style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
-          >
-            Assign
-          </button>
-        </div> : <span style={{ color: "#706e6b", fontSize: 12 }}>Use Manage access</span>}
       </td>
       <td data-label="Actions" style={td}><div className="user-row-actions">
         {editing ? <><button type="button" disabled={savingEdit} onClick={() => { setSavingEdit(true); void onUpdate(dispatchUser.id, { name: editName, email: editEmail, phone: editPhone }).then(() => setEditing(false)).catch(() => undefined).finally(() => setSavingEdit(false)); }}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></> : <button type="button" onClick={() => setEditing(true)}>Edit</button>}
         <button type="button" className="danger" onClick={() => void onDelete(dispatchUser)}>Delete</button>
       </div></td>
+      {showCompanyManager ? <td className="company-access-modal-cell"><div className="company-access-backdrop" onMouseDown={() => !savingCompanies && setShowCompanyManager(false)}><section className="company-access-modal" role="dialog" aria-modal="true" aria-label={`Manage companies for ${dispatchUser.name}`} onMouseDown={(event) => event.stopPropagation()}>
+        <header><div><span className="company-access-icon">▦</span><div><h2>Manage Company Access</h2><p>{dispatchUser.name}</p></div></div><button type="button" aria-label="Close" onClick={() => setShowCompanyManager(false)}>×</button></header>
+        <div className="company-access-body"><input value={companySearch} onChange={(event) => setCompanySearch(event.target.value)} placeholder="Search companies" aria-label="Search companies" /><div className="company-access-count">{draftCompanyIds.length} of {companies.length} selected</div><div className="company-access-options">{filteredCompanies.map((company) => { const checked = draftCompanyIds.includes(company.id); return <label key={company.id} className={checked ? "selected" : ""}><input type="checkbox" checked={checked} onChange={() => setDraftCompanyIds((current) => checked ? current.filter((id) => id !== company.id) : [...current, company.id])} /><span><strong>{company.name}</strong><small>{checked ? "Access enabled" : "No access"}</small></span></label>; })}</div></div>
+        <footer><button type="button" onClick={() => setShowCompanyManager(false)}>Cancel</button><button type="button" className="primary" disabled={savingCompanies} onClick={() => void saveCompanyAccess()}>{savingCompanies ? "Saving..." : "Save Changes"}</button></footer>
+      </section></div></td> : null}
     </tr>
   );
 }
@@ -2226,6 +2211,8 @@ const sectionHeader: React.CSSProperties = {
 
 const fieldLabel: React.CSSProperties = {
   display: "grid",
+  alignContent: "start",
+  alignSelf: "start",
   gap: 5,
   fontSize: 13,
   fontWeight: 600,
