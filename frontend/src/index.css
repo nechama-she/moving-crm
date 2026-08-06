@@ -88,6 +88,11 @@ input, select, textarea, button {
   border-top: 3px solid #0176d3 !important;
 }
 
+.dispatch-user-create-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
+.dispatch-user-create-grid > label { min-width: 0; }
+.dispatch-password-controls { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.dispatch-password-controls button { flex: 0 0 auto; }
+
 .user-setup-create-card > h2 {
   color: #032d60 !important;
   font-size: 14px !important;
@@ -1140,6 +1145,8 @@ button:focus-visible {
 }
 
 @media (max-width: 760px) {
+  .dispatch-user-create-grid { grid-template-columns: 1fr; }
+  .dispatch-password-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
   .lead-job-summary-grid {
     grid-template-columns: 1fr 1fr;
   }

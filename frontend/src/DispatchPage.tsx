@@ -1287,8 +1287,8 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
 
       <div className="user-setup-create-card" style={{ border: "1px solid #dddbda", borderRadius: 4, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
         <h2 style={sectionHeader}>Create Dispatch User</h2>
-        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-          <label style={fieldLabel}>
+        <div className="dispatch-user-create-grid">
+          <label className="dispatch-password-field" style={fieldLabel}>
             Name
             <input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
           </label>
@@ -1303,14 +1303,14 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
           <label style={fieldLabel}>
             Temporary Password
             <div style={{ display: "grid", gap: 4 }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div className="dispatch-password-controls">
                 <input
                   type={showPassword ? "text" : "password"}
                   name="new-dispatch-password"
                   autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  style={{ ...inputStyle, flex: 1, height: 34 }}
+                  style={{ ...inputStyle, flex: 1, minWidth: 0, height: 34 }}
                 />
                 <button
                   type="button"
