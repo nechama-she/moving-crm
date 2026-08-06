@@ -2334,6 +2334,8 @@ def update_lead_job(
             foreman = db.query(User).filter(User.id == next_foreman_id, User.role == "foreman").first()
             if not foreman:
                 raise HTTPException(status_code=404, detail="Foreman not found")
+            if user.role == "dispatch" and foreman.manager_dispatch_id != user.id:
+                raise HTTPException(status_code=403, detail="You can only assign your own foremen")
             foreman_company = db.query(UserCompany).filter(
                 UserCompany.user_id == foreman.id,
                 UserCompany.company_id == row.company_id,
@@ -3708,6 +3710,8 @@ def _apply_lead_update(
                     foreman = db.query(User).filter(User.id == next_foreman_id, User.role == "foreman").first()
                     if not foreman:
                         raise HTTPException(status_code=404, detail="Foreman not found")
+                    if user.role == "dispatch" and foreman.manager_dispatch_id != user.id:
+                        raise HTTPException(status_code=403, detail="You can only assign your own foremen")
                     foreman_company = db.query(UserCompany).filter(
                         UserCompany.user_id == foreman.id,
                         UserCompany.company_id == target_job.company_id,

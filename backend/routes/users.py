@@ -35,10 +35,15 @@ class ForemanCreate(BaseModel):
     phone: str = ""
     password: str
     company_ids: List[str] = Field(default_factory=list)
+    dispatcher_id: str = ""
 
 
 class ForemanCompaniesUpdate(BaseModel):
     company_ids: List[str] = Field(default_factory=list)
+
+
+class ForemanManagerUpdate(BaseModel):
+    dispatcher_id: str
 
 
 class UserUpdate(BaseModel):
@@ -224,10 +229,10 @@ def list_foremen(
 ):
     _require_foreman_manager(actor)
     company_ids = _manageable_company_ids(actor, db)
-    if not company_ids:
-        return []
-    visible_ids = db.query(UserCompany.user_id).filter(UserCompany.company_id.in_(company_ids)).distinct().subquery()
-    rows = db.query(User).filter(User.role == "foreman", User.id.in_(visible_ids)).order_by(User.name).all()
+    query = db.query(User).filter(User.role == "foreman")
+    if actor.role == "dispatch":
+        query = query.filter(User.manager_dispatch_id == actor.id)
+    rows = query.order_by(User.name).all()
     items = []
     for row in rows:
         item = row.to_dict()
@@ -243,12 +248,21 @@ def create_foreman(
     db: Session = Depends(get_db),
 ):
     _require_foreman_manager(actor)
+    manager_dispatch_id = actor.id
+    if actor.role == "admin":
+        manager_dispatch_id = body.dispatcher_id.strip()
+        manager = db.query(User).filter(User.id == manager_dispatch_id, User.role == "dispatch").first()
+        if not manager:
+            raise HTTPException(status_code=400, detail="Select a valid dispatcher")
     allowed = _manageable_company_ids(actor, db)
     requested = {company_id.strip() for company_id in body.company_ids if company_id.strip()}
     if not requested:
         raise HTTPException(status_code=400, detail="Select at least one company")
     if not requested.issubset(allowed):
         raise HTTPException(status_code=403, detail="You can only assign companies you can access")
+    manager_company_ids = {row[0] for row in db.query(UserCompany.company_id).filter(UserCompany.user_id == manager_dispatch_id).all()}
+    if not requested.issubset(manager_company_ids):
+        raise HTTPException(status_code=400, detail="Foreman companies must be within the dispatcher's company access")
     validate_password_strength(body.password)
     if db.query(User).filter(User.email == body.email.strip()).first():
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -258,12 +272,34 @@ def create_foreman(
         phone=body.phone.strip(),
         password_hash=hash_password(body.password),
         role="foreman",
+        manager_dispatch_id=manager_dispatch_id,
         must_change_password=True,
     )
     db.add(foreman)
     db.flush()
     for company_id in requested:
         db.add(UserCompany(user_id=foreman.id, company_id=company_id))
+    db.commit()
+    db.refresh(foreman)
+    return foreman.to_dict()
+
+
+@router.put("/foremen/{foreman_id}/manager")
+def replace_foreman_manager(
+    foreman_id: str,
+    body: ForemanManagerUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    foreman = db.query(User).filter(User.id == foreman_id, User.role == "foreman").first()
+    manager = db.query(User).filter(User.id == body.dispatcher_id.strip(), User.role == "dispatch").first()
+    if not foreman or not manager:
+        raise HTTPException(status_code=404, detail="Foreman or dispatcher not found")
+    foreman_companies = {row[0] for row in db.query(UserCompany.company_id).filter(UserCompany.user_id == foreman.id).all()}
+    manager_companies = {row[0] for row in db.query(UserCompany.company_id).filter(UserCompany.user_id == manager.id).all()}
+    if not foreman_companies.issubset(manager_companies):
+        raise HTTPException(status_code=400, detail="Dispatcher does not have access to all of this foreman's companies")
+    foreman.manager_dispatch_id = manager.id
     db.commit()
     db.refresh(foreman)
     return foreman.to_dict()
@@ -282,13 +318,17 @@ def replace_foreman_companies(
     if not foreman:
         raise HTTPException(status_code=404, detail="Foreman not found")
     existing = {row[0] for row in db.query(UserCompany.company_id).filter(UserCompany.user_id == foreman.id).all()}
-    if actor.role == "dispatch" and not existing.intersection(allowed):
-        raise HTTPException(status_code=403, detail="Foreman is outside your company access")
+    if actor.role == "dispatch" and foreman.manager_dispatch_id != actor.id:
+        raise HTTPException(status_code=403, detail="This foreman belongs to another dispatcher")
     requested = {company_id.strip() for company_id in body.company_ids if company_id.strip()}
     if not requested:
         raise HTTPException(status_code=400, detail="Select at least one company")
     if not requested.issubset(allowed):
         raise HTTPException(status_code=403, detail="You can only assign companies you can access")
+    if foreman.manager_dispatch_id:
+        manager_companies = {row[0] for row in db.query(UserCompany.company_id).filter(UserCompany.user_id == foreman.manager_dispatch_id).all()}
+        if not requested.issubset(manager_companies):
+            raise HTTPException(status_code=400, detail="Foreman companies must be within the dispatcher's company access")
     removed_company_ids = (existing.intersection(allowed) if actor.role == "dispatch" else existing) - requested
     if removed_company_ids:
         db.query(LeadJob).filter(

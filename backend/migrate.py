@@ -40,6 +40,12 @@ def migrate() -> None:
         connection.execute(
             text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS estimated_materials TEXT")
         )
+        connection.execute(
+            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_dispatch_id VARCHAR(36) REFERENCES users(id)")
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_users_manager_dispatch_id ON users (manager_dispatch_id)")
+        )
     from database import SessionLocal
     from pricing_seed import seed_pricing
 

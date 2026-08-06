@@ -3,12 +3,15 @@ import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
 type Company = { id: string; name: string };
-type Foreman = { id: string; name: string; email: string; phone?: string; companies?: Company[] };
+type Foreman = { id: string; name: string; email: string; phone?: string; manager_dispatch_id?: string; companies?: Company[] };
+type Dispatcher = { id: string; name: string; email: string; role: string; companies?: Company[] };
 
 export default function ForemenPage() {
   const { token, user } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [foremen, setForemen] = useState<Foreman[]>([]);
+  const [dispatchers, setDispatchers] = useState<Dispatcher[]>([]);
+  const [dispatcherId, setDispatcherId] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -27,7 +30,13 @@ export default function ForemenPage() {
     if (!companiesResponse.ok || !foremenResponse.ok) throw new Error("Could not load foremen setup");
     setCompanies(await companiesResponse.json());
     setForemen(await foremenResponse.json());
-  }, [token]);
+    if (user?.role === "admin") {
+      const usersResponse = await fetch(`${API_BASE}/api/users`, { headers: authHeaders(token) });
+      if (!usersResponse.ok) throw new Error("Could not load dispatch users");
+      const allUsers = await usersResponse.json();
+      setDispatchers((Array.isArray(allUsers) ? allUsers : []).filter((item: Dispatcher) => item.role === "dispatch"));
+    }
+  }, [token, user?.role]);
 
   useEffect(() => { void load().catch((reason) => setError(reason.message)); }, [load]);
 
@@ -36,17 +45,17 @@ export default function ForemenPage() {
   }
 
   async function createForeman() {
-    if (!name.trim() || !email.trim() || !password || companyIds.length === 0) return;
+    if (!name.trim() || !email.trim() || !password || companyIds.length === 0 || (user?.role === "admin" && !dispatcherId)) return;
     setBusy(true); setError(""); setMessage("");
     try {
       const response = await fetch(`${API_BASE}/api/users/foremen`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
-        body: JSON.stringify({ name: name.trim(), email: email.trim(), phone: phone.trim(), password, company_ids: companyIds }),
+        body: JSON.stringify({ name: name.trim(), email: email.trim(), phone: phone.trim(), password, company_ids: companyIds, dispatcher_id: dispatcherId }),
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(body?.detail || `Request failed (${response.status})`);
-      setName(""); setEmail(""); setPhone(""); setPassword(""); setCompanyIds([]);
+      setName(""); setEmail(""); setPhone(""); setPassword(""); setCompanyIds([]); setDispatcherId("");
       setMessage("Foreman created.");
       await load();
     } catch (reason) {
@@ -71,7 +80,28 @@ export default function ForemenPage() {
     } finally { setBusy(false); }
   }
 
+  async function saveDispatcher(foreman: Foreman, nextDispatcherId: string) {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await fetch(`${API_BASE}/api/users/foremen/${foreman.id}/manager`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ dispatcher_id: nextDispatcherId }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.detail || `Request failed (${response.status})`);
+      setMessage(`${foreman.name}'s dispatcher updated.`);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update dispatcher");
+    } finally { setBusy(false); }
+  }
+
   if (!user || !["admin", "dispatch"].includes(user.role)) return <main style={page}><p>Access denied.</p></main>;
+
+  const createCompanies = user.role === "admin"
+    ? (dispatchers.find((dispatcher) => dispatcher.id === dispatcherId)?.companies || [])
+    : companies;
 
   return <main className="user-setup-page" style={page}>
     <header style={{ marginBottom: 16 }}><h1 style={title}>Foremen</h1><p style={subtitle}>Create read-only foremen and control which companies they can work for.</p></header>
@@ -83,18 +113,21 @@ export default function ForemenPage() {
         <label style={label}>Email<input style={input} type="email" name="new-foreman-email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
         <label style={label}>Phone (optional)<input style={input} type="tel" name="new-foreman-phone" autoComplete="off" value={phone} onChange={(e) => setPhone(e.target.value)} /></label>
         <label style={label}>Temporary Password<input style={input} type="password" name="new-foreman-password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+        {user.role === "admin" ? <label style={label}>Dispatcher<select style={input} value={dispatcherId} onChange={(e) => { setDispatcherId(e.target.value); setCompanyIds([]); }}><option value="">Select dispatcher</option>{dispatchers.map((dispatcher) => <option key={dispatcher.id} value={dispatcher.id}>{dispatcher.name}</option>)}</select></label> : null}
       </div>
       <div style={{ marginTop: 12 }}><strong style={{ fontSize: 12, color: "#3e3e3c" }}>Companies</strong><div style={chips}>
-        {companies.map((company) => <button type="button" key={company.id} onClick={() => toggleCompany(company.id)} style={companyIds.includes(company.id) ? selectedChip : chip}>{company.name}</button>)}
+        {createCompanies.map((company) => <button type="button" key={company.id} onClick={() => toggleCompany(company.id)} style={companyIds.includes(company.id) ? selectedChip : chip}>{company.name}</button>)}
       </div></div>
-      <button type="button" disabled={busy || !name.trim() || !email.trim() || !password || companyIds.length === 0} onClick={() => void createForeman()} style={primary}>{busy ? "Saving…" : "Create Foreman"}</button>
+      <button type="button" disabled={busy || !name.trim() || !email.trim() || !password || companyIds.length === 0 || (user.role === "admin" && !dispatcherId)} onClick={() => void createForeman()} style={primary}>{busy ? "Saving…" : "Create Foreman"}</button>
     </section>
     <section style={{ display: "grid", gap: 10 }}>
       {foremen.map((foreman) => {
         const assigned = new Set((foreman.companies || []).map((company) => company.id));
+        const availableCompanies = user.role === "admin" ? (dispatchers.find((dispatcher) => dispatcher.id === foreman.manager_dispatch_id)?.companies || []) : companies;
         return <article key={foreman.id} style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}><div><h2 style={{ ...sectionTitle, marginBottom: 2 }}>{foreman.name}</h2><span style={{ color: "#706e6b", fontSize: 12 }}>{foreman.email}</span></div><span style={badge}>READ ONLY</span></div>
-          <div style={chips}>{companies.map((company) => {
+          {user.role === "admin" ? <label style={{ ...label, maxWidth: 360, marginTop: 12 }}>Dispatcher<select style={input} value={foreman.manager_dispatch_id || ""} disabled={busy} onChange={(event) => void saveDispatcher(foreman, event.target.value)}><option value="">Unassigned</option>{dispatchers.map((dispatcher) => <option key={dispatcher.id} value={dispatcher.id}>{dispatcher.name}</option>)}</select></label> : null}
+          <div style={chips}>{availableCompanies.map((company) => {
             const checked = assigned.has(company.id);
             return <button type="button" disabled={busy} key={company.id} style={checked ? selectedChip : chip} onClick={() => {
               const next = checked ? [...assigned].filter((id) => id !== company.id) : [...assigned, company.id];

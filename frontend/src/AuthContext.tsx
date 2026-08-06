@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { API_BASE } from "./apiConfig";
 
-interface User {
+export interface User {
   id: string;
   email: string;
   name: string;
@@ -14,6 +14,10 @@ interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<void>;
   updateUser: (user: User) => void;
+  impersonate: (userId: string) => Promise<void>;
+  stopImpersonating: () => void;
+  isImpersonating: boolean;
+  originalAdmin: User | null;
   logout: () => void;
   loading: boolean;
 }
@@ -37,6 +41,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return saved ? JSON.parse(saved) : null;
   });
   const [loading, setLoading] = useState(!!token);
+  const [originalAdmin, setOriginalAdmin] = useState<User | null>(() => {
+    const saved = sessionStorage.getItem("impersonation_admin_user");
+    return saved ? JSON.parse(saved) : null;
+  });
 
   useEffect(() => {
     if (!token) return;
@@ -78,8 +86,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
+    sessionStorage.removeItem("impersonation_admin_token");
+    sessionStorage.removeItem("impersonation_admin_user");
     setToken(null);
     setUser(null);
+    setOriginalAdmin(null);
   };
 
   const updateUser = (updatedUser: User) => {
@@ -87,8 +98,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(updatedUser);
   };
 
+  const impersonate = async (userId: string) => {
+    if (!token || !user || !["admin", "dispatch"].includes(user.role)) throw new Error("Impersonation access required");
+    const response = await fetch(`${API_BASE}/api/auth/impersonate/${userId}`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.detail || "Failed to impersonate user");
+
+    sessionStorage.setItem("impersonation_admin_token", token);
+    sessionStorage.setItem("impersonation_admin_user", JSON.stringify(user));
+    localStorage.setItem("token", data.token);
+    localStorage.setItem("user", JSON.stringify(data.user));
+    setOriginalAdmin(user);
+    setToken(data.token);
+    setUser(data.user);
+  };
+
+  const stopImpersonating = () => {
+    const adminToken = sessionStorage.getItem("impersonation_admin_token");
+    const savedAdmin = sessionStorage.getItem("impersonation_admin_user");
+    if (!adminToken || !savedAdmin) return;
+    const adminUser = JSON.parse(savedAdmin) as User;
+    localStorage.setItem("token", adminToken);
+    localStorage.setItem("user", JSON.stringify(adminUser));
+    sessionStorage.removeItem("impersonation_admin_token");
+    sessionStorage.removeItem("impersonation_admin_user");
+    setToken(adminToken);
+    setUser(adminUser);
+    setOriginalAdmin(null);
+  };
+
   return (
-    <AuthContext.Provider value={{ token, user, login, updateUser, logout, loading }}>
+    <AuthContext.Provider value={{ token, user, login, updateUser, impersonate, stopImpersonating, isImpersonating: Boolean(originalAdmin), originalAdmin, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );

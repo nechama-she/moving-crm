@@ -48,7 +48,7 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-def create_access_token(user_id: str, role: str) -> str:
+def create_access_token(user_id: str, role: str, *, impersonated_by: str | None = None) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
@@ -57,6 +57,8 @@ def create_access_token(user_id: str, role: str) -> str:
         "iat": now,
         "exp": now + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS),
     }
+    if impersonated_by:
+        payload["impersonated_by"] = impersonated_by
     return jwt.encode(payload, _secret_key(), algorithm=ALGORITHM)
 
 
@@ -103,4 +105,21 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     """FastAPI dependency — requires admin role."""
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+def require_impersonator(
+    creds: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    """Require a real admin/dispatch session, preventing nested impersonation."""
+    try:
+        payload = decode_access_token(creds.credentials)
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    if payload.get("impersonated_by"):
+        raise HTTPException(status_code=403, detail="Return to the original admin session first")
+    user = db.query(User).filter(User.id == payload.get("sub")).first()
+    if not user or user.role not in ("admin", "dispatch"):
+        raise HTTPException(status_code=403, detail="Impersonation access required")
     return user
