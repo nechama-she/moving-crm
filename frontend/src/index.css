@@ -475,21 +475,17 @@ input, select, textarea, button {
     gap: 10px !important;
   }
 
-  .lead-profile-header > div:nth-child(2) {
-    display: contents;
-  }
-
   .lead-profile-card {
     padding: 12px !important;
   }
 
   .lead-profile-meta {
-    display: contents !important;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 6px !important;
   }
 
   .lead-profile-name {
-    grid-column: 2;
-    grid-row: 1;
     min-height: 36px;
     display: flex;
     align-items: center;
@@ -504,9 +500,8 @@ input, select, textarea, button {
   }
 
   .lead-profile-selector {
-    grid-column: 1 / -1;
-    width: 100%;
-    margin-left: 0;
+    margin-left: -58px;
+    width: calc(100% + 58px);
   }
 
   .lead-profile-name + .lead-profile-selector {
@@ -556,6 +551,7 @@ input, select, textarea, button {
     font-size: 0 !important;
   }
 
+  .lead-profile-copy-button > span:first-child,
   .lead-profile-files-button > span:first-child {
     font-size: 18px;
     line-height: 1;
