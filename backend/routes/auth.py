@@ -65,7 +65,8 @@ def change_password(
     user.password_hash = hash_password(body.new_password)
     user.must_change_password = False
     db.commit()
-    return {"message": "Password changed successfully"}
+    db.refresh(user)
+    return {"message": "Password changed successfully", "user": user.to_dict()}
 
 
 @router.get("/me")
