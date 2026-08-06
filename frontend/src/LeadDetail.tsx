@@ -2218,26 +2218,25 @@ export default function LeadDetail() {
                     <span aria-hidden="true">📎</span>
                     <span className="lead-profile-action-label"> Files</span>
                   </button>
-                  <button
+                  {canRefreshSmartMoving ? <button
                     type="button"
                     className="lead-profile-action-button lead-profile-refresh-button"
                     onClick={() => void refreshFromSmartmoving()}
-                    disabled={!canRefreshSmartMoving || refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
+                    disabled={refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
                     title="Refresh from SmartMoving"
                     style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", fontSize: 12, color: "#334155", cursor: refreshingSmartmoving ? "default" : "pointer" }}
                   >
                     {refreshingSmartmoving ? "Refreshing..." : "Refresh SmartMoving"}
-                  </button>
-                  <button
+                  </button> : null}
+                  {canEditLead ? <button
                     type="button"
                     className="lead-profile-action-button lead-profile-edit-button"
                     onClick={startEditUser}
-                    disabled={!canEditLead}
                     title="Edit"
-                    style={{ padding: "5px 10px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: canEditLead ? "pointer" : "default", opacity: canEditLead ? 1 : 0.6 }}
+                    style={{ padding: "5px 10px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: "pointer" }}
                   >
                     ✎ Edit
-                  </button>
+                  </button> : null}
                 </div>
               )}
             </div>
