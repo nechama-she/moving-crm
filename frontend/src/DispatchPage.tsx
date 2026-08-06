@@ -991,6 +991,32 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     }
   }
 
+  async function updateDispatchUser(userId: string, values: { name: string; email: string; phone: string }) {
+    setError(""); setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/users/dispatchers/${userId}`, { method: "PUT", headers: { "Content-Type": "application/json", ...authHeaders(token) }, body: JSON.stringify(values) });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.detail || "Failed to update dispatch user");
+      setInfo("Dispatch user updated.");
+      await loadData();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Failed to update dispatch user");
+      throw reason;
+    }
+  }
+
+  async function deleteDispatchUser(dispatchUser: AppUser) {
+    if (!window.confirm(`Delete ${dispatchUser.name}? This cannot be undone.`)) return;
+    setError(""); setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/users/dispatchers/${dispatchUser.id}`, { method: "DELETE", headers: authHeaders(token) });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.detail || "Failed to delete dispatch user");
+      setInfo("Dispatch user deleted.");
+      await loadData();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Failed to delete dispatch user"); }
+  }
+
   if (showCalendar) {
     return (
       <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
@@ -1394,17 +1420,18 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
               <th style={th}>Phone</th>
               <th style={th}>Companies</th>
               <th style={th}>Assign Company</th>
+              <th style={th}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={5}>Loading...</td>
+                <td style={td} colSpan={6}>Loading...</td>
               </tr>
             ) : null}
             {!loading && dispatchUsers.length === 0 ? (
               <tr>
-                <td style={td} colSpan={5}>No dispatch users yet.</td>
+                <td style={td} colSpan={6}>No dispatch users yet.</td>
               </tr>
             ) : null}
 
@@ -1415,6 +1442,8 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 companies={companies}
                 onAssign={assignCompany}
                 onUnassign={unassignCompany}
+                onUpdate={updateDispatchUser}
+                onDelete={deleteDispatchUser}
               />
             ))}
           </tbody>
@@ -2108,23 +2137,32 @@ function DispatchRow({
   companies,
   onAssign,
   onUnassign,
+  onUpdate,
+  onDelete,
 }: {
   dispatchUser: AppUser;
   companies: Company[];
   onAssign: (userId: string, companyId: string) => Promise<void>;
   onUnassign: (userId: string, companyId: string) => Promise<void>;
+  onUpdate: (userId: string, values: { name: string; email: string; phone: string }) => Promise<void>;
+  onDelete: (user: AppUser) => Promise<void>;
 }) {
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [showCompanyManager, setShowCompanyManager] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(dispatchUser.name);
+  const [editEmail, setEditEmail] = useState(dispatchUser.email);
+  const [editPhone, setEditPhone] = useState(dispatchUser.phone || "");
+  const [savingEdit, setSavingEdit] = useState(false);
   const assigned = dispatchUser.companies || [];
   const assignedIds = new Set(assigned.map((c) => c.id));
   const availableCompanies = companies.filter((c) => !assignedIds.has(c.id));
 
   return (
     <tr className="user-setup-record" style={{ borderTop: "1px solid #e5e7eb" }}>
-      <td data-label="Name" style={td}>{dispatchUser.name}</td>
-      <td data-label="Email" style={td}>{dispatchUser.email}</td>
-      <td data-label="Phone" style={td}>{dispatchUser.phone || ""}</td>
+      <td data-label="Name" style={td}>{editing ? <input style={inputStyle} value={editName} onChange={(e) => setEditName(e.target.value)} /> : dispatchUser.name}</td>
+      <td data-label="Email" style={td}>{editing ? <input style={inputStyle} type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} /> : dispatchUser.email}</td>
+      <td data-label="Phone" style={td}>{editing ? <input style={inputStyle} value={editPhone} onChange={(e) => setEditPhone(e.target.value)} /> : (dispatchUser.phone || "")}</td>
       <td data-label="Companies" style={td}>
         <div className="user-access-summary">
           <div>
@@ -2169,6 +2207,10 @@ function DispatchRow({
           </button>
         </div> : <span style={{ color: "#706e6b", fontSize: 12 }}>Use Manage access</span>}
       </td>
+      <td data-label="Actions" style={td}><div className="user-row-actions">
+        {editing ? <><button type="button" disabled={savingEdit} onClick={() => { setSavingEdit(true); void onUpdate(dispatchUser.id, { name: editName, email: editEmail, phone: editPhone }).then(() => setEditing(false)).catch(() => undefined).finally(() => setSavingEdit(false)); }}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></> : <button type="button" onClick={() => setEditing(true)}>Edit</button>}
+        <button type="button" className="danger" onClick={() => void onDelete(dispatchUser)}>Delete</button>
+      </div></td>
     </tr>
   );
 }
