@@ -3410,7 +3410,19 @@ def update_lead(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _ensure_not_dispatch_write(user)
+    return _apply_lead_update(lead_id, body, user, db)
+
+
+def _apply_lead_update(
+    lead_id: str,
+    body: LeadUpdate,
+    user: User,
+    db: Session,
+    *,
+    allow_dispatch_smartmoving_refresh: bool = False,
+):
+    if not (allow_dispatch_smartmoving_refresh and user.role == "dispatch"):
+        _ensure_not_dispatch_write(user)
     company_ids = _get_user_company_ids(user, db)
     lead = db.query(Lead).filter(Lead.id == lead_id, Lead.company_id.in_(company_ids)).first()
     if not lead:
@@ -3906,6 +3918,11 @@ def _refresh_lead_from_smartmoving(
         error_text = str(opportunity_result.get("error") or "")
         lowered = error_text.lower()
         if "http 400" in lowered and "opportunity was not found" in lowered:
+            if user.role == "dispatch":
+                raise HTTPException(
+                    status_code=502,
+                    detail="SmartMoving opportunity was not found; the CRM lead was not changed",
+                )
             resolved_lead_id = lead.id
             _hard_delete_lead(lead, db)
             return {
@@ -3981,7 +3998,13 @@ def _refresh_lead_from_smartmoving(
             job["booked_move_date"] = booked_iso
 
     body = LeadUpdate.model_validate(payload)
-    updated = update_lead(lead.id, body, user, db)
+    updated = _apply_lead_update(
+        lead.id,
+        body,
+        user,
+        db,
+        allow_dispatch_smartmoving_refresh=True,
+    )
     sync_result = sync_smartmoving_files(lead, user, db, opportunity)
     request.state.audit_request_payload = {
         "smartmoving_id": smartmoving_id,

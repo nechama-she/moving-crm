@@ -298,6 +298,10 @@ export default function LeadDetail() {
   }, [leadId, token]);
 
   useEffect(() => {
+    if (!user || !["admin", "sales_rep"].includes(user.role)) {
+      setCommissionPercentByUserId(new Map());
+      return;
+    }
     let cancelled = false;
     fetch(`${API_BASE}/api/users/sales-rep-commission-settings`, { headers: authHeaders(token) })
       .then((res) => {
@@ -329,7 +333,7 @@ export default function LeadDetail() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, user?.role]);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) })
@@ -1027,7 +1031,10 @@ export default function LeadDetail() {
     || "",
   );
   const hasRepCommission = assignedToRole === "sales_rep";
-  const canManageRepPayments = hasRepCommission && (user?.role === "admin" || user?.role === "sales_rep");
+  const isAssignedSalesRep = user?.role === "sales_rep"
+    && String(user.id || "") === String(lead.assigned_to || "");
+  const canViewRepCommission = hasRepCommission && (user?.role === "admin" || isAssignedSalesRep);
+  const canManageRepPayments = hasRepCommission && user?.role === "admin";
 
   function formatMoney(value: number): string {
     return `$${value.toFixed(2)}`;
@@ -2364,7 +2371,7 @@ export default function LeadDetail() {
                       <span>{payment.takenByUser || `Payment ${index + 1}`}</span>
                       <strong>{formatMoney(payment.amount)}</strong>
                     </div>
-                    {hasRepCommission ? <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 11 }}>
+                    {canViewRepCommission ? <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 11 }}>
                       <span style={{ color: "#475569" }}>
                         Rep paid ({repPaidCommissionRatePercent().toFixed(6)}%
                         {payment.thirdPartyCommissionAmount > 0 ? ` of ${formatMoney(Math.max(0, payment.amount - payment.thirdPartyCommissionAmount))} after third-party` : ""}):{" "}
@@ -2388,7 +2395,7 @@ export default function LeadDetail() {
                         </span>
                       )}
                     </div> : null}
-                    {hasRepCommission && payment.repPaid && payment.repPaidAt ? (
+                    {canViewRepCommission && payment.repPaid && payment.repPaidAt ? (
                       <div style={{ fontSize: 10, color: "#64748b" }}>Paid at: {new Date(payment.repPaidAt).toLocaleString()}</div>
                     ) : null}
                     {user?.role === "admin" ? (
