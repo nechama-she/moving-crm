@@ -112,14 +112,14 @@ def require_impersonator(
     creds: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    """Require a real admin/dispatch session, preventing nested impersonation."""
+    """Allow admin/dispatch impersonation, including admin -> dispatch -> foreman."""
     try:
         payload = decode_access_token(creds.credentials)
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
-    if payload.get("impersonated_by"):
-        raise HTTPException(status_code=403, detail="Return to the original admin session first")
     user = db.query(User).filter(User.id == payload.get("sub")).first()
     if not user or user.role not in ("admin", "dispatch"):
         raise HTTPException(status_code=403, detail="Impersonation access required")
+    if payload.get("impersonated_by") and user.role != "dispatch":
+        raise HTTPException(status_code=403, detail="Return to the original account first")
     return user

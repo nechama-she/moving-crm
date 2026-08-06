@@ -107,11 +107,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await response.json().catch(() => null);
     if (!response.ok) throw new Error(data?.detail || "Failed to impersonate user");
 
-    sessionStorage.setItem("impersonation_admin_token", token);
-    sessionStorage.setItem("impersonation_admin_user", JSON.stringify(user));
+    if (!originalAdmin) {
+      sessionStorage.setItem("impersonation_admin_token", token);
+      sessionStorage.setItem("impersonation_admin_user", JSON.stringify(user));
+      setOriginalAdmin(user);
+    }
     localStorage.setItem("token", data.token);
     localStorage.setItem("user", JSON.stringify(data.user));
-    setOriginalAdmin(user);
     setToken(data.token);
     setUser(data.user);
   };
