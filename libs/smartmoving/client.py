@@ -193,6 +193,32 @@ def get_opportunity(opportunity_id: str) -> dict:
         return {"error": str(e)}
 
 
+def get_opportunity_job(opportunity_id: str, job_id: str) -> dict:
+    """Fetch the detailed SmartMoving payload for one opportunity job."""
+    url = f"{SMARTMOVING_BASE_URL}/premium/opportunities/{opportunity_id}/jobs/{job_id}"
+    params = {
+        "IncludeEstimatedCharges": "true",
+        "IncludeActualCharges": "true",
+        "IncludeEstimatedMaterials": "true",
+        "IncludeActualMaterials": "true",
+        "IncludeStops": "true",
+        "IncludeDispatchInfo": "true",
+        "IncludeCharges": "true",
+        "IncludeNotes": "true",
+    }
+    try:
+        resp = _request(httpx.get, url, headers=_headers(), params=params, timeout=15)
+        resp.raise_for_status()
+        return {"data": resp.json()}
+    except httpx.HTTPError as exc:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None) if response is not None else None
+        body = getattr(response, "text", str(exc)) if response is not None else str(exc)
+        return {"error": f"HTTP {status}: {body[:300]}"}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 def create_provider_lead(provider_key: str, branch_id: str, payload: dict) -> dict:
     """Create a lead through SmartMoving's provider API."""
     provider = (provider_key or "").strip()

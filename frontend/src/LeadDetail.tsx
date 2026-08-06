@@ -52,7 +52,9 @@ type LeadJobItem = {
   foreman_id: string;
   foreman_name: string;
   notes: string;
+  customer_notes: string;
   foreman_notes: string;
+  estimated_materials: LeadJobMaterialItem[];
   pickup_zip: string;
   delivery_zip: string;
   stops: string[];
@@ -71,6 +73,14 @@ type LeadJobChargeItem = {
   subtotal: number;
   discount_amount: number;
   total_cost: number;
+};
+
+type LeadJobMaterialItem = {
+  id: string;
+  name: string;
+  description: string;
+  quantity: number;
+  rate: number;
 };
 
 type ThirdPartyPayout = {
@@ -163,6 +173,7 @@ type LeadJobDraft = {
   booked_move_date: string;
   price: string;
   notes: string;
+  customer_notes: string;
   foreman_notes: string;
 };
 
@@ -267,6 +278,7 @@ export default function LeadDetail() {
     booked_move_date: "",
     price: "",
     notes: "",
+    customer_notes: "",
     foreman_notes: "",
   });
   const [addingJob, setAddingJob] = useState(false);
@@ -274,6 +286,8 @@ export default function LeadDetail() {
   const [savingNoteJobId, setSavingNoteJobId] = useState("");
   const [deletingJobId, setDeletingJobId] = useState("");
   const [activeJobTabId, setActiveJobTabId] = useState("");
+  const [noteTabByJob, setNoteTabByJob] = useState<Record<string, "customer_notes" | "notes" | "foreman_notes">>({});
+  const [expandedMaterials, setExpandedMaterials] = useState<Record<string, boolean>>({});
   const consumedRouteJobRef = useRef("");
   const routeJobId = useMemo(() => {
     const params = new URLSearchParams(location.search);
@@ -428,6 +442,7 @@ export default function LeadDetail() {
       booked_move_date: item.booked_move_date || "",
       price: item.price == null ? "" : String(item.price),
       notes: item.notes || "",
+      customer_notes: item.customer_notes || "",
       foreman_notes: item.foreman_notes || "",
     };
   }
@@ -459,7 +474,20 @@ export default function LeadDetail() {
         foreman_id: String(item.foreman_id || ""),
         foreman_name: String(item.foreman_name || ""),
         notes: String(item.notes || ""),
+        customer_notes: String(item.customer_notes || ""),
         foreman_notes: String(item.foreman_notes || ""),
+        estimated_materials: Array.isArray(item.estimated_materials)
+          ? item.estimated_materials.map((material) => {
+              const row = material as Record<string, unknown>;
+              return {
+                id: String(row.id || ""),
+                name: String(row.name || ""),
+                description: String(row.description || ""),
+                quantity: Number(row.materialsQuantity || 0),
+                rate: Number(row.materialsRate || 0),
+              };
+            })
+          : [],
         pickup_zip: String(item.pickup_zip || ""),
         delivery_zip: String(item.delivery_zip || ""),
         stops: parseStops(item.stops),
@@ -584,6 +612,7 @@ export default function LeadDetail() {
           booked_move_date: draft.booked_move_date,
           price: draft.price.trim() === "" ? null : Number(draft.price),
           notes: draft.notes,
+          customer_notes: draft.customer_notes,
           foreman_notes: draft.foreman_notes,
         }),
       });
@@ -616,6 +645,7 @@ export default function LeadDetail() {
           booked_move_date: newJobDraft.booked_move_date,
           price: newJobDraft.price.trim() === "" ? null : Number(newJobDraft.price),
           notes: newJobDraft.notes,
+          customer_notes: newJobDraft.customer_notes,
           foreman_notes: newJobDraft.foreman_notes,
         }),
       });
@@ -629,6 +659,7 @@ export default function LeadDetail() {
         booked_move_date: "",
         price: "",
         notes: "",
+        customer_notes: "",
         foreman_notes: "",
       });
       await loadLeadJobs();
@@ -1177,7 +1208,7 @@ export default function LeadDetail() {
     if (attachmentId) void moveAttachmentToJob(attachmentId, targetJobId);
   }
 
-  async function saveJobNotes(jobId: string, field: "notes" | "foreman_notes") {
+  async function saveJobNotes(jobId: string, field: "customer_notes" | "notes" | "foreman_notes") {
     const draft = jobDrafts[jobId];
     if (!draft) return;
     setSavingNoteJobId(jobId);
@@ -2673,7 +2704,38 @@ export default function LeadDetail() {
                       </div>
                     </div>
 
-                    <section className="lead-notes-card" aria-label={`Job ${job.job_order} notes`}>
+                    {(() => {
+                      const activeNoteTab = noteTabByJob[job.id] || "customer_notes";
+                      const noteTabs = [
+                        { key: "customer_notes" as const, label: "Customer Notes" },
+                        { key: "notes" as const, label: "Internal Notes" },
+                        { key: "foreman_notes" as const, label: "Foreman Notes" },
+                      ];
+                      const readOnly = isForemanUser && activeNoteTab !== "foreman_notes";
+                      return (
+                        <section className="lead-notes-card job-notes-tabs" aria-label={`Job ${job.job_order} notes`}>
+                          <div className="job-notes-tabs__bar" role="tablist">
+                            {noteTabs.map((tab) => (
+                              <button key={tab.key} type="button" role="tab" aria-selected={activeNoteTab === tab.key} className={activeNoteTab === tab.key ? "active" : ""} onClick={() => setNoteTabByJob((prev) => ({ ...prev, [job.id]: tab.key }))}>
+                                {tab.label}
+                              </button>
+                            ))}
+                          </div>
+                          {readOnly ? (
+                            <div className={draft[activeNoteTab].trim() ? "lead-notes-card__body" : "lead-notes-card__body lead-notes-card__body--empty"}>
+                              {draft[activeNoteTab].trim() || "No notes have been added."}
+                            </div>
+                          ) : (
+                            <>
+                              <textarea className="lead-notes-card__input" value={draft[activeNoteTab]} onChange={(event) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, [activeNoteTab]: event.target.value } }))} placeholder="Add notes..." rows={3} />
+                              <div className="lead-notes-card__actions"><button type="button" onClick={() => void saveJobNotes(job.id, activeNoteTab)} disabled={savingNoteJobId === job.id}>Save</button></div>
+                            </>
+                          )}
+                        </section>
+                      );
+                    })()}
+
+                    <section className="lead-notes-card job-notes-legacy" aria-label={`Job ${job.job_order} notes`}>
                       <div className="lead-notes-card__header">
                         <div>
                           <span className="lead-notes-card__icon" aria-hidden="true">✎</span>
@@ -2701,7 +2763,7 @@ export default function LeadDetail() {
                       )}
                     </section>
 
-                    <section className="lead-notes-card" aria-label={`Job ${job.job_order} foreman notes`}>
+                    <section className="lead-notes-card job-notes-legacy" aria-label={`Job ${job.job_order} foreman notes`}>
                       <div className="lead-notes-card__header lead-notes-card__header--foreman">
                         <div>
                           <span className="lead-notes-card__icon lead-notes-card__icon--foreman" aria-hidden="true">✎</span>
@@ -2846,19 +2908,35 @@ export default function LeadDetail() {
                         {job.charges.length === 0 ? <div style={{ color: "#706e6b", fontSize: 12 }}>No charges for this job yet.</div> : null}
                         {job.charges.length > 0 ? (
                           <div style={{ display: "grid", gap: 6 }}>
-                            {job.charges.map((charge) => (
-                              <div key={charge.id} style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: 8, display: "grid", gap: 4 }}>
-                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                                  <strong style={{ fontSize: 12, color: "#0f172a" }}>{charge.name}</strong>
-                                  <span style={{ fontSize: 12, color: "#0f172a", fontWeight: 700 }}>${charge.total_cost.toFixed(2)}</span>
-                                </div>
+                            {job.charges.map((charge) => {
+                              const isMaterials = charge.name.trim().toLowerCase() === "materials";
+                              const isExpanded = Boolean(expandedMaterials[job.id]);
+                              return (
+                              <div key={charge.id} className={isMaterials ? "job-materials-charge" : ""} style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: 8, display: "grid", gap: 4 }}>
+                                <button type="button" disabled={!isMaterials} className="job-charge-heading" onClick={() => isMaterials && setExpandedMaterials((prev) => ({ ...prev, [job.id]: !prev[job.id] }))} aria-expanded={isMaterials ? isExpanded : undefined}>
+                                  <strong>{charge.name}{isMaterials ? <span aria-hidden="true"> {isExpanded ? "▴" : "▾"}</span> : null}</strong>
+                                  <span>${charge.total_cost.toFixed(2)}</span>
+                                </button>
                                 {charge.description ? <div style={{ fontSize: 11, color: "#475569" }}>{charge.description}</div> : null}
                                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11, color: "#64748b" }}>
                                   <span>{`Subtotal: $${charge.subtotal.toFixed(2)}`}</span>
                                   <span>{`Discount: $${charge.discount_amount.toFixed(2)}`}</span>
                                 </div>
+                                {isMaterials && isExpanded ? (
+                                  <div className="job-materials-list">
+                                    {job.estimated_materials.length ? job.estimated_materials.map((material) => (
+                                      <div key={material.id || material.name} className="job-material-row">
+                                        <div><strong>{material.name}</strong>{material.description ? <small>{material.description}</small> : null}</div>
+                                        <span>{material.quantity}</span>
+                                        <span>${material.rate.toFixed(2)}</span>
+                                        <strong>${(material.quantity * material.rate).toFixed(2)}</strong>
+                                      </div>
+                                    )) : <div className="job-materials-empty">No estimated materials for this job.</div>}
+                                  </div>
+                                ) : null}
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         ) : null}
                       </div>

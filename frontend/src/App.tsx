@@ -20,6 +20,7 @@ const PendingDuplicationsPage = lazy(() => import("./PendingDuplicationsPage"));
 const PricingPage = lazy(() => import("./PricingPage"));
 const SalesPerformancePage = lazy(() => import("./SalesPerformancePage"));
 const ForemenPage = lazy(() => import("./ForemenPage"));
+const ImpersonateUsersPage = lazy(() => import("./ImpersonateUsersPage"));
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -35,7 +36,7 @@ const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties 
 });
 
 function ProtectedRoutes() {
-  const { token, loading, logout, user } = useAuth();
+  const { token, loading, logout, user, isImpersonating, previousUser, stopImpersonating } = useAuth();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   useEffect(() => setMobileMenuOpen(false), [location.pathname]);
@@ -46,12 +47,13 @@ function ProtectedRoutes() {
     location.pathname === "/sales-calendar" ||
     location.pathname === "/sales-performance" ||
     location.pathname === "/foremen" ||
+    location.pathname === "/settings/impersonate" ||
     location.pathname === "/settings" ||
     location.pathname === "/change-password" ||
     /^\/leads\/[^/]+$/.test(location.pathname);
   if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
   if (!token) return <Navigate to="/login" state={{ from: location.pathname }} replace />;
-  if (user?.must_change_password && location.pathname !== "/change-password") {
+  if (user?.must_change_password && !isImpersonating && location.pathname !== "/change-password") {
     return <Navigate to="/change-password" replace />;
   }
   const isForemanAllowedPath =
@@ -67,6 +69,7 @@ function ProtectedRoutes() {
   }
   return (
     <div className="crm-shell" style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+      {isImpersonating ? <div className="impersonation-banner"><span>Viewing CRM as <strong>{user?.name}</strong> ({user?.role}).</span><button type="button" onClick={() => { stopImpersonating(); window.location.assign("/settings/impersonate"); }}>Return to {previousUser?.name || "Previous User"}</button></div> : null}
       <nav className="crm-nav" style={{
         background: "#032d60",
         display: "flex",
@@ -119,7 +122,7 @@ function ProtectedRoutes() {
         </div>
         <div className="crm-user-actions" style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {user && <span style={{ color: "#9dc9e8", fontSize: 13 }}>{user.name}</span>}
-          {!isDispatchUser ? (
+          {!isDispatchUser && !isImpersonating ? (
             <NavLink to="/change-password" style={({ isActive }) => ({ ...navLinkStyle({ isActive }), padding: "0 8px", fontSize: 13 })}>
               Change Password
             </NavLink>
@@ -154,7 +157,7 @@ function ProtectedRoutes() {
                 <>
                   <NavLink to="/dispatch">My Jobs</NavLink>
                   <NavLink to="/settings">Settings</NavLink>
-                  <NavLink to="/change-password">Change Password</NavLink>
+                  {!isImpersonating ? <NavLink to="/change-password">Change Password</NavLink> : null}
                 </>
               ) : isDispatchUser ? (
                 <>
@@ -176,7 +179,7 @@ function ProtectedRoutes() {
                       <NavLink to="/dispatch">Dispatch Calendar</NavLink>
                     </>
                   ) : null}
-                  <NavLink to="/change-password">Change Password</NavLink>
+                  {!isImpersonating ? <NavLink to="/change-password">Change Password</NavLink> : null}
                 </>
               )}
             </div>
@@ -199,6 +202,7 @@ function ProtectedRoutes() {
           <Route path="/settings/companies" element={<CompaniesPage />} />
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
           <Route path="/settings/pending-duplications" element={<PendingDuplicationsPage />} />
+          <Route path="/settings/impersonate" element={<ImpersonateUsersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/pricing" element={<PricingPage />} />
           <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />

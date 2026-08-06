@@ -35,6 +35,18 @@ export default function SettingsPage() {
           </div>
         </section> : null}
 
+        {isDispatch ? <section style={card}>
+          <h2 style={sectionHeader}>View as Foreman</h2>
+          <p style={desc}>Open the CRM as a foreman assigned to one of your companies.</p>
+          <div style={actionsRow}><Link to="/settings/impersonate" style={primaryLink}>Choose a Foreman</Link></div>
+        </section> : null}
+
+        {isAdmin ? <section style={card}>
+          <h2 style={sectionHeader}>Impersonate User</h2>
+          <p style={desc}>Open the CRM as another user to verify their access without signing out.</p>
+          <div style={actionsRow}><Link to="/settings/impersonate" style={primaryLink}>Choose a User</Link></div>
+        </section> : null}
+
         {isAdmin ? <section style={card}>
           <h2 style={sectionHeader}>SMS Templates</h2>
           <p style={desc}>Edit the welcome, rep-assignment, and day 2/3 followup SMS bodies per company.</p>

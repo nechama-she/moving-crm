@@ -71,6 +71,7 @@ class User(Base):
     aircall_number_id = Column(String(50))
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False, default="sales_rep")
+    manager_dispatch_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     must_change_password = Column(Boolean, nullable=False, default=False)
     # roles: admin, sales_rep, dispatch, foreman
     created_at = Column(DateTime(timezone=True), default=_now)
@@ -86,6 +87,7 @@ class User(Base):
             "smartmoving_rep_id": self.smartmoving_rep_id or "",
             "aircall_number_id": self.aircall_number_id or "",
             "role": self.role,
+            "manager_dispatch_id": self.manager_dispatch_id or "",
             "must_change_password": bool(self.must_change_password),
             "companies": [uc.company.to_dict() for uc in self.companies],
             "created_at": self.created_at.isoformat() if self.created_at else "",
@@ -377,7 +379,9 @@ class LeadJob(Base):
     smartmoving_job_id = Column(String(100), index=True)
     foreman_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     notes = Column(Text)
+    customer_notes = Column(Text)
     foreman_notes = Column(Text)
+    estimated_materials = Column(Text)
     price = Column(Numeric(12, 2))
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
@@ -391,6 +395,13 @@ class LeadJob(Base):
         UniqueConstraint("lead_id", "job_order", name="uq_lead_jobs_lead_order"),
     )
 
+    def _estimated_materials_data(self):
+        try:
+            parsed = json.loads(self.estimated_materials or "[]")
+            return parsed if isinstance(parsed, list) else []
+        except (TypeError, ValueError):
+            return []
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -399,7 +410,9 @@ class LeadJob(Base):
             "foreman_id": self.foreman_id or "",
             "foreman_name": self.foreman.name if self.foreman else "",
             "notes": self.notes or "",
+            "customer_notes": self.customer_notes or "",
             "foreman_notes": self.foreman_notes or "",
+            "estimated_materials": self._estimated_materials_data(),
             "company_id": self.company_id,
             "company_name": self.company.name if self.company else "",
             "job_order": self.job_order,
