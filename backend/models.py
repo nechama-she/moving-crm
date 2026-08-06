@@ -377,7 +377,9 @@ class LeadJob(Base):
     smartmoving_job_id = Column(String(100), index=True)
     foreman_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     notes = Column(Text)
+    customer_notes = Column(Text)
     foreman_notes = Column(Text)
+    estimated_materials = Column(Text)
     price = Column(Numeric(12, 2))
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
@@ -391,6 +393,13 @@ class LeadJob(Base):
         UniqueConstraint("lead_id", "job_order", name="uq_lead_jobs_lead_order"),
     )
 
+    def _estimated_materials_data(self):
+        try:
+            parsed = json.loads(self.estimated_materials or "[]")
+            return parsed if isinstance(parsed, list) else []
+        except (TypeError, ValueError):
+            return []
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -399,7 +408,9 @@ class LeadJob(Base):
             "foreman_id": self.foreman_id or "",
             "foreman_name": self.foreman.name if self.foreman else "",
             "notes": self.notes or "",
+            "customer_notes": self.customer_notes or "",
             "foreman_notes": self.foreman_notes or "",
+            "estimated_materials": self._estimated_materials_data(),
             "company_id": self.company_id,
             "company_name": self.company.name if self.company else "",
             "job_order": self.job_order,

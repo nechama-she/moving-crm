@@ -33,6 +33,7 @@ from libs.smartmoving.client import (
     download_opportunity_document,
     download_opportunity_file,
     get_opportunity,
+    get_opportunity_job,
     get_opportunity_audit_activity,
     get_opportunity_documents,
     finish_request_capture,
@@ -48,6 +49,7 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 
 # Statuses that dispatch can see (booked and beyond)
 DISPATCH_STATUSES = {"booked", "scheduled", "completed"}
+SMARTMOVING_JOB_DETAIL_STATUSES = {"booked", "confirmed", "scheduled", "schedule"}
 BOOKED_STATUS_CHANGED_RE = re.compile(r"\bstatus\s+changed\s+to\s+booked\b", re.IGNORECASE)
 
 # Terminal statuses that should never receive automated messages.
@@ -2034,6 +2036,7 @@ class LeadJobCreate(BaseModel):
     booked_move_date: str = ""
     price: float | None = None
     notes: str = ""
+    customer_notes: str = ""
     foreman_notes: str = ""
     logs: list[ExternalLeadUpdateLog] | None = None
 
@@ -2053,6 +2056,7 @@ class LeadJobUpdate(BaseModel):
     price: float | None = None
     foreman_id: str | None = None
     notes: str | None = None
+    customer_notes: str | None = None
     foreman_notes: str | None = None
     logs: list[ExternalLeadUpdateLog] | None = None
 
@@ -2226,6 +2230,7 @@ def create_lead_job(
         move_date=move_date,
         booked_move_date=booked_date,
         notes=(body.notes or "").strip() or None,
+        customer_notes=(body.customer_notes or "").strip() or None,
         foreman_notes=(body.foreman_notes or "").strip() or None,
         price=price_value,
     )
@@ -2290,7 +2295,7 @@ def update_lead_job(
     payload = body.model_dump(exclude_unset=True, by_alias=False)
     if user.role == "foreman" and set(payload) != {"foreman_notes"}:
         raise HTTPException(status_code=403, detail="Foreman users can only update foreman notes")
-    if user.role == "dispatch" and (not payload or not set(payload).issubset({"foreman_id", "notes", "foreman_notes"})):
+    if user.role == "dispatch" and (not payload or not set(payload).issubset({"foreman_id", "notes", "customer_notes", "foreman_notes"})):
         raise HTTPException(status_code=403, detail="Dispatch users can only assign a foreman or update job notes")
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
@@ -2339,6 +2344,8 @@ def update_lead_job(
 
     if "notes" in payload:
         row.notes = (payload.get("notes") or "").strip() or None
+    if "customer_notes" in payload:
+        row.customer_notes = (payload.get("customer_notes") or "").strip() or None
     if "foreman_notes" in payload:
         row.foreman_notes = (payload.get("foreman_notes") or "").strip() or None
 
@@ -3362,6 +3369,7 @@ class LeadUpdateJob(BaseModel):
     smartmoving_job_id: str | None = None
     foreman_id: str | None = None
     notes: str | None = None
+    customer_notes: str | None = None
     foreman_notes: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
@@ -3411,6 +3419,41 @@ def update_lead(
     db: Session = Depends(get_db),
 ):
     return _apply_lead_update(lead_id, body, user, db)
+
+
+def _sync_smartmoving_job_details(lead: Lead, db: Session) -> None:
+    """Best-effort sync of per-job notes and estimated materials."""
+    opportunity_id = _clean_optional_text(lead.smartmoving_id)
+    if not opportunity_id or (lead.status or "").strip().lower() not in SMARTMOVING_JOB_DETAIL_STATUSES:
+        return
+
+    jobs = db.query(LeadJob).filter(LeadJob.lead_id == lead.id).all()
+    changed = False
+    for job in jobs:
+        job_id = _clean_optional_text(job.smartmoving_job_id)
+        if not job_id:
+            continue
+        result = get_opportunity_job(opportunity_id, job_id)
+        detail = result.get("data")
+        if result.get("error") or not isinstance(detail, dict):
+            logger.warning(
+                "Non-fatal SmartMoving job detail sync failure: lead_id=%s job_id=%s error=%s",
+                lead.id,
+                job_id,
+                result.get("error") or "invalid response",
+            )
+            continue
+
+        notes = detail.get("notes") if isinstance(detail.get("notes"), dict) else {}
+        job.notes = str(notes.get("internalNotes") or "").strip() or None
+        job.customer_notes = str(notes.get("customerNotes") or "").strip() or None
+        job.foreman_notes = str(notes.get("crewNotes") or "").strip() or None
+        materials = detail.get("estimatedMaterials")
+        job.estimated_materials = json.dumps(materials if isinstance(materials, list) else [])
+        changed = True
+
+    if changed:
+        db.commit()
 
 
 def _apply_lead_update(
@@ -3675,6 +3718,8 @@ def _apply_lead_update(
 
             if "notes" in job_payload:
                 target_job.notes = (job_payload.get("notes") or "").strip() or None
+            if "customer_notes" in job_payload:
+                target_job.customer_notes = (job_payload.get("customer_notes") or "").strip() or None
             if "foreman_notes" in job_payload:
                 target_job.foreman_notes = (job_payload.get("foreman_notes") or "").strip() or None
 
@@ -3846,6 +3891,7 @@ def _apply_lead_update(
             raise HTTPException(status_code=409, detail="Conflicting sortOrder values for this lead")
         raise HTTPException(status_code=500, detail="Failed to update lead")
     db.refresh(lead)
+    _sync_smartmoving_job_details(lead, db)
 
     # If assignment changed to a new rep, send the rep_assignment SMS.
     will_send_rep_assignment_sms = (

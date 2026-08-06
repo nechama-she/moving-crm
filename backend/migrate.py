@@ -34,6 +34,12 @@ def migrate() -> None:
         connection.execute(
             text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS foreman_notes TEXT")
         )
+        connection.execute(
+            text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS customer_notes TEXT")
+        )
+        connection.execute(
+            text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS estimated_materials TEXT")
+        )
     from database import SessionLocal
     from pricing_seed import seed_pricing
 
