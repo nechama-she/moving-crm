@@ -2672,14 +2672,13 @@ def _sync_opportunity_files_to_s3(
     if not jobs:
         return 0
 
-    primary_job = jobs[0]
     job_by_smartmoving_id = {
         (job.smartmoving_job_id or "").strip(): job
         for job in jobs
         if (job.smartmoving_job_id or "").strip()
     }
-    source_hashes = {
-        (row.source_external_id or "").strip()
+    existing_by_hash = {
+        (row.source_external_id or "").strip(): row
         for row in db.query(LeadAttachment)
         .filter(
             LeadAttachment.lead_id == lead.id,
@@ -2691,10 +2690,17 @@ def _sync_opportunity_files_to_s3(
 
     s3 = boto3.client("s3")
     created = 0
+    reassigned = 0
     uploaded_keys: list[str] = []
     for item in files:
         source_hash = hashlib.sha256(item["url"].encode("utf-8")).hexdigest()
-        if source_hash in source_hashes:
+        target_job = job_by_smartmoving_id.get((item.get("smartmoving_job_id") or "").strip())
+        target_job_id = target_job.id if target_job else None
+        existing_row = existing_by_hash.get(source_hash)
+        if source_hash in existing_by_hash:
+            if existing_row and existing_row.job_id != target_job_id:
+                existing_row.job_id = target_job_id
+                reassigned += 1
             continue
         fetched = download_opportunity_file(item["url"])
         if not fetched.get("ok"):
@@ -2705,14 +2711,14 @@ def _sync_opportunity_files_to_s3(
             logger.warning("Skipping SmartMoving opportunity file with invalid size: %s", item["url"])
             continue
 
-        target_job = job_by_smartmoving_id.get(item.get("smartmoving_job_id", "")) or primary_job
         file_name = re.sub(
             r'[\\/\r\n"]+',
             "_",
             _clean_optional_text(fetched.get("file_name")) or item["name"],
         )[:255]
         content_type = _clean_optional_text(fetched.get("content_type")) or "application/octet-stream"
-        object_key = f"leads/{lead.id}/jobs/{target_job.id}/smartmoving/{source_hash}/{file_name}"
+        file_scope = f"jobs/{target_job.id}" if target_job else "lead"
+        object_key = f"leads/{lead.id}/{file_scope}/smartmoving/{source_hash}/{file_name}"
         try:
             s3.put_object(
                 Bucket=bucket,
@@ -2728,7 +2734,7 @@ def _sync_opportunity_files_to_s3(
 
         db.add(LeadAttachment(
             lead_id=lead.id,
-            job_id=target_job.id,
+            job_id=target_job_id,
             file_name=file_name,
             content_type=content_type,
             file_size=len(content),
@@ -2739,10 +2745,10 @@ def _sync_opportunity_files_to_s3(
             source_external_id=source_hash,
             uploaded_by=user.id,
         ))
-        source_hashes.add(source_hash)
+        existing_by_hash[source_hash] = None
         created += 1
 
-    if created:
+    if created or reassigned:
         try:
             db.commit()
         except Exception:
@@ -2784,7 +2790,6 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
     if not jobs:
         return 0
 
-    primary_job = jobs[0]
     job_by_smartmoving_id = {
         (row.smartmoving_job_id or "").strip(): row
         for row in jobs
@@ -2809,15 +2814,28 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
     stored = 0
     uploaded_urls: list[str] = []
     for doc in documents:
-        target_job = job_by_smartmoving_id.get((doc.get("smartmoving_job_id") or "").strip()) or primary_job
+        target_job = job_by_smartmoving_id.get((doc.get("smartmoving_job_id") or "").strip())
+        target_job_id = target_job.id if target_job else ""
         document_id = (doc.get("external_id") or "").strip()
         document_url = (doc.get("url") or "").strip()
         existing = (
-            existing_by_id.get((target_job.id, document_id))
+            existing_by_id.get((target_job_id, document_id))
             if document_id
             else None
-        ) or existing_by_url.get((target_job.id, document_url))
+        ) or existing_by_url.get((target_job_id, document_url))
+        if not existing and not target_job:
+            existing = next(
+                (
+                    row for row in existing_rows
+                    if (document_id and (row.source_external_id or "").strip() == document_id)
+                    or (document_url and (row.external_url or "").strip() == document_url)
+                ),
+                None,
+            )
         if existing and (existing.external_source or "").strip() == "smartmoving_document_s3":
+            if existing.job_id:
+                existing.job_id = None
+                stored += 1
             continue
         fetched = download_opportunity_document(
             smartmoving_id,
@@ -2837,7 +2855,7 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
         try:
             s3_url = _upload_attachment_bytes_to_s3(
                 lead_id=lead.id,
-                job_id=target_job.id,
+                job_id=target_job.id if target_job else None,
                 file_name=file_name,
                 content=content,
                 content_type=content_type,
@@ -2850,7 +2868,7 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
 
         row = existing or LeadAttachment(
             lead_id=lead.id,
-            job_id=target_job.id,
+            job_id=target_job.id if target_job else None,
             file_blob=b"",
             uploaded_by=user.id,
         )
@@ -2862,6 +2880,7 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
         row.is_external_link = True
         row.external_source = "smartmoving_document_s3"
         row.source_external_id = document_id[:255] or hashlib.sha256(document_url.encode("utf-8")).hexdigest()
+        row.job_id = target_job.id if target_job else None
         if not existing:
             db.add(row)
         stored += 1
