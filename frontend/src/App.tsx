@@ -36,7 +36,7 @@ const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties 
 });
 
 function ProtectedRoutes() {
-  const { token, loading, logout, user, isImpersonating, originalAdmin, stopImpersonating } = useAuth();
+  const { token, loading, logout, user, isImpersonating, previousUser, stopImpersonating } = useAuth();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   useEffect(() => setMobileMenuOpen(false), [location.pathname]);
@@ -69,7 +69,7 @@ function ProtectedRoutes() {
   }
   return (
     <div className="crm-shell" style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      {isImpersonating ? <div className="impersonation-banner"><span>Viewing CRM as <strong>{user?.name}</strong> ({user?.role}). Started from {originalAdmin?.name}'s account.</span><button type="button" onClick={() => { stopImpersonating(); window.location.assign("/settings/impersonate"); }}>Return to My Account</button></div> : null}
+      {isImpersonating ? <div className="impersonation-banner"><span>Viewing CRM as <strong>{user?.name}</strong> ({user?.role}).</span><button type="button" onClick={() => { stopImpersonating(); window.location.assign("/settings/impersonate"); }}>Return to {previousUser?.name || "Previous User"}</button></div> : null}
       <nav className="crm-nav" style={{
         background: "#032d60",
         display: "flex",

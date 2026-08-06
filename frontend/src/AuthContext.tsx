@@ -17,7 +17,7 @@ interface AuthContextType {
   impersonate: (userId: string) => Promise<void>;
   stopImpersonating: () => void;
   isImpersonating: boolean;
-  originalAdmin: User | null;
+  previousUser: User | null;
   logout: () => void;
   loading: boolean;
 }
@@ -41,9 +41,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return saved ? JSON.parse(saved) : null;
   });
   const [loading, setLoading] = useState(!!token);
-  const [originalAdmin, setOriginalAdmin] = useState<User | null>(() => {
-    const saved = sessionStorage.getItem("impersonation_admin_user");
-    return saved ? JSON.parse(saved) : null;
+  const [impersonationStack, setImpersonationStack] = useState<Array<{ token: string; user: User }>>(() => {
+    const saved = sessionStorage.getItem("impersonation_session_stack");
+    if (saved) return JSON.parse(saved);
+    const legacyToken = sessionStorage.getItem("impersonation_admin_token");
+    const legacyUser = sessionStorage.getItem("impersonation_admin_user");
+    return legacyToken && legacyUser ? [{ token: legacyToken, user: JSON.parse(legacyUser) }] : [];
   });
 
   useEffect(() => {
@@ -88,9 +91,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("user");
     sessionStorage.removeItem("impersonation_admin_token");
     sessionStorage.removeItem("impersonation_admin_user");
+    sessionStorage.removeItem("impersonation_session_stack");
     setToken(null);
     setUser(null);
-    setOriginalAdmin(null);
+    setImpersonationStack([]);
   };
 
   const updateUser = (updatedUser: User) => {
@@ -107,11 +111,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await response.json().catch(() => null);
     if (!response.ok) throw new Error(data?.detail || "Failed to impersonate user");
 
-    if (!originalAdmin) {
-      sessionStorage.setItem("impersonation_admin_token", token);
-      sessionStorage.setItem("impersonation_admin_user", JSON.stringify(user));
-      setOriginalAdmin(user);
-    }
+    const nextStack = [...impersonationStack, { token, user }];
+    sessionStorage.setItem("impersonation_session_stack", JSON.stringify(nextStack));
+    sessionStorage.removeItem("impersonation_admin_token");
+    sessionStorage.removeItem("impersonation_admin_user");
+    setImpersonationStack(nextStack);
     localStorage.setItem("token", data.token);
     localStorage.setItem("user", JSON.stringify(data.user));
     setToken(data.token);
@@ -119,21 +123,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const stopImpersonating = () => {
-    const adminToken = sessionStorage.getItem("impersonation_admin_token");
-    const savedAdmin = sessionStorage.getItem("impersonation_admin_user");
-    if (!adminToken || !savedAdmin) return;
-    const adminUser = JSON.parse(savedAdmin) as User;
-    localStorage.setItem("token", adminToken);
-    localStorage.setItem("user", JSON.stringify(adminUser));
-    sessionStorage.removeItem("impersonation_admin_token");
-    sessionStorage.removeItem("impersonation_admin_user");
-    setToken(adminToken);
-    setUser(adminUser);
-    setOriginalAdmin(null);
+    if (!impersonationStack.length) return;
+    const previousSession = impersonationStack[impersonationStack.length - 1];
+    const nextStack = impersonationStack.slice(0, -1);
+    localStorage.setItem("token", previousSession.token);
+    localStorage.setItem("user", JSON.stringify(previousSession.user));
+    if (nextStack.length) sessionStorage.setItem("impersonation_session_stack", JSON.stringify(nextStack));
+    else sessionStorage.removeItem("impersonation_session_stack");
+    setToken(previousSession.token);
+    setUser(previousSession.user);
+    setImpersonationStack(nextStack);
   };
 
+  const previousUser = impersonationStack.length ? impersonationStack[impersonationStack.length - 1].user : null;
+
   return (
-    <AuthContext.Provider value={{ token, user, login, updateUser, impersonate, stopImpersonating, isImpersonating: Boolean(originalAdmin), originalAdmin, logout, loading }}>
+    <AuthContext.Provider value={{ token, user, login, updateUser, impersonate, stopImpersonating, isImpersonating: impersonationStack.length > 0, previousUser, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );
