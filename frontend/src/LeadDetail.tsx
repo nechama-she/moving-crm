@@ -918,6 +918,7 @@ export default function LeadDetail() {
   const isDispatchUser = user?.role === "dispatch";
   const isForemanUser = user?.role === "foreman";
   const canViewLeadCommunications = user?.role === "admin" || user?.role === "sales_rep";
+  const canRefreshSmartMoving = user?.role === "admin" || user?.role === "sales_rep" || user?.role === "dispatch";
   const canEditLead = !isDispatchUser && !isForemanUser;
   const canEditJobs = !isDispatchUser && !isForemanUser;
 
@@ -1783,7 +1784,7 @@ export default function LeadDetail() {
         }
 
         async function refreshFromSmartmoving() {
-          if (!canEditLead) return;
+          if (!canRefreshSmartMoving) return;
           setRefreshingSmartmoving(true);
           try {
             const res = await fetch(`${API_BASE}/api/leads/${leadId}/refresh-smartmoving`, {
@@ -2214,7 +2215,7 @@ export default function LeadDetail() {
                     type="button"
                     className="lead-profile-action-button lead-profile-refresh-button"
                     onClick={() => void refreshFromSmartmoving()}
-                    disabled={refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
+                    disabled={!canRefreshSmartMoving || refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
                     title="Refresh from SmartMoving"
                     style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", fontSize: 12, color: "#334155", cursor: refreshingSmartmoving ? "default" : "pointer" }}
                   >

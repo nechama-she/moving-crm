@@ -3881,7 +3881,8 @@ def _refresh_lead_from_smartmoving(
     db: Session,
     outbound_logs: list[dict[str, Any]],
 ):
-    _ensure_not_dispatch_write(user)
+    if user.role not in ("admin", "sales_rep", "dispatch"):
+        raise HTTPException(status_code=403, detail="This role cannot refresh SmartMoving data")
     lead = _get_visible_lead_or_404(lead_id, user, db)
     smartmoving_id = _clean_optional_text(lead.smartmoving_id)
     if not smartmoving_id:
