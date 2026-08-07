@@ -135,6 +135,29 @@ input, select, textarea, button {
 .user-row-actions button { min-height: 32px; border: 1px solid #0176d3; border-radius: 4px; padding: 5px 10px; background: #fff; color: #0176d3; font-size: 11px; font-weight: 700; cursor: pointer; }
 .user-row-actions button.danger { border-color: #ea001e; color: #ba0517; }
 .user-row-actions button:disabled { opacity: .55; cursor: default; }
+.company-access-modal-cell { position: fixed !important; inset: 0; z-index: 140; display: block !important; width: auto !important; padding: 0 !important; border: 0 !important; }
+.company-access-backdrop { width: 100%; height: 100%; padding: 18px; display: grid; place-items: center; box-sizing: border-box; background: rgb(8 21 38 / 52%); }
+.company-access-modal { width: min(540px, 100%); max-height: min(720px, calc(100vh - 36px)); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; border: 1px solid #dddbda; border-radius: 8px; background: #fff; box-shadow: 0 18px 50px rgb(0 0 0 / 28%); }
+.company-access-modal > header { min-height: 64px; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #dddbda; background: #f3f3f3; }
+.company-access-modal > header > div { min-width: 0; display: flex; align-items: center; gap: 11px; }
+.company-access-icon { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 6px; background: #0176d3; color: #fff; font-size: 20px; }
+.company-access-modal h2 { margin: 0; color: #032d60; font-size: 17px; }
+.company-access-modal header p { margin: 2px 0 0; color: #706e6b; font-size: 11px; }
+.company-access-modal header > button { border: 0; background: transparent; color: #706e6b; font-size: 24px; cursor: pointer; }
+.company-access-body { min-height: 0; padding: 14px 16px; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 9px; }
+.company-access-body > input { width: 100%; height: 38px; box-sizing: border-box; border: 1px solid #c9c7c5; border-radius: 4px; padding: 0 10px; font: inherit; font-size: 13px; }
+.company-access-count { color: #706e6b; font-size: 11px; }
+.company-access-options { min-height: 0; overflow-y: auto; display: grid; align-content: start; border: 1px solid #dddbda; border-radius: 6px; }
+.company-access-options label { min-height: 50px; padding: 8px 11px; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 9px; border-bottom: 1px solid #ecebea; background: #fff; cursor: pointer; }
+.company-access-options label:last-child { border-bottom: 0; }
+.company-access-options label.selected { background: #eef4ff; }
+.company-access-options input { width: 16px; height: 16px; accent-color: #0176d3; }
+.company-access-options span { min-width: 0; display: grid; gap: 2px; }
+.company-access-options strong { overflow: hidden; color: #181818; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.company-access-options small { color: #706e6b; font-size: 10px; }
+.company-access-modal > footer { padding: 11px 16px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #dddbda; background: #fafaf9; }
+.company-access-modal footer button { min-height: 34px; border: 1px solid #c9c7c5; border-radius: 4px; padding: 6px 14px; background: #fff; color: #0176d3; font-weight: 700; cursor: pointer; }
+.company-access-modal footer button.primary { border-color: #0176d3; background: #0176d3; color: #fff; }
 
 .user-access-summary {
   min-width: 0;
@@ -345,6 +368,8 @@ input, select, textarea, button {
 }
 
 @media (max-width: 640px) {
+  .company-access-backdrop { padding: 10px 10px 0; align-items: end; }
+  .company-access-modal { max-height: calc(100vh - 10px); border-radius: 10px 10px 0 0; }
   html, body {
     font-size: 13px;
     overflow-x: hidden;
