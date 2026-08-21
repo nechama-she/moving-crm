@@ -36,16 +36,19 @@ export default function ChatsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [source, setSource] = useState<"meta" | "sms">("meta");
   const [cursor, setCursor] = useState("");
   const [hasMore, setHasMore] = useState(true);
   const loadingRef = useRef(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const activeSourceRef = useRef<"meta" | "sms">("meta");
 
   const loadChats = useCallback((nextCursor = "") => {
     if (loadingRef.current || (!hasMore && nextCursor)) return;
     loadingRef.current = true;
     setLoading(true);
-    const params = new URLSearchParams({ limit: "20" });
+    const requestedSource = source;
+    const params = new URLSearchParams({ limit: "20", source: requestedSource });
     if (nextCursor) params.set("cursor", nextCursor);
     fetch(`${API_BASE}/api/chats?${params.toString()}`, { headers: authHeaders(token) })
       .then(async (response) => {
@@ -56,6 +59,7 @@ export default function ChatsPage() {
         return response.json();
       })
       .then((data) => {
+        if (activeSourceRef.current !== requestedSource) return;
         setItems((current) => {
           const merged = new Map(current.map((item) => [`${item.lead_id}-${item.platform}`, item]));
           for (const item of data.items || []) {
@@ -69,16 +73,26 @@ export default function ChatsPage() {
         setHasMore(Boolean(data.has_more));
       })
       .catch((reason) => {
+        if (activeSourceRef.current !== requestedSource) return;
         setError(reason instanceof Error ? reason.message : "Could not load chats");
         setHasMore(false);
       })
       .finally(() => {
+        if (activeSourceRef.current !== requestedSource) return;
         loadingRef.current = false;
         setLoading(false);
       });
-  }, [hasMore, token]);
+  }, [hasMore, source, token]);
 
-  useEffect(() => { loadChats(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    activeSourceRef.current = source;
+    loadingRef.current = false;
+    setItems([]);
+    setCursor("");
+    setHasMore(true);
+    setError("");
+    loadChats();
+  }, [source]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -115,6 +129,27 @@ export default function ChatsPage() {
           placeholder="Search chats"
           style={{ width: 280, maxWidth: "100%", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: 7, fontSize: 14 }}
         />
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, borderBottom: "1px solid #d8dde6" }}>
+        {([{"value": "meta", "label": "Messenger / Instagram"}, {"value": "sms", "label": "SMS"}] as const).map((tab) => (
+          <button
+            key={tab.value}
+            type="button"
+            onClick={() => setSource(tab.value)}
+            style={{
+              padding: "10px 16px",
+              border: "none",
+              borderBottom: source === tab.value ? "3px solid #0b5cab" : "3px solid transparent",
+              background: "transparent",
+              color: source === tab.value ? "#032d60" : "#64748b",
+              fontWeight: source === tab.value ? 700 : 500,
+              cursor: "pointer",
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {loading && items.length === 0 ? <p style={{ color: "#64748b" }}>Loading chats…</p> : null}

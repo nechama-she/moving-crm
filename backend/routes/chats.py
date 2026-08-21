@@ -77,6 +77,7 @@ def _lead_time(lead: Lead) -> datetime:
 def get_all_chats(
     cursor: str = Query(default=""),
     limit: int = Query(default=20, ge=2, le=100),
+    source: str = Query(default="meta", pattern="^(meta|sms)$"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -89,6 +90,10 @@ def get_all_chats(
 
     try:
         meta_start, sms_start = _decode_cursor(cursor)
+        if source == "meta":
+            sms_start = DONE_CURSOR
+        else:
+            meta_start = DONE_CURSOR
         meta_done = meta_start == DONE_CURSOR
         sms_done = sms_start == DONE_CURSOR
         meta_next = None if meta_done else meta_start

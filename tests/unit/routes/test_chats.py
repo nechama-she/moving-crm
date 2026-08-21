@@ -78,7 +78,7 @@ def test_reads_more_pages_until_unique_conversation_limit(monkeypatch):
     )
 
     result = chats.get_all_chats(
-        cursor="", limit=2, user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb(leads),
+        cursor="", limit=2, source="meta", user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb(leads),
     )
 
     assert len(result["items"]) == 2
@@ -108,13 +108,13 @@ def test_returns_all_conversations_from_final_full_batch(monkeypatch):
     )
 
     result = chats.get_all_chats(
-        cursor="", limit=20, user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb(lead_rows),
+        cursor="", limit=20, source="meta", user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb(lead_rows),
     )
 
     assert len(result["items"]) == 27
 
 
-def test_combines_platforms_and_orders_by_latest_message(monkeypatch):
+def test_keeps_meta_and_sms_sources_separate(monkeypatch):
     company = SimpleNamespace(name="Moving Co")
     lead = SimpleNamespace(
         id="lead-1",
@@ -151,23 +151,33 @@ def test_combines_platforms_and_orders_by_latest_message(monkeypatch):
         ), None),
     )
 
-    result = chats.get_all_chats(
+    meta_result = chats.get_all_chats(
         cursor="",
         limit=20,
+        source="meta",
+        user=SimpleNamespace(id="admin-1", role="admin"),
+        db=FakeDb([lead]),
+    )
+    sms_result = chats.get_all_chats(
+        cursor="",
+        limit=20,
+        source="sms",
         user=SimpleNamespace(id="admin-1", role="admin"),
         db=FakeDb([lead]),
     )
 
-    assert [item["platform"] for item in result["items"]] == ["messenger", "sms", "instagram"]
-    assert result["items"][0]["message"] == "Newest"
-    assert result["items"][0]["rep"] == "Alex Rep"
-    assert all(item["lead_id"] == "lead-1" for item in result["items"])
+    assert [item["platform"] for item in meta_result["items"]] == ["messenger", "instagram"]
+    assert meta_result["items"][0]["message"] == "Newest"
+    assert meta_result["items"][0]["rep"] == "Alex Rep"
+    assert [item["platform"] for item in sms_result["items"]] == ["sms"]
+    assert all(item["lead_id"] == "lead-1" for item in meta_result["items"] + sms_result["items"])
 
 
 def test_returns_empty_without_company_access(monkeypatch):
     monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: [])
 
     result = chats.get_all_chats(
+        source="meta",
         user=SimpleNamespace(id="admin-1", role="admin"),
         db=FakeDb([]),
     )
@@ -181,6 +191,7 @@ def test_rejects_non_admin_users(role):
         chats.get_all_chats(
             cursor="",
             limit=20,
+            source="meta",
             user=SimpleNamespace(id="user-1", role=role),
             db=FakeDb([]),
         )
