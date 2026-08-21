@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -1520,6 +1521,70 @@ def get_leads(
         "total": total,
         "has_more": has_more,
     }
+
+
+class AircallRepLookupRequest(BaseModel):
+    client_phone: str
+    company_phone: str
+
+
+@router.post("/leads/aircall-rep")
+def get_assigned_rep_aircall_id(
+    body: AircallRepLookupRequest,
+    x_api_secret: str = Header(...),
+    db: Session = Depends(get_db),
+):
+    """Resolve an assigned rep's Aircall number from client and company phones."""
+    secret = get_config().get("API_SECRET", os.getenv("API_SECRET", ""))
+    if not secret:
+        raise HTTPException(status_code=500, detail="API secret not configured")
+    if not hmac.compare_digest(x_api_secret, secret):
+        raise HTTPException(status_code=401, detail="Invalid API secret")
+
+    client_phone = _normalize_phone(body.client_phone)
+    company_phone = _normalize_phone(body.company_phone)
+    if not client_phone or not company_phone:
+        raise HTTPException(
+            status_code=400,
+            detail="client_phone and company_phone must contain digits",
+        )
+
+    companies = [
+        company
+        for company in db.query(Company).all()
+        if _normalize_phone(company.phone) == company_phone
+    ]
+    if not companies:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if len(companies) > 1:
+        raise HTTPException(status_code=409, detail="Company phone matches multiple companies")
+
+    matching_leads = [
+        lead
+        for lead in db.query(Lead).filter(Lead.company_id == companies[0].id).all()
+        if _normalize_phone(lead.phone) == client_phone
+    ]
+    if not matching_leads:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    # A client can submit more than once. Route calls using the latest CRM record.
+    lead = max(
+        matching_leads,
+        key=lambda row: (
+            (row.updated_at or row.created_at or datetime.min).isoformat(),
+            row.id or "",
+        ),
+    )
+    if not lead.assigned_to:
+        raise HTTPException(status_code=404, detail="Lead has no assigned rep")
+
+    rep = db.query(User).filter(User.id == lead.assigned_to).first()
+    if not rep:
+        raise HTTPException(status_code=404, detail="Assigned rep not found")
+    if not (rep.aircall_number_id or "").strip():
+        raise HTTPException(status_code=404, detail="Assigned rep has no Aircall number ID")
+
+    return {"aircall_number_id": rep.aircall_number_id.strip()}
 
 
 @router.get("/leads/by-leadgen/{leadgen_id}")
