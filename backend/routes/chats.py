@@ -8,7 +8,8 @@ from datetime import datetime
 from botocore.exceptions import ClientError
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session, joinedload
 
 from auth import get_current_user
 from database import get_db
@@ -83,8 +84,86 @@ def get_all_chats(
     if not company_ids:
         return {"items": [], "next_cursor": "", "has_more": False}
 
-    lead_query = db.query(Lead).filter(Lead.company_id.in_(company_ids))
-    leads = lead_query.all()
+    try:
+        meta_start, sms_start = _decode_cursor(cursor)
+        meta_done = meta_start == DONE_CURSOR
+        sms_done = sms_start == DONE_CURSOR
+        meta_next = None if meta_done else meta_start
+        sms_next = None if sms_done else sms_start
+        meta_messages: list[dict] = []
+        sms_messages: list[dict] = []
+        conversation_keys: set[tuple[str, str, str]] = set()
+
+        # A page means unique conversations, not raw messages. Keep advancing
+        # through full raw-message batches until the requested minimum is
+        # collected. Return every conversation found in the final batch so a
+        # scanned conversation is never discarded merely to enforce the limit.
+        while len(conversation_keys) < limit and not (meta_done and sms_done):
+            active_sources = int(not meta_done) + int(not sms_done)
+            meta_limit = 0
+            sms_limit = 0
+            if not meta_done:
+                meta_limit = limit if active_sources == 1 else (limit + 1) // 2
+            if not sms_done:
+                sms_limit = limit if active_sources == 1 else limit // 2
+
+            if meta_limit:
+                page, meta_next = _scan_page(conversations_table, meta_next, meta_limit)
+                meta_messages.extend(page)
+                for message in page:
+                    platform = str(message.get("platform") or "").strip().lower()
+                    user_id = str(message.get("user_id") or "")
+                    if platform in {"messenger", "instagram"} and user_id:
+                        conversation_keys.add(("meta", user_id, platform))
+                meta_done = meta_next is None
+
+            if sms_limit:
+                page, sms_next = _scan_page(sms_messages_table, sms_next, sms_limit)
+                sms_messages.extend(page)
+                for message in page:
+                    phone = normalize_digits(str(message.get("phone_number") or ""))
+                    if len(phone) == 11 and phone.startswith("1"):
+                        phone = phone[1:]
+                    if phone:
+                        company_name = str(message.get("company_name") or "").strip().lower()
+                        conversation_keys.add(("sms", phone, company_name))
+                sms_done = sms_next is None
+    except ClientError as exc:
+        logger.error("Could not load unified chats: %s", exc)
+        raise HTTPException(status_code=502, detail="Could not fetch chats") from exc
+
+    meta_user_ids = {
+        str(message.get("user_id") or "")
+        for message in meta_messages
+        if message.get("user_id")
+    }
+    sms_phones: set[str] = set()
+    for message in sms_messages:
+        phone = normalize_digits(str(message.get("phone_number") or ""))
+        if len(phone) == 11 and phone.startswith("1"):
+            phone = phone[1:]
+        if phone:
+            sms_phones.add(phone)
+
+    match_conditions = []
+    if meta_user_ids:
+        match_conditions.append(Lead.facebook_user_id.in_(meta_user_ids))
+    if sms_phones:
+        normalized_lead_phone = func.right(
+            func.regexp_replace(Lead.phone, r"\D", "", "g"),
+            10,
+        )
+        match_conditions.append(normalized_lead_phone.in_(sms_phones))
+
+    leads = []
+    if match_conditions:
+        leads = (
+            db.query(Lead)
+            .options(joinedload(Lead.company), joinedload(Lead.assignee))
+            .filter(Lead.company_id.in_(company_ids))
+            .filter(or_(*match_conditions))
+            .all()
+        )
 
     meta_leads: dict[str, Lead] = {}
     sms_leads: dict[tuple[str, str], Lead] = {}
@@ -104,26 +183,6 @@ def get_all_chats(
             if current is None or _lead_time(lead) > _lead_time(current):
                 sms_leads[sms_key] = lead
             sms_phone_leads.setdefault(phone, []).append(lead)
-
-    try:
-        meta_start, sms_start = _decode_cursor(cursor)
-        meta_limit = (limit + 1) // 2
-        sms_limit = limit // 2
-        if meta_start == DONE_CURSOR:
-            meta_messages, meta_next = [], None
-            meta_done = True
-        else:
-            meta_messages, meta_next = _scan_page(conversations_table, meta_start, meta_limit)
-            meta_done = meta_next is None
-        if sms_start == DONE_CURSOR:
-            sms_messages, sms_next = [], None
-            sms_done = True
-        else:
-            sms_messages, sms_next = _scan_page(sms_messages_table, sms_start, sms_limit)
-            sms_done = sms_next is None
-    except ClientError as exc:
-        logger.error("Could not load unified chats: %s", exc)
-        raise HTTPException(status_code=502, detail="Could not fetch chats") from exc
 
     latest: dict[tuple[str, str], dict] = {}
 

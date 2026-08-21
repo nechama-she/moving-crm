@@ -21,6 +21,9 @@ class FakeQuery:
     def filter(self, *args):
         return self
 
+    def options(self, *args):
+        return self
+
     def all(self):
         return self.rows
 
@@ -44,6 +47,66 @@ def test_cursor_preserves_dynamodb_number_types():
     assert decoded_meta == meta_key
     assert decoded_sms == sms_key
     assert isinstance(decoded_meta["timestamp"], Decimal)
+
+
+def test_reads_more_pages_until_unique_conversation_limit(monkeypatch):
+    company = SimpleNamespace(name="Moving Co")
+    leads = [
+        SimpleNamespace(
+            id=f"lead-{number}", company_id="company-1", assigned_to=None,
+            full_name=f"Client {number}", phone="", facebook_user_id=f"meta-{number}",
+            company=company, assignee=None, created_at=datetime(2026, 1, number),
+            updated_at=datetime(2026, 1, number),
+        )
+        for number in (1, 2)
+    ]
+    meta_pages = iter([
+        ([{"user_id": "meta-1", "platform": "messenger", "text": "one", "timestamp": 1}], {"page": "2"}),
+        ([{"user_id": "meta-1", "platform": "messenger", "text": "new one", "timestamp": 2}], {"page": "3"}),
+        ([{"user_id": "meta-2", "platform": "messenger", "text": "two", "timestamp": 3}], None),
+    ])
+    monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: ["company-1"])
+    monkeypatch.setattr(
+        chats,
+        "_scan_page",
+        lambda table, start_key, limit: next(meta_pages) if table is chats.conversations_table else ([], None),
+    )
+
+    result = chats.get_all_chats(
+        cursor="", limit=2, user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb(leads),
+    )
+
+    assert len(result["items"]) == 2
+    assert {item["lead_id"] for item in result["items"]} == {"lead-1", "lead-2"}
+
+
+def test_returns_all_conversations_from_final_full_batch(monkeypatch):
+    company = SimpleNamespace(name="Moving Co")
+    lead_rows = [
+        SimpleNamespace(
+            id=f"lead-{number}", company_id="company-1", assigned_to=None,
+            full_name=f"Client {number}", phone="", facebook_user_id=f"meta-{number}",
+            company=company, assignee=None, created_at=datetime(2026, 1, 1),
+            updated_at=datetime(2026, 1, 1),
+        )
+        for number in range(1, 28)
+    ]
+    pages = iter([
+        ([{"user_id": f"meta-{number}", "platform": "messenger", "text": str(number), "timestamp": number} for number in range(1, 16)], {"page": "2"}),
+        ([{"user_id": f"meta-{number}", "platform": "messenger", "text": str(number), "timestamp": number} for number in range(16, 28)], None),
+    ])
+    monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: ["company-1"])
+    monkeypatch.setattr(
+        chats,
+        "_scan_page",
+        lambda table, start_key, limit: next(pages) if table is chats.conversations_table else ([], None),
+    )
+
+    result = chats.get_all_chats(
+        cursor="", limit=20, user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb(lead_rows),
+    )
+
+    assert len(result["items"]) == 27
 
 
 def test_combines_platforms_and_orders_by_latest_message(monkeypatch):
