@@ -68,7 +68,10 @@ export default function ChatsPage() {
         setCursor(data.next_cursor || "");
         setHasMore(Boolean(data.has_more));
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load chats"))
+      .catch((reason) => {
+        setError(reason instanceof Error ? reason.message : "Could not load chats");
+        setHasMore(false);
+      })
       .finally(() => {
         loadingRef.current = false;
         setLoading(false);
@@ -115,8 +118,8 @@ export default function ChatsPage() {
       </div>
 
       {loading && items.length === 0 ? <p style={{ color: "#64748b" }}>Loading chats…</p> : null}
-      {error ? <p style={{ color: "#ba0517" }}>{error}</p> : null}
-      {!error && (items.length > 0 || !loading) ? (
+      {error ? <p style={{ color: "#ba0517" }}>Could not load more chats: {error}</p> : null}
+      {(items.length > 0 || (!loading && !error)) ? (
         <div style={{ border: "1px solid #d8dde6", borderRadius: 8, overflow: "hidden", background: "#fff" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
             <thead style={{ background: "#f3f6f9", color: "#475569", textAlign: "left" }}>

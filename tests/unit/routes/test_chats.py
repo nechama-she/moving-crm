@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 import sys
@@ -32,6 +33,17 @@ class FakeDb:
         if model is chats.Lead:
             return FakeQuery(self.lead_rows)
         return FakeQuery([("company-1",)])
+
+
+def test_cursor_preserves_dynamodb_number_types():
+    meta_key = {"user_id": "meta-1", "timestamp": Decimal("123.456")}
+    sms_key = {"phone_number": "+12125550199", "timestamp": Decimal("789")}
+
+    decoded_meta, decoded_sms = chats._decode_cursor(chats._encode_cursor(meta_key, sms_key))
+
+    assert decoded_meta == meta_key
+    assert decoded_sms == sms_key
+    assert isinstance(decoded_meta["timestamp"], Decimal)
 
 
 def test_combines_platforms_and_orders_by_latest_message(monkeypatch):

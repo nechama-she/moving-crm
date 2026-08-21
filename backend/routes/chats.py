@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 
 from botocore.exceptions import ClientError
+from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -38,11 +39,10 @@ def _scan_page(table, start_key: dict | None, limit: int) -> tuple[list[dict], d
 
 
 def _encode_cursor(meta_key: dict | None, sms_key: dict | None) -> str:
-    payload = json.dumps(
-        {"meta": meta_key, "sms": sms_key},
-        separators=(",", ":"),
-        default=lambda value: float(value),
-    ).encode()
+    # DynamoDB pagination keys can contain Decimal values. Serializing through
+    # DynamoDB's typed format preserves them for ExclusiveStartKey on the next page.
+    typed = TypeSerializer().serialize({"meta": meta_key, "sms": sms_key})
+    payload = json.dumps(typed, separators=(",", ":")).encode()
     return base64.urlsafe_b64encode(payload).decode().rstrip("=")
 
 
@@ -51,7 +51,8 @@ def _decode_cursor(cursor: str) -> tuple[dict | None, dict | None]:
         return None, None
     try:
         padding = "=" * (-len(cursor) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
+        typed = json.loads(base64.urlsafe_b64decode(cursor + padding))
+        payload = TypeDeserializer().deserialize(typed)
         return payload.get("meta"), payload.get("sms")
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid chats cursor") from exc
