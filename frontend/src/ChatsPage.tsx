@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -6,6 +6,7 @@ import { authHeaders, useAuth } from "./AuthContext";
 type ChatRow = {
   lead_id: string;
   client: string;
+  rep: string;
   platform: "sms" | "messenger" | "instagram";
   message: string;
   timestamp: number;
@@ -35,9 +36,18 @@ export default function ChatsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [cursor, setCursor] = useState("");
+  const [hasMore, setHasMore] = useState(true);
+  const loadingRef = useRef(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    fetch(`${API_BASE}/api/chats`, { headers: authHeaders(token) })
+  const loadChats = useCallback((nextCursor = "") => {
+    if (loadingRef.current || (!hasMore && nextCursor)) return;
+    loadingRef.current = true;
+    setLoading(true);
+    const params = new URLSearchParams({ limit: "20" });
+    if (nextCursor) params.set("cursor", nextCursor);
+    fetch(`${API_BASE}/api/chats?${params.toString()}`, { headers: authHeaders(token) })
       .then(async (response) => {
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
@@ -45,16 +55,44 @@ export default function ChatsPage() {
         }
         return response.json();
       })
-      .then((data) => setItems(data.items || []))
+      .then((data) => {
+        setItems((current) => {
+          const merged = new Map(current.map((item) => [`${item.lead_id}-${item.platform}`, item]));
+          for (const item of data.items || []) {
+            const key = `${item.lead_id}-${item.platform}`;
+            const previous = merged.get(key);
+            if (!previous || item.timestamp > previous.timestamp) merged.set(key, item);
+          }
+          return [...merged.values()].sort((a, b) => b.timestamp - a.timestamp);
+        });
+        setCursor(data.next_cursor || "");
+        setHasMore(Boolean(data.has_more));
+      })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load chats"))
-      .finally(() => setLoading(false));
-  }, [token]);
+      .finally(() => {
+        loadingRef.current = false;
+        setLoading(false);
+      });
+  }, [hasMore, token]);
+
+  useEffect(() => { loadChats(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !hasMore) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting && cursor && !loadingRef.current) loadChats(cursor);
+    }, { rootMargin: "300px" });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [cursor, hasMore, loadChats]);
 
   const visibleItems = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return items;
     return items.filter((item) =>
       item.client.toLowerCase().includes(query)
+      || item.rep.toLowerCase().includes(query)
       || item.message.toLowerCase().includes(query)
       || item.platform.includes(query)
     );
@@ -76,14 +114,15 @@ export default function ChatsPage() {
         />
       </div>
 
-      {loading ? <p style={{ color: "#64748b" }}>Loading chats…</p> : null}
+      {loading && items.length === 0 ? <p style={{ color: "#64748b" }}>Loading chats…</p> : null}
       {error ? <p style={{ color: "#ba0517" }}>{error}</p> : null}
-      {!loading && !error ? (
+      {!error && (items.length > 0 || !loading) ? (
         <div style={{ border: "1px solid #d8dde6", borderRadius: 8, overflow: "hidden", background: "#fff" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
             <thead style={{ background: "#f3f6f9", color: "#475569", textAlign: "left" }}>
               <tr>
                 <th style={{ padding: "12px 16px", width: "25%" }}>Client</th>
+                <th style={{ padding: "12px 16px", width: "18%" }}>Rep</th>
                 <th style={{ padding: "12px 16px", width: "16%" }}>Platform</th>
                 <th style={{ padding: "12px 16px" }}>Message</th>
                 <th style={{ padding: "12px 16px", width: 180 }}>Last messaged</th>
@@ -101,6 +140,7 @@ export default function ChatsPage() {
                       {item.client}
                     </Link>
                   </td>
+                  <td style={{ padding: "14px 16px", color: item.rep ? "#334155" : "#94a3b8" }}>{item.rep || "Unassigned"}</td>
                   <td style={{ padding: "14px 16px" }}>{PLATFORM_LABELS[item.platform] || item.platform}</td>
                   <td style={{ padding: "14px 16px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "#334155" }} title={item.message}>
                     {item.message || "—"}
@@ -109,12 +149,15 @@ export default function ChatsPage() {
                 </tr>
               ))}
               {visibleItems.length === 0 ? (
-                <tr><td colSpan={4} style={{ padding: 32, textAlign: "center", color: "#64748b" }}>No chats found.</td></tr>
+                <tr><td colSpan={5} style={{ padding: 32, textAlign: "center", color: "#64748b" }}>No chats found.</td></tr>
               ) : null}
             </tbody>
           </table>
         </div>
       ) : null}
+      <div ref={sentinelRef} style={{ minHeight: 24, padding: 12, textAlign: "center", color: "#64748b" }}>
+        {loading && items.length > 0 ? "Loading more chats…" : null}
+      </div>
     </main>
   );
 }

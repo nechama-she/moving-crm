@@ -1,10 +1,12 @@
 """Unified latest-message inbox across SMS, Messenger, and Instagram."""
 
 import logging
+import base64
+import json
 from datetime import datetime
 
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
@@ -15,6 +17,7 @@ from models import Company, Lead, User, UserCompany
 
 logger = logging.getLogger("moving-crm")
 router = APIRouter(prefix="/api/chats", tags=["Chats"])
+DONE_CURSOR = {"__done": True}
 
 
 def _user_company_ids(user: User, db: Session) -> list[str]:
@@ -26,14 +29,32 @@ def _user_company_ids(user: User, db: Session) -> list[str]:
     return []
 
 
-def _scan_all(table) -> list[dict]:
-    items: list[dict] = []
-    response = table.scan()
-    items.extend(response.get("Items", []))
-    while "LastEvaluatedKey" in response:
-        response = table.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
-        items.extend(response.get("Items", []))
-    return items
+def _scan_page(table, start_key: dict | None, limit: int) -> tuple[list[dict], dict | None]:
+    kwargs: dict = {"Limit": limit}
+    if start_key:
+        kwargs["ExclusiveStartKey"] = start_key
+    response = table.scan(**kwargs)
+    return response.get("Items", []), response.get("LastEvaluatedKey")
+
+
+def _encode_cursor(meta_key: dict | None, sms_key: dict | None) -> str:
+    payload = json.dumps(
+        {"meta": meta_key, "sms": sms_key},
+        separators=(",", ":"),
+        default=lambda value: float(value),
+    ).encode()
+    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> tuple[dict | None, dict | None]:
+    if not cursor:
+        return None, None
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
+        return payload.get("meta"), payload.get("sms")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid chats cursor") from exc
 
 
 def _timestamp(value) -> float:
@@ -49,6 +70,8 @@ def _lead_time(lead: Lead) -> datetime:
 
 @router.get("")
 def get_all_chats(
+    cursor: str = Query(default=""),
+    limit: int = Query(default=20, ge=2, le=100),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -57,7 +80,7 @@ def get_all_chats(
 
     company_ids = _user_company_ids(user, db)
     if not company_ids:
-        return {"items": []}
+        return {"items": [], "next_cursor": "", "has_more": False}
 
     lead_query = db.query(Lead).filter(Lead.company_id.in_(company_ids))
     leads = lead_query.all()
@@ -82,8 +105,21 @@ def get_all_chats(
             sms_phone_leads.setdefault(phone, []).append(lead)
 
     try:
-        meta_messages = _scan_all(conversations_table)
-        sms_messages = _scan_all(sms_messages_table)
+        meta_start, sms_start = _decode_cursor(cursor)
+        meta_limit = (limit + 1) // 2
+        sms_limit = limit // 2
+        if meta_start == DONE_CURSOR:
+            meta_messages, meta_next = [], None
+            meta_done = True
+        else:
+            meta_messages, meta_next = _scan_page(conversations_table, meta_start, meta_limit)
+            meta_done = meta_next is None
+        if sms_start == DONE_CURSOR:
+            sms_messages, sms_next = [], None
+            sms_done = True
+        else:
+            sms_messages, sms_next = _scan_page(sms_messages_table, sms_start, sms_limit)
+            sms_done = sms_next is None
     except ClientError as exc:
         logger.error("Could not load unified chats: %s", exc)
         raise HTTPException(status_code=502, detail="Could not fetch chats") from exc
@@ -98,6 +134,7 @@ def get_all_chats(
         latest[key] = {
             "lead_id": lead.id,
             "client": lead.full_name or lead.phone or "Unknown client",
+            "rep": lead.assignee.name if lead.assignee else "",
             "platform": platform,
             "message": str(message.get("text") or ""),
             "timestamp": timestamp,
@@ -125,4 +162,12 @@ def get_all_chats(
         if lead:
             add_message(lead, "sms", message)
 
-    return {"items": sorted(latest.values(), key=lambda item: item["timestamp"], reverse=True)}
+    has_more = not meta_done or not sms_done
+    return {
+        "items": sorted(latest.values(), key=lambda item: item["timestamp"], reverse=True),
+        "next_cursor": _encode_cursor(
+            meta_next if not meta_done else DONE_CURSOR,
+            sms_next if not sms_done else DONE_CURSOR,
+        ) if has_more else "",
+        "has_more": has_more,
+    }
