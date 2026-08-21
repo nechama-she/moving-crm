@@ -11,7 +11,7 @@ from config import get_config
 from database import SessionLocal
 from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
 from models import Lead, User
-from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing
+from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats
 from routes.meta import messenger, instagram
 
 cfg = get_config()
@@ -239,6 +239,7 @@ app.include_router(users.router)
 app.include_router(messenger.router, dependencies=[Depends(get_current_user)])
 app.include_router(instagram.router, dependencies=[Depends(get_current_user)])
 app.include_router(sms.router, dependencies=[Depends(get_current_user)])
+app.include_router(chats.router)
 # Triggers backend Lambda processing — admin only.
 app.include_router(smartmoving.router, dependencies=[Depends(require_admin)])
 app.include_router(followups.router)
