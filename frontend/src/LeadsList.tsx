@@ -80,6 +80,8 @@ export default function LeadsList() {
   const observerRef = useRef<IntersectionObserver | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeRequestRef = useRef<AbortController | null>(null);
+  const requestVersionRef = useRef(0);
   const companyIdFilter = searchParams.get("company_id") || "";
   const companyNameFilter = searchParams.get("company_name") || "";
 
@@ -109,7 +111,19 @@ export default function LeadsList() {
 
   const fetchLeads = useCallback(async (offset: number = 0, query: string = "") => {
     const isFirst = offset === 0;
-    if (!isFirst) setLoadingMore(true);
+    activeRequestRef.current?.abort();
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
+    const requestVersion = isFirst ? ++requestVersionRef.current : requestVersionRef.current;
+    if (isFirst) {
+      setError("");
+      setLeads([]);
+      setHasMore(false);
+      setLoading(true);
+      setLoadingMore(false);
+    } else {
+      setLoadingMore(true);
+    }
     try {
       const params = new URLSearchParams({ limit: "50", offset: String(offset) });
       if (query) params.set("search", query);
@@ -119,21 +133,35 @@ export default function LeadsList() {
       if (assignedToFilter) params.set("assigned_to", assignedToFilter);
       params.set("sort_by", sortBy);
       params.set("sort_dir", sortDir);
-      const res = await fetch(`${API_BASE}/api/leads?${params}`, { headers: authHeaders(token) });
+      const res = await fetch(`${API_BASE}/api/leads?${params}`, {
+        headers: authHeaders(token),
+        signal: controller.signal,
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setLeads((prev) => (isFirst ? data.items : [...prev, ...data.items]));
+      if (requestVersion !== requestVersionRef.current) return;
+      setLeads((previous) => {
+        if (isFirst) return data.items;
+        const merged = new Map(previous.map((lead) => [lead.id, lead]));
+        for (const lead of data.items) merged.set(lead.id, lead);
+        return [...merged.values()];
+      });
       setHasMore(data.has_more);
     } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (requestVersion !== requestVersionRef.current) return;
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (requestVersion === requestVersionRef.current && activeRequestRef.current === controller) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   }, [token, companyIdFilter, companyFilter, assignedToFilter, statusFilter, sortBy, sortDir]);
 
   useEffect(() => {
     fetchLeads(0, search);
+    return () => activeRequestRef.current?.abort();
   }, [fetchLeads, search, companyIdFilter, companyFilter, assignedToFilter, statusFilter, sortBy, sortDir]);
 
   const handleSearchChange = (value: string) => {
@@ -297,7 +325,7 @@ export default function LeadsList() {
           <tbody>
             {leads.map((lead, i) => (
               <tr
-                key={lead.leadgen_id ?? i}
+                key={lead.id || i}
                 onClick={() => navigate(`/leads/${lead.id}`)}
                 style={{ cursor: "pointer" }}
                 onMouseOver={(e) =>

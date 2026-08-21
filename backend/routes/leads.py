@@ -1466,7 +1466,9 @@ def get_leads(
     query = db.query(Lead).filter(Lead.company_id.in_(company_ids))
 
     # Filter by specific company if requested
-    if company_id and company_id in company_ids:
+    if company_id:
+        if company_id not in company_ids:
+            return {"items": [], "total": 0, "has_more": False}
         query = query.filter(Lead.company_id == company_id)
 
     # Role-based filtering
