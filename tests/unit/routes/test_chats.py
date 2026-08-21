@@ -38,6 +38,11 @@ class FakeDb:
         return FakeQuery([("company-1",)])
 
 
+def test_timestamp_normalizes_milliseconds_and_seconds():
+    assert chats._timestamp(1_777_000_000_000) == 1_777_000_000
+    assert chats._timestamp(1_777_000_000) == 1_777_000_000
+
+
 def test_cursor_preserves_dynamodb_number_types():
     meta_key = {"user_id": "meta-1", "timestamp": Decimal("123.456")}
     sms_key = {"phone_number": "+12125550199", "timestamp": Decimal("789")}

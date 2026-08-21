@@ -61,7 +61,10 @@ def _decode_cursor(cursor: str) -> tuple[dict | None, dict | None]:
 
 def _timestamp(value) -> float:
     try:
-        return float(value or 0)
+        timestamp = float(value or 0)
+        # Meta records may use milliseconds while SMS records use seconds.
+        # Normalize both to epoch seconds before comparing across platforms.
+        return timestamp / 1000 if timestamp >= 1_000_000_000_000 else timestamp
     except (TypeError, ValueError):
         return 0
 
