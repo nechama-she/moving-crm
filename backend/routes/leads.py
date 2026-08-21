@@ -1,5 +1,4 @@
 import hashlib
-import hmac
 import json
 import logging
 import os
@@ -1523,36 +1522,27 @@ def get_leads(
     }
 
 
-class AircallRepLookupRequest(BaseModel):
-    client_phone: str
-    company_phone: str
-
-
-@router.post("/leads/aircall-rep")
+@router.get("/leads/aircall-rep")
 def get_assigned_rep_aircall_id(
-    body: AircallRepLookupRequest,
-    x_api_secret: str = Header(...),
+    client_phone: str = Query(...),
+    company_phone: str = Query(...),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Resolve an assigned rep's Aircall number from client and company phones."""
-    secret = get_config().get("API_SECRET", os.getenv("API_SECRET", ""))
-    if not secret:
-        raise HTTPException(status_code=500, detail="API secret not configured")
-    if not hmac.compare_digest(x_api_secret, secret):
-        raise HTTPException(status_code=401, detail="Invalid API secret")
-
-    client_phone = _normalize_phone(body.client_phone)
-    company_phone = _normalize_phone(body.company_phone)
+    client_phone = _normalize_phone(client_phone)
+    company_phone = _normalize_phone(company_phone)
     if not client_phone or not company_phone:
         raise HTTPException(
             status_code=400,
             detail="client_phone and company_phone must contain digits",
         )
 
+    company_ids = set(_get_user_company_ids(user, db))
     companies = [
         company
         for company in db.query(Company).all()
-        if _normalize_phone(company.phone) == company_phone
+        if company.id in company_ids and _normalize_phone(company.phone) == company_phone
     ]
     if not companies:
         raise HTTPException(status_code=404, detail="Company not found")

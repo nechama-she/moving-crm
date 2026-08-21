@@ -54,14 +54,15 @@ def make_db(*, rep_aircall_id="aircall-123", assigned_to="rep-1"):
 
 
 @pytest.fixture(autouse=True)
-def api_secret(monkeypatch):
-    monkeypatch.setattr(leads, "get_config", lambda: {"API_SECRET": "test-secret"})
+def user_company_access(monkeypatch):
+    monkeypatch.setattr(leads, "_get_user_company_ids", lambda user, db: ["company-1"])
 
 
 def lookup(db, **body):
     return leads.get_assigned_rep_aircall_id(
-        leads.AircallRepLookupRequest(**body),
-        x_api_secret="test-secret",
+        client_phone=body["client_phone"],
+        company_phone=body["company_phone"],
+        user=SimpleNamespace(id="user-1", role="admin"),
         db=db,
     )
 
@@ -109,17 +110,3 @@ def test_returns_clear_not_found_errors(db, detail):
 
     assert exc.value.status_code == 404
     assert exc.value.detail == detail
-
-
-def test_rejects_invalid_api_secret():
-    with pytest.raises(HTTPException) as exc:
-        leads.get_assigned_rep_aircall_id(
-            leads.AircallRepLookupRequest(
-                client_phone="2125550199",
-                company_phone="2125550100",
-            ),
-            x_api_secret="wrong",
-            db=make_db(),
-        )
-
-    assert exc.value.status_code == 401
