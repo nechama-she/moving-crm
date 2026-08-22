@@ -74,7 +74,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
 
     if (phoneNumber && aircallNumberId) {
       fetches.push(
-        fetch(`${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}?company_name=${encodeURIComponent(companyName)}&aircall_number_id=${encodeURIComponent(aircallNumberId)}`, { headers: authHeaders(token) })
+        fetch(`${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}?aircall_number_id=${encodeURIComponent(aircallNumberId)}`, { headers: authHeaders(token) })
           .then((res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();
@@ -85,7 +85,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
 
     if (phoneNumber && repAircallNumberId) {
       fetches.push(
-        fetch(`${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}?company_name=${encodeURIComponent(companyName)}&aircall_number_id=${encodeURIComponent(repAircallNumberId)}`, { headers: authHeaders(token) })
+        fetch(`${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}?aircall_number_id=${encodeURIComponent(repAircallNumberId)}`, { headers: authHeaders(token) })
           .then((res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();
