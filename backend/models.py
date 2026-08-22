@@ -255,6 +255,7 @@ class Lead(Base):
             "assigned_to": self.assigned_to or "",
             "assigned_to_name": self.assignee.name if self.assignee else "",
             "assigned_to_role": self.assignee.role if self.assignee else "",
+            "assigned_rep_aircall_number_id": self.assignee.aircall_number_id if self.assignee else "",
             "company_name": self.company.name if self.company else "",
             "company_phone": self.company.phone if self.company else "",
             "aircall_number_id": self.company.aircall_number_id if self.company else "",

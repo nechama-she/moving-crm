@@ -18,7 +18,11 @@ logger = logging.getLogger("moving-crm")
 router = APIRouter(prefix="/api", tags=["SMS"])
 
 @router.get("/sms/{phone}")
-def get_sms_messages(phone: str, company_name: str | None = None):
+def get_sms_messages(
+    phone: str,
+    company_name: str | None = None,
+    aircall_number_id: str | None = None,
+):
     """Fetch SMS messages for a phone number from the sms_messages table.
     Tries multiple phone number formats. Filters by company_name if provided."""
     try:
@@ -35,6 +39,8 @@ def get_sms_messages(phone: str, company_name: str | None = None):
             for item in response.get("Items", []):
                 if company_name and item.get("company_name", "").lower() != company_name.lower():
                     continue
+                if aircall_number_id and str(item.get("number_id", "")) != aircall_number_id:
+                    continue
                 mid = item.get("message_id", "")
                 if mid not in seen_ids:
                     seen_ids.add(mid)
@@ -44,6 +50,8 @@ def get_sms_messages(phone: str, company_name: str | None = None):
                 response = sms_messages_table.query(**query_kwargs)
                 for item in response.get("Items", []):
                     if company_name and item.get("company_name", "").lower() != company_name.lower():
+                        continue
+                    if aircall_number_id and str(item.get("number_id", "")) != aircall_number_id:
                         continue
                     mid = item.get("message_id", "")
                     if mid not in seen_ids:

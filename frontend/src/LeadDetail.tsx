@@ -3156,6 +3156,7 @@ export default function LeadDetail() {
                   phoneNumber={lead.phone_number ? String(lead.phone_number) : ""}
                   inboxUrl={messengerInboxUrl}
                   aircallNumberId={lead.aircall_number_id ? String(lead.aircall_number_id) : ""}
+                  repAircallNumberId={lead.assigned_rep_aircall_number_id ? String(lead.assigned_rep_aircall_number_id) : ""}
                   companyName={lead.company_name ? String(lead.company_name) : ""}
                 />
               ) : (
