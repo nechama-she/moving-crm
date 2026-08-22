@@ -23,13 +23,14 @@ def get_config() -> dict:
     }
     try:
         ssm = boto3.client("ssm", region_name=config["AWS_REGION"])
-        resp = ssm.get_parameters_by_path(
-            Path=SSM_PREFIX, Recursive=True, WithDecryption=True
-        )
-        for param in resp.get("Parameters", []):
-            key = param["Name"].removeprefix(SSM_PREFIX)
-            config[key] = param["Value"]
-        logger.info("Loaded %d params from SSM %s", len(resp.get("Parameters", [])), SSM_PREFIX)
+        loaded = 0
+        paginator = ssm.get_paginator("get_parameters_by_path")
+        for page in paginator.paginate(Path=SSM_PREFIX, Recursive=True, WithDecryption=True):
+            for param in page.get("Parameters", []):
+                key = param["Name"].removeprefix(SSM_PREFIX)
+                config[key] = param["Value"]
+                loaded += 1
+        logger.info("Loaded %d params from SSM %s", loaded, SSM_PREFIX)
     except ClientError:
         logger.warning("Could not reach SSM — using env vars / defaults")
     return config
