@@ -1,13 +1,14 @@
 """Admin response monitoring and webhook-fed communication state."""
 
 import hmac
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Literal
 
 from boto3.dynamodb.conditions import Attr, Key
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import or_
@@ -23,6 +24,7 @@ from realtime import publish_realtime_event
 
 router = APIRouter(prefix="/api/rep-activity", tags=["Rep Activity"])
 lead_activity_router = APIRouter(prefix="/api/lead-activity", tags=["Lead Activity"])
+logger = logging.getLogger("moving-crm")
 
 
 def _utcnow() -> datetime:
@@ -211,11 +213,25 @@ def end_conversation(
         raise HTTPException(status_code=400, detail="partition_key is required")
     table = sms_messages_table if body.platform == "sms" else conversations_table
     partition_name = "phone_number" if body.platform == "sms" else "user_id"
-    table.update_item(
-        Key={partition_name: partition_key, "timestamp": Decimal(str(body.timestamp))},
-        UpdateExpression="SET conversation_ended = :ended",
-        ExpressionAttributeValues={":ended": True},
-    )
+    try:
+        table.update_item(
+            Key={partition_name: partition_key, "timestamp": Decimal(str(body.timestamp))},
+            UpdateExpression="SET conversation_ended = :ended",
+            ExpressionAttributeValues={":ended": True},
+            ConditionExpression=f"attribute_exists({partition_name}) AND attribute_exists(#ts)",
+            ExpressionAttributeNames={"#ts": "timestamp"},
+        )
+    except ClientError as exc:
+        error = exc.response.get("Error", {})
+        code = str(error.get("Code") or "DynamoDBError")
+        message = str(error.get("Message") or "Could not update the message")
+        logger.exception("Could not mark conversation ended: %s: %s", code, message)
+        if code == "ConditionalCheckFailedException":
+            raise HTTPException(status_code=404, detail="Message record was not found") from exc
+        raise HTTPException(status_code=502, detail=f"Could not mark conversation ended ({code}): {message}") from exc
+    except (BotoCoreError, ValueError) as exc:
+        logger.exception("Could not mark conversation ended")
+        raise HTTPException(status_code=502, detail=f"Could not mark conversation ended: {exc}") from exc
     publish_realtime_event({
         "type": "communication_updated",
         "lead_id": "",
