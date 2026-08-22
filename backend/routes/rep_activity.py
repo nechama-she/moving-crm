@@ -114,6 +114,7 @@ def _unmatched_unanswered(user: User, db: Session, now: datetime) -> list[dict]:
                 "rep": chat.get("rep") or "",
                 "company": chat.get("company") or "",
                 "created_at": occurred_at.isoformat(),
+                "reference_at": occurred_at.isoformat(),
                 "age_minutes": max(0, int((now - occurred_at).total_seconds() // 60)),
                 "status": "Unmatched",
                 "platform": chat.get("platform") or "",
@@ -142,6 +143,7 @@ def _closed_chats(user: User, db: Session, now: datetime) -> list[dict]:
                 "rep": chat.get("rep") or "",
                 "company": chat.get("company") or "",
                 "created_at": occurred_at.isoformat(),
+                "reference_at": occurred_at.isoformat(),
                 "age_minutes": max(0, int((now - occurred_at).total_seconds() // 60)),
                 "status": "Closed",
                 "platform": chat.get("platform") or "",
@@ -153,12 +155,13 @@ def _closed_chats(user: User, db: Session, now: datetime) -> list[dict]:
     return sorted(items, key=lambda item: item["age_minutes"])
 
 
-def _conversation_activity(user: User, db: Session, now: datetime) -> tuple[list[dict], list[dict]]:
-    """Build unmatched-unanswered and closed lists from one fetch per platform."""
+def _conversation_activity(user: User, db: Session, now: datetime) -> tuple[list[dict], list[dict], dict[str, dict]]:
+    """Build activity lists and latest linked messages from one fetch per platform."""
     from routes.chats import get_all_chats
 
     unmatched: list[dict] = []
     closed: list[dict] = []
+    linked_latest: dict[str, dict] = {}
     for source in ("sms", "meta"):
         chats = get_all_chats(cursor="", limit=100, source=source, user=user, db=db)
         for chat in chats["items"]:
@@ -177,6 +180,11 @@ def _conversation_activity(user: User, db: Session, now: datetime) -> tuple[list
                 "message_partition_key": chat.get("message_partition_key") or "",
                 "message_timestamp": chat.get("message_timestamp"),
             }
+            lead_id = str(chat.get("lead_id") or "")
+            if lead_id:
+                current = linked_latest.get(lead_id)
+                if current is None or item["created_at"] > current["created_at"]:
+                    linked_latest[lead_id] = {**item, "conversation_ended": bool(chat.get("conversation_ended"))}
             if chat.get("conversation_ended"):
                 closed.append({**item, "status": "Closed"})
                 continue
@@ -184,11 +192,11 @@ def _conversation_activity(user: User, db: Session, now: datetime) -> tuple[list
             if not chat.get("lead_id") and direction in {"received", "inbound", "user"}:
                 unmatched.append({**item, "status": "Unmatched"})
     closed.sort(key=lambda item: item["age_minutes"])
-    return unmatched, closed
+    return unmatched, closed, linked_latest
 
 
 class CommunicationUpdate(BaseModel):
-    lead_id: str
+    lead_id: str = ""
     channel: Literal["sms", "messenger", "instagram", "call"]
     direction: Literal["inbound", "outbound"]
     occurred_at: datetime
@@ -257,11 +265,22 @@ def update_communication_state(
     if body.channel == "call" and body.answered is None:
         raise HTTPException(status_code=400, detail="answered is required for call updates")
 
-    lead = db.query(Lead).filter(Lead.id == body.lead_id).first()
+    occurred_at = _aware(body.occurred_at)
+    lead_id = body.lead_id.strip()
+    if not lead_id:
+        publish_realtime_event({
+            "type": "communication_updated",
+            "lead_id": "",
+            "channel": body.channel,
+            "direction": body.direction,
+            "occurred_at": occurred_at.isoformat(),
+        })
+        return {"ok": True, "lead_id": ""}
+
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    occurred_at = _aware(body.occurred_at)
     state = db.query(LeadCommunicationState).filter(LeadCommunicationState.lead_id == lead.id).first()
     if state is None:
         state = LeadCommunicationState(lead_id=lead.id)
@@ -330,7 +349,7 @@ def get_rep_activity(
         "missed_calls": missed_query,
     }
     counts = {key: query.count() for key, query in queries.items()}
-    unmatched_items, closed_items = _conversation_activity(user, db, now)
+    unmatched_items, closed_items, linked_latest = _conversation_activity(user, db, now)
     closed_linked_count = sum(1 for item in closed_items if item.get("lead_id"))
     counts["unanswered"] = max(0, counts["unanswered"] + len(unmatched_items) - closed_linked_count)
     counts["closed_chats"] = len(closed_items)
@@ -369,7 +388,7 @@ def get_rep_activity(
             reference_at = state.latest_missed_call_at
         reference_at = _aware(reference_at) if reference_at else None
         age_minutes = max(0, int((now - reference_at).total_seconds() // 60)) if reference_at else 0
-        message_record = _latest_message_record(lead, state.latest_message_channel) if category == "unanswered" and state else {}
+        message_record = linked_latest.get(lead.id, {}) if category == "unanswered" else {}
         if category == "unanswered" and message_record.get("conversation_ended"):
             continue
         items.append({
@@ -379,13 +398,14 @@ def get_rep_activity(
             "rep": lead.assignee.name if lead.assignee else "",
             "company": lead.company.name if lead.company else "",
             "created_at": lead.created_at.isoformat() if lead.created_at else "",
+            "reference_at": reference_at.isoformat() if reference_at else "",
             "age_minutes": age_minutes,
             "status": lead.status or "new",
             "platform": state.latest_message_channel if category == "unanswered" and state else "",
-            "message": str(message_record.get("text") or "").strip(),
+            "message": str(message_record.get("message") or "").strip(),
             "latest_message_at": reference_at.isoformat() if category == "unanswered" and reference_at else "",
-            "message_partition_key": str(message_record.get("phone_number") or message_record.get("user_id") or ""),
-            "message_timestamp": message_record.get("timestamp"),
+            "message_partition_key": str(message_record.get("message_partition_key") or ""),
+            "message_timestamp": message_record.get("message_timestamp"),
         })
 
     if category == "unanswered":

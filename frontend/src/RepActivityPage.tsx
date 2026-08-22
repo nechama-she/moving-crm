@@ -13,6 +13,7 @@ type ActivityLead = {
   rep: string;
   company: string;
   created_at: string;
+  reference_at: string;
   age_minutes: number;
   status: string;
   platform: string;
@@ -38,6 +39,18 @@ function waitingTime(minutes: number): string {
   return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
+function activityGrid(category: Category): string {
+  if (category === "unanswered") return "minmax(160px, 1.2fr) 100px minmax(220px, 1.8fr) minmax(130px, 1fr) minmax(140px, 1fr) 90px 120px";
+  if (category === "closed_chats") return "minmax(160px, 1.2fr) 100px minmax(220px, 1.8fr) minmax(130px, 1fr) minmax(140px, 1fr) 90px";
+  return "minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(150px, 1fr) 120px 100px";
+}
+
+function activityHeaders(category: Category): string[] {
+  if (category === "unanswered") return ["Client", "Platform", "Message", "Rep", "Company", "Waiting", "Action"];
+  if (category === "closed_chats") return ["Client", "Platform", "Message", "Rep", "Company", "Ended"];
+  return ["Client", "Rep", "Company", "Status", "Waiting"];
+}
+
 export default function RepActivityPage() {
   const { token } = useAuth();
   const [category, setCategory] = useState<Category>("new");
@@ -47,11 +60,17 @@ export default function RepActivityPage() {
   const [error, setError] = useState("");
   const [hasMore, setHasMore] = useState(false);
   const [closing, setClosing] = useState("");
+  const [clock, setClock] = useState(() => Date.now());
   const realtimeTimerRef = useRef(0);
 
   const markConversationEnded = async (lead: ActivityLead) => {
     if (!lead.conversation_id || closing) return;
+    const previousItems = items;
+    const previousCounts = counts;
     setClosing(lead.conversation_id);
+    setError("");
+    setItems((current) => current.filter((item) => item.conversation_id !== lead.conversation_id));
+    setCounts((current) => ({ ...current, unanswered: Math.max(0, current.unanswered - 1), closed_chats: current.closed_chats + 1 }));
     try {
       const response = await fetch(`${API_BASE}/api/rep-activity/conversations/end`, {
         method: "POST",
@@ -59,9 +78,9 @@ export default function RepActivityPage() {
         body: JSON.stringify({ platform: lead.platform, partition_key: lead.message_partition_key, timestamp: lead.message_timestamp }),
       });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
-      setItems((current) => current.filter((item) => item.conversation_id !== lead.conversation_id));
-      setCounts((current) => ({ ...current, unanswered: Math.max(0, current.unanswered - 1) }));
     } catch (reason) {
+      setItems(previousItems);
+      setCounts(previousCounts);
       setError(reason instanceof Error ? reason.message : "Could not close conversation");
     } finally {
       setClosing("");
@@ -89,12 +108,29 @@ export default function RepActivityPage() {
     }
   }, [category, token]);
 
-  useRealtimeUpdates(token, () => {
+  useRealtimeUpdates(token, (event) => {
+    if (event.direction === "outbound" && event.lead_id) {
+      const isVisible = category === "unanswered" && items.some((item) => item.lead_id === event.lead_id);
+      if (isVisible) {
+        setItems((current) => current.filter((item) => item.lead_id !== event.lead_id));
+        setCounts((current) => ({ ...current, unanswered: Math.max(0, current.unanswered - 1) }));
+      }
+      return;
+    }
     window.clearTimeout(realtimeTimerRef.current);
     realtimeTimerRef.current = window.setTimeout(() => void load(0), 250);
   });
 
   useEffect(() => { void load(0); }, [load]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const liveAgeMinutes = (lead: ActivityLead) => {
+    const timestamp = Date.parse(lead.reference_at || lead.latest_message_at || lead.created_at);
+    return Number.isFinite(timestamp) ? Math.max(0, Math.floor((clock - timestamp) / 60_000)) : lead.age_minutes;
+  };
 
   const selectedCard = CARDS.find((card) => card.key === category)!;
 
@@ -127,18 +163,21 @@ export default function RepActivityPage() {
         <div style={{ padding: "14px 18px", background: selectedCard.tint, borderBottom: "1px solid #d8dde6" }}>
           <strong style={{ color: selectedCard.color }}>{selectedCard.title}</strong>
         </div>
+        <div style={{ display: "grid", gridTemplateColumns: activityGrid(category), gap: 16, padding: "11px 18px", background: "#f8fafc", borderBottom: "1px solid #d8dde6", color: "#475569", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+          {activityHeaders(category).map((header) => <span key={header}>{header}</span>)}
+        </div>
         {error ? <p style={{ padding: 18, color: "#b91c1c" }}>{error}</p> : null}
         {!loading && !error && items.length === 0 ? <p style={{ padding: 24, color: "#64748b" }}>No leads in this list.</p> : null}
         {items.map((lead) => (
-          <div key={lead.conversation_id || lead.lead_id} style={{ display: "grid", gridTemplateColumns: category === "unanswered" ? "minmax(160px, 1.2fr) 100px minmax(220px, 1.8fr) minmax(130px, 1fr) minmax(140px, 1fr) 90px 120px" : category === "closed_chats" ? "minmax(160px, 1.2fr) 100px minmax(220px, 1.8fr) minmax(130px, 1fr) minmax(140px, 1fr) 90px" : "minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(150px, 1fr) 120px 100px", gap: 16, alignItems: "center", padding: "14px 18px", borderTop: "1px solid #e5e7eb" }}>
+          <div key={lead.conversation_id || lead.lead_id} style={{ display: "grid", gridTemplateColumns: activityGrid(category), gap: 16, alignItems: "center", padding: "14px 18px", borderTop: "1px solid #e5e7eb" }}>
             {lead.lead_id ? <Link to={`/leads/${lead.lead_id}`} state={{ backTo: "/rep-activity", backLabel: "← Back to Rep Activity" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{lead.client}</Link> : lead.platform === "messenger" ? <a href={`https://www.facebook.com/latest/${encodeURIComponent(lead.client)}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{lead.client}</a> : <span style={{ color: "#334155", fontWeight: 700 }}>{lead.client}</span>}
             {category === "unanswered" || category === "closed_chats" ? <span style={{ color: "#475569", textTransform: "capitalize" }}>{lead.platform || "Unknown"}</span> : null}
             {category === "unanswered" || category === "closed_chats" ? <span title={lead.message} style={{ color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lead.message || "No preview"}</span> : null}
             <span>{lead.rep || "Unassigned"}</span>
             <span style={{ color: "#475569" }}>{lead.company || "Unknown company"}</span>
             {category !== "unanswered" && category !== "closed_chats" ? <span style={{ color: "#475569" }}>{lead.status}</span> : null}
-            <strong style={{ color: category === "new" ? "#0b5cab" : "#c2410c" }}>{waitingTime(lead.age_minutes)}</strong>
-            {category === "unanswered" ? <label style={{ display: "flex", alignItems: "center", gap: 7, color: "#475569", fontSize: 13, cursor: closing || !lead.message_partition_key ? "default" : "pointer" }}><input type="checkbox" disabled={Boolean(closing) || !lead.message_partition_key || lead.message_timestamp == null} checked={false} onChange={() => void markConversationEnded(lead)} /> Ended</label> : null}
+            <strong style={{ color: category === "new" ? "#0b5cab" : "#c2410c" }}>{waitingTime(liveAgeMinutes(lead))}</strong>
+            {category === "unanswered" ? <label style={{ display: "flex", alignItems: "center", gap: 7, color: "#475569", fontSize: 13, cursor: closing === lead.conversation_id || !lead.message_partition_key ? "default" : "pointer" }}><input type="checkbox" disabled={closing === lead.conversation_id || !lead.message_partition_key || lead.message_timestamp == null} checked={false} onChange={() => void markConversationEnded(lead)} /> Ended</label> : null}
           </div>
         ))}
         {loading ? <p style={{ padding: 18, color: "#64748b" }}>Loading…</p> : null}

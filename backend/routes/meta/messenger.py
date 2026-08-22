@@ -7,9 +7,12 @@ import urllib.error
 import boto3
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from communication_activity import record_outbound_message
+from database import get_db
 from db import conversations_table
 from libs.common.ssm import get_ssm_cached
 
@@ -104,10 +107,11 @@ def get_messenger_messages(user_id: str):
 class MessengerSendRequest(BaseModel):
     message: str
     page_id: str
+    lead_id: str = ""
 
 
 @router.post("/{user_id}")
-def send_messenger_message(user_id: str, req: MessengerSendRequest):
+def send_messenger_message(user_id: str, req: MessengerSendRequest, db: Session = Depends(get_db)):
     """Send a Messenger message to a user."""
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
@@ -141,4 +145,9 @@ def send_messenger_message(user_id: str, req: MessengerSendRequest):
         )
         with urllib.request.urlopen(http_req2, timeout=10) as resp2:
             logger.info("Messenger sent (retry) to %s", user_id)
+    if req.lead_id:
+        try:
+            record_outbound_message(db, req.lead_id, "messenger")
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"ok": True}

@@ -3151,6 +3151,7 @@ export default function LeadDetail() {
             {activeTab === "conversations" ? (
               chatUserId || lead.phone_number ? (
                 <ChatMessages
+                  leadId={leadId!}
                   userId={chatUserId}
                   userName={String(lead.full_name || "Client")}
                   phoneNumber={lead.phone_number ? String(lead.phone_number) : ""}

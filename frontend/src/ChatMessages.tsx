@@ -19,6 +19,7 @@ interface Message {
 }
 
 interface Props {
+  leadId: string;
   userId: string;
   userName: string;
   phoneNumber: string;
@@ -36,7 +37,7 @@ const TABS = [
   { key: "calls", label: "Calls" },
 ] as const;
 
-export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, aircallNumberId, repAircallNumberId, companyName }: Props) {
+export default function ChatMessages({ leadId, userId, userName, phoneNumber, inboxUrl, aircallNumberId, repAircallNumberId, companyName }: Props) {
   const { token } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [companySmsMessages, setCompanySmsMessages] = useState<Message[]>([]);
@@ -166,7 +167,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
     if (!replyText.trim() || sending) return;
     setSending(true);
     try {
-      const body: Record<string, string> = { message: replyText.trim() };
+      const body: Record<string, string> = { message: replyText.trim(), lead_id: leadId };
       if (activeTab === "messages") {
         body.aircall_number_id = smsNumberTab === "company" ? aircallNumberId : repAircallNumberId;
       } else {

@@ -6,9 +6,12 @@ import base64
 
 from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from communication_activity import record_outbound_message
+from database import get_db
 from db import sms_messages_table
 from libs.common.phone import normalize_digits as _normalize_digits, phone_variants as _phone_variants
 from libs.common.ssm import get_ssm_cached
@@ -72,10 +75,11 @@ def get_sms_messages(
 class SmsSendRequest(BaseModel):
     message: str
     aircall_number_id: str
+    lead_id: str = ""
 
 
 @router.post("/sms/{phone}")
-def send_sms(phone: str, req: SmsSendRequest):
+def send_sms(phone: str, req: SmsSendRequest, db: Session = Depends(get_db)):
     """Send an SMS message via Aircall."""
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
@@ -102,6 +106,11 @@ def send_sms(phone: str, req: SmsSendRequest):
             data = json.loads(resp.read().decode("utf-8"))
             msg_id = str(data.get("id", ""))
             logger.info("Aircall SMS sent to %s: id=%s", to_number, msg_id)
+            if req.lead_id:
+                try:
+                    record_outbound_message(db, req.lead_id, "sms")
+                except ValueError as exc:
+                    raise HTTPException(status_code=404, detail=str(exc)) from exc
             return {"ok": True, "message_id": msg_id}
     except urllib.error.HTTPError as exc:
         body_text = exc.read().decode("utf-8", errors="replace")
