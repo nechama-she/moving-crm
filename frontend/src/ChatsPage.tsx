@@ -4,6 +4,7 @@ import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
 type ChatRow = {
+  conversation_id: string;
   lead_id: string;
   client: string;
   rep: string;
@@ -36,7 +37,7 @@ export default function ChatsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const [source, setSource] = useState<"meta" | "sms">("meta");
+  const [source, setSource] = useState<"meta" | "sms">("sms");
   const [cursor, setCursor] = useState("");
   const [hasMore, setHasMore] = useState(true);
   const loadingRef = useRef(false);
@@ -61,9 +62,9 @@ export default function ChatsPage() {
       .then((data) => {
         if (activeSourceRef.current !== requestedSource) return;
         setItems((current) => {
-          const merged = new Map(current.map((item) => [`${item.lead_id}-${item.platform}`, item]));
+          const merged = new Map(current.map((item) => [item.conversation_id || `${item.lead_id}-${item.platform}`, item]));
           for (const item of data.items || []) {
-            const key = `${item.lead_id}-${item.platform}`;
+            const key = item.conversation_id || `${item.lead_id}-${item.platform}`;
             const previous = merged.get(key);
             if (!previous || item.timestamp > previous.timestamp) merged.set(key, item);
           }
@@ -168,15 +169,15 @@ export default function ChatsPage() {
             </thead>
             <tbody>
               {visibleItems.map((item) => (
-                <tr key={`${item.lead_id}-${item.platform}`} style={{ borderTop: "1px solid #e5e7eb" }}>
+                <tr key={item.conversation_id || `${item.lead_id}-${item.platform}`} style={{ borderTop: "1px solid #e5e7eb" }}>
                   <td style={{ padding: "14px 16px", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    <Link
+                    {item.lead_id ? <Link
                       to={`/leads/${item.lead_id}`}
                       state={{ backTo: "/chats", backLabel: "← Back to All Chats" }}
                       style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}
                     >
                       {item.client}
-                    </Link>
+                    </Link> : <span style={{ color: "#334155", fontWeight: 700 }}>{item.client}</span>}
                   </td>
                   <td style={{ padding: "14px 16px", color: item.rep ? "#334155" : "#94a3b8" }}>{item.rep || "Unassigned"}</td>
                   <td style={{ padding: "14px 16px" }}>{PLATFORM_LABELS[item.platform] || item.platform}</td>

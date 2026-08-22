@@ -5,6 +5,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
+from boto3.dynamodb.conditions import Attr, Key
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import or_
@@ -13,6 +15,8 @@ from sqlalchemy.orm import Session, joinedload
 from auth import get_current_user
 from config import get_config
 from database import get_db
+from db import conversations_table, sms_messages_table
+from libs.common.phone import phone_variants
 from models import Lead, LeadCommunicationState, User
 
 router = APIRouter(prefix="/api/rep-activity", tags=["Rep Activity"])
@@ -29,6 +33,59 @@ def _aware(value: datetime) -> datetime:
 
 def _latest(current: datetime | None, incoming: datetime) -> datetime:
     return incoming if current is None or incoming > _aware(current) else current
+
+
+def _latest_message_preview(lead: Lead, channel: str) -> str:
+    """Read the latest inbound message text from the channel's DynamoDB table."""
+    try:
+        if channel == "sms" and lead.phone:
+            allowed_number_ids = {
+                str(value).strip()
+                for value in (
+                    lead.assignee.aircall_number_id if lead.assignee else "",
+                    lead.company.aircall_number_id if lead.company else "",
+                )
+                if value
+            }
+            newest: dict | None = None
+            for phone in phone_variants(lead.phone):
+                kwargs = {
+                    "KeyConditionExpression": Key("phone_number").eq(phone),
+                    "ScanIndexForward": False,
+                    "Limit": 20,
+                }
+                while True:
+                    response = sms_messages_table.query(**kwargs)
+                    for message in response.get("Items", []):
+                        if str(message.get("direction") or "").lower() != "received":
+                            continue
+                        if str(message.get("number_id") or "").strip() not in allowed_number_ids:
+                            continue
+                        if newest is None or float(message.get("timestamp") or 0) > float(newest.get("timestamp") or 0):
+                            newest = message
+                    if newest is not None or "LastEvaluatedKey" not in response:
+                        break
+                    kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+            return str((newest or {}).get("text") or "").strip()
+
+        if channel in {"messenger", "instagram"} and lead.facebook_user_id:
+            kwargs = {
+                "KeyConditionExpression": Key("user_id").eq(lead.facebook_user_id),
+                "FilterExpression": Attr("platform").eq(channel) & Attr("role").eq("user"),
+                "ScanIndexForward": False,
+                "Limit": 20,
+            }
+            while True:
+                response = conversations_table.query(**kwargs)
+                messages = response.get("Items", [])
+                if messages:
+                    return str(messages[0].get("text") or "").strip()
+                if "LastEvaluatedKey" not in response:
+                    break
+                kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+    except (ClientError, TypeError, ValueError):
+        return ""
+    return ""
 
 
 class CommunicationUpdate(BaseModel):
@@ -156,6 +213,8 @@ def get_rep_activity(
             "created_at": lead.created_at.isoformat() if lead.created_at else "",
             "age_minutes": age_minutes,
             "status": lead.status or "new",
+            "platform": state.latest_message_channel if category == "unanswered" and state else "",
+            "message": _latest_message_preview(lead, state.latest_message_channel) if category == "unanswered" and state else "",
         })
 
     total = counts[category]

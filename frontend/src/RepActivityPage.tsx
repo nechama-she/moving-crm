@@ -13,6 +13,8 @@ type ActivityLead = {
   created_at: string;
   age_minutes: number;
   status: string;
+  platform: string;
+  message: string;
 };
 
 const CARDS: Array<{ key: Category; title: string; description: string; color: string; tint: string }> = [
@@ -96,11 +98,13 @@ export default function RepActivityPage() {
         {error ? <p style={{ padding: 18, color: "#b91c1c" }}>{error}</p> : null}
         {!loading && !error && items.length === 0 ? <p style={{ padding: 24, color: "#64748b" }}>No leads in this list.</p> : null}
         {items.map((lead) => (
-          <div key={lead.lead_id} style={{ display: "grid", gridTemplateColumns: "minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(150px, 1fr) 120px 100px", gap: 16, alignItems: "center", padding: "14px 18px", borderTop: "1px solid #e5e7eb" }}>
+          <div key={lead.lead_id} style={{ display: "grid", gridTemplateColumns: category === "unanswered" ? "minmax(160px, 1.2fr) 100px minmax(220px, 1.8fr) minmax(130px, 1fr) minmax(140px, 1fr) 90px" : "minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(150px, 1fr) 120px 100px", gap: 16, alignItems: "center", padding: "14px 18px", borderTop: "1px solid #e5e7eb" }}>
             <Link to={`/leads/${lead.lead_id}`} state={{ backTo: "/rep-activity", backLabel: "← Back to Rep Activity" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{lead.client}</Link>
+            {category === "unanswered" ? <span style={{ color: "#475569", textTransform: "capitalize" }}>{lead.platform || "Unknown"}</span> : null}
+            {category === "unanswered" ? <span title={lead.message} style={{ color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lead.message || "No preview"}</span> : null}
             <span>{lead.rep || "Unassigned"}</span>
             <span style={{ color: "#475569" }}>{lead.company}</span>
-            <span style={{ color: "#475569" }}>{lead.status}</span>
+            {category !== "unanswered" ? <span style={{ color: "#475569" }}>{lead.status}</span> : null}
             <strong style={{ color: category === "new" ? "#0b5cab" : "#c2410c" }}>{waitingTime(lead.age_minutes)}</strong>
           </div>
         ))}

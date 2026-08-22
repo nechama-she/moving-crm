@@ -191,7 +191,7 @@ def test_keeps_meta_and_sms_sources_separate(monkeypatch):
     assert all(item["lead_id"] == "lead-1" for item in meta_result["items"] + sms_result["items"])
 
 
-def test_sms_does_not_fall_back_to_phone_only(monkeypatch):
+def test_unmatched_sms_is_returned_without_a_lead_link(monkeypatch):
     lead = SimpleNamespace(
         id="lead-sean", company_id="company-1", assigned_to="sean",
         full_name="Shared Client", phone="18046374931", facebook_user_id="",
@@ -218,7 +218,9 @@ def test_sms_does_not_fall_back_to_phone_only(monkeypatch):
         user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb([lead]),
     )
 
-    assert result["items"] == []
+    assert len(result["items"]) == 1
+    assert result["items"][0]["lead_id"] == ""
+    assert result["items"][0]["client"] == "+18046374931"
 
 
 def test_returns_empty_without_company_access(monkeypatch):

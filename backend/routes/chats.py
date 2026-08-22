@@ -161,12 +161,25 @@ def get_all_chats(
         if message.get("user_id")
     }
     sms_phones: set[str] = set()
+    sms_number_ids: set[str] = set()
     for message in sms_messages:
         phone = normalize_digits(str(message.get("phone_number") or ""))
         if len(phone) == 11 and phone.startswith("1"):
             phone = phone[1:]
         if phone:
             sms_phones.add(phone)
+        number_id = str(message.get("number_id") or "").strip()
+        if number_id:
+            sms_number_ids.add(number_id)
+
+    number_rep_names: dict[str, str] = {}
+    if sms_number_ids:
+        rep_rows = db.query(User).filter(User.aircall_number_id.in_(sms_number_ids)).all()
+        number_rep_names = {
+            str(getattr(rep, "aircall_number_id", "") or "").strip(): str(getattr(rep, "name", "") or "").strip()
+            for rep in rep_rows
+            if getattr(rep, "aircall_number_id", None)
+        }
 
     match_conditions = []
     if meta_user_ids:
@@ -209,6 +222,7 @@ def get_all_chats(
         if key in latest and latest[key]["timestamp"] >= timestamp:
             return
         latest[key] = {
+            "conversation_id": f"lead:{lead.id}:{platform}",
             "lead_id": lead.id,
             "client": lead.full_name or lead.phone or "Unknown client",
             "rep": rep_name if rep_name is not None else (lead.assignee.name if lead.assignee else ""),
@@ -249,6 +263,20 @@ def get_all_chats(
             # The exact number_id match selected the lead. Rep identity comes
             # from that matched CRM relationship, never from DynamoDB name fields.
             add_message(lead, "sms", message)
+        else:
+            timestamp = _timestamp(message.get("timestamp"))
+            key = (f"unmatched:{phone}:{number_id}", "sms")
+            if key not in latest or latest[key]["timestamp"] < timestamp:
+                latest[key] = {
+                    "conversation_id": f"unmatched:{phone}:{number_id}",
+                    "lead_id": "",
+                    "client": str(message.get("phone_number") or phone or "Unknown client"),
+                    "rep": number_rep_names.get(number_id, ""),
+                    "platform": "sms",
+                    "message": str(message.get("text") or ""),
+                    "timestamp": timestamp,
+                    "direction": str(message.get("direction") or ""),
+                }
 
     has_more = not meta_done or not sms_done
     return {
