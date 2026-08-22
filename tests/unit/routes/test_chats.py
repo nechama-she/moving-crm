@@ -187,7 +187,7 @@ def test_keeps_meta_and_sms_sources_separate(monkeypatch):
     assert meta_result["items"][0]["message"] == "Newest"
     assert meta_result["items"][0]["rep"] == "Alex Rep"
     assert [item["platform"] for item in sms_result["items"]] == ["sms"]
-    assert sms_result["items"][0]["rep"] == "Message Sender"
+    assert sms_result["items"][0]["rep"] == "Alex Rep"
     assert all(item["lead_id"] == "lead-1" for item in meta_result["items"] + sms_result["items"])
 
 

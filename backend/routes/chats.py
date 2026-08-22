@@ -231,7 +231,7 @@ def get_all_chats(
         if len(phone) == 11 and phone.startswith("1"):
             phone = phone[1:]
         number_id = str(message.get("number_id") or "").strip()
-        exact_matches = []
+        exact_matches: list[Lead] = []
         if number_id:
             for candidate in sms_phone_leads.get(phone, []):
                 rep_number_id = (
@@ -246,12 +246,9 @@ def get_all_chats(
                     exact_matches.append(candidate)
         lead = max(exact_matches, key=_lead_time) if exact_matches else None
         if lead:
-            add_message(
-                lead,
-                "sms",
-                message,
-                rep_name=str(message.get("sales_name") or "").strip(),
-            )
+            # The exact number_id match selected the lead. Rep identity comes
+            # from that matched CRM relationship, never from DynamoDB name fields.
+            add_message(lead, "sms", message)
 
     has_more = not meta_done or not sms_done
     return {
