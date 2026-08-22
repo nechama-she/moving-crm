@@ -19,12 +19,13 @@ from config import get_config
 from database import get_db
 from db import conversations_table, sms_messages_table
 from libs.common.phone import phone_variants
-from models import Lead, LeadCommunicationState, User
+from models import AppSetting, Lead, LeadCommunicationState, User
 from realtime import publish_realtime_event
 
 router = APIRouter(prefix="/api/rep-activity", tags=["Rep Activity"])
 lead_activity_router = APIRouter(prefix="/api/lead-activity", tags=["Lead Activity"])
 logger = logging.getLogger("moving-crm")
+UNANSWERED_START_SETTING = "rep_activity.unanswered_start_at"
 
 
 def _utcnow() -> datetime:
@@ -33,6 +34,22 @@ def _utcnow() -> datetime:
 
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _unanswered_start_at(db: Session, now: datetime) -> datetime:
+    setting = db.query(AppSetting).filter(AppSetting.key == UNANSWERED_START_SETTING).first()
+    if setting and setting.value:
+        try:
+            return _aware(datetime.fromisoformat(setting.value.replace("Z", "+00:00")))
+        except ValueError:
+            logger.warning("Invalid unanswered-message cutoff %r; resetting it", setting.value)
+    if setting is None:
+        setting = AppSetting(key=UNANSWERED_START_SETTING, value=now.isoformat())
+        db.add(setting)
+    else:
+        setting.value = now.isoformat()
+    db.commit()
+    return now
 
 
 def _latest(current: datetime | None, incoming: datetime) -> datetime:
@@ -155,7 +172,7 @@ def _closed_chats(user: User, db: Session, now: datetime) -> list[dict]:
     return sorted(items, key=lambda item: item["age_minutes"])
 
 
-def _conversation_activity(user: User, db: Session, now: datetime) -> tuple[list[dict], list[dict], dict[str, dict]]:
+def _conversation_activity(user: User, db: Session, now: datetime, unanswered_start_at: datetime) -> tuple[list[dict], list[dict], dict[str, dict]]:
     """Build activity lists and latest linked messages from one fetch per platform."""
     from routes.chats import get_all_chats
 
@@ -187,6 +204,8 @@ def _conversation_activity(user: User, db: Session, now: datetime) -> tuple[list
                     linked_latest[lead_id] = {**item, "conversation_ended": bool(chat.get("conversation_ended"))}
             if chat.get("conversation_ended"):
                 closed.append({**item, "status": "Closed"})
+                continue
+            if occurred_at < unanswered_start_at:
                 continue
             direction = str(chat.get("direction") or "").lower()
             if not chat.get("lead_id") and direction in {"received", "inbound", "user"}:
@@ -323,6 +342,7 @@ def get_rep_activity(
         raise HTTPException(status_code=403, detail="Only admins can view rep activity")
 
     now = _utcnow()
+    unanswered_start_at = _unanswered_start_at(db, now)
     cutoff = now - timedelta(minutes=30)
     base_query = db.query(Lead).outerjoin(LeadCommunicationState, LeadCommunicationState.lead_id == Lead.id)
     no_contact = or_(LeadCommunicationState.lead_id.is_(None), LeadCommunicationState.first_contact_at.is_(None))
@@ -330,6 +350,7 @@ def get_rep_activity(
     no_contact_query = base_query.filter(Lead.created_at <= cutoff, no_contact)
     unanswered_query = base_query.filter(
         LeadCommunicationState.latest_inbound_message_at.isnot(None),
+        LeadCommunicationState.latest_inbound_message_at >= unanswered_start_at,
         or_(
             LeadCommunicationState.latest_outbound_message_at.is_(None),
             LeadCommunicationState.latest_inbound_message_at > LeadCommunicationState.latest_outbound_message_at,
@@ -349,7 +370,7 @@ def get_rep_activity(
         "missed_calls": missed_query,
     }
     counts = {key: query.count() for key, query in queries.items()}
-    unmatched_items, closed_items, linked_latest = _conversation_activity(user, db, now)
+    unmatched_items, closed_items, linked_latest = _conversation_activity(user, db, now, unanswered_start_at)
     closed_linked_count = sum(1 for item in closed_items if item.get("lead_id"))
     counts["unanswered"] = max(0, counts["unanswered"] + len(unmatched_items) - closed_linked_count)
     counts["closed_chats"] = len(closed_items)
