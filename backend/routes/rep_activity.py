@@ -3,9 +3,10 @@
 import hmac
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import BotoCoreError, ClientError
@@ -19,13 +20,12 @@ from config import get_config
 from database import get_db
 from db import conversations_table, sms_messages_table
 from libs.common.phone import phone_variants
-from models import AppSetting, Lead, LeadCommunicationState, User
+from models import Lead, LeadCommunicationState, User
 from realtime import publish_realtime_event
 
 router = APIRouter(prefix="/api/rep-activity", tags=["Rep Activity"])
 lead_activity_router = APIRouter(prefix="/api/lead-activity", tags=["Lead Activity"])
 logger = logging.getLogger("moving-crm")
-UNANSWERED_START_SETTING = "rep_activity.unanswered_start_at"
 
 
 def _utcnow() -> datetime:
@@ -34,22 +34,6 @@ def _utcnow() -> datetime:
 
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-
-
-def _unanswered_start_at(db: Session, now: datetime) -> datetime:
-    setting = db.query(AppSetting).filter(AppSetting.key == UNANSWERED_START_SETTING).first()
-    if setting and setting.value:
-        try:
-            return _aware(datetime.fromisoformat(setting.value.replace("Z", "+00:00")))
-        except ValueError:
-            logger.warning("Invalid unanswered-message cutoff %r; resetting it", setting.value)
-    if setting is None:
-        setting = AppSetting(key=UNANSWERED_START_SETTING, value=now.isoformat())
-        db.add(setting)
-    else:
-        setting.value = now.isoformat()
-    db.commit()
-    return now
 
 
 def _latest(current: datetime | None, incoming: datetime) -> datetime:
@@ -172,7 +156,7 @@ def _closed_chats(user: User, db: Session, now: datetime) -> list[dict]:
     return sorted(items, key=lambda item: item["age_minutes"])
 
 
-def _conversation_activity(user: User, db: Session, now: datetime, unanswered_start_at: datetime) -> tuple[list[dict], list[dict], dict[str, dict]]:
+def _conversation_activity(user: User, db: Session, now: datetime, range_start: datetime, range_end: datetime) -> tuple[list[dict], list[dict], dict[str, dict]]:
     """Build activity lists and latest linked messages from one fetch per platform."""
     from routes.chats import get_all_chats
 
@@ -183,6 +167,8 @@ def _conversation_activity(user: User, db: Session, now: datetime, unanswered_st
         chats = get_all_chats(cursor="", limit=100, source=source, user=user, db=db)
         for chat in chats["items"]:
             occurred_at = datetime.fromtimestamp(float(chat.get("timestamp") or 0), tz=timezone.utc)
+            if occurred_at < range_start or occurred_at >= range_end:
+                continue
             item = {
                 "conversation_id": chat.get("conversation_id") or "",
                 "lead_id": chat.get("lead_id") or "",
@@ -204,8 +190,6 @@ def _conversation_activity(user: User, db: Session, now: datetime, unanswered_st
                     linked_latest[lead_id] = {**item, "conversation_ended": bool(chat.get("conversation_ended"))}
             if chat.get("conversation_ended"):
                 closed.append({**item, "status": "Closed"})
-                continue
-            if occurred_at < unanswered_start_at:
                 continue
             direction = str(chat.get("direction") or "").lower()
             if not chat.get("lead_id") and direction in {"received", "inbound", "user"}:
@@ -335,6 +319,8 @@ def get_rep_activity(
     category: str = Query(default="new", pattern="^(new|no_first_contact|unanswered|missed_calls|closed_chats)$"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -342,15 +328,23 @@ def get_rep_activity(
         raise HTTPException(status_code=403, detail="Only admins can view rep activity")
 
     now = _utcnow()
-    unanswered_start_at = _unanswered_start_at(db, now)
+    eastern = ZoneInfo("America/New_York")
+    eastern_today = now.astimezone(eastern).date()
+    selected_start = start_date or (eastern_today - timedelta(days=3))
+    selected_end = end_date or eastern_today
+    if selected_end < selected_start:
+        raise HTTPException(status_code=400, detail="end_date must be on or after start_date")
+    range_start = datetime.combine(selected_start, time.min, tzinfo=eastern).astimezone(timezone.utc)
+    range_end = datetime.combine(selected_end + timedelta(days=1), time.min, tzinfo=eastern).astimezone(timezone.utc)
     cutoff = now - timedelta(minutes=30)
     base_query = db.query(Lead).outerjoin(LeadCommunicationState, LeadCommunicationState.lead_id == Lead.id)
     no_contact = or_(LeadCommunicationState.lead_id.is_(None), LeadCommunicationState.first_contact_at.is_(None))
-    new_query = base_query.filter(Lead.created_at > cutoff, no_contact)
-    no_contact_query = base_query.filter(Lead.created_at <= cutoff, no_contact)
+    new_query = base_query.filter(Lead.created_at > cutoff, Lead.created_at >= range_start, Lead.created_at < range_end, no_contact)
+    no_contact_query = base_query.filter(Lead.created_at <= cutoff, Lead.created_at >= range_start, Lead.created_at < range_end, no_contact)
     unanswered_query = base_query.filter(
         LeadCommunicationState.latest_inbound_message_at.isnot(None),
-        LeadCommunicationState.latest_inbound_message_at >= unanswered_start_at,
+        LeadCommunicationState.latest_inbound_message_at >= range_start,
+        LeadCommunicationState.latest_inbound_message_at < range_end,
         or_(
             LeadCommunicationState.latest_outbound_message_at.is_(None),
             LeadCommunicationState.latest_inbound_message_at > LeadCommunicationState.latest_outbound_message_at,
@@ -358,6 +352,8 @@ def get_rep_activity(
     )
     missed_query = base_query.filter(
         LeadCommunicationState.latest_missed_call_at.isnot(None),
+        LeadCommunicationState.latest_missed_call_at >= range_start,
+        LeadCommunicationState.latest_missed_call_at < range_end,
         or_(
             LeadCommunicationState.latest_call_response_at.is_(None),
             LeadCommunicationState.latest_missed_call_at > LeadCommunicationState.latest_call_response_at,
@@ -370,7 +366,7 @@ def get_rep_activity(
         "missed_calls": missed_query,
     }
     counts = {key: query.count() for key, query in queries.items()}
-    unmatched_items, closed_items, linked_latest = _conversation_activity(user, db, now, unanswered_start_at)
+    unmatched_items, closed_items, linked_latest = _conversation_activity(user, db, now, range_start, range_end)
     closed_linked_count = sum(1 for item in closed_items if item.get("lead_id"))
     counts["unanswered"] = max(0, counts["unanswered"] + len(unmatched_items) - closed_linked_count)
     counts["closed_chats"] = len(closed_items)

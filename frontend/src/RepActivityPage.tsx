@@ -31,6 +31,15 @@ const CARDS: Array<{ key: Category; title: string; description: string; color: s
   { key: "closed_chats", title: "Closed Chats", description: "Conversations manually marked as ended", color: "#475569", tint: "#f8fafc" },
 ];
 
+function localDate(daysAgo = 0): string {
+  const value = new Date();
+  value.setDate(value.getDate() - daysAgo);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function waitingTime(minutes: number): string {
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
@@ -73,6 +82,8 @@ export default function RepActivityPage() {
   const [hasMore, setHasMore] = useState(false);
   const [closing, setClosing] = useState("");
   const [clock, setClock] = useState(() => Date.now());
+  const [startDate, setStartDate] = useState(() => localDate(3));
+  const [endDate, setEndDate] = useState(() => localDate());
   const realtimeTimerRef = useRef(0);
 
   const markConversationEnded = async (lead: ActivityLead) => {
@@ -103,7 +114,7 @@ export default function RepActivityPage() {
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams({ category, limit: "50", offset: String(offset) });
+      const params = new URLSearchParams({ category, limit: "50", offset: String(offset), start_date: startDate, end_date: endDate });
       const response = await fetch(`${API_BASE}/api/rep-activity?${params}`, { headers: authHeaders(token) });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
@@ -118,7 +129,7 @@ export default function RepActivityPage() {
     } finally {
       setLoading(false);
     }
-  }, [category, token]);
+  }, [category, token, startDate, endDate]);
 
   useRealtimeUpdates(token, (event) => {
     if (event.direction === "outbound" && event.lead_id) {
@@ -150,6 +161,17 @@ export default function RepActivityPage() {
     <main style={{ padding: 24, width: "100%", maxWidth: 1280, margin: "0 auto", boxSizing: "border-box" }}>
       <h1 style={{ margin: 0, color: "#032d60", fontSize: 24 }}>Rep Activity</h1>
       <p style={{ margin: "6px 0 20px", color: "#64748b" }}>Leads requiring attention based on response activity.</p>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <label style={{ display: "grid", gap: 5, color: "#475569", fontSize: 12, fontWeight: 700 }}>
+          From
+          <input type="date" value={startDate} max={endDate} onChange={(event) => setStartDate(event.target.value)} style={{ padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 6, color: "#334155" }} />
+        </label>
+        <label style={{ display: "grid", gap: 5, color: "#475569", fontSize: 12, fontWeight: 700 }}>
+          To
+          <input type="date" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} style={{ padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 6, color: "#334155" }} />
+        </label>
+      </div>
 
       <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 24 }}>
         {CARDS.map((card) => {
