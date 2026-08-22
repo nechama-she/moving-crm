@@ -933,6 +933,22 @@ Resources:
                 Action:
                   - sqs:*
                 Resource: "*"
+              # DynamoDB tables managed by this stack
+              - Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DeleteTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:UpdateTimeToLive
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                  - dynamodb:ListTagsOfResource
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/moving-crm-*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/moving-crm-*/index/*"
               # Secrets Manager (RDS managed passwords)
               - Effect: Allow
                 Action:
@@ -1312,6 +1328,7 @@ Resources:
 
   RealtimeConnectionsTable:
     Type: AWS::DynamoDB::Table
+    DependsOn: CloudFormationExecutionRole
     Properties:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
