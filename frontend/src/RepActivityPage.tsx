@@ -39,6 +39,18 @@ function waitingTime(minutes: number): string {
   return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
+function messageTime(value: string): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "Unknown";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(timestamp);
+}
+
 function activityGrid(category: Category): string {
   if (category === "unanswered") return "minmax(160px, 1.2fr) 100px minmax(220px, 1.8fr) minmax(130px, 1fr) minmax(140px, 1fr) 90px 120px";
   if (category === "closed_chats") return "minmax(160px, 1.2fr) 100px minmax(220px, 1.8fr) minmax(130px, 1fr) minmax(140px, 1fr) 90px";
@@ -46,8 +58,8 @@ function activityGrid(category: Category): string {
 }
 
 function activityHeaders(category: Category): string[] {
-  if (category === "unanswered") return ["Client", "Platform", "Message", "Rep", "Company", "Waiting", "Action"];
-  if (category === "closed_chats") return ["Client", "Platform", "Message", "Rep", "Company", "Ended"];
+  if (category === "unanswered") return ["Client", "Platform", "Message", "Rep", "Company", "Message Time", "Action"];
+  if (category === "closed_chats") return ["Client", "Platform", "Message", "Rep", "Company", "Message Time"];
   return ["Client", "Rep", "Company", "Status", "Waiting"];
 }
 
@@ -176,7 +188,9 @@ export default function RepActivityPage() {
             <span>{lead.rep || "Unassigned"}</span>
             <span style={{ color: "#475569" }}>{lead.company || "Unknown company"}</span>
             {category !== "unanswered" && category !== "closed_chats" ? <span style={{ color: "#475569" }}>{lead.status}</span> : null}
-            <strong style={{ color: category === "new" ? "#0b5cab" : "#c2410c" }}>{waitingTime(liveAgeMinutes(lead))}</strong>
+            {category === "unanswered" || category === "closed_chats"
+              ? <span style={{ color: "#475569", fontSize: 13 }}>{messageTime(lead.latest_message_at || lead.reference_at)}</span>
+              : <strong style={{ color: category === "new" ? "#0b5cab" : "#c2410c" }}>{waitingTime(liveAgeMinutes(lead))}</strong>}
             {category === "unanswered" ? <label style={{ display: "flex", alignItems: "center", gap: 7, color: "#475569", fontSize: 13, cursor: closing === lead.conversation_id || !lead.message_partition_key ? "default" : "pointer" }}><input type="checkbox" disabled={closing === lead.conversation_id || !lead.message_partition_key || lead.message_timestamp == null} checked={false} onChange={() => void markConversationEnded(lead)} /> Ended</label> : null}
           </div>
         ))}
