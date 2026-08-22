@@ -43,6 +43,22 @@ def test_timestamp_normalizes_milliseconds_and_seconds():
     assert chats._timestamp(1_777_000_000) == 1_777_000_000
 
 
+def test_sms_page_queries_timestamp_index_newest_first(monkeypatch):
+    table = MagicMock()
+    table.query.return_value = {"Items": [{"message_id": "m1"}], "LastEvaluatedKey": {"cursor": "next"}}
+    monkeypatch.setattr(chats, "sms_messages_table", table)
+
+    items, cursor = chats._query_sms_page({"cursor": "current"}, 20)
+
+    assert items == [{"message_id": "m1"}]
+    assert cursor == {"cursor": "next"}
+    kwargs = table.query.call_args.kwargs
+    assert kwargs["IndexName"] == "record-type-timestamp-index"
+    assert kwargs["ScanIndexForward"] is False
+    assert kwargs["Limit"] == 20
+    assert kwargs["ExclusiveStartKey"] == {"cursor": "current"}
+
+
 def test_cursor_preserves_dynamodb_number_types():
     meta_key = {"user_id": "meta-1", "timestamp": Decimal("123.456")}
     sms_key = {"phone_number": "+12125550199", "timestamp": Decimal("789")}
@@ -132,23 +148,22 @@ def test_keeps_meta_and_sms_sources_separate(monkeypatch):
     monkeypatch.setattr(
         chats,
         "_scan_page",
-        lambda table, start_key, limit: ((
-            [
+        lambda table, start_key, limit: ([
                 {"user_id": "meta-1", "platform": "messenger", "text": "Old", "timestamp": 10},
                 {"user_id": "meta-1", "platform": "messenger", "text": "Newest", "timestamp": 30},
                 {"user_id": "meta-1", "platform": "instagram", "text": "Instagram", "timestamp": 20},
-            ]
-            if table is chats.conversations_table
-            else [
-                {
-                    "phone_number": "+12125550199",
-                    "company_name": "Moving Co",
-                    "text": "SMS",
-                    "timestamp": 25,
-                    "direction": "received",
-                }
-            ]
-        ), None),
+            ], None),
+    )
+    monkeypatch.setattr(
+        chats,
+        "_query_sms_page",
+        lambda start_key, limit: ([{
+            "phone_number": "+12125550199",
+            "company_name": "Moving Co",
+            "text": "SMS",
+            "timestamp": 25,
+            "direction": "received",
+        }], None),
     )
 
     meta_result = chats.get_all_chats(

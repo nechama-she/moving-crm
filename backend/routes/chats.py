@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 
 from botocore.exceptions import ClientError
+from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_
@@ -20,6 +21,7 @@ from models import Company, Lead, User, UserCompany
 logger = logging.getLogger("moving-crm")
 router = APIRouter(prefix="/api/chats", tags=["Chats"])
 DONE_CURSOR = {"__done": True}
+SMS_TIMESTAMP_INDEX = "record-type-timestamp-index"
 
 
 def _user_company_ids(user: User, db: Session) -> list[str]:
@@ -36,6 +38,19 @@ def _scan_page(table, start_key: dict | None, limit: int) -> tuple[list[dict], d
     if start_key:
         kwargs["ExclusiveStartKey"] = start_key
     response = table.scan(**kwargs)
+    return response.get("Items", []), response.get("LastEvaluatedKey")
+
+
+def _query_sms_page(start_key: dict | None, limit: int) -> tuple[list[dict], dict | None]:
+    kwargs: dict = {
+        "IndexName": SMS_TIMESTAMP_INDEX,
+        "KeyConditionExpression": Key("record_type").eq("message"),
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    if start_key:
+        kwargs["ExclusiveStartKey"] = start_key
+    response = sms_messages_table.query(**kwargs)
     return response.get("Items", []), response.get("LastEvaluatedKey")
 
 
@@ -126,7 +141,7 @@ def get_all_chats(
                 meta_done = meta_next is None
 
             if sms_limit:
-                page, sms_next = _scan_page(sms_messages_table, sms_next, sms_limit)
+                page, sms_next = _query_sms_page(sms_next, sms_limit)
                 sms_messages.extend(page)
                 for message in page:
                     phone = normalize_digits(str(message.get("phone_number") or ""))
