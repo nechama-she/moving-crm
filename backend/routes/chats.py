@@ -22,6 +22,7 @@ logger = logging.getLogger("moving-crm")
 router = APIRouter(prefix="/api/chats", tags=["Chats"])
 DONE_CURSOR = {"__done": True}
 SMS_TIMESTAMP_INDEX = "record-type-timestamp-index"
+META_TIMESTAMP_INDEX = "record-type-timestamp-index"
 
 
 def _user_company_ids(user: User, db: Session) -> list[str]:
@@ -33,11 +34,16 @@ def _user_company_ids(user: User, db: Session) -> list[str]:
     return []
 
 
-def _scan_page(table, start_key: dict | None, limit: int) -> tuple[list[dict], dict | None]:
-    kwargs: dict = {"Limit": limit}
+def _query_meta_page(start_key: dict | None, limit: int) -> tuple[list[dict], dict | None]:
+    kwargs: dict = {
+        "IndexName": META_TIMESTAMP_INDEX,
+        "KeyConditionExpression": Key("record_type").eq("message"),
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
     if start_key:
         kwargs["ExclusiveStartKey"] = start_key
-    response = table.scan(**kwargs)
+    response = conversations_table.query(**kwargs)
     return response.get("Items", []), response.get("LastEvaluatedKey")
 
 
@@ -131,7 +137,7 @@ def get_all_chats(
                 sms_limit = limit if active_sources == 1 else limit // 2
 
             if meta_limit:
-                page, meta_next = _scan_page(conversations_table, meta_next, meta_limit)
+                page, meta_next = _query_meta_page(meta_next, meta_limit)
                 meta_messages.extend(page)
                 for message in page:
                     platform = str(message.get("platform") or "").strip().lower()

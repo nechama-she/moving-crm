@@ -59,6 +59,22 @@ def test_sms_page_queries_timestamp_index_newest_first(monkeypatch):
     assert kwargs["ExclusiveStartKey"] == {"cursor": "current"}
 
 
+def test_meta_page_queries_timestamp_index_newest_first(monkeypatch):
+    table = MagicMock()
+    table.query.return_value = {"Items": [{"message_id": "m1"}], "LastEvaluatedKey": {"cursor": "next"}}
+    monkeypatch.setattr(chats, "conversations_table", table)
+
+    items, cursor = chats._query_meta_page({"cursor": "current"}, 20)
+
+    assert items == [{"message_id": "m1"}]
+    assert cursor == {"cursor": "next"}
+    kwargs = table.query.call_args.kwargs
+    assert kwargs["IndexName"] == "record-type-timestamp-index"
+    assert kwargs["ScanIndexForward"] is False
+    assert kwargs["Limit"] == 20
+    assert kwargs["ExclusiveStartKey"] == {"cursor": "current"}
+
+
 def test_cursor_preserves_dynamodb_number_types():
     meta_key = {"user_id": "meta-1", "timestamp": Decimal("123.456")}
     sms_key = {"phone_number": "+12125550199", "timestamp": Decimal("789")}
@@ -89,8 +105,8 @@ def test_reads_more_pages_until_unique_conversation_limit(monkeypatch):
     monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: ["company-1"])
     monkeypatch.setattr(
         chats,
-        "_scan_page",
-        lambda table, start_key, limit: next(meta_pages) if table is chats.conversations_table else ([], None),
+        "_query_meta_page",
+        lambda start_key, limit: next(meta_pages),
     )
 
     result = chats.get_all_chats(
@@ -119,8 +135,8 @@ def test_returns_all_conversations_from_final_full_batch(monkeypatch):
     monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: ["company-1"])
     monkeypatch.setattr(
         chats,
-        "_scan_page",
-        lambda table, start_key, limit: next(pages) if table is chats.conversations_table else ([], None),
+        "_query_meta_page",
+        lambda start_key, limit: next(pages),
     )
 
     result = chats.get_all_chats(
@@ -147,8 +163,8 @@ def test_keeps_meta_and_sms_sources_separate(monkeypatch):
     monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: ["company-1"])
     monkeypatch.setattr(
         chats,
-        "_scan_page",
-        lambda table, start_key, limit: ([
+        "_query_meta_page",
+        lambda start_key, limit: ([
                 {"user_id": "meta-1", "platform": "messenger", "text": "Old", "timestamp": 10},
                 {"user_id": "meta-1", "platform": "messenger", "text": "Newest", "timestamp": 30},
                 {"user_id": "meta-1", "platform": "instagram", "text": "Instagram", "timestamp": 20},
