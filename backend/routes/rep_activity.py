@@ -3,6 +3,7 @@
 import hmac
 import os
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Literal
 
 from boto3.dynamodb.conditions import Attr, Key
@@ -35,7 +36,7 @@ def _latest(current: datetime | None, incoming: datetime) -> datetime:
     return incoming if current is None or incoming > _aware(current) else current
 
 
-def _latest_message_preview(lead: Lead, channel: str) -> str:
+def _latest_message_record(lead: Lead, channel: str) -> dict:
     """Read the latest inbound message text from the channel's DynamoDB table."""
     try:
         if channel == "sms" and lead.phone:
@@ -66,7 +67,7 @@ def _latest_message_preview(lead: Lead, channel: str) -> str:
                     if newest is not None or "LastEvaluatedKey" not in response:
                         break
                     kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-            return str((newest or {}).get("text") or "").strip()
+            return newest or {}
 
         if channel in {"messenger", "instagram"} and lead.facebook_user_id:
             kwargs = {
@@ -79,13 +80,74 @@ def _latest_message_preview(lead: Lead, channel: str) -> str:
                 response = conversations_table.query(**kwargs)
                 messages = response.get("Items", [])
                 if messages:
-                    return str(messages[0].get("text") or "").strip()
+                    return messages[0]
                 if "LastEvaluatedKey" not in response:
                     break
                 kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
     except (ClientError, TypeError, ValueError):
-        return ""
-    return ""
+        return {}
+    return {}
+
+
+def _unmatched_unanswered(user: User, db: Session, now: datetime) -> list[dict]:
+    from routes.chats import get_all_chats
+
+    items: list[dict] = []
+    for source in ("sms", "meta"):
+        chats = get_all_chats(cursor="", limit=100, source=source, user=user, db=db)
+        for chat in chats["items"]:
+            if chat.get("lead_id"):
+                continue
+            if chat.get("conversation_ended"):
+                continue
+            direction = str(chat.get("direction") or "").lower()
+            if direction not in {"received", "inbound", "user"}:
+                continue
+            occurred_at = datetime.fromtimestamp(float(chat.get("timestamp") or 0), tz=timezone.utc)
+            items.append({
+                "conversation_id": chat.get("conversation_id") or "",
+                "lead_id": "",
+                "client": chat.get("client") or "Unknown client",
+                "rep": chat.get("rep") or "",
+                "company": chat.get("company") or "",
+                "created_at": occurred_at.isoformat(),
+                "age_minutes": max(0, int((now - occurred_at).total_seconds() // 60)),
+                "status": "Unmatched",
+                "platform": chat.get("platform") or "",
+                "message": chat.get("message") or "",
+                "latest_message_at": occurred_at.isoformat(),
+                "message_partition_key": chat.get("message_partition_key") or "",
+                "message_timestamp": chat.get("message_timestamp"),
+            })
+    return items
+
+
+def _closed_chats(user: User, db: Session, now: datetime) -> list[dict]:
+    from routes.chats import get_all_chats
+
+    items: list[dict] = []
+    for source in ("sms", "meta"):
+        chats = get_all_chats(cursor="", limit=100, source=source, user=user, db=db)
+        for chat in chats["items"]:
+            if not chat.get("conversation_ended"):
+                continue
+            occurred_at = datetime.fromtimestamp(float(chat.get("timestamp") or 0), tz=timezone.utc)
+            items.append({
+                "conversation_id": chat.get("conversation_id") or "",
+                "lead_id": chat.get("lead_id") or "",
+                "client": chat.get("client") or "Unknown client",
+                "rep": chat.get("rep") or "",
+                "company": chat.get("company") or "",
+                "created_at": occurred_at.isoformat(),
+                "age_minutes": max(0, int((now - occurred_at).total_seconds() // 60)),
+                "status": "Closed",
+                "platform": chat.get("platform") or "",
+                "message": chat.get("message") or "",
+                "latest_message_at": occurred_at.isoformat(),
+                "message_partition_key": chat.get("message_partition_key") or "",
+                "message_timestamp": chat.get("message_timestamp"),
+            })
+    return sorted(items, key=lambda item: item["age_minutes"])
 
 
 class CommunicationUpdate(BaseModel):
@@ -94,6 +156,32 @@ class CommunicationUpdate(BaseModel):
     direction: Literal["inbound", "outbound"]
     occurred_at: datetime
     answered: bool | None = None
+
+
+class EndConversationRequest(BaseModel):
+    platform: Literal["sms", "messenger", "instagram"]
+    partition_key: str
+    timestamp: int | float
+
+
+@router.post("/conversations/end")
+def end_conversation(
+    body: EndConversationRequest,
+    user: User = Depends(get_current_user),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can end conversations")
+    partition_key = body.partition_key.strip()
+    if not partition_key:
+        raise HTTPException(status_code=400, detail="partition_key is required")
+    table = sms_messages_table if body.platform == "sms" else conversations_table
+    partition_name = "phone_number" if body.platform == "sms" else "user_id"
+    table.update_item(
+        Key={partition_name: partition_key, "timestamp": Decimal(str(body.timestamp))},
+        UpdateExpression="SET conversation_ended = :ended",
+        ExpressionAttributeValues={":ended": True},
+    )
+    return {"ok": True}
 
 
 @lead_activity_router.post("/communication-update")
@@ -141,7 +229,7 @@ def update_communication_state(
 
 @router.get("")
 def get_rep_activity(
-    category: str = Query(default="new", pattern="^(new|no_first_contact|unanswered|missed_calls)$"),
+    category: str = Query(default="new", pattern="^(new|no_first_contact|unanswered|missed_calls|closed_chats)$"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
@@ -177,6 +265,18 @@ def get_rep_activity(
         "missed_calls": missed_query,
     }
     counts = {key: query.count() for key, query in queries.items()}
+    unmatched_items = _unmatched_unanswered(user, db, now) if category == "unanswered" else []
+    closed_items = _closed_chats(user, db, now)
+    counts["closed_chats"] = len(closed_items)
+
+    if category == "closed_chats":
+        total = len(closed_items)
+        return {
+            "counts": counts,
+            "items": closed_items[offset:offset + limit],
+            "total": total,
+            "has_more": offset + limit < total,
+        }
 
     if category == "new":
         order = Lead.created_at.desc()
@@ -187,14 +287,12 @@ def get_rep_activity(
     else:
         order = LeadCommunicationState.latest_missed_call_at.asc()
 
-    rows = (
+    rows_query = (
         queries[category]
         .options(joinedload(Lead.company), joinedload(Lead.assignee), joinedload(Lead.communication_state))
         .order_by(order)
-        .offset(offset)
-        .limit(limit)
-        .all()
     )
+    rows = rows_query.all() if category == "unanswered" else rows_query.offset(offset).limit(limit).all()
     items = []
     for lead in rows:
         state = lead.communication_state
@@ -205,7 +303,11 @@ def get_rep_activity(
             reference_at = state.latest_missed_call_at
         reference_at = _aware(reference_at) if reference_at else None
         age_minutes = max(0, int((now - reference_at).total_seconds() // 60)) if reference_at else 0
+        message_record = _latest_message_record(lead, state.latest_message_channel) if category == "unanswered" and state else {}
+        if category == "unanswered" and message_record.get("conversation_ended"):
+            continue
         items.append({
+            "conversation_id": f"lead:{lead.id}",
             "lead_id": lead.id,
             "client": lead.full_name or lead.phone or "Unknown client",
             "rep": lead.assignee.name if lead.assignee else "",
@@ -214,8 +316,17 @@ def get_rep_activity(
             "age_minutes": age_minutes,
             "status": lead.status or "new",
             "platform": state.latest_message_channel if category == "unanswered" and state else "",
-            "message": _latest_message_preview(lead, state.latest_message_channel) if category == "unanswered" and state else "",
+            "message": str(message_record.get("text") or "").strip(),
+            "latest_message_at": reference_at.isoformat() if category == "unanswered" and reference_at else "",
+            "message_partition_key": str(message_record.get("phone_number") or message_record.get("user_id") or ""),
+            "message_timestamp": message_record.get("timestamp"),
         })
+
+    if category == "unanswered":
+        items.extend(unmatched_items)
+        items.sort(key=lambda item: item["age_minutes"], reverse=True)
+        counts["unanswered"] = len(items)
+        items = items[offset:offset + limit]
 
     total = counts[category]
     return {"counts": counts, "items": items, "total": total, "has_more": offset + limit < total}

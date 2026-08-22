@@ -3,9 +3,10 @@ import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
-type Category = "new" | "no_first_contact" | "unanswered" | "missed_calls";
+type Category = "new" | "no_first_contact" | "unanswered" | "missed_calls" | "closed_chats";
 type Counts = Record<Category, number>;
 type ActivityLead = {
+  conversation_id: string;
   lead_id: string;
   client: string;
   rep: string;
@@ -15,6 +16,9 @@ type ActivityLead = {
   status: string;
   platform: string;
   message: string;
+  latest_message_at: string;
+  message_partition_key: string;
+  message_timestamp: number;
 };
 
 const CARDS: Array<{ key: Category; title: string; description: string; color: string; tint: string }> = [
@@ -22,6 +26,7 @@ const CARDS: Array<{ key: Category; title: string; description: string; color: s
   { key: "no_first_contact", title: "No First Contact", description: "Older than 30 minutes with no recorded call", color: "#c2410c", tint: "#fff7ed" },
   { key: "unanswered", title: "Unanswered Messages", description: "Client messages waiting for a response", color: "#a16207", tint: "#fefce8" },
   { key: "missed_calls", title: "Missed Calls", description: "Missed calls without a callback", color: "#b91c1c", tint: "#fef2f2" },
+  { key: "closed_chats", title: "Closed Chats", description: "Conversations manually marked as ended", color: "#475569", tint: "#f8fafc" },
 ];
 
 function waitingTime(minutes: number): string {
@@ -35,11 +40,31 @@ function waitingTime(minutes: number): string {
 export default function RepActivityPage() {
   const { token } = useAuth();
   const [category, setCategory] = useState<Category>("new");
-  const [counts, setCounts] = useState<Counts>({ new: 0, no_first_contact: 0, unanswered: 0, missed_calls: 0 });
+  const [counts, setCounts] = useState<Counts>({ new: 0, no_first_contact: 0, unanswered: 0, missed_calls: 0, closed_chats: 0 });
   const [items, setItems] = useState<ActivityLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [hasMore, setHasMore] = useState(false);
+  const [closing, setClosing] = useState("");
+
+  const markConversationEnded = async (lead: ActivityLead) => {
+    if (!lead.conversation_id || closing) return;
+    setClosing(lead.conversation_id);
+    try {
+      const response = await fetch(`${API_BASE}/api/rep-activity/conversations/end`, {
+        method: "POST",
+        headers: { ...authHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: lead.platform, partition_key: lead.message_partition_key, timestamp: lead.message_timestamp }),
+      });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || `HTTP ${response.status}`);
+      setItems((current) => current.filter((item) => item.conversation_id !== lead.conversation_id));
+      setCounts((current) => ({ ...current, unanswered: Math.max(0, current.unanswered - 1) }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not close conversation");
+    } finally {
+      setClosing("");
+    }
+  };
 
   const load = useCallback(async (offset = 0) => {
     setLoading(true);
@@ -98,14 +123,15 @@ export default function RepActivityPage() {
         {error ? <p style={{ padding: 18, color: "#b91c1c" }}>{error}</p> : null}
         {!loading && !error && items.length === 0 ? <p style={{ padding: 24, color: "#64748b" }}>No leads in this list.</p> : null}
         {items.map((lead) => (
-          <div key={lead.lead_id} style={{ display: "grid", gridTemplateColumns: category === "unanswered" ? "minmax(160px, 1.2fr) 100px minmax(220px, 1.8fr) minmax(130px, 1fr) minmax(140px, 1fr) 90px" : "minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(150px, 1fr) 120px 100px", gap: 16, alignItems: "center", padding: "14px 18px", borderTop: "1px solid #e5e7eb" }}>
-            <Link to={`/leads/${lead.lead_id}`} state={{ backTo: "/rep-activity", backLabel: "← Back to Rep Activity" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{lead.client}</Link>
-            {category === "unanswered" ? <span style={{ color: "#475569", textTransform: "capitalize" }}>{lead.platform || "Unknown"}</span> : null}
-            {category === "unanswered" ? <span title={lead.message} style={{ color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lead.message || "No preview"}</span> : null}
+          <div key={lead.conversation_id || lead.lead_id} style={{ display: "grid", gridTemplateColumns: category === "unanswered" ? "minmax(160px, 1.2fr) 100px minmax(220px, 1.8fr) minmax(130px, 1fr) minmax(140px, 1fr) 90px 120px" : category === "closed_chats" ? "minmax(160px, 1.2fr) 100px minmax(220px, 1.8fr) minmax(130px, 1fr) minmax(140px, 1fr) 90px" : "minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(150px, 1fr) 120px 100px", gap: 16, alignItems: "center", padding: "14px 18px", borderTop: "1px solid #e5e7eb" }}>
+            {lead.lead_id ? <Link to={`/leads/${lead.lead_id}`} state={{ backTo: "/rep-activity", backLabel: "← Back to Rep Activity" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{lead.client}</Link> : <span style={{ color: "#334155", fontWeight: 700 }}>{lead.client}</span>}
+            {category === "unanswered" || category === "closed_chats" ? <span style={{ color: "#475569", textTransform: "capitalize" }}>{lead.platform || "Unknown"}</span> : null}
+            {category === "unanswered" || category === "closed_chats" ? <span title={lead.message} style={{ color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lead.message || "No preview"}</span> : null}
             <span>{lead.rep || "Unassigned"}</span>
-            <span style={{ color: "#475569" }}>{lead.company}</span>
-            {category !== "unanswered" ? <span style={{ color: "#475569" }}>{lead.status}</span> : null}
+            <span style={{ color: "#475569" }}>{lead.company || "Unknown company"}</span>
+            {category !== "unanswered" && category !== "closed_chats" ? <span style={{ color: "#475569" }}>{lead.status}</span> : null}
             <strong style={{ color: category === "new" ? "#0b5cab" : "#c2410c" }}>{waitingTime(lead.age_minutes)}</strong>
+            {category === "unanswered" ? <label style={{ display: "flex", alignItems: "center", gap: 7, color: "#475569", fontSize: 13, cursor: closing || !lead.message_partition_key ? "default" : "pointer" }}><input type="checkbox" disabled={Boolean(closing) || !lead.message_partition_key || lead.message_timestamp == null} checked={false} onChange={() => void markConversationEnded(lead)} /> Ended</label> : null}
           </div>
         ))}
         {loading ? <p style={{ padding: 18, color: "#64748b" }}>Loading…</p> : null}

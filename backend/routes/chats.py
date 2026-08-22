@@ -179,6 +179,17 @@ def get_all_chats(
             sms_number_ids.add(number_id)
 
     number_rep_names: dict[str, str] = {}
+    number_company_names: dict[str, str] = {}
+    page_company_names: dict[str, str] = {}
+    company_rows = db.query(Company).filter(Company.id.in_(company_ids)).all()
+    for company in company_rows:
+        company_name = str(getattr(company, "name", "") or "").strip()
+        number_id = str(getattr(company, "aircall_number_id", "") or "").strip()
+        page_id = str(getattr(company, "facebook_page_id", "") or "").strip()
+        if number_id:
+            number_company_names[number_id] = company_name
+        if page_id:
+            page_company_names[page_id] = company_name
     if sms_number_ids:
         rep_rows = db.query(User).filter(User.aircall_number_id.in_(sms_number_ids)).all()
         number_rep_names = {
@@ -232,10 +243,14 @@ def get_all_chats(
             "lead_id": lead.id,
             "client": lead.full_name or lead.phone or "Unknown client",
             "rep": rep_name if rep_name is not None else (lead.assignee.name if lead.assignee else ""),
+            "company": lead.company.name if lead.company else "",
             "platform": platform,
             "message": str(message.get("text") or ""),
             "timestamp": timestamp,
             "direction": str(message.get("direction") or message.get("role") or ""),
+            "message_partition_key": str(message.get("phone_number") or message.get("user_id") or ""),
+            "message_timestamp": message.get("timestamp"),
+            "conversation_ended": bool(message.get("conversation_ended", False)),
         }
 
     for message in meta_messages:
@@ -257,10 +272,14 @@ def get_all_chats(
                     "lead_id": "",
                     "client": user_id,
                     "rep": "",
+                    "company": page_company_names.get(str(message.get("page_id") or ""), ""),
                     "platform": platform,
                     "message": str(message.get("text") or ""),
                     "timestamp": timestamp,
                     "direction": str(message.get("role") or ""),
+                    "message_partition_key": user_id,
+                    "message_timestamp": message.get("timestamp"),
+                    "conversation_ended": bool(message.get("conversation_ended", False)),
                 }
 
     for message in sms_messages:
@@ -295,10 +314,14 @@ def get_all_chats(
                     "lead_id": "",
                     "client": str(message.get("phone_number") or phone or "Unknown client"),
                     "rep": number_rep_names.get(number_id, ""),
+                    "company": number_company_names.get(number_id) or str(message.get("company_name") or ""),
                     "platform": "sms",
                     "message": str(message.get("text") or ""),
                     "timestamp": timestamp,
                     "direction": str(message.get("direction") or ""),
+                    "message_partition_key": str(message.get("phone_number") or ""),
+                    "message_timestamp": message.get("timestamp"),
+                    "conversation_ended": bool(message.get("conversation_ended", False)),
                 }
 
     has_more = not meta_done or not sms_done

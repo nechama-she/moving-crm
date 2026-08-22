@@ -298,6 +298,7 @@ class LeadCommunicationState(Base):
     latest_call_response_at = Column(DateTime(timezone=True), index=True)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
+
     lead = relationship("Lead", back_populates="communication_state")
 
 
