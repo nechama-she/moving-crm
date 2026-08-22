@@ -241,6 +241,7 @@ app.include_router(instagram.router, dependencies=[Depends(get_current_user)])
 app.include_router(sms.router, dependencies=[Depends(get_current_user)])
 app.include_router(chats.router)
 app.include_router(rep_activity.router)
+app.include_router(rep_activity.lead_activity_router)
 # Triggers backend Lambda processing — admin only.
 app.include_router(smartmoving.router, dependencies=[Depends(require_admin)])
 app.include_router(followups.router)

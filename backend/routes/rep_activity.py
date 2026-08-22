@@ -16,6 +16,7 @@ from database import get_db
 from models import Lead, LeadCommunicationState, User
 
 router = APIRouter(prefix="/api/rep-activity", tags=["Rep Activity"])
+lead_activity_router = APIRouter(prefix="/api/lead-activity", tags=["Lead Activity"])
 
 
 def _utcnow() -> datetime:
@@ -38,7 +39,7 @@ class CommunicationUpdate(BaseModel):
     answered: bool | None = None
 
 
-@router.post("/communication-update")
+@lead_activity_router.post("/communication-update")
 def update_communication_state(
     body: CommunicationUpdate,
     request: Request,
