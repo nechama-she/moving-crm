@@ -239,6 +239,30 @@ def test_unmatched_sms_is_returned_without_a_lead_link(monkeypatch):
     assert result["items"][0]["client"] == "+18046374931"
 
 
+def test_unmatched_meta_message_uses_sender_id_without_a_lead_link(monkeypatch):
+    monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: ["company-1"])
+    monkeypatch.setattr(
+        chats,
+        "_query_meta_page",
+        lambda start_key, limit: ([{
+            "user_id": "sender-123",
+            "platform": "messenger",
+            "text": "Hello",
+            "timestamp": 25,
+            "role": "user",
+        }], None),
+    )
+
+    result = chats.get_all_chats(
+        cursor="", limit=20, source="meta",
+        user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb([]),
+    )
+
+    assert len(result["items"]) == 1
+    assert result["items"][0]["lead_id"] == ""
+    assert result["items"][0]["client"] == "sender-123"
+
+
 def test_returns_empty_without_company_access(monkeypatch):
     monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: [])
 

@@ -177,7 +177,16 @@ export default function ChatsPage() {
                       style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}
                     >
                       {item.client}
-                    </Link> : <span style={{ color: "#334155", fontWeight: 700 }}>{item.client}</span>}
+                    </Link> : item.platform === "messenger" ? (
+                      <a
+                        href={`https://www.facebook.com/latest/${encodeURIComponent(item.client)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}
+                      >
+                        {item.client}
+                      </a>
+                    ) : <span style={{ color: "#334155", fontWeight: 700 }}>{item.client}</span>}
                   </td>
                   <td style={{ padding: "14px 16px", color: item.rep ? "#334155" : "#94a3b8" }}>{item.rep || "Unassigned"}</td>
                   <td style={{ padding: "14px 16px" }}>{PLATFORM_LABELS[item.platform] || item.platform}</td>

@@ -245,6 +245,23 @@ def get_all_chats(
         lead = meta_leads.get(str(message.get("user_id") or ""))
         if lead:
             add_message(lead, platform, message)
+        else:
+            user_id = str(message.get("user_id") or "").strip()
+            if not user_id:
+                continue
+            timestamp = _timestamp(message.get("timestamp"))
+            key = (f"unmatched:{platform}:{user_id}", platform)
+            if key not in latest or latest[key]["timestamp"] < timestamp:
+                latest[key] = {
+                    "conversation_id": f"unmatched:{platform}:{user_id}",
+                    "lead_id": "",
+                    "client": user_id,
+                    "rep": "",
+                    "platform": platform,
+                    "message": str(message.get("text") or ""),
+                    "timestamp": timestamp,
+                    "direction": str(message.get("role") or ""),
+                }
 
     for message in sms_messages:
         phone = normalize_digits(str(message.get("phone_number") or ""))
