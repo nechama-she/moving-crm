@@ -211,6 +211,7 @@ class Lead(Base):
 
     company = relationship("Company", back_populates="leads")
     assignee = relationship("User", foreign_keys=[assigned_to])
+    communication_state = relationship("LeadCommunicationState", back_populates="lead", uselist=False)
 
     def to_dict(self):
         estimated_total_data = None
@@ -254,6 +255,7 @@ class Lead(Base):
             "assigned_to": self.assigned_to or "",
             "assigned_to_name": self.assignee.name if self.assignee else "",
             "assigned_to_role": self.assignee.role if self.assignee else "",
+            "assigned_rep_aircall_number_id": self.assignee.aircall_number_id if self.assignee else "",
             "company_name": self.company.name if self.company else "",
             "company_phone": self.company.phone if self.company else "",
             "aircall_number_id": self.company.aircall_number_id if self.company else "",
@@ -282,6 +284,22 @@ class Lead(Base):
             "estimatedTotal": estimated_total_data,
             "payments": payments_data,
         }
+
+
+class LeadCommunicationState(Base):
+    __tablename__ = "lead_communication_states"
+
+    lead_id = Column(String(36), ForeignKey("leads.id"), primary_key=True)
+    latest_inbound_message_at = Column(DateTime(timezone=True), index=True)
+    latest_outbound_message_at = Column(DateTime(timezone=True), index=True)
+    latest_message_channel = Column(String(20))
+    first_contact_at = Column(DateTime(timezone=True), index=True)
+    latest_missed_call_at = Column(DateTime(timezone=True), index=True)
+    latest_call_response_at = Column(DateTime(timezone=True), index=True)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+    lead = relationship("Lead", back_populates="communication_state")
 
 
 class LeadUpdateLog(Base):

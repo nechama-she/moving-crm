@@ -732,6 +732,19 @@ Resources:
                   - dynamodb:Query
                 Resource:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/leads"
+              # One-time production message index migration and backfill
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations/index/*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages/index/*"
               # Secrets Manager (RDS managed password)
               - Effect: Allow
                 Action:
@@ -933,6 +946,22 @@ Resources:
                 Action:
                   - sqs:*
                 Resource: "*"
+              # DynamoDB tables managed by this stack
+              - Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DeleteTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:UpdateTimeToLive
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                  - dynamodb:ListTagsOfResource
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/moving-crm-*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/moving-crm-*/index/*"
               # Secrets Manager (RDS managed passwords)
               - Effect: Allow
                 Action:
@@ -1131,7 +1160,7 @@ Resources:
           Subnets: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
           SecurityGroupIds: [!Ref LambdaSecurityGroup]
         - !Ref "AWS::NoValue"
-      TimeoutInMinutes: 10
+      TimeoutInMinutes: 60
       Source:
         Type: CODEPIPELINE
         BuildSpec: deployspec.yml
@@ -1202,11 +1231,19 @@ Resources:
                   - dynamodb:GetItem
                   - dynamodb:Query
                   - dynamodb:PutItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:UpdateItem
                 Resource:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/leads"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations/index/*"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages/index/*"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/cache"
+                  - !GetAtt RealtimeConnectionsTable.Arn
+              - Effect: Allow
+                Action: execute-api:ManageConnections
+                Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RealtimeApi}/live/POST/@connections/*"
               - Effect: Allow
                 Action:
                   - sqs:SendMessage
@@ -1231,7 +1268,9 @@ Resources:
               - Effect: Allow
                 Action:
                   - lambda:InvokeFunction
-                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-lead-duplicate-${Environment}"
+                Resource:
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-lead-duplicate-${Environment}"
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-realtime-${Environment}"
               # Allow passing the scheduler role to EventBridge Scheduler
               - Effect: Allow
                 Action:
@@ -1296,6 +1335,90 @@ Resources:
           ATTACHMENTS_BUCKET: !Ref AttachmentBucket
           LEAD_DUPLICATE_FUNCTION_ARN: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-lead-duplicate-${Environment}"
           LEAD_DUPLICATE_SCHEDULER_ROLE_ARN: !GetAtt LeadDuplicateSchedulerRole.Arn
+          REALTIME_CONNECTIONS_TABLE: !Ref RealtimeConnectionsTable
+          REALTIME_MANAGEMENT_ENDPOINT: !Sub "https://${RealtimeApi}.execute-api.${AWS::Region}.amazonaws.com/live"
+          REALTIME_FUNCTION_NAME: !Ref RealtimeFunction
+
+  RealtimeConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    DependsOn: CloudFormationExecutionRole
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: connection_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connection_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  RealtimeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub moving-crm-realtime-${Environment}
+      Runtime: python3.14
+      Handler: realtime_handler.handler
+      Timeout: 10
+      MemorySize: 128
+      Role: !GetAtt ApiLambdaRole.Arn
+      Code: !If
+        - ShouldDeployLambda
+        - S3Bucket: !Ref FrontendBucket
+          S3Key: api-backend/package.zip
+        - ZipFile: |
+            def handler(event, context):
+                return {"statusCode": 503}
+      Environment:
+        Variables:
+          REALTIME_CONNECTIONS_TABLE: !Ref RealtimeConnectionsTable
+          REALTIME_MANAGEMENT_ENDPOINT: !Sub "https://${RealtimeApi}.execute-api.${AWS::Region}.amazonaws.com/live"
+          JWT_SECRET: !Sub "{{resolve:secretsmanager:${JwtSecret}:SecretString}}"
+          JWT_ISSUER: moving-crm
+
+  RealtimeApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub moving-crm-realtime-${Environment}
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  RealtimeIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref RealtimeApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RealtimeFunction.Arn}/invocations"
+
+  RealtimeConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref RealtimeApi
+      RouteKey: "$connect"
+      Target: !Sub "integrations/${RealtimeIntegration}"
+
+  RealtimeDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref RealtimeApi
+      RouteKey: "$disconnect"
+      Target: !Sub "integrations/${RealtimeIntegration}"
+
+  RealtimeStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref RealtimeApi
+      StageName: live
+      AutoDeploy: true
+
+  RealtimeInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref RealtimeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RealtimeApi}/*"
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
@@ -1774,6 +1897,10 @@ Outputs:
   ApiURL:
     Description: API Gateway URL for the backend
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  RealtimeURL:
+    Description: WebSocket URL for live CRM updates
+    Value: !Sub "wss://${RealtimeApi}.execute-api.${AWS::Region}.amazonaws.com/live"
 
   CloudFrontDistributionId:
     Description: CloudFront distribution ID

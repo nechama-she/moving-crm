@@ -19,11 +19,13 @@ interface Message {
 }
 
 interface Props {
+  leadId: string;
   userId: string;
   userName: string;
   phoneNumber: string;
   inboxUrl: string;
   aircallNumberId: string;
+  repAircallNumberId: string;
   companyName: string;
 }
 
@@ -35,10 +37,12 @@ const TABS = [
   { key: "calls", label: "Calls" },
 ] as const;
 
-export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, aircallNumberId, companyName }: Props) {
+export default function ChatMessages({ leadId, userId, userName, phoneNumber, inboxUrl, aircallNumberId, repAircallNumberId, companyName }: Props) {
   const { token } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
-  const [smsMessages, setSmsMessages] = useState<Message[]>([]);
+  const [companySmsMessages, setCompanySmsMessages] = useState<Message[]>([]);
+  const [repSmsMessages, setRepSmsMessages] = useState<Message[]>([]);
+  const [smsNumberTab, setSmsNumberTab] = useState<"company" | "rep">("company");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<string>("");
@@ -69,14 +73,25 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
       );
     }
 
-    if (phoneNumber) {
+    if (phoneNumber && aircallNumberId) {
       fetches.push(
-        fetch(`${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}${companyName ? `?company_name=${encodeURIComponent(companyName)}` : ""}`, { headers: authHeaders(token) })
+        fetch(`${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}?aircall_number_id=${encodeURIComponent(aircallNumberId)}`, { headers: authHeaders(token) })
           .then((res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();
           })
-          .then((data) => setSmsMessages(data.messages || []))
+          .then((data) => setCompanySmsMessages(data.messages || []))
+      );
+    }
+
+    if (phoneNumber && repAircallNumberId) {
+      fetches.push(
+        fetch(`${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}?aircall_number_id=${encodeURIComponent(repAircallNumberId)}`, { headers: authHeaders(token) })
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+          })
+          .then((data) => setRepSmsMessages(data.messages || []))
       );
     }
 
@@ -88,12 +103,17 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
     Promise.all(fetches)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [userId, phoneNumber]);
+  }, [userId, phoneNumber, companyName, aircallNumberId, repAircallNumberId, token]);
 
   // Combine conversation messages + SMS (tagged with platform)
   const allMessages: Message[] = [
     ...messages,
-    ...smsMessages.map((m) => ({
+    ...companySmsMessages.map((m) => ({
+      ...m,
+      platform: "messages",
+      role: m.direction === "received" ? "user" : "agent",
+    })),
+    ...repSmsMessages.map((m) => ({
       ...m,
       platform: "messages",
       role: m.direction === "received" ? "user" : "agent",
@@ -112,10 +132,15 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, smsMessages]);
+  }, [messages, companySmsMessages, repSmsMessages]);
 
+  const selectedSmsMessages = smsNumberTab === "company" ? companySmsMessages : repSmsMessages;
   const filtered = activeTab === "messages"
-    ? allMessages.filter((m) => m.platform === "messages")
+    ? selectedSmsMessages.map((m) => ({
+        ...m,
+        platform: "messages",
+        role: m.direction === "received" ? "user" : "agent",
+      }))
     : allMessages.filter((m) => (m.platform?.toLowerCase() || "") === activeTab);
 
   if (loading)
@@ -133,7 +158,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
   // Determine if reply is possible on the active tab
   const canReply =
     (activeTab === "messenger" && !!userId) ||
-    (activeTab === "messages" && !!phoneNumber && !!aircallNumberId);
+    (activeTab === "messages" && !!phoneNumber && !!(smsNumberTab === "company" ? aircallNumberId : repAircallNumberId));
 
   // Extract page_id from the first messenger message (needed for Messenger replies)
   const messengerPageId = messages.find((m) => m.page_id)?.page_id || "";
@@ -142,9 +167,9 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
     if (!replyText.trim() || sending) return;
     setSending(true);
     try {
-      const body: Record<string, string> = { message: replyText.trim() };
+      const body: Record<string, string> = { message: replyText.trim(), lead_id: leadId };
       if (activeTab === "messages") {
-        body.aircall_number_id = aircallNumberId;
+        body.aircall_number_id = smsNumberTab === "company" ? aircallNumberId : repAircallNumberId;
       } else {
         body.page_id = messengerPageId;
       }
@@ -163,13 +188,19 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
       // Add the sent message to the local list immediately
       const now = Date.now() / 1000;
       if (activeTab === "messages") {
-        setSmsMessages((prev) => [...prev, {
+        const appendSentMessage = (prev: Message[]): Message[] => [...prev, {
           message_id: `local-${now}`,
           timestamp: now,
           text: replyText.trim(),
           direction: "sent",
           company_name: companyName,
-        }]);
+          number_id: body.aircall_number_id,
+        }];
+        if (smsNumberTab === "company") {
+          setCompanySmsMessages(appendSentMessage);
+        } else {
+          setRepSmsMessages(appendSentMessage);
+        }
       } else {
         setMessages((prev) => [...prev, {
           message_id: `local-${now}`,
@@ -231,6 +262,39 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
           );
         })}
       </div>
+
+      {activeTab === "messages" && (
+        <div style={{ display: "flex", gap: 8, padding: "10px 12px", border: "1px solid #e0e0e0", borderTop: "none", background: "#fff" }}>
+          <button
+            type="button"
+            onClick={() => setSmsNumberTab("company")}
+            style={{
+              padding: "7px 14px", borderRadius: 6,
+              border: smsNumberTab === "company" ? "1px solid #1976d2" : "1px solid #ccc",
+              background: smsNumberTab === "company" ? "#e3f2fd" : "#fff",
+              color: smsNumberTab === "company" ? "#1976d2" : "#555",
+              fontWeight: smsNumberTab === "company" ? 600 : 400, cursor: "pointer",
+            }}
+          >
+            Company Number ({companySmsMessages.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setSmsNumberTab("rep")}
+            disabled={!repAircallNumberId}
+            style={{
+              padding: "7px 14px", borderRadius: 6,
+              border: smsNumberTab === "rep" ? "1px solid #1976d2" : "1px solid #ccc",
+              background: smsNumberTab === "rep" ? "#e3f2fd" : "#fff",
+              color: !repAircallNumberId ? "#aaa" : smsNumberTab === "rep" ? "#1976d2" : "#555",
+              fontWeight: smsNumberTab === "rep" ? 600 : 400,
+              cursor: repAircallNumberId ? "pointer" : "default",
+            }}
+          >
+            Assigned Rep Number ({repSmsMessages.length})
+          </button>
+        </div>
+      )}
 
       {/* External link bar — sticky above messages */}
       {activeTab === "messenger" && inboxUrl && (

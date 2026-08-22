@@ -1,3 +1,5 @@
+"""Database migration entry point."""
+
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -5,56 +7,7 @@ logger = logging.getLogger("migrate")
 
 
 def migrate() -> None:
-    """Ensure the database schema exists.
-
-    ``create_all`` is idempotent — it only creates missing tables — so this is a
-    no-op where the schema already exists (e.g. dev) and builds the full schema on a
-    fresh database (e.g. a brand-new prod RDS). Importing ``models`` registers every
-    ORM table on ``Base.metadata``.
-    """
-    import models  # noqa: F401 - registers all ORM tables on Base.metadata
-    from models import Base
-    from database import engine
-    from sqlalchemy import text
-
-    Base.metadata.create_all(bind=engine)
-    with engine.begin() as connection:
-        connection.execute(
-            text("ALTER TABLE lead_update_logs ADD COLUMN IF NOT EXISTS sql_statements TEXT")
-        )
-        connection.execute(
-            text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS foreman_id VARCHAR(36) REFERENCES users(id)")
-        )
-        connection.execute(
-            text("CREATE INDEX IF NOT EXISTS ix_lead_jobs_foreman_id ON lead_jobs (foreman_id)")
-        )
-        connection.execute(
-            text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS notes TEXT")
-        )
-        connection.execute(
-            text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS foreman_notes TEXT")
-        )
-        connection.execute(
-            text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS customer_notes TEXT")
-        )
-        connection.execute(
-            text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS estimated_materials TEXT")
-        )
-        connection.execute(
-            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_dispatch_id VARCHAR(36) REFERENCES users(id)")
-        )
-        connection.execute(
-            text("CREATE INDEX IF NOT EXISTS ix_users_manager_dispatch_id ON users (manager_dispatch_id)")
-        )
-    from database import SessionLocal
-    from pricing_seed import seed_pricing
-
-    db = SessionLocal()
-    try:
-        seeded = seed_pricing(db)
-    finally:
-        db.close()
-    logger.info("Schema ensured via create_all; seeded %s pricing plans.", seeded)
+    pass
 
 
 if __name__ == "__main__":

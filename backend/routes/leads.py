@@ -234,6 +234,8 @@ def _merge_smartmoving_payments_with_existing(smartmoving_rows: list[dict], exis
         next_row = dict(row)
         next_row["repPaid"] = rep_paid
         next_row["repPaidAt"] = rep_paid_at
+        next_row["repCommissionPercent"] = existing.get("repCommissionPercent")
+        next_row["repCommissionAmount"] = existing.get("repCommissionAmount")
         next_row["thirdPartyCommissionTo"] = str(existing.get("thirdPartyCommissionTo") or "").strip()
         next_row["thirdPartyCommissionAmount"] = float(existing.get("thirdPartyCommissionAmount") or 0)
         next_row["thirdPartyCommissionPaid"] = bool(existing.get("thirdPartyCommissionPaid") or False)
@@ -1466,7 +1468,9 @@ def get_leads(
     query = db.query(Lead).filter(Lead.company_id.in_(company_ids))
 
     # Filter by specific company if requested
-    if company_id and company_id in company_ids:
+    if company_id:
+        if company_id not in company_ids:
+            return {"items": [], "total": 0, "has_more": False}
         query = query.filter(Lead.company_id == company_id)
 
     # Role-based filtering
@@ -1520,6 +1524,61 @@ def get_leads(
         "total": total,
         "has_more": has_more,
     }
+
+
+@router.get("/leads/aircall-rep")
+def get_assigned_rep_aircall_id(
+    client_phone: str = Query(...),
+    company_phone: str = Query(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Resolve an assigned rep's Aircall number from client and company phones."""
+    client_phone = _normalize_phone(client_phone)
+    company_phone = _normalize_phone(company_phone)
+    if not client_phone or not company_phone:
+        raise HTTPException(
+            status_code=400,
+            detail="client_phone and company_phone must contain digits",
+        )
+
+    company_ids = set(_get_user_company_ids(user, db))
+    companies = [
+        company
+        for company in db.query(Company).all()
+        if company.id in company_ids and _normalize_phone(company.phone) == company_phone
+    ]
+    if not companies:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if len(companies) > 1:
+        raise HTTPException(status_code=409, detail="Company phone matches multiple companies")
+
+    matching_leads = [
+        lead
+        for lead in db.query(Lead).filter(Lead.company_id == companies[0].id).all()
+        if _normalize_phone(lead.phone) == client_phone
+    ]
+    if not matching_leads:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    # A client can submit more than once. Route calls using the latest CRM record.
+    lead = max(
+        matching_leads,
+        key=lambda row: (
+            (row.updated_at or row.created_at or datetime.min).isoformat(),
+            row.id or "",
+        ),
+    )
+    if not lead.assigned_to:
+        raise HTTPException(status_code=404, detail="Lead has no assigned rep")
+
+    rep = db.query(User).filter(User.id == lead.assigned_to).first()
+    if not rep:
+        raise HTTPException(status_code=404, detail="Assigned rep not found")
+    if not (rep.aircall_number_id or "").strip():
+        raise HTTPException(status_code=404, detail="Assigned rep has no Aircall number ID")
+
+    return {"aircall_number_id": rep.aircall_number_id.strip()}
 
 
 @router.get("/leads/by-leadgen/{leadgen_id}")
@@ -1898,6 +1957,8 @@ class LeadPaymentPayload(BaseModel):
     taken_by_user: str = Field(default="", alias="takenByUser")
     rep_paid: bool = Field(default=False, alias="repPaid")
     rep_paid_at: str = Field(default="", alias="repPaidAt")
+    rep_commission_percent: float | None = Field(default=None, alias="repCommissionPercent")
+    rep_commission_amount: float | None = Field(default=None, alias="repCommissionAmount")
     third_party_commission_to: str = Field(default="", alias="thirdPartyCommissionTo")
     third_party_commission_amount: float = Field(default=0, alias="thirdPartyCommissionAmount")
     third_party_commission_paid: bool = Field(default=False, alias="thirdPartyCommissionPaid")
@@ -1924,6 +1985,8 @@ def _serialize_payments(payments: list[LeadPaymentPayload] | None) -> str | None
             "takenByUser": (payment.taken_by_user or "").strip(),
             "repPaid": bool(payment.rep_paid),
             "repPaidAt": (payment.rep_paid_at or "").strip(),
+            "repCommissionPercent": payment.rep_commission_percent,
+            "repCommissionAmount": payment.rep_commission_amount,
             "thirdPartyCommissionTo": (payment.third_party_commission_to or "").strip(),
             "thirdPartyCommissionAmount": float(payment.third_party_commission_amount),
             "thirdPartyCommissionPaid": bool(payment.third_party_commission_paid),
@@ -1968,6 +2031,8 @@ def _deserialize_payments(raw: str | None) -> list[dict[str, object]]:
             "takenByUser": str(row.get("takenByUser") or "").strip(),
             "repPaid": bool(row.get("repPaid") or False),
             "repPaidAt": str(row.get("repPaidAt") or "").strip(),
+            "repCommissionPercent": float(row["repCommissionPercent"]) if row.get("repCommissionPercent") is not None else None,
+            "repCommissionAmount": float(row["repCommissionAmount"]) if row.get("repCommissionAmount") is not None else None,
             "thirdPartyCommissionTo": str(row.get("thirdPartyCommissionTo") or "").strip(),
             "thirdPartyCommissionAmount": float(row.get("thirdPartyCommissionAmount") or 0),
             "thirdPartyCommissionPaid": bool(row.get("thirdPartyCommissionPaid") or False),
@@ -3603,6 +3668,13 @@ def _apply_lead_update(
                 ):
                     raise HTTPException(status_code=403, detail="Only admin and sales reps can mark rep payments")
         if user.role != "admin":
+            rep_commission_fields = {"rep_commission_percent", "rep_commission_amount"}
+            for index, payment in enumerate(body.payments):
+                existing = existing_payments[index] if index < len(existing_payments) else {}
+                submitted_commission = (payment.rep_commission_percent, payment.rep_commission_amount)
+                existing_commission = (existing.get("repCommissionPercent"), existing.get("repCommissionAmount"))
+                if rep_commission_fields.intersection(payment.model_fields_set) and submitted_commission != existing_commission:
+                    raise HTTPException(status_code=403, detail="Only admins can manage lead rep commission overrides")
             third_party_fields = {
                 "third_party_commission_to",
                 "third_party_commission_amount",
@@ -3637,6 +3709,11 @@ def _apply_lead_update(
                     status_code=400,
                     detail="thirdPartyCommissionAmount cannot exceed the payment amount",
                 )
+            if payment.rep_commission_percent is not None and not 0 <= payment.rep_commission_percent <= 100:
+                raise HTTPException(status_code=400, detail="repCommissionPercent must be between 0 and 100")
+            commissionable_amount = max(0, payment.amount - payment.third_party_commission_amount)
+            if payment.rep_commission_amount is not None and not 0 <= payment.rep_commission_amount <= commissionable_amount:
+                raise HTTPException(status_code=400, detail="repCommissionAmount cannot exceed the commissionable payment amount")
         lead.payments = _serialize_payments(merged_payments)
 
     primary_job = _get_or_create_primary_lead_job(lead, db)
@@ -3973,6 +4050,11 @@ def _refresh_lead_from_smartmoving(
                     status_code=502,
                     detail="SmartMoving opportunity was not found; the CRM lead was not changed",
                 )
+            if payment.rep_commission_percent is not None and not 0 <= payment.rep_commission_percent <= 100:
+                raise HTTPException(status_code=400, detail="repCommissionPercent must be between 0 and 100")
+            commissionable_amount = max(0, payment.amount - payment.third_party_commission_amount)
+            if payment.rep_commission_amount is not None and not 0 <= payment.rep_commission_amount <= commissionable_amount:
+                raise HTTPException(status_code=400, detail="repCommissionAmount cannot exceed the commissionable payment amount")
             resolved_lead_id = lead.id
             _hard_delete_lead(lead, db)
             return {

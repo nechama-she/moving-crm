@@ -39,6 +39,8 @@ type LeadPayment = {
   repPaidAt?: string;
   thirdPartyCommissionTo?: string;
   thirdPartyCommissionAmount?: number;
+  repCommissionPercent?: number | null;
+  repCommissionAmount?: number | null;
   thirdPartyCommissionPaid?: boolean;
   thirdPartyCommissionPaidAt?: string;
 };
@@ -240,7 +242,8 @@ function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
-function repPaidCommissionAmount(paymentAmount: number, commissionPercent: number, thirdPartyAmount = 0): number {
+function repPaidCommissionAmount(paymentAmount: number, commissionPercent: number, thirdPartyAmount = 0, overrideAmount?: number | null): number {
+  if (overrideAmount != null && Number.isFinite(Number(overrideAmount))) return Number(overrideAmount);
   const commissionableAmount = Math.max(0, paymentAmount - Math.max(0, thirdPartyAmount));
   return commissionableAmount * (commissionPercent / 100);
 }
@@ -298,6 +301,8 @@ function parsePayments(raw: unknown): LeadPayment[] {
       repPaidAt: String(value.repPaidAt || ""),
       thirdPartyCommissionTo: String(value.thirdPartyCommissionTo || ""),
       thirdPartyCommissionAmount: Number(value.thirdPartyCommissionAmount || 0),
+      repCommissionPercent: value.repCommissionPercent == null ? null : Number(value.repCommissionPercent),
+      repCommissionAmount: value.repCommissionAmount == null ? null : Number(value.repCommissionAmount),
       thirdPartyCommissionPaid: Boolean(value.thirdPartyCommissionPaid || false),
       thirdPartyCommissionPaidAt: String(value.thirdPartyCommissionPaidAt || ""),
     };
@@ -624,9 +629,10 @@ export default function SalesCalendarPage() {
           for (const payment of job.payments || []) {
             const paymentAmount = Number(payment.amount || 0);
             const thirdPartyAmount = Number(payment.thirdPartyCommissionAmount || 0);
-            repCommissionTotal += repPaidCommissionAmount(paymentAmount, commissionPercent, thirdPartyAmount);
+            const effectivePercent = payment.repCommissionPercent ?? commissionPercent;
+            repCommissionTotal += repPaidCommissionAmount(paymentAmount, effectivePercent, thirdPartyAmount, payment.repCommissionAmount);
             if (payment.repPaid) {
-              repCommissionPaid += repPaidCommissionAmount(paymentAmount, commissionPercent, thirdPartyAmount);
+              repCommissionPaid += repPaidCommissionAmount(paymentAmount, effectivePercent, thirdPartyAmount, payment.repCommissionAmount);
             }
           }
         }
@@ -719,9 +725,10 @@ export default function SalesCalendarPage() {
           for (const payment of job.payments || []) {
             const paymentAmount = Number(payment.amount || 0);
             const thirdPartyAmount = Number(payment.thirdPartyCommissionAmount || 0);
-            repCommissionTotal += repPaidCommissionAmount(paymentAmount, commissionPercent, thirdPartyAmount);
+            const effectivePercent = payment.repCommissionPercent ?? commissionPercent;
+            repCommissionTotal += repPaidCommissionAmount(paymentAmount, effectivePercent, thirdPartyAmount, payment.repCommissionAmount);
             if (payment.repPaid) {
-              repCommissionPaid += repPaidCommissionAmount(paymentAmount, commissionPercent, thirdPartyAmount);
+              repCommissionPaid += repPaidCommissionAmount(paymentAmount, effectivePercent, thirdPartyAmount, payment.repCommissionAmount);
             }
           }
         }
