@@ -732,19 +732,6 @@ Resources:
                   - dynamodb:Query
                 Resource:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/leads"
-              # One-time production message index migration and backfill
-              - Effect: Allow
-                Action:
-                  - dynamodb:DescribeTable
-                  - dynamodb:UpdateTable
-                  - dynamodb:Scan
-                  - dynamodb:Query
-                  - dynamodb:UpdateItem
-                Resource:
-                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations"
-                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations/index/*"
-                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages"
-                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages/index/*"
               # Secrets Manager (RDS managed password)
               - Effect: Allow
                 Action:
@@ -1160,7 +1147,7 @@ Resources:
           Subnets: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
           SecurityGroupIds: [!Ref LambdaSecurityGroup]
         - !Ref "AWS::NoValue"
-      TimeoutInMinutes: 60
+      TimeoutInMinutes: 10
       Source:
         Type: CODEPIPELINE
         BuildSpec: deployspec.yml
@@ -1185,6 +1172,14 @@ Resources:
             Value: !Ref FrontendBucket
           - Name: DYNAMO_TABLE_NAME
             Value: leads
+          - Name: DB_HOST
+            Value: !If [IsProd, !GetAtt RDSProxy.Endpoint, !GetAtt Database.Endpoint.Address]
+          - Name: DB_PORT
+            Value: !GetAtt Database.Endpoint.Port
+          - Name: DB_NAME
+            Value: !Ref DBName
+          - Name: DB_USER
+            Value: !Ref DBMasterUsername
           - Name: DB_PASSWORD
             Type: SECRETS_MANAGER
             Value: !Sub
