@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
+import { useRealtimeUpdates } from "./useRealtimeUpdates";
 
 type Category = "new" | "no_first_contact" | "unanswered" | "missed_calls" | "closed_chats";
 type Counts = Record<Category, number>;
@@ -46,6 +47,7 @@ export default function RepActivityPage() {
   const [error, setError] = useState("");
   const [hasMore, setHasMore] = useState(false);
   const [closing, setClosing] = useState("");
+  const realtimeTimerRef = useRef(0);
 
   const markConversationEnded = async (lead: ActivityLead) => {
     if (!lead.conversation_id || closing) return;
@@ -87,6 +89,11 @@ export default function RepActivityPage() {
     }
   }, [category, token]);
 
+  useRealtimeUpdates(token, () => {
+    window.clearTimeout(realtimeTimerRef.current);
+    realtimeTimerRef.current = window.setTimeout(() => void load(0), 250);
+  });
+
   useEffect(() => { void load(0); }, [load]);
 
   const selectedCard = CARDS.find((card) => card.key === category)!;
@@ -124,7 +131,7 @@ export default function RepActivityPage() {
         {!loading && !error && items.length === 0 ? <p style={{ padding: 24, color: "#64748b" }}>No leads in this list.</p> : null}
         {items.map((lead) => (
           <div key={lead.conversation_id || lead.lead_id} style={{ display: "grid", gridTemplateColumns: category === "unanswered" ? "minmax(160px, 1.2fr) 100px minmax(220px, 1.8fr) minmax(130px, 1fr) minmax(140px, 1fr) 90px 120px" : category === "closed_chats" ? "minmax(160px, 1.2fr) 100px minmax(220px, 1.8fr) minmax(130px, 1fr) minmax(140px, 1fr) 90px" : "minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(150px, 1fr) 120px 100px", gap: 16, alignItems: "center", padding: "14px 18px", borderTop: "1px solid #e5e7eb" }}>
-            {lead.lead_id ? <Link to={`/leads/${lead.lead_id}`} state={{ backTo: "/rep-activity", backLabel: "← Back to Rep Activity" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{lead.client}</Link> : <span style={{ color: "#334155", fontWeight: 700 }}>{lead.client}</span>}
+            {lead.lead_id ? <Link to={`/leads/${lead.lead_id}`} state={{ backTo: "/rep-activity", backLabel: "← Back to Rep Activity" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{lead.client}</Link> : lead.platform === "messenger" ? <a href={`https://www.facebook.com/latest/${encodeURIComponent(lead.client)}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{lead.client}</a> : <span style={{ color: "#334155", fontWeight: 700 }}>{lead.client}</span>}
             {category === "unanswered" || category === "closed_chats" ? <span style={{ color: "#475569", textTransform: "capitalize" }}>{lead.platform || "Unknown"}</span> : null}
             {category === "unanswered" || category === "closed_chats" ? <span title={lead.message} style={{ color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lead.message || "No preview"}</span> : null}
             <span>{lead.rep || "Unassigned"}</span>

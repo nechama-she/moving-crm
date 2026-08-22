@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
+import { useRealtimeUpdates } from "./useRealtimeUpdates";
 
 type ChatRow = {
   conversation_id: string;
@@ -43,6 +44,7 @@ export default function ChatsPage() {
   const loadingRef = useRef(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const activeSourceRef = useRef<"meta" | "sms">("meta");
+  const realtimeTimerRef = useRef(0);
 
   const loadChats = useCallback((nextCursor = "") => {
     if (loadingRef.current || (!hasMore && nextCursor)) return;
@@ -84,6 +86,12 @@ export default function ChatsPage() {
         setLoading(false);
       });
   }, [hasMore, source, token]);
+
+  useRealtimeUpdates(token, (event) => {
+    if ((source === "sms") !== (event.channel === "sms")) return;
+    window.clearTimeout(realtimeTimerRef.current);
+    realtimeTimerRef.current = window.setTimeout(() => loadChats(""), 250);
+  });
 
   useEffect(() => {
     activeSourceRef.current = source;

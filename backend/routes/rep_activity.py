@@ -19,6 +19,7 @@ from database import get_db
 from db import conversations_table, sms_messages_table
 from libs.common.phone import phone_variants
 from models import Lead, LeadCommunicationState, User
+from realtime import publish_realtime_event
 
 router = APIRouter(prefix="/api/rep-activity", tags=["Rep Activity"])
 lead_activity_router = APIRouter(prefix="/api/lead-activity", tags=["Lead Activity"])
@@ -150,6 +151,40 @@ def _closed_chats(user: User, db: Session, now: datetime) -> list[dict]:
     return sorted(items, key=lambda item: item["age_minutes"])
 
 
+def _conversation_activity(user: User, db: Session, now: datetime) -> tuple[list[dict], list[dict]]:
+    """Build unmatched-unanswered and closed lists from one fetch per platform."""
+    from routes.chats import get_all_chats
+
+    unmatched: list[dict] = []
+    closed: list[dict] = []
+    for source in ("sms", "meta"):
+        chats = get_all_chats(cursor="", limit=100, source=source, user=user, db=db)
+        for chat in chats["items"]:
+            occurred_at = datetime.fromtimestamp(float(chat.get("timestamp") or 0), tz=timezone.utc)
+            item = {
+                "conversation_id": chat.get("conversation_id") or "",
+                "lead_id": chat.get("lead_id") or "",
+                "client": chat.get("client") or "Unknown client",
+                "rep": chat.get("rep") or "",
+                "company": chat.get("company") or "",
+                "created_at": occurred_at.isoformat(),
+                "age_minutes": max(0, int((now - occurred_at).total_seconds() // 60)),
+                "platform": chat.get("platform") or "",
+                "message": chat.get("message") or "",
+                "latest_message_at": occurred_at.isoformat(),
+                "message_partition_key": chat.get("message_partition_key") or "",
+                "message_timestamp": chat.get("message_timestamp"),
+            }
+            if chat.get("conversation_ended"):
+                closed.append({**item, "status": "Closed"})
+                continue
+            direction = str(chat.get("direction") or "").lower()
+            if not chat.get("lead_id") and direction in {"received", "inbound", "user"}:
+                unmatched.append({**item, "status": "Unmatched"})
+    closed.sort(key=lambda item: item["age_minutes"])
+    return unmatched, closed
+
+
 class CommunicationUpdate(BaseModel):
     lead_id: str
     channel: Literal["sms", "messenger", "instagram", "call"]
@@ -181,6 +216,13 @@ def end_conversation(
         UpdateExpression="SET conversation_ended = :ended",
         ExpressionAttributeValues={":ended": True},
     )
+    publish_realtime_event({
+        "type": "communication_updated",
+        "lead_id": "",
+        "channel": body.platform,
+        "direction": "ended",
+        "occurred_at": _utcnow().isoformat(),
+    })
     return {"ok": True}
 
 
@@ -224,6 +266,13 @@ def update_communication_state(
         state.latest_message_channel = body.channel
 
     db.commit()
+    publish_realtime_event({
+        "type": "communication_updated",
+        "lead_id": lead.id,
+        "channel": body.channel,
+        "direction": body.direction,
+        "occurred_at": occurred_at.isoformat(),
+    })
     return {"ok": True, "lead_id": lead.id}
 
 
@@ -265,8 +314,9 @@ def get_rep_activity(
         "missed_calls": missed_query,
     }
     counts = {key: query.count() for key, query in queries.items()}
-    unmatched_items = _unmatched_unanswered(user, db, now) if category == "unanswered" else []
-    closed_items = _closed_chats(user, db, now)
+    unmatched_items, closed_items = _conversation_activity(user, db, now)
+    closed_linked_count = sum(1 for item in closed_items if item.get("lead_id"))
+    counts["unanswered"] = max(0, counts["unanswered"] + len(unmatched_items) - closed_linked_count)
     counts["closed_chats"] = len(closed_items)
 
     if category == "closed_chats":
