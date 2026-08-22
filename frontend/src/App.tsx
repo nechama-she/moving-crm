@@ -23,6 +23,7 @@ const ForemenPage = lazy(() => import("./ForemenPage"));
 const ImpersonateUsersPage = lazy(() => import("./ImpersonateUsersPage"));
 const ChatsPage = lazy(() => import("./ChatsPage"));
 const RepActivityPage = lazy(() => import("./RepActivityPage"));
+const IgnoredNumbersPage = lazy(() => import("./IgnoredNumbersPage"));
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -211,6 +212,7 @@ function ProtectedRoutes() {
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
           <Route path="/settings/pending-duplications" element={<PendingDuplicationsPage />} />
           <Route path="/settings/impersonate" element={<ImpersonateUsersPage />} />
+          <Route path="/settings/ignored-numbers" element={user?.role === "admin" ? <IgnoredNumbersPage /> : <Navigate to="/settings" replace />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/pricing" element={<PricingPage />} />
           <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />

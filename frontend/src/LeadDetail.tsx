@@ -90,6 +90,62 @@ type ThirdPartyPayout = {
   thirdPartyCommissionPaidAt: string;
 };
 
+function RepCommissionEditor({
+  commissionableAmount,
+  percent,
+  amount,
+  overridden,
+  saving,
+  onSave,
+}: {
+  commissionableAmount: number;
+  percent: number;
+  amount: number;
+  overridden: boolean;
+  saving: boolean;
+  onSave: (percent: number | null, amount: number | null) => Promise<void>;
+}) {
+  const [percentValue, setPercentValue] = useState(percent.toFixed(6));
+  const [amountValue, setAmountValue] = useState(amount.toFixed(2));
+
+  useEffect(() => {
+    setPercentValue(percent.toFixed(6));
+    setAmountValue(amount.toFixed(2));
+  }, [percent, amount]);
+
+  const parsedPercent = Number(percentValue);
+  const parsedAmount = Number(amountValue);
+  const invalid = !Number.isFinite(parsedPercent) || parsedPercent < 0 || parsedPercent > 100
+    || !Number.isFinite(parsedAmount) || parsedAmount < 0 || parsedAmount > commissionableAmount;
+
+  return (
+    <div style={{ display: "flex", alignItems: "end", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+      <label style={{ display: "grid", gap: 3, color: "#475569", fontSize: 10, fontWeight: 700 }}>
+        Rep paid %
+        <input type="number" min={0} max={100} step="0.000001" value={percentValue} onChange={(event) => {
+          const next = event.target.value;
+          setPercentValue(next);
+          const number = Number(next);
+          if (Number.isFinite(number)) setAmountValue((commissionableAmount * number / 100).toFixed(2));
+        }} style={{ width: 105, border: `1px solid ${invalid ? "#ea001e" : "#c9c7c5"}`, borderRadius: 4, padding: "6px 8px" }} />
+      </label>
+      <label style={{ display: "grid", gap: 3, color: "#475569", fontSize: 10, fontWeight: 700 }}>
+        Rep paid amount
+        <input type="number" min={0} max={commissionableAmount} step="0.01" value={amountValue} onChange={(event) => {
+          const next = event.target.value;
+          setAmountValue(next);
+          const number = Number(next);
+          if (Number.isFinite(number)) setPercentValue(commissionableAmount > 0 ? (number / commissionableAmount * 100).toFixed(6) : "0.000000");
+        }} style={{ width: 115, border: `1px solid ${invalid ? "#ea001e" : "#c9c7c5"}`, borderRadius: 4, padding: "6px 8px" }} />
+      </label>
+      <button type="button" disabled={saving || invalid} onClick={() => void onSave(parsedPercent, parsedAmount)} style={{ border: 0, borderRadius: 4, padding: "7px 11px", background: "#0176d3", color: "#fff", fontSize: 11, fontWeight: 700 }}>
+        {saving ? "Saving…" : "Save"}
+      </button>
+      {overridden ? <button type="button" disabled={saving} onClick={() => void onSave(null, null)} style={{ border: "1px solid #c9c7c5", borderRadius: 4, padding: "6px 10px", background: "#fff", color: "#475569", fontSize: 11 }}>Use rep default</button> : null}
+    </div>
+  );
+}
+
 function ThirdPartyPayoutEditor({
   payout,
   paymentAmount,
@@ -1038,6 +1094,8 @@ export default function LeadDetail() {
           takenByUser: String(item.takenByUser ?? "").trim(),
           repPaid: Boolean(item.repPaid ?? false),
           repPaidAt: String(item.repPaidAt ?? "").trim(),
+          repCommissionPercent: item.repCommissionPercent == null ? null : Number(item.repCommissionPercent),
+          repCommissionAmount: item.repCommissionAmount == null ? null : Number(item.repCommissionAmount),
           thirdPartyCommissionTo: String(item.thirdPartyCommissionTo ?? "").trim(),
           thirdPartyCommissionAmount: Number(item.thirdPartyCommissionAmount ?? 0),
           thirdPartyCommissionPaid: Boolean(item.thirdPartyCommissionPaid ?? false),
@@ -1049,6 +1107,8 @@ export default function LeadDetail() {
         takenByUser: string;
         repPaid: boolean;
         repPaidAt: string;
+        repCommissionPercent: number | null;
+        repCommissionAmount: number | null;
         thirdPartyCommissionTo: string;
         thirdPartyCommissionAmount: number;
         thirdPartyCommissionPaid: boolean;
@@ -1071,8 +1131,9 @@ export default function LeadDetail() {
     return `$${value.toFixed(2)}`;
   }
 
-  function repPaidCommissionAmount(paymentAmount: number, thirdPartyAmount = 0): number {
+  function repPaidCommissionAmount(paymentAmount: number, thirdPartyAmount = 0, overrideAmount: number | null = null): number {
     if (!hasRepCommission) return 0;
+    if (overrideAmount != null && Number.isFinite(overrideAmount)) return overrideAmount;
     const assignedTo = String(lead?.assigned_to || "").trim();
     const commissionPercent = assignedTo
       ? (commissionPercentByUserId.get(assignedTo) ?? defaultCommissionPercent)
@@ -1081,8 +1142,9 @@ export default function LeadDetail() {
     return commissionableAmount * (commissionPercent / 100);
   }
 
-  function repPaidCommissionRatePercent(): number {
+  function repPaidCommissionRatePercent(overridePercent: number | null = null): number {
     if (!hasRepCommission) return 0;
+    if (overridePercent != null && Number.isFinite(overridePercent)) return overridePercent;
     const assignedTo = String(lead?.assigned_to || "").trim();
     if (!assignedTo) return defaultCommissionPercent;
     return commissionPercentByUserId.get(assignedTo) ?? defaultCommissionPercent;
@@ -1172,6 +1234,30 @@ export default function LeadDetail() {
       setLead(updated);
     } catch (e) {
       alert(`Failed to update rep payment: ${e instanceof Error ? e.message : "error"}`);
+    } finally {
+      setSavingRepPaymentIndex(null);
+    }
+  }
+
+  async function updateRepCommissionOverride(paymentIndex: number, percent: number | null, amount: number | null) {
+    if (!leadId || !canManageRepPayments || paymentIndex < 0 || paymentIndex >= paymentsData.length) return;
+    const nextPayments = paymentsData.map((payment, index) => index === paymentIndex ? {
+      ...payment,
+      repCommissionPercent: percent,
+      repCommissionAmount: amount,
+    } : payment);
+    setSavingRepPaymentIndex(paymentIndex);
+    try {
+      const response = await fetch(`${API_BASE}/api/leads/${leadId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ payments: nextPayments }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.detail || `HTTP ${response.status}`);
+      setLead(body);
+    } catch (reason) {
+      alert(`Failed to update rep commission: ${reason instanceof Error ? reason.message : "error"}`);
     } finally {
       setSavingRepPaymentIndex(null);
     }
@@ -2403,9 +2489,9 @@ export default function LeadDetail() {
                     </div>
                     {canViewRepCommission ? <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 11 }}>
                       <span style={{ color: "#475569" }}>
-                        Rep paid ({repPaidCommissionRatePercent().toFixed(6)}%
+                        Rep paid ({repPaidCommissionRatePercent(payment.repCommissionPercent).toFixed(6)}%
                         {payment.thirdPartyCommissionAmount > 0 ? ` of ${formatMoney(Math.max(0, payment.amount - payment.thirdPartyCommissionAmount))} after third-party` : ""}):{" "}
-                        <strong>{formatMoney(repPaidCommissionAmount(payment.amount, payment.thirdPartyCommissionAmount))}</strong>
+                        <strong>{formatMoney(repPaidCommissionAmount(payment.amount, payment.thirdPartyCommissionAmount, payment.repCommissionAmount))}</strong>
                       </span>
                       {canManageRepPayments ? (
                         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, color: payment.repPaid ? "#15803d" : "#92400e", fontWeight: 700 }}>
@@ -2425,6 +2511,14 @@ export default function LeadDetail() {
                         </span>
                       )}
                     </div> : null}
+                    {canManageRepPayments ? <RepCommissionEditor
+                      commissionableAmount={Math.max(0, payment.amount - payment.thirdPartyCommissionAmount)}
+                      percent={repPaidCommissionRatePercent(payment.repCommissionPercent)}
+                      amount={repPaidCommissionAmount(payment.amount, payment.thirdPartyCommissionAmount, payment.repCommissionAmount)}
+                      overridden={payment.repCommissionPercent != null || payment.repCommissionAmount != null}
+                      saving={savingRepPaymentIndex === index}
+                      onSave={(percent, amount) => updateRepCommissionOverride(index, percent, amount)}
+                    /> : null}
                     {canViewRepCommission && payment.repPaid && payment.repPaidAt ? (
                       <div style={{ fontSize: 10, color: "#64748b" }}>Paid at: {new Date(payment.repPaidAt).toLocaleString()}</div>
                     ) : null}

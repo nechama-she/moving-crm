@@ -1,6 +1,7 @@
 """Admin response monitoring and webhook-fed communication state."""
 
 import hmac
+import json
 import logging
 import os
 from datetime import date, datetime, time, timedelta, timezone
@@ -19,13 +20,14 @@ from auth import get_current_user
 from config import get_config
 from database import get_db
 from db import conversations_table, sms_messages_table
-from libs.common.phone import phone_variants
-from models import Lead, LeadCommunicationState, User
+from libs.common.phone import normalize_digits, phone_variants
+from models import AppSetting, Lead, LeadCommunicationState, User
 from realtime import publish_realtime_event
 
 router = APIRouter(prefix="/api/rep-activity", tags=["Rep Activity"])
 lead_activity_router = APIRouter(prefix="/api/lead-activity", tags=["Lead Activity"])
 logger = logging.getLogger("moving-crm")
+IGNORED_NUMBERS_SETTING = "rep_activity.ignored_sms_numbers"
 
 
 def _utcnow() -> datetime:
@@ -38,6 +40,23 @@ def _aware(value: datetime) -> datetime:
 
 def _latest(current: datetime | None, incoming: datetime) -> datetime:
     return incoming if current is None or incoming > _aware(current) else current
+
+
+def _normalized_number(value: str) -> str:
+    digits = normalize_digits(value)
+    return digits[1:] if len(digits) == 11 and digits.startswith("1") else digits
+
+
+def _ignored_sms_numbers(db: Session) -> set[str]:
+    row = db.query(AppSetting).filter(AppSetting.key == IGNORED_NUMBERS_SETTING).first()
+    if not row or not row.value:
+        return set()
+    try:
+        values = json.loads(row.value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid ignored SMS numbers setting")
+        return set()
+    return {_normalized_number(str(value)) for value in values if _normalized_number(str(value))}
 
 
 def _latest_message_record(lead: Lead, channel: str) -> dict:
@@ -156,7 +175,7 @@ def _closed_chats(user: User, db: Session, now: datetime) -> list[dict]:
     return sorted(items, key=lambda item: item["age_minutes"])
 
 
-def _conversation_activity(user: User, db: Session, now: datetime, range_start: datetime, range_end: datetime) -> tuple[list[dict], list[dict], dict[str, dict]]:
+def _conversation_activity(user: User, db: Session, now: datetime, range_start: datetime, range_end: datetime, ignored_numbers: set[str]) -> tuple[list[dict], list[dict], dict[str, dict]]:
     """Build activity lists and latest linked messages from one fetch per platform."""
     from routes.chats import get_all_chats
 
@@ -191,6 +210,8 @@ def _conversation_activity(user: User, db: Session, now: datetime, range_start: 
             if chat.get("conversation_ended"):
                 closed.append({**item, "status": "Closed"})
                 continue
+            if str(chat.get("platform") or "").lower() == "sms" and _normalized_number(item["message_partition_key"]) in ignored_numbers:
+                continue
             direction = str(chat.get("direction") or "").lower()
             if not chat.get("lead_id") and direction in {"received", "inbound", "user"}:
                 unmatched.append({**item, "status": "Unmatched"})
@@ -210,6 +231,34 @@ class EndConversationRequest(BaseModel):
     platform: Literal["sms", "messenger", "instagram"]
     partition_key: str
     timestamp: int | float
+
+
+class IgnoredNumbersUpdate(BaseModel):
+    numbers: list[str]
+
+
+@router.get("/ignored-numbers")
+def get_ignored_numbers(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can manage ignored numbers")
+    return {"numbers": sorted(_ignored_sms_numbers(db))}
+
+
+@router.put("/ignored-numbers")
+def update_ignored_numbers(body: IgnoredNumbersUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can manage ignored numbers")
+    numbers = sorted({_normalized_number(value) for value in body.numbers if _normalized_number(value)})
+    if any(len(value) < 7 or len(value) > 15 for value in numbers):
+        raise HTTPException(status_code=400, detail="Each phone number must contain 7 to 15 digits")
+    row = db.query(AppSetting).filter(AppSetting.key == IGNORED_NUMBERS_SETTING).first()
+    serialized = json.dumps(numbers, separators=(",", ":"))
+    if row:
+        row.value = serialized
+    else:
+        db.add(AppSetting(key=IGNORED_NUMBERS_SETTING, value=serialized))
+    db.commit()
+    return {"numbers": numbers}
 
 
 @router.post("/conversations/end")
@@ -366,7 +415,8 @@ def get_rep_activity(
         "missed_calls": missed_query,
     }
     counts = {key: query.count() for key, query in queries.items()}
-    unmatched_items, closed_items, linked_latest = _conversation_activity(user, db, now, range_start, range_end)
+    ignored_numbers = _ignored_sms_numbers(db)
+    unmatched_items, closed_items, linked_latest = _conversation_activity(user, db, now, range_start, range_end, ignored_numbers)
     closed_linked_count = sum(1 for item in closed_items if item.get("lead_id"))
     counts["unanswered"] = max(0, counts["unanswered"] + len(unmatched_items) - closed_linked_count)
     counts["closed_chats"] = len(closed_items)
@@ -406,6 +456,8 @@ def get_rep_activity(
         reference_at = _aware(reference_at) if reference_at else None
         age_minutes = max(0, int((now - reference_at).total_seconds() // 60)) if reference_at else 0
         message_record = linked_latest.get(lead.id, {}) if category == "unanswered" else {}
+        if category == "unanswered" and state and state.latest_message_channel == "sms" and _normalized_number(lead.phone or "") in ignored_numbers:
+            continue
         if category == "unanswered" and message_record.get("conversation_ended"):
             continue
         items.append({
