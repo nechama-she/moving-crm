@@ -71,7 +71,7 @@ def test_cursor_preserves_dynamodb_number_types():
 
 
 def test_reads_more_pages_until_unique_conversation_limit(monkeypatch):
-    company = SimpleNamespace(name="Moving Co")
+    company = SimpleNamespace(name="Moving Co", aircall_number_id="company-number-1")
     leads = [
         SimpleNamespace(
             id=f"lead-{number}", company_id="company-1", assigned_to=None,
@@ -140,7 +140,7 @@ def test_keeps_meta_and_sms_sources_separate(monkeypatch):
         phone="(212) 555-0199",
         facebook_user_id="meta-1",
         company=company,
-        assignee=SimpleNamespace(name="Alex Rep"),
+        assignee=SimpleNamespace(name="Alex Rep", aircall_number_id="rep-number-1"),
         created_at=datetime(2026, 1, 1),
         updated_at=datetime(2026, 1, 2),
     )
@@ -160,6 +160,8 @@ def test_keeps_meta_and_sms_sources_separate(monkeypatch):
         lambda start_key, limit: ([{
             "phone_number": "+12125550199",
             "company_name": "Moving Co",
+            "number_id": "rep-number-1",
+            "sales_name": "Message Sender",
             "text": "SMS",
             "timestamp": 25,
             "direction": "received",
@@ -185,7 +187,38 @@ def test_keeps_meta_and_sms_sources_separate(monkeypatch):
     assert meta_result["items"][0]["message"] == "Newest"
     assert meta_result["items"][0]["rep"] == "Alex Rep"
     assert [item["platform"] for item in sms_result["items"]] == ["sms"]
+    assert sms_result["items"][0]["rep"] == "Message Sender"
     assert all(item["lead_id"] == "lead-1" for item in meta_result["items"] + sms_result["items"])
+
+
+def test_sms_does_not_fall_back_to_phone_only(monkeypatch):
+    lead = SimpleNamespace(
+        id="lead-sean", company_id="company-1", assigned_to="sean",
+        full_name="Shared Client", phone="18046374931", facebook_user_id="",
+        company=SimpleNamespace(name="Moving Co", aircall_number_id="company-number"),
+        assignee=SimpleNamespace(name="Sean", aircall_number_id="sean-number"),
+        created_at=datetime(2026, 1, 1), updated_at=datetime(2026, 1, 2),
+    )
+    monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: ["company-1"])
+    monkeypatch.setattr(
+        chats,
+        "_query_sms_page",
+        lambda start_key, limit: ([{
+            "phone_number": "+18046374931",
+            "number_id": "bushra-number",
+            "sales_name": "Bushra A",
+            "text": "Bushra message",
+            "timestamp": 25,
+            "direction": "sent",
+        }], None),
+    )
+
+    result = chats.get_all_chats(
+        cursor="", limit=20, source="sms",
+        user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb([lead]),
+    )
+
+    assert result["items"] == []
 
 
 def test_returns_empty_without_company_access(monkeypatch):

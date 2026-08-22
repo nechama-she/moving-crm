@@ -148,8 +148,8 @@ def get_all_chats(
                     if len(phone) == 11 and phone.startswith("1"):
                         phone = phone[1:]
                     if phone:
-                        company_name = str(message.get("company_name") or "").strip().lower()
-                        conversation_keys.add(("sms", phone, company_name))
+                        number_id = str(message.get("number_id") or "").strip()
+                        conversation_keys.add(("sms", phone, number_id))
                 sms_done = sms_next is None
     except ClientError as exc:
         logger.error("Could not load unified chats: %s", exc)
@@ -189,7 +189,6 @@ def get_all_chats(
         )
 
     meta_leads: dict[str, Lead] = {}
-    sms_leads: dict[tuple[str, str], Lead] = {}
     sms_phone_leads: dict[str, list[Lead]] = {}
     for lead in leads:
         if lead.facebook_user_id:
@@ -200,16 +199,11 @@ def get_all_chats(
         if len(phone) == 11 and phone.startswith("1"):
             phone = phone[1:]
         if phone:
-            company_name = (lead.company.name if lead.company else "").strip().lower()
-            sms_key = (phone, company_name)
-            current = sms_leads.get(sms_key)
-            if current is None or _lead_time(lead) > _lead_time(current):
-                sms_leads[sms_key] = lead
             sms_phone_leads.setdefault(phone, []).append(lead)
 
     latest: dict[tuple[str, str], dict] = {}
 
-    def add_message(lead: Lead, platform: str, message: dict) -> None:
+    def add_message(lead: Lead, platform: str, message: dict, rep_name: str | None = None) -> None:
         timestamp = _timestamp(message.get("timestamp"))
         key = (lead.id, platform)
         if key in latest and latest[key]["timestamp"] >= timestamp:
@@ -217,7 +211,7 @@ def get_all_chats(
         latest[key] = {
             "lead_id": lead.id,
             "client": lead.full_name or lead.phone or "Unknown client",
-            "rep": lead.assignee.name if lead.assignee else "",
+            "rep": rep_name if rep_name is not None else (lead.assignee.name if lead.assignee else ""),
             "platform": platform,
             "message": str(message.get("text") or ""),
             "timestamp": timestamp,
@@ -236,14 +230,28 @@ def get_all_chats(
         phone = normalize_digits(str(message.get("phone_number") or ""))
         if len(phone) == 11 and phone.startswith("1"):
             phone = phone[1:]
-        company_name = str(message.get("company_name") or "").strip().lower()
-        lead = sms_leads.get((phone, company_name))
-        if lead is None:
-            phone_matches = sms_phone_leads.get(phone, [])
-            if len(phone_matches) == 1:
-                lead = phone_matches[0]
+        number_id = str(message.get("number_id") or "").strip()
+        exact_matches = []
+        if number_id:
+            for candidate in sms_phone_leads.get(phone, []):
+                rep_number_id = (
+                    str(getattr(candidate.assignee, "aircall_number_id", "") or "").strip()
+                    if candidate.assignee else ""
+                )
+                company_number_id = (
+                    str(getattr(candidate.company, "aircall_number_id", "") or "").strip()
+                    if candidate.company else ""
+                )
+                if number_id in {rep_number_id, company_number_id}:
+                    exact_matches.append(candidate)
+        lead = max(exact_matches, key=_lead_time) if exact_matches else None
         if lead:
-            add_message(lead, "sms", message)
+            add_message(
+                lead,
+                "sms",
+                message,
+                rep_name=str(message.get("sales_name") or "").strip(),
+            )
 
     has_more = not meta_done or not sms_done
     return {
