@@ -11,6 +11,8 @@ phases:
 
   pre_build:
     commands:
+      - echo "Ensuring production message indexes and record_type backfill"
+      - cd $CODEBUILD_SRC_DIR/backend && python migrate_message_indexes.py
       - echo "Running database migrations"
       - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
       - cd $CODEBUILD_SRC_DIR/backend && python add_columns.py
