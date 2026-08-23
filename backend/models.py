@@ -314,6 +314,8 @@ class MessageState(Base):
     conversation_ended = Column(Boolean, nullable=False, default=False)
     occurred_at = Column(DateTime(timezone=True), nullable=False, index=True)
 
+    lead = relationship("Lead")
+
 
 class LeadUpdateLog(Base):
     __tablename__ = "lead_update_logs"
