@@ -9,7 +9,6 @@ from decimal import Decimal
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -20,7 +19,7 @@ from auth import get_current_user
 from config import get_config
 from database import get_db
 from db import conversations_table, sms_messages_table
-from libs.common.phone import normalize_digits, phone_variants
+from libs.common.phone import normalize_digits
 from models import AppSetting, Lead, LeadCommunicationState, User
 from realtime import publish_realtime_event
 
@@ -57,166 +56,6 @@ def _ignored_sms_numbers(db: Session) -> set[str]:
         logger.warning("Invalid ignored SMS numbers setting")
         return set()
     return {_normalized_number(str(value)) for value in values if _normalized_number(str(value))}
-
-
-def _latest_message_record(lead: Lead, channel: str) -> dict:
-    """Read the latest inbound message text from the channel's DynamoDB table."""
-    try:
-        if channel == "sms" and lead.phone:
-            allowed_number_ids = {
-                str(value).strip()
-                for value in (
-                    lead.assignee.aircall_number_id if lead.assignee else "",
-                    lead.company.aircall_number_id if lead.company else "",
-                )
-                if value
-            }
-            newest: dict | None = None
-            for phone in phone_variants(lead.phone):
-                kwargs = {
-                    "KeyConditionExpression": Key("phone_number").eq(phone),
-                    "ScanIndexForward": False,
-                    "Limit": 20,
-                }
-                while True:
-                    response = sms_messages_table.query(**kwargs)
-                    for message in response.get("Items", []):
-                        if str(message.get("direction") or "").lower() != "received":
-                            continue
-                        if str(message.get("number_id") or "").strip() not in allowed_number_ids:
-                            continue
-                        if newest is None or float(message.get("timestamp") or 0) > float(newest.get("timestamp") or 0):
-                            newest = message
-                    if newest is not None or "LastEvaluatedKey" not in response:
-                        break
-                    kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-            return newest or {}
-
-        if channel in {"messenger", "instagram"} and lead.facebook_user_id:
-            kwargs = {
-                "KeyConditionExpression": Key("user_id").eq(lead.facebook_user_id),
-                "FilterExpression": Attr("platform").eq(channel) & Attr("role").eq("user"),
-                "ScanIndexForward": False,
-                "Limit": 20,
-            }
-            while True:
-                response = conversations_table.query(**kwargs)
-                messages = response.get("Items", [])
-                if messages:
-                    return messages[0]
-                if "LastEvaluatedKey" not in response:
-                    break
-                kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-    except (ClientError, TypeError, ValueError):
-        return {}
-    return {}
-
-
-def _unmatched_unanswered(user: User, db: Session, now: datetime) -> list[dict]:
-    from routes.chats import get_all_chats
-
-    items: list[dict] = []
-    for source in ("sms", "meta"):
-        chats = get_all_chats(cursor="", limit=100, source=source, user=user, db=db)
-        for chat in chats["items"]:
-            if chat.get("lead_id"):
-                continue
-            if chat.get("conversation_ended"):
-                continue
-            direction = str(chat.get("direction") or "").lower()
-            if direction not in {"received", "inbound", "user"}:
-                continue
-            occurred_at = datetime.fromtimestamp(float(chat.get("timestamp") or 0), tz=timezone.utc)
-            items.append({
-                "conversation_id": chat.get("conversation_id") or "",
-                "lead_id": "",
-                "client": chat.get("client") or "Unknown client",
-                "rep": chat.get("rep") or "",
-                "company": chat.get("company") or "",
-                "created_at": occurred_at.isoformat(),
-                "reference_at": occurred_at.isoformat(),
-                "age_minutes": max(0, int((now - occurred_at).total_seconds() // 60)),
-                "status": "Unmatched",
-                "platform": chat.get("platform") or "",
-                "message": chat.get("message") or "",
-                "latest_message_at": occurred_at.isoformat(),
-                "message_partition_key": chat.get("message_partition_key") or "",
-                "message_timestamp": chat.get("message_timestamp"),
-            })
-    return items
-
-
-def _closed_chats(user: User, db: Session, now: datetime) -> list[dict]:
-    from routes.chats import get_all_chats
-
-    items: list[dict] = []
-    for source in ("sms", "meta"):
-        chats = get_all_chats(cursor="", limit=100, source=source, user=user, db=db)
-        for chat in chats["items"]:
-            if not chat.get("conversation_ended"):
-                continue
-            occurred_at = datetime.fromtimestamp(float(chat.get("timestamp") or 0), tz=timezone.utc)
-            items.append({
-                "conversation_id": chat.get("conversation_id") or "",
-                "lead_id": chat.get("lead_id") or "",
-                "client": chat.get("client") or "Unknown client",
-                "rep": chat.get("rep") or "",
-                "company": chat.get("company") or "",
-                "created_at": occurred_at.isoformat(),
-                "reference_at": occurred_at.isoformat(),
-                "age_minutes": max(0, int((now - occurred_at).total_seconds() // 60)),
-                "status": "Closed",
-                "platform": chat.get("platform") or "",
-                "message": chat.get("message") or "",
-                "latest_message_at": occurred_at.isoformat(),
-                "message_partition_key": chat.get("message_partition_key") or "",
-                "message_timestamp": chat.get("message_timestamp"),
-            })
-    return sorted(items, key=lambda item: item["age_minutes"])
-
-
-def _conversation_activity(user: User, db: Session, now: datetime, range_start: datetime, range_end: datetime, ignored_numbers: set[str]) -> tuple[list[dict], list[dict], dict[str, dict]]:
-    """Build activity lists and latest linked messages from one fetch per platform."""
-    from routes.chats import get_all_chats
-
-    unmatched: list[dict] = []
-    closed: list[dict] = []
-    linked_latest: dict[str, dict] = {}
-    for source in ("sms", "meta"):
-        chats = get_all_chats(cursor="", limit=100, source=source, user=user, db=db)
-        for chat in chats["items"]:
-            occurred_at = datetime.fromtimestamp(float(chat.get("timestamp") or 0), tz=timezone.utc)
-            if occurred_at < range_start or occurred_at >= range_end:
-                continue
-            item = {
-                "conversation_id": chat.get("conversation_id") or "",
-                "lead_id": chat.get("lead_id") or "",
-                "client": chat.get("client") or "Unknown client",
-                "rep": chat.get("rep") or "",
-                "company": chat.get("company") or "",
-                "created_at": occurred_at.isoformat(),
-                "age_minutes": max(0, int((now - occurred_at).total_seconds() // 60)),
-                "platform": chat.get("platform") or "",
-                "message": chat.get("message") or "",
-                "latest_message_at": occurred_at.isoformat(),
-                "message_partition_key": chat.get("message_partition_key") or "",
-                "message_timestamp": chat.get("message_timestamp"),
-            }
-            lead_id = str(chat.get("lead_id") or "")
-            if lead_id:
-                current = linked_latest.get(lead_id)
-                if current is None or item["created_at"] > current["created_at"]:
-                    linked_latest[lead_id] = {**item, "conversation_ended": bool(chat.get("conversation_ended"))}
-            if chat.get("conversation_ended"):
-                closed.append({**item, "status": "Closed"})
-                continue
-            if str(chat.get("platform") or "").lower() == "sms" and _normalized_number(item["message_partition_key"]) in ignored_numbers:
-                continue
-            direction = str(chat.get("direction") or "").lower()
-            if not chat.get("lead_id") and direction in {"received", "inbound", "user"}:
-                unmatched.append({**item, "status": "Unmatched"})
-    closed.sort(key=lambda item: item["age_minutes"])
-    return unmatched, closed, linked_latest
 
 
 class CommunicationUpdate(BaseModel):
@@ -416,18 +255,14 @@ def get_rep_activity(
     }
     counts = {key: query.count() for key, query in queries.items()}
     ignored_numbers = _ignored_sms_numbers(db)
-    unmatched_items, closed_items, linked_latest = _conversation_activity(user, db, now, range_start, range_end, ignored_numbers)
-    closed_linked_count = sum(1 for item in closed_items if item.get("lead_id"))
-    counts["unanswered"] = max(0, counts["unanswered"] + len(unmatched_items) - closed_linked_count)
-    counts["closed_chats"] = len(closed_items)
+    counts["closed_chats"] = 0
 
     if category == "closed_chats":
-        total = len(closed_items)
         return {
             "counts": counts,
-            "items": closed_items[offset:offset + limit],
-            "total": total,
-            "has_more": offset + limit < total,
+            "items": [],
+            "total": 0,
+            "has_more": False,
         }
 
     if category == "new":
@@ -455,10 +290,7 @@ def get_rep_activity(
             reference_at = state.latest_missed_call_at
         reference_at = _aware(reference_at) if reference_at else None
         age_minutes = max(0, int((now - reference_at).total_seconds() // 60)) if reference_at else 0
-        message_record = linked_latest.get(lead.id, {}) if category == "unanswered" else {}
         if category == "unanswered" and state and state.latest_message_channel == "sms" and _normalized_number(lead.phone or "") in ignored_numbers:
-            continue
-        if category == "unanswered" and message_record.get("conversation_ended"):
             continue
         items.append({
             "conversation_id": f"lead:{lead.id}",
@@ -471,14 +303,13 @@ def get_rep_activity(
             "age_minutes": age_minutes,
             "status": lead.status or "new",
             "platform": state.latest_message_channel if category == "unanswered" and state else "",
-            "message": str(message_record.get("message") or "").strip(),
+            "message": "",
             "latest_message_at": reference_at.isoformat() if category == "unanswered" and reference_at else "",
-            "message_partition_key": str(message_record.get("message_partition_key") or ""),
-            "message_timestamp": message_record.get("message_timestamp"),
+            "message_partition_key": "",
+            "message_timestamp": None,
         })
 
     if category == "unanswered":
-        items.extend(unmatched_items)
         items.sort(key=lambda item: item["age_minutes"], reverse=True)
         counts["unanswered"] = len(items)
         items = items[offset:offset + limit]
