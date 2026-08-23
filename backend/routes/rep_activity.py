@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Literal
 from zoneinfo import ZoneInfo
 
+from boto3.dynamodb.conditions import Key
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -19,7 +20,7 @@ from auth import get_current_user
 from config import get_config
 from database import get_db
 from db import conversations_table, sms_messages_table
-from libs.common.phone import normalize_digits
+from libs.common.phone import normalize_digits, phone_variants
 from models import AppSetting, Lead, LeadCommunicationState, User
 from realtime import publish_realtime_event
 
@@ -56,6 +57,63 @@ def _ignored_sms_numbers(db: Session) -> set[str]:
         logger.warning("Invalid ignored SMS numbers setting")
         return set()
     return {_normalized_number(str(value)) for value in values if _normalized_number(str(value))}
+
+
+def _message_for_state(lead: Lead, state: LeadCommunicationState) -> dict:
+    """Fetch only the message referenced by this state's inbound timestamp."""
+    occurred_at = state.latest_inbound_message_at
+    channel = str(state.latest_message_channel or "").lower()
+    if occurred_at is None or channel not in {"sms", "messenger", "instagram"}:
+        return {}
+
+    epoch = _aware(occurred_at).timestamp()
+    if channel == "sms":
+        table = sms_messages_table
+        partition_name = "phone_number"
+        partition_values = phone_variants(lead.phone or "")
+    else:
+        table = conversations_table
+        partition_name = "user_id"
+        partition_values = [str(lead.facebook_user_id or "").strip()]
+
+    partition_values = [value for value in dict.fromkeys(partition_values) if value]
+    candidates: list[dict] = []
+    try:
+        # SMS records use epoch seconds; Meta records may use seconds or
+        # milliseconds. Query only a narrow window in the client's partition.
+        for partition_value in partition_values:
+            for center, radius in ((int(epoch), 5), (int(epoch * 1000), 5000)):
+                response = table.query(
+                    KeyConditionExpression=(
+                        Key(partition_name).eq(partition_value)
+                        & Key("timestamp").between(center - radius, center + radius)
+                    ),
+                    ScanIndexForward=False,
+                    Limit=10,
+                )
+                candidates.extend(response.get("Items", []))
+    except (ClientError, TypeError, ValueError):
+        logger.exception("Could not fetch message preview for lead %s", lead.id)
+        return {}
+
+    def is_inbound(message: dict) -> bool:
+        if channel == "sms":
+            return str(message.get("direction") or "").lower() in {"received", "inbound"}
+        return (
+            str(message.get("platform") or "").lower() == channel
+            and str(message.get("role") or message.get("direction") or "").lower() in {"user", "inbound", "received"}
+        )
+
+    inbound = [message for message in candidates if is_inbound(message)]
+    if not inbound:
+        return {}
+
+    def distance(message: dict) -> float:
+        value = float(message.get("timestamp") or 0)
+        value = value / 1000 if value >= 1_000_000_000_000 else value
+        return abs(value - epoch)
+
+    return min(inbound, key=distance)
 
 
 class CommunicationUpdate(BaseModel):
@@ -280,6 +338,7 @@ def get_rep_activity(
         .order_by(order)
     )
     rows = rows_query.all() if category == "unanswered" else rows_query.offset(offset).limit(limit).all()
+    leads_by_id = {lead.id: lead for lead in rows}
     items = []
     for lead in rows:
         state = lead.communication_state
@@ -313,6 +372,21 @@ def get_rep_activity(
         items.sort(key=lambda item: item["age_minutes"], reverse=True)
         counts["unanswered"] = len(items)
         items = items[offset:offset + limit]
+        visible_items = []
+        for item in items:
+            lead = leads_by_id.get(item["lead_id"])
+            state = lead.communication_state if lead else None
+            message = _message_for_state(lead, state) if lead and state else {}
+            if message.get("conversation_ended"):
+                continue
+            item["message"] = str(message.get("text") or "").strip()
+            item["company"] = str(message.get("company_name") or "").strip() or item["company"]
+            item["message_partition_key"] = str(
+                message.get("phone_number") or message.get("user_id") or ""
+            )
+            item["message_timestamp"] = message.get("timestamp")
+            visible_items.append(item)
+        items = visible_items
 
     total = counts[category]
     return {"counts": counts, "items": items, "total": total, "has_more": offset + limit < total}
