@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
-from sqlalchemy import func, or_
+from sqlalchemy import delete, func, or_
 from sqlalchemy.dialects.postgresql import insert
 
 from database import SessionLocal
@@ -36,8 +36,10 @@ def _occurred_at(value) -> datetime:
 
 def _channel(record: dict, item: dict) -> str:
     arn = str(record.get("eventSourceARN") or "")
-    if "/table/sms_messages/" in arn:
+    if ":table/sms_messages/stream/" in arn:
         return "sms"
+    if ":table/conversations/stream/" not in arn:
+        raise ValueError(f"Unsupported DynamoDB stream ARN: {arn}")
     platform = str(item.get("platform") or "messenger").strip().lower()
     return platform if platform in {"messenger", "instagram"} else "messenger"
 
@@ -57,6 +59,11 @@ def _conversation_identifiers(channel: str, item: dict) -> tuple[str, str]:
     if channel == "sms":
         return _digits(item.get("phone_number")), _digits(item.get("company_number"))
     return str(item.get("user_id") or "").strip(), str(item.get("page_id") or "").strip()
+
+
+def _log_sql(db, operation: str, statement) -> None:
+    compiled = statement.compile(dialect=db.bind.dialect, compile_kwargs={"literal_binds": False})
+    logger.info("message_states SQL operation=%s statement=%s params=%s", operation, compiled, compiled.params)
 
 
 def _valid_explicit_lead_id(db, value) -> str | None:
@@ -133,10 +140,19 @@ def _process_record(db, record: dict) -> bool:
     # An outbound reply resolves the current unanswered inbound message. Outbound
     # messages are events, not durable state rows. Manually ended rows remain.
     if direction == "outbound":
-        db.query(MessageState).filter(
+        clear_statement = delete(MessageState).where(
             *conversation_filter,
             MessageState.conversation_ended.is_(False),
-        ).delete(synchronize_session=False)
+        )
+        _log_sql(db, "clear_answered", clear_statement)
+        clear_result = db.execute(clear_statement)
+        logger.info(
+            "message_states SQL response operation=clear_answered rowcount=%s channel=%s client_identifier=%s company_identifier=%s",
+            clear_result.rowcount,
+            channel,
+            client_identifier,
+            company_identifier,
+        )
         return True
 
     lead_id = _valid_explicit_lead_id(db, item.get("lead_id"))
@@ -145,7 +161,16 @@ def _process_record(db, record: dict) -> bool:
 
     # A new inbound message reopens an ended conversation and replaces any older
     # unanswered inbound, keeping exactly one current row per conversation.
-    db.query(MessageState).filter(*conversation_filter).delete(synchronize_session=False)
+    replace_statement = delete(MessageState).where(*conversation_filter)
+    _log_sql(db, "remove_previous_state", replace_statement)
+    replace_result = db.execute(replace_statement)
+    logger.info(
+        "message_states SQL response operation=remove_previous_state rowcount=%s channel=%s client_identifier=%s company_identifier=%s",
+        replace_result.rowcount,
+        channel,
+        client_identifier,
+        company_identifier,
+    )
     statement = insert(MessageState).values(
         channel=channel,
         message_id=message_id,
@@ -163,8 +188,19 @@ def _process_record(db, record: dict) -> bool:
             "direction": statement.excluded.direction,
             "occurred_at": statement.excluded.occurred_at,
         },
+    ).returning(
+        MessageState.channel,
+        MessageState.message_id,
+        MessageState.lead_id,
+        MessageState.client_identifier,
+        MessageState.company_identifier,
+        MessageState.direction,
+        MessageState.conversation_ended,
+        MessageState.occurred_at,
     )
-    db.execute(statement)
+    _log_sql(db, "upsert_inbound", statement)
+    inserted = dict(db.execute(statement).mappings().one())
+    logger.info("message_states SQL response operation=upsert_inbound row=%s", inserted)
     return True
 
 
