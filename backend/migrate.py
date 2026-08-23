@@ -3,7 +3,7 @@
 import logging
 
 from database import engine
-from models import LeadCommunicationState
+from models import LeadCommunicationState, MessageState
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("migrate")
@@ -17,6 +17,8 @@ def migrate() -> None:
     """
     LeadCommunicationState.__table__.create(bind=engine, checkfirst=True)
     logger.info("lead_communication_states is ready")
+    MessageState.__table__.create(bind=engine, checkfirst=True)
+    logger.info("message_states is ready")
 
 
 if __name__ == "__main__":

@@ -302,6 +302,17 @@ class LeadCommunicationState(Base):
     lead = relationship("Lead", back_populates="communication_state")
 
 
+class MessageState(Base):
+    __tablename__ = "message_states"
+
+    channel = Column(String(20), primary_key=True)
+    message_id = Column(String(255), primary_key=True)
+    lead_id = Column(String(36), ForeignKey("leads.id"), nullable=True, index=True)
+    direction = Column(String(20), nullable=False)
+    conversation_ended = Column(Boolean, nullable=False, default=False)
+    occurred_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
 class LeadUpdateLog(Base):
     __tablename__ = "lead_update_logs"
 
