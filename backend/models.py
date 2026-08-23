@@ -308,6 +308,8 @@ class MessageState(Base):
     channel = Column(String(20), primary_key=True)
     message_id = Column(String(255), primary_key=True)
     lead_id = Column(String(36), ForeignKey("leads.id"), nullable=True, index=True)
+    client_identifier = Column(String(255), nullable=False, index=True)
+    company_identifier = Column(String(255), nullable=False, index=True)
     direction = Column(String(20), nullable=False)
     conversation_ended = Column(Boolean, nullable=False, default=False)
     occurred_at = Column(DateTime(timezone=True), nullable=False, index=True)
