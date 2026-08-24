@@ -1,6 +1,7 @@
 """Admin-only API for the new Unanswered Messages page."""
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from boto3.dynamodb.conditions import Key
@@ -63,17 +64,19 @@ def list_message_states(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    unanswered_count = db.query(MessageState).filter(MessageState.conversation_ended.is_(False)).count()
-    ended_count = db.query(MessageState).filter(MessageState.conversation_ended.is_(True)).count()
-    states = (
+    started_at = time.perf_counter()
+    all_states = (
         db.query(MessageState)
         .options(joinedload(MessageState.lead).joinedload(Lead.company), joinedload(MessageState.lead).joinedload(Lead.assignee))
-        .filter(MessageState.conversation_ended.is_(ended))
         .order_by(MessageState.occurred_at.desc())
-        .limit(limit)
         .all()
     )
+    sql_finished_at = time.perf_counter()
+    unanswered_count = sum(not state.conversation_ended for state in all_states)
+    ended_count = len(all_states) - unanswered_count
+    states = [state for state in all_states if bool(state.conversation_ended) is ended][:limit]
     messages = _preview_messages(states)
+    previews_finished_at = time.perf_counter()
     page_ids = {state.company_identifier for state in states if state.channel != "sms" and not state.lead_id}
     companies_by_page = {
         company.facebook_page_id: company.name
@@ -96,6 +99,14 @@ def list_message_states(
             ),
             "occurred_at": state.occurred_at.isoformat(),
         })
+    logger.info(
+        "Unanswered messages load total_rows=%d displayed_rows=%d sql_ms=%.1f previews_ms=%.1f total_ms=%.1f",
+        len(all_states),
+        len(states),
+        (sql_finished_at - started_at) * 1000,
+        (previews_finished_at - sql_finished_at) * 1000,
+        (time.perf_counter() - started_at) * 1000,
+    )
     return {"items": items, "counts": {"unanswered": unanswered_count, "ended": ended_count}}
 
 
