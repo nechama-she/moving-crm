@@ -5,7 +5,7 @@ import logging
 from sqlalchemy import text
 
 from database import engine
-from models import MessageState, MissedCallState
+from models import LeadDuplicationRule, MessageState, MissedCallState
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("migrate")
@@ -23,6 +23,8 @@ def migrate() -> None:
     MessageState.__table__.create(bind=engine, checkfirst=True)
     MissedCallState.__table__.create(bind=engine, checkfirst=True)
     logger.info("missed_call_states is ready")
+    LeadDuplicationRule.__table__.create(bind=engine, checkfirst=True)
+    logger.info("lead_duplication_rules is ready")
     # Safe for environments where the new table was created by an earlier deploy.
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE message_states ADD COLUMN IF NOT EXISTS client_identifier VARCHAR(255)"))
@@ -33,7 +35,6 @@ def migrate() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_message_states_client_identifier ON message_states (client_identifier)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_message_states_company_identifier ON message_states (company_identifier)"))
     logger.info("message_states is ready")
-
 
 if __name__ == "__main__":
     migrate()

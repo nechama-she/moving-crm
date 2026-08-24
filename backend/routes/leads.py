@@ -18,7 +18,7 @@ from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, cast, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from auth import get_current_user
 from assignment_conflicts import find_assignment_conflicts
@@ -39,7 +39,7 @@ from libs.smartmoving.client import (
     finish_request_capture,
     update_opportunity_salesperson,
 )
-from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting
+from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule
 from routes.templates import get_company_template, render_template
 
 logger = logging.getLogger("moving-crm")
@@ -574,7 +574,6 @@ def _pick_available_rep_for_company(company_id: str, db: Session, allowed_rep_id
     return min(rep_rows, key=lambda u: (counts.get(u.id, 0), u.name.lower()))
 
 
-LEAD_DUPLICATE_DELAY_HOURS = 8
 LEAD_DUPLICATE_SCHEDULE_PREFIX = "lead-dup-"
 LEAD_DUPLICATE_SCHEDULE_GROUP = "default"
 LEAD_DUPLICATE_TIMEZONE = ZoneInfo("America/New_York")
@@ -599,7 +598,7 @@ def _enqueue_lead_for_duplication(
     lead_id: str,
     target_company_name: str,
     target_referral_source: str,
-    delay_minutes: int | None = None,
+    delay_minutes: int,
 ) -> None:
     """Schedule a one-time EventBridge Scheduler invocation of the lead-duplicate Lambda.
 
@@ -620,10 +619,7 @@ def _enqueue_lead_for_duplication(
         )
         return
 
-    if delay_minutes is not None:
-        fire_at = _utcnow() + timedelta(minutes=delay_minutes)
-    else:
-        fire_at = _utcnow() + timedelta(hours=LEAD_DUPLICATE_DELAY_HOURS)
+    fire_at = _utcnow() + timedelta(minutes=delay_minutes)
     fire_at = _move_duplication_into_business_hours(fire_at)
     # Scheduler expects naive UTC ISO8601 (no offset, no microseconds).
     schedule_at = fire_at.replace(microsecond=0, tzinfo=None).isoformat()
@@ -631,7 +627,12 @@ def _enqueue_lead_for_duplication(
     # Schedule name must be unique and <=64 chars, [0-9A-Za-z_.-]
     short_id = lead_id.replace("-", "")[:24]
     epoch = int(fire_at.timestamp())
-    schedule_name = f"{LEAD_DUPLICATE_SCHEDULE_PREFIX}{short_id}-{epoch}"
+    # A lead may have several matching rules firing at the same time. Include the
+    # destination in the name so every target gets its own schedule.
+    destination_key = hashlib.sha256(
+        f"{target_company_name}|{target_referral_source}".encode("utf-8")
+    ).hexdigest()[:8]
+    schedule_name = f"{LEAD_DUPLICATE_SCHEDULE_PREFIX}{short_id}-{epoch}-{destination_key}"
 
     payload = {
         "lead_id": lead_id,
@@ -4656,36 +4657,23 @@ def create_lead(
         db.rollback()
         logger.warning("Non-fatal outreach event write failure for lead %s: %s", lead.id, exc)
 
-    # Duplicate matching Gorilla leads to Top Tier or Movers 95 based on referral source.
-    if company.name == "Gorilla Haulers" and not status_provided and not suppress_new_lead_automation:
-        if lead.referral_source == "Facebook-Gorilla-HHG-Nationwide":
-            _enqueue_lead_for_duplication(
-                lead_id=lead.id,
-                target_company_name="Top Tier Van Lines",
-                target_referral_source="Facebook-TTVL-HHG-Nationwide",
+    if not status_provided and not suppress_new_lead_automation and lead.referral_source:
+        duplication_rules = (
+            db.query(LeadDuplicationRule)
+            .options(joinedload(LeadDuplicationRule.target_company))
+            .filter(
+                LeadDuplicationRule.source_company_id == company.id,
+                LeadDuplicationRule.source_referral_source == lead.referral_source,
+                LeadDuplicationRule.active.is_(True),
             )
-        elif lead.referral_source == "Facebook-Gorilla-HHG-FL-GA-NC":
+            .all()
+        )
+        for duplication_rule in duplication_rules:
             _enqueue_lead_for_duplication(
                 lead_id=lead.id,
-                target_company_name="Top Tier Van Lines",
-                target_referral_source="Facebook-TTVL-HHG-FL-GA-NC",
-                delay_minutes=120,
-            )
-        elif lead.referral_source == "Facebook-Gorilla-HHG-Local":
-            _enqueue_lead_for_duplication(
-                lead_id=lead.id,
-                target_company_name="Movers 95",
-                target_referral_source="Facebook-Movers95-HHG-Local",
-            )
-
-    # Duplicate Wilson Bros FL/GA/NC leads to Top Tier after 120 minutes.
-    if company.name == "Wilson Bros Van Lines" and not status_provided and not suppress_new_lead_automation:
-        if lead.referral_source == "Facebook-WilsonBros-HHG-FL-GA-NC":
-            _enqueue_lead_for_duplication(
-                lead_id=lead.id,
-                target_company_name="Top Tier Van Lines",
-                target_referral_source="Facebook-TTVL-HHG-FL-GA-NC",
-                delay_minutes=120,
+                target_company_name=duplication_rule.target_company.name,
+                target_referral_source=duplication_rule.target_referral_source,
+                delay_minutes=duplication_rule.delay_minutes,
             )
 
     return {

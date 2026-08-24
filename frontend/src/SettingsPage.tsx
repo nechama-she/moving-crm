@@ -77,6 +77,7 @@ export default function SettingsPage() {
             <h2 style={sectionHeader}>Lead Duplication</h2>
             <p style={desc}>Review leads waiting to be duplicated and cancel pending schedules.</p>
             <div style={actionsRow}>
+              <Link to="/settings/duplication-rules" style={primaryLink}>Manage Duplication Rules</Link>
               <Link to="/settings/pending-duplications" style={primaryLink}>Pending Duplications</Link>
             </div>
           </section>

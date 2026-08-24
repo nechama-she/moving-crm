@@ -57,6 +57,26 @@ class Company(Base):
         }
 
 
+class LeadDuplicationRule(Base):
+    __tablename__ = "lead_duplication_rules"
+    __table_args__ = (
+        UniqueConstraint("source_company_id", "source_referral_source", "target_company_id", "target_referral_source", name="uq_lead_duplication_rule_route"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    source_company_id = Column(String(36), ForeignKey("companies.id"), nullable=False, index=True)
+    source_referral_source = Column(String(255), nullable=False, index=True)
+    target_company_id = Column(String(36), ForeignKey("companies.id"), nullable=False, index=True)
+    target_referral_source = Column(String(255), nullable=False)
+    delay_minutes = Column(Integer, nullable=False, default=480)
+    active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    source_company = relationship("Company", foreign_keys=[source_company_id])
+    target_company = relationship("Company", foreign_keys=[target_company_id])
+
+
 # ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
