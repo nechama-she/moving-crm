@@ -27,6 +27,11 @@ class EndStateRequest(BaseModel):
     ended: bool
 
 
+class IgnoreMissedCallRequest(BaseModel):
+    client_identifier: str
+    company_identifier: str
+
+
 @router.get("/missed-calls")
 def list_missed_calls(
     limit: int = Query(100, ge=1, le=100),
@@ -55,6 +60,32 @@ def list_missed_calls(
             "latest_missed_at": state.latest_missed_at.isoformat(),
         })
     return {"items": items, "count": len(states)}
+
+
+@router.delete("/missed-calls")
+def ignore_missed_call(
+    body: IgnoreMissedCallRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    state = db.query(MissedCallState).filter(
+        MissedCallState.client_identifier == body.client_identifier.strip(),
+        MissedCallState.company_identifier == body.company_identifier.strip(),
+    ).first()
+    if not state:
+        raise HTTPException(status_code=404, detail="Missed call item not found")
+    call_id = state.call_id
+    db.delete(state)
+    db.commit()
+    realtime_event = {
+        "type": "missed_call_state_changed",
+        "event_id": f"manual:{uuid.uuid4()}",
+        "action": "remove",
+        "call_ids": [call_id],
+        "count_delta": -1,
+    }
+    publish_realtime_event(realtime_event)
+    return {"ok": True, "event": realtime_event}
 
 
 def _exact_source_message(channel: str, message_id: str) -> dict:

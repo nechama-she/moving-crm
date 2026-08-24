@@ -129,6 +129,18 @@ export default function UnansweredMessagesPage() {
     if (result.event) applyRealtimeEvent(result.event as RealtimeEvent);
   };
 
+  const ignoreMissedCall = async (row: MissedCallRow) => {
+    setError("");
+    const response = await fetch(`${API_BASE}/api/unanswered-messages/missed-calls`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({ client_identifier: row.client_identifier, company_identifier: row.company_identifier }),
+    });
+    if (!response.ok) { setError(`HTTP ${response.status}`); return; }
+    const result = await response.json();
+    if (result.event) applyMissedCallEvent(result.event as RealtimeEvent);
+  };
+
   const headers = ["Client", "Platform", "Message", "Rep", "Company", "Message Time", "Action"];
   const cell = { padding: "13px 16px", borderBottom: "1px solid #e2e8f0", color: "#334155" } as const;
 
@@ -185,11 +197,11 @@ export default function UnansweredMessagesPage() {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 760, borderCollapse: "collapse", tableLayout: "fixed" }}>
             <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>
-              {['Client', 'Rep', 'Company', 'Missed Calls', 'First Missed', 'Latest Missed'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+              {['Client', 'Rep', 'Company', 'Missed Calls', 'First Missed', 'Latest Missed', 'Action'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
-              {loading ? <tr><td colSpan={6} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
-              {!loading && missedCalls.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>No missed calls.</td></tr> : null}
+              {loading ? <tr><td colSpan={7} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
+              {!loading && missedCalls.length === 0 ? <tr><td colSpan={7} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>No missed calls.</td></tr> : null}
               {!loading && missedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
                 <td style={cell}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : <strong>{row.client}</strong>}</td>
                 <td style={cell}>{row.rep}</td>
@@ -197,6 +209,7 @@ export default function UnansweredMessagesPage() {
                 <td style={cell}><strong>{row.missed_count}</strong></td>
                 <td style={cell}>{new Date(row.first_missed_at).toLocaleString()}</td>
                 <td style={cell}>{new Date(row.latest_missed_at).toLocaleString()}</td>
+                <td style={cell}><button type="button" onClick={() => void ignoreMissedCall(row)} style={{ border: "1px solid #c9c7c5", borderRadius: 4, background: "#fff", color: "#475569", padding: "6px 11px", fontWeight: 600, cursor: "pointer" }}>Ignore</button></td>
               </tr>)}
             </tbody>
           </table>
