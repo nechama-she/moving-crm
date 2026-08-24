@@ -62,6 +62,17 @@ phases:
       - echo "Uploading API backend package to S3"
       - aws s3 cp $CODEBUILD_SRC_DIR/backend/api-package.zip s3://${FRONTEND_BUCKET}/api-backend/package.zip
 
+      - echo "Packaging message stream Lambda"
+      - cd $CODEBUILD_SRC_DIR/backend
+      - "pip install --root-user-action=ignore -r message-stream-requirements.txt -t ./message-stream-package --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.13 --implementation cp"
+      - rm -rf ./message-stream-package/boto3* ./message-stream-package/botocore* ./message-stream-package/s3transfer* ./message-stream-package/jmespath* ./message-stream-package/sqlalchemy/dialects/mssql ./message-stream-package/sqlalchemy/dialects/mysql ./message-stream-package/sqlalchemy/dialects/oracle ./message-stream-package/sqlalchemy/dialects/sqlite
+      - cp message_stream_handler.py realtime.py database.py config.py models.py company_colors.py ./message-stream-package/
+      - cd message-stream-package && zip -qr9 ../message-stream-package.zip . && cd ..
+      - echo "message-stream package size:" && du -h $CODEBUILD_SRC_DIR/backend/message-stream-package.zip
+
+      - echo "Uploading message stream package to S3"
+      - aws s3 cp $CODEBUILD_SRC_DIR/backend/message-stream-package.zip s3://${FRONTEND_BUCKET}/message-stream/package.zip
+
 artifacts:
   files:
     - "**/*"

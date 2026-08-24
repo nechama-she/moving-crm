@@ -57,6 +57,26 @@ class Company(Base):
         }
 
 
+class LeadDuplicationRule(Base):
+    __tablename__ = "lead_duplication_rules"
+    __table_args__ = (
+        UniqueConstraint("source_company_id", "source_referral_source", "target_company_id", "target_referral_source", name="uq_lead_duplication_rule_route"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    source_company_id = Column(String(36), ForeignKey("companies.id"), nullable=False, index=True)
+    source_referral_source = Column(String(255), nullable=False, index=True)
+    target_company_id = Column(String(36), ForeignKey("companies.id"), nullable=False, index=True)
+    target_referral_source = Column(String(255), nullable=False)
+    delay_minutes = Column(Integer, nullable=False, default=480)
+    active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    source_company = relationship("Company", foreign_keys=[source_company_id])
+    target_company = relationship("Company", foreign_keys=[target_company_id])
+
+
 # ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
@@ -211,7 +231,6 @@ class Lead(Base):
 
     company = relationship("Company", back_populates="leads")
     assignee = relationship("User", foreign_keys=[assigned_to])
-    communication_state = relationship("LeadCommunicationState", back_populates="lead", uselist=False)
 
     def to_dict(self):
         estimated_total_data = None
@@ -286,20 +305,33 @@ class Lead(Base):
         }
 
 
-class LeadCommunicationState(Base):
-    __tablename__ = "lead_communication_states"
+class MessageState(Base):
+    __tablename__ = "message_states"
 
-    lead_id = Column(String(36), ForeignKey("leads.id"), primary_key=True)
-    latest_inbound_message_at = Column(DateTime(timezone=True), index=True)
-    latest_outbound_message_at = Column(DateTime(timezone=True), index=True)
-    latest_message_channel = Column(String(20))
-    first_contact_at = Column(DateTime(timezone=True), index=True)
-    latest_missed_call_at = Column(DateTime(timezone=True), index=True)
-    latest_call_response_at = Column(DateTime(timezone=True), index=True)
-    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+    channel = Column(String(20), primary_key=True)
+    message_id = Column(String(255), primary_key=True)
+    lead_id = Column(String(36), ForeignKey("leads.id"), nullable=True, index=True)
+    client_identifier = Column(String(255), nullable=False, index=True)
+    company_identifier = Column(String(255), nullable=False, index=True)
+    direction = Column(String(20), nullable=False)
+    conversation_ended = Column(Boolean, nullable=False, default=False)
+    occurred_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    lead = relationship("Lead")
 
 
-    lead = relationship("Lead", back_populates="communication_state")
+class MissedCallState(Base):
+    __tablename__ = "missed_call_states"
+
+    client_identifier = Column(String(255), primary_key=True)
+    company_identifier = Column(String(255), primary_key=True)
+    call_id = Column(String(255), nullable=False)
+    lead_id = Column(String(36), ForeignKey("leads.id"), nullable=True, index=True)
+    missed_count = Column(Integer, nullable=False, default=1)
+    first_missed_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    latest_missed_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    lead = relationship("Lead")
 
 
 class LeadUpdateLog(Base):

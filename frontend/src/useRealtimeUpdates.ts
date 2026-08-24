@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 
 declare global { interface Window { __WS_URL__?: string; } }
 
-export type RealtimeEvent = { type: "communication_updated"; lead_id: string; channel: string; direction: string; occurred_at: string };
+export type RealtimeEvent = { type: string; [key: string]: unknown };
 
 export function useRealtimeUpdates(token: string | null, onEvent: (event: RealtimeEvent) => void) {
   const callbackRef = useRef(onEvent);
@@ -19,7 +19,7 @@ export function useRealtimeUpdates(token: string | null, onEvent: (event: Realti
       socket.onmessage = ({ data }) => {
         try {
           const event = JSON.parse(data) as RealtimeEvent;
-          if (event.type === "communication_updated") callbackRef.current(event);
+          if (event.type) callbackRef.current(event);
         } catch { /* ignore malformed events */ }
       };
       socket.onclose = () => {

@@ -55,14 +55,6 @@ export default function SettingsPage() {
           </div>
         </section> : null}
 
-        {isAdmin ? <section style={card}>
-          <h2 style={sectionHeader}>Ignored SMS Numbers</h2>
-          <p style={desc}>Exclude system phone numbers from the Unanswered Messages queue.</p>
-          <div style={actionsRow}>
-            <Link to="/settings/ignored-numbers" style={primaryLink}>Manage Ignored Numbers</Link>
-          </div>
-        </section> : null}
-
         {canViewPricing ? <section style={card}>
           <h2 style={sectionHeader}>Pricing Books</h2>
           <p style={desc}>Review company rates, pricing exceptions, and additional services in one place.</p>
@@ -85,6 +77,7 @@ export default function SettingsPage() {
             <h2 style={sectionHeader}>Lead Duplication</h2>
             <p style={desc}>Review leads waiting to be duplicated and cancel pending schedules.</p>
             <div style={actionsRow}>
+              <Link to="/settings/duplication-rules" style={primaryLink}>Manage Duplication Rules</Link>
               <Link to="/settings/pending-duplications" style={primaryLink}>Pending Duplications</Link>
             </div>
           </section>

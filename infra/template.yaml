@@ -1234,6 +1234,8 @@ Resources:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations/index/*"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages/index/*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/calls"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/calls/index/*"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/cache"
                   - !GetAtt RealtimeConnectionsTable.Arn
               - Effect: Allow
@@ -1333,6 +1335,199 @@ Resources:
           REALTIME_CONNECTIONS_TABLE: !Ref RealtimeConnectionsTable
           REALTIME_MANAGEMENT_ENDPOINT: !Sub "https://${RealtimeApi}.execute-api.${AWS::Region}.amazonaws.com/live"
           REALTIME_FUNCTION_NAME: !Ref RealtimeFunction
+
+  MessageStreamLookupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DescribeSourceMessageTables
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:DescribeTable
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/calls"
+
+  MessageStreamLookupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.13
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt MessageStreamLookupRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import urllib.request
+          import boto3
+
+          def respond(event, context, status, data=None, reason=None):
+              body = json.dumps({
+                  "Status": status,
+                  "Reason": reason or "See CloudWatch logs",
+                  "PhysicalResourceId": "moving-crm-source-message-streams",
+                  "StackId": event["StackId"],
+                  "RequestId": event["RequestId"],
+                  "LogicalResourceId": event["LogicalResourceId"],
+                  "NoEcho": False,
+                  "Data": data or {},
+              }).encode()
+              request = urllib.request.Request(
+                  event["ResponseURL"], data=body, method="PUT",
+                  headers={"content-type": "", "content-length": str(len(body))},
+              )
+              urllib.request.urlopen(request, timeout=10).read()
+
+          def handler(event, context):
+              try:
+                  if event["RequestType"] == "Delete":
+                      respond(event, context, "SUCCESS")
+                      return
+                  client = boto3.client("dynamodb")
+                  values = {}
+                  for key, table_name in (("SmsStreamArn", "sms_messages"), ("ConversationsStreamArn", "conversations"), ("CallsStreamArn", "calls")):
+                      table = client.describe_table(TableName=table_name)["Table"]
+                      arn = table.get("LatestStreamArn")
+                      stream = table.get("StreamSpecification") or {}
+                      if not arn or not stream.get("StreamEnabled") or stream.get("StreamViewType") != "NEW_IMAGE":
+                          raise RuntimeError(f"{table_name} must have a NEW_IMAGE DynamoDB stream enabled")
+                      values[key] = arn
+                  respond(event, context, "SUCCESS", values)
+              except Exception as exc:
+                  respond(event, context, "FAILED", reason=str(exc))
+
+  SourceMessageStreams:
+    Type: Custom::SourceMessageStreams
+    Properties:
+      ServiceToken: !GetAtt MessageStreamLookupFunction.Arn
+      RefreshVersion: "2"
+
+  MessageStreamConsumerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: MessageStreamConsumer
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages/stream/*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations/stream/*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/calls/stream/*"
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !GetAtt Database.MasterUserSecret.SecretArn
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/*"
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-realtime-${Environment}"
+
+  MessageStreamConsumerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub moving-crm-message-stream-${Environment}
+      Runtime: python3.13
+      Handler: message_stream_handler.handler
+      Timeout: 30
+      MemorySize: 256
+      Role: !GetAtt MessageStreamConsumerRole.Arn
+      VpcConfig: !If
+        - IsProd
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+        - !Ref "AWS::NoValue"
+      Code: !If
+        - ShouldDeployLambda
+        - S3Bucket: !Ref FrontendBucket
+          S3Key: message-stream/package.zip
+        - ZipFile: |
+            def handler(event, context):
+                return {"batchItemFailures": []}
+      Environment:
+        Variables:
+          SSM_PREFIX: !Sub /moving-crm/${Environment}/
+          AWS_REGION_NAME: !Ref AWS::Region
+          DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
+          DB_HOST: !GetAtt Database.Endpoint.Address
+          DB_PORT: !GetAtt Database.Endpoint.Port
+          DB_NAME: !Ref DBName
+          DB_USER: !Ref DBMasterUsername
+          REALTIME_FUNCTION_NAME: !Ref RealtimeFunction
+
+  SmsMessageStreamMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt SourceMessageStreams.SmsStreamArn
+      FunctionName: !Ref MessageStreamConsumerFunction
+      StartingPosition: LATEST
+      BatchSize: 20
+      MaximumBatchingWindowInSeconds: 1
+      BisectBatchOnFunctionError: true
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName":["INSERT"],"dynamodb":{"NewImage":{"record_type":{"S":["message"]}}}}'
+
+  ConversationsMessageStreamMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt SourceMessageStreams.ConversationsStreamArn
+      FunctionName: !Ref MessageStreamConsumerFunction
+      StartingPosition: LATEST
+      BatchSize: 20
+      MaximumBatchingWindowInSeconds: 1
+      BisectBatchOnFunctionError: true
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName":["INSERT"],"dynamodb":{"NewImage":{"record_type":{"S":["message"]}}}}'
+
+  CallsStreamMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt SourceMessageStreams.CallsStreamArn
+      FunctionName: !Ref MessageStreamConsumerFunction
+      StartingPosition: LATEST
+      BatchSize: 20
+      MaximumBatchingWindowInSeconds: 1
+      BisectBatchOnFunctionError: true
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName":["INSERT"],"dynamodb":{"NewImage":{"record_type":{"S":["call"]}}}}'
 
   RealtimeConnectionsTable:
     Type: AWS::DynamoDB::Table

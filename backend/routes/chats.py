@@ -14,8 +14,9 @@ from sqlalchemy.orm import Session, joinedload
 
 from auth import get_current_user
 from database import get_db
-from db import conversations_table, sms_messages_table
+from db import calls_table, conversations_table, sms_messages_table
 from libs.common.phone import normalize_digits
+from libs.common.phone import phone_variants
 from models import Company, Lead, User, UserCompany
 
 logger = logging.getLogger("moving-crm")
@@ -23,6 +24,7 @@ router = APIRouter(prefix="/api/chats", tags=["Chats"])
 DONE_CURSOR = {"__done": True}
 SMS_TIMESTAMP_INDEX = "record-type-timestamp-index"
 META_TIMESTAMP_INDEX = "record-type-timestamp-index"
+CALLS_TIMESTAMP_INDEX = "record-type-timestamp-index"
 
 
 def _user_company_ids(user: User, db: Session) -> list[str]:
@@ -92,6 +94,116 @@ def _timestamp(value) -> float:
 
 def _lead_time(lead: Lead) -> datetime:
     return lead.updated_at or lead.created_at or datetime.min
+
+
+def _phone(value) -> str:
+    digits = normalize_digits(str(value or ""))
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+@router.get("/calls")
+def get_latest_calls(
+    cursor: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=100),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can view all calls")
+    company_ids = _user_company_ids(user, db)
+    if not company_ids:
+        return {"items": [], "next_cursor": "", "has_more": False}
+    start_key, _ = _decode_cursor(cursor)
+    kwargs: dict = {
+        "IndexName": CALLS_TIMESTAMP_INDEX,
+        "KeyConditionExpression": Key("record_type").eq("call"),
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    if start_key:
+        kwargs["ExclusiveStartKey"] = start_key
+    try:
+        response = calls_table.query(**kwargs)
+    except ClientError as exc:
+        logger.error("Could not load calls: %s", exc)
+        raise HTTPException(status_code=502, detail="Could not fetch calls") from exc
+    records = response.get("Items", [])
+    next_key = response.get("LastEvaluatedKey")
+
+    client_phones = {_phone(item.get("phone_number")) for item in records if _phone(item.get("phone_number"))}
+    normalized_lead_phone = func.right(func.regexp_replace(Lead.phone, r"\D", "", "g"), 10)
+    leads = (
+        db.query(Lead)
+        .options(joinedload(Lead.company), joinedload(Lead.assignee))
+        .filter(Lead.company_id.in_(company_ids), normalized_lead_phone.in_(client_phones))
+        .all()
+        if client_phones else []
+    )
+    leads_by_phone: dict[str, list[Lead]] = {}
+    for lead in leads:
+        leads_by_phone.setdefault(_phone(lead.phone), []).append(lead)
+
+    items = []
+    for record in records:
+        client_phone = _phone(record.get("phone_number"))
+        company_phone = _phone(record.get("company_number"))
+        matches = []
+        for lead in leads_by_phone.get(client_phone, []):
+            lead_company_phone = _phone(lead.company.phone) if lead.company else ""
+            lead_rep_phone = _phone(lead.assignee.phone) if lead.assignee else ""
+            if company_phone and company_phone in {lead_company_phone, lead_rep_phone}:
+                matches.append(lead)
+        lead = matches[0] if len(matches) == 1 else None
+        direction = str(record.get("direction") or "").strip().lower()
+        items.append({
+            "call_id": str(record.get("message_id") or ""),
+            "conversation_id": f"{client_phone}:{company_phone}",
+            "lead_id": lead.id if lead else "",
+            "client": lead.full_name if lead else str(record.get("phone_number") or client_phone),
+            "client_identifier": client_phone,
+            "company_identifier": company_phone,
+            "company": lead.company.name if lead and lead.company else str(record.get("company_name") or company_phone),
+            "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
+            "direction": "inbound" if direction == "inbound" else "outbound",
+            "answered": bool(record.get("answered")),
+            "reason": str(record.get("reason") or ""),
+            "timestamp": _timestamp(record.get("timestamp")),
+        })
+    return {
+        "items": items,
+        "next_cursor": _encode_cursor(next_key, None) if next_key else "",
+        "has_more": bool(next_key),
+    }
+
+
+@router.get("/calls/history")
+def get_call_history(
+    phone: str = Query(...),
+    company_number: str = Query(...),
+    user: User = Depends(get_current_user),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can view call history")
+    expected_company = _phone(company_number)
+    items: list[dict] = []
+    seen: set[str] = set()
+    try:
+        for variant in phone_variants(phone):
+            response = calls_table.query(KeyConditionExpression=Key("phone_number").eq(variant), ScanIndexForward=True)
+            while True:
+                for record in response.get("Items", []):
+                    call_id = str(record.get("message_id") or "")
+                    if call_id and call_id not in seen and _phone(record.get("company_number")) == expected_company:
+                        seen.add(call_id)
+                        items.append(record)
+                if "LastEvaluatedKey" not in response:
+                    break
+                response = calls_table.query(KeyConditionExpression=Key("phone_number").eq(variant), ScanIndexForward=True, ExclusiveStartKey=response["LastEvaluatedKey"])
+    except ClientError as exc:
+        logger.error("Could not load call history: %s", exc)
+        raise HTTPException(status_code=502, detail="Could not fetch call history") from exc
+    items.sort(key=lambda item: _timestamp(item.get("timestamp")))
+    return {"calls": items}
 
 
 @router.get("")
@@ -249,6 +361,8 @@ def get_all_chats(
             "timestamp": timestamp,
             "direction": str(message.get("direction") or message.get("role") or ""),
             "message_partition_key": str(message.get("phone_number") or message.get("user_id") or ""),
+            "company_identifier": str(message.get("number_id") or message.get("page_id") or ""),
+            "company_phone_identifier": str(message.get("company_number") or ""),
             "message_timestamp": message.get("timestamp"),
             "conversation_ended": bool(message.get("conversation_ended", False)),
         }
@@ -278,6 +392,8 @@ def get_all_chats(
                     "timestamp": timestamp,
                     "direction": str(message.get("role") or ""),
                     "message_partition_key": user_id,
+                    "company_identifier": str(message.get("page_id") or ""),
+                    "company_phone_identifier": "",
                     "message_timestamp": message.get("timestamp"),
                     "conversation_ended": bool(message.get("conversation_ended", False)),
                 }
@@ -320,6 +436,8 @@ def get_all_chats(
                     "timestamp": timestamp,
                     "direction": str(message.get("direction") or ""),
                     "message_partition_key": str(message.get("phone_number") or ""),
+                    "company_identifier": number_id,
+                    "company_phone_identifier": str(message.get("company_number") or ""),
                     "message_timestamp": message.get("timestamp"),
                     "conversation_ended": bool(message.get("conversation_ended", False)),
                 }

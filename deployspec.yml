@@ -42,8 +42,11 @@ phases:
       - echo "Updating realtime Lambda function code"
       - aws lambda update-function-code --function-name moving-crm-realtime-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key api-backend/package.zip
 
+      - echo "Updating message stream Lambda function code"
+      - aws lambda update-function-code --function-name moving-crm-message-stream-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key message-stream/package.zip
+
       - echo "Deploying frontend to S3"
-      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --delete --exclude "lead-followup/*" --exclude "api-backend/*" --exclude "lead-duplicate/*"
+      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --delete --exclude "lead-followup/*" --exclude "api-backend/*" --exclude "lead-duplicate/*" --exclude "message-stream/*"
 
       - echo "Frontend calls the API same-origin via CloudFront (/api/*), so no absolute URL is injected"
       - REALTIME_URL=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='RealtimeURL'].OutputValue" --output text)
