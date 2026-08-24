@@ -5,11 +5,13 @@ import { authHeaders, useAuth } from "./AuthContext";
 import { RealtimeEvent, useRealtimeUpdates } from "./useRealtimeUpdates";
 
 type MessageTab = "unanswered" | "ended";
+type QueueTab = "messages" | "calls";
 type MessageRow = { channel: string; message_id: string; lead_id: string; client: string; message: string; rep: string; company: string; occurred_at: string };
 type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
 
 export default function UnansweredMessagesPage() {
   const { token } = useAuth();
+  const [queueTab, setQueueTab] = useState<QueueTab>("messages");
   const [tab, setTab] = useState<MessageTab>("unanswered");
   const [items, setItems] = useState<MessageRow[]>([]);
   const [counts, setCounts] = useState({ unanswered: 0, ended: 0 });
@@ -135,7 +137,21 @@ export default function UnansweredMessagesPage() {
       <h1 style={{ margin: 0, color: "#032d60", fontSize: 24 }}>Sales Work Queue</h1>
       <p style={{ margin: "6px 0 20px", color: "#64748b" }}>Sales items that need attention.</p>
       {error ? <p style={{ color: "#b91c1c" }}>{error}</p> : null}
-      <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+
+      <nav aria-label="Sales work queue categories" style={{ display: "flex", flexWrap: "nowrap", gap: 12, overflowX: "auto", paddingBottom: 12, marginBottom: 6 }}>
+        <button type="button" onClick={() => setQueueTab("messages")} style={{ ...queueCard, ...(queueTab === "messages" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>Unanswered Messages</span>
+          <strong style={queueCardCount}>{counts.unanswered}</strong>
+          <span style={queueCardDescription}>Client messages waiting for a response</span>
+        </button>
+        <button type="button" onClick={() => setQueueTab("calls")} style={{ ...queueCard, ...(queueTab === "calls" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>Missed Calls</span>
+          <strong style={queueCardCount}>{missedCallCount}</strong>
+          <span style={queueCardDescription}>Missed calls without a later contact attempt</span>
+        </button>
+      </nav>
+
+      {queueTab === "messages" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px 0" }}>
           <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Unanswered Messages ({counts.unanswered})</h2>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
@@ -160,9 +176,9 @@ export default function UnansweredMessagesPage() {
           </tbody>
         </table>
         </div>
-      </section>
+      </section> : null}
 
-      <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden", marginTop: 18 }}>
+      {queueTab === "calls" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px" }}>
           <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Missed Calls ({missedCallCount})</h2>
         </div>
@@ -185,7 +201,30 @@ export default function UnansweredMessagesPage() {
             </tbody>
           </table>
         </div>
-      </section>
+      </section> : null}
     </main>
   );
 }
+
+const queueCard: React.CSSProperties = {
+  position: "relative",
+  display: "grid",
+  gridTemplateColumns: "1fr auto",
+  gridTemplateRows: "auto auto",
+  gap: "7px 14px",
+  flex: "1 0 260px",
+  maxWidth: 360,
+  minHeight: 106,
+  padding: "16px 18px",
+  textAlign: "left",
+  background: "#fff",
+  border: "1px solid #d8dde6",
+  borderRadius: 10,
+  color: "#032d60",
+  cursor: "pointer",
+  boxSizing: "border-box",
+};
+const activeQueueCard: React.CSSProperties = { border: "2px solid #0b5cab", padding: "15px 17px", background: "#eef6ff" };
+const queueCardLabel: React.CSSProperties = { fontSize: 16, fontWeight: 700, alignSelf: "center" };
+const queueCardCount: React.CSSProperties = { fontSize: 28, lineHeight: 1, color: "#0b5cab" };
+const queueCardDescription: React.CSSProperties = { gridColumn: "1 / -1", fontSize: 13, lineHeight: 1.35, color: "#64748b" };
