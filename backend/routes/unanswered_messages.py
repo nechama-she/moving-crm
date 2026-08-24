@@ -2,6 +2,7 @@
 
 import logging
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from boto3.dynamodb.conditions import Key
@@ -14,6 +15,7 @@ from auth import require_admin
 from database import get_db
 from db import conversations_table, sms_messages_table
 from models import Company, Lead, MessageState, User
+from realtime import publish_realtime_event
 
 router = APIRouter(prefix="/api/unanswered-messages", tags=["Unanswered Messages"])
 logger = logging.getLogger("moving-crm")
@@ -122,6 +124,46 @@ def set_conversation_ended(
     ).first()
     if not state:
         raise HTTPException(status_code=404, detail="Message state not found")
+    previous_ended = bool(state.conversation_ended)
+    if previous_ended == body.ended:
+        return {"message_id": state.message_id, "conversation_ended": previous_ended, "event": None}
     state.conversation_ended = body.ended
     db.commit()
-    return {"message_id": state.message_id, "conversation_ended": state.conversation_ended}
+    lead = (
+        db.query(Lead)
+        .options(joinedload(Lead.company), joinedload(Lead.assignee))
+        .filter(Lead.id == state.lead_id)
+        .first()
+        if state.lead_id else None
+    )
+    try:
+        message = _exact_source_message(state.channel, state.message_id)
+    except (BotoCoreError, ClientError, TypeError, ValueError):
+        logger.exception("Message preview lookup failed while changing ended state channel=%s message_id=%s", state.channel, state.message_id)
+        message = {}
+    company = lead.company.name if lead and lead.company else str(message.get("company_name") or "")
+    if not company and state.channel != "sms":
+        matched_company = db.query(Company).filter(Company.facebook_page_id == state.company_identifier).first()
+        company = matched_company.name if matched_company else ""
+    row = {
+        "channel": state.channel,
+        "message_id": state.message_id,
+        "lead_id": state.lead_id or "",
+        "client": lead.full_name if lead else state.client_identifier,
+        "message": str(message.get("text") or ""),
+        "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
+        "company": company,
+        "occurred_at": state.occurred_at.isoformat(),
+    }
+    realtime_event = {
+        "type": "message_state_changed",
+        "event_id": f"manual:{uuid.uuid4()}",
+        "action": "ended" if body.ended else "reopened",
+        "row": row,
+        "count_delta": {
+            "unanswered": -1 if body.ended else 1,
+            "ended": 1 if body.ended else -1,
+        },
+    }
+    publish_realtime_event(realtime_event)
+    return {"message_id": state.message_id, "conversation_ended": state.conversation_ended, "event": realtime_event}

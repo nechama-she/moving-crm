@@ -88,6 +88,7 @@ export default function ChatsPage() {
   }, [hasMore, source, token]);
 
   useRealtimeUpdates(token, (event) => {
+    if (event.type !== "communication_updated") return;
     if ((source === "sms") !== (event.channel === "sms")) return;
     window.clearTimeout(realtimeTimerRef.current);
     realtimeTimerRef.current = window.setTimeout(() => loadChats(""), 250);
