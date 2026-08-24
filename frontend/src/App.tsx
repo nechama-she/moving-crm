@@ -110,7 +110,7 @@ function ProtectedRoutes() {
           ) : (
             <>
               <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
-              {user?.role === "admin" ? <NavLink to="/chats" style={navLinkStyle}>Chats</NavLink> : null}
+              {user?.role === "admin" ? <NavLink to="/chats" style={navLinkStyle}>Communications</NavLink> : null}
               {user?.role === "admin" ? <NavLink to="/sales-work-queue" style={navLinkStyle}>Sales Work Queue</NavLink> : null}
               <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
               <NavLink to="/sales-performance" style={navLinkStyle}>Performance</NavLink>
@@ -174,7 +174,7 @@ function ProtectedRoutes() {
               ) : (
                 <>
                   <NavLink to="/">Leads</NavLink>
-                  {user?.role === "admin" ? <NavLink to="/chats">Chats</NavLink> : null}
+                  {user?.role === "admin" ? <NavLink to="/chats">Communications</NavLink> : null}
                   {user?.role === "admin" ? <NavLink to="/sales-work-queue">Sales Work Queue</NavLink> : null}
                   <NavLink to="/sales-calendar">Sales Calendar</NavLink>
                   <NavLink to="/sales-performance">Sales Performance</NavLink>

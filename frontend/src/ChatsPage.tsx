@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 import { useRealtimeUpdates } from "./useRealtimeUpdates";
+import CallsTimeline from "./CallsTimeline";
 
 type ChatRow = {
   conversation_id: string;
@@ -38,12 +39,12 @@ export default function ChatsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const [source, setSource] = useState<"meta" | "sms">("sms");
+  const [source, setSource] = useState<"meta" | "sms" | "calls">("sms");
   const [cursor, setCursor] = useState("");
   const [hasMore, setHasMore] = useState(true);
   const loadingRef = useRef(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
-  const activeSourceRef = useRef<"meta" | "sms">("meta");
+  const activeSourceRef = useRef<"meta" | "sms" | "calls">("meta");
   const realtimeTimerRef = useRef(0);
 
   const loadChats = useCallback((nextCursor = "") => {
@@ -89,6 +90,7 @@ export default function ChatsPage() {
 
   useRealtimeUpdates(token, (event) => {
     if (event.type !== "communication_updated") return;
+    if (source === "calls") return;
     if ((source === "sms") !== (event.channel === "sms")) return;
     window.clearTimeout(realtimeTimerRef.current);
     realtimeTimerRef.current = window.setTimeout(() => loadChats(""), 250);
@@ -101,7 +103,7 @@ export default function ChatsPage() {
     setCursor("");
     setHasMore(true);
     setError("");
-    loadChats();
+    if (source !== "calls") loadChats(); else setLoading(false);
   }, [source]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -129,20 +131,20 @@ export default function ChatsPage() {
     <main style={{ padding: 24, width: "100%", maxWidth: 1200, margin: "0 auto", boxSizing: "border-box" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
         <div>
-          <h1 style={{ margin: 0, color: "#032d60", fontSize: 24 }}>All Chats</h1>
-          <p style={{ margin: "5px 0 0", color: "#64748b" }}>Latest client conversations across every platform.</p>
+          <h1 style={{ margin: 0, color: "#032d60", fontSize: 24 }}>Communications</h1>
+          <p style={{ margin: "5px 0 0", color: "#64748b" }}>Latest client messages and call-response timelines.</p>
         </div>
         <input
           type="search"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search chats"
+          placeholder="Search communications"
           style={{ width: 280, maxWidth: "100%", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: 7, fontSize: 14 }}
         />
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16, borderBottom: "1px solid #d8dde6" }}>
-        {([{"value": "meta", "label": "Messenger / Instagram"}, {"value": "sms", "label": "SMS"}] as const).map((tab) => (
+        {([{"value": "meta", "label": "Messenger / Instagram"}, {"value": "sms", "label": "SMS"}, {"value": "calls", "label": "Calls"}] as const).map((tab) => (
           <button
             key={tab.value}
             type="button"
@@ -162,9 +164,10 @@ export default function ChatsPage() {
         ))}
       </div>
 
-      {loading && items.length === 0 ? <p style={{ color: "#64748b" }}>Loading chats…</p> : null}
-      {error ? <p style={{ color: "#ba0517" }}>Could not load more chats: {error}</p> : null}
-      {(items.length > 0 || (!loading && !error)) ? (
+      {source === "calls" ? <CallsTimeline token={token || ""} search={search} /> : null}
+      {source !== "calls" && loading && items.length === 0 ? <p style={{ color: "#64748b" }}>Loading chats…</p> : null}
+      {source !== "calls" && error ? <p style={{ color: "#ba0517" }}>Could not load more chats: {error}</p> : null}
+      {source !== "calls" && (items.length > 0 || (!loading && !error)) ? (
         <div style={{ border: "1px solid #d8dde6", borderRadius: 8, overflow: "hidden", background: "#fff" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
             <thead style={{ background: "#f3f6f9", color: "#475569", textAlign: "left" }}>
@@ -212,9 +215,9 @@ export default function ChatsPage() {
           </table>
         </div>
       ) : null}
-      <div ref={sentinelRef} style={{ minHeight: 24, padding: 12, textAlign: "center", color: "#64748b" }}>
+      {source !== "calls" ? <div ref={sentinelRef} style={{ minHeight: 24, padding: 12, textAlign: "center", color: "#64748b" }}>
         {loading && items.length > 0 ? "Loading more chats…" : null}
-      </div>
+      </div> : null}
     </main>
   );
 }
