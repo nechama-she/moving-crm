@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, joinedload
 from auth import require_admin
 from database import get_db
 from db import conversations_table, sms_messages_table
-from models import Company, Lead, MessageState, User
+from models import Company, Lead, MessageState, MissedCallState, User
 from realtime import publish_realtime_event
 
 router = APIRouter(prefix="/api/unanswered-messages", tags=["Unanswered Messages"])
@@ -25,6 +25,36 @@ class EndStateRequest(BaseModel):
     channel: str
     message_id: str
     ended: bool
+
+
+@router.get("/missed-calls")
+def list_missed_calls(
+    limit: int = Query(100, ge=1, le=100),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    states = (
+        db.query(MissedCallState)
+        .options(joinedload(MissedCallState.lead).joinedload(Lead.company), joinedload(MissedCallState.lead).joinedload(Lead.assignee))
+        .order_by(MissedCallState.latest_missed_at.desc())
+        .all()
+    )
+    items = []
+    for state in states[:limit]:
+        lead = state.lead
+        items.append({
+            "call_id": state.call_id,
+            "lead_id": state.lead_id or "",
+            "client_identifier": state.client_identifier,
+            "company_identifier": state.company_identifier,
+            "client": lead.full_name if lead else state.client_identifier,
+            "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
+            "company": lead.company.name if lead and lead.company else state.company_identifier,
+            "missed_count": state.missed_count,
+            "first_missed_at": state.first_missed_at.isoformat(),
+            "latest_missed_at": state.latest_missed_at.isoformat(),
+        })
+    return {"items": items, "count": len(states)}
 
 
 def _exact_source_message(channel: str, message_id: str) -> dict:

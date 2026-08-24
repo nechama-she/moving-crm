@@ -1356,6 +1356,7 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/calls"
 
   MessageStreamLookupFunction:
     Type: AWS::Lambda::Function
@@ -1394,7 +1395,7 @@ Resources:
                       return
                   client = boto3.client("dynamodb")
                   values = {}
-                  for key, table_name in (("SmsStreamArn", "sms_messages"), ("ConversationsStreamArn", "conversations")):
+                  for key, table_name in (("SmsStreamArn", "sms_messages"), ("ConversationsStreamArn", "conversations"), ("CallsStreamArn", "calls")):
                       table = client.describe_table(TableName=table_name)["Table"]
                       arn = table.get("LatestStreamArn")
                       stream = table.get("StreamSpecification") or {}
@@ -1409,7 +1410,7 @@ Resources:
     Type: Custom::SourceMessageStreams
     Properties:
       ServiceToken: !GetAtt MessageStreamLookupFunction.Arn
-      RefreshVersion: "1"
+      RefreshVersion: "2"
 
   MessageStreamConsumerRole:
     Type: AWS::IAM::Role
@@ -1438,6 +1439,7 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages/stream/*"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations/stream/*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/calls/stream/*"
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !GetAtt Database.MasterUserSecret.SecretArn
@@ -1510,6 +1512,20 @@ Resources:
       FilterCriteria:
         Filters:
           - Pattern: '{"eventName":["INSERT"],"dynamodb":{"NewImage":{"record_type":{"S":["message"]}}}}'
+
+  CallsStreamMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt SourceMessageStreams.CallsStreamArn
+      FunctionName: !Ref MessageStreamConsumerFunction
+      StartingPosition: LATEST
+      BatchSize: 20
+      MaximumBatchingWindowInSeconds: 1
+      BisectBatchOnFunctionError: true
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName":["INSERT"],"dynamodb":{"NewImage":{"record_type":{"S":["call"]}}}}'
 
   RealtimeConnectionsTable:
     Type: AWS::DynamoDB::Table

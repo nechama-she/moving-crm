@@ -300,6 +300,20 @@ class MessageState(Base):
     lead = relationship("Lead")
 
 
+class MissedCallState(Base):
+    __tablename__ = "missed_call_states"
+
+    client_identifier = Column(String(255), primary_key=True)
+    company_identifier = Column(String(255), primary_key=True)
+    call_id = Column(String(255), nullable=False)
+    lead_id = Column(String(36), ForeignKey("leads.id"), nullable=True, index=True)
+    missed_count = Column(Integer, nullable=False, default=1)
+    first_missed_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    latest_missed_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    lead = relationship("Lead")
+
+
 class LeadUpdateLog(Base):
     __tablename__ = "lead_update_logs"
 

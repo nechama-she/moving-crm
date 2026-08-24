@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import joinedload
 
 from database import SessionLocal
-from models import Company, Lead, MessageState, User
+from models import Company, Lead, MessageState, MissedCallState, User
 from realtime import publish_realtime_event
 
 
@@ -138,10 +138,108 @@ def _display_row(db, inserted: dict, item: dict) -> dict:
     }
 
 
+def _call_display_row(db, inserted: dict) -> dict:
+    lead = None
+    if inserted.get("lead_id"):
+        lead = (
+            db.query(Lead)
+            .options(joinedload(Lead.company), joinedload(Lead.assignee))
+            .filter(Lead.id == inserted["lead_id"])
+            .first()
+        )
+    return {
+        "call_id": inserted["call_id"],
+        "lead_id": inserted.get("lead_id") or "",
+        "client_identifier": inserted["client_identifier"],
+        "company_identifier": inserted["company_identifier"],
+        "client": lead.full_name if lead else inserted["client_identifier"],
+        "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
+        "company": lead.company.name if lead and lead.company else inserted["company_identifier"],
+        "missed_count": inserted["missed_count"],
+        "first_missed_at": inserted["first_missed_at"].isoformat(),
+        "latest_missed_at": inserted["latest_missed_at"].isoformat(),
+    }
+
+
+def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[bool, dict | None]:
+    call_id = str(item.get("message_id") or "").strip()
+    timestamp = item.get("timestamp")
+    client_identifier = _digits(item.get("phone_number"))
+    company_identifier = _digits(item.get("company_number"))
+    if not call_id or timestamp is None or not client_identifier or not company_identifier:
+        logger.warning("Skipping call without complete identifiers")
+        return False, None
+
+    is_missed_inbound = (
+        str(item.get("direction") or "").strip().lower() == "inbound"
+        and item.get("answered") is False
+    )
+    state_filter = (
+        MissedCallState.client_identifier == client_identifier,
+        MissedCallState.company_identifier == company_identifier,
+    )
+    if not is_missed_inbound:
+        clear_statement = delete(MissedCallState).where(*state_filter).returning(MissedCallState.call_id)
+        _log_sql(db, "clear_missed_calls", clear_statement)
+        removed_ids = [row[0] for row in db.execute(clear_statement).all()]
+        if not removed_ids:
+            return True, None
+        return True, {
+            "type": "missed_call_state_changed",
+            "event_id": f"stream:{event_id}",
+            "action": "remove",
+            "call_ids": removed_ids,
+            "count_delta": -1,
+        }
+
+    lead_id = _valid_explicit_lead_id(db, item.get("lead_id")) or _resolve_sms_lead_id(db, item)
+    occurred_at = _occurred_at(timestamp)
+    statement = insert(MissedCallState).values(
+        client_identifier=client_identifier,
+        company_identifier=company_identifier,
+        call_id=call_id,
+        lead_id=lead_id,
+        missed_count=1,
+        first_missed_at=occurred_at,
+        latest_missed_at=occurred_at,
+    )
+    statement = statement.on_conflict_do_update(
+        index_elements=[MissedCallState.client_identifier, MissedCallState.company_identifier],
+        set_={
+            "call_id": statement.excluded.call_id,
+            "lead_id": func.coalesce(statement.excluded.lead_id, MissedCallState.lead_id),
+            "missed_count": MissedCallState.missed_count + 1,
+            "latest_missed_at": statement.excluded.latest_missed_at,
+        },
+    ).returning(
+        MissedCallState.client_identifier,
+        MissedCallState.company_identifier,
+        MissedCallState.call_id,
+        MissedCallState.lead_id,
+        MissedCallState.missed_count,
+        MissedCallState.first_missed_at,
+        MissedCallState.latest_missed_at,
+    )
+    _log_sql(db, "upsert_missed_call", statement)
+    inserted = dict(db.execute(statement).mappings().one())
+    return True, {
+        "type": "missed_call_state_changed",
+        "event_id": f"stream:{event_id}",
+        "action": "upsert",
+        "row": _call_display_row(db, inserted),
+        "count_delta": 1 if inserted["missed_count"] == 1 else 0,
+    }
+
+
 def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]:
     if record.get("eventName") != "INSERT":
         return False, None
     item = _image(record)
+    arn = str(record.get("eventSourceARN") or "")
+    if ":table/calls/stream/" in arn:
+        if str(item.get("record_type") or "call").lower() != "call":
+            return False, None
+        return _process_call_record(db, record, item, event_id)
     if str(item.get("record_type") or "message").lower() != "message":
         return False, None
 
@@ -274,7 +372,7 @@ def handler(event, context):
                 logger.exception("Failed message stream record %s", event_id)
                 failures.append({"itemIdentifier": event_id})
         if realtime_events:
-            publish_realtime_event({"type": "message_state_batch", "events": realtime_events})
+            publish_realtime_event({"type": "sales_work_queue_batch", "events": realtime_events})
         logger.info("Processed %d message state records; failures=%d realtime_events=%d", processed, len(failures), len(realtime_events))
         return {"batchItemFailures": failures}
     finally:

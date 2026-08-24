@@ -6,12 +6,15 @@ import { RealtimeEvent, useRealtimeUpdates } from "./useRealtimeUpdates";
 
 type MessageTab = "unanswered" | "ended";
 type MessageRow = { channel: string; message_id: string; lead_id: string; client: string; message: string; rep: string; company: string; occurred_at: string };
+type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
 
 export default function UnansweredMessagesPage() {
   const { token } = useAuth();
   const [tab, setTab] = useState<MessageTab>("unanswered");
   const [items, setItems] = useState<MessageRow[]>([]);
   const [counts, setCounts] = useState({ unanswered: 0, ended: 0 });
+  const [missedCalls, setMissedCalls] = useState<MissedCallRow[]>([]);
+  const [missedCallCount, setMissedCallCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const processedEvents = useRef(new Set<string>());
@@ -23,11 +26,17 @@ export default function UnansweredMessagesPage() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`${API_BASE}/api/unanswered-messages?ended=${tab === "ended"}&limit=100`, { headers: authHeaders(token) });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      setItems(data.items || []);
-      setCounts(data.counts || { unanswered: 0, ended: 0 });
+      const [messageResponse, callsResponse] = await Promise.all([
+        fetch(`${API_BASE}/api/unanswered-messages?ended=${tab === "ended"}&limit=100`, { headers: authHeaders(token) }),
+        fetch(`${API_BASE}/api/unanswered-messages/missed-calls?limit=100`, { headers: authHeaders(token) }),
+      ]);
+      if (!messageResponse.ok) throw new Error(`Messages HTTP ${messageResponse.status}`);
+      if (!callsResponse.ok) throw new Error(`Missed calls HTTP ${callsResponse.status}`);
+      const [messageData, callsData] = await Promise.all([messageResponse.json(), callsResponse.json()]);
+      setItems(messageData.items || []);
+      setCounts(messageData.counts || { unanswered: 0, ended: 0 });
+      setMissedCalls(callsData.items || []);
+      setMissedCallCount(Number(callsData.count || 0));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load messages");
     } finally {
@@ -69,19 +78,43 @@ export default function UnansweredMessagesPage() {
     });
   }, [tab]);
 
+  const applyMissedCallEvent = useCallback((event: RealtimeEvent) => {
+    if (event.type !== "missed_call_state_changed") return;
+    if (loadingRef.current) { pendingEvents.current.push(event); return; }
+    const eventId = String(event.event_id || "");
+    if (!eventId || processedEvents.current.has(eventId)) return;
+    processedEvents.current.add(eventId);
+    setMissedCallCount((current) => Math.max(0, current + Number(event.count_delta || 0)));
+    const removed = new Set((event.call_ids || []) as string[]);
+    const row = event.row as MissedCallRow | undefined;
+    setMissedCalls((current) => {
+      let next = current.filter((item) => !removed.has(item.call_id));
+      if (row) next = next.filter((item) => item.client_identifier !== row.client_identifier || item.company_identifier !== row.company_identifier);
+      if (row && event.action === "upsert") next = [row, ...next].sort((a, b) => Date.parse(b.latest_missed_at) - Date.parse(a.latest_missed_at)).slice(0, 100);
+      return next;
+    });
+  }, []);
+
   useRealtimeUpdates(token, (event) => {
-    if (event.type === "message_state_batch") {
-      ((event.events || []) as RealtimeEvent[]).forEach(applyRealtimeEvent);
+    if (event.type === "sales_work_queue_batch") {
+      ((event.events || []) as RealtimeEvent[]).forEach((item) => {
+        applyRealtimeEvent(item);
+        applyMissedCallEvent(item);
+      });
       return;
     }
     applyRealtimeEvent(event);
+    applyMissedCallEvent(event);
   });
 
   useEffect(() => {
     if (loading || pendingEvents.current.length === 0) return;
     const queued = pendingEvents.current.splice(0);
-    queued.forEach(applyRealtimeEvent);
-  }, [loading, applyRealtimeEvent]);
+    queued.forEach((event) => {
+      applyRealtimeEvent(event);
+      applyMissedCallEvent(event);
+    });
+  }, [loading, applyRealtimeEvent, applyMissedCallEvent]);
 
   const setEnded = async (row: MessageRow, ended: boolean) => {
     const response = await fetch(`${API_BASE}/api/unanswered-messages/end`, {
@@ -111,7 +144,8 @@ export default function UnansweredMessagesPage() {
             ))}
           </div>
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+        <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse", tableLayout: "fixed" }}>
           <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>{headers.map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}</tr></thead>
           <tbody>
             {loading ? <tr><td colSpan={7} style={{ padding: 32, textAlign: "center" }}>Loading messages…</td></tr> : null}
@@ -125,6 +159,32 @@ export default function UnansweredMessagesPage() {
             </tr>)}
           </tbody>
         </table>
+        </div>
+      </section>
+
+      <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden", marginTop: 18 }}>
+        <div style={{ padding: "16px 18px" }}>
+          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Missed Calls ({missedCallCount})</h2>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", minWidth: 760, borderCollapse: "collapse", tableLayout: "fixed" }}>
+            <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>
+              {['Client', 'Rep', 'Company', 'Missed Calls', 'First Missed', 'Latest Missed'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+            </tr></thead>
+            <tbody>
+              {loading ? <tr><td colSpan={6} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
+              {!loading && missedCalls.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>No missed calls.</td></tr> : null}
+              {!loading && missedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
+                <td style={cell}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : <strong>{row.client}</strong>}</td>
+                <td style={cell}>{row.rep}</td>
+                <td style={cell}>{row.company || row.company_identifier}</td>
+                <td style={cell}><strong>{row.missed_count}</strong></td>
+                <td style={cell}>{new Date(row.first_missed_at).toLocaleString()}</td>
+                <td style={cell}>{new Date(row.latest_missed_at).toLocaleString()}</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
       </section>
     </main>
   );

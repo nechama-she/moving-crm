@@ -5,7 +5,7 @@ import logging
 from sqlalchemy import text
 
 from database import engine
-from models import MessageState
+from models import MessageState, MissedCallState
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("migrate")
@@ -21,6 +21,8 @@ def migrate() -> None:
         connection.execute(text("DROP TABLE IF EXISTS lead_communication_states"))
     logger.info("obsolete lead_communication_states table removed")
     MessageState.__table__.create(bind=engine, checkfirst=True)
+    MissedCallState.__table__.create(bind=engine, checkfirst=True)
+    logger.info("missed_call_states is ready")
     # Safe for environments where the new table was created by an earlier deploy.
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE message_states ADD COLUMN IF NOT EXISTS client_identifier VARCHAR(255)"))
