@@ -37,6 +37,27 @@ function formatDelay(minutes: number): string {
   return [hours ? `${hours}h` : "", remainder ? `${remainder}m` : ""].filter(Boolean).join(" ");
 }
 
+function calculateTargetCampaign(
+  sourceCampaign: string,
+  targetCompanyId: string,
+  campaigns: Record<string, string[]>,
+): string {
+  if (!sourceCampaign || !targetCompanyId) return "";
+  const hhgPosition = sourceCampaign.indexOf("-HHG");
+  if (hhgPosition < 0) return "";
+  const suffix = sourceCampaign.slice(hhgPosition);
+  const targetCampaigns = campaigns[targetCompanyId] || [];
+
+  // Prefer an existing campaign with the exact same HHG suffix.
+  const exactMatch = targetCampaigns.find((campaign) => campaign.endsWith(suffix));
+  if (exactMatch) return exactMatch;
+
+  // Otherwise use the target company's campaign prefix with the source suffix.
+  const targetPattern = targetCampaigns.find((campaign) => campaign.includes("-HHG"));
+  if (!targetPattern) return "";
+  return `${targetPattern.slice(0, targetPattern.indexOf("-HHG"))}${suffix}`;
+}
+
 export default function LeadDuplicationRulesPage() {
   const { token, user } = useAuth();
   const [rules, setRules] = useState<Rule[]>([]);
@@ -71,6 +92,13 @@ export default function LeadDuplicationRulesPage() {
     () => campaigns[form.source_company_id] || [],
     [campaigns, form.source_company_id],
   );
+
+  useEffect(() => {
+    const calculated = calculateTargetCampaign(form.source_referral_source, form.target_company_id, campaigns);
+    setForm((current) => current.target_referral_source === calculated
+      ? current
+      : { ...current, target_referral_source: calculated });
+  }, [campaigns, form.source_referral_source, form.target_company_id]);
 
   function editRule(rule: Rule) {
     setEditingId(rule.id);
@@ -174,7 +202,10 @@ export default function LeadDuplicationRulesPage() {
             </select>
           </label>
           <label style={label}>Target campaign
-            <input required value={form.target_referral_source} onChange={(e) => setForm({ ...form, target_referral_source: e.target.value })} style={input} placeholder="Campaign on duplicated lead" />
+            <input required value={form.target_referral_source} onChange={(e) => setForm({ ...form, target_referral_source: e.target.value })} style={input} placeholder="Calculated automatically or enter campaign" />
+            {form.source_referral_source && form.target_company_id && !form.target_referral_source
+              ? <span style={{ color: "#ba0517", fontSize: 11, fontWeight: 400 }}>No campaign pattern was found for the target company.</span>
+              : null}
           </label>
           <label style={label}>Delay (minutes)
             <input required type="number" min={0} max={525600} value={form.delay_minutes} onChange={(e) => setForm({ ...form, delay_minutes: Number(e.target.value) })} style={input} />

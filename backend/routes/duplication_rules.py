@@ -67,6 +67,15 @@ def list_rules(_: User = Depends(require_admin), db: Session = Depends(get_db)):
         .order_by(LeadDuplicationRule.source_company_id, LeadDuplicationRule.source_referral_source, LeadDuplicationRule.created_at)
         .all()
     )
+    for rule in rules:
+        source_values = campaigns.setdefault(rule.source_company_id, [])
+        if rule.source_referral_source not in source_values:
+            source_values.append(rule.source_referral_source)
+            source_values.sort()
+        target_values = campaigns.setdefault(rule.target_company_id, [])
+        if rule.target_referral_source not in target_values:
+            target_values.append(rule.target_referral_source)
+            target_values.sort()
     return {
         "rules": [_serialize(rule) for rule in rules],
         "companies": [{"id": company.id, "name": company.name} for company in companies],
