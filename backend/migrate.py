@@ -5,7 +5,7 @@ import logging
 from sqlalchemy import text
 
 from database import engine
-from models import LeadCommunicationState, MessageState
+from models import MessageState
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("migrate")
@@ -17,8 +17,9 @@ def migrate() -> None:
     The DynamoDB message-index migration has already completed and is
     intentionally not repeated here.
     """
-    LeadCommunicationState.__table__.create(bind=engine, checkfirst=True)
-    logger.info("lead_communication_states is ready")
+    with engine.begin() as connection:
+        connection.execute(text("DROP TABLE IF EXISTS lead_communication_states"))
+    logger.info("obsolete lead_communication_states table removed")
     MessageState.__table__.create(bind=engine, checkfirst=True)
     # Safe for environments where the new table was created by an earlier deploy.
     with engine.begin() as connection:

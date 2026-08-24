@@ -22,9 +22,7 @@ const SalesPerformancePage = lazy(() => import("./SalesPerformancePage"));
 const ForemenPage = lazy(() => import("./ForemenPage"));
 const ImpersonateUsersPage = lazy(() => import("./ImpersonateUsersPage"));
 const ChatsPage = lazy(() => import("./ChatsPage"));
-const RepActivityPage = lazy(() => import("./RepActivityPage"));
 const UnansweredMessagesPage = lazy(() => import("./UnansweredMessagesPage"));
-const IgnoredNumbersPage = lazy(() => import("./IgnoredNumbersPage"));
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -112,7 +110,6 @@ function ProtectedRoutes() {
             <>
               <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
               {user?.role === "admin" ? <NavLink to="/chats" style={navLinkStyle}>Chats</NavLink> : null}
-              {user?.role === "admin" ? <NavLink to="/rep-activity" style={navLinkStyle}>Rep Activity</NavLink> : null}
               {user?.role === "admin" ? <NavLink to="/unanswered-messages" style={navLinkStyle}>Unanswered Messages</NavLink> : null}
               <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
               <NavLink to="/sales-performance" style={navLinkStyle}>Performance</NavLink>
@@ -177,7 +174,6 @@ function ProtectedRoutes() {
                 <>
                   <NavLink to="/">Leads</NavLink>
                   {user?.role === "admin" ? <NavLink to="/chats">Chats</NavLink> : null}
-                  {user?.role === "admin" ? <NavLink to="/rep-activity">Rep Activity</NavLink> : null}
                   {user?.role === "admin" ? <NavLink to="/unanswered-messages">Unanswered Messages</NavLink> : null}
                   <NavLink to="/sales-calendar">Sales Calendar</NavLink>
                   <NavLink to="/sales-performance">Sales Performance</NavLink>
@@ -201,7 +197,6 @@ function ProtectedRoutes() {
         <Routes>
           <Route path="/" element={<LeadsList />} />
           <Route path="/chats" element={user?.role === "admin" ? <ChatsPage /> : <Navigate to="/" replace />} />
-          <Route path="/rep-activity" element={user?.role === "admin" ? <RepActivityPage /> : <Navigate to="/" replace />} />
           <Route path="/unanswered-messages" element={user?.role === "admin" ? <UnansweredMessagesPage /> : <Navigate to="/" replace />} />
           <Route path="/outreach" element={<OutreachEventsPage />} />
           <Route path="/sales-calendar" element={<SalesCalendarPage />} />
@@ -216,7 +211,6 @@ function ProtectedRoutes() {
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
           <Route path="/settings/pending-duplications" element={<PendingDuplicationsPage />} />
           <Route path="/settings/impersonate" element={<ImpersonateUsersPage />} />
-          <Route path="/settings/ignored-numbers" element={user?.role === "admin" ? <IgnoredNumbersPage /> : <Navigate to="/settings" replace />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/pricing" element={<PricingPage />} />
           <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />
