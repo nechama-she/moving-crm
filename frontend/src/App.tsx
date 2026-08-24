@@ -22,7 +22,7 @@ const PricingPage = lazy(() => import("./PricingPage"));
 const SalesPerformancePage = lazy(() => import("./SalesPerformancePage"));
 const ForemenPage = lazy(() => import("./ForemenPage"));
 const ImpersonateUsersPage = lazy(() => import("./ImpersonateUsersPage"));
-const ChatsPage = lazy(() => import("./ChatsPage"));
+const ChatsPage = lazy(() => import("./UnifiedCommunicationsPage"));
 const UnansweredMessagesPage = lazy(() => import("./UnansweredMessagesPage"));
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({

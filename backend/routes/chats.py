@@ -16,6 +16,7 @@ from auth import get_current_user
 from database import get_db
 from db import calls_table, conversations_table, sms_messages_table
 from libs.common.phone import normalize_digits
+from libs.common.phone import phone_variants
 from models import Company, Lead, User, UserCompany
 
 logger = logging.getLogger("moving-crm")
@@ -175,6 +176,36 @@ def get_latest_calls(
     }
 
 
+@router.get("/calls/history")
+def get_call_history(
+    phone: str = Query(...),
+    company_number: str = Query(...),
+    user: User = Depends(get_current_user),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can view call history")
+    expected_company = _phone(company_number)
+    items: list[dict] = []
+    seen: set[str] = set()
+    try:
+        for variant in phone_variants(phone):
+            response = calls_table.query(KeyConditionExpression=Key("phone_number").eq(variant), ScanIndexForward=True)
+            while True:
+                for record in response.get("Items", []):
+                    call_id = str(record.get("message_id") or "")
+                    if call_id and call_id not in seen and _phone(record.get("company_number")) == expected_company:
+                        seen.add(call_id)
+                        items.append(record)
+                if "LastEvaluatedKey" not in response:
+                    break
+                response = calls_table.query(KeyConditionExpression=Key("phone_number").eq(variant), ScanIndexForward=True, ExclusiveStartKey=response["LastEvaluatedKey"])
+    except ClientError as exc:
+        logger.error("Could not load call history: %s", exc)
+        raise HTTPException(status_code=502, detail="Could not fetch call history") from exc
+    items.sort(key=lambda item: _timestamp(item.get("timestamp")))
+    return {"calls": items}
+
+
 @router.get("")
 def get_all_chats(
     cursor: str = Query(default=""),
@@ -330,6 +361,7 @@ def get_all_chats(
             "timestamp": timestamp,
             "direction": str(message.get("direction") or message.get("role") or ""),
             "message_partition_key": str(message.get("phone_number") or message.get("user_id") or ""),
+            "company_identifier": str(message.get("number_id") or message.get("page_id") or ""),
             "message_timestamp": message.get("timestamp"),
             "conversation_ended": bool(message.get("conversation_ended", False)),
         }
@@ -359,6 +391,7 @@ def get_all_chats(
                     "timestamp": timestamp,
                     "direction": str(message.get("role") or ""),
                     "message_partition_key": user_id,
+                    "company_identifier": str(message.get("page_id") or ""),
                     "message_timestamp": message.get("timestamp"),
                     "conversation_ended": bool(message.get("conversation_ended", False)),
                 }
@@ -401,6 +434,7 @@ def get_all_chats(
                     "timestamp": timestamp,
                     "direction": str(message.get("direction") or ""),
                     "message_partition_key": str(message.get("phone_number") or ""),
+                    "company_identifier": number_id,
                     "message_timestamp": message.get("timestamp"),
                     "conversation_ended": bool(message.get("conversation_ended", False)),
                 }
