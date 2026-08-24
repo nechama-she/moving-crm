@@ -6,6 +6,7 @@ import { authHeaders, useAuth } from "./AuthContext";
 type Contact = { key: string; lead_id: string; client: string; rep: string; company: string; timestamp: number; sources: Array<Record<string, unknown>> };
 type TimelineItem = { id: string; kind: "message" | "call"; channel: string; direction: "inbound" | "outbound"; timestamp: number; text: string; answered?: boolean; reason?: string };
 const stamp = (value: unknown) => { const n = Number(value || 0); return n >= 1e12 ? n / 1000 : n; };
+const digits = (value: unknown) => { const normalized = String(value || "").replace(/\D/g, ""); return normalized.length >= 10 ? normalized.slice(-10) : normalized; };
 const when = (value: number) => new Date(value * 1000).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 const elapsed = (seconds: number) => seconds < 60 ? `${Math.max(1, Math.round(seconds))} sec` : seconds < 3600 ? `${Math.round(seconds / 60)} min` : `${Math.floor(seconds / 3600)}h ${Math.round((seconds % 3600) / 60)}m`;
 
@@ -21,7 +22,11 @@ export default function UnifiedCommunicationsPage() {
       const leadId = String(source.lead_id || ""); const platform = String(source.platform || (source.call_id ? "calls" : ""));
       const clientId = String(source.client_identifier || source.message_partition_key || source.client || "");
       const companyId = String(source.company || source.company_identifier || "");
-      const key = leadId ? `lead:${leadId}` : `${platform}:${clientId}:${companyId}`;
+      const key = platform === "calls"
+        ? `phone:${digits(source.client_identifier)}:${digits(source.company_identifier)}`
+        : platform === "sms"
+          ? `phone:${digits(source.message_partition_key)}:${digits(source.company_phone_identifier)}`
+          : `meta:${platform}:${String(source.message_partition_key || "")}:${String(source.company_identifier || "")}`;
       const value = map.get(key) || { key, lead_id: leadId, client: String(source.client || clientId), rep: String(source.rep || "Unassigned"), company: String(source.company || companyId), timestamp: 0, sources: [] };
       value.sources.push({ ...source, source_type: platform }); value.timestamp = Math.max(value.timestamp, stamp(source.timestamp)); map.set(key, value);
     }

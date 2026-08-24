@@ -362,6 +362,7 @@ def get_all_chats(
             "direction": str(message.get("direction") or message.get("role") or ""),
             "message_partition_key": str(message.get("phone_number") or message.get("user_id") or ""),
             "company_identifier": str(message.get("number_id") or message.get("page_id") or ""),
+            "company_phone_identifier": str(message.get("company_number") or ""),
             "message_timestamp": message.get("timestamp"),
             "conversation_ended": bool(message.get("conversation_ended", False)),
         }
@@ -392,6 +393,7 @@ def get_all_chats(
                     "direction": str(message.get("role") or ""),
                     "message_partition_key": user_id,
                     "company_identifier": str(message.get("page_id") or ""),
+                    "company_phone_identifier": "",
                     "message_timestamp": message.get("timestamp"),
                     "conversation_ended": bool(message.get("conversation_ended", False)),
                 }
@@ -435,6 +437,7 @@ def get_all_chats(
                     "direction": str(message.get("direction") or ""),
                     "message_partition_key": str(message.get("phone_number") or ""),
                     "company_identifier": number_id,
+                    "company_phone_identifier": str(message.get("company_number") or ""),
                     "message_timestamp": message.get("timestamp"),
                     "conversation_ended": bool(message.get("conversation_ended", False)),
                 }
