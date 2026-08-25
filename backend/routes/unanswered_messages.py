@@ -1,15 +1,18 @@
 """Admin-only API for the new Unanswered Messages page."""
 
+import base64
 import json
 import logging
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from auth import require_admin
@@ -247,27 +250,49 @@ def _preview_messages(states: list[MessageState]) -> dict[tuple[str, str], dict]
 @router.get("")
 def list_message_states(
     ended: bool = Query(False),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=100),
+    cursor: str = Query(""),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     started_at = time.perf_counter()
-    all_states = (
-        db.query(MessageState)
-        .options(joinedload(MessageState.lead).joinedload(Lead.company), joinedload(MessageState.lead).joinedload(Lead.assignee))
-        .order_by(MessageState.occurred_at.desc())
+    ignored_numbers = _ignored_call_numbers(db)
+    visible_filter = True
+    if ignored_numbers:
+        visible_filter = ~and_(MessageState.channel == "sms", MessageState.company_identifier.in_(ignored_numbers))
+    count_rows = (
+        db.query(MessageState.conversation_ended, func.count())
+        .filter(visible_filter)
+        .group_by(MessageState.conversation_ended)
         .all()
     )
-    ignored_numbers = _ignored_call_numbers(db)
-    all_states = [
-        state
-        for state in all_states
-        if state.channel != "sms" or _digits(state.company_identifier) not in ignored_numbers
-    ]
+    counts_by_ended = {bool(value): int(count) for value, count in count_rows}
+    query = (
+        db.query(MessageState)
+        .options(joinedload(MessageState.lead).joinedload(Lead.company), joinedload(MessageState.lead).joinedload(Lead.assignee))
+        .filter(visible_filter, MessageState.conversation_ended.is_(ended))
+        .order_by(MessageState.occurred_at.desc(), MessageState.channel.asc(), MessageState.message_id.asc())
+    )
+    if cursor:
+        try:
+            padding = "=" * (-len(cursor) % 4)
+            cursor_data = json.loads(base64.urlsafe_b64decode(cursor + padding).decode("utf-8"))
+            cursor_time = datetime.fromisoformat(cursor_data["occurred_at"])
+            cursor_channel = str(cursor_data["channel"])
+            cursor_message_id = str(cursor_data["message_id"])
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="Invalid message cursor")
+        query = query.filter(or_(
+            MessageState.occurred_at < cursor_time,
+            and_(MessageState.occurred_at == cursor_time, MessageState.channel > cursor_channel),
+            and_(MessageState.occurred_at == cursor_time, MessageState.channel == cursor_channel, MessageState.message_id > cursor_message_id),
+        ))
+    page = query.limit(limit + 1).all()
+    has_more = len(page) > limit
+    states = page[:limit]
     sql_finished_at = time.perf_counter()
-    unanswered_count = sum(not state.conversation_ended for state in all_states)
-    ended_count = len(all_states) - unanswered_count
-    states = [state for state in all_states if bool(state.conversation_ended) is ended][:limit]
+    unanswered_count = counts_by_ended.get(False, 0)
+    ended_count = counts_by_ended.get(True, 0)
     messages = _preview_messages(states)
     previews_finished_at = time.perf_counter()
     companies_by_phone = {_digits(phone): name for name, phone in db.query(Company.name, Company.phone).all() if _digits(phone)}
@@ -291,13 +316,23 @@ def list_message_states(
         })
     logger.info(
         "Unanswered messages load total_rows=%d displayed_rows=%d sql_ms=%.1f previews_ms=%.1f total_ms=%.1f",
-        len(all_states),
+        unanswered_count + ended_count,
         len(states),
         (sql_finished_at - started_at) * 1000,
         (previews_finished_at - sql_finished_at) * 1000,
         (time.perf_counter() - started_at) * 1000,
     )
-    return {"items": items, "counts": {"unanswered": unanswered_count, "ended": ended_count}}
+    next_cursor = ""
+    if has_more and states:
+        last = states[-1]
+        payload = json.dumps({"occurred_at": last.occurred_at.isoformat(), "channel": last.channel, "message_id": last.message_id}, separators=(",", ":"))
+        next_cursor = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+    return {
+        "items": items,
+        "counts": {"unanswered": unanswered_count, "ended": ended_count},
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+    }
 
 
 @router.patch("/end")

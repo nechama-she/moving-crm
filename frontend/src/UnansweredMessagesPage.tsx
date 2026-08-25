@@ -43,6 +43,9 @@ export default function UnansweredMessagesPage() {
   const [queueTab, setQueueTab] = useState<QueueTab>("messages");
   const [tab, setTab] = useState<MessageTab>("unanswered");
   const [items, setItems] = useState<MessageRow[]>([]);
+  const [messageCursor, setMessageCursor] = useState("");
+  const [messageHasMore, setMessageHasMore] = useState(false);
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
   const [counts, setCounts] = useState({ unanswered: 0, ended: 0 });
   const [missedCalls, setMissedCalls] = useState<MissedCallRow[]>([]);
   const [missedCallCount, setMissedCallCount] = useState(0);
@@ -52,6 +55,7 @@ export default function UnansweredMessagesPage() {
   const processedEvents = useRef(new Set<string>());
   const loadingRef = useRef(true);
   const pendingEvents = useRef<RealtimeEvent[]>([]);
+  const messageLoadSentinel = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     loadingRef.current = true;
@@ -59,13 +63,15 @@ export default function UnansweredMessagesPage() {
     setError("");
     try {
       const [messageResponse, callsResponse] = await Promise.all([
-        fetch(`${API_BASE}/api/unanswered-messages?ended=${tab === "ended"}&limit=100`, { headers: authHeaders(token) }),
+        fetch(`${API_BASE}/api/unanswered-messages?ended=${tab === "ended"}&limit=20`, { headers: authHeaders(token) }),
         fetch(`${API_BASE}/api/unanswered-messages/missed-calls?limit=100`, { headers: authHeaders(token) }),
       ]);
       if (!messageResponse.ok) throw new Error(`Messages HTTP ${messageResponse.status}`);
       if (!callsResponse.ok) throw new Error(`Missed calls HTTP ${callsResponse.status}`);
       const [messageData, callsData] = await Promise.all([messageResponse.json(), callsResponse.json()]);
       setItems(messageData.items || []);
+      setMessageCursor(String(messageData.next_cursor || ""));
+      setMessageHasMore(Boolean(messageData.has_more));
       setCounts(messageData.counts || { unanswered: 0, ended: 0 });
       setMissedCalls(callsData.items || []);
       setMissedCallCount(Number(callsData.count || 0));
@@ -78,6 +84,37 @@ export default function UnansweredMessagesPage() {
   }, [tab, token]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const loadMoreMessages = useCallback(async () => {
+    if (loading || loadingMoreMessages || !messageHasMore || !messageCursor) return;
+    setLoadingMoreMessages(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages?ended=${tab === "ended"}&limit=20&cursor=${encodeURIComponent(messageCursor)}`, { headers: authHeaders(token) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || `Messages HTTP ${response.status}`);
+      const incoming = (data.items || []) as MessageRow[];
+      setItems((current) => {
+        const existing = new Set(current.map((item) => `${item.channel}:${item.message_id}`));
+        return [...current, ...incoming.filter((item) => !existing.has(`${item.channel}:${item.message_id}`))];
+      });
+      setMessageCursor(String(data.next_cursor || ""));
+      setMessageHasMore(Boolean(data.has_more));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load more messages");
+    } finally {
+      setLoadingMoreMessages(false);
+    }
+  }, [loading, loadingMoreMessages, messageHasMore, messageCursor, tab, token]);
+
+  useEffect(() => {
+    const target = messageLoadSentinel.current;
+    if (!target || queueTab !== "messages") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadMoreMessages();
+    }, { rootMargin: "240px 0px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [queueTab, loadMoreMessages]);
 
   useEffect(() => {
     if (!numberMenu) return;
@@ -113,7 +150,7 @@ export default function UnansweredMessagesPage() {
       let next = current.filter((item) => !removed.has(item.message_id));
       if (row) next = next.filter((item) => item.channel !== row.channel || item.message_id !== row.message_id);
       const belongsHere = row && ((tab === "unanswered" && (event.action === "upsert" || event.action === "reopened")) || (tab === "ended" && event.action === "ended"));
-      if (belongsHere && row) next = [row, ...next].sort((a, b) => Date.parse(b.occurred_at) - Date.parse(a.occurred_at)).slice(0, 100);
+      if (belongsHere && row) next = [row, ...next].sort((a, b) => Date.parse(b.occurred_at) - Date.parse(a.occurred_at));
       return next;
     });
   }, [tab]);
@@ -247,6 +284,7 @@ export default function UnansweredMessagesPage() {
           </tbody>
         </table>
         </div>
+        <div ref={messageLoadSentinel} style={{ minHeight: 1, padding: loadingMoreMessages ? 14 : 0, color: "#64748b", textAlign: "center" }}>{loadingMoreMessages ? "Loading more messages…" : null}</div>
       </section> : null}
 
       {queueTab === "calls" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
