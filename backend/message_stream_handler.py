@@ -63,11 +63,16 @@ def _channel(record: dict, item: dict) -> str:
 def _direction(channel: str, item: dict) -> str:
     if channel == "sms":
         value = str(item.get("direction") or "").strip().lower()
+        sender = str(item.get("sales_name") or "").strip().lower()
+        if value == "draft" or sender in {"ai", "assistant", "bot"}:
+            return "ignored"
         if value in {"received", "inbound"}:
             return "inbound"
         if value in {"sent", "outbound"}:
             return "outbound"
     role = str(item.get("role") or "").strip().lower()
+    if role == "assistant":
+        return "ignored"
     return "inbound" if role in {"user", "client", "customer"} else "outbound"
 
 
@@ -288,6 +293,9 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
 
     channel = _channel(record, item)
     direction = _direction(channel, item)
+    if direction == "ignored":
+        logger.info("Ignoring automated %s message role=%s", channel, item.get("role"))
+        return True, None
     client_identifier, company_identifier = _conversation_identifiers(channel, item)
     if not client_identifier or not company_identifier:
         logger.warning("Skipping %s message without complete conversation identifiers", channel)
