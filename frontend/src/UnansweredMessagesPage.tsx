@@ -31,7 +31,7 @@ function IgnoreNumberTarget({ number, name, openMenu }: { number: string; name: 
     onPointerUp={cancelHold}
     onPointerCancel={cancelHold}
     onPointerMove={cancelHold}
-    style={{ userSelect: "text", WebkitUserSelect: "text", touchAction: "manipulation", cursor: "context-menu" }}
+    style={{ userSelect: "text", WebkitUserSelect: "text", touchAction: "manipulation", cursor: "pointer" }}
   >
     <strong>{displayPhone(number)}</strong>
     <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{name || "Unknown number"}</div>
