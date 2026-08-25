@@ -92,7 +92,11 @@ def list_missed_calls(
         .all()
     )
     ignored_numbers = _ignored_call_numbers(db)
-    states = [state for state in states if _digits(state.company_identifier) not in ignored_numbers]
+    states = [
+        state for state in states
+        if _digits(state.client_identifier) not in ignored_numbers
+        and _digits(state.company_identifier) not in ignored_numbers
+    ]
     companies_by_phone = {
         _digits(phone): name
         for name, phone in db.query(Company.name, Company.phone).all()
@@ -141,13 +145,16 @@ def add_ignored_call_number(
     numbers = _ignored_call_numbers(db)
     numbers.add(number)
     _save_ignored_call_numbers(db, numbers)
-    call_states = db.query(MissedCallState).filter(MissedCallState.company_identifier == number).all()
+    call_states = db.query(MissedCallState).filter(or_(
+        MissedCallState.client_identifier == number,
+        MissedCallState.company_identifier == number,
+    )).all()
     call_ids = [state.call_id for state in call_states]
     for state in call_states:
         db.delete(state)
     message_states = db.query(MessageState).filter(
         MessageState.channel == "sms",
-        MessageState.company_identifier == number,
+        or_(MessageState.client_identifier == number, MessageState.company_identifier == number),
     ).all()
     message_ids = [state.message_id for state in message_states]
     unanswered_removed = sum(not state.conversation_ended for state in message_states)
@@ -259,7 +266,13 @@ def list_message_states(
     ignored_numbers = _ignored_call_numbers(db)
     visible_filter = True
     if ignored_numbers:
-        visible_filter = ~and_(MessageState.channel == "sms", MessageState.company_identifier.in_(ignored_numbers))
+        visible_filter = ~and_(
+            MessageState.channel == "sms",
+            or_(
+                MessageState.client_identifier.in_(ignored_numbers),
+                MessageState.company_identifier.in_(ignored_numbers),
+            ),
+        )
     count_rows = (
         db.query(MessageState.conversation_ended, func.count())
         .filter(visible_filter)
@@ -307,6 +320,7 @@ def list_message_states(
             "message_id": state.message_id,
             "lead_id": state.lead_id or "",
             "client": lead.full_name if lead else state.client_identifier,
+            "client_number": _digits(state.client_identifier) if state.channel == "sms" else "",
             "message": str(message.get("text") or ""),
             "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
             "company": lead.company.name if lead and lead.company else "",

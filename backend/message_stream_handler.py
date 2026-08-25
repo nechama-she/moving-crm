@@ -148,6 +148,7 @@ def _display_row(db, inserted: dict, item: dict) -> dict:
         "message_id": inserted["message_id"],
         "lead_id": inserted.get("lead_id") or "",
         "client": lead.full_name if lead else inserted["client_identifier"],
+        "client_number": _digits(inserted["client_identifier"]) if inserted["channel"] == "sms" else "",
         "message": str(item.get("text") or ""),
         "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
         "company": company,
@@ -201,8 +202,9 @@ def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[b
         logger.warning("Skipping call without complete identifiers")
         return False, None
 
-    if company_identifier in _ignored_call_numbers(db):
-        logger.info("Ignoring call to configured destination number %s", company_identifier)
+    ignored_numbers = _ignored_call_numbers(db)
+    if client_identifier in ignored_numbers or company_identifier in ignored_numbers:
+        logger.info("Ignoring call with configured number client=%s destination=%s", client_identifier, company_identifier)
         return True, None
 
     is_missed_inbound = (
@@ -291,8 +293,8 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
         logger.warning("Skipping %s message without complete conversation identifiers", channel)
         return False, None
 
-    if channel == "sms" and company_identifier in _ignored_call_numbers(db):
-        logger.info("Ignoring SMS to configured destination number %s", company_identifier)
+    if channel == "sms" and ({client_identifier, company_identifier} & _ignored_call_numbers(db)):
+        logger.info("Ignoring SMS with configured number client=%s destination=%s", client_identifier, company_identifier)
         return True, None
 
     conversation_filter = (

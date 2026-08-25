@@ -57,10 +57,10 @@ export default function IgnoredCallNumbersPage() {
   return <main style={{ padding: 24, width: "100%", maxWidth: 760, margin: "0 auto", boxSizing: "border-box" }}>
     <Link to="/settings" style={{ color: "#0176d3", textDecoration: "none", fontSize: 13 }}>← Back to Settings</Link>
     <h1 style={{ color: "#032d60", fontSize: 24, margin: "18px 0 4px" }}>Ignored Communication Numbers</h1>
-    <p style={{ color: "#64748b", margin: "0 0 20px" }}>Messages and missed calls received on these destination numbers will not enter the Sales Work Queue.</p>
+    <p style={{ color: "#64748b", margin: "0 0 20px" }}>Messages and missed calls involving these client or destination numbers will not enter the Sales Work Queue.</p>
     <section style={{ border: "1px solid #d8dde6", borderRadius: 8, background: "#fff", overflow: "hidden" }}>
       <div style={{ padding: 16, display: "flex", gap: 8, borderBottom: "1px solid #e2e8f0" }}>
-        <input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void addNumber(); }} placeholder="Enter destination phone number" disabled={saving} style={{ flex: 1, minWidth: 180, border: "1px solid #cbd5e1", borderRadius: 5, padding: "9px 11px", fontSize: 14 }} />
+        <input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void addNumber(); }} placeholder="Enter phone number" disabled={saving} style={{ flex: 1, minWidth: 180, border: "1px solid #cbd5e1", borderRadius: 5, padding: "9px 11px", fontSize: 14 }} />
         <button type="button" onClick={() => void addNumber()} disabled={saving || !input.trim()} style={{ border: 0, borderRadius: 5, padding: "9px 15px", background: "#0176d3", color: "#fff", fontWeight: 700 }}>Add number</button>
       </div>
       {error ? <p style={{ color: "#b91c1c", padding: "0 16px" }}>{error}</p> : null}
