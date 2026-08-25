@@ -6,7 +6,7 @@ import { RealtimeEvent, useRealtimeUpdates } from "./useRealtimeUpdates";
 
 type MessageTab = "unanswered" | "ended";
 type QueueTab = "messages" | "calls";
-type MessageRow = { channel: string; message_id: string; lead_id: string; client: string; message: string; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
+type MessageRow = { channel: string; message_id: string; lead_id: string; client: string; client_number: string; message: string; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type NumberMenu = { number: string; x: number; y: number } | null;
 
@@ -16,7 +16,7 @@ const displayPhone = (value: string) => {
   return local.length === 10 ? `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}` : value;
 };
 
-function IgnoreNumberTarget({ number, name, openMenu }: { number: string; name: string; openMenu: (number: string, x: number, y: number) => void }) {
+function IgnoreNumberTarget({ number, name, showUnknown = false, openMenu }: { number: string; name?: string; showUnknown?: boolean; openMenu: (number: string, x: number, y: number) => void }) {
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelHold = () => { if (holdTimer.current) clearTimeout(holdTimer.current); holdTimer.current = null; };
   return <div
@@ -34,7 +34,7 @@ function IgnoreNumberTarget({ number, name, openMenu }: { number: string; name: 
     style={{ userSelect: "text", WebkitUserSelect: "text", touchAction: "manipulation", cursor: "pointer" }}
   >
     <strong>{displayPhone(number)}</strong>
-    <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{name || "Unknown number"}</div>
+    {name || showUnknown ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{name || "Unknown number"}</div> : null}
   </div>;
 }
 
@@ -273,11 +273,14 @@ export default function UnansweredMessagesPage() {
             {loading ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading messages…</td></tr> : null}
             {!loading && items.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{tab === "unanswered" ? "No unanswered messages." : "No ended chats."}</td></tr> : null}
             {!loading && items.map((row) => <tr key={`${row.channel}:${row.message_id}`}>
-              <td style={cell}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : row.channel === "messenger" || row.channel === "instagram" ? <a href={`https://www.facebook.com/latest/${encodeURIComponent(row.client)}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</a> : <strong>{row.client}</strong>}</td>
+              <td style={cell}>
+                {row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : row.channel === "messenger" || row.channel === "instagram" ? <a href={`https://www.facebook.com/latest/${encodeURIComponent(row.client)}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</a> : null}
+                {row.channel === "sms" && row.client_number ? <div style={{ marginTop: row.lead_id ? 4 : 0 }}><IgnoreNumberTarget number={row.client_number} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></div> : null}
+              </td>
               <td style={cell}>{row.channel === "sms" ? "SMS" : row.channel === "instagram" ? "Instagram" : "Messenger"}</td>
               <td style={{ ...cell, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.message}>{row.message || "No preview"}</td>
               <td style={cell}>{row.rep}</td><td style={cell}>{row.company || "—"}</td>
-              <td style={cell}>{row.channel === "sms" ? <IgnoreNumberTarget number={row.destination_number} name={row.destination_name} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /> : "—"}</td>
+              <td style={cell}>{row.channel === "sms" ? <IgnoreNumberTarget number={row.destination_number} name={row.destination_name} showUnknown openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /> : "—"}</td>
               <td style={cell}>{new Date(row.occurred_at).toLocaleString()}</td>
               <td style={cell}><label><input type="checkbox" checked={tab === "ended"} onChange={() => void setEnded(row, tab === "unanswered")} /> {tab === "unanswered" ? "Ended" : "Reopen"}</label></td>
             </tr>)}
@@ -300,10 +303,10 @@ export default function UnansweredMessagesPage() {
               {loading ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
               {!loading && missedCalls.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>No missed calls.</td></tr> : null}
               {!loading && missedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
-                <td style={cell}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : <strong>{row.client}</strong>}</td>
+                <td style={cell}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : null}<div style={{ marginTop: row.lead_id ? 4 : 0 }}><IgnoreNumberTarget number={row.client_identifier} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></div></td>
                 <td style={cell}>{row.rep}</td>
                 <td style={cell}>{row.company}</td>
-                <td style={cell}><IgnoreNumberTarget number={row.ring_number || row.company_identifier} name={row.ring_target} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></td>
+                <td style={cell}><IgnoreNumberTarget number={row.ring_number || row.company_identifier} name={row.ring_target} showUnknown openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></td>
                 <td style={cell}><strong>{row.missed_count}</strong></td>
                 <td style={cell}>{new Date(row.first_missed_at).toLocaleString()}</td>
                 <td style={cell}>{new Date(row.latest_missed_at).toLocaleString()}</td>

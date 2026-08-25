@@ -85,7 +85,7 @@ export default function SettingsPage() {
 
         {isAdmin ? <section style={card}>
           <h2 style={sectionHeader}>Ignored Communication Numbers</h2>
-          <p style={desc}>Manage destination numbers whose messages and missed calls should not enter the Sales Work Queue.</p>
+          <p style={desc}>Manage client or destination numbers whose messages and missed calls should not enter the Sales Work Queue.</p>
           <div style={actionsRow}><Link to="/settings/ignored-call-numbers" style={primaryLink}>Manage Ignored Numbers</Link></div>
         </section> : null}
 

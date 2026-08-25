@@ -1154,6 +1154,7 @@ export default function LeadDetail() {
     const val = lead![key];
     if (val == null || val === "") return null;
     const isInbox = key === "inbox_url";
+    const isSmartMovingId = key === "smartmoving_id";
     if (isInbox && !String(val).trim().startsWith("http")) return null;
     return (
       <tr key={key}>
@@ -1162,6 +1163,10 @@ export default function LeadDetail() {
           {isInbox ? (
             <a href={String(val)} target="_blank" rel="noopener noreferrer">
               Open Inbox
+            </a>
+          ) : isSmartMovingId ? (
+            <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(String(val))}/sales`} target="_blank" rel="noopener noreferrer" style={{ color: "#0176d3" }}>
+              {String(val)}
             </a>
           ) : (
             formatValue(key, val)
