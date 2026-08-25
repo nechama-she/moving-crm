@@ -148,16 +148,15 @@ def _call_display_row(db, inserted: dict) -> dict:
             .first()
         )
     ring_number = _digits(inserted["company_identifier"])
-    matches_rep = bool(lead and lead.assignee and _digits(lead.assignee.phone) == ring_number)
-    matches_company = bool(lead and lead.company and _digits(lead.company.phone) == ring_number)
-    if matches_rep and matches_company:
-        ring_target = "Company and rep number"
-    elif matches_rep:
-        ring_target = "Rep number"
-    elif matches_company:
-        ring_target = "Company number"
-    else:
-        ring_target = "Unknown number"
+    rep = next(
+        (name for name, phone in db.query(User.name, User.phone).all() if _digits(phone) == ring_number),
+        "",
+    )
+    company = next(
+        (name for name, phone in db.query(Company.name, Company.phone).all() if _digits(phone) == ring_number),
+        "",
+    )
+    ring_target = rep or company or "Unknown number"
     return {
         "call_id": inserted["call_id"],
         "lead_id": inserted.get("lead_id") or "",

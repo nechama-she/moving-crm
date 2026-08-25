@@ -36,17 +36,15 @@ def _digits(value: object) -> str:
     return "".join(character for character in str(value or "") if character.isdigit())
 
 
-def _ring_target(lead: Lead | None, number: str) -> str:
-    if not lead:
-        return "Unknown number"
-    matches_rep = bool(lead.assignee and _digits(lead.assignee.phone) == number)
-    matches_company = bool(lead.company and _digits(lead.company.phone) == number)
-    if matches_rep and matches_company:
-        return "Company and rep number"
-    if matches_rep:
-        return "Rep number"
-    if matches_company:
-        return "Company number"
+def _ring_target(
+    number: str,
+    companies_by_phone: dict[str, str],
+    reps_by_phone: dict[str, str],
+) -> str:
+    if number in reps_by_phone:
+        return reps_by_phone[number]
+    if number in companies_by_phone:
+        return companies_by_phone[number]
     return "Unknown number"
 
 
@@ -62,6 +60,16 @@ def list_missed_calls(
         .order_by(MissedCallState.latest_missed_at.desc())
         .all()
     )
+    companies_by_phone = {
+        _digits(phone): name
+        for name, phone in db.query(Company.name, Company.phone).all()
+        if _digits(phone)
+    }
+    reps_by_phone = {
+        _digits(phone): name
+        for name, phone in db.query(User.name, User.phone).all()
+        if _digits(phone)
+    }
     items = []
     for state in states[:limit]:
         lead = state.lead
@@ -75,7 +83,7 @@ def list_missed_calls(
             "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
             "company": lead.company.name if lead and lead.company else "",
             "ring_number": ring_number,
-            "ring_target": _ring_target(lead, ring_number),
+            "ring_target": _ring_target(ring_number, companies_by_phone, reps_by_phone),
             "missed_count": state.missed_count,
             "first_missed_at": state.first_missed_at.isoformat(),
             "latest_missed_at": state.latest_missed_at.isoformat(),
