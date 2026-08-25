@@ -8,12 +8,35 @@ type MessageTab = "unanswered" | "ended";
 type QueueTab = "messages" | "calls";
 type MessageRow = { channel: string; message_id: string; lead_id: string; client: string; message: string; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
+type NumberMenu = { number: string; x: number; y: number } | null;
 
 const displayPhone = (value: string) => {
   const digits = String(value || "").replace(/\D/g, "");
   const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
   return local.length === 10 ? `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}` : value;
 };
+
+function IgnoreNumberTarget({ number, name, openMenu }: { number: string; name: string; openMenu: (number: string, x: number, y: number) => void }) {
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelHold = () => { if (holdTimer.current) clearTimeout(holdTimer.current); holdTimer.current = null; };
+  return <div
+    title="Right-click or press and hold for options"
+    onContextMenu={(event) => { event.preventDefault(); cancelHold(); openMenu(number, event.clientX, event.clientY); }}
+    onPointerDown={(event) => {
+      if (event.pointerType !== "touch") return;
+      const { clientX, clientY } = event;
+      cancelHold();
+      holdTimer.current = setTimeout(() => openMenu(number, clientX, clientY), 550);
+    }}
+    onPointerUp={cancelHold}
+    onPointerCancel={cancelHold}
+    onPointerMove={cancelHold}
+    style={{ userSelect: "none", WebkitUserSelect: "none", touchAction: "manipulation" }}
+  >
+    <strong>{displayPhone(number)}</strong>
+    <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{name || "Unknown number"}</div>
+  </div>;
+}
 
 export default function UnansweredMessagesPage() {
   const { token } = useAuth();
@@ -25,6 +48,7 @@ export default function UnansweredMessagesPage() {
   const [missedCallCount, setMissedCallCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [numberMenu, setNumberMenu] = useState<NumberMenu>(null);
   const processedEvents = useRef(new Set<string>());
   const loadingRef = useRef(true);
   const pendingEvents = useRef<RealtimeEvent[]>([]);
@@ -54,6 +78,14 @@ export default function UnansweredMessagesPage() {
   }, [tab, token]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!numberMenu) return;
+    const close = () => setNumberMenu(null);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("scroll", close, true);
+    return () => { window.removeEventListener("pointerdown", close); window.removeEventListener("scroll", close, true); };
+  }, [numberMenu]);
 
   const applyRealtimeEvent = useCallback((event: RealtimeEvent) => {
     if (event.type !== "message_state_changed") return;
@@ -147,28 +179,13 @@ export default function UnansweredMessagesPage() {
     if (result.event) applyMissedCallEvent(result.event as RealtimeEvent);
   };
 
-  const ignoreRangOnNumber = async (row: MissedCallRow) => {
+  const ignoreNumber = async (number: string) => {
     setError("");
+    setNumberMenu(null);
     const response = await fetch(`${API_BASE}/api/unanswered-messages/ignored-call-numbers`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
-      body: JSON.stringify({ number: row.ring_number || row.company_identifier }),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) { setError(result.detail || `HTTP ${response.status}`); return; }
-    ((result.events || []) as RealtimeEvent[]).forEach((event) => {
-      applyMissedCallEvent(event);
-      applyRealtimeEvent(event);
-    });
-  };
-
-  const ignoreMessageNumber = async (row: MessageRow) => {
-    if (!row.destination_number) return;
-    setError("");
-    const response = await fetch(`${API_BASE}/api/unanswered-messages/ignored-call-numbers`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders(token) },
-      body: JSON.stringify({ number: row.destination_number }),
+      body: JSON.stringify({ number }),
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) { setError(result.detail || `HTTP ${response.status}`); return; }
@@ -186,6 +203,9 @@ export default function UnansweredMessagesPage() {
       <h1 style={{ margin: 0, color: "#032d60", fontSize: 24 }}>Sales Work Queue</h1>
       <p style={{ margin: "6px 0 20px", color: "#64748b" }}>Sales items that need attention.</p>
       {error ? <p style={{ color: "#b91c1c" }}>{error}</p> : null}
+      {numberMenu ? <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "fixed", zIndex: 1000, left: Math.min(numberMenu.x, window.innerWidth - 190), top: Math.min(numberMenu.y, window.innerHeight - 60), minWidth: 180, padding: 5, border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", boxShadow: "0 6px 18px rgba(15,23,42,.2)" }}>
+        <button type="button" onClick={() => void ignoreNumber(numberMenu.number)} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore this number</button>
+      </div> : null}
 
       <nav aria-label="Sales work queue categories" style={{ display: "flex", flexWrap: "nowrap", gap: 12, overflowX: "auto", paddingBottom: 12, marginBottom: 6 }}>
         <button type="button" onClick={() => setQueueTab("messages")} style={{ ...queueCard, ...(queueTab === "messages" ? activeQueueCard : {}) }}>
@@ -220,7 +240,7 @@ export default function UnansweredMessagesPage() {
               <td style={cell}>{row.channel === "sms" ? "SMS" : row.channel === "instagram" ? "Instagram" : "Messenger"}</td>
               <td style={{ ...cell, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.message}>{row.message || "No preview"}</td>
               <td style={cell}>{row.rep}</td><td style={cell}>{row.company || "—"}</td>
-              <td style={cell}>{row.channel === "sms" ? <><strong>{displayPhone(row.destination_number)}</strong><div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{row.destination_name || "Unknown number"}</div><button type="button" onClick={() => void ignoreMessageNumber(row)} style={{ border: 0, background: "transparent", color: "#0b5cab", padding: "5px 0 0", fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>Ignore this number</button></> : "—"}</td>
+              <td style={cell}>{row.channel === "sms" ? <IgnoreNumberTarget number={row.destination_number} name={row.destination_name} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /> : "—"}</td>
               <td style={cell}>{new Date(row.occurred_at).toLocaleString()}</td>
               <td style={cell}><label><input type="checkbox" checked={tab === "ended"} onChange={() => void setEnded(row, tab === "unanswered")} /> {tab === "unanswered" ? "Ended" : "Reopen"}</label></td>
             </tr>)}
@@ -245,11 +265,7 @@ export default function UnansweredMessagesPage() {
                 <td style={cell}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : <strong>{row.client}</strong>}</td>
                 <td style={cell}>{row.rep}</td>
                 <td style={cell}>{row.company}</td>
-                <td style={cell}>
-                  <strong>{displayPhone(row.ring_number || row.company_identifier)}</strong>
-                  <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{row.ring_target || "Unknown number"}</div>
-                  <button type="button" onClick={() => void ignoreRangOnNumber(row)} style={{ border: 0, background: "transparent", color: "#0b5cab", padding: "5px 0 0", fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>Ignore this number</button>
-                </td>
+                <td style={cell}><IgnoreNumberTarget number={row.ring_number || row.company_identifier} name={row.ring_target} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></td>
                 <td style={cell}><strong>{row.missed_count}</strong></td>
                 <td style={cell}>{new Date(row.first_missed_at).toLocaleString()}</td>
                 <td style={cell}>{new Date(row.latest_missed_at).toLocaleString()}</td>
