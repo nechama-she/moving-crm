@@ -6,7 +6,7 @@ import { RealtimeEvent, useRealtimeUpdates } from "./useRealtimeUpdates";
 
 type MessageTab = "unanswered" | "ended";
 type QueueTab = "messages" | "calls";
-type MessageRow = { channel: string; message_id: string; lead_id: string; client: string; message: string; rep: string; company: string; occurred_at: string };
+type MessageRow = { channel: string; message_id: string; lead_id: string; client: string; message: string; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
 
 const displayPhone = (value: string) => {
@@ -147,7 +147,38 @@ export default function UnansweredMessagesPage() {
     if (result.event) applyMissedCallEvent(result.event as RealtimeEvent);
   };
 
-  const headers = ["Client", "Platform", "Message", "Rep", "Company", "Message Time", "Action"];
+  const ignoreRangOnNumber = async (row: MissedCallRow) => {
+    setError("");
+    const response = await fetch(`${API_BASE}/api/unanswered-messages/ignored-call-numbers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({ number: row.ring_number || row.company_identifier }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) { setError(result.detail || `HTTP ${response.status}`); return; }
+    ((result.events || []) as RealtimeEvent[]).forEach((event) => {
+      applyMissedCallEvent(event);
+      applyRealtimeEvent(event);
+    });
+  };
+
+  const ignoreMessageNumber = async (row: MessageRow) => {
+    if (!row.destination_number) return;
+    setError("");
+    const response = await fetch(`${API_BASE}/api/unanswered-messages/ignored-call-numbers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({ number: row.destination_number }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) { setError(result.detail || `HTTP ${response.status}`); return; }
+    ((result.events || []) as RealtimeEvent[]).forEach((event) => {
+      applyMissedCallEvent(event);
+      applyRealtimeEvent(event);
+    });
+  };
+
+  const headers = ["Client", "Platform", "Message", "Rep", "Company", "Sent To", "Message Time", "Action"];
   const cell = { padding: "13px 16px", borderBottom: "1px solid #e2e8f0", color: "#334155" } as const;
 
   return (
@@ -179,16 +210,18 @@ export default function UnansweredMessagesPage() {
           </div>
         </div>
         <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse", tableLayout: "fixed" }}>
+        <table style={{ width: "100%", minWidth: 1050, borderCollapse: "collapse", tableLayout: "fixed" }}>
           <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>{headers.map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}</tr></thead>
           <tbody>
-            {loading ? <tr><td colSpan={7} style={{ padding: 32, textAlign: "center" }}>Loading messages…</td></tr> : null}
-            {!loading && items.length === 0 ? <tr><td colSpan={7} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{tab === "unanswered" ? "No unanswered messages." : "No ended chats."}</td></tr> : null}
+            {loading ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading messages…</td></tr> : null}
+            {!loading && items.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{tab === "unanswered" ? "No unanswered messages." : "No ended chats."}</td></tr> : null}
             {!loading && items.map((row) => <tr key={`${row.channel}:${row.message_id}`}>
               <td style={cell}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : row.channel === "messenger" ? <a href={`https://www.facebook.com/latest/${encodeURIComponent(row.client)}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</a> : <strong>{row.client}</strong>}</td>
               <td style={cell}>{row.channel === "sms" ? "SMS" : row.channel === "instagram" ? "Instagram" : "Messenger"}</td>
               <td style={{ ...cell, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.message}>{row.message || "No preview"}</td>
-              <td style={cell}>{row.rep}</td><td style={cell}>{row.company || "—"}</td><td style={cell}>{new Date(row.occurred_at).toLocaleString()}</td>
+              <td style={cell}>{row.rep}</td><td style={cell}>{row.company || "—"}</td>
+              <td style={cell}>{row.channel === "sms" ? <><strong>{displayPhone(row.destination_number)}</strong><div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{row.destination_name || "Unknown number"}</div><button type="button" onClick={() => void ignoreMessageNumber(row)} style={{ border: 0, background: "transparent", color: "#0b5cab", padding: "5px 0 0", fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>Ignore this number</button></> : "—"}</td>
+              <td style={cell}>{new Date(row.occurred_at).toLocaleString()}</td>
               <td style={cell}><label><input type="checkbox" checked={tab === "ended"} onChange={() => void setEnded(row, tab === "unanswered")} /> {tab === "unanswered" ? "Ended" : "Reopen"}</label></td>
             </tr>)}
           </tbody>
@@ -212,7 +245,11 @@ export default function UnansweredMessagesPage() {
                 <td style={cell}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : <strong>{row.client}</strong>}</td>
                 <td style={cell}>{row.rep}</td>
                 <td style={cell}>{row.company}</td>
-                <td style={cell}><strong>{displayPhone(row.ring_number || row.company_identifier)}</strong><div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{row.ring_target || "Unknown number"}</div></td>
+                <td style={cell}>
+                  <strong>{displayPhone(row.ring_number || row.company_identifier)}</strong>
+                  <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{row.ring_target || "Unknown number"}</div>
+                  <button type="button" onClick={() => void ignoreRangOnNumber(row)} style={{ border: 0, background: "transparent", color: "#0b5cab", padding: "5px 0 0", fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>Ignore this number</button>
+                </td>
                 <td style={cell}><strong>{row.missed_count}</strong></td>
                 <td style={cell}>{new Date(row.first_missed_at).toLocaleString()}</td>
                 <td style={cell}>{new Date(row.latest_missed_at).toLocaleString()}</td>

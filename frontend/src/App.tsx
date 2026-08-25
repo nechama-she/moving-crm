@@ -24,6 +24,7 @@ const ForemenPage = lazy(() => import("./ForemenPage"));
 const ImpersonateUsersPage = lazy(() => import("./ImpersonateUsersPage"));
 const ChatsPage = lazy(() => import("./UnifiedCommunicationsPage"));
 const UnansweredMessagesPage = lazy(() => import("./UnansweredMessagesPage"));
+const IgnoredCallNumbersPage = lazy(() => import("./IgnoredCallNumbersPage"));
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -212,6 +213,7 @@ function ProtectedRoutes() {
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
           <Route path="/settings/pending-duplications" element={<PendingDuplicationsPage />} />
           <Route path="/settings/duplication-rules" element={user?.role === "admin" ? <LeadDuplicationRulesPage /> : <Navigate to="/" replace />} />
+          <Route path="/settings/ignored-call-numbers" element={user?.role === "admin" ? <IgnoredCallNumbersPage /> : <Navigate to="/" replace />} />
           <Route path="/settings/impersonate" element={<ImpersonateUsersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/pricing" element={<PricingPage />} />

@@ -1,5 +1,6 @@
 """Admin-only API for the new Unanswered Messages page."""
 
+import json
 import logging
 import time
 import uuid
@@ -14,11 +15,12 @@ from sqlalchemy.orm import Session, joinedload
 from auth import require_admin
 from database import get_db
 from db import conversations_table, sms_messages_table
-from models import Company, Lead, MessageState, MissedCallState, User
+from models import AppSetting, Company, Lead, MessageState, MissedCallState, User
 from realtime import publish_realtime_event
 
 router = APIRouter(prefix="/api/unanswered-messages", tags=["Unanswered Messages"])
 logger = logging.getLogger("moving-crm")
+IGNORED_CALL_NUMBERS_SETTING = "sales_work_queue.ignored_call_numbers"
 
 
 class EndStateRequest(BaseModel):
@@ -32,8 +34,34 @@ class IgnoreMissedCallRequest(BaseModel):
     company_identifier: str
 
 
+class IgnoredNumberRequest(BaseModel):
+    number: str
+
+
 def _digits(value: object) -> str:
-    return "".join(character for character in str(value or "") if character.isdigit())
+    digits = "".join(character for character in str(value or "") if character.isdigit())
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _ignored_call_numbers(db: Session) -> set[str]:
+    row = db.query(AppSetting).filter(AppSetting.key == IGNORED_CALL_NUMBERS_SETTING).first()
+    if not row or not row.value:
+        return set()
+    try:
+        values = json.loads(row.value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid ignored call numbers setting")
+        return set()
+    return {_digits(value) for value in values if _digits(value)}
+
+
+def _save_ignored_call_numbers(db: Session, numbers: set[str]) -> None:
+    row = db.query(AppSetting).filter(AppSetting.key == IGNORED_CALL_NUMBERS_SETTING).first()
+    value = json.dumps(sorted(numbers), separators=(",", ":"))
+    if row:
+        row.value = value
+    else:
+        db.add(AppSetting(key=IGNORED_CALL_NUMBERS_SETTING, value=value))
 
 
 def _ring_target(
@@ -60,6 +88,8 @@ def list_missed_calls(
         .order_by(MissedCallState.latest_missed_at.desc())
         .all()
     )
+    ignored_numbers = _ignored_call_numbers(db)
+    states = [state for state in states if _digits(state.company_identifier) not in ignored_numbers]
     companies_by_phone = {
         _digits(phone): name
         for name, phone in db.query(Company.name, Company.phone).all()
@@ -89,6 +119,71 @@ def list_missed_calls(
             "latest_missed_at": state.latest_missed_at.isoformat(),
         })
     return {"items": items, "count": len(states)}
+
+
+@router.get("/ignored-call-numbers")
+def list_ignored_call_numbers(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return {"numbers": sorted(_ignored_call_numbers(db))}
+
+
+@router.post("/ignored-call-numbers")
+def add_ignored_call_number(
+    body: IgnoredNumberRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    number = _digits(body.number)
+    if len(number) < 7 or len(number) > 15:
+        raise HTTPException(status_code=400, detail="Phone number must contain 7 to 15 digits")
+    numbers = _ignored_call_numbers(db)
+    numbers.add(number)
+    _save_ignored_call_numbers(db, numbers)
+    call_states = db.query(MissedCallState).filter(MissedCallState.company_identifier == number).all()
+    call_ids = [state.call_id for state in call_states]
+    for state in call_states:
+        db.delete(state)
+    message_states = db.query(MessageState).filter(
+        MessageState.channel == "sms",
+        MessageState.company_identifier == number,
+    ).all()
+    message_ids = [state.message_id for state in message_states]
+    unanswered_removed = sum(not state.conversation_ended for state in message_states)
+    ended_removed = len(message_states) - unanswered_removed
+    for state in message_states:
+        db.delete(state)
+    db.commit()
+    call_event = {
+        "type": "missed_call_state_changed",
+        "event_id": f"ignored-number:{uuid.uuid4()}",
+        "action": "remove",
+        "call_ids": call_ids,
+        "count_delta": -len(call_states),
+    }
+    message_event = {
+        "type": "message_state_changed",
+        "event_id": f"ignored-number:{uuid.uuid4()}",
+        "action": "remove",
+        "channel": "sms",
+        "message_ids": message_ids,
+        "count_delta": {"unanswered": -unanswered_removed, "ended": -ended_removed},
+    }
+    publish_realtime_event(call_event)
+    publish_realtime_event(message_event)
+    return {"numbers": sorted(numbers), "events": [call_event, message_event]}
+
+
+@router.delete("/ignored-call-numbers/{number}")
+def remove_ignored_call_number(
+    number: str,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    normalized = _digits(number)
+    numbers = _ignored_call_numbers(db)
+    numbers.discard(normalized)
+    _save_ignored_call_numbers(db, numbers)
+    db.commit()
+    return {"numbers": sorted(numbers)}
 
 
 @router.delete("/missed-calls")
@@ -163,21 +258,25 @@ def list_message_states(
         .order_by(MessageState.occurred_at.desc())
         .all()
     )
+    ignored_numbers = _ignored_call_numbers(db)
+    all_states = [
+        state
+        for state in all_states
+        if state.channel != "sms" or _digits(state.company_identifier) not in ignored_numbers
+    ]
     sql_finished_at = time.perf_counter()
     unanswered_count = sum(not state.conversation_ended for state in all_states)
     ended_count = len(all_states) - unanswered_count
     states = [state for state in all_states if bool(state.conversation_ended) is ended][:limit]
     messages = _preview_messages(states)
     previews_finished_at = time.perf_counter()
-    page_ids = {state.company_identifier for state in states if state.channel != "sms" and not state.lead_id}
-    companies_by_page = {
-        company.facebook_page_id: company.name
-        for company in db.query(Company).filter(Company.facebook_page_id.in_(page_ids)).all()
-    } if page_ids else {}
+    companies_by_phone = {_digits(phone): name for name, phone in db.query(Company.name, Company.phone).all() if _digits(phone)}
+    reps_by_phone = {_digits(phone): name for name, phone in db.query(User.name, User.phone).all() if _digits(phone)}
     items = []
     for state in states:
         lead = state.lead
         message = messages.get((state.channel, state.message_id), {})
+        destination_number = _digits(state.company_identifier) if state.channel == "sms" else ""
         items.append({
             "channel": state.channel,
             "message_id": state.message_id,
@@ -185,10 +284,9 @@ def list_message_states(
             "client": lead.full_name if lead else state.client_identifier,
             "message": str(message.get("text") or ""),
             "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
-            "company": (
-                lead.company.name if lead and lead.company
-                else companies_by_page.get(state.company_identifier, str(message.get("company_name") or ""))
-            ),
+            "company": lead.company.name if lead and lead.company else "",
+            "destination_number": destination_number,
+            "destination_name": _ring_target(destination_number, companies_by_phone, reps_by_phone) if destination_number else "",
             "occurred_at": state.occurred_at.isoformat(),
         })
     logger.info(
