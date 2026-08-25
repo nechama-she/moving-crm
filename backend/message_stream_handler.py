@@ -1,5 +1,6 @@
 """Consume source-message DynamoDB streams into the CRM-owned message_states table."""
 
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -10,13 +11,14 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import joinedload
 
 from database import SessionLocal
-from models import Company, Lead, MessageState, MissedCallState, User
+from models import AppSetting, Company, Lead, MessageState, MissedCallState, User
 from realtime import publish_realtime_event
 
 
 logger = logging.getLogger("moving-crm.message-stream")
 logger.setLevel(logging.INFO)
 _deserialize = TypeDeserializer().deserialize
+IGNORED_CALL_NUMBERS_SETTING = "sales_work_queue.ignored_call_numbers"
 
 
 def _image(record: dict) -> dict:
@@ -27,6 +29,18 @@ def _image(record: dict) -> dict:
 def _digits(value) -> str:
     digits = "".join(character for character in str(value or "") if character.isdigit())
     return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _ignored_call_numbers(db) -> set[str]:
+    row = db.query(AppSetting).filter(AppSetting.key == IGNORED_CALL_NUMBERS_SETTING).first()
+    if not row or not row.value:
+        return set()
+    try:
+        values = json.loads(row.value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid ignored call numbers setting")
+        return set()
+    return {_digits(value) for value in values if _digits(value)}
 
 
 def _occurred_at(value) -> datetime:
@@ -122,10 +136,13 @@ def _display_row(db, inserted: dict, item: dict) -> dict:
             .filter(Lead.id == inserted["lead_id"])
             .first()
         )
-    company = lead.company.name if lead and lead.company else str(item.get("company_name") or "")
-    if not company and inserted["channel"] != "sms":
-        matched_company = db.query(Company).filter(Company.facebook_page_id == inserted["company_identifier"]).first()
-        company = matched_company.name if matched_company else ""
+    company = lead.company.name if lead and lead.company else ""
+    destination_number = _digits(inserted["company_identifier"]) if inserted["channel"] == "sms" else ""
+    destination_name = ""
+    if destination_number:
+        rep = next((name for name, phone in db.query(User.name, User.phone).all() if _digits(phone) == destination_number), "")
+        destination_company = next((name for name, phone in db.query(Company.name, Company.phone).all() if _digits(phone) == destination_number), "")
+        destination_name = rep or destination_company or "Unknown number"
     return {
         "channel": inserted["channel"],
         "message_id": inserted["message_id"],
@@ -134,6 +151,8 @@ def _display_row(db, inserted: dict, item: dict) -> dict:
         "message": str(item.get("text") or ""),
         "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
         "company": company,
+        "destination_number": destination_number,
+        "destination_name": destination_name,
         "occurred_at": inserted["occurred_at"].isoformat(),
     }
 
@@ -147,6 +166,16 @@ def _call_display_row(db, inserted: dict) -> dict:
             .filter(Lead.id == inserted["lead_id"])
             .first()
         )
+    ring_number = _digits(inserted["company_identifier"])
+    rep = next(
+        (name for name, phone in db.query(User.name, User.phone).all() if _digits(phone) == ring_number),
+        "",
+    )
+    company = next(
+        (name for name, phone in db.query(Company.name, Company.phone).all() if _digits(phone) == ring_number),
+        "",
+    )
+    ring_target = rep or company or "Unknown number"
     return {
         "call_id": inserted["call_id"],
         "lead_id": inserted.get("lead_id") or "",
@@ -154,7 +183,9 @@ def _call_display_row(db, inserted: dict) -> dict:
         "company_identifier": inserted["company_identifier"],
         "client": lead.full_name if lead else inserted["client_identifier"],
         "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
-        "company": lead.company.name if lead and lead.company else inserted["company_identifier"],
+        "company": lead.company.name if lead and lead.company else "",
+        "ring_number": ring_number,
+        "ring_target": ring_target,
         "missed_count": inserted["missed_count"],
         "first_missed_at": inserted["first_missed_at"].isoformat(),
         "latest_missed_at": inserted["latest_missed_at"].isoformat(),
@@ -169,6 +200,10 @@ def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[b
     if not call_id or timestamp is None or not client_identifier or not company_identifier:
         logger.warning("Skipping call without complete identifiers")
         return False, None
+
+    if company_identifier in _ignored_call_numbers(db):
+        logger.info("Ignoring call to configured destination number %s", company_identifier)
+        return True, None
 
     is_missed_inbound = (
         str(item.get("direction") or "").strip().lower() == "inbound"
@@ -255,6 +290,10 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
     if not client_identifier or not company_identifier:
         logger.warning("Skipping %s message without complete conversation identifiers", channel)
         return False, None
+
+    if channel == "sms" and company_identifier in _ignored_call_numbers(db):
+        logger.info("Ignoring SMS to configured destination number %s", company_identifier)
+        return True, None
 
     conversation_filter = (
         MessageState.channel == channel,
