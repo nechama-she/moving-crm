@@ -101,6 +101,11 @@ def _phone(value) -> str:
     return digits[-10:] if len(digits) >= 10 else digits
 
 
+def _automated_sender(message: dict) -> str:
+    value = str(message.get("sales_name") or message.get("role") or "").strip().lower()
+    return "AI" if value in {"ai", "assistant", "bot"} else ""
+
+
 @router.get("/calls")
 def get_latest_calls(
     cursor: str = Query(default=""),
@@ -358,6 +363,7 @@ def get_all_chats(
             "company": lead.company.name if lead.company else "",
             "platform": platform,
             "message": str(message.get("text") or ""),
+            "sender_label": _automated_sender(message),
             "timestamp": timestamp,
             "direction": str(message.get("direction") or message.get("role") or ""),
             "message_partition_key": str(message.get("phone_number") or message.get("user_id") or ""),
@@ -389,6 +395,7 @@ def get_all_chats(
                     "company": page_company_names.get(str(message.get("page_id") or ""), ""),
                     "platform": platform,
                     "message": str(message.get("text") or ""),
+                    "sender_label": _automated_sender(message),
                     "timestamp": timestamp,
                     "direction": str(message.get("role") or ""),
                     "message_partition_key": user_id,
@@ -433,6 +440,7 @@ def get_all_chats(
                     "company": number_company_names.get(number_id) or str(message.get("company_name") or ""),
                     "platform": "sms",
                     "message": str(message.get("text") or ""),
+                    "sender_label": _automated_sender(message),
                     "timestamp": timestamp,
                     "direction": str(message.get("direction") or ""),
                     "message_partition_key": str(message.get("phone_number") or ""),
