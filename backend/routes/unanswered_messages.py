@@ -32,6 +32,24 @@ class IgnoreMissedCallRequest(BaseModel):
     company_identifier: str
 
 
+def _digits(value: object) -> str:
+    return "".join(character for character in str(value or "") if character.isdigit())
+
+
+def _ring_target(lead: Lead | None, number: str) -> str:
+    if not lead:
+        return "Unknown number"
+    matches_rep = bool(lead.assignee and _digits(lead.assignee.phone) == number)
+    matches_company = bool(lead.company and _digits(lead.company.phone) == number)
+    if matches_rep and matches_company:
+        return "Company and rep number"
+    if matches_rep:
+        return "Rep number"
+    if matches_company:
+        return "Company number"
+    return "Unknown number"
+
+
 @router.get("/missed-calls")
 def list_missed_calls(
     limit: int = Query(100, ge=1, le=100),
@@ -47,6 +65,7 @@ def list_missed_calls(
     items = []
     for state in states[:limit]:
         lead = state.lead
+        ring_number = _digits(state.company_identifier)
         items.append({
             "call_id": state.call_id,
             "lead_id": state.lead_id or "",
@@ -54,7 +73,9 @@ def list_missed_calls(
             "company_identifier": state.company_identifier,
             "client": lead.full_name if lead else state.client_identifier,
             "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
-            "company": lead.company.name if lead and lead.company else state.company_identifier,
+            "company": lead.company.name if lead and lead.company else "",
+            "ring_number": ring_number,
+            "ring_target": _ring_target(lead, ring_number),
             "missed_count": state.missed_count,
             "first_missed_at": state.first_missed_at.isoformat(),
             "latest_missed_at": state.latest_missed_at.isoformat(),

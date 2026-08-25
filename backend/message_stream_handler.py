@@ -147,6 +147,17 @@ def _call_display_row(db, inserted: dict) -> dict:
             .filter(Lead.id == inserted["lead_id"])
             .first()
         )
+    ring_number = _digits(inserted["company_identifier"])
+    matches_rep = bool(lead and lead.assignee and _digits(lead.assignee.phone) == ring_number)
+    matches_company = bool(lead and lead.company and _digits(lead.company.phone) == ring_number)
+    if matches_rep and matches_company:
+        ring_target = "Company and rep number"
+    elif matches_rep:
+        ring_target = "Rep number"
+    elif matches_company:
+        ring_target = "Company number"
+    else:
+        ring_target = "Unknown number"
     return {
         "call_id": inserted["call_id"],
         "lead_id": inserted.get("lead_id") or "",
@@ -154,7 +165,9 @@ def _call_display_row(db, inserted: dict) -> dict:
         "company_identifier": inserted["company_identifier"],
         "client": lead.full_name if lead else inserted["client_identifier"],
         "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
-        "company": lead.company.name if lead and lead.company else inserted["company_identifier"],
+        "company": lead.company.name if lead and lead.company else "",
+        "ring_number": ring_number,
+        "ring_target": ring_target,
         "missed_count": inserted["missed_count"],
         "first_missed_at": inserted["first_missed_at"].isoformat(),
         "latest_missed_at": inserted["latest_missed_at"].isoformat(),

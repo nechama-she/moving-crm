@@ -7,7 +7,13 @@ import { RealtimeEvent, useRealtimeUpdates } from "./useRealtimeUpdates";
 type MessageTab = "unanswered" | "ended";
 type QueueTab = "messages" | "calls";
 type MessageRow = { channel: string; message_id: string; lead_id: string; client: string; message: string; rep: string; company: string; occurred_at: string };
-type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
+type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
+
+const displayPhone = (value: string) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  return local.length === 10 ? `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}` : value;
+};
 
 export default function UnansweredMessagesPage() {
   const { token } = useAuth();
@@ -195,17 +201,18 @@ export default function UnansweredMessagesPage() {
           <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Missed Calls ({missedCallCount})</h2>
         </div>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", minWidth: 760, borderCollapse: "collapse", tableLayout: "fixed" }}>
+          <table style={{ width: "100%", minWidth: 920, borderCollapse: "collapse", tableLayout: "fixed" }}>
             <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>
-              {['Client', 'Rep', 'Company', 'Missed Calls', 'First Missed', 'Latest Missed', 'Action'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+              {['Client', 'Rep', 'Company', 'Rang On', 'Missed Calls', 'First Missed', 'Latest Missed', 'Action'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
-              {loading ? <tr><td colSpan={7} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
-              {!loading && missedCalls.length === 0 ? <tr><td colSpan={7} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>No missed calls.</td></tr> : null}
+              {loading ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
+              {!loading && missedCalls.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>No missed calls.</td></tr> : null}
               {!loading && missedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
                 <td style={cell}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : <strong>{row.client}</strong>}</td>
                 <td style={cell}>{row.rep}</td>
-                <td style={cell}>{row.company || row.company_identifier}</td>
+                <td style={cell}>{row.company}</td>
+                <td style={cell}><strong>{displayPhone(row.ring_number || row.company_identifier)}</strong><div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{row.ring_target || "Unknown number"}</div></td>
                 <td style={cell}><strong>{row.missed_count}</strong></td>
                 <td style={cell}>{new Date(row.first_missed_at).toLocaleString()}</td>
                 <td style={cell}>{new Date(row.latest_missed_at).toLocaleString()}</td>
