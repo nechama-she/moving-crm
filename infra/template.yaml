@@ -1349,12 +1349,14 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: DescribeSourceMessageTables
+        - PolicyName: ManageSourceMessageStreams
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
-                Action: dynamodb:DescribeTable
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:UpdateTable
                 Resource:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/sms_messages"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/conversations"
@@ -1365,11 +1367,12 @@ Resources:
     Properties:
       Runtime: python3.13
       Handler: index.handler
-      Timeout: 30
+      Timeout: 180
       Role: !GetAtt MessageStreamLookupRole.Arn
       Code:
         ZipFile: |
           import json
+          import time
           import urllib.request
           import boto3
 
@@ -1399,10 +1402,24 @@ Resources:
                   values = {}
                   for key, table_name in (("SmsStreamArn", "sms_messages"), ("ConversationsStreamArn", "conversations"), ("CallsStreamArn", "calls")):
                       table = client.describe_table(TableName=table_name)["Table"]
-                      arn = table.get("LatestStreamArn")
+                      while table.get("TableStatus") != "ACTIVE":
+                          time.sleep(3)
+                          table = client.describe_table(TableName=table_name)["Table"]
                       stream = table.get("StreamSpecification") or {}
-                      if not arn or not stream.get("StreamEnabled") or stream.get("StreamViewType") != "NEW_IMAGE":
-                          raise RuntimeError(f"{table_name} must have a NEW_IMAGE DynamoDB stream enabled")
+                      if not stream.get("StreamEnabled") or stream.get("StreamViewType") != "NEW_IMAGE":
+                          client.update_table(
+                              TableName=table_name,
+                              StreamSpecification={"StreamEnabled": True, "StreamViewType": "NEW_IMAGE"},
+                          )
+                          while True:
+                              table = client.describe_table(TableName=table_name)["Table"]
+                              stream = table.get("StreamSpecification") or {}
+                              if table.get("TableStatus") == "ACTIVE" and stream.get("StreamEnabled") and stream.get("StreamViewType") == "NEW_IMAGE":
+                                  break
+                              time.sleep(3)
+                      arn = table.get("LatestStreamArn")
+                      if not arn:
+                          raise RuntimeError(f"{table_name} stream enabled but LatestStreamArn is missing")
                       values[key] = arn
                   respond(event, context, "SUCCESS", values)
               except Exception as exc:
