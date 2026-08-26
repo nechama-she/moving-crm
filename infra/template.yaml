@@ -1931,11 +1931,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
-                  - ssm:GetParameters
-                  - ssm:GetParametersByPath
-                Resource:
-                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/*"
-                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/meta-webhook/*"
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/meta-webhook/MOVINGCRM_ADMIN_PASSWORD"
               - Effect: Allow
                 Action:
                   - sqs:ReceiveMessage
@@ -1960,7 +1956,6 @@ Resources:
         S3Key: lead-duplicate/package.zip
       Environment:
         Variables:
-          SSM_PREFIX: !Sub /moving-crm/${Environment}/
           API_URL: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
           MOVING_CRM_ADMIN_PASSWORD_PARAM: /meta-webhook/MOVINGCRM_ADMIN_PASSWORD
 

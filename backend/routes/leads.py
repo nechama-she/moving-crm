@@ -27,6 +27,7 @@ from config import get_config
 from database import get_db
 from lead_audit import record_lead_update_log
 from libs.common.phone import normalize_digits
+from libs.common.ssm import get_ssm_cached
 from libs.smartmoving.client import (
     begin_request_capture,
     create_provider_lead,
@@ -902,15 +903,7 @@ def _get_user_company_ids(user: User, db: Session) -> list[str]:
 
 
 def _smartmoving_provider_key() -> str:
-    raw = get_config().get("SMARTMOVING_DUPLICATE_CONFIG", "")
-    if isinstance(raw, dict):
-        config = raw
-    else:
-        try:
-            config = json.loads(raw or "{}")
-        except (TypeError, json.JSONDecodeError):
-            config = {}
-    return _clean_optional_text(config.get("providerKey"))
+    return _clean_optional_text(get_ssm_cached("/meta-webhook/SMARTMOVING_PROVIDER_KEY"))
 
 
 def _lookup_sender_id(lead: Lead) -> str | None:
