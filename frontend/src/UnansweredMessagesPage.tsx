@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -53,6 +53,9 @@ export default function UnansweredMessagesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [numberMenu, setNumberMenu] = useState<NumberMenu>(null);
+  const [repFilter, setRepFilter] = useState("");
+  const [companyFilter, setCompanyFilter] = useState("");
+  const [platformFilter, setPlatformFilter] = useState("");
   const processedEvents = useRef(new Set<string>());
   const loadingRef = useRef(true);
   const pendingEvents = useRef<RealtimeEvent[]>([]);
@@ -235,6 +238,30 @@ export default function UnansweredMessagesPage() {
 
   const headers = ["Client", "Platform", "Message", "Rep", "Company", "Sent To", "Message Time", "Action"];
   const cell = { padding: "13px 16px", borderBottom: "1px solid #e2e8f0", color: "#334155" } as const;
+  const filterOptions = useMemo(() => {
+    const rows = queueTab === "messages" ? items : missedCalls;
+    return {
+      reps: [...new Set(rows.map((row) => row.rep).filter(Boolean))].sort(),
+      companies: [...new Set(rows.map((row) => row.company).filter(Boolean))].sort(),
+      platforms: queueTab === "messages" ? [...new Set(items.map((row) => row.channel).filter(Boolean))].sort() : ["calls"],
+    };
+  }, [queueTab, items, missedCalls]);
+  const filteredItems = useMemo(() => items.filter((row) =>
+    (!repFilter || row.rep === repFilter) &&
+    (!companyFilter || row.company === companyFilter) &&
+    (!platformFilter || row.channel === platformFilter)
+  ), [items, repFilter, companyFilter, platformFilter]);
+  const filteredMissedCalls = useMemo(() => missedCalls.filter((row) =>
+    (!repFilter || row.rep === repFilter) &&
+    (!companyFilter || row.company === companyFilter) &&
+    (!platformFilter || platformFilter === "calls")
+  ), [missedCalls, repFilter, companyFilter, platformFilter]);
+
+  useEffect(() => {
+    setRepFilter("");
+    setCompanyFilter("");
+    setPlatformFilter("");
+  }, [queueTab]);
 
   return (
     <main style={{ padding: 24, width: "100%", maxWidth: 1280, margin: "0 auto", boxSizing: "border-box" }}>
@@ -258,6 +285,12 @@ export default function UnansweredMessagesPage() {
         </button>
       </nav>
 
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        <select aria-label="Filter work queue by rep" value={repFilter} onChange={(event) => setRepFilter(event.target.value)} style={filterSelect}><option value="">All reps</option>{filterOptions.reps.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+        <select aria-label="Filter work queue by company" value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} style={filterSelect}><option value="">All companies</option>{filterOptions.companies.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+        <select aria-label="Filter work queue by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select>
+      </div>
+
       {queueTab === "messages" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px 0" }}>
           <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Unanswered Messages ({counts.unanswered})</h2>
@@ -272,8 +305,8 @@ export default function UnansweredMessagesPage() {
           <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>{headers.map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}</tr></thead>
           <tbody>
             {loading ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading messages…</td></tr> : null}
-            {!loading && items.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{tab === "unanswered" ? "No unanswered messages." : "No ended chats."}</td></tr> : null}
-            {!loading && items.map((row) => <tr key={`${row.channel}:${row.message_id}`}>
+            {!loading && filteredItems.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{items.length ? "No messages match these filters." : tab === "unanswered" ? "No unanswered messages." : "No ended chats."}</td></tr> : null}
+            {!loading && filteredItems.map((row) => <tr key={`${row.channel}:${row.message_id}`}>
               <td style={cell}>
                 {row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : row.channel === "messenger" || row.channel === "instagram" ? <a href={`https://www.facebook.com/latest/${encodeURIComponent(row.client)}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</a> : null}
                 {row.channel === "sms" && row.client_number ? <div style={{ marginTop: row.lead_id ? 4 : 0 }}><IgnoreNumberTarget number={row.client_number} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></div> : null}
@@ -302,8 +335,8 @@ export default function UnansweredMessagesPage() {
             </tr></thead>
             <tbody>
               {loading ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
-              {!loading && missedCalls.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>No missed calls.</td></tr> : null}
-              {!loading && missedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
+              {!loading && filteredMissedCalls.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{missedCalls.length ? "No missed calls match these filters." : "No missed calls."}</td></tr> : null}
+              {!loading && filteredMissedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
                 <td style={cell}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : null}<div style={{ marginTop: row.lead_id ? 4 : 0 }}><IgnoreNumberTarget number={row.client_identifier} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></div></td>
                 <td style={cell}>{row.rep}</td>
                 <td style={cell}>{row.company}</td>
@@ -343,3 +376,4 @@ const activeQueueCard: React.CSSProperties = { border: "2px solid #0b5cab", padd
 const queueCardLabel: React.CSSProperties = { fontSize: 16, fontWeight: 700, alignSelf: "center" };
 const queueCardCount: React.CSSProperties = { fontSize: 28, lineHeight: 1, color: "#0b5cab" };
 const queueCardDescription: React.CSSProperties = { gridColumn: "1 / -1", fontSize: 13, lineHeight: 1.35, color: "#64748b" };
+const filterSelect: React.CSSProperties = { minWidth: 180, padding: "9px 32px 9px 10px", border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", color: "#334155" };

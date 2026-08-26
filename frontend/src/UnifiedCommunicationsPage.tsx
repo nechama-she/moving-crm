@@ -26,6 +26,7 @@ const companyAndRep = (item: Contact) => {
 
 export default function UnifiedCommunicationsPage() {
   const { token } = useAuth(); const [contacts, setContacts] = useState<Contact[]>([]); const [selected, setSelected] = useState(""); const [timeline, setTimeline] = useState<TimelineItem[]>([]); const [search, setSearch] = useState(""); const [loading, setLoading] = useState(true); const [historyLoading, setHistoryLoading] = useState(false); const [error, setError] = useState("");
+  const [repFilter, setRepFilter] = useState(""); const [companyFilter, setCompanyFilter] = useState(""); const [platformFilter, setPlatformFilter] = useState("");
   const [cursors, setCursors] = useState({ sms: "", meta: "", calls: "" }); const [more, setMore] = useState({ sms: true, meta: true, calls: true }); const [loadingMore, setLoadingMore] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
   useEffect(() => { (async () => { setLoading(true); try {
@@ -112,11 +113,30 @@ export default function UnifiedCommunicationsPage() {
     return () => cancelAnimationFrame(frame);
   }, [selected, historyLoading, timeline.length]);
 
-  const shown = useMemo(() => { const query = search.trim().toLowerCase(); return !query ? contacts : contacts.filter((item) => [item.client, item.company, item.rep].some((value) => value.toLowerCase().includes(query))); }, [contacts, search]);
+  const filterOptions = useMemo(() => ({
+    reps: [...new Set(contacts.map((item) => item.rep).filter(Boolean))].sort(),
+    companies: [...new Set(contacts.map((item) => item.company).filter(Boolean))].sort(),
+    platforms: [...new Set(contacts.flatMap((item) => item.sources.map((source) => String(source.source_type || ""))).filter(Boolean))].sort(),
+  }), [contacts]);
+  const shown = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return contacts.filter((item) => {
+      if (query && ![item.client, item.company, item.rep].some((value) => value.toLowerCase().includes(query))) return false;
+      if (repFilter && item.rep !== repFilter) return false;
+      if (companyFilter && item.company !== companyFilter) return false;
+      if (platformFilter && !item.sources.some((source) => String(source.source_type || "") === platformFilter)) return false;
+      return true;
+    });
+  }, [contacts, search, repFilter, companyFilter, platformFilter]);
   function callbackFor(index: number) { const item = timeline[index]; if (item.kind !== "call" || item.direction !== "inbound" || item.answered) return undefined; return timeline.slice(index + 1).find((next) => next.kind === "call" && next.direction === "outbound"); }
   function missedBefore(index: number) { const item = timeline[index]; if (item.kind !== "call" || item.direction !== "outbound") return undefined; const prior = timeline.slice(0, index).filter((candidate) => candidate.kind === "call" && candidate.direction === "inbound" && !candidate.answered); return [...prior].reverse().find((missed) => !timeline.some((candidate) => candidate.kind === "call" && candidate.direction === "outbound" && candidate.timestamp > missed.timestamp && candidate.timestamp < item.timestamp)); }
 
   return <main style={{ padding: 20, width: "100%", maxWidth: 1400, margin: "0 auto", boxSizing: "border-box" }}><div style={{ marginBottom: 14 }}><h1 style={{ margin: 0, color: "#032d60", fontSize: 24 }}>Communications</h1><p style={{ margin: "5px 0 0", color: "#64748b" }}>Messages and calls in one client timeline.</p></div>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+      <select aria-label="Filter communications by rep" value={repFilter} onChange={(event) => setRepFilter(event.target.value)} style={filterSelect}><option value="">All reps</option>{filterOptions.reps.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+      <select aria-label="Filter communications by company" value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} style={filterSelect}><option value="">All companies</option>{filterOptions.companies.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+      <select aria-label="Filter communications by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select>
+    </div>
     {error ? <p style={{ color: "#ba0517" }}>{error}</p> : null}<div className="communications-workspace">
       <section className="communications-timeline" style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 9, minHeight: 560, overflow: "hidden" }}>
         <header style={{ padding: "14px 18px", borderBottom: "1px solid #d8dde6", background: "#f8fafc" }}>{contact ? <>{contact.lead_id ? <Link to={`/leads/${contact.lead_id}`} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{contact.client}</Link> : <strong>{contact.client}</strong>}<span style={{ color: "#64748b", marginLeft: 10 }}>{contact.company} · {contact.rep}</span></> : "Select a client"}</header>
@@ -125,3 +145,5 @@ export default function UnifiedCommunicationsPage() {
       <aside className="communications-contacts" style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 9, overflow: "hidden" }}><div style={{ padding: 12, borderBottom: "1px solid #d8dde6" }}><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search clients or numbers" style={{ width: "100%", padding: "9px 10px", border: "1px solid #cbd5e1", borderRadius: 6, boxSizing: "border-box" }} /></div><div onScroll={(event) => { const element = event.currentTarget; if (element.scrollHeight - element.scrollTop - element.clientHeight < 240) void loadMore(); }} style={{ maxHeight: "calc(100vh - 190px)", overflowY: "auto" }}>{loading ? <p style={{ padding: 14 }}>Loading…</p> : shown.map((item) => <button key={item.key} type="button" onClick={() => setSelected(item.key)} style={{ display: "block", width: "100%", padding: "12px 14px", textAlign: "left", border: 0, borderBottom: "1px solid #e2e8f0", background: selected === item.key ? "#eef6ff" : "#fff", cursor: "pointer" }}><strong style={{ display: "block", color: "#032d60" }}>{item.client}</strong><span style={{ display: "block", color: "#64748b", fontSize: 12 }}>{companyAndRep(item)} · {when(item.timestamp)}</span><span title={item.last_preview} style={{ display: "block", marginTop: 4, color: "#475569", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.last_preview}</span></button>)}{loadingMore ? <div style={{ padding: 12, textAlign: "center", color: "#64748b", fontSize: 12 }}>Loading more…</div> : null}</div></aside>
     </div></main>;
 }
+
+const filterSelect: React.CSSProperties = { minWidth: 180, padding: "9px 32px 9px 10px", border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", color: "#334155" };
