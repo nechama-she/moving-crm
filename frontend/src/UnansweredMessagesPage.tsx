@@ -6,7 +6,7 @@ import { RealtimeEvent, useRealtimeUpdates } from "./useRealtimeUpdates";
 
 type MessageTab = "unanswered" | "ended";
 type QueueTab = "messages" | "calls";
-type MessageRow = { channel: string; message_id: string; lead_id: string; client: string; client_number: string; message: string; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
+type MessageRow = { channel: string; message_id: string; lead_id: string; client_identifier: string; client: string; client_number: string; message: string; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type NumberMenu = { number: string; x: number; y: number } | null;
 
@@ -277,7 +277,7 @@ export default function UnansweredMessagesPage() {
                 {row.lead_id ? <Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : row.channel === "messenger" || row.channel === "instagram" ? <a href={`https://www.facebook.com/latest/${encodeURIComponent(row.client)}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</a> : null}
                 {row.channel === "sms" && row.client_number ? <div style={{ marginTop: row.lead_id ? 4 : 0 }}><IgnoreNumberTarget number={row.client_number} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></div> : null}
               </td>
-              <td style={cell}>{row.channel === "sms" ? "SMS" : row.channel === "instagram" ? "Instagram" : "Messenger"}</td>
+              <td style={cell}>{row.channel === "sms" ? "SMS" : <a href={`https://www.facebook.com/latest/${encodeURIComponent(row.client_identifier)}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.channel === "instagram" ? "Instagram" : "Messenger"}</a>}</td>
               <td style={{ ...cell, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.message}>{row.message || "No preview"}</td>
               <td style={cell}>{row.rep}</td><td style={cell}>{row.company || "—"}</td>
               <td style={cell}>{row.channel === "sms" ? <IgnoreNumberTarget number={row.destination_number} name={row.destination_name} showUnknown openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /> : "—"}</td>

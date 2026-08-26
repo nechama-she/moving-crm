@@ -152,6 +152,7 @@ def _display_row(db, inserted: dict, item: dict) -> dict:
         "channel": inserted["channel"],
         "message_id": inserted["message_id"],
         "lead_id": inserted.get("lead_id") or "",
+        "client_identifier": inserted["client_identifier"],
         "client": lead.full_name if lead else inserted["client_identifier"],
         "client_number": _digits(inserted["client_identifier"]) if inserted["channel"] == "sms" else "",
         "message": str(item.get("text") or ""),
