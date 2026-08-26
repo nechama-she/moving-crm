@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
+import MessageAttachments, { MessageAttachment } from "./MessageAttachments";
 
 interface Message {
   user_id?: string;
@@ -16,6 +17,7 @@ interface Message {
   phone_number?: string;
   company_name?: string;
   number_id?: string;
+  attachments?: MessageAttachment[];
 }
 
 interface Props {
@@ -49,6 +51,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
   const tabPickedRef = useRef(false);
 
   useEffect(() => {
@@ -142,6 +145,14 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
         role: m.direction === "received" ? "user" : "agent",
       }))
     : allMessages.filter((m) => (m.platform?.toLowerCase() || "") === activeTab);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const list = messageListRef.current;
+      if (list) list.scrollTop = list.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeTab, smsNumberTab, filtered.length, loading]);
 
   if (loading)
     return <p style={{ padding: 16, color: "#888" }}>Loading messages…</p>;
@@ -307,6 +318,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
 
       {/* Messages */}
       <div
+        ref={messageListRef}
         style={{
           maxHeight: 500,
           overflowY: "auto",
@@ -370,7 +382,8 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
                     lineHeight: 1.5,
                   }}
                 >
-                  {msg.text}
+                  {msg.text ? <div>{msg.text}</div> : null}
+                  <MessageAttachments attachments={msg.attachments} />
                 </div>
               </div>
             );

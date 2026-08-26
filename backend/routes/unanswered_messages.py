@@ -229,8 +229,6 @@ def _exact_source_message(channel: str, message_id: str) -> dict:
     if not items:
         return {}
     item = items[0]
-    if item.get("text") is not None:
-        return item
     key = (
         {"phone_number": item.get("phone_number"), "timestamp": item.get("timestamp")}
         if channel == "sms"
@@ -319,9 +317,11 @@ def list_message_states(
             "channel": state.channel,
             "message_id": state.message_id,
             "lead_id": state.lead_id or "",
+            "client_identifier": state.client_identifier,
             "client": lead.full_name if lead else state.client_identifier,
             "client_number": _digits(state.client_identifier) if state.channel == "sms" else "",
             "message": str(message.get("text") or ""),
+            "attachments": message.get("attachments") or [],
             "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
             "company": lead.company.name if lead and lead.company else "",
             "destination_number": destination_number,
@@ -386,8 +386,10 @@ def set_conversation_ended(
         "channel": state.channel,
         "message_id": state.message_id,
         "lead_id": state.lead_id or "",
+        "client_identifier": state.client_identifier,
         "client": lead.full_name if lead else state.client_identifier,
         "message": str(message.get("text") or ""),
+        "attachments": message.get("attachments") or [],
         "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
         "company": company,
         "occurred_at": state.occurred_at.isoformat(),
