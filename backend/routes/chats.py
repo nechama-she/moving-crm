@@ -148,6 +148,19 @@ def get_latest_calls(
     for lead in leads:
         leads_by_phone.setdefault(_phone(lead.phone), []).append(lead)
 
+    company_rows = db.query(Company).filter(Company.id.in_(company_ids)).all()
+    company_names_by_phone = {
+        _phone(company.phone): company.name
+        for company in company_rows
+        if _phone(company.phone)
+    }
+    rep_rows = db.query(User).all()
+    rep_names_by_phone = {
+        _phone(rep.phone): rep.name
+        for rep in rep_rows
+        if _phone(rep.phone)
+    }
+
     items = []
     for record in records:
         client_phone = _phone(record.get("phone_number"))
@@ -160,6 +173,8 @@ def get_latest_calls(
                 matches.append(lead)
         lead = matches[0] if len(matches) == 1 else None
         direction = str(record.get("direction") or "").strip().lower()
+        resolved_company = company_names_by_phone.get(company_phone, "")
+        resolved_rep = rep_names_by_phone.get(company_phone, "")
         items.append({
             "call_id": str(record.get("message_id") or ""),
             "conversation_id": f"{client_phone}:{company_phone}",
@@ -167,8 +182,8 @@ def get_latest_calls(
             "client": lead.full_name if lead else str(record.get("phone_number") or client_phone),
             "client_identifier": client_phone,
             "company_identifier": company_phone,
-            "company": lead.company.name if lead and lead.company else str(record.get("company_name") or company_phone),
-            "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
+            "company": lead.company.name if lead and lead.company else resolved_company,
+            "rep": lead.assignee.name if lead and lead.assignee else (resolved_rep or "Unassigned"),
             "direction": "inbound" if direction == "inbound" else "outbound",
             "answered": bool(record.get("answered")),
             "reason": str(record.get("reason") or ""),
@@ -439,7 +454,10 @@ def get_all_chats(
                     "lead_id": "",
                     "client": str(message.get("phone_number") or phone or "Unknown client"),
                     "rep": number_rep_names.get(number_id, ""),
-                    "company": number_company_names.get(number_id) or str(message.get("company_name") or ""),
+                    # number_id is authoritative. company_name on source SMS
+                    # records may contain a salesperson name, so never use it
+                    # as a company fallback.
+                    "company": number_company_names.get(number_id, ""),
                     "platform": "sms",
                     "message": str(message.get("text") or ""),
                     "attachments": message.get("attachments") or [],

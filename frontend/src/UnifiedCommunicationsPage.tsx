@@ -26,6 +26,7 @@ const companyAndRep = (item: Contact) => {
 
 export default function UnifiedCommunicationsPage() {
   const { token } = useAuth(); const [contacts, setContacts] = useState<Contact[]>([]); const [selected, setSelected] = useState(""); const [timeline, setTimeline] = useState<TimelineItem[]>([]); const [search, setSearch] = useState(""); const [loading, setLoading] = useState(true); const [historyLoading, setHistoryLoading] = useState(false); const [error, setError] = useState("");
+  const [repFilter, setRepFilter] = useState(""); const [companyFilter, setCompanyFilter] = useState(""); const [platformFilter, setPlatformFilter] = useState("");
   const [cursors, setCursors] = useState({ sms: "", meta: "", calls: "" }); const [more, setMore] = useState({ sms: true, meta: true, calls: true }); const [loadingMore, setLoadingMore] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
   useEffect(() => { (async () => { setLoading(true); try {
@@ -37,13 +38,12 @@ export default function UnifiedCommunicationsPage() {
     for (const source of [...(sms.items || []), ...(meta.items || []), ...(calls.items || [])]) {
       const leadId = String(source.lead_id || ""); const platform = String(source.platform || (source.call_id ? "calls" : ""));
       const clientId = String(source.client_identifier || source.message_partition_key || source.client || "");
-      const companyId = String(source.company || source.company_identifier || "");
       const key = platform === "calls"
         ? `phone:${digits(source.client_identifier)}:${digits(source.company_identifier)}`
         : platform === "sms"
           ? `phone:${digits(source.message_partition_key)}:${digits(source.company_phone_identifier)}`
           : `meta:${platform}:${String(source.message_partition_key || "")}:${String(source.company_identifier || "")}`;
-      const value = map.get(key) || { key, lead_id: leadId, client: String(source.client || clientId), rep: String(source.rep || "Unassigned"), company: String(source.company || companyId), timestamp: 0, last_preview: "", sources: [] };
+      const value = map.get(key) || { key, lead_id: leadId, client: String(source.client || clientId), rep: String(source.rep || "Unassigned"), company: String(source.company || ""), timestamp: 0, last_preview: "", sources: [] };
       value.sources.push({ ...source, source_type: platform });
       const sourceTimestamp = stamp(source.timestamp);
       if (sourceTimestamp >= value.timestamp) {
@@ -69,9 +69,9 @@ export default function UnifiedCommunicationsPage() {
       setContacts((current) => {
         const map = new Map(current.map((item) => [item.key, { ...item, sources: [...item.sources] }]));
         for (const source of incoming) {
-          const leadId = String(source.lead_id || ""); const platform = String(source.platform || (source.call_id ? "calls" : "")); const clientId = String(source.client_identifier || source.message_partition_key || source.client || ""); const companyId = String(source.company || source.company_identifier || "");
+          const leadId = String(source.lead_id || ""); const platform = String(source.platform || (source.call_id ? "calls" : "")); const clientId = String(source.client_identifier || source.message_partition_key || source.client || "");
           const key = platform === "calls" ? `phone:${digits(source.client_identifier)}:${digits(source.company_identifier)}` : platform === "sms" ? `phone:${digits(source.message_partition_key)}:${digits(source.company_phone_identifier)}` : `meta:${platform}:${String(source.message_partition_key || "")}:${String(source.company_identifier || "")}`;
-          const value = map.get(key) || { key, lead_id: leadId, client: String(source.client || clientId), rep: String(source.rep || "Unassigned"), company: String(source.company || companyId), timestamp: 0, last_preview: "", sources: [] };
+          const value = map.get(key) || { key, lead_id: leadId, client: String(source.client || clientId), rep: String(source.rep || "Unassigned"), company: String(source.company || ""), timestamp: 0, last_preview: "", sources: [] };
           const sourceKey = `${platform}:${String(source.message_partition_key || source.client_identifier || "")}:${String(source.company_identifier || source.company_phone_identifier || "")}`;
           const sourceExists = value.sources.some((existing) => `${String(existing.source_type || "")}:${String(existing.message_partition_key || existing.client_identifier || "")}:${String(existing.company_identifier || existing.company_phone_identifier || "")}` === sourceKey);
           if (!sourceExists) value.sources.push({ ...source, source_type: platform }); const sourceTimestamp = stamp(source.timestamp);
@@ -112,16 +112,42 @@ export default function UnifiedCommunicationsPage() {
     return () => cancelAnimationFrame(frame);
   }, [selected, historyLoading, timeline.length]);
 
-  const shown = useMemo(() => { const query = search.trim().toLowerCase(); return !query ? contacts : contacts.filter((item) => [item.client, item.company, item.rep].some((value) => value.toLowerCase().includes(query))); }, [contacts, search]);
+  const filterOptions = useMemo(() => ({
+    reps: [...new Set(contacts.map((item) => item.rep).filter(Boolean))].sort(),
+    companies: [...new Set(contacts.map((item) => item.company).filter(Boolean))].sort(),
+    platforms: [...new Set(contacts.flatMap((item) => item.sources.map((source) => String(source.source_type || ""))).filter(Boolean))].sort(),
+  }), [contacts]);
+  const shown = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return contacts.filter((item) => {
+      if (query && ![item.client, item.company, item.rep].some((value) => value.toLowerCase().includes(query))) return false;
+      if (repFilter && item.rep !== repFilter) return false;
+      if (companyFilter && item.company !== companyFilter) return false;
+      if (platformFilter && !item.sources.some((source) => String(source.source_type || "") === platformFilter)) return false;
+      return true;
+    });
+  }, [contacts, search, repFilter, companyFilter, platformFilter]);
+  useEffect(() => {
+    if (loading) return;
+    if (selected && shown.some((item) => item.key === selected)) return;
+    setSelected(shown[0]?.key || "");
+  }, [loading, selected, shown]);
   function callbackFor(index: number) { const item = timeline[index]; if (item.kind !== "call" || item.direction !== "inbound" || item.answered) return undefined; return timeline.slice(index + 1).find((next) => next.kind === "call" && next.direction === "outbound"); }
   function missedBefore(index: number) { const item = timeline[index]; if (item.kind !== "call" || item.direction !== "outbound") return undefined; const prior = timeline.slice(0, index).filter((candidate) => candidate.kind === "call" && candidate.direction === "inbound" && !candidate.answered); return [...prior].reverse().find((missed) => !timeline.some((candidate) => candidate.kind === "call" && candidate.direction === "outbound" && candidate.timestamp > missed.timestamp && candidate.timestamp < item.timestamp)); }
 
   return <main style={{ padding: 20, width: "100%", maxWidth: 1400, margin: "0 auto", boxSizing: "border-box" }}><div style={{ marginBottom: 14 }}><h1 style={{ margin: 0, color: "#032d60", fontSize: 24 }}>Communications</h1><p style={{ margin: "5px 0 0", color: "#64748b" }}>Messages and calls in one client timeline.</p></div>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+      <select aria-label="Filter communications by rep" value={repFilter} onChange={(event) => setRepFilter(event.target.value)} style={filterSelect}><option value="">All reps</option>{filterOptions.reps.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+      <select aria-label="Filter communications by company" value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} style={filterSelect}><option value="">All companies</option>{filterOptions.companies.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+      <select aria-label="Filter communications by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select>
+    </div>
     {error ? <p style={{ color: "#ba0517" }}>{error}</p> : null}<div className="communications-workspace">
       <section className="communications-timeline" style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 9, minHeight: 560, overflow: "hidden" }}>
-        <header style={{ padding: "14px 18px", borderBottom: "1px solid #d8dde6", background: "#f8fafc" }}>{contact ? <>{contact.lead_id ? <Link to={`/leads/${contact.lead_id}`} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{contact.client}</Link> : <strong>{contact.client}</strong>}<span style={{ color: "#64748b", marginLeft: 10 }}>{contact.company} · {contact.rep}</span></> : "Select a client"}</header>
+        <header style={{ padding: "14px 18px", borderBottom: "1px solid #d8dde6", background: "#f8fafc" }}>{contact ? <>{contact.lead_id ? <Link to={`/leads/${contact.lead_id}`} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{contact.client}</Link> : <strong>{contact.client}</strong>}<span style={{ color: "#64748b", marginLeft: 10 }}>{companyAndRep(contact)}</span></> : "Select a client"}</header>
         <div ref={timelineRef} style={{ padding: 18, maxHeight: "calc(100vh - 230px)", overflowY: "auto" }}>{historyLoading ? <p>Loading communication…</p> : timeline.map((item, index) => { const callback = callbackFor(index); const missed = missedBefore(index); return <div key={item.id} style={{ display: "flex", justifyContent: item.direction === "outbound" ? "flex-end" : "flex-start", margin: "9px 0" }}><article style={{ maxWidth: "72%", padding: "10px 13px", borderRadius: 14, background: item.direction === "outbound" ? "#e3f2fd" : "#f3f4f6", color: "#1e293b" }}>{item.kind === "message" ? <>{item.senderLabel ? <strong style={{ display: "block", marginBottom: 5, color: "#5c2d91", fontSize: 12 }}>{item.senderLabel}</strong> : null}{item.text ? <div style={{ whiteSpace: "pre-wrap" }}>{item.text}</div> : null}<MessageAttachments attachments={item.attachments} /></> : <><strong>{item.direction === "inbound" ? "Inbound call" : "Outbound call"}</strong><div style={{ fontSize: 12, color: "#64748b" }}>{item.answered ? "Answered" : "Not answered"}{item.reason ? ` · ${item.reason}` : ""}</div>{callback ? <div style={{ color: "#2e844a", fontSize: 12, fontWeight: 700 }}>Called back in {elapsed(callback.timestamp - item.timestamp)}</div> : item.direction === "inbound" && !item.answered ? <div style={{ color: "#ba0517", fontSize: 12, fontWeight: 700 }}>No callback yet</div> : null}{missed ? <div style={{ color: "#2e844a", fontSize: 12, fontWeight: 700 }}>Callback after {elapsed(item.timestamp - missed.timestamp)}</div> : null}</>}<footer style={{ marginTop: 5, color: "#64748b", fontSize: 11 }}>{item.channel.toUpperCase()} · {when(item.timestamp)}</footer></article></div>; })}{!historyLoading && contact && timeline.length === 0 ? <p style={{ textAlign: "center", color: "#64748b" }}>No communication history found.</p> : null}</div>
       </section>
       <aside className="communications-contacts" style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 9, overflow: "hidden" }}><div style={{ padding: 12, borderBottom: "1px solid #d8dde6" }}><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search clients or numbers" style={{ width: "100%", padding: "9px 10px", border: "1px solid #cbd5e1", borderRadius: 6, boxSizing: "border-box" }} /></div><div onScroll={(event) => { const element = event.currentTarget; if (element.scrollHeight - element.scrollTop - element.clientHeight < 240) void loadMore(); }} style={{ maxHeight: "calc(100vh - 190px)", overflowY: "auto" }}>{loading ? <p style={{ padding: 14 }}>Loading…</p> : shown.map((item) => <button key={item.key} type="button" onClick={() => setSelected(item.key)} style={{ display: "block", width: "100%", padding: "12px 14px", textAlign: "left", border: 0, borderBottom: "1px solid #e2e8f0", background: selected === item.key ? "#eef6ff" : "#fff", cursor: "pointer" }}><strong style={{ display: "block", color: "#032d60" }}>{item.client}</strong><span style={{ display: "block", color: "#64748b", fontSize: 12 }}>{companyAndRep(item)} · {when(item.timestamp)}</span><span title={item.last_preview} style={{ display: "block", marginTop: 4, color: "#475569", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.last_preview}</span></button>)}{loadingMore ? <div style={{ padding: 12, textAlign: "center", color: "#64748b", fontSize: 12 }}>Loading more…</div> : null}</div></aside>
     </div></main>;
 }
+
+const filterSelect: React.CSSProperties = { minWidth: 180, padding: "9px 32px 9px 10px", border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", color: "#334155" };
