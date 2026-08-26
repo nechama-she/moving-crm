@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
+import MessageAttachments, { MessageAttachment } from "./MessageAttachments";
 
 interface Message {
   user_id?: string;
@@ -16,6 +17,7 @@ interface Message {
   phone_number?: string;
   company_name?: string;
   number_id?: string;
+  attachments?: MessageAttachment[];
 }
 
 interface Props {
@@ -370,7 +372,8 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
                     lineHeight: 1.5,
                   }}
                 >
-                  {msg.text}
+                  {msg.text ? <div>{msg.text}</div> : null}
+                  <MessageAttachments attachments={msg.attachments} />
                 </div>
               </div>
             );

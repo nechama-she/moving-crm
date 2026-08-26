@@ -156,6 +156,7 @@ def _display_row(db, inserted: dict, item: dict) -> dict:
         "client": lead.full_name if lead else inserted["client_identifier"],
         "client_number": _digits(inserted["client_identifier"]) if inserted["channel"] == "sms" else "",
         "message": str(item.get("text") or ""),
+        "attachments": item.get("attachments") or [],
         "rep": lead.assignee.name if lead and lead.assignee else "Unassigned",
         "company": company,
         "destination_number": destination_number,
