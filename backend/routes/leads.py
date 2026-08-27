@@ -4044,11 +4044,6 @@ def _refresh_lead_from_smartmoving(
                     status_code=502,
                     detail="SmartMoving opportunity was not found; the CRM lead was not changed",
                 )
-            if payment.rep_commission_percent is not None and not 0 <= payment.rep_commission_percent <= 100:
-                raise HTTPException(status_code=400, detail="repCommissionPercent must be between 0 and 100")
-            commissionable_amount = max(0, payment.amount - payment.third_party_commission_amount)
-            if payment.rep_commission_amount is not None and not 0 <= payment.rep_commission_amount <= commissionable_amount:
-                raise HTTPException(status_code=400, detail="repCommissionAmount cannot exceed the commissionable payment amount")
             resolved_lead_id = lead.id
             _hard_delete_lead(lead, db)
             return {
