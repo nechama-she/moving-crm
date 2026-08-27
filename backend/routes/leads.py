@@ -1666,6 +1666,18 @@ def copy_lead(
     target_company = db.query(Company).filter(Company.id == target_company_id).first()
     if not target_company:
         raise HTTPException(status_code=404, detail="Selected company not found")
+    matching_company_ids = [
+        row.id
+        for row in db.query(Company.id).filter(Company.name == target_company.name).all()
+    ]
+    if matching_company_ids != [target_company.id]:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot copy lead: company name '{target_company.name}' is not unique. "
+                "The lead was not created or messaged."
+            ),
+        )
     branch_id = _clean_optional_text(target_company.samrtmoving_branch_id)
     provider_key = _smartmoving_provider_key()
     if not branch_id:
@@ -1693,55 +1705,36 @@ def copy_lead(
             detail=f"SmartMoving could not create the copied lead: {smartmoving_result.get('error', 'unknown error')}",
         )
 
-    copied_lead = Lead(
-        company_id=target_company.id,
-        assigned_to=None,
-        full_name=source_lead.full_name or "",
-        email=source_lead.email or "",
-        phone=source_lead.phone or "",
-        source="Facebook",
-        smartmoving_id=_clean_optional_text(smartmoving_result.get("lead_id")) or None,
-        pickup_zip=source_lead.pickup_zip or "",
-        delivery_zip=source_lead.delivery_zip or "",
-        move_size=source_lead.move_size or "",
-        move_date=source_lead.move_date or "",
-        status="new",
-        notes=f"Copied from Moving CRM lead {source_lead.id}",
-        referral_source=referral_source,
-        service_type="Moving",
+    api_secret = get_config().get("API_SECRET", os.getenv("API_SECRET", ""))
+    creation_result = create_lead(
+        NewLead(
+            full_name=source_lead.full_name or "",
+            email=source_lead.email or "",
+            phone_number=source_lead.phone or "",
+            pickup_zip=source_lead.pickup_zip or "",
+            delivery_zip=source_lead.delivery_zip or "",
+            move_size=source_lead.move_size or "",
+            move_date=source_lead.move_date or "",
+            smartmoving_id=_clean_optional_text(smartmoving_result.get("lead_id")) or None,
+            notes=f"Copied from Moving CRM lead {source_lead.id}",
+            referral_source=referral_source,
+            service_type="Moving",
+            status="new",
+            company_name=target_company.name,
+            source="Facebook",
+        ),
+        x_api_secret=api_secret,
+        db=db,
     )
-    try:
-        db.add(copied_lead)
-        db.flush()
-        db.add(LeadJob(
-            lead_id=copied_lead.id,
-            company_id=target_company.id,
-            job_order=1,
-            pickup_zip=copied_lead.pickup_zip,
-            delivery_zip=copied_lead.delivery_zip,
-            move_date=copied_lead.move_date,
-        ))
-        db.commit()
-        db.refresh(copied_lead)
-    except Exception:
-        db.rollback()
-        logger.exception(
-            "SmartMoving lead %s was created, but CRM copy failed for source lead %s",
-            smartmoving_result.get("lead_id"),
-            source_lead.id,
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "SmartMoving created the lead, but Moving CRM could not save it. "
-                f"SmartMoving ID: {smartmoving_result.get('lead_id')}"
-            ),
-        )
+    copied_lead = db.query(Lead).filter(Lead.id == creation_result["lead_id"]).first()
+    if not copied_lead:
+        raise HTTPException(status_code=500, detail="Copied lead was created but could not be reloaded")
 
     return {
         "ok": True,
         "lead": copied_lead.to_dict(),
         "source_lead_id": source_lead.id,
+        "creation": creation_result,
     }
 
 
