@@ -60,7 +60,7 @@ export default function UnansweredMessagesPage() {
   const [firstContactCounts, setFirstContactCounts] = useState({ new: 0, overdue: 0 });
   const [firstContactHasMore, setFirstContactHasMore] = useState(false);
   const [loadingLeads, setLoadingLeads] = useState(false);
-  const [followupTab, setFollowupTab] = useState<FollowupTab>("all");
+  const [followupTab, setFollowupTab] = useState<FollowupTab>("overdue");
   const [followupLeads, setFollowupLeads] = useState<FollowupLead[]>([]);
   const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0 });
   const [followupHasMore, setFollowupHasMore] = useState(false);

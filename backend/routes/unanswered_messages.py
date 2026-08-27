@@ -35,10 +35,15 @@ CALL_PERIODS = (
     ("evening", 17, 20),
 )
 OPEN_SALES_STATUSES = ("new", "contacted", "quoted")
+MIRIT_COMPANY_NAME = "mirit great american"
 
 
 def _open_sales_status_filter():
     return or_(Lead.status.in_(OPEN_SALES_STATUSES), Lead.status.is_(None), Lead.status == "")
+
+
+def _exclude_mirit_company_filter():
+    return ~Lead.company.has(func.lower(func.trim(Company.name)) == MIRIT_COMPANY_NAME)
 
 
 class EndStateRequest(BaseModel):
@@ -239,7 +244,7 @@ def list_followup_calls(
     candidate_leads = (
         db.query(Lead)
         .options(joinedload(Lead.company), joinedload(Lead.assignee))
-        .filter(Lead.priority == 0, _open_sales_status_filter())
+        .filter(Lead.priority == 0, _open_sales_status_filter(), _exclude_mirit_company_filter())
         .all()
     )
     leads_with_created_at = [
@@ -289,9 +294,15 @@ def list_followup_calls(
             seen_call_periods.add(period_key)
             lead_calls.append(call_at)
         slots = _priority_zero_schedule(created_at, timezone_name)
+        try:
+            lead_tz = ZoneInfo(timezone_name or "America/New_York")
+        except Exception:
+            lead_tz = ZoneInfo("America/New_York")
         call_index = 0
         attempts = []
-        for index, (start, end, period) in enumerate(slots, start=1):
+        slot_index = 0
+        while slot_index < len(slots) and len(attempts) < 6:
+            start, end, period = slots[slot_index]
             start_utc, end_utc = start.astimezone(timezone.utc), end.astimezone(timezone.utc)
             while call_index < len(lead_calls) and lead_calls[call_index] < start_utc:
                 call_index += 1
@@ -299,6 +310,14 @@ def list_followup_calls(
             if completed_at:
                 call_index += 1
                 status = "on_time" if completed_at <= end_utc else "delayed"
+                if status == "delayed":
+                    completed_local = completed_at.astimezone(lead_tz)
+                    for future_index in range(slot_index + 1, len(slots)):
+                        future_start, future_end, _ = slots[future_index]
+                        if future_start <= completed_local < future_end:
+                            del slots[future_index]
+                            slots.append(_next_period(slots[-1][1], lead_tz))
+                            break
             elif now > end_utc:
                 status = "overdue"
             elif now >= start_utc:
@@ -306,13 +325,14 @@ def list_followup_calls(
             else:
                 status = "upcoming"
             attempts.append({
-                "number": index,
+                "number": len(attempts) + 1,
                 "period": period,
                 "scheduled_start": start.isoformat(),
                 "scheduled_end": end.isoformat(),
                 "completed_at": completed_at.isoformat() if completed_at else "",
                 "status": status,
             })
+            slot_index += 1
         overdue_count = sum(1 for attempt in attempts if attempt["status"] == "overdue")
         rows.append({
             "lead_id": lead.id,
@@ -351,7 +371,7 @@ def list_first_contact_leads(
     leads = (
         db.query(Lead)
         .options(joinedload(Lead.company), joinedload(Lead.assignee))
-        .filter(Lead.created_at >= tracking_start, _open_sales_status_filter())
+        .filter(Lead.created_at >= tracking_start, _open_sales_status_filter(), _exclude_mirit_company_filter())
         .order_by(Lead.created_at.desc())
         .all()
     )
