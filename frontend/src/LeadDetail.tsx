@@ -249,7 +249,7 @@ const MOVE_FIELDS = [
   "when_is_the_move?",
   "are_you_moving_within_the_state_or_out_of_state?",
 ];
-const META_FIELDS = ["leadgen_id", "created_time", "page_id", "form_id", "adgroup_id", "ad_id"];
+const META_FIELDS = ["leadgen_id", "created_time", "created_at", "page_id", "form_id", "adgroup_id", "ad_id"];
 const LEAD_STATUS_OPTIONS = [
   "new",
   "contacted",
@@ -1152,7 +1152,8 @@ export default function LeadDetail() {
 
   function renderRow(key: string) {
     const val = lead![key];
-    if (val == null || val === "") return null;
+    const isCreationTime = key === "created_time" || key === "created_at";
+    if ((val == null || val === "") && !isCreationTime) return null;
     const isInbox = key === "inbox_url";
     const isSmartMovingId = key === "smartmoving_id";
     if (isInbox && !String(val).trim().startsWith("http")) return null;
@@ -1169,7 +1170,7 @@ export default function LeadDetail() {
               {String(val)}
             </a>
           ) : (
-            formatValue(key, val)
+            isCreationTime && (val == null || val === "") ? "—" : formatValue(key, val)
           )}
         </td>
       </tr>
@@ -3257,6 +3258,8 @@ export default function LeadDetail() {
                   inboxUrl={messengerInboxUrl}
                   aircallNumberId={lead.aircall_number_id ? String(lead.aircall_number_id) : ""}
                   repAircallNumberId={lead.assigned_rep_aircall_number_id ? String(lead.assigned_rep_aircall_number_id) : ""}
+                  companyPhone={lead.company_phone ? String(lead.company_phone) : ""}
+                  repPhone={lead.assigned_rep_phone ? String(lead.assigned_rep_phone) : ""}
                   companyName={lead.company_name ? String(lead.company_name) : ""}
                 />
               ) : (

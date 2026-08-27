@@ -17,6 +17,8 @@ interface Message {
   phone_number?: string;
   company_name?: string;
   number_id?: string;
+  answered?: boolean;
+  reason?: string;
   attachments?: MessageAttachment[];
 }
 
@@ -28,6 +30,8 @@ interface Props {
   inboxUrl: string;
   aircallNumberId: string;
   repAircallNumberId: string;
+  companyPhone: string;
+  repPhone: string;
   companyName: string;
 }
 
@@ -39,12 +43,15 @@ const TABS = [
   { key: "calls", label: "Calls" },
 ] as const;
 
-export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, aircallNumberId, repAircallNumberId, companyName }: Props) {
+export default function ChatMessages({ leadId, userId, userName, phoneNumber, inboxUrl, aircallNumberId, repAircallNumberId, companyPhone, repPhone, companyName }: Props) {
   const { token } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [companySmsMessages, setCompanySmsMessages] = useState<Message[]>([]);
   const [repSmsMessages, setRepSmsMessages] = useState<Message[]>([]);
   const [smsNumberTab, setSmsNumberTab] = useState<"company" | "rep">("company");
+  const [companyCalls, setCompanyCalls] = useState<Message[]>([]);
+  const [repCalls, setRepCalls] = useState<Message[]>([]);
+  const [callNumberTab, setCallNumberTab] = useState<"company" | "rep">("company");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<string>("");
@@ -98,6 +105,20 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
       );
     }
 
+    const loadCalls = (destination: string, setter: (items: Message[]) => void) => {
+      if (!phoneNumber || !destination) return;
+      fetches.push(
+        fetch(`${API_BASE}/api/chats/calls/history?phone=${encodeURIComponent(phoneNumber)}&company_number=${encodeURIComponent(destination)}&lead_id=${encodeURIComponent(leadId)}`, { headers: authHeaders(token) })
+          .then((res) => {
+            if (!res.ok) throw new Error(`Calls HTTP ${res.status}`);
+            return res.json();
+          })
+          .then((data) => setter((data.calls || []).map((call: Message) => ({ ...call, platform: "calls", role: String(call.direction || "").toLowerCase() === "inbound" ? "user" : "agent" }))))
+      );
+    };
+    loadCalls(companyPhone, setCompanyCalls);
+    if (repPhone && repPhone.replace(/\D/g, "") !== companyPhone.replace(/\D/g, "")) loadCalls(repPhone, setRepCalls);
+
     if (fetches.length === 0) {
       setLoading(false);
       return;
@@ -106,7 +127,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
     Promise.all(fetches)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [userId, phoneNumber, companyName, aircallNumberId, repAircallNumberId, token]);
+  }, [leadId, userId, phoneNumber, companyName, companyPhone, repPhone, aircallNumberId, repAircallNumberId, token]);
 
   // Combine conversation messages + SMS (tagged with platform)
   const allMessages: Message[] = [
@@ -121,6 +142,8 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
       platform: "messages",
       role: m.direction === "received" ? "user" : "agent",
     })),
+    ...companyCalls,
+    ...repCalls,
   ];
 
   // Auto-select first tab with data (only once)
@@ -135,7 +158,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, companySmsMessages, repSmsMessages]);
+  }, [messages, companySmsMessages, repSmsMessages, companyCalls, repCalls]);
 
   const selectedSmsMessages = smsNumberTab === "company" ? companySmsMessages : repSmsMessages;
   const filtered = activeTab === "messages"
@@ -144,6 +167,8 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
         platform: "messages",
         role: m.direction === "received" ? "user" : "agent",
       }))
+    : activeTab === "calls"
+      ? (callNumberTab === "company" ? companyCalls : repCalls)
     : allMessages.filter((m) => (m.platform?.toLowerCase() || "") === activeTab);
 
   useEffect(() => {
@@ -152,7 +177,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
       if (list) list.scrollTop = list.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [activeTab, smsNumberTab, filtered.length, loading]);
+  }, [activeTab, smsNumberTab, callNumberTab, filtered.length, loading]);
 
   if (loading)
     return <p style={{ padding: 16, color: "#888" }}>Loading messages…</p>;
@@ -307,6 +332,13 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
         </div>
       )}
 
+      {activeTab === "calls" && (
+        <div style={{ display: "flex", gap: 8, padding: "10px 12px", border: "1px solid #e0e0e0", borderTop: "none", background: "#fff" }}>
+          <button type="button" onClick={() => setCallNumberTab("company")} style={{ padding: "7px 14px", borderRadius: 6, border: callNumberTab === "company" ? "1px solid #1976d2" : "1px solid #ccc", background: callNumberTab === "company" ? "#e3f2fd" : "#fff", color: callNumberTab === "company" ? "#1976d2" : "#555", fontWeight: callNumberTab === "company" ? 600 : 400, cursor: "pointer" }}>Company Number ({companyCalls.length})</button>
+          <button type="button" onClick={() => setCallNumberTab("rep")} disabled={!repPhone} style={{ padding: "7px 14px", borderRadius: 6, border: callNumberTab === "rep" ? "1px solid #1976d2" : "1px solid #ccc", background: callNumberTab === "rep" ? "#e3f2fd" : "#fff", color: !repPhone ? "#aaa" : callNumberTab === "rep" ? "#1976d2" : "#555", fontWeight: callNumberTab === "rep" ? 600 : 400, cursor: repPhone ? "pointer" : "default" }}>Assigned Rep Number ({repCalls.length})</button>
+        </div>
+      )}
+
       {/* External link bar — sticky above messages */}
       {activeTab === "messenger" && inboxUrl && (
         <div style={{ padding: "8px 12px", background: "#e3f2fd", border: "1px solid #e0e0e0", borderTop: "none", fontSize: 13 }}>
@@ -331,7 +363,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
       >
         {filtered.length === 0 ? (
           <p style={{ color: "#888", textAlign: "center", padding: 24 }}>
-            No {TABS.find((t) => t.key === activeTab)?.label} messages.
+            No {TABS.find((t) => t.key === activeTab)?.label} records.
           </p>
         ) : (
           filtered.map((msg, i) => {
@@ -382,8 +414,7 @@ export default function ChatMessages({ userId, userName, phoneNumber, inboxUrl, 
                     lineHeight: 1.5,
                   }}
                 >
-                  {msg.text ? <div>{msg.text}</div> : null}
-                  <MessageAttachments attachments={msg.attachments} />
+                  {activeTab === "calls" ? <><strong>{String(msg.direction || "").toLowerCase() === "inbound" ? "Inbound call" : "Outbound call"}</strong><div style={{ color: "#64748b", fontSize: 12 }}>{msg.answered ? "Answered" : "Not answered"}{msg.reason ? ` · ${msg.reason}` : ""}</div></> : <>{msg.text ? <div>{msg.text}</div> : null}<MessageAttachments attachments={msg.attachments} /></>}
                 </div>
               </div>
             );
