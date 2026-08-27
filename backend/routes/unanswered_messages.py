@@ -202,7 +202,7 @@ def _priority_zero_schedule(created_at: datetime, timezone_name: str) -> list[tu
     third_day = slots[-1][0].date()
     third_name = slots[-1][2]
     if third_name == "morning":
-        phase_two = [_period_on(third_day, "evening", tz), _period_on(third_day + timedelta(days=1), "morning", tz)]
+        phase_two = [_period_on(third_day, "afternoon", tz), _period_on(third_day, "evening", tz)]
     elif third_name == "afternoon":
         phase_two = [_period_on(third_day, "evening", tz), _period_on(third_day + timedelta(days=1), "morning", tz)]
     else:
@@ -210,6 +210,19 @@ def _priority_zero_schedule(created_at: datetime, timezone_name: str) -> list[tu
     slots.extend(phase_two)
     slots.append(_period_on(phase_two[-1][0].date() + timedelta(days=1), "morning", tz))
     return slots
+
+
+def _call_period_key(call_at: datetime, timezone_name: str) -> tuple[str, str] | None:
+    """Identify the local call period; calls outside a required period do not count."""
+    try:
+        tz = ZoneInfo(timezone_name or "America/New_York")
+    except Exception:
+        tz = ZoneInfo("America/New_York")
+    local = call_at.astimezone(tz)
+    for name, start_hour, end_hour in CALL_PERIODS:
+        if start_hour <= local.hour < end_hour:
+            return local.date().isoformat(), name
+    return None
 
 
 @router.get("/followup-calls")
@@ -255,15 +268,27 @@ def list_followup_calls(
     rows = []
     for lead, created_at in leads_with_created_at:
         client_phone = _digits(lead.phone)
+        timezone_name = lead.company.timezone if lead.company else "America/New_York"
         destinations = {_digits(lead.company.phone) if lead.company else "", _digits(lead.assignee.phone) if lead.assignee else ""}
         destinations.discard("")
-        lead_calls = sorted(
+        matching_calls = sorted(
             call_at
             for destination in destinations
             for call_at in calls_by_pair.get((client_phone, destination), [])
             if call_at >= created_at
         )
-        slots = _priority_zero_schedule(created_at, lead.company.timezone if lead.company else "America/New_York")
+        # A required morning/afternoon/evening period can be completed only once.
+        # Extra calls in that same local period neither complete another slot nor
+        # carry forward as a delayed completion.
+        seen_call_periods: set[tuple[str, str]] = set()
+        lead_calls = []
+        for call_at in matching_calls:
+            period_key = _call_period_key(call_at, timezone_name)
+            if period_key is None or period_key in seen_call_periods:
+                continue
+            seen_call_periods.add(period_key)
+            lead_calls.append(call_at)
+        slots = _priority_zero_schedule(created_at, timezone_name)
         call_index = 0
         attempts = []
         for index, (start, end, period) in enumerate(slots, start=1):

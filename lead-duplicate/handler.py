@@ -64,7 +64,7 @@ def _process(body: dict) -> dict:
             "referral_source": target_referral_source,
         },
         headers=headers,
-        timeout=20,
+        timeout=40,
     )
     if not copy_response.is_success:
         raise RuntimeError(
