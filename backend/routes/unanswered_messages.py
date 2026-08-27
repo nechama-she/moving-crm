@@ -34,6 +34,11 @@ CALL_PERIODS = (
     ("afternoon", 12, 17),
     ("evening", 17, 20),
 )
+OPEN_SALES_STATUSES = ("new", "contacted", "quoted")
+
+
+def _open_sales_status_filter():
+    return or_(Lead.status.in_(OPEN_SALES_STATUSES), Lead.status.is_(None), Lead.status == "")
 
 
 class EndStateRequest(BaseModel):
@@ -221,7 +226,7 @@ def list_followup_calls(
     candidate_leads = (
         db.query(Lead)
         .options(joinedload(Lead.company), joinedload(Lead.assignee))
-        .filter(Lead.priority == 0)
+        .filter(Lead.priority == 0, _open_sales_status_filter())
         .all()
     )
     leads_with_created_at = [
@@ -321,7 +326,7 @@ def list_first_contact_leads(
     leads = (
         db.query(Lead)
         .options(joinedload(Lead.company), joinedload(Lead.assignee))
-        .filter(Lead.created_at >= tracking_start)
+        .filter(Lead.created_at >= tracking_start, _open_sales_status_filter())
         .order_by(Lead.created_at.desc())
         .all()
     )
