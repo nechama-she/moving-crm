@@ -8,7 +8,8 @@ export const LABEL_MAP: Record<string, string> = {
   leadgen_id: "Lead Id",
   "when_is_the_move?": "Move Date",
   "are_you_moving_within_the_state_or_out_of_state?": "Move Type",
-  created_time: "Created Time",
+  created_time: "SmartMoving Created Time",
+  created_at: "CRM Record Created Time",
   inbox_url: "Inbox",
   phone_number: "Phone Number",
   full_name: "Full Name",
@@ -34,7 +35,7 @@ export function formatLabel(key: string): string {
 export function formatValue(key: string, value: unknown): string {
   if (value == null || value === "") return "";
   const str = String(value);
-  if (key === "created_time") {
+  if (key === "created_time" || key === "created_at") {
     const d = new Date(str);
     if (!isNaN(d.getTime())) {
       return d.toLocaleString("en-US", {

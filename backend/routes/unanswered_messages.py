@@ -7,6 +7,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import BotoCoreError, ClientError
@@ -26,6 +27,13 @@ logger = logging.getLogger("moving-crm")
 IGNORED_CALL_NUMBERS_SETTING = "sales_work_queue.ignored_call_numbers"
 COMMUNICATION_TIMESTAMP_INDEX = "record-type-timestamp-index"
 _first_contact_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "keys": set()}
+_followup_calls_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "calls": []}
+
+CALL_PERIODS = (
+    ("morning", 8, 12),
+    ("afternoon", 12, 17),
+    ("evening", 17, 20),
+)
 
 
 class EndStateRequest(BaseModel):
@@ -54,6 +62,19 @@ def _epoch(value: object) -> float:
         return number / 1000 if number >= 1_000_000_000_000 else number
     except (TypeError, ValueError):
         return 0
+
+
+def _smartmoving_created_at(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if text.replace(".", "", 1).isdigit():
+            return datetime.fromtimestamp(_epoch(text), tz=timezone.utc)
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 def _query_since(table, record_type: str, since: int) -> list[dict]:
@@ -119,6 +140,171 @@ def _first_contact_tracking() -> tuple[datetime | None, set[tuple[str, str, str]
     keys.discard(("meta", "", ""))
     _first_contact_cache.update({"loaded_at": now, "tracking_start": tracking_start, "keys": keys})
     return tracking_start, keys
+
+
+def _followup_call_tracking() -> tuple[datetime | None, list[dict]]:
+    now = time.time()
+    if _followup_calls_cache["tracking_start"] is not None and now - _followup_calls_cache["loaded_at"] < 30:
+        return _followup_calls_cache["tracking_start"], _followup_calls_cache["calls"]
+    first_page = calls_table.query(
+        IndexName=COMMUNICATION_TIMESTAMP_INDEX,
+        KeyConditionExpression=Key("record_type").eq("call"),
+        ScanIndexForward=True,
+        Limit=1,
+    )
+    first_items = first_page.get("Items", [])
+    if not first_items:
+        return None, []
+    first_epoch = _epoch(first_items[0].get("timestamp"))
+    calls = _query_since(calls_table, "call", int(first_epoch))
+    outbound = [item for item in calls if str(item.get("direction") or "").strip().lower() == "outbound"]
+    tracking_start = datetime.fromtimestamp(first_epoch, tz=timezone.utc)
+    _followup_calls_cache.update({"loaded_at": now, "tracking_start": tracking_start, "calls": outbound})
+    return tracking_start, outbound
+
+
+def _period_on(day, name: str, tz: ZoneInfo) -> tuple[datetime, datetime, str]:
+    _, start_hour, end_hour = next(period for period in CALL_PERIODS if period[0] == name)
+    return (
+        datetime(day.year, day.month, day.day, start_hour, tzinfo=tz),
+        datetime(day.year, day.month, day.day, end_hour, tzinfo=tz),
+        name,
+    )
+
+
+def _next_period(after: datetime, tz: ZoneInfo) -> tuple[datetime, datetime, str]:
+    local = after.astimezone(tz)
+    for name, start_hour, end_hour in CALL_PERIODS:
+        end = datetime(local.year, local.month, local.day, end_hour, tzinfo=tz)
+        if local < end:
+            start = datetime(local.year, local.month, local.day, start_hour, tzinfo=tz)
+            return max(start, local), end, name
+    return _period_on(local.date() + timedelta(days=1), "morning", tz)
+
+
+def _priority_zero_schedule(created_at: datetime, timezone_name: str) -> list[tuple[datetime, datetime, str]]:
+    try:
+        tz = ZoneInfo(timezone_name or "America/New_York")
+    except Exception:
+        tz = ZoneInfo("America/New_York")
+    slots: list[tuple[datetime, datetime, str]] = []
+    cursor = created_at.astimezone(tz)
+    for _ in range(3):
+        slot = _next_period(cursor, tz)
+        slots.append(slot)
+        cursor = slot[1]
+
+    third_day = slots[-1][0].date()
+    third_name = slots[-1][2]
+    if third_name == "morning":
+        phase_two = [_period_on(third_day, "evening", tz), _period_on(third_day + timedelta(days=1), "morning", tz)]
+    elif third_name == "afternoon":
+        phase_two = [_period_on(third_day, "evening", tz), _period_on(third_day + timedelta(days=1), "morning", tz)]
+    else:
+        phase_two = [_period_on(third_day + timedelta(days=1), "morning", tz), _period_on(third_day + timedelta(days=1), "afternoon", tz)]
+    slots.extend(phase_two)
+    slots.append(_period_on(phase_two[-1][0].date() + timedelta(days=1), "morning", tz))
+    return slots
+
+
+@router.get("/followup-calls")
+def list_followup_calls(
+    category: str = Query("all", pattern="^(all|overdue)$"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    tracking_start, calls = _followup_call_tracking()
+    if tracking_start is None:
+        return {"items": [], "counts": {"all": 0, "overdue": 0}, "has_more": False}
+    candidate_leads = (
+        db.query(Lead)
+        .options(joinedload(Lead.company), joinedload(Lead.assignee))
+        .filter(Lead.priority == 0)
+        .all()
+    )
+    leads_with_created_at = [
+        (
+            lead,
+            _smartmoving_created_at(lead.created_time)
+            or (lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc)),
+        )
+        for lead in candidate_leads
+    ]
+    leads_with_created_at = [
+        (lead, created_at)
+        for lead, created_at in leads_with_created_at
+        if created_at is not None and created_at >= tracking_start
+    ]
+    leads_with_created_at.sort(key=lambda pair: pair[1], reverse=True)
+    calls_by_pair: dict[tuple[str, str], list[datetime]] = {}
+    for call in calls:
+        call_at = datetime.fromtimestamp(_epoch(call.get("timestamp")), tz=timezone.utc)
+        key = (_digits(call.get("phone_number")), _digits(call.get("company_number")))
+        calls_by_pair.setdefault(key, []).append(call_at)
+    for values in calls_by_pair.values():
+        values.sort()
+
+    now = datetime.now(timezone.utc)
+    rows = []
+    for lead, created_at in leads_with_created_at:
+        client_phone = _digits(lead.phone)
+        destinations = {_digits(lead.company.phone) if lead.company else "", _digits(lead.assignee.phone) if lead.assignee else ""}
+        destinations.discard("")
+        lead_calls = sorted(
+            call_at
+            for destination in destinations
+            for call_at in calls_by_pair.get((client_phone, destination), [])
+            if call_at >= created_at
+        )
+        slots = _priority_zero_schedule(created_at, lead.company.timezone if lead.company else "America/New_York")
+        call_index = 0
+        attempts = []
+        for index, (start, end, period) in enumerate(slots, start=1):
+            start_utc, end_utc = start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+            while call_index < len(lead_calls) and lead_calls[call_index] < start_utc:
+                call_index += 1
+            completed_at = lead_calls[call_index] if call_index < len(lead_calls) else None
+            if completed_at:
+                call_index += 1
+                status = "on_time" if completed_at <= end_utc else "delayed"
+            elif now > end_utc:
+                status = "overdue"
+            elif now >= start_utc:
+                status = "open"
+            else:
+                status = "upcoming"
+            attempts.append({
+                "number": index,
+                "period": period,
+                "scheduled_start": start.isoformat(),
+                "scheduled_end": end.isoformat(),
+                "completed_at": completed_at.isoformat() if completed_at else "",
+                "status": status,
+            })
+        overdue_count = sum(1 for attempt in attempts if attempt["status"] == "overdue")
+        rows.append({
+            "lead_id": lead.id,
+            "client": lead.full_name or lead.phone or "Unknown client",
+            "client_phone": lead.phone or "",
+            "rep": lead.assignee.name if lead.assignee else "",
+            "company": lead.company.name if lead.company else "",
+            "created_at": created_at.isoformat(),
+            "smartmoving_created_time": lead.created_time,
+            "created_time_source": "smartmoving" if _smartmoving_created_at(lead.created_time) else "crm",
+            "attempts": attempts,
+            "completed_count": sum(1 for attempt in attempts if attempt["completed_at"]),
+            "overdue_count": overdue_count,
+        })
+    overdue_rows = [row for row in rows if row["overdue_count"]]
+    selected = rows if category == "all" else overdue_rows
+    page = selected[offset:offset + limit]
+    return {
+        "items": page,
+        "counts": {"all": len(rows), "overdue": len(overdue_rows)},
+        "has_more": offset + limit < len(selected),
+    }
 
 
 @router.get("/first-contact-leads")

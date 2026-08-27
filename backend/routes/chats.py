@@ -216,10 +216,25 @@ def get_latest_calls(
 def get_call_history(
     phone: str = Query(...),
     company_number: str = Query(...),
+    lead_id: str = Query(default=""),
     user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     if user.role != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can view call history")
+        lead = (
+            db.query(Lead)
+            .options(joinedload(Lead.company), joinedload(Lead.assignee))
+            .filter(Lead.id == lead_id)
+            .first()
+        )
+        if not lead or user.role != "sales_rep" or lead.assigned_to != user.id:
+            raise HTTPException(status_code=403, detail="You cannot view this call history")
+        valid_destinations = {
+            _phone(lead.company.phone) if lead.company else "",
+            _phone(lead.assignee.phone) if lead.assignee else "",
+        }
+        if _phone(phone) != _phone(lead.phone) or _phone(company_number) not in valid_destinations:
+            raise HTTPException(status_code=403, detail="Call history does not belong to this lead")
     expected_company = _phone(company_number)
     items: list[dict] = []
     seen: set[str] = set()
