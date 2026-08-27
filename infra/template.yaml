@@ -1218,6 +1218,10 @@ Resources:
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/meta-webhook/*"
               - Effect: Allow
                 Action:
+                  - ssm:PutParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/LIVESWITCH_REFRESH_TOKEN"
+              - Effect: Allow
+                Action:
                   - secretsmanager:GetSecretValue
                 Resource: !GetAtt Database.MasterUserSecret.SecretArn
               - Effect: Allow

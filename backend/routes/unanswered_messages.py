@@ -6,7 +6,7 @@ import logging
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import BotoCoreError, ClientError
@@ -17,13 +17,15 @@ from sqlalchemy.orm import Session, joinedload
 
 from auth import require_admin
 from database import get_db
-from db import conversations_table, sms_messages_table
+from db import calls_table, conversations_table, sms_messages_table
 from models import AppSetting, Company, Lead, MessageState, MissedCallState, User
 from realtime import publish_realtime_event
 
 router = APIRouter(prefix="/api/unanswered-messages", tags=["Unanswered Messages"])
 logger = logging.getLogger("moving-crm")
 IGNORED_CALL_NUMBERS_SETTING = "sales_work_queue.ignored_call_numbers"
+COMMUNICATION_TIMESTAMP_INDEX = "record-type-timestamp-index"
+_first_contact_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "keys": set()}
 
 
 class EndStateRequest(BaseModel):
@@ -44,6 +46,145 @@ class IgnoredNumberRequest(BaseModel):
 def _digits(value: object) -> str:
     digits = "".join(character for character in str(value or "") if character.isdigit())
     return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _epoch(value: object) -> float:
+    try:
+        number = float(value or 0)
+        return number / 1000 if number >= 1_000_000_000_000 else number
+    except (TypeError, ValueError):
+        return 0
+
+
+def _query_since(table, record_type: str, since: int) -> list[dict]:
+    items: list[dict] = []
+    response = table.query(
+        IndexName=COMMUNICATION_TIMESTAMP_INDEX,
+        KeyConditionExpression=Key("record_type").eq(record_type) & Key("timestamp").gte(since),
+        ScanIndexForward=True,
+    )
+    while True:
+        items.extend(response.get("Items", []))
+        if "LastEvaluatedKey" not in response:
+            return items
+        response = table.query(
+            IndexName=COMMUNICATION_TIMESTAMP_INDEX,
+            KeyConditionExpression=Key("record_type").eq(record_type) & Key("timestamp").gte(since),
+            ScanIndexForward=True,
+            ExclusiveStartKey=response["LastEvaluatedKey"],
+        )
+
+
+def _first_contact_tracking() -> tuple[datetime | None, set[tuple[str, str, str]]]:
+    now = time.time()
+    if _first_contact_cache["tracking_start"] is not None and now - _first_contact_cache["loaded_at"] < 30:
+        return _first_contact_cache["tracking_start"], _first_contact_cache["keys"]
+    first_page = calls_table.query(
+        IndexName=COMMUNICATION_TIMESTAMP_INDEX,
+        KeyConditionExpression=Key("record_type").eq("call"),
+        ScanIndexForward=True,
+        Limit=1,
+    )
+    first_items = first_page.get("Items", [])
+    if not first_items:
+        return None, set()
+    first_epoch = _epoch(first_items[0].get("timestamp"))
+    tracking_start = datetime.fromtimestamp(first_epoch, tz=timezone.utc)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        calls_future = executor.submit(_query_since, calls_table, "call", int(first_epoch))
+        sms_future = executor.submit(_query_since, sms_messages_table, "message", int(first_epoch))
+        meta_future = executor.submit(_query_since, conversations_table, "message", int(first_epoch * 1000))
+        calls, sms_messages, meta_messages = calls_future.result(), sms_future.result(), meta_future.result()
+    keys: set[tuple[str, str, str]] = set()
+    for item in calls:
+        if str(item.get("direction") or "").strip().lower() == "outbound":
+            keys.add(("phone", _digits(item.get("phone_number")), _digits(item.get("company_number"))))
+    for item in sms_messages:
+        direction = str(item.get("direction") or "").strip().lower()
+        sender = str(item.get("sales_name") or "").strip().lower()
+        if direction in {"sent", "outbound"} and sender not in {"ai", "assistant", "bot"}:
+            client = _digits(item.get("phone_number"))
+            number_id = str(item.get("number_id") or "").strip()
+            destination = _digits(item.get("company_number"))
+            if number_id:
+                keys.add(("sms_id", client, number_id))
+            if destination:
+                keys.add(("phone", client, destination))
+    for item in meta_messages:
+        role = str(item.get("role") or "").strip().lower()
+        sender = str(item.get("sales_name") or "").strip().lower()
+        if role not in {"user", "client", "customer", "ai", "assistant", "bot"} and sender not in {"ai", "assistant", "bot"}:
+            keys.add(("meta", str(item.get("user_id") or "").strip(), str(item.get("page_id") or "").strip()))
+    keys.discard(("phone", "", ""))
+    keys.discard(("meta", "", ""))
+    _first_contact_cache.update({"loaded_at": now, "tracking_start": tracking_start, "keys": keys})
+    return tracking_start, keys
+
+
+@router.get("/first-contact-leads")
+def list_first_contact_leads(
+    category: str = Query("new", pattern="^(new|overdue)$"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    tracking_start, contact_keys = _first_contact_tracking()
+    if tracking_start is None:
+        return {"items": [], "counts": {"new": 0, "overdue": 0}, "total": 0, "has_more": False, "tracking_start": ""}
+    leads = (
+        db.query(Lead)
+        .options(joinedload(Lead.company), joinedload(Lead.assignee))
+        .filter(Lead.created_at >= tracking_start)
+        .order_by(Lead.created_at.desc())
+        .all()
+    )
+    now = datetime.now(timezone.utc)
+    thirty_minutes_ago = now - timedelta(minutes=30)
+    pending: dict[str, list[Lead]] = {"new": [], "overdue": []}
+    for lead in leads:
+        client_phone = _digits(lead.phone)
+        company_phone = _digits(lead.company.phone) if lead.company else ""
+        rep_phone = _digits(lead.assignee.phone) if lead.assignee else ""
+        company_number_id = str(lead.company.aircall_number_id or "").strip() if lead.company else ""
+        rep_number_id = str(lead.assignee.aircall_number_id or "").strip() if lead.assignee else ""
+        meta_key = ("meta", str(lead.facebook_user_id or "").strip(), str(lead.company.facebook_page_id or "").strip() if lead.company else "")
+        contacted = (
+            ("phone", client_phone, company_phone) in contact_keys
+            or ("phone", client_phone, rep_phone) in contact_keys
+            or ("sms_id", client_phone, company_number_id) in contact_keys
+            or ("sms_id", client_phone, rep_number_id) in contact_keys
+            or meta_key in contact_keys
+        )
+        if contacted:
+            continue
+        created_at = lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc)
+        pending["new" if created_at > thirty_minutes_ago else "overdue"].append(lead)
+    selected = pending[category]
+    if category == "overdue":
+        selected.sort(key=lambda lead: lead.created_at)
+    page = selected[offset:offset + limit]
+    items = []
+    for lead in page:
+        created_at = lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc)
+        items.append({
+            "lead_id": lead.id,
+            "client": lead.full_name or lead.phone or "Unknown client",
+            "client_phone": lead.phone or "",
+            "rep": lead.assignee.name if lead.assignee else "",
+            "company": lead.company.name if lead.company else "",
+            "status": lead.status or "new",
+            "created_at": created_at.isoformat(),
+            "age_minutes": max(0, int((now - created_at).total_seconds() // 60)),
+        })
+    counts = {name: len(rows) for name, rows in pending.items()}
+    return {
+        "items": items,
+        "counts": counts,
+        "total": len(selected),
+        "has_more": offset + limit < len(selected),
+        "tracking_start": tracking_start.isoformat(),
+    }
 
 
 def _ignored_call_numbers(db: Session) -> set[str]:
