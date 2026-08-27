@@ -6,9 +6,11 @@ import { RealtimeEvent, useRealtimeUpdates } from "./useRealtimeUpdates";
 import MessageAttachments, { attachmentSummary, MessageAttachment } from "./MessageAttachments";
 
 type MessageTab = "unanswered" | "ended";
-type QueueTab = "messages" | "calls";
+type QueueTab = "messages" | "calls" | "leads";
+type LeadTab = "new" | "overdue";
 type MessageRow = { channel: string; message_id: string; lead_id: string; client_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
+type FirstContactLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; created_at: string; age_minutes: number };
 type NumberMenu = { number: string; x: number; y: number } | null;
 
 const displayPhone = (value: string) => {
@@ -50,6 +52,11 @@ export default function UnansweredMessagesPage() {
   const [counts, setCounts] = useState({ unanswered: 0, ended: 0 });
   const [missedCalls, setMissedCalls] = useState<MissedCallRow[]>([]);
   const [missedCallCount, setMissedCallCount] = useState(0);
+  const [leadTab, setLeadTab] = useState<LeadTab>("new");
+  const [firstContactLeads, setFirstContactLeads] = useState<FirstContactLead[]>([]);
+  const [firstContactCounts, setFirstContactCounts] = useState({ new: 0, overdue: 0 });
+  const [firstContactHasMore, setFirstContactHasMore] = useState(false);
+  const [loadingLeads, setLoadingLeads] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [numberMenu, setNumberMenu] = useState<NumberMenu>(null);
@@ -60,6 +67,7 @@ export default function UnansweredMessagesPage() {
   const loadingRef = useRef(true);
   const pendingEvents = useRef<RealtimeEvent[]>([]);
   const messageLoadSentinel = useRef<HTMLDivElement | null>(null);
+  const leadLoadSentinel = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     loadingRef.current = true;
@@ -88,6 +96,35 @@ export default function UnansweredMessagesPage() {
   }, [tab, token]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const loadFirstContactLeads = useCallback(async (offset = 0) => {
+    if (offset) setLoadingLeads(true);
+    else setLoadingLeads(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-leads?category=${leadTab}&limit=50&offset=${offset}`, { headers: authHeaders(token) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || `Leads HTTP ${response.status}`);
+      setFirstContactLeads((current) => offset ? [...current, ...(data.items || [])] : (data.items || []));
+      setFirstContactCounts(data.counts || { new: 0, overdue: 0 });
+      setFirstContactHasMore(Boolean(data.has_more));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load leads awaiting first contact");
+    } finally {
+      setLoadingLeads(false);
+    }
+  }, [leadTab, token]);
+
+  useEffect(() => { void loadFirstContactLeads(0); }, [loadFirstContactLeads]);
+
+  useEffect(() => {
+    const target = leadLoadSentinel.current;
+    if (!target || queueTab !== "leads" || !firstContactHasMore || loadingLeads) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadFirstContactLeads(firstContactLeads.length);
+    }, { rootMargin: "240px 0px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [queueTab, firstContactHasMore, loadingLeads, firstContactLeads.length, loadFirstContactLeads]);
 
   const loadMoreMessages = useCallback(async () => {
     if (loading || loadingMoreMessages || !messageHasMore || !messageCursor) return;
@@ -239,13 +276,13 @@ export default function UnansweredMessagesPage() {
   const headers = ["Client", "Platform", "Message", "Rep", "Company", "Sent To", "Message Time", "Action"];
   const cell = { padding: "13px 16px", borderBottom: "1px solid #e2e8f0", color: "#334155" } as const;
   const filterOptions = useMemo(() => {
-    const rows = queueTab === "messages" ? items : missedCalls;
+    const rows = queueTab === "messages" ? items : queueTab === "calls" ? missedCalls : firstContactLeads;
     return {
       reps: [...new Set(rows.map((row) => row.rep).filter(Boolean))].sort(),
       companies: [...new Set(rows.map((row) => row.company).filter(Boolean))].sort(),
-      platforms: queueTab === "messages" ? [...new Set(items.map((row) => row.channel).filter(Boolean))].sort() : ["calls"],
+      platforms: queueTab === "messages" ? [...new Set(items.map((row) => row.channel).filter(Boolean))].sort() : queueTab === "calls" ? ["calls"] : [],
     };
-  }, [queueTab, items, missedCalls]);
+  }, [queueTab, items, missedCalls, firstContactLeads]);
   const filteredItems = useMemo(() => items.filter((row) =>
     (!repFilter || row.rep === repFilter) &&
     (!companyFilter || row.company === companyFilter) &&
@@ -256,6 +293,10 @@ export default function UnansweredMessagesPage() {
     (!companyFilter || row.company === companyFilter) &&
     (!platformFilter || platformFilter === "calls")
   ), [missedCalls, repFilter, companyFilter, platformFilter]);
+  const filteredFirstContactLeads = useMemo(() => firstContactLeads.filter((row) =>
+    (!repFilter || row.rep === repFilter) &&
+    (!companyFilter || row.company === companyFilter)
+  ), [firstContactLeads, repFilter, companyFilter]);
 
   useEffect(() => {
     setRepFilter("");
@@ -283,12 +324,17 @@ export default function UnansweredMessagesPage() {
           <strong style={queueCardCount}>{missedCallCount}</strong>
           <span style={queueCardDescription}>Missed calls without a later contact attempt</span>
         </button>
+        <button type="button" onClick={() => setQueueTab("leads")} style={{ ...queueCard, ...(queueTab === "leads" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>Leads Awaiting First Contact</span>
+          <strong style={queueCardCount}>{firstContactCounts.new + firstContactCounts.overdue}</strong>
+          <span style={queueCardDescription}>New leads with no human call or message</span>
+        </button>
       </nav>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
         <select aria-label="Filter work queue by rep" value={repFilter} onChange={(event) => setRepFilter(event.target.value)} style={filterSelect}><option value="">All reps</option>{filterOptions.reps.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         <select aria-label="Filter work queue by company" value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} style={filterSelect}><option value="">All companies</option>{filterOptions.companies.map((value) => <option key={value} value={value}>{value}</option>)}</select>
-        <select aria-label="Filter work queue by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select>
+        {queueTab !== "leads" ? <select aria-label="Filter work queue by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select> : null}
       </div>
 
       {queueTab === "messages" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
@@ -349,6 +395,37 @@ export default function UnansweredMessagesPage() {
             </tbody>
           </table>
         </div>
+      </section> : null}
+
+      {queueTab === "leads" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ padding: "16px 18px 0" }}>
+          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Leads Awaiting First Contact ({firstContactCounts.new + firstContactCounts.overdue})</h2>
+          <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
+            {([ ["new", "New Leads", firstContactCounts.new], ["overdue", "Overdue", firstContactCounts.overdue] ] as const).map(([key, label, count]) => (
+              <button key={key} type="button" onClick={() => setLeadTab(key)} style={{ border: 0, borderBottom: leadTab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: leadTab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: leadTab === key ? 700 : 500, cursor: "pointer" }}>{label} ({count})</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", minWidth: 760, borderCollapse: "collapse", tableLayout: "fixed" }}>
+            <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>
+              {['Client', 'Rep', 'Company', 'Status', 'Created', 'Waiting'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+            </tr></thead>
+            <tbody>
+              {loadingLeads && firstContactLeads.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, textAlign: "center" }}>Loading leads…</td></tr> : null}
+              {!loadingLeads && filteredFirstContactLeads.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{firstContactLeads.length ? "No leads match these filters." : "No leads awaiting first contact."}</td></tr> : null}
+              {filteredFirstContactLeads.map((row) => <tr key={row.lead_id}>
+                <td style={cell}><Link to={`/leads/${row.lead_id}`} state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</td>
+                <td style={cell}>{row.rep || "—"}</td>
+                <td style={cell}>{row.company || "—"}</td>
+                <td style={cell}>{row.status}</td>
+                <td style={cell}>{new Date(row.created_at).toLocaleString()}</td>
+                <td style={cell}><strong style={{ color: leadTab === "overdue" ? "#b91c1c" : "#0b5cab" }}>{row.age_minutes < 60 ? `${row.age_minutes}m` : row.age_minutes < 1440 ? `${Math.floor(row.age_minutes / 60)}h ${row.age_minutes % 60}m` : `${Math.floor(row.age_minutes / 1440)}d ${Math.floor((row.age_minutes % 1440) / 60)}h`}</strong></td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+        <div ref={leadLoadSentinel} style={{ minHeight: 1, padding: loadingLeads && firstContactLeads.length ? 14 : 0, color: "#64748b", textAlign: "center" }}>{loadingLeads && firstContactLeads.length ? "Loading more leads…" : null}</div>
       </section> : null}
     </main>
   );

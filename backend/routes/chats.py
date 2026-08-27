@@ -154,11 +154,21 @@ def get_latest_calls(
         for company in company_rows
         if _phone(company.phone)
     }
+    company_number_ids_by_phone = {
+        _phone(company.phone): str(company.aircall_number_id or "").strip()
+        for company in company_rows
+        if _phone(company.phone) and str(company.aircall_number_id or "").strip()
+    }
     rep_rows = db.query(User).all()
     rep_names_by_phone = {
         _phone(rep.phone): rep.name
         for rep in rep_rows
         if _phone(rep.phone)
+    }
+    rep_number_ids_by_phone = {
+        _phone(rep.phone): str(rep.aircall_number_id or "").strip()
+        for rep in rep_rows
+        if _phone(rep.phone) and str(rep.aircall_number_id or "").strip()
     }
 
     items = []
@@ -175,6 +185,8 @@ def get_latest_calls(
         direction = str(record.get("direction") or "").strip().lower()
         resolved_company = company_names_by_phone.get(company_phone, "")
         resolved_rep = rep_names_by_phone.get(company_phone, "")
+        destination_name = resolved_company or resolved_rep
+        destination_type = "company" if resolved_company else ("rep" if resolved_rep else "")
         items.append({
             "call_id": str(record.get("message_id") or ""),
             "conversation_id": f"{client_phone}:{company_phone}",
@@ -182,8 +194,12 @@ def get_latest_calls(
             "client": lead.full_name if lead else str(record.get("phone_number") or client_phone),
             "client_identifier": client_phone,
             "company_identifier": company_phone,
-            "company": lead.company.name if lead and lead.company else resolved_company,
-            "rep": lead.assignee.name if lead and lead.assignee else (resolved_rep or "Unassigned"),
+            "company": lead.company.name if lead and lead.company else "",
+            "rep": lead.assignee.name if lead and lead.assignee else "",
+            "destination_name": destination_name,
+            "destination_type": destination_type,
+            "destination_phone": str(record.get("company_number") or ""),
+            "destination_aircall_number_id": company_number_ids_by_phone.get(company_phone) or rep_number_ids_by_phone.get(company_phone, ""),
             "direction": "inbound" if direction == "inbound" else "outbound",
             "answered": bool(record.get("answered")),
             "reason": str(record.get("reason") or ""),
@@ -370,12 +386,19 @@ def get_all_chats(
         key = (lead.id, platform)
         if key in latest and latest[key]["timestamp"] >= timestamp:
             return
+        number_id = str(message.get("number_id") or "").strip()
+        page_id = str(message.get("page_id") or "").strip()
+        destination_company = number_company_names.get(number_id, "") if platform == "sms" else page_company_names.get(page_id, "")
+        destination_rep = number_rep_names.get(number_id, "") if platform == "sms" else ""
         latest[key] = {
             "conversation_id": f"lead:{lead.id}:{platform}",
             "lead_id": lead.id,
             "client": lead.full_name or lead.phone or "Unknown client",
             "rep": rep_name if rep_name is not None else (lead.assignee.name if lead.assignee else ""),
             "company": lead.company.name if lead.company else "",
+            "destination_name": destination_company or destination_rep,
+            "destination_type": "company" if destination_company else ("rep" if destination_rep else ""),
+            "destination_phone": str(message.get("company_number") or ""),
             "platform": platform,
             "message": str(message.get("text") or ""),
             "attachments": message.get("attachments") or [],
@@ -408,7 +431,10 @@ def get_all_chats(
                     "lead_id": "",
                     "client": user_id,
                     "rep": "",
-                    "company": page_company_names.get(str(message.get("page_id") or ""), ""),
+                    "company": "",
+                    "destination_name": page_company_names.get(str(message.get("page_id") or ""), ""),
+                    "destination_type": "company" if page_company_names.get(str(message.get("page_id") or ""), "") else "",
+                    "destination_phone": "",
                     "platform": platform,
                     "message": str(message.get("text") or ""),
                     "attachments": message.get("attachments") or [],
@@ -453,11 +479,14 @@ def get_all_chats(
                     "conversation_id": f"unmatched:{phone}:{number_id}",
                     "lead_id": "",
                     "client": str(message.get("phone_number") or phone or "Unknown client"),
-                    "rep": number_rep_names.get(number_id, ""),
+                    "rep": "",
                     # number_id is authoritative. company_name on source SMS
                     # records may contain a salesperson name, so never use it
                     # as a company fallback.
-                    "company": number_company_names.get(number_id, ""),
+                    "company": "",
+                    "destination_name": number_company_names.get(number_id) or number_rep_names.get(number_id, ""),
+                    "destination_type": "company" if number_company_names.get(number_id) else ("rep" if number_rep_names.get(number_id) else ""),
+                    "destination_phone": str(message.get("company_number") or ""),
                     "platform": "sms",
                     "message": str(message.get("text") or ""),
                     "attachments": message.get("attachments") or [],
