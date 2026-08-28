@@ -26,8 +26,10 @@ router = APIRouter(prefix="/api/unanswered-messages", tags=["Unanswered Messages
 logger = logging.getLogger("moving-crm")
 IGNORED_CALL_NUMBERS_SETTING = "sales_work_queue.ignored_call_numbers"
 COMMUNICATION_TIMESTAMP_INDEX = "record-type-timestamp-index"
-_first_contact_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "keys": set()}
+_first_contact_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "contacts": {}}
 _followup_calls_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "calls": []}
+_followup_messages_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "messages": []}
+_followup_rows_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "rows": []}
 
 CALL_PERIODS = (
     ("morning", 8, 12),
@@ -39,7 +41,8 @@ MIRIT_COMPANY_NAME = "mirit great american"
 
 
 def _open_sales_status_filter():
-    return or_(Lead.status.in_(OPEN_SALES_STATUSES), Lead.status.is_(None), Lead.status == "")
+    normalized_status = func.lower(func.trim(func.coalesce(Lead.status, "")))
+    return normalized_status.in_((*OPEN_SALES_STATUSES, ""))
 
 
 def _exclude_mirit_company_filter():
@@ -106,10 +109,10 @@ def _query_since(table, record_type: str, since: int) -> list[dict]:
         )
 
 
-def _first_contact_tracking() -> tuple[datetime | None, set[tuple[str, str, str]]]:
+def _first_contact_tracking() -> tuple[datetime | None, dict[tuple[str, str, str], datetime]]:
     now = time.time()
     if _first_contact_cache["tracking_start"] is not None and now - _first_contact_cache["loaded_at"] < 30:
-        return _first_contact_cache["tracking_start"], _first_contact_cache["keys"]
+        return _first_contact_cache["tracking_start"], _first_contact_cache["contacts"]
     first_page = calls_table.query(
         IndexName=COMMUNICATION_TIMESTAMP_INDEX,
         KeyConditionExpression=Key("record_type").eq("call"),
@@ -118,38 +121,28 @@ def _first_contact_tracking() -> tuple[datetime | None, set[tuple[str, str, str]
     )
     first_items = first_page.get("Items", [])
     if not first_items:
-        return None, set()
+        return None, {}
     first_epoch = _epoch(first_items[0].get("timestamp"))
     tracking_start = datetime.fromtimestamp(first_epoch, tz=timezone.utc)
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        calls_future = executor.submit(_query_since, calls_table, "call", int(first_epoch))
-        sms_future = executor.submit(_query_since, sms_messages_table, "message", int(first_epoch))
-        meta_future = executor.submit(_query_since, conversations_table, "message", int(first_epoch * 1000))
-        calls, sms_messages, meta_messages = calls_future.result(), sms_future.result(), meta_future.result()
-    keys: set[tuple[str, str, str]] = set()
+    calls = _query_since(calls_table, "call", int(first_epoch))
+    contacts: dict[tuple[str, str, str], datetime] = {}
+
+    def record_contact(key: tuple[str, str, str], raw_timestamp: object) -> None:
+        if not key[1] or not key[2]:
+            return
+        occurred_at = datetime.fromtimestamp(_epoch(raw_timestamp), tz=timezone.utc)
+        previous = contacts.get(key)
+        if previous is None or occurred_at > previous:
+            contacts[key] = occurred_at
+
     for item in calls:
         if str(item.get("direction") or "").strip().lower() == "outbound":
-            keys.add(("phone", _digits(item.get("phone_number")), _digits(item.get("company_number"))))
-    for item in sms_messages:
-        direction = str(item.get("direction") or "").strip().lower()
-        sender = str(item.get("sales_name") or "").strip().lower()
-        if direction in {"sent", "outbound"} and sender not in {"ai", "assistant", "bot"}:
-            client = _digits(item.get("phone_number"))
-            number_id = str(item.get("number_id") or "").strip()
-            destination = _digits(item.get("company_number"))
-            if number_id:
-                keys.add(("sms_id", client, number_id))
-            if destination:
-                keys.add(("phone", client, destination))
-    for item in meta_messages:
-        role = str(item.get("role") or "").strip().lower()
-        sender = str(item.get("sales_name") or "").strip().lower()
-        if role not in {"user", "client", "customer", "ai", "assistant", "bot"} and sender not in {"ai", "assistant", "bot"}:
-            keys.add(("meta", str(item.get("user_id") or "").strip(), str(item.get("page_id") or "").strip()))
-    keys.discard(("phone", "", ""))
-    keys.discard(("meta", "", ""))
-    _first_contact_cache.update({"loaded_at": now, "tracking_start": tracking_start, "keys": keys})
-    return tracking_start, keys
+            record_contact(
+                ("phone", _digits(item.get("phone_number")), _digits(item.get("company_number"))),
+                item.get("timestamp"),
+            )
+    _first_contact_cache.update({"loaded_at": now, "tracking_start": tracking_start, "contacts": contacts})
+    return tracking_start, contacts
 
 
 def _followup_call_tracking() -> tuple[datetime | None, list[dict]]:
@@ -171,6 +164,45 @@ def _followup_call_tracking() -> tuple[datetime | None, list[dict]]:
     tracking_start = datetime.fromtimestamp(first_epoch, tz=timezone.utc)
     _followup_calls_cache.update({"loaded_at": now, "tracking_start": tracking_start, "calls": outbound})
     return tracking_start, outbound
+
+
+def _followup_message_tracking(tracking_start: datetime) -> list[dict]:
+    now = time.time()
+    cached_start = _followup_messages_cache["tracking_start"]
+    if cached_start == tracking_start and now - _followup_messages_cache["loaded_at"] < 30:
+        return _followup_messages_cache["messages"]
+    since_epoch = int(tracking_start.timestamp())
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        sms_future = executor.submit(_query_since, sms_messages_table, "message", since_epoch)
+        meta_future = executor.submit(_query_since, conversations_table, "message", since_epoch * 1000)
+        sms_messages, meta_messages = sms_future.result(), meta_future.result()
+    messages: list[dict] = []
+    for item in sms_messages:
+        direction = str(item.get("direction") or "").strip().lower()
+        sender = str(item.get("sales_name") or item.get("company_name") or "").strip().lower()
+        if direction not in {"sent", "outbound"} or sender in {"ai", "assistant", "bot"}:
+            continue
+        messages.append({
+            "channel": "sms",
+            "occurred_at": datetime.fromtimestamp(_epoch(item.get("timestamp")), tz=timezone.utc),
+            "client": _digits(item.get("phone_number")),
+            "destination": _digits(item.get("company_number")),
+            "number_id": str(item.get("number_id") or "").strip(),
+        })
+    for item in meta_messages:
+        role = str(item.get("role") or "").strip().lower()
+        sender = str(item.get("sales_name") or "").strip().lower()
+        if role in {"user", "client", "customer", "ai", "assistant", "bot"} or sender in {"ai", "assistant", "bot"}:
+            continue
+        messages.append({
+            "channel": str(item.get("platform") or "messenger").strip().lower(),
+            "occurred_at": datetime.fromtimestamp(_epoch(item.get("timestamp")), tz=timezone.utc),
+            "client": str(item.get("user_id") or "").strip(),
+            "page_id": str(item.get("page_id") or "").strip(),
+        })
+    messages.sort(key=lambda item: item["occurred_at"])
+    _followup_messages_cache.update({"loaded_at": now, "tracking_start": tracking_start, "messages": messages})
+    return messages
 
 
 def _period_on(day, name: str, tz: ZoneInfo) -> tuple[datetime, datetime, str]:
@@ -230,9 +262,82 @@ def _call_period_key(call_at: datetime, timezone_name: str) -> tuple[str, str] |
     return None
 
 
+def _required_message_attempts(
+    created_at: datetime,
+    timezone_name: str,
+    message_times: list[datetime],
+    now: datetime,
+) -> list[dict]:
+    try:
+        tz = ZoneInfo(timezone_name or "America/New_York")
+    except Exception:
+        tz = ZoneInfo("America/New_York")
+    created_local = created_at.astimezone(tz)
+    local_messages = [value.astimezone(tz) for value in message_times if value >= created_at]
+    definitions = (("Welcome message", 0), ("Day 2 message", 1), ("Day 3 message", 2))
+    attempts = []
+    for label, day_offset in definitions:
+        day = created_local.date() + timedelta(days=day_offset)
+        scheduled_start = created_local if day_offset == 0 else datetime(day.year, day.month, day.day, 8, tzinfo=tz)
+        scheduled_end = datetime(day.year, day.month, day.day, 20, tzinfo=tz)
+        completed = next((value for value in local_messages if value.date() == day), None)
+        if completed:
+            status = "completed"
+        elif now > scheduled_end.astimezone(timezone.utc):
+            status = "overdue"
+        elif now >= scheduled_start.astimezone(timezone.utc):
+            status = "open"
+        else:
+            status = "upcoming"
+        attempts.append({
+            "kind": "message",
+            "label": label,
+            "period": "message",
+            "scheduled_start": scheduled_start.isoformat(),
+            "scheduled_end": scheduled_end.isoformat(),
+            "completed_at": completed.isoformat() if completed else "",
+            "status": status,
+        })
+    return attempts
+
+
+def _followup_page(
+    rows: list[dict],
+    *,
+    category: str,
+    rep: str,
+    company: str,
+    limit: int,
+    offset: int,
+) -> dict:
+    """Filter and paginate an already-calculated follow-up snapshot."""
+    global_overdue_rows = [row for row in rows if row["overdue_count"] or row["overdue_message_count"]]
+    rep_filter = rep.strip().casefold()
+    company_filter = company.strip().casefold()
+    filtered_rows = [
+        row for row in rows
+        if (not rep_filter or str(row["rep"] or "").strip().casefold() == rep_filter)
+        and (not company_filter or str(row["company"] or "").strip().casefold() == company_filter)
+    ]
+    overdue_rows = [row for row in filtered_rows if row["overdue_count"] or row["overdue_message_count"]]
+    selected = filtered_rows if category == "all" else overdue_rows
+    return {
+        "items": selected[offset:offset + limit],
+        "counts": {"all": len(filtered_rows), "overdue": len(overdue_rows)},
+        "global_counts": {"all": len(rows), "overdue": len(global_overdue_rows)},
+        "filter_options": {
+            "reps": sorted({str(row["rep"]) for row in rows if row["rep"]}),
+            "companies": sorted({str(row["company"]) for row in rows if row["company"]}),
+        },
+        "has_more": offset + limit < len(selected),
+    }
+
+
 @router.get("/followup-calls")
 def list_followup_calls(
     category: str = Query("all", pattern="^(all|overdue)$"),
+    rep: str = Query(""),
+    company: str = Query(""),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     _: User = Depends(require_admin),
@@ -240,11 +345,30 @@ def list_followup_calls(
 ):
     tracking_start, calls = _followup_call_tracking()
     if tracking_start is None:
-        return {"items": [], "counts": {"all": 0, "overdue": 0}, "has_more": False}
+        return _followup_page([], category=category, rep=rep, company=company, limit=limit, offset=offset)
+    now_monotonic = time.monotonic()
+    if (
+        _followup_rows_cache["tracking_start"] == tracking_start
+        and now_monotonic - _followup_rows_cache["loaded_at"] < 30
+    ):
+        return _followup_page(
+            _followup_rows_cache["rows"],
+            category=category,
+            rep=rep,
+            company=company,
+            limit=limit,
+            offset=offset,
+        )
+    messages = _followup_message_tracking(tracking_start)
     candidate_leads = (
         db.query(Lead)
         .options(joinedload(Lead.company), joinedload(Lead.assignee))
-        .filter(Lead.priority == 0, _open_sales_status_filter(), _exclude_mirit_company_filter())
+        .filter(
+            Lead.priority == 0,
+            _open_sales_status_filter(),
+            _exclude_mirit_company_filter(),
+            func.length(func.trim(func.coalesce(Lead.phone, ""))) > 0,
+        )
         .all()
     )
     leads_with_created_at = [
@@ -268,6 +392,18 @@ def list_followup_calls(
         calls_by_pair.setdefault(key, []).append(call_at)
     for values in calls_by_pair.values():
         values.sort()
+    sms_by_phone_destination: dict[tuple[str, str], list[datetime]] = {}
+    sms_by_phone_number_id: dict[tuple[str, str], list[datetime]] = {}
+    meta_by_user_page: dict[tuple[str, str], list[datetime]] = {}
+    for message in messages:
+        occurred_at = message["occurred_at"]
+        if message["channel"] == "sms":
+            if message.get("destination"):
+                sms_by_phone_destination.setdefault((message["client"], message["destination"]), []).append(occurred_at)
+            if message.get("number_id"):
+                sms_by_phone_number_id.setdefault((message["client"], message["number_id"]), []).append(occurred_at)
+        elif message.get("client") and message.get("page_id"):
+            meta_by_user_page.setdefault((message["client"], message["page_id"]), []).append(occurred_at)
 
     now = datetime.now(timezone.utc)
     rows = []
@@ -326,6 +462,8 @@ def list_followup_calls(
                 status = "upcoming"
             attempts.append({
                 "number": len(attempts) + 1,
+                "kind": "call",
+                "label": f"{period.capitalize()} call",
                 "period": period,
                 "scheduled_start": start.isoformat(),
                 "scheduled_end": end.isoformat(),
@@ -333,6 +471,20 @@ def list_followup_calls(
                 "status": status,
             })
             slot_index += 1
+        message_times: set[datetime] = set()
+        company_number_id = str(lead.company.aircall_number_id or "").strip() if lead.company else ""
+        rep_number_id = str(lead.assignee.aircall_number_id or "").strip() if lead.assignee else ""
+        for destination in destinations:
+            message_times.update(sms_by_phone_destination.get((client_phone, destination), []))
+        for number_id in {company_number_id, rep_number_id} - {""}:
+            message_times.update(sms_by_phone_number_id.get((client_phone, number_id), []))
+        facebook_user_id = str(lead.facebook_user_id or "").strip()
+        facebook_page_id = str(lead.company.facebook_page_id or "").strip() if lead.company else ""
+        if facebook_user_id and facebook_page_id:
+            message_times.update(meta_by_user_page.get((facebook_user_id, facebook_page_id), []))
+        message_attempts = _required_message_attempts(created_at, timezone_name, sorted(message_times), now)
+        timeline = [*attempts, *message_attempts]
+        timeline.sort(key=lambda item: item["completed_at"] or item["scheduled_start"])
         overdue_count = sum(1 for attempt in attempts if attempt["status"] == "overdue")
         rows.append({
             "lead_id": lead.id,
@@ -344,17 +496,26 @@ def list_followup_calls(
             "smartmoving_created_time": lead.created_time,
             "created_time_source": "smartmoving" if _smartmoving_created_at(lead.created_time) else "crm",
             "attempts": attempts,
+            "message_attempts": message_attempts,
+            "timeline": timeline,
             "completed_count": sum(1 for attempt in attempts if attempt["completed_at"]),
+            "completed_message_count": sum(1 for attempt in message_attempts if attempt["completed_at"]),
+            "overdue_message_count": sum(1 for attempt in message_attempts if attempt["status"] == "overdue"),
             "overdue_count": overdue_count,
         })
-    overdue_rows = [row for row in rows if row["overdue_count"]]
-    selected = rows if category == "all" else overdue_rows
-    page = selected[offset:offset + limit]
-    return {
-        "items": page,
-        "counts": {"all": len(rows), "overdue": len(overdue_rows)},
-        "has_more": offset + limit < len(selected),
-    }
+    _followup_rows_cache.update({
+        "loaded_at": time.monotonic(),
+        "tracking_start": tracking_start,
+        "rows": rows,
+    })
+    return _followup_page(
+        rows,
+        category=category,
+        rep=rep,
+        company=company,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/first-contact-leads")
@@ -365,7 +526,7 @@ def list_first_contact_leads(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    tracking_start, contact_keys = _first_contact_tracking()
+    tracking_start, contacts = _first_contact_tracking()
     if tracking_start is None:
         return {"items": [], "counts": {"new": 0, "overdue": 0}, "total": 0, "has_more": False, "tracking_start": ""}
     leads = (
@@ -379,22 +540,22 @@ def list_first_contact_leads(
     thirty_minutes_ago = now - timedelta(minutes=30)
     pending: dict[str, list[Lead]] = {"new": [], "overdue": []}
     for lead in leads:
+        created_at = (
+            _smartmoving_created_at(lead.created_time)
+            or (lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc))
+        )
+        if created_at < tracking_start:
+            continue
         client_phone = _digits(lead.phone)
         company_phone = _digits(lead.company.phone) if lead.company else ""
         rep_phone = _digits(lead.assignee.phone) if lead.assignee else ""
-        company_number_id = str(lead.company.aircall_number_id or "").strip() if lead.company else ""
-        rep_number_id = str(lead.assignee.aircall_number_id or "").strip() if lead.assignee else ""
-        meta_key = ("meta", str(lead.facebook_user_id or "").strip(), str(lead.company.facebook_page_id or "").strip() if lead.company else "")
-        contacted = (
-            ("phone", client_phone, company_phone) in contact_keys
-            or ("phone", client_phone, rep_phone) in contact_keys
-            or ("sms_id", client_phone, company_number_id) in contact_keys
-            or ("sms_id", client_phone, rep_number_id) in contact_keys
-            or meta_key in contact_keys
+        contact_keys = (
+            ("phone", client_phone, company_phone),
+            ("phone", client_phone, rep_phone),
         )
+        contacted = any(contacts.get(key) is not None and contacts[key] >= created_at for key in contact_keys)
         if contacted:
             continue
-        created_at = lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc)
         pending["new" if created_at > thirty_minutes_ago else "overdue"].append(lead)
     selected = pending[category]
     if category == "overdue":
@@ -402,7 +563,10 @@ def list_first_contact_leads(
     page = selected[offset:offset + limit]
     items = []
     for lead in page:
-        created_at = lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc)
+        created_at = (
+            _smartmoving_created_at(lead.created_time)
+            or (lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc))
+        )
         items.append({
             "lead_id": lead.id,
             "client": lead.full_name or lead.phone or "Unknown client",
