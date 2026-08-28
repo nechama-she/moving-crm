@@ -79,6 +79,9 @@ export default function UnansweredMessagesPage() {
   const messageLoadSentinel = useRef<HTMLDivElement | null>(null);
   const leadLoadSentinel = useRef<HTMLDivElement | null>(null);
   const followupLoadSentinel = useRef<HTMLDivElement | null>(null);
+  const queueRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshFirstContact = useRef(false);
+  const refreshFollowups = useRef(false);
 
   const load = useCallback(async () => {
     loadingRef.current = true;
@@ -108,11 +111,11 @@ export default function UnansweredMessagesPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const loadFirstContactLeads = useCallback(async (offset = 0) => {
+  const loadFirstContactLeads = useCallback(async (offset = 0, refresh = false) => {
     if (offset) setLoadingLeads(true);
     else setLoadingLeads(true);
     try {
-      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-leads?category=${leadTab}&limit=50&offset=${offset}`, { headers: authHeaders(token) });
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-leads?category=${leadTab}&limit=50&offset=${offset}&refresh=${refresh}`, { headers: authHeaders(token) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || `Leads HTTP ${response.status}`);
       setFirstContactLeads((current) => offset ? [...current, ...(data.items || [])] : (data.items || []));
@@ -127,10 +130,11 @@ export default function UnansweredMessagesPage() {
 
   useEffect(() => { void loadFirstContactLeads(0); }, [loadFirstContactLeads]);
 
-  const loadFollowups = useCallback(async (offset = 0) => {
+  const loadFollowups = useCallback(async (offset = 0, refresh = false) => {
     setLoadingFollowups(true);
     try {
       const params = new URLSearchParams({ category: followupTab, limit: "50", offset: String(offset) });
+      if (refresh) params.set("refresh", "true");
       if (repFilter) params.set("rep", repFilter);
       if (companyFilter) params.set("company", companyFilter);
       const response = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls?${params.toString()}`, { headers: authHeaders(token) });
@@ -147,6 +151,25 @@ export default function UnansweredMessagesPage() {
       setLoadingFollowups(false);
     }
   }, [followupTab, repFilter, companyFilter, token]);
+
+  const scheduleQueueRefresh = useCallback((firstContact: boolean, followups: boolean) => {
+    refreshFirstContact.current ||= firstContact;
+    refreshFollowups.current ||= followups;
+    if (queueRefreshTimer.current) clearTimeout(queueRefreshTimer.current);
+    queueRefreshTimer.current = setTimeout(() => {
+      queueRefreshTimer.current = null;
+      const reloadFirstContact = refreshFirstContact.current;
+      const reloadFollowups = refreshFollowups.current;
+      refreshFirstContact.current = false;
+      refreshFollowups.current = false;
+      if (reloadFirstContact) void loadFirstContactLeads(0, true);
+      if (reloadFollowups) void loadFollowups(0, true);
+    }, 250);
+  }, [loadFirstContactLeads, loadFollowups]);
+
+  useEffect(() => () => {
+    if (queueRefreshTimer.current) clearTimeout(queueRefreshTimer.current);
+  }, []);
 
   useEffect(() => { void loadFollowups(0); }, [loadFollowups]);
 
@@ -262,11 +285,17 @@ export default function UnansweredMessagesPage() {
       ((event.events || []) as RealtimeEvent[]).forEach((item) => {
         applyRealtimeEvent(item);
         applyMissedCallEvent(item);
+        if (item.type === "call_activity_changed" || item.type === "missed_call_state_changed") scheduleQueueRefresh(true, true);
+        if (item.type === "message_activity_changed" || item.type === "message_state_changed") scheduleQueueRefresh(false, true);
+        if (item.type === "lead_activity_changed") scheduleQueueRefresh(true, true);
       });
       return;
     }
     applyRealtimeEvent(event);
     applyMissedCallEvent(event);
+    if (event.type === "call_activity_changed" || event.type === "missed_call_state_changed") scheduleQueueRefresh(true, true);
+    if (event.type === "message_activity_changed" || event.type === "message_state_changed") scheduleQueueRefresh(false, true);
+    if (event.type === "lead_activity_changed") scheduleQueueRefresh(true, true);
   });
 
   useEffect(() => {

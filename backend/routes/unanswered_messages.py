@@ -338,11 +338,16 @@ def list_followup_calls(
     category: str = Query("all", pattern="^(all|overdue)$"),
     rep: str = Query(""),
     company: str = Query(""),
+    refresh: bool = Query(False),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    if refresh:
+        _followup_calls_cache["loaded_at"] = 0.0
+        _followup_messages_cache["loaded_at"] = 0.0
+        _followup_rows_cache["loaded_at"] = 0.0
     tracking_start, calls = _followup_call_tracking()
     if tracking_start is None:
         return _followup_page([], category=category, rep=rep, company=company, limit=limit, offset=offset)
@@ -523,18 +528,26 @@ def list_followup_calls(
 @router.get("/first-contact-leads")
 def list_first_contact_leads(
     category: str = Query("new", pattern="^(new|overdue)$"),
+    refresh: bool = Query(False),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    if refresh:
+        _first_contact_cache["loaded_at"] = 0.0
     tracking_start, contacts = _first_contact_tracking()
     if tracking_start is None:
         return {"items": [], "counts": {"new": 0, "overdue": 0}, "total": 0, "has_more": False, "tracking_start": ""}
     leads = (
         db.query(Lead)
         .options(joinedload(Lead.company), joinedload(Lead.assignee))
-        .filter(Lead.created_at >= tracking_start, _open_sales_status_filter(), _exclude_mirit_company_filter())
+        .filter(
+            Lead.created_at >= tracking_start,
+            Lead.priority == 0,
+            _open_sales_status_filter(),
+            _exclude_mirit_company_filter(),
+        )
         .order_by(Lead.created_at.desc())
         .all()
     )
