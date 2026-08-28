@@ -404,12 +404,12 @@ export default function UnansweredMessagesPage() {
         <button type="button" onClick={() => setQueueTab("leads")} style={{ ...queueCard, ...(queueTab === "leads" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Leads Awaiting First Contact</span>
           <strong style={queueCardCount}>{firstContactCounts.new + firstContactCounts.overdue}</strong>
-          <span style={queueCardDescription}>New leads with no human call or message</span>
+          <span style={queueCardDescription}>New leads with no call attempt</span>
         </button>
         <button type="button" onClick={() => setQueueTab("followups")} style={{ ...queueCard, ...(queueTab === "followups" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Priority 0 Follow-ups</span>
           <strong style={queueCardCount}>{followupGlobalCounts.overdue}</strong>
-          <span style={queueCardDescription}>Six call periods and three human messages</span>
+          <span style={queueCardDescription}>Six call periods and three required messages</span>
         </button>
       </nav>
 
