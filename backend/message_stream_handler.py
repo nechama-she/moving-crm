@@ -227,7 +227,11 @@ def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[b
         _log_sql(db, "clear_missed_calls", clear_statement)
         removed_ids = [row[0] for row in db.execute(clear_statement).all()]
         if not removed_ids:
-            return True, None
+            return True, {
+                "type": "call_activity_changed",
+                "event_id": f"stream:{event_id}",
+                "action": "recorded",
+            }
         return True, {
             "type": "missed_call_state_changed",
             "event_id": f"stream:{event_id}",
@@ -339,6 +343,13 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
                 "channel": channel,
                 "message_ids": removed_ids,
                 "count_delta": {"unanswered": -len(removed_ids), "ended": 0},
+            }
+        else:
+            event = {
+                "type": "message_activity_changed",
+                "event_id": f"stream:{event_id}",
+                "action": "recorded",
+                "channel": channel,
             }
         return True, event
 

@@ -41,6 +41,7 @@ from libs.smartmoving.client import (
     update_opportunity_salesperson,
 )
 from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule
+from realtime import publish_realtime_event
 from routes.templates import get_company_template, render_template
 
 logger = logging.getLogger("moving-crm")
@@ -4656,6 +4657,13 @@ def create_lead(
                 target_referral_source=duplication_rule.target_referral_source,
                 delay_minutes=duplication_rule.delay_minutes,
             )
+
+    publish_realtime_event({
+        "type": "lead_activity_changed",
+        "event_id": f"lead-created:{lead.id}",
+        "action": "created",
+        "lead_id": lead.id,
+    })
 
     return {
         "status": "created",
