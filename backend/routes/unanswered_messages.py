@@ -484,7 +484,9 @@ def list_followup_calls(
             message_times.update(meta_by_user_page.get((facebook_user_id, facebook_page_id), []))
         message_attempts = _required_message_attempts(created_at, timezone_name, sorted(message_times), now)
         timeline = [*attempts, *message_attempts]
-        timeline.sort(key=lambda item: item["completed_at"] or item["scheduled_start"])
+        # The UI presents each requirement by its deadline, so order the
+        # checklist by that same deadline. Completion time must not move it.
+        timeline.sort(key=lambda item: (item["scheduled_end"], 0 if item["kind"] == "call" else 1))
         overdue_count = sum(1 for attempt in attempts if attempt["status"] == "overdue")
         rows.append({
             "lead_id": lead.id,
