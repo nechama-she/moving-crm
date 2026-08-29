@@ -283,6 +283,11 @@ def _required_message_attempts(
         completed = next((value for value in local_messages if value.date() == day), None)
         if completed:
             status = "completed"
+        elif any(value > scheduled_end for value in local_messages):
+            # A later outbound message makes an older missed message impossible
+            # to recover. Preserve it as not sent for progress/audit purposes,
+            # but do not leave it in the actionable overdue queue.
+            status = "not_sent"
         elif now > scheduled_end.astimezone(timezone.utc):
             status = "overdue"
         elif now >= scheduled_start.astimezone(timezone.utc):
@@ -488,7 +493,7 @@ def list_followup_calls(
         if facebook_user_id and facebook_page_id:
             message_times.update(meta_by_user_page.get((facebook_user_id, facebook_page_id), []))
         message_attempts = _required_message_attempts(created_at, timezone_name, sorted(message_times), now)
-        timeline = [*attempts, *message_attempts]
+        timeline = [*attempts, *(attempt for attempt in message_attempts if attempt["status"] != "not_sent")]
         # The UI presents each requirement by its deadline, so order the
         # checklist by that same deadline. Completion time must not move it.
         timeline.sort(key=lambda item: (item["scheduled_end"], 0 if item["kind"] == "call" else 1))
