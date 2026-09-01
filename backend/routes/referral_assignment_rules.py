@@ -70,8 +70,24 @@ def _validate(body: RuleBody, db: Session, exclude_rule_id: str = "") -> tuple[s
     for rule in load_referral_assignment_rules(db):
         if str(rule.get("id") or "") == exclude_rule_id:
             continue
-        if str(rule.get("company_id") or "") == body.company_id and normalize_referral_source(rule.get("referral_source")) == normalized:
-            raise HTTPException(status_code=409, detail="A rule already exists for this company and Referral Source")
+        if str(rule.get("company_id") or "") != body.company_id or normalize_referral_source(rule.get("referral_source")) != normalized:
+            continue
+        existing_assignments = rule.get("rep_assignments")
+        if not isinstance(existing_assignments, list):
+            existing_assignments = [
+                {"rep_user_id": rep_id, "schedule": "always"}
+                for rep_id in (rule.get("rep_user_ids") or [])
+            ]
+        for assignment in assignments:
+            for existing in existing_assignments:
+                if str(existing.get("rep_user_id") or "") != assignment["rep_user_id"]:
+                    continue
+                if assignment["schedule"] == "always" or existing.get("schedule", "always") == "always":
+                    raise HTTPException(status_code=409, detail="This rep already has an overlapping rule for this company and Referral Source")
+                starts_before_existing_ends = assignment["start_date"] <= str(existing.get("end_date") or "")
+                ends_after_existing_starts = assignment["end_date"] >= str(existing.get("start_date") or "")
+                if starts_before_existing_ends and ends_after_existing_starts:
+                    raise HTTPException(status_code=409, detail="This rep already has an overlapping date rule for this company and Referral Source")
     return referral_source, assignments
 
 

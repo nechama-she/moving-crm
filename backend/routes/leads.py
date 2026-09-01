@@ -1,8 +1,10 @@
 import hashlib
+import io
 import json
 import logging
 import os
 import re
+import zipfile
 from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, TypeVar
@@ -2518,6 +2520,10 @@ class AttachmentMoveBody(BaseModel):
     job_id: str | None = None
 
 
+class AttachmentDownloadBody(BaseModel):
+    attachment_ids: list[str] | None = None
+
+
 def _get_job_or_404(lead_id: str, job_id: str, user: User, db: Session) -> "LeadJob":
     lead = _get_visible_lead_or_404(lead_id, user, db)
     job = (
@@ -3074,6 +3080,80 @@ def _delete_s3_url(external_url: str) -> None:
     if parsed.scheme != "s3" or not configured_bucket or parsed.netloc != configured_bucket:
         return
     boto3.client("s3").delete_object(Bucket=configured_bucket, Key=parsed.path.lstrip("/"))
+
+
+def _stored_attachment_bytes(row: LeadAttachment) -> bytes | None:
+    external_url = (row.external_url or "").strip()
+    external_source = (row.external_source or "").strip().lower()
+    if external_url.startswith("s3://") and external_source.endswith("_s3"):
+        parsed = urlparse(external_url)
+        configured_bucket = (os.getenv("ATTACHMENTS_BUCKET") or "").strip()
+        if parsed.netloc != configured_bucket:
+            return None
+        return boto3.client("s3").get_object(Bucket=configured_bucket, Key=parsed.path.lstrip("/"))["Body"].read()
+    if not row.is_external_link:
+        return bytes(row.file_blob or b"")
+    return None
+
+
+@router.post("/leads/{lead_id}/attachments/download")
+def download_lead_attachments(
+    lead_id: str,
+    body: AttachmentDownloadBody,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    requested = {str(value).strip() for value in (body.attachment_ids or []) if str(value).strip()}
+    query = db.query(LeadAttachment).filter(LeadAttachment.lead_id == lead.id)
+    if requested:
+        query = query.filter(LeadAttachment.id.in_(requested))
+    rows = query.order_by(LeadAttachment.created_at.asc()).all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="No files found")
+
+    archive = io.BytesIO()
+    used_names: set[str] = set()
+    skipped: list[str] = []
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for row in rows:
+            content = _stored_attachment_bytes(row)
+            if content is None:
+                skipped.append(row.file_name or row.id)
+                continue
+            name = _safe_attachment_name(row.file_name or row.id)
+            stem, extension = os.path.splitext(name)
+            candidate = name
+            suffix = 2
+            while candidate.lower() in used_names:
+                candidate = f"{stem}-{suffix}{extension}"
+                suffix += 1
+            used_names.add(candidate.lower())
+            bundle.writestr(candidate, content)
+        if skipped:
+            bundle.writestr("files-not-included.txt", "The following link-only files could not be included:\n" + "\n".join(skipped))
+    archive.seek(0)
+    safe_lead_name = _safe_attachment_name(lead.full_name or "lead")
+    bucket = (os.getenv("ATTACHMENTS_BUCKET") or "").strip()
+    if not bucket:
+        raise HTTPException(status_code=500, detail="Attachment storage is not configured")
+    download_name = f"{safe_lead_name}-files.zip"
+    object_key = f"downloads/{lead.id}/{uuid4()}/{download_name}"
+    s3 = boto3.client("s3")
+    s3.put_object(
+        Bucket=bucket,
+        Key=object_key,
+        Body=archive.getvalue(),
+        ContentType="application/zip",
+        ContentDisposition=f'attachment; filename="{download_name}"',
+        ServerSideEncryption="AES256",
+    )
+    signed_url = s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": object_key, "ResponseContentDisposition": f'attachment; filename="{download_name}"'},
+        ExpiresIn=300,
+    )
+    return RedirectResponse(url=signed_url, status_code=307)
 
 
 @router.get("/leads/{lead_id}/jobs/{job_id}/attachments")
