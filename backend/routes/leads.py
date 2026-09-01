@@ -1,8 +1,10 @@
 import hashlib
+import io
 import json
 import logging
 import os
 import re
+import zipfile
 from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, TypeVar
@@ -42,6 +44,7 @@ from libs.smartmoving.client import (
 )
 from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule
 from realtime import publish_realtime_event
+from referral_assignment_rules import configured_rep_ids_for_referral
 from routes.templates import get_company_template, render_template
 
 logger = logging.getLogger("moving-crm")
@@ -502,6 +505,7 @@ def _active_reps_for_company(
     db: Session,
     allowed_rep_ids: set[str] | None = None,
     now: datetime | None = None,
+    respect_availability: bool = True,
 ) -> list[User]:
     rep_rows = (
         db.query(User)
@@ -513,6 +517,8 @@ def _active_reps_for_company(
     if allowed_rep_ids is not None:
         rep_rows = [u for u in rep_rows if u.id in allowed_rep_ids]
 
+    if not respect_availability:
+        return rep_rows
     active_ids = _filter_by_rep_availability([r.id for r in rep_rows], db, now=now)
     return [u for u in rep_rows if u.id in active_ids]
 
@@ -522,8 +528,15 @@ def _pick_round_robin_rep_for_company(
     db: Session,
     allowed_rep_ids: set[str] | None = None,
     now: datetime | None = None,
+    respect_availability: bool = True,
 ) -> User | None:
-    active_reps = _active_reps_for_company(company_id, db, allowed_rep_ids=allowed_rep_ids, now=now)
+    active_reps = _active_reps_for_company(
+        company_id,
+        db,
+        allowed_rep_ids=allowed_rep_ids,
+        now=now,
+        respect_availability=respect_availability,
+    )
     if not active_reps:
         return None
 
@@ -2507,6 +2520,10 @@ class AttachmentMoveBody(BaseModel):
     job_id: str | None = None
 
 
+class AttachmentDownloadBody(BaseModel):
+    attachment_ids: list[str] | None = None
+
+
 def _get_job_or_404(lead_id: str, job_id: str, user: User, db: Session) -> "LeadJob":
     lead = _get_visible_lead_or_404(lead_id, user, db)
     job = (
@@ -3063,6 +3080,80 @@ def _delete_s3_url(external_url: str) -> None:
     if parsed.scheme != "s3" or not configured_bucket or parsed.netloc != configured_bucket:
         return
     boto3.client("s3").delete_object(Bucket=configured_bucket, Key=parsed.path.lstrip("/"))
+
+
+def _stored_attachment_bytes(row: LeadAttachment) -> bytes | None:
+    external_url = (row.external_url or "").strip()
+    external_source = (row.external_source or "").strip().lower()
+    if external_url.startswith("s3://") and external_source.endswith("_s3"):
+        parsed = urlparse(external_url)
+        configured_bucket = (os.getenv("ATTACHMENTS_BUCKET") or "").strip()
+        if parsed.netloc != configured_bucket:
+            return None
+        return boto3.client("s3").get_object(Bucket=configured_bucket, Key=parsed.path.lstrip("/"))["Body"].read()
+    if not row.is_external_link:
+        return bytes(row.file_blob or b"")
+    return None
+
+
+@router.post("/leads/{lead_id}/attachments/download")
+def download_lead_attachments(
+    lead_id: str,
+    body: AttachmentDownloadBody,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    requested = {str(value).strip() for value in (body.attachment_ids or []) if str(value).strip()}
+    query = db.query(LeadAttachment).filter(LeadAttachment.lead_id == lead.id)
+    if requested:
+        query = query.filter(LeadAttachment.id.in_(requested))
+    rows = query.order_by(LeadAttachment.created_at.asc()).all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="No files found")
+
+    archive = io.BytesIO()
+    used_names: set[str] = set()
+    skipped: list[str] = []
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for row in rows:
+            content = _stored_attachment_bytes(row)
+            if content is None:
+                skipped.append(row.file_name or row.id)
+                continue
+            name = _safe_attachment_name(row.file_name or row.id)
+            stem, extension = os.path.splitext(name)
+            candidate = name
+            suffix = 2
+            while candidate.lower() in used_names:
+                candidate = f"{stem}-{suffix}{extension}"
+                suffix += 1
+            used_names.add(candidate.lower())
+            bundle.writestr(candidate, content)
+        if skipped:
+            bundle.writestr("files-not-included.txt", "The following link-only files could not be included:\n" + "\n".join(skipped))
+    archive.seek(0)
+    safe_lead_name = _safe_attachment_name(lead.full_name or "lead")
+    bucket = (os.getenv("ATTACHMENTS_BUCKET") or "").strip()
+    if not bucket:
+        raise HTTPException(status_code=500, detail="Attachment storage is not configured")
+    download_name = f"{safe_lead_name}-files.zip"
+    object_key = f"downloads/{lead.id}/{uuid4()}/{download_name}"
+    s3 = boto3.client("s3")
+    s3.put_object(
+        Bucket=bucket,
+        Key=object_key,
+        Body=archive.getvalue(),
+        ContentType="application/zip",
+        ContentDisposition=f'attachment; filename="{download_name}"',
+        ServerSideEncryption="AES256",
+    )
+    signed_url = s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": object_key, "ResponseContentDisposition": f'attachment; filename="{download_name}"'},
+        ExpiresIn=300,
+    )
+    return RedirectResponse(url=signed_url, status_code=307)
 
 
 @router.get("/leads/{lead_id}/jobs/{job_id}/attachments")
@@ -4378,9 +4469,12 @@ def create_lead(
         assigned_to_user_id = matched_users[0].id
         assignment_reason = "api_assigned_to_name"
 
-    # Auto-assign only while all admins are unavailable and no explicit assignee was provided.
-    if not assigned_to_user_id and not _any_admin_available_now(db):
-        available_rep_ids = _active_available_rep_ids(db)
+    # A Referral Source rule routes immediately and independently of date rules.
+    # Without a matching rule, retain the existing admin-availability behavior.
+    configured_rep_ids = configured_rep_ids_for_referral(db, company.id, body.referral_source)
+    should_auto_assign = configured_rep_ids is not None or not _any_admin_available_now(db)
+    if not assigned_to_user_id and should_auto_assign:
+        available_rep_ids = configured_rep_ids if configured_rep_ids is not None else _active_available_rep_ids(db)
         conflicts = find_assignment_conflicts(
             db,
             company_id=company.id,
@@ -4390,9 +4484,34 @@ def create_lead(
         if conflicts.same_company_match:
             assignment_mode = "queued"
             assignment_reason = "matching_assigned_lead_same_company"
+        elif configured_rep_ids is not None:
+            # A Referral Source rule chooses from its complete configured pool.
+            # Do not silently route to a different rule rep when the selected rep
+            # already owns this client under another company.
+            rep = _pick_round_robin_rep_for_company(
+                company.id,
+                db,
+                available_rep_ids,
+                respect_availability=False,
+            )
+            if rep and rep.id in conflicts.excluded_rep_ids:
+                assignment_mode = "queued"
+                assignment_reason = "referral_source_rule_rep_has_matching_lead_other_company"
+            elif rep:
+                assigned_to_user_id = rep.id
+                assignment_mode = "auto"
+                assignment_reason = "referral_source_rule_round_robin"
+            else:
+                assignment_mode = "queued"
+                assignment_reason = "referral_source_rule_no_available_rep"
         else:
             eligible_rep_ids = available_rep_ids - conflicts.excluded_rep_ids
-            rep = _pick_round_robin_rep_for_company(company.id, db, eligible_rep_ids)
+            rep = _pick_round_robin_rep_for_company(
+                company.id,
+                db,
+                eligible_rep_ids,
+                respect_availability=True,
+            )
             if rep:
                 assigned_to_user_id = rep.id
                 assignment_mode = "auto"
@@ -4588,6 +4707,8 @@ def create_lead(
     # Build assignment note with SmartMoving sync details
     if assignment_reason == "matching_assigned_lead_same_company":
         assign_note = "Not auto-assigned because the same phone or email is already assigned in this company"
+    elif assignment_reason == "referral_source_rule_rep_has_matching_lead_other_company":
+        assign_note = "Not auto-assigned because the rule-selected rep already has the same phone or email under another company"
     elif assignment_reason == "matching_lead_other_company_excluded_all_reps":
         assign_note = "Not auto-assigned because matching leads in other companies are assigned to every eligible rep"
     elif assignment_mode == "auto" and auto_assignment_dry_run:

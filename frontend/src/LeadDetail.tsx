@@ -296,6 +296,8 @@ export default function LeadDetail() {
   const [uploadingCount, setUploadingCount] = useState(0);
   const [attachmentsQuery, setAttachmentsQuery] = useState("");
   const [attachmentsSort, setAttachmentsSort] = useState<"newest" | "name" | "size">("newest");
+  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);
+  const [downloadingAttachments, setDownloadingAttachments] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [filesModalOpen, setFilesModalOpen] = useState(false);
   const [groupedAttachments, setGroupedAttachments] = useState<Record<string, LeadAttachment[]>>({});
@@ -961,6 +963,11 @@ export default function LeadDetail() {
     return rows;
   }, [attachmentsQuery, attachmentsSort, groupedAttachments]);
 
+  const allModalAttachments = useMemo(
+    () => Object.values(groupedAttachments).flat(),
+    [groupedAttachments],
+  );
+
   useEffect(() => {
     function onDocMouseDown(event: MouseEvent) {
       const target = event.target as Node;
@@ -1243,6 +1250,41 @@ export default function LeadDetail() {
     } finally {
       setSavingRepPaymentIndex(null);
     }
+  }
+
+  async function downloadAttachments(attachmentIds?: string[]) {
+    setAttachmentsError("");
+    setDownloadingAttachments(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/attachments/download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ attachment_ids: attachmentIds?.length ? attachmentIds : null }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = `${lead?.full_name || "lead"}-files.zip`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err: unknown) {
+      setAttachmentsError(err instanceof Error ? err.message : "Failed to download files");
+    } finally {
+      setDownloadingAttachments(false);
+    }
+  }
+
+  function toggleAttachmentSelection(attachmentId: string) {
+    setSelectedAttachmentIds((current) => current.includes(attachmentId)
+      ? current.filter((id) => id !== attachmentId)
+      : [...current, attachmentId]);
   }
 
   async function updateRepCommissionOverride(paymentIndex: number, percent: number | null, amount: number | null) {
@@ -1597,6 +1639,34 @@ export default function LeadDetail() {
                 </select>
               </div>
 
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "0 0 12px" }}>
+                <button
+                  type="button"
+                  disabled={allModalAttachments.length === 0}
+                  onClick={() => setSelectedAttachmentIds(
+                    selectedAttachmentIds.length === allModalAttachments.length
+                      ? []
+                      : allModalAttachments.map((attachment) => attachment.id),
+                  )}
+                >
+                  {selectedAttachmentIds.length === allModalAttachments.length && allModalAttachments.length > 0 ? "Clear selection" : "Select all"}
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedAttachmentIds.length === 0 || downloadingAttachments}
+                  onClick={() => void downloadAttachments(selectedAttachmentIds)}
+                >
+                  Download selected ({selectedAttachmentIds.length})
+                </button>
+                <button
+                  type="button"
+                  disabled={allModalAttachments.length === 0 || downloadingAttachments}
+                  onClick={() => void downloadAttachments()}
+                >
+                  {downloadingAttachments ? "Preparing…" : `Download all (${allModalAttachments.length})`}
+                </button>
+              </div>
+
               {attachmentsError ? <p style={{ margin: "0 0 10px", fontSize: 12, color: "#ba0517" }}>{attachmentsError}</p> : null}
               {groupedAttachmentsLoading ? <p style={{ margin: 0, fontSize: 12, color: "#706e6b" }}>Loading files...</p> : null}
               {!groupedAttachmentsLoading ? (
@@ -1624,6 +1694,13 @@ export default function LeadDetail() {
                       <div className="lead-files-list">
                         {generalFilesForDisplay.map((attachment) => (
                           <article key={attachment.id} draggable={user?.role === "admin"} onDragStart={(event) => startAttachmentDrag(event, attachment.id)}>
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${attachment.file_name}`}
+                              checked={selectedAttachmentIds.includes(attachment.id)}
+                              onChange={() => toggleAttachmentSelection(attachment.id)}
+                              style={{ flex: "0 0 auto" }}
+                            />
                             <span className="lead-file-type">{fileIcon(attachment.file_name)}</span>
                             <div className="lead-file-info">
                               {renamingId === attachment.id ? (
@@ -1675,6 +1752,13 @@ export default function LeadDetail() {
                         <div className="lead-files-list">
                           {jobAttachments.map((attachment) => (
                             <article key={attachment.id} draggable={user?.role === "admin"} onDragStart={(event) => startAttachmentDrag(event, attachment.id)}>
+                              <input
+                                type="checkbox"
+                                aria-label={`Select ${attachment.file_name}`}
+                                checked={selectedAttachmentIds.includes(attachment.id)}
+                                onChange={() => toggleAttachmentSelection(attachment.id)}
+                                style={{ flex: "0 0 auto" }}
+                              />
                               <span className="lead-file-type">{fileIcon(attachment.file_name)}</span>
                               <div className="lead-file-info">
                                 {renamingId === attachment.id ? (

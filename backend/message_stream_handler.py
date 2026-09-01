@@ -12,6 +12,7 @@ from sqlalchemy.orm import joinedload
 
 from database import SessionLocal
 from models import AppSetting, Company, Lead, MessageState, MissedCallState, User
+from meta_attachment_archiver import archive_meta_attachments
 from realtime import publish_realtime_event
 
 
@@ -311,6 +312,22 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
         logger.info("Ignoring SMS with configured number client=%s destination=%s", client_identifier, company_identifier)
         return True, None
 
+    lead_id = _valid_explicit_lead_id(db, item.get("lead_id"))
+    if not lead_id:
+        lead_id = _resolve_sms_lead_id(db, item) if channel == "sms" else _resolve_meta_lead_id(db, item)
+
+    if channel in {"messenger", "instagram"} and item.get("attachments"):
+        archived = archive_meta_attachments(
+            db,
+            lead_id=lead_id,
+            channel=channel,
+            message_id=message_id,
+            attachments=item.get("attachments"),
+            occurred_at=_occurred_at(timestamp),
+        )
+        if archived:
+            logger.info("Archived %d %s attachments for lead %s message %s", archived, channel, lead_id, message_id)
+
     conversation_filter = (
         MessageState.channel == channel,
         MessageState.client_identifier == client_identifier,
@@ -352,10 +369,6 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
                 "channel": channel,
             }
         return True, event
-
-    lead_id = _valid_explicit_lead_id(db, item.get("lead_id"))
-    if not lead_id:
-        lead_id = _resolve_sms_lead_id(db, item) if channel == "sms" else _resolve_meta_lead_id(db, item)
 
     # A new inbound message reopens an ended conversation and replaces any older
     # unanswered inbound, keeping exactly one current row per conversation.

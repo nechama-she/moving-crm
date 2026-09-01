@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -41,11 +41,56 @@ const contactReps = (item: Contact) => [...new Set([
   ...item.sources.filter((source) => source.destination_type === "rep").map((source) => String(source.destination_name || "")),
 ].filter((value) => value && value !== "Unassigned"))];
 
+const CommunicationsContacts = memo(function CommunicationsContacts({ contacts, selected, loading, loadingMore, hasMore, repFilter, companyFilter, platformFilter, onSelect, onLoadMore }: {
+  contacts: Contact[];
+  selected: string;
+  loading: boolean;
+  loadingMore: boolean;
+  hasMore: boolean;
+  repFilter: string;
+  companyFilter: string;
+  platformFilter: string;
+  onSelect: (key: string) => void;
+  onLoadMore: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const shown = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const queryDigits = digits(query);
+    return contacts.filter((item) => {
+      const searchable = [item.key, item.client, item.company, item.rep, ...item.sources.flatMap((source) => [source.client_identifier, source.message_partition_key, source.company_identifier, source.company_phone_identifier, source.destination_phone, source.destination_name])]
+        .map((value) => String(value || "").toLowerCase());
+      if (query && !searchable.some((value) => value.includes(query) || (queryDigits.length >= 3 && digits(value).includes(queryDigits)))) return false;
+      if (repFilter && !contactReps(item).includes(repFilter)) return false;
+      if (companyFilter && !contactCompanies(item).includes(companyFilter)) return false;
+      if (platformFilter && !item.sources.some((source) => String(source.source_type || "") === platformFilter)) return false;
+      return true;
+    });
+  }, [contacts, search, repFilter, companyFilter, platformFilter]);
+  const filtersActive = Boolean(search.trim() || repFilter || companyFilter || platformFilter);
+  useEffect(() => {
+    if (!filtersActive || loading || loadingMore || shown.length >= 20 || !hasMore) return;
+    onLoadMore();
+  }, [filtersActive, hasMore, loading, loadingMore, onLoadMore, shown.length]);
+
+  return <aside className="communications-contacts" style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 9, overflow: "hidden" }}>
+    <div style={{ padding: 12, borderBottom: "1px solid #d8dde6" }}>
+      <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search clients or numbers" style={{ width: "100%", padding: "9px 10px", border: "1px solid #cbd5e1", borderRadius: 6, boxSizing: "border-box" }} />
+    </div>
+    <div onScroll={(event) => { const element = event.currentTarget; if (element.scrollHeight - element.scrollTop - element.clientHeight < 240) onLoadMore(); }} style={{ maxHeight: "calc(100vh - 190px)", overflowY: "auto" }}>
+      {loading ? <p style={{ padding: 14 }}>Loading…</p> : shown.map((item) => <button key={item.key} type="button" onClick={() => onSelect(item.key)} style={{ display: "block", width: "100%", padding: "12px 14px", textAlign: "left", border: 0, borderBottom: "1px solid #e2e8f0", background: selected === item.key ? "#eef6ff" : "#fff", cursor: "pointer" }}><strong style={{ display: "block", color: "#032d60" }}>{item.client}</strong><span style={{ display: "block", color: "#475569", fontSize: 12 }}>To: {destinationLabel(item)} · {when(item.timestamp)}</span>{companyAndRep(item) ? <span style={{ display: "block", color: "#64748b", fontSize: 12 }}>Assigned: {companyAndRep(item)}</span> : null}<span title={item.last_preview} style={{ display: "block", marginTop: 4, color: "#475569", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.last_preview}</span></button>)}
+      {loadingMore ? <div style={{ padding: 12, textAlign: "center", color: "#64748b", fontSize: 12 }}>Loading more…</div> : null}
+    </div>
+  </aside>;
+});
+
 export default function UnifiedCommunicationsPage() {
-  const { token } = useAuth(); const [contacts, setContacts] = useState<Contact[]>([]); const [selected, setSelected] = useState(""); const [timeline, setTimeline] = useState<TimelineItem[]>([]); const [search, setSearch] = useState(""); const [loading, setLoading] = useState(true); const [historyLoading, setHistoryLoading] = useState(false); const [error, setError] = useState("");
+  const { token } = useAuth(); const [contacts, setContacts] = useState<Contact[]>([]); const [selected, setSelected] = useState(""); const [timeline, setTimeline] = useState<TimelineItem[]>([]); const [loading, setLoading] = useState(true); const [historyLoading, setHistoryLoading] = useState(false); const [error, setError] = useState("");
   const [repFilter, setRepFilter] = useState(""); const [companyFilter, setCompanyFilter] = useState(""); const [platformFilter, setPlatformFilter] = useState("");
+  const [directoryCompanies, setDirectoryCompanies] = useState<string[]>([]); const [directoryReps, setDirectoryReps] = useState<string[]>([]);
   const [cursors, setCursors] = useState({ sms: "", meta: "", calls: "" }); const [more, setMore] = useState({ sms: true, meta: true, calls: true }); const [loadingMore, setLoadingMore] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
+  const loadingMoreRef = useRef(false);
   useEffect(() => { (async () => { setLoading(true); try {
     const urls = ["/api/chats?source=sms&limit=20", "/api/chats?source=meta&limit=20", "/api/chats/calls?limit=50"];
     const responses = await Promise.all(urls.map((url) => fetch(`${API_BASE}${url}`, { headers: authHeaders(token) })));
@@ -75,10 +120,23 @@ export default function UnifiedCommunicationsPage() {
     setCursors({ sms: sms.next_cursor || "", meta: meta.next_cursor || "", calls: calls.next_cursor || "" }); setMore({ sms: Boolean(sms.has_more), meta: Boolean(meta.has_more), calls: Boolean(calls.has_more) });
   } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not load communications"); } finally { setLoading(false); } })(); }, [token]);
 
+  useEffect(() => {
+    Promise.allSettled([
+      fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) }).then((response) => response.ok ? response.json() : []),
+      fetch(`${API_BASE}/api/users/mine-reps`, { headers: authHeaders(token) }).then((response) => response.ok ? response.json() : []),
+    ]).then(([companiesResult, repsResult]) => {
+      if (companiesResult.status === "fulfilled" && Array.isArray(companiesResult.value)) setDirectoryCompanies(companiesResult.value.map((item) => String(item.name || "")).filter(Boolean));
+      if (repsResult.status === "fulfilled" && Array.isArray(repsResult.value)) setDirectoryReps(repsResult.value.map((item) => String(item.name || "")).filter(Boolean));
+    });
+  }, [token]);
+
   const loadMore = useCallback(async () => {
-    if (loadingMore || !Object.values(more).some(Boolean)) return; setLoadingMore(true);
+    if (loadingMoreRef.current || !Object.values(more).some(Boolean)) return;
+    loadingMoreRef.current = true; setLoadingMore(true);
     try {
-      const sources = (["sms", "meta", "calls"] as const).filter((source) => more[source]);
+      const allowedSources = platformFilter === "calls" ? ["calls"] : platformFilter === "sms" ? ["sms"] : ["messenger", "instagram"].includes(platformFilter) ? ["meta"] : ["sms", "meta", "calls"];
+      const sources = (["sms", "meta", "calls"] as const).filter((source) => allowedSources.includes(source) && more[source]);
+      if (!sources.length) return;
       const responses = await Promise.all(sources.map((source) => { const base = source === "calls" ? "/api/chats/calls?limit=50" : `/api/chats?source=${source}&limit=20`; return fetch(`${API_BASE}${base}&cursor=${encodeURIComponent(cursors[source])}`, { headers: authHeaders(token) }); }));
       if (responses.some((response) => !response.ok)) throw new Error("Could not load more communications");
       const pages = await Promise.all(responses.map((response) => response.json()));
@@ -99,8 +157,8 @@ export default function UnifiedCommunicationsPage() {
       });
       setCursors((current) => { const next = { ...current }; sources.forEach((source, index) => { next[source] = pages[index].next_cursor || ""; }); return next; });
       setMore((current) => { const next = { ...current }; sources.forEach((source, index) => { next[source] = Boolean(pages[index].has_more); }); return next; });
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not load more communications"); } finally { setLoadingMore(false); }
-  }, [cursors, loadingMore, more, token]);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not load more communications"); } finally { loadingMoreRef.current = false; setLoadingMore(false); }
+  }, [cursors, more, platformFilter, token]);
 
   const contact = contacts.find((item) => item.key === selected);
   const loadHistory = useCallback(async (current: Contact) => { setHistoryLoading(true); setError(""); try {
@@ -120,13 +178,14 @@ export default function UnifiedCommunicationsPage() {
       }
     }
     const requests = [...requestUrls].map((url) => fetch(`${API_BASE}${url}`, { headers: authHeaders(token) }));
-    const responses = await Promise.all(requests); const bodies = await Promise.all(responses.map((response) => response.ok ? response.json() : Promise.resolve({})));
+    const responses = await Promise.all(requests); const failedRequests = responses.filter((response) => !response.ok).length; const bodies = await Promise.all(responses.map((response) => response.ok ? response.json() : Promise.resolve({})));
     const result: TimelineItem[] = [];
     bodies.forEach((body) => {
       for (const item of body.messages || []) { const platform = String(item.platform || (item.phone_number ? "sms" : "messenger")); const inbound = platform === "sms" ? ["received", "inbound"].includes(String(item.direction || "").toLowerCase()) : ["user", "client", "customer"].includes(String(item.role || "").toLowerCase()); result.push({ id: `m:${item.message_id}`, kind: "message", channel: platform, direction: inbound ? "inbound" : "outbound", timestamp: stamp(item.timestamp), text: String(item.text || ""), attachments: item.attachments || [], senderLabel: automatedSender(item) }); }
       for (const item of body.calls || []) { result.push({ id: `c:${item.message_id}`, kind: "call", channel: "call", direction: String(item.direction).toLowerCase() === "inbound" ? "inbound" : "outbound", timestamp: stamp(item.timestamp), text: "", answered: Boolean(item.answered), reason: String(item.reason || "") }); }
     });
     setTimeline([...new Map(result.map((item) => [item.id, item])).values()].sort((a, b) => a.timestamp - b.timestamp));
+    if (failedRequests) setError(`${failedRequests} communication source${failedRequests === 1 ? "" : "s"} could not be loaded. The timeline may be incomplete.`);
   } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not load communication history"); } finally { setHistoryLoading(false); } }, [token]);
   useEffect(() => { if (contact) void loadHistory(contact); else setTimeline([]); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -139,30 +198,10 @@ export default function UnifiedCommunicationsPage() {
   }, [selected, historyLoading, timeline.length]);
 
   const filterOptions = useMemo(() => ({
-    reps: [...new Set(contacts.flatMap(contactReps))].sort(),
-    companies: [...new Set(contacts.flatMap(contactCompanies))].sort(),
-    platforms: [...new Set(contacts.flatMap((item) => item.sources.map((source) => String(source.source_type || ""))).filter(Boolean))].sort(),
-  }), [contacts]);
-  const shown = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return contacts.filter((item) => {
-      if (query && ![item.client, item.company, item.rep].some((value) => value.toLowerCase().includes(query))) return false;
-      if (repFilter && !contactReps(item).includes(repFilter)) return false;
-      if (companyFilter && !contactCompanies(item).includes(companyFilter)) return false;
-      if (platformFilter && !item.sources.some((source) => String(source.source_type || "") === platformFilter)) return false;
-      return true;
-    });
-  }, [contacts, search, repFilter, companyFilter, platformFilter]);
-  const filtersActive = Boolean(search.trim() || repFilter || companyFilter || platformFilter);
-  useEffect(() => {
-    if (!filtersActive || loading || loadingMore || shown.length >= 20 || !Object.values(more).some(Boolean)) return;
-    void loadMore();
-  }, [filtersActive, loading, loadingMore, shown.length, more, loadMore]);
-  useEffect(() => {
-    if (loading) return;
-    if (selected && shown.some((item) => item.key === selected)) return;
-    setSelected(shown[0]?.key || "");
-  }, [loading, selected, shown]);
+    reps: [...new Set([...directoryReps, ...contacts.flatMap(contactReps)])].sort(),
+    companies: [...new Set([...directoryCompanies, ...contacts.flatMap(contactCompanies)])].sort(),
+    platforms: ["calls", "instagram", "messenger", "sms"],
+  }), [contacts, directoryCompanies, directoryReps]);
   function callbackFor(index: number) { const item = timeline[index]; if (item.kind !== "call" || item.direction !== "inbound" || item.answered) return undefined; return timeline.slice(index + 1).find((next) => next.kind === "call" && next.direction === "outbound"); }
   function missedBefore(index: number) { const item = timeline[index]; if (item.kind !== "call" || item.direction !== "outbound") return undefined; const prior = timeline.slice(0, index).filter((candidate) => candidate.kind === "call" && candidate.direction === "inbound" && !candidate.answered); return [...prior].reverse().find((missed) => !timeline.some((candidate) => candidate.kind === "call" && candidate.direction === "outbound" && candidate.timestamp > missed.timestamp && candidate.timestamp < item.timestamp)); }
 
@@ -177,7 +216,7 @@ export default function UnifiedCommunicationsPage() {
         <header style={{ padding: "12px 18px", borderBottom: "1px solid #d8dde6", background: "#f8fafc" }}>{contact ? <>{contact.lead_id ? <Link to={`/leads/${contact.lead_id}`} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{contact.client}</Link> : <strong>{contact.client}</strong>}<div style={{ color: "#475569", marginTop: 4, fontSize: 12 }}><strong>Sent to:</strong> {destinationLabel(contact)}</div>{companyAndRep(contact) ? <div style={{ color: "#64748b", marginTop: 2, fontSize: 12 }}><strong>Lead assigned to:</strong> {companyAndRep(contact)}</div> : null}</> : "Select a client"}</header>
         <div ref={timelineRef} style={{ padding: 18, maxHeight: "calc(100vh - 230px)", overflowY: "auto" }}>{historyLoading ? <p>Loading communication…</p> : timeline.map((item, index) => { const callback = callbackFor(index); const missed = missedBefore(index); return <div key={item.id} style={{ display: "flex", justifyContent: item.direction === "outbound" ? "flex-end" : "flex-start", margin: "9px 0" }}><article style={{ maxWidth: "72%", padding: "10px 13px", borderRadius: 14, background: item.direction === "outbound" ? "#e3f2fd" : "#f3f4f6", color: "#1e293b" }}>{item.kind === "message" ? <>{item.senderLabel ? <strong style={{ display: "block", marginBottom: 5, color: "#5c2d91", fontSize: 12 }}>{item.senderLabel}</strong> : null}{item.text ? <div style={{ whiteSpace: "pre-wrap" }}>{item.text}</div> : null}<MessageAttachments attachments={item.attachments} /></> : <><strong>{item.direction === "inbound" ? "Inbound call" : "Outbound call"}</strong><div style={{ fontSize: 12, color: "#64748b" }}>{item.answered ? "Answered" : "Not answered"}{item.reason ? ` · ${item.reason}` : ""}</div>{callback ? <div style={{ color: "#2e844a", fontSize: 12, fontWeight: 700 }}>Called back in {elapsed(callback.timestamp - item.timestamp)}</div> : item.direction === "inbound" && !item.answered ? <div style={{ color: "#ba0517", fontSize: 12, fontWeight: 700 }}>No callback yet</div> : null}{missed ? <div style={{ color: "#2e844a", fontSize: 12, fontWeight: 700 }}>Callback after {elapsed(item.timestamp - missed.timestamp)}</div> : null}</>}<footer style={{ marginTop: 5, color: "#64748b", fontSize: 11 }}>{item.channel.toUpperCase()} · {when(item.timestamp)}</footer></article></div>; })}{!historyLoading && contact && timeline.length === 0 ? <p style={{ textAlign: "center", color: "#64748b" }}>No communication history found.</p> : null}</div>
       </section>
-      <aside className="communications-contacts" style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 9, overflow: "hidden" }}><div style={{ padding: 12, borderBottom: "1px solid #d8dde6" }}><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search clients or numbers" style={{ width: "100%", padding: "9px 10px", border: "1px solid #cbd5e1", borderRadius: 6, boxSizing: "border-box" }} /></div><div onScroll={(event) => { const element = event.currentTarget; if (element.scrollHeight - element.scrollTop - element.clientHeight < 240) void loadMore(); }} style={{ maxHeight: "calc(100vh - 190px)", overflowY: "auto" }}>{loading ? <p style={{ padding: 14 }}>Loading…</p> : shown.map((item) => <button key={item.key} type="button" onClick={() => setSelected(item.key)} style={{ display: "block", width: "100%", padding: "12px 14px", textAlign: "left", border: 0, borderBottom: "1px solid #e2e8f0", background: selected === item.key ? "#eef6ff" : "#fff", cursor: "pointer" }}><strong style={{ display: "block", color: "#032d60" }}>{item.client}</strong><span style={{ display: "block", color: "#475569", fontSize: 12 }}>To: {destinationLabel(item)} · {when(item.timestamp)}</span>{companyAndRep(item) ? <span style={{ display: "block", color: "#64748b", fontSize: 12 }}>Assigned: {companyAndRep(item)}</span> : null}<span title={item.last_preview} style={{ display: "block", marginTop: 4, color: "#475569", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.last_preview}</span></button>)}{loadingMore ? <div style={{ padding: 12, textAlign: "center", color: "#64748b", fontSize: 12 }}>Loading more…</div> : null}</div></aside>
+      <CommunicationsContacts contacts={contacts} selected={selected} loading={loading} loadingMore={loadingMore} hasMore={platformFilter === "calls" ? more.calls : platformFilter === "sms" ? more.sms : ["messenger", "instagram"].includes(platformFilter) ? more.meta : Object.values(more).some(Boolean)} repFilter={repFilter} companyFilter={companyFilter} platformFilter={platformFilter} onSelect={setSelected} onLoadMore={loadMore} />
     </div></main>;
 }
 

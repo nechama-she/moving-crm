@@ -82,6 +82,7 @@ export default function LeadsList() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRequestRef = useRef<AbortController | null>(null);
   const requestVersionRef = useRef(0);
+  const hasLoadedRef = useRef(false);
   const companyIdFilter = searchParams.get("company_id") || "";
   const companyNameFilter = searchParams.get("company_name") || "";
 
@@ -117,7 +118,6 @@ export default function LeadsList() {
     const requestVersion = isFirst ? ++requestVersionRef.current : requestVersionRef.current;
     if (isFirst) {
       setError("");
-      setLeads([]);
       setHasMore(false);
       setLoading(true);
       setLoadingMore(false);
@@ -147,6 +147,7 @@ export default function LeadsList() {
         return [...merged.values()];
       });
       setHasMore(data.has_more);
+      hasLoadedRef.current = true;
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       if (requestVersion !== requestVersionRef.current) return;
@@ -198,7 +199,7 @@ export default function LeadsList() {
     return ordered;
   };
 
-  if (loading) return <p>Loading…</p>;
+  if (loading && !hasLoadedRef.current) return <p>Loading…</p>;
 
   const columns = getColumns(leads);
 
