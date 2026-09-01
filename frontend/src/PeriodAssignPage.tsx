@@ -66,6 +66,7 @@ function ReferralAssignmentRulesPanel() {
   const [data, setData] = useState<ReferralRuleData>({ rules: [], companies: [], reps: [], referral_sources: {} });
   const [companyId, setCompanyId] = useState("");
   const [referralSource, setReferralSource] = useState("");
+  const [manualReferralSource, setManualReferralSource] = useState(false);
   const [repAssignments, setRepAssignments] = useState<Record<string, ReferralRepAssignment>>({});
   const [active, setActive] = useState(true);
   const [editingId, setEditingId] = useState("");
@@ -85,6 +86,7 @@ function ReferralAssignmentRulesPanel() {
   function resetForm() {
     setCompanyId("");
     setReferralSource("");
+    setManualReferralSource(false);
     setRepAssignments({});
     setActive(true);
     setEditingId("");
@@ -130,6 +132,7 @@ function ReferralAssignmentRulesPanel() {
   function editRule(rule: ReferralRule) {
     setCompanyId(rule.company_id);
     setReferralSource(rule.referral_source);
+    setManualReferralSource(false);
     setRepAssignments(Object.fromEntries((rule.rep_assignments || []).map((assignment) => [assignment.rep_user_id, assignment])));
     setActive(rule.active);
     setEditingId(rule.id);
@@ -174,17 +177,37 @@ function ReferralAssignmentRulesPanel() {
         <div style={referralFormGrid}>
           <label style={referralLabel}>
             Company
-            <select style={referralInput} value={companyId} onChange={(event) => { setCompanyId(event.target.value); setRepAssignments({}); }}>
+            <select style={referralInput} value={companyId} onChange={(event) => { setCompanyId(event.target.value); setReferralSource(""); setManualReferralSource(false); setRepAssignments({}); }}>
               <option value="">Select company</option>
               {data.companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
             </select>
           </label>
           <label style={referralLabel}>
             Referral Source
-            <input style={referralInput} list="referral-assignment-sources" value={referralSource} onChange={(event) => setReferralSource(event.target.value)} placeholder="Select or enter Referral Source" />
-            <datalist id="referral-assignment-sources">
-              {(data.referral_sources[companyId] || []).map((source) => <option key={source} value={source} />)}
-            </datalist>
+            {!manualReferralSource ? (
+              <select
+                style={referralInput}
+                value={referralSource}
+                disabled={!companyId}
+                onChange={(event) => {
+                  if (event.target.value === "__manual__") {
+                    setReferralSource("");
+                    setManualReferralSource(true);
+                  } else {
+                    setReferralSource(event.target.value);
+                  }
+                }}
+              >
+                <option value="">Select Referral Source</option>
+                {(data.referral_sources[companyId] || []).map((source) => <option key={source} value={source}>{source}</option>)}
+                <option value="__manual__">Enter a new Referral Source...</option>
+              </select>
+            ) : (
+              <div style={{ display: "flex", gap: 7 }}>
+                <input autoFocus style={referralInput} value={referralSource} onChange={(event) => setReferralSource(event.target.value)} placeholder="Enter Referral Source" />
+                <button type="button" style={referralSecondaryButton} onClick={() => { setReferralSource(""); setManualReferralSource(false); }}>Choose existing</button>
+              </div>
+            )}
           </label>
         </div>
 
