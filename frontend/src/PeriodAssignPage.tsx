@@ -132,67 +132,111 @@ function ReferralAssignmentRulesPanel() {
   const companyName = new Map(data.companies.map((company) => [company.id, company.name]));
   const repName = new Map(data.reps.map((rep) => [rep.id, rep.name]));
   const eligibleReps = data.reps.filter((rep) => rep.company_ids.includes(companyId));
+  const saveDisabled = saving || !companyId || !referralSource.trim() || repIds.length === 0;
 
   return (
-    <section style={{ marginBottom: 22, border: "1px solid #dddbda", borderRadius: 4, padding: 14, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
-      <h2 style={{ margin: "0 0 4px", fontSize: 16, color: "#032d60" }}>Referral Source Assignment</h2>
-      <p style={{ margin: "0 0 14px", color: "#706e6b", fontSize: 13 }}>
-        Choose which reps can receive leads from each company and Referral Source.
-      </p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-        <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 600 }}>
-          Company
-          <select value={companyId} onChange={(event) => { setCompanyId(event.target.value); setRepIds([]); }}>
-            <option value="">Select company...</option>
-            {data.companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
-          </select>
-        </label>
-        <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 600 }}>
-          Referral Source
-          <input list="referral-assignment-sources" value={referralSource} onChange={(event) => setReferralSource(event.target.value)} placeholder="Select or enter Referral Source" />
-          <datalist id="referral-assignment-sources">
-            {(data.referral_sources[companyId] || []).map((source) => <option key={source} value={source} />)}
-          </datalist>
-        </label>
+    <section style={{ marginBottom: 22 }}>
+      <div style={referralSectionHeader}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 18, color: "#032d60" }}>Referral Source Assignment</h2>
+          <p style={{ margin: "5px 0 0", color: "#706e6b", fontSize: 13 }}>Route leads to the right sales reps based on company and Referral Source.</p>
+        </div>
+        <span style={referralCountBadge}>{data.rules.length} {data.rules.length === 1 ? "rule" : "rules"}</span>
       </div>
-      <div style={{ marginTop: 12, fontSize: 13, fontWeight: 600 }}>Who gets it</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
-        {companyId && eligibleReps.length === 0 ? <span style={{ color: "#706e6b", fontSize: 13 }}>No reps belong to this company.</span> : null}
-        {eligibleReps.map((rep) => (
-          <label key={rep.id} style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid #dddbda", borderRadius: 4, padding: "7px 10px", fontSize: 13 }}>
-            <input type="checkbox" checked={repIds.includes(rep.id)} onChange={() => setRepIds((current) => current.includes(rep.id) ? current.filter((id) => id !== rep.id) : [...current, rep.id])} />
-            {rep.name}
+
+      <div style={referralCard}>
+        <h3 style={referralCardTitle}>{editingId ? "Edit Assignment Rule" : "New Assignment Rule"}</h3>
+        <div style={referralFormGrid}>
+          <label style={referralLabel}>
+            Company
+            <select style={referralInput} value={companyId} onChange={(event) => { setCompanyId(event.target.value); setRepIds([]); }}>
+              <option value="">Select company</option>
+              {data.companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+            </select>
           </label>
-        ))}
+          <label style={referralLabel}>
+            Referral Source
+            <input style={referralInput} list="referral-assignment-sources" value={referralSource} onChange={(event) => setReferralSource(event.target.value)} placeholder="Select or enter Referral Source" />
+            <datalist id="referral-assignment-sources">
+              {(data.referral_sources[companyId] || []).map((source) => <option key={source} value={source} />)}
+            </datalist>
+          </label>
+        </div>
+
+        <fieldset style={referralRepFieldset}>
+          <legend style={referralLegend}>Assign to reps</legend>
+          {!companyId ? <div style={referralEmptyHint}>Select a company to see its sales reps.</div> : null}
+          {companyId && eligibleReps.length === 0 ? <div style={referralEmptyHint}>No sales reps are assigned to this company.</div> : null}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 8 }}>
+            {eligibleReps.map((rep) => {
+              const selected = repIds.includes(rep.id);
+              return (
+                <label key={rep.id} style={{ ...referralRepOption, ...(selected ? referralRepOptionSelected : {}) }}>
+                  <input type="checkbox" checked={selected} onChange={() => setRepIds((current) => selected ? current.filter((id) => id !== rep.id) : [...current, rep.id])} />
+                  <span><strong style={{ display: "block", color: "#181818" }}>{rep.name}</strong><span style={{ color: "#706e6b", fontSize: 11 }}>{rep.email}</span></span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 13, fontSize: 13, fontWeight: 600, color: "#181818" }}>
+          <input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} /> Rule enabled
+        </label>
+        {error ? <div style={referralErrorBox}>{error}</div> : null}
+        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          <button type="button" onClick={saveRule} disabled={saveDisabled} style={{ ...referralPrimaryButton, opacity: saveDisabled ? 0.55 : 1, cursor: saveDisabled ? "not-allowed" : "pointer" }}>{saving ? "Saving..." : editingId ? "Save Changes" : "Add Rule"}</button>
+          {editingId ? <button type="button" onClick={resetForm} style={referralSecondaryButton}>Cancel</button> : null}
+        </div>
       </div>
-      <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12, fontSize: 13 }}>
-        <input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} /> Enabled
-      </label>
-      {error ? <div style={{ color: "#ba0517", marginTop: 10, fontSize: 13 }}>{error}</div> : null}
-      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button type="button" onClick={saveRule} disabled={saving || !companyId || !referralSource.trim() || repIds.length === 0}>{saving ? "Saving..." : editingId ? "Save Rule" : "Add Rule"}</button>
-        {editingId ? <button type="button" onClick={resetForm}>Cancel</button> : null}
-      </div>
-      <div style={{ overflowX: "auto", marginTop: 18 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead><tr style={{ textAlign: "left", borderBottom: "1px solid #dddbda" }}><th style={{ padding: 8 }}>Company</th><th style={{ padding: 8 }}>Referral Source</th><th style={{ padding: 8 }}>Assigned Reps</th><th style={{ padding: 8 }}>Status</th><th style={{ padding: 8 }}>Actions</th></tr></thead>
-          <tbody>
-            {data.rules.map((rule) => (
-              <tr key={rule.id} style={{ borderBottom: "1px solid #eef0f2" }}>
-                <td style={{ padding: 8 }}>{companyName.get(rule.company_id) || rule.company_id}</td>
-                <td style={{ padding: 8 }}>{rule.referral_source}</td>
-                <td style={{ padding: 8 }}>{rule.rep_user_ids.map((id) => repName.get(id) || id).join(", ")}</td>
-                <td style={{ padding: 8 }}>{rule.active ? "Enabled" : "Disabled"}</td>
-                <td style={{ padding: 8 }}><button type="button" onClick={() => editRule(rule)}>Edit</button> <button type="button" onClick={() => deleteRule(rule.id)} style={{ color: "#ba0517" }}>Delete</button></td>
-              </tr>
-            ))}
-            {data.rules.length === 0 ? <tr><td colSpan={5} style={{ padding: 14, textAlign: "center", color: "#706e6b" }}>No referral source assignment rules configured.</td></tr> : null}
-          </tbody>
-        </table>
+
+      <div style={referralCard}>
+        <h3 style={referralCardTitle}>Configured Rules</h3>
+        <div style={{ overflowX: "auto" }}>
+          <table style={referralTable}>
+            <thead><tr><th style={referralTh}>Company</th><th style={referralTh}>Referral Source</th><th style={referralTh}>Assigned Reps</th><th style={referralTh}>Status</th><th style={referralTh}>Actions</th></tr></thead>
+            <tbody>
+              {data.rules.map((rule) => (
+                <tr key={rule.id} style={{ opacity: rule.active ? 1 : 0.62 }}>
+                  <td style={referralTd}>{companyName.get(rule.company_id) || rule.company_id}</td>
+                  <td style={referralTd}><strong>{rule.referral_source}</strong></td>
+                  <td style={referralTd}><div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>{rule.rep_user_ids.map((id) => <span key={id} style={referralRepBadge}>{repName.get(id) || id}</span>)}</div></td>
+                  <td style={referralTd}><span style={{ ...referralStatusBadge, ...(rule.active ? referralStatusEnabled : referralStatusDisabled) }}>{rule.active ? "Enabled" : "Disabled"}</span></td>
+                  <td style={{ ...referralTd, whiteSpace: "nowrap" }}><button type="button" onClick={() => editRule(rule)} style={referralLinkButton}>Edit</button><button type="button" onClick={() => deleteRule(rule.id)} style={{ ...referralLinkButton, color: "#ba0517" }}>Delete</button></td>
+                </tr>
+              ))}
+              {data.rules.length === 0 ? <tr><td colSpan={5} style={{ ...referralTd, padding: 30, textAlign: "center", color: "#706e6b" }}>No assignment rules configured.</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   );
 }
+
+const referralSectionHeader: React.CSSProperties = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 };
+const referralCountBadge: React.CSSProperties = { borderRadius: 14, background: "#eef4ff", color: "#014486", padding: "4px 10px", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" };
+const referralCard: React.CSSProperties = { background: "#fff", border: "1px solid #dddbda", borderRadius: 6, padding: 18, marginBottom: 14, boxShadow: "0 1px 2px rgba(0,0,0,.04)" };
+const referralCardTitle: React.CSSProperties = { color: "#032d60", fontSize: 15, margin: "0 0 14px" };
+const referralFormGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 };
+const referralLabel: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 6, color: "#181818", fontSize: 13, fontWeight: 600 };
+const referralInput: React.CSSProperties = { width: "100%", minHeight: 38, border: "1px solid #c9c7c5", borderRadius: 4, padding: "7px 10px", boxSizing: "border-box", background: "#fff", color: "#181818" };
+const referralRepFieldset: React.CSSProperties = { border: "1px solid #dddbda", borderRadius: 5, padding: 12, margin: "15px 0 0", minWidth: 0 };
+const referralLegend: React.CSSProperties = { padding: "0 5px", color: "#3e3e3c", fontSize: 12, fontWeight: 700 };
+const referralEmptyHint: React.CSSProperties = { padding: "8px 2px", color: "#706e6b", fontSize: 13 };
+const referralRepOption: React.CSSProperties = { display: "flex", alignItems: "center", gap: 9, minWidth: 0, border: "1px solid #dddbda", borderRadius: 5, padding: "9px 10px", background: "#fff", cursor: "pointer", fontSize: 13 };
+const referralRepOptionSelected: React.CSSProperties = { borderColor: "#0176d3", background: "#eef4ff", boxShadow: "inset 0 0 0 1px #0176d3" };
+const referralPrimaryButton: React.CSSProperties = { border: 0, borderRadius: 4, padding: "9px 16px", background: "#0176d3", color: "#fff", fontWeight: 700 };
+const referralSecondaryButton: React.CSSProperties = { border: "1px solid #0176d3", borderRadius: 4, padding: "8px 16px", background: "#fff", color: "#0176d3", fontWeight: 700, cursor: "pointer" };
+const referralErrorBox: React.CSSProperties = { background: "#fef1ee", border: "1px solid #ea001e", borderRadius: 4, color: "#ba0517", padding: 10, marginTop: 13, fontSize: 13 };
+const referralTable: React.CSSProperties = { width: "100%", minWidth: 760, borderCollapse: "collapse", fontSize: 13 };
+const referralTh: React.CSSProperties = { textAlign: "left", color: "#3e3e3c", padding: "10px 9px", borderBottom: "1px solid #c9c7c5", background: "#f3f3f3", fontSize: 12, textTransform: "uppercase", letterSpacing: ".025em" };
+const referralTd: React.CSSProperties = { padding: "11px 9px", borderBottom: "1px solid #e5e5e5", verticalAlign: "middle", color: "#181818" };
+const referralRepBadge: React.CSSProperties = { display: "inline-flex", borderRadius: 12, border: "1px solid #c9c7c5", padding: "3px 8px", background: "#fff", color: "#3e3e3c", fontSize: 12 };
+const referralStatusBadge: React.CSSProperties = { display: "inline-flex", alignItems: "center", borderRadius: 12, padding: "3px 9px", fontSize: 12, fontWeight: 700 };
+const referralStatusEnabled: React.CSSProperties = { color: "#2e844a", background: "#ecf7ee", border: "1px solid #91db8b" };
+const referralStatusDisabled: React.CSSProperties = { color: "#706e6b", background: "#f3f3f3", border: "1px solid #c9c7c5" };
+const referralLinkButton: React.CSSProperties = { border: 0, background: "transparent", color: "#0176d3", cursor: "pointer", padding: "4px 10px 4px 0", fontWeight: 700 };
 
 function toMs(value: string | undefined): number {
   if (!value) return 0;
@@ -619,8 +663,8 @@ export default function PeriodAssignPage() {
   }
 
   return (
-    <div className="user-setup-page" style={{ padding: "20px 24px", fontFamily: "inherit", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
-      <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Assignment Rules</h1>
+    <div className="user-setup-page" style={{ padding: "22px 24px", fontFamily: "inherit", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box", background: "#f3f3f3" }}>
+      <h1 style={{ fontSize: 24, color: "#032d60", fontWeight: 700, margin: 0 }}>Assignment Rules</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
         Configure lead routing by Referral Source and keep date-based availability rules below.
       </p>
