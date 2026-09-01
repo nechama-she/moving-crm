@@ -163,8 +163,8 @@ function ReferralAssignmentRulesPanel() {
   }
 
   return (
-    <section style={{ marginBottom: 22 }}>
-      <div style={referralSectionHeader}>
+    <section className="referral-assignment-section" style={{ marginBottom: 22 }}>
+      <div className="referral-assignment-header" style={referralSectionHeader}>
         <div>
           <h2 style={{ margin: 0, fontSize: 18, color: "#032d60" }}>Referral Source Assignment</h2>
           <p style={{ margin: "5px 0 0", color: "#706e6b", fontSize: 13 }}>Route leads to the right sales reps based on company and Referral Source.</p>
@@ -172,7 +172,7 @@ function ReferralAssignmentRulesPanel() {
         <span style={referralCountBadge}>{data.rules.length} {data.rules.length === 1 ? "rule" : "rules"}</span>
       </div>
 
-      <div style={referralCard}>
+      <div className="referral-assignment-card" style={referralCard}>
         <h3 style={referralCardTitle}>{editingId ? "Edit Assignment Rule" : "New Assignment Rule"}</h3>
         <div style={referralFormGrid}>
           <label style={referralLabel}>
@@ -203,7 +203,7 @@ function ReferralAssignmentRulesPanel() {
                 <option value="__manual__">Enter a new Referral Source...</option>
               </select>
             ) : (
-              <div style={{ display: "flex", gap: 7 }}>
+              <div className="referral-manual-source" style={{ display: "flex", gap: 7 }}>
                 <input autoFocus style={referralInput} value={referralSource} onChange={(event) => setReferralSource(event.target.value)} placeholder="Enter Referral Source" />
                 <button type="button" style={referralSecondaryButton} onClick={() => { setReferralSource(""); setManualReferralSource(false); }}>Choose existing</button>
               </div>
@@ -215,7 +215,7 @@ function ReferralAssignmentRulesPanel() {
           <legend style={referralLegend}>Assign to reps</legend>
           {!companyId ? <div style={referralEmptyHint}>Select a company to see its sales reps.</div> : null}
           {companyId && eligibleReps.length === 0 ? <div style={referralEmptyHint}>No sales reps are assigned to this company.</div> : null}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(330px, 1fr))", gap: 10 }}>
+          <div className="referral-rep-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(330px, 1fr))", gap: 10 }}>
             {eligibleReps.map((rep) => {
               const assignment = repAssignments[rep.id];
               const selected = Boolean(assignment);
@@ -235,7 +235,7 @@ function ReferralAssignmentRulesPanel() {
                         </select>
                       </label>
                       {assignment.schedule === "scheduled" ? (
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 9 }}>
+                        <div className="referral-date-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 9 }}>
                           <label style={{ ...referralLabel, fontSize: 11 }}>Start date<input type="date" style={referralInput} value={assignment.start_date || ""} onChange={(event) => updateRepSchedule(rep.id, { start_date: event.target.value })} /></label>
                           <label style={{ ...referralLabel, fontSize: 11 }}>End date<input type="date" style={referralInput} value={assignment.end_date || ""} onChange={(event) => updateRepSchedule(rep.id, { end_date: event.target.value })} /></label>
                         </div>
@@ -258,7 +258,7 @@ function ReferralAssignmentRulesPanel() {
         </div>
       </div>
 
-      <div style={referralCard}>
+      <div className="referral-assignment-card" style={referralCard}>
         <h3 style={referralCardTitle}>Configured Rules</h3>
         <div style={{ overflowX: "auto" }}>
           <table style={referralTable}>

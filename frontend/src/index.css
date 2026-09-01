@@ -368,6 +368,35 @@ input, select, textarea, button {
 }
 
 @media (max-width: 640px) {
+  .referral-assignment-header {
+    align-items: flex-start !important;
+    flex-wrap: wrap;
+  }
+
+  .referral-assignment-card {
+    padding: 12px !important;
+  }
+
+  .referral-rep-grid,
+  .referral-date-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .referral-manual-source {
+    flex-direction: column;
+  }
+
+  .referral-manual-source button,
+  .referral-assignment-card button,
+  .referral-assignment-card select,
+  .referral-assignment-card input:not([type="checkbox"]) {
+    min-height: 44px;
+  }
+
+  .referral-assignment-card button {
+    touch-action: manipulation;
+  }
+
   .company-access-backdrop { padding: 10px 10px 0; align-items: end; }
   .company-access-modal { max-height: calc(100vh - 10px); border-radius: 10px 10px 0 0; }
   html, body {
