@@ -4484,13 +4484,33 @@ def create_lead(
         if conflicts.same_company_match:
             assignment_mode = "queued"
             assignment_reason = "matching_assigned_lead_same_company"
+        elif configured_rep_ids is not None:
+            # A Referral Source rule chooses from its complete configured pool.
+            # Do not silently route to a different rule rep when the selected rep
+            # already owns this client under another company.
+            rep = _pick_round_robin_rep_for_company(
+                company.id,
+                db,
+                available_rep_ids,
+                respect_availability=False,
+            )
+            if rep and rep.id in conflicts.excluded_rep_ids:
+                assignment_mode = "queued"
+                assignment_reason = "referral_source_rule_rep_has_matching_lead_other_company"
+            elif rep:
+                assigned_to_user_id = rep.id
+                assignment_mode = "auto"
+                assignment_reason = "referral_source_rule_round_robin"
+            else:
+                assignment_mode = "queued"
+                assignment_reason = "referral_source_rule_no_available_rep"
         else:
             eligible_rep_ids = available_rep_ids - conflicts.excluded_rep_ids
             rep = _pick_round_robin_rep_for_company(
                 company.id,
                 db,
                 eligible_rep_ids,
-                respect_availability=configured_rep_ids is None,
+                respect_availability=True,
             )
             if rep:
                 assigned_to_user_id = rep.id
@@ -4498,22 +4518,14 @@ def create_lead(
                 assignment_reason = (
                     "matching_lead_other_company_excluded_previous_rep"
                     if conflicts.excluded_rep_ids
-                    else (
-                        "referral_source_rule_round_robin"
-                        if configured_rep_ids is not None
-                        else "all_admins_unavailable_round_robin"
-                    )
+                    else "all_admins_unavailable_round_robin"
                 )
             else:
                 assignment_mode = "queued"
                 assignment_reason = (
                     "matching_lead_other_company_excluded_all_reps"
                     if conflicts.excluded_rep_ids
-                    else (
-                        "referral_source_rule_no_available_rep"
-                        if configured_rep_ids is not None
-                        else "all_admins_unavailable_no_available_rep"
-                    )
+                    else "all_admins_unavailable_no_available_rep"
                 )
 
     raw_move_type = _clean_optional_text(body.move_type).lower()
@@ -4695,6 +4707,8 @@ def create_lead(
     # Build assignment note with SmartMoving sync details
     if assignment_reason == "matching_assigned_lead_same_company":
         assign_note = "Not auto-assigned because the same phone or email is already assigned in this company"
+    elif assignment_reason == "referral_source_rule_rep_has_matching_lead_other_company":
+        assign_note = "Not auto-assigned because the rule-selected rep already has the same phone or email under another company"
     elif assignment_reason == "matching_lead_other_company_excluded_all_reps":
         assign_note = "Not auto-assigned because matching leads in other companies are assigned to every eligible rep"
     elif assignment_mode == "auto" and auto_assignment_dry_run:

@@ -65,6 +65,7 @@ export default function LeadDuplicationRulesPage() {
   const [campaigns, setCampaigns] = useState<Record<string, string[]>>({});
   const [form, setForm] = useState<FormState>(blankForm);
   const [editingId, setEditingId] = useState("");
+  const [targetReferralEdited, setTargetReferralEdited] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -94,13 +95,15 @@ export default function LeadDuplicationRulesPage() {
   );
 
   useEffect(() => {
+    if (targetReferralEdited) return;
     const calculated = calculateTargetCampaign(form.source_referral_source, form.target_company_id, campaigns);
     setForm((current) => current.target_referral_source === calculated
       ? current
       : { ...current, target_referral_source: calculated });
-  }, [campaigns, form.source_referral_source, form.target_company_id]);
+  }, [campaigns, form.source_referral_source, form.target_company_id, targetReferralEdited]);
 
   function editRule(rule: Rule) {
+    setTargetReferralEdited(true);
     setEditingId(rule.id);
     setForm({
       source_company_id: rule.source_company_id,
@@ -116,6 +119,7 @@ export default function LeadDuplicationRulesPage() {
   function cancelEdit() {
     setEditingId("");
     setForm(blankForm);
+    setTargetReferralEdited(false);
     setError("");
   }
 
@@ -186,23 +190,23 @@ export default function LeadDuplicationRulesPage() {
         <h2 style={cardTitle}>{editingId ? "Edit Rule" : "Add Rule"}</h2>
         <div style={formGrid}>
           <label style={label}>Source company
-            <select required value={form.source_company_id} onChange={(e) => setForm({ ...form, source_company_id: e.target.value, source_referral_source: "" })} style={input}>
+            <select required value={form.source_company_id} onChange={(e) => { setTargetReferralEdited(false); setForm({ ...form, source_company_id: e.target.value, source_referral_source: "", target_referral_source: "" }); }} style={input}>
               <option value="">Select company</option>
               {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
             </select>
           </label>
           <label style={label}>Source campaign
-            <input required list="source-campaigns" value={form.source_referral_source} onChange={(e) => setForm({ ...form, source_referral_source: e.target.value })} style={input} placeholder="Select or enter campaign" />
+            <input required list="source-campaigns" value={form.source_referral_source} onChange={(e) => { setTargetReferralEdited(false); setForm({ ...form, source_referral_source: e.target.value }); }} style={input} placeholder="Select or enter campaign" />
             <datalist id="source-campaigns">{sourceCampaigns.map((campaign) => <option key={campaign} value={campaign} />)}</datalist>
           </label>
           <label style={label}>Duplicate to company
-            <select required value={form.target_company_id} onChange={(e) => setForm({ ...form, target_company_id: e.target.value })} style={input}>
+            <select required value={form.target_company_id} onChange={(e) => { setTargetReferralEdited(false); setForm({ ...form, target_company_id: e.target.value }); }} style={input}>
               <option value="">Select company</option>
               {companies.filter((company) => company.id !== form.source_company_id).map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
             </select>
           </label>
           <label style={label}>Target campaign
-            <input required value={form.target_referral_source} onChange={(e) => setForm({ ...form, target_referral_source: e.target.value })} style={input} placeholder="Calculated automatically or enter campaign" />
+            <input required value={form.target_referral_source} onChange={(e) => { setTargetReferralEdited(true); setForm({ ...form, target_referral_source: e.target.value }); }} style={input} placeholder="Calculated automatically or enter campaign" />
             {form.source_referral_source && form.target_company_id && !form.target_referral_source
               ? <span style={{ color: "#ba0517", fontSize: 11, fontWeight: 400 }}>No campaign pattern was found for the target company.</span>
               : null}
