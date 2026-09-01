@@ -174,11 +174,6 @@ export default function UnifiedCommunicationsPage() {
     if (!filtersActive || loading || loadingMore || shown.length >= 20 || !Object.values(more).some(Boolean)) return;
     void loadMore();
   }, [filtersActive, loading, loadingMore, shown.length, more, loadMore]);
-  useEffect(() => {
-    if (loading) return;
-    if (selected && shown.some((item) => item.key === selected)) return;
-    setSelected(shown[0]?.key || "");
-  }, [loading, selected, shown]);
   function callbackFor(index: number) { const item = timeline[index]; if (item.kind !== "call" || item.direction !== "inbound" || item.answered) return undefined; return timeline.slice(index + 1).find((next) => next.kind === "call" && next.direction === "outbound"); }
   function missedBefore(index: number) { const item = timeline[index]; if (item.kind !== "call" || item.direction !== "outbound") return undefined; const prior = timeline.slice(0, index).filter((candidate) => candidate.kind === "call" && candidate.direction === "inbound" && !candidate.answered); return [...prior].reverse().find((missed) => !timeline.some((candidate) => candidate.kind === "call" && candidate.direction === "outbound" && candidate.timestamp > missed.timestamp && candidate.timestamp < item.timestamp)); }
 
