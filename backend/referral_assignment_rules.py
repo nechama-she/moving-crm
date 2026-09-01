@@ -1,8 +1,11 @@
 import json
+from datetime import datetime
+
+from dateutil.tz import gettz
 
 from sqlalchemy.orm import Session
 
-from models import AppSetting
+from models import AppSetting, Company
 
 
 SETTING_KEY = "referral_source_assignment_rules_v1"
@@ -37,6 +40,8 @@ def configured_rep_ids_for_referral(
     company_id: str,
     referral_source: str | None,
     rules: list[dict] | None = None,
+    now: datetime | None = None,
+    timezone_name: str | None = None,
 ) -> set[str] | None:
     normalized = normalize_referral_source(referral_source)
     if not normalized:
@@ -48,5 +53,37 @@ def configured_rep_ids_for_referral(
             continue
         if normalize_referral_source(str(rule.get("referral_source") or "")) != normalized:
             continue
-        return {str(rep_id) for rep_id in (rule.get("rep_user_ids") or []) if rep_id}
+        assignments = rule.get("rep_assignments")
+        if not isinstance(assignments, list):
+            assignments = [
+                {"rep_user_id": rep_id, "schedule": "always"}
+                for rep_id in (rule.get("rep_user_ids") or [])
+                if rep_id
+            ]
+        if timezone_name is None:
+            company = db.query(Company.timezone).filter(Company.id == company_id).first()
+            timezone_name = (company[0] if company else None) or "America/New_York"
+        zone = gettz(timezone_name) or gettz("America/New_York")
+        current = now or datetime.now(zone)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=zone)
+        else:
+            current = current.astimezone(zone)
+        today = current.date().isoformat()
+        eligible: set[str] = set()
+        for assignment in assignments:
+            rep_id = str(assignment.get("rep_user_id") or "")
+            if not rep_id:
+                continue
+            if assignment.get("schedule", "always") == "always":
+                eligible.add(rep_id)
+                continue
+            start_date = str(assignment.get("start_date") or "")
+            end_date = str(assignment.get("end_date") or "")
+            if start_date and today < start_date:
+                continue
+            if end_date and today > end_date:
+                continue
+            eligible.add(rep_id)
+        return eligible
     return None

@@ -43,8 +43,15 @@ type ReferralRule = {
   id: string;
   company_id: string;
   referral_source: string;
-  rep_user_ids: string[];
+  rep_assignments: ReferralRepAssignment[];
   active: boolean;
+};
+
+type ReferralRepAssignment = {
+  rep_user_id: string;
+  schedule: "always" | "scheduled";
+  start_date?: string;
+  end_date?: string;
 };
 
 type ReferralRuleData = {
@@ -59,7 +66,7 @@ function ReferralAssignmentRulesPanel() {
   const [data, setData] = useState<ReferralRuleData>({ rules: [], companies: [], reps: [], referral_sources: {} });
   const [companyId, setCompanyId] = useState("");
   const [referralSource, setReferralSource] = useState("");
-  const [repIds, setRepIds] = useState<string[]>([]);
+  const [repAssignments, setRepAssignments] = useState<Record<string, ReferralRepAssignment>>({});
   const [active, setActive] = useState(true);
   const [editingId, setEditingId] = useState("");
   const [error, setError] = useState("");
@@ -78,7 +85,7 @@ function ReferralAssignmentRulesPanel() {
   function resetForm() {
     setCompanyId("");
     setReferralSource("");
-    setRepIds([]);
+    setRepAssignments({});
     setActive(true);
     setEditingId("");
   }
@@ -90,7 +97,7 @@ function ReferralAssignmentRulesPanel() {
       const res = await fetch(`${API_BASE}/api/referral-assignment-rules${editingId ? `/${editingId}` : ""}`, {
         method: editingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
-        body: JSON.stringify({ company_id: companyId, referral_source: referralSource, rep_user_ids: repIds, active }),
+        body: JSON.stringify({ company_id: companyId, referral_source: referralSource, rep_assignments: Object.values(repAssignments), active }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
@@ -123,7 +130,7 @@ function ReferralAssignmentRulesPanel() {
   function editRule(rule: ReferralRule) {
     setCompanyId(rule.company_id);
     setReferralSource(rule.referral_source);
-    setRepIds(rule.rep_user_ids || []);
+    setRepAssignments(Object.fromEntries((rule.rep_assignments || []).map((assignment) => [assignment.rep_user_id, assignment])));
     setActive(rule.active);
     setEditingId(rule.id);
     setError("");
@@ -132,7 +139,25 @@ function ReferralAssignmentRulesPanel() {
   const companyName = new Map(data.companies.map((company) => [company.id, company.name]));
   const repName = new Map(data.reps.map((rep) => [rep.id, rep.name]));
   const eligibleReps = data.reps.filter((rep) => rep.company_ids.includes(companyId));
-  const saveDisabled = saving || !companyId || !referralSource.trim() || repIds.length === 0;
+  const saveDisabled = saving || !companyId || !referralSource.trim() || Object.keys(repAssignments).length === 0;
+
+  function toggleRep(repId: string) {
+    setRepAssignments((current) => {
+      if (current[repId]) {
+        const next = { ...current };
+        delete next[repId];
+        return next;
+      }
+      return { ...current, [repId]: { rep_user_id: repId, schedule: "always" } };
+    });
+  }
+
+  function updateRepSchedule(repId: string, patch: Partial<ReferralRepAssignment>) {
+    setRepAssignments((current) => ({
+      ...current,
+      [repId]: { ...(current[repId] || { rep_user_id: repId, schedule: "always" }), ...patch },
+    }));
+  }
 
   return (
     <section style={{ marginBottom: 22 }}>
@@ -149,7 +174,7 @@ function ReferralAssignmentRulesPanel() {
         <div style={referralFormGrid}>
           <label style={referralLabel}>
             Company
-            <select style={referralInput} value={companyId} onChange={(event) => { setCompanyId(event.target.value); setRepIds([]); }}>
+            <select style={referralInput} value={companyId} onChange={(event) => { setCompanyId(event.target.value); setRepAssignments({}); }}>
               <option value="">Select company</option>
               {data.companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
             </select>
@@ -167,14 +192,34 @@ function ReferralAssignmentRulesPanel() {
           <legend style={referralLegend}>Assign to reps</legend>
           {!companyId ? <div style={referralEmptyHint}>Select a company to see its sales reps.</div> : null}
           {companyId && eligibleReps.length === 0 ? <div style={referralEmptyHint}>No sales reps are assigned to this company.</div> : null}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(330px, 1fr))", gap: 10 }}>
             {eligibleReps.map((rep) => {
-              const selected = repIds.includes(rep.id);
+              const assignment = repAssignments[rep.id];
+              const selected = Boolean(assignment);
               return (
-                <label key={rep.id} style={{ ...referralRepOption, ...(selected ? referralRepOptionSelected : {}) }}>
-                  <input type="checkbox" checked={selected} onChange={() => setRepIds((current) => selected ? current.filter((id) => id !== rep.id) : [...current, rep.id])} />
-                  <span><strong style={{ display: "block", color: "#181818" }}>{rep.name}</strong><span style={{ color: "#706e6b", fontSize: 11 }}>{rep.email}</span></span>
-                </label>
+                <div key={rep.id} style={{ ...referralRepOption, ...(selected ? referralRepOptionSelected : {}), display: "block" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer" }}>
+                    <input type="checkbox" checked={selected} onChange={() => toggleRep(rep.id)} />
+                    <span><strong style={{ display: "block", color: "#181818" }}>{rep.name}</strong><span style={{ color: "#706e6b", fontSize: 11 }}>{rep.email}</span></span>
+                  </label>
+                  {selected ? (
+                    <div style={{ borderTop: "1px solid #d8e6f5", marginTop: 9, paddingTop: 9 }}>
+                      <label style={{ ...referralLabel, fontSize: 12 }}>
+                        Availability
+                        <select style={{ ...referralInput, minHeight: 34 }} value={assignment.schedule} onChange={(event) => updateRepSchedule(rep.id, { schedule: event.target.value as "always" | "scheduled" })}>
+                          <option value="always">Always</option>
+                          <option value="scheduled">Specific dates</option>
+                        </select>
+                      </label>
+                      {assignment.schedule === "scheduled" ? (
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 9 }}>
+                          <label style={{ ...referralLabel, fontSize: 11 }}>Start date<input type="date" style={referralInput} value={assignment.start_date || ""} onChange={(event) => updateRepSchedule(rep.id, { start_date: event.target.value })} /></label>
+                          <label style={{ ...referralLabel, fontSize: 11 }}>End date<input type="date" style={referralInput} value={assignment.end_date || ""} onChange={(event) => updateRepSchedule(rep.id, { end_date: event.target.value })} /></label>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               );
             })}
           </div>
@@ -200,7 +245,7 @@ function ReferralAssignmentRulesPanel() {
                 <tr key={rule.id} style={{ opacity: rule.active ? 1 : 0.62 }}>
                   <td style={referralTd}>{companyName.get(rule.company_id) || rule.company_id}</td>
                   <td style={referralTd}><strong>{rule.referral_source}</strong></td>
-                  <td style={referralTd}><div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>{rule.rep_user_ids.map((id) => <span key={id} style={referralRepBadge}>{repName.get(id) || id}</span>)}</div></td>
+                  <td style={referralTd}><div style={{ display: "grid", gap: 5 }}>{rule.rep_assignments.map((assignment) => <div key={assignment.rep_user_id}><span style={referralRepBadge}>{repName.get(assignment.rep_user_id) || assignment.rep_user_id}</span><span style={{ marginLeft: 7, color: "#706e6b", fontSize: 12 }}>{assignment.schedule === "always" ? "Always" : `${assignment.start_date} – ${assignment.end_date}`}</span></div>)}</div></td>
                   <td style={referralTd}><span style={{ ...referralStatusBadge, ...(rule.active ? referralStatusEnabled : referralStatusDisabled) }}>{rule.active ? "Enabled" : "Disabled"}</span></td>
                   <td style={{ ...referralTd, whiteSpace: "nowrap" }}><button type="button" onClick={() => editRule(rule)} style={referralLinkButton}>Edit</button><button type="button" onClick={() => deleteRule(rule.id)} style={{ ...referralLinkButton, color: "#ba0517" }}>Delete</button></td>
                 </tr>

@@ -570,6 +570,10 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
     queued_count = 0
     pool_positions: dict[tuple[str, tuple[str, ...]], int] = {}
     referral_rules = load_referral_assignment_rules(db)
+    company_timezones = {
+        company_id: (timezone_name or "America/New_York")
+        for company_id, timezone_name in db.query(Company.id, Company.timezone).filter(Company.id.in_(by_company.keys())).all()
+    }
 
     for company_id, company_leads in by_company.items():
         active_reps = _active_reps_for_company(company_id, db, allowed_rep_ids=globally_available_rep_ids, now=now)
@@ -630,6 +634,8 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
                 company_id,
                 lead.referral_source,
                 rules=referral_rules,
+                now=now,
+                timezone_name=company_timezones.get(company_id),
             )
             if configured_rep_ids is not None:
                 eligible_reps = [rep for rep in eligible_reps if rep.id in configured_rep_ids]

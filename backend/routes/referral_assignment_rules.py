@@ -20,13 +20,31 @@ router = APIRouter(prefix="/api/referral-assignment-rules", tags=["Referral Assi
 class RuleBody(BaseModel):
     company_id: str
     referral_source: str
-    rep_user_ids: list[str]
+    rep_assignments: list[dict]
     active: bool = True
 
 
-def _validate(body: RuleBody, db: Session, exclude_rule_id: str = "") -> tuple[str, list[str]]:
+def _validate(body: RuleBody, db: Session, exclude_rule_id: str = "") -> tuple[str, list[dict]]:
     referral_source = " ".join(body.referral_source.strip().split())
-    rep_ids = list(dict.fromkeys(str(value).strip() for value in body.rep_user_ids if str(value).strip()))
+    assignments: list[dict] = []
+    seen_rep_ids: set[str] = set()
+    for raw in body.rep_assignments:
+        rep_id = str(raw.get("rep_user_id") or "").strip()
+        if not rep_id or rep_id in seen_rep_ids:
+            continue
+        seen_rep_ids.add(rep_id)
+        schedule = "scheduled" if raw.get("schedule") == "scheduled" else "always"
+        assignment = {"rep_user_id": rep_id, "schedule": schedule}
+        if schedule == "scheduled":
+            start_date = str(raw.get("start_date") or "").strip()
+            end_date = str(raw.get("end_date") or "").strip()
+            if not start_date or not end_date:
+                raise HTTPException(status_code=400, detail="Scheduled reps need both a start date and an end date")
+            if start_date and end_date and end_date < start_date:
+                raise HTTPException(status_code=400, detail="Rep schedule end date must be on or after its start date")
+            assignment.update({"start_date": start_date, "end_date": end_date})
+        assignments.append(assignment)
+    rep_ids = [assignment["rep_user_id"] for assignment in assignments]
     if not referral_source:
         raise HTTPException(status_code=400, detail="Referral Source is required")
     if not rep_ids:
@@ -54,7 +72,7 @@ def _validate(body: RuleBody, db: Session, exclude_rule_id: str = "") -> tuple[s
             continue
         if str(rule.get("company_id") or "") == body.company_id and normalize_referral_source(rule.get("referral_source")) == normalized:
             raise HTTPException(status_code=409, detail="A rule already exists for this company and Referral Source")
-    return referral_source, rep_ids
+    return referral_source, assignments
 
 
 def _response(db: Session) -> dict:
@@ -79,6 +97,12 @@ def _response(db: Session) -> dict:
     for company_id, source in source_rows:
         sources.setdefault(company_id, []).append(source)
     rules = load_referral_assignment_rules(db)
+    for rule in rules:
+        if not isinstance(rule.get("rep_assignments"), list):
+            rule["rep_assignments"] = [
+                {"rep_user_id": rep_id, "schedule": "always"}
+                for rep_id in (rule.get("rep_user_ids") or [])
+            ]
     for rule in rules:
         values = sources.setdefault(str(rule.get("company_id") or ""), [])
         source = str(rule.get("referral_source") or "")
@@ -108,13 +132,13 @@ def list_rules(_: User = Depends(require_admin), db: Session = Depends(get_db)):
 
 @router.post("", status_code=201)
 def create_rule(body: RuleBody, _: User = Depends(require_admin), db: Session = Depends(get_db)):
-    referral_source, rep_ids = _validate(body, db)
+    referral_source, assignments = _validate(body, db)
     rules = load_referral_assignment_rules(db)
     rules.append({
         "id": str(uuid4()),
         "company_id": body.company_id,
         "referral_source": referral_source,
-        "rep_user_ids": rep_ids,
+        "rep_assignments": assignments,
         "active": body.active,
     })
     save_referral_assignment_rules(db, rules)
@@ -124,7 +148,7 @@ def create_rule(body: RuleBody, _: User = Depends(require_admin), db: Session = 
 
 @router.put("/{rule_id}")
 def update_rule(rule_id: str, body: RuleBody, _: User = Depends(require_admin), db: Session = Depends(get_db)):
-    referral_source, rep_ids = _validate(body, db, exclude_rule_id=rule_id)
+    referral_source, assignments = _validate(body, db, exclude_rule_id=rule_id)
     rules = load_referral_assignment_rules(db)
     target = next((rule for rule in rules if str(rule.get("id") or "") == rule_id), None)
     if target is None:
@@ -132,9 +156,10 @@ def update_rule(rule_id: str, body: RuleBody, _: User = Depends(require_admin), 
     target.update({
         "company_id": body.company_id,
         "referral_source": referral_source,
-        "rep_user_ids": rep_ids,
+        "rep_assignments": assignments,
         "active": body.active,
     })
+    target.pop("rep_user_ids", None)
     save_referral_assignment_rules(db, rules)
     db.commit()
     return _response(db)
