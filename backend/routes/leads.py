@@ -42,6 +42,7 @@ from libs.smartmoving.client import (
 )
 from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule
 from realtime import publish_realtime_event
+from referral_assignment_rules import configured_rep_ids_for_referral
 from routes.templates import get_company_template, render_template
 
 logger = logging.getLogger("moving-crm")
@@ -502,6 +503,7 @@ def _active_reps_for_company(
     db: Session,
     allowed_rep_ids: set[str] | None = None,
     now: datetime | None = None,
+    respect_availability: bool = True,
 ) -> list[User]:
     rep_rows = (
         db.query(User)
@@ -513,6 +515,8 @@ def _active_reps_for_company(
     if allowed_rep_ids is not None:
         rep_rows = [u for u in rep_rows if u.id in allowed_rep_ids]
 
+    if not respect_availability:
+        return rep_rows
     active_ids = _filter_by_rep_availability([r.id for r in rep_rows], db, now=now)
     return [u for u in rep_rows if u.id in active_ids]
 
@@ -522,8 +526,15 @@ def _pick_round_robin_rep_for_company(
     db: Session,
     allowed_rep_ids: set[str] | None = None,
     now: datetime | None = None,
+    respect_availability: bool = True,
 ) -> User | None:
-    active_reps = _active_reps_for_company(company_id, db, allowed_rep_ids=allowed_rep_ids, now=now)
+    active_reps = _active_reps_for_company(
+        company_id,
+        db,
+        allowed_rep_ids=allowed_rep_ids,
+        now=now,
+        respect_availability=respect_availability,
+    )
     if not active_reps:
         return None
 
@@ -4378,9 +4389,12 @@ def create_lead(
         assigned_to_user_id = matched_users[0].id
         assignment_reason = "api_assigned_to_name"
 
-    # Auto-assign only while all admins are unavailable and no explicit assignee was provided.
-    if not assigned_to_user_id and not _any_admin_available_now(db):
-        available_rep_ids = _active_available_rep_ids(db)
+    # A Referral Source rule routes immediately and independently of date rules.
+    # Without a matching rule, retain the existing admin-availability behavior.
+    configured_rep_ids = configured_rep_ids_for_referral(db, company.id, body.referral_source)
+    should_auto_assign = configured_rep_ids is not None or not _any_admin_available_now(db)
+    if not assigned_to_user_id and should_auto_assign:
+        available_rep_ids = configured_rep_ids if configured_rep_ids is not None else _active_available_rep_ids(db)
         conflicts = find_assignment_conflicts(
             db,
             company_id=company.id,
@@ -4392,21 +4406,34 @@ def create_lead(
             assignment_reason = "matching_assigned_lead_same_company"
         else:
             eligible_rep_ids = available_rep_ids - conflicts.excluded_rep_ids
-            rep = _pick_round_robin_rep_for_company(company.id, db, eligible_rep_ids)
+            rep = _pick_round_robin_rep_for_company(
+                company.id,
+                db,
+                eligible_rep_ids,
+                respect_availability=configured_rep_ids is None,
+            )
             if rep:
                 assigned_to_user_id = rep.id
                 assignment_mode = "auto"
                 assignment_reason = (
                     "matching_lead_other_company_excluded_previous_rep"
                     if conflicts.excluded_rep_ids
-                    else "all_admins_unavailable_round_robin"
+                    else (
+                        "referral_source_rule_round_robin"
+                        if configured_rep_ids is not None
+                        else "all_admins_unavailable_round_robin"
+                    )
                 )
             else:
                 assignment_mode = "queued"
                 assignment_reason = (
                     "matching_lead_other_company_excluded_all_reps"
                     if conflicts.excluded_rep_ids
-                    else "all_admins_unavailable_no_available_rep"
+                    else (
+                        "referral_source_rule_no_available_rep"
+                        if configured_rep_ids is not None
+                        else "all_admins_unavailable_no_available_rep"
+                    )
                 )
 
     raw_move_type = _clean_optional_text(body.move_type).lower()

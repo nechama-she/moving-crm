@@ -12,6 +12,7 @@ from config import get_config
 from database import get_db
 from libs.smartmoving.client import update_opportunity_salesperson
 from models import AutoAssignEvent, Company, Lead, User, UserCompany, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AppSetting
+from referral_assignment_rules import configured_rep_ids_for_referral, load_referral_assignment_rules
 
 logger = logging.getLogger("moving-crm")
 DRY_RUN_BACKLOG_REASON = "dry_run_queued_backlog_round_robin"
@@ -567,6 +568,8 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
     assigned_count = 0
     touched_companies = 0
     queued_count = 0
+    pool_positions: dict[tuple[str, tuple[str, ...]], int] = {}
+    referral_rules = load_referral_assignment_rules(db)
 
     for company_id, company_leads in by_company.items():
         active_reps = _active_reps_for_company(company_id, db, allowed_rep_ids=globally_available_rep_ids, now=now)
@@ -602,10 +605,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             len(active_reps),
             dry_run,
         )
-        rep_ids = [r.id for r in active_reps]
-        start_idx = _next_round_robin_start_index(company_id, rep_ids, db)
-
-        for idx, lead in enumerate(company_leads):
+        for lead in company_leads:
             conflicts = find_assignment_conflicts(
                 db,
                 company_id=lead.company_id,
@@ -625,18 +625,42 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
                 continue
 
             eligible_reps = [rep for rep in active_reps if rep.id not in conflicts.excluded_rep_ids]
+            configured_rep_ids = configured_rep_ids_for_referral(
+                db,
+                company_id,
+                lead.referral_source,
+                rules=referral_rules,
+            )
+            if configured_rep_ids is not None:
+                eligible_reps = [rep for rep in eligible_reps if rep.id in configured_rep_ids]
             if not eligible_reps:
+                no_rep_reason = (
+                    "referral_source_rule_no_available_rep"
+                    if configured_rep_ids is not None
+                    else "matching_lead_other_company_excluded_all_reps"
+                )
+                no_rep_note = (
+                    "Queued because no rep configured for this Referral Source is currently eligible"
+                    if configured_rep_ids is not None
+                    else "Not auto-assigned because matching leads in other companies are assigned to every eligible rep"
+                )
                 queued_count += _queue_backlog_leads(
                     [lead],
-                    assignment_reason="matching_lead_other_company_excluded_all_reps",
-                    note="Not auto-assigned because matching leads in other companies are assigned to every eligible rep",
+                    assignment_reason=no_rep_reason,
+                    note=no_rep_note,
                     latest_events_by_lead=latest_events_by_lead,
                     lead_ids_with_queued_event=lead_ids_with_queued_event,
                     db=db,
                 )
                 continue
 
-            rep = eligible_reps[(start_idx + idx) % len(eligible_reps)]
+            rep_pool = tuple(rep.id for rep in eligible_reps)
+            pool_key = (company_id, rep_pool)
+            if pool_key not in pool_positions:
+                pool_positions[pool_key] = _next_round_robin_start_index(company_id, list(rep_pool), db)
+            pool_position = pool_positions[pool_key]
+            rep = eligible_reps[pool_position % len(eligible_reps)]
+            pool_positions[pool_key] = (pool_position + 1) % len(eligible_reps)
             dry_run_reason = DRY_RUN_BACKLOG_REASON
             if dry_run:
                 latest_event = latest_events_by_lead.get(lead.id)

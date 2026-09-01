@@ -39,6 +39,161 @@ type RepAvailabilityWindow = {
   reason?: string;
 };
 
+type ReferralRule = {
+  id: string;
+  company_id: string;
+  referral_source: string;
+  rep_user_ids: string[];
+  active: boolean;
+};
+
+type ReferralRuleData = {
+  rules: ReferralRule[];
+  companies: Array<{ id: string; name: string }>;
+  reps: Array<{ id: string; name: string; email: string; company_ids: string[] }>;
+  referral_sources: Record<string, string[]>;
+};
+
+function ReferralAssignmentRulesPanel() {
+  const { token } = useAuth();
+  const [data, setData] = useState<ReferralRuleData>({ rules: [], companies: [], reps: [], referral_sources: {} });
+  const [companyId, setCompanyId] = useState("");
+  const [referralSource, setReferralSource] = useState("");
+  const [repIds, setRepIds] = useState<string[]>([]);
+  const [active, setActive] = useState(true);
+  const [editingId, setEditingId] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/referral-assignment-rules`, { headers: authHeaders(token) })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<ReferralRuleData>;
+      })
+      .then(setData)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load assignment rules"));
+  }, [token]);
+
+  function resetForm() {
+    setCompanyId("");
+    setReferralSource("");
+    setRepIds([]);
+    setActive(true);
+    setEditingId("");
+  }
+
+  async function saveRule() {
+    setError("");
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/referral-assignment-rules${editingId ? `/${editingId}` : ""}`, {
+        method: editingId ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ company_id: companyId, referral_source: referralSource, rep_user_ids: repIds, active }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(body.detail || `HTTP ${res.status}`);
+      }
+      setData((await res.json()) as ReferralRuleData);
+      resetForm();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to save assignment rule");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteRule(ruleId: string) {
+    if (!window.confirm("Delete this referral source assignment rule?")) return;
+    setError("");
+    const res = await fetch(`${API_BASE}/api/referral-assignment-rules/${ruleId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    if (!res.ok) {
+      setError(`HTTP ${res.status}`);
+      return;
+    }
+    setData((await res.json()) as ReferralRuleData);
+    if (editingId === ruleId) resetForm();
+  }
+
+  function editRule(rule: ReferralRule) {
+    setCompanyId(rule.company_id);
+    setReferralSource(rule.referral_source);
+    setRepIds(rule.rep_user_ids || []);
+    setActive(rule.active);
+    setEditingId(rule.id);
+    setError("");
+  }
+
+  const companyName = new Map(data.companies.map((company) => [company.id, company.name]));
+  const repName = new Map(data.reps.map((rep) => [rep.id, rep.name]));
+  const eligibleReps = data.reps.filter((rep) => rep.company_ids.includes(companyId));
+
+  return (
+    <section style={{ marginBottom: 22, border: "1px solid #dddbda", borderRadius: 4, padding: 14, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
+      <h2 style={{ margin: "0 0 4px", fontSize: 16, color: "#032d60" }}>Referral Source Assignment</h2>
+      <p style={{ margin: "0 0 14px", color: "#706e6b", fontSize: 13 }}>
+        Choose which reps can receive leads from each company and Referral Source.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+        <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 600 }}>
+          Company
+          <select value={companyId} onChange={(event) => { setCompanyId(event.target.value); setRepIds([]); }}>
+            <option value="">Select company...</option>
+            {data.companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+          </select>
+        </label>
+        <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 600 }}>
+          Referral Source
+          <input list="referral-assignment-sources" value={referralSource} onChange={(event) => setReferralSource(event.target.value)} placeholder="Select or enter Referral Source" />
+          <datalist id="referral-assignment-sources">
+            {(data.referral_sources[companyId] || []).map((source) => <option key={source} value={source} />)}
+          </datalist>
+        </label>
+      </div>
+      <div style={{ marginTop: 12, fontSize: 13, fontWeight: 600 }}>Who gets it</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}>
+        {companyId && eligibleReps.length === 0 ? <span style={{ color: "#706e6b", fontSize: 13 }}>No reps belong to this company.</span> : null}
+        {eligibleReps.map((rep) => (
+          <label key={rep.id} style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid #dddbda", borderRadius: 4, padding: "7px 10px", fontSize: 13 }}>
+            <input type="checkbox" checked={repIds.includes(rep.id)} onChange={() => setRepIds((current) => current.includes(rep.id) ? current.filter((id) => id !== rep.id) : [...current, rep.id])} />
+            {rep.name}
+          </label>
+        ))}
+      </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12, fontSize: 13 }}>
+        <input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} /> Enabled
+      </label>
+      {error ? <div style={{ color: "#ba0517", marginTop: 10, fontSize: 13 }}>{error}</div> : null}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button type="button" onClick={saveRule} disabled={saving || !companyId || !referralSource.trim() || repIds.length === 0}>{saving ? "Saving..." : editingId ? "Save Rule" : "Add Rule"}</button>
+        {editingId ? <button type="button" onClick={resetForm}>Cancel</button> : null}
+      </div>
+      <div style={{ overflowX: "auto", marginTop: 18 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead><tr style={{ textAlign: "left", borderBottom: "1px solid #dddbda" }}><th style={{ padding: 8 }}>Company</th><th style={{ padding: 8 }}>Referral Source</th><th style={{ padding: 8 }}>Assigned Reps</th><th style={{ padding: 8 }}>Status</th><th style={{ padding: 8 }}>Actions</th></tr></thead>
+          <tbody>
+            {data.rules.map((rule) => (
+              <tr key={rule.id} style={{ borderBottom: "1px solid #eef0f2" }}>
+                <td style={{ padding: 8 }}>{companyName.get(rule.company_id) || rule.company_id}</td>
+                <td style={{ padding: 8 }}>{rule.referral_source}</td>
+                <td style={{ padding: 8 }}>{rule.rep_user_ids.map((id) => repName.get(id) || id).join(", ")}</td>
+                <td style={{ padding: 8 }}>{rule.active ? "Enabled" : "Disabled"}</td>
+                <td style={{ padding: 8 }}><button type="button" onClick={() => editRule(rule)}>Edit</button> <button type="button" onClick={() => deleteRule(rule.id)} style={{ color: "#ba0517" }}>Delete</button></td>
+              </tr>
+            ))}
+            {data.rules.length === 0 ? <tr><td colSpan={5} style={{ padding: 14, textAlign: "center", color: "#706e6b" }}>No referral source assignment rules configured.</td></tr> : null}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function toMs(value: string | undefined): number {
   if (!value) return 0;
   const d = new Date(value);
@@ -465,10 +620,12 @@ export default function PeriodAssignPage() {
 
   return (
     <div className="user-setup-page" style={{ padding: "20px 24px", fontFamily: "inherit", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
-      <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Assignment Availability Rules</h1>
+      <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Assignment Rules</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
-        Configure when admins are unavailable and which reps are available to receive auto-assignment during that time.
+        Configure lead routing by Referral Source and keep date-based availability rules below.
       </p>
+
+      <ReferralAssignmentRulesPanel />
 
       <div className="user-setup-create-card" style={{ marginBottom: 14, border: "1px solid #dddbda", borderRadius: 4, padding: 14, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
         <h2 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#3e3e3c" }}>
