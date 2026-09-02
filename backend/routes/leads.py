@@ -1786,6 +1786,25 @@ def create_lead_through_copy_path(
     created_lead = db.query(Lead).filter(Lead.id == creation_result["lead_id"]).first()
     if not created_lead:
         raise HTTPException(status_code=500, detail="Lead was created but could not be reloaded")
+    assignment_result: dict = {"attempted": False, "ok": True}
+    if assigned_to:
+        assignment_result = {"attempted": True, "ok": False}
+        assigned_rep = db.query(User).filter(User.id == assigned_to).first()
+        smartmoving_lead_id = _clean_optional_text(smartmoving_result.get("lead_id"))
+        if not assigned_rep:
+            assignment_result["error"] = "Selected CRM rep was not found"
+        elif not _clean_optional_text(assigned_rep.smartmoving_rep_id):
+            assignment_result["error"] = f"{assigned_rep.name} does not have a SmartMoving rep ID configured"
+        elif not smartmoving_lead_id:
+            assignment_result["error"] = "SmartMoving did not return a lead ID"
+        else:
+            update_result = update_opportunity_salesperson(
+                smartmoving_lead_id,
+                _clean_optional_text(assigned_rep.smartmoving_rep_id),
+            )
+            assignment_result.update(update_result)
+            assignment_result["rep_name"] = assigned_rep.name
+    creation_result["smartmoving_assignment"] = assignment_result
     return created_lead, creation_result
 
 
