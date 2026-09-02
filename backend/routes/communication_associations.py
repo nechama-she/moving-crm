@@ -21,18 +21,26 @@ class ConnectRequest(BaseModel):
     lead_id: str
 
 
-def _company_ids(db: Session, channel: str, company_identifier: str) -> set[str]:
+def _destination_scope(db: Session, channel: str, company_identifier: str) -> tuple[set[str], str]:
     if channel == "phone":
         normalized_company_phone = func.right(func.regexp_replace(Company.phone, r"\D", "", "g"), 10)
-        direct = {row[0] for row in db.query(Company.id).filter(normalized_company_phone == company_identifier).all()}
+        direct_companies = db.query(Company).filter(normalized_company_phone == company_identifier).all()
+        direct = {company.id for company in direct_companies}
         if direct:
-            return direct
+            return direct, ", ".join(sorted(company.name for company in direct_companies))
         normalized_rep_phone = func.right(func.regexp_replace(User.phone, r"\D", "", "g"), 10)
-        rep_ids = [row[0] for row in db.query(User.id).filter(normalized_rep_phone == company_identifier).all()]
+        reps = db.query(User).filter(normalized_rep_phone == company_identifier).all()
+        rep_ids = [rep.id for rep in reps]
         if rep_ids:
-            return {row[0] for row in db.query(UserCompany.company_id).filter(UserCompany.user_id.in_(rep_ids)).all()}
-        return set()
-    return {row[0] for row in db.query(Company.id).filter(Company.facebook_page_id == company_identifier).all()}
+            company_ids = {row[0] for row in db.query(UserCompany.company_id).filter(UserCompany.user_id.in_(rep_ids)).all()}
+            return company_ids, ", ".join(sorted(rep.name for rep in reps))
+        return set(), ""
+    companies = db.query(Company).filter(Company.facebook_page_id == company_identifier).all()
+    return {company.id for company in companies}, ", ".join(sorted(company.name for company in companies))
+
+
+def _company_ids(db: Session, channel: str, company_identifier: str) -> set[str]:
+    return _destination_scope(db, channel, company_identifier)[0]
 
 
 @router.get("/candidates")
@@ -48,7 +56,7 @@ def candidates(
     key = normalized_key(channel, client_identifier, company_identifier)
     if not all(key):
         raise HTTPException(status_code=400, detail="Complete communication identifiers are required")
-    company_ids = _company_ids(db, key[0], key[2])
+    company_ids, scope_label = _destination_scope(db, key[0], key[2])
     if not company_ids:
         raise HTTPException(status_code=404, detail="The destination is not connected to a CRM company")
     query = db.query(Lead).filter(Lead.company_id.in_(company_ids))
@@ -58,6 +66,7 @@ def candidates(
         query = query.filter(or_(Lead.full_name.ilike(pattern), Lead.phone.ilike(pattern), Lead.email.ilike(pattern), Lead.smartmoving_id.ilike(pattern)))
     leads = query.order_by(Lead.created_at.desc()).limit(limit).all()
     return {
+        "scope_label": scope_label,
         "companies": [{"id": company.id, "name": company.name} for company in db.query(Company).filter(Company.id.in_(company_ids)).order_by(Company.name).all()],
         "items": [{"id": lead.id, "name": lead.full_name, "phone": lead.phone or "", "email": lead.email or "", "company_id": lead.company_id, "company": lead.company.name if lead.company else ""} for lead in leads],
     }
