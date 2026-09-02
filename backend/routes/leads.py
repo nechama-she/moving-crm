@@ -40,6 +40,7 @@ from libs.smartmoving.client import (
     get_opportunity_audit_activity,
     get_opportunity_documents,
     finish_request_capture,
+    update_lead_salesperson,
     update_opportunity_salesperson,
 )
 from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule
@@ -1798,7 +1799,7 @@ def create_lead_through_copy_path(
         elif not smartmoving_lead_id:
             assignment_result["error"] = "SmartMoving did not return a lead ID"
         else:
-            update_result = update_opportunity_salesperson(
+            update_result = update_lead_salesperson(
                 smartmoving_lead_id,
                 _clean_optional_text(assigned_rep.smartmoving_rep_id),
             )
