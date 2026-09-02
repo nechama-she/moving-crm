@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, TypeVar
@@ -19,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, cast, text, or_
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -32,6 +34,7 @@ from libs.common.phone import normalize_digits
 from libs.common.ssm import get_ssm_cached
 from libs.smartmoving.client import (
     begin_request_capture,
+    check_opportunity_exists,
     create_provider_lead,
     download_opportunity_document,
     download_opportunity_file,
@@ -40,10 +43,11 @@ from libs.smartmoving.client import (
     get_opportunity_audit_activity,
     get_opportunity_documents,
     finish_request_capture,
+    get_referral_sources,
     update_lead_salesperson,
     update_opportunity_salesperson,
 )
-from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule
+from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, SmartMovingReferralSource, MessageState, MissedCallState, CommunicationAssociation
 from realtime import publish_realtime_event
 from referral_assignment_rules import configured_rep_ids_for_referral
 from routes.templates import get_company_template, render_template
@@ -1663,6 +1667,77 @@ class CopyLeadRequest(BaseModel):
     assigned_to: str = ""
 
 
+def _normalize_referral_source_name(value: str) -> str:
+    return " ".join((value or "").split()).casefold()
+
+
+def _resolve_smartmoving_referral_source_id(db: Session, referral_source_name: str) -> str:
+    """Resolve from the local cache, refreshing that cache once on a miss."""
+    normalized_name = _normalize_referral_source_name(referral_source_name)
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Referral Source is required for SmartMoving assignment")
+
+    cached = db.query(SmartMovingReferralSource).filter(
+        SmartMovingReferralSource.normalized_name == normalized_name
+    ).first()
+    if cached:
+        return cached.id
+
+    result = get_referral_sources()
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not load SmartMoving referral sources: {result.get('error', 'unknown error')}",
+        )
+
+    now = datetime.now(timezone.utc)
+    cache_rows = []
+    for item in result.get("items", []):
+        source_id = _clean_optional_text(item.get("id"))
+        source_name = _clean_optional_text(item.get("name"))
+        source_normalized_name = _normalize_referral_source_name(source_name)
+        if not source_id or not source_normalized_name:
+            continue
+        cache_rows.append({
+            "id": source_id,
+            "name": source_name,
+            "normalized_name": source_normalized_name,
+            "is_lead_provider": bool(item.get("isLeadProvider", False)),
+            "is_public": bool(item.get("isPublic", False)),
+            "created_at": now,
+            "updated_at": now,
+        })
+    try:
+        if cache_rows:
+            statement = pg_insert(SmartMovingReferralSource).values(cache_rows)
+            statement = statement.on_conflict_do_update(
+                index_elements=[SmartMovingReferralSource.id],
+                set_={
+                    "name": statement.excluded.name,
+                    "normalized_name": statement.excluded.normalized_name,
+                    "is_lead_provider": statement.excluded.is_lead_provider,
+                    "is_public": statement.excluded.is_public,
+                    "updated_at": statement.excluded.updated_at,
+                },
+            )
+            db.execute(statement)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        logger.exception("Could not refresh SmartMoving referral-source cache")
+        raise HTTPException(status_code=500, detail="Could not update SmartMoving referral-source cache") from exc
+
+    cached = db.query(SmartMovingReferralSource).filter(
+        SmartMovingReferralSource.normalized_name == normalized_name
+    ).first()
+    if not cached:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Referral Source '{referral_source_name}' was not found in SmartMoving",
+        )
+    return cached.id
+
+
 @router.get("/leads/{lead_id}/copy-conflicts")
 def copy_lead_conflicts(
     lead_id: str,
@@ -1799,10 +1874,25 @@ def create_lead_through_copy_path(
         elif not smartmoving_lead_id:
             assignment_result["error"] = "SmartMoving did not return a lead ID"
         else:
-            update_result = update_lead_salesperson(
-                smartmoving_lead_id,
-                _clean_optional_text(assigned_rep.smartmoving_rep_id),
-            )
+            try:
+                referral_source_id = _resolve_smartmoving_referral_source_id(
+                    db,
+                    resolved_referral_source,
+                )
+                update_result = update_lead_salesperson(
+                    smartmoving_lead_id,
+                    _clean_optional_text(assigned_rep.smartmoving_rep_id),
+                    referral_source_id,
+                    customer_name=full_name,
+                    branch_id=branch_id,
+                    phone_number=phone,
+                    email_address=email,
+                    move_date=move_date,
+                    origin_zip=pickup_zip,
+                    destination_zip=delivery_zip,
+                )
+            except HTTPException as exc:
+                update_result = {"ok": False, "error": str(exc.detail)}
             assignment_result.update(update_result)
             assignment_result["rep_name"] = assigned_rep.name
             if update_result.get("ok"):
@@ -1937,6 +2027,60 @@ def delete_lead(
     return {"ok": True, "deleted_lead_id": lead.id}
 
 
+class ValidateSmartMovingLeadsRequest(BaseModel):
+    lead_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+@router.post("/leads/validate-smartmoving")
+def validate_smartmoving_leads(
+    body: ValidateSmartMovingLeadsRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Manually validate queue leads and delete only confirmed SmartMoving misses."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can validate Sales Work Queue leads")
+    requested_ids = list(dict.fromkeys(value.strip() for value in body.lead_ids if value.strip()))
+    if not requested_ids:
+        return {"ok": True, "checked": 0, "removed_lead_ids": [], "skipped": [], "errors": []}
+
+    company_ids = _get_user_company_ids(user, db)
+    leads = db.query(Lead).filter(Lead.id.in_(requested_ids), Lead.company_id.in_(company_ids)).all()
+    checkable = {lead.id: (lead.smartmoving_id or "").strip() for lead in leads if (lead.smartmoving_id or "").strip()}
+    skipped = [lead.id for lead in leads if not (lead.smartmoving_id or "").strip()]
+    results: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=min(5, max(1, len(checkable)))) as executor:
+        futures = {
+            executor.submit(check_opportunity_exists, smartmoving_id): lead_id
+            for lead_id, smartmoving_id in checkable.items()
+        }
+        for future in as_completed(futures):
+            lead_id = futures[future]
+            try:
+                results[lead_id] = future.result()
+            except Exception as exc:
+                results[lead_id] = {"ok": False, "error": str(exc)}
+
+    removed = []
+    errors = []
+    leads_by_id = {lead.id: lead for lead in leads}
+    for lead_id, result in results.items():
+        if not result.get("ok"):
+            errors.append({"lead_id": lead_id, "error": result.get("error", "SmartMoving check failed")})
+            continue
+        if result.get("exists") is False:
+            _hard_delete_lead(leads_by_id[lead_id], db)
+            removed.append(lead_id)
+
+    return {
+        "ok": not errors,
+        "checked": len(checkable),
+        "removed_lead_ids": removed,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
 def _hard_delete_lead(lead: Lead, db: Session) -> None:
     smartmoving_id = (lead.smartmoving_id or "").strip()
     resolved_lead_id = lead.id
@@ -1961,6 +2105,15 @@ def _hard_delete_lead(lead: Lead, db: Session) -> None:
         db.query(Task).filter(Task.lead_id == resolved_lead_id).delete(synchronize_session=False)
         db.query(AutoAssignEvent).filter(AutoAssignEvent.lead_id == resolved_lead_id).delete(synchronize_session=False)
         db.query(OutreachEvent).filter(OutreachEvent.lead_id == resolved_lead_id).delete(synchronize_session=False)
+        db.query(MessageState).filter(MessageState.lead_id == resolved_lead_id).update(
+            {MessageState.lead_id: None}, synchronize_session=False
+        )
+        db.query(MissedCallState).filter(MissedCallState.lead_id == resolved_lead_id).update(
+            {MissedCallState.lead_id: None}, synchronize_session=False
+        )
+        db.query(CommunicationAssociation).filter(
+            CommunicationAssociation.lead_id == resolved_lead_id
+        ).delete(synchronize_session=False)
 
         if smartmoving_id:
             db.query(Followup).filter(Followup.smartmoving_id == smartmoving_id).delete(synchronize_session=False)
