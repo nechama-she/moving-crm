@@ -81,6 +81,9 @@ type CopyLeadResult = {
   assignmentAttempted: boolean;
   assignmentOk: boolean;
   assignmentError: string;
+  notificationAttempted: boolean;
+  notificationOk: boolean;
+  notificationError: string;
 };
 
 type LeadJobMaterialItem = {
@@ -1468,12 +1471,16 @@ export default function LeadDetail() {
       if (!copiedLeadId) throw new Error("The lead was copied, but no CRM lead id was returned");
       const smartMovingId = String(responseBody?.lead?.smartmoving_id || "");
       const assignment = responseBody?.creation?.smartmoving_assignment || {};
+      const notification = assignment.notification || {};
       setCopyLeadResult({
         crmLeadId: copiedLeadId,
         smartMovingId,
         assignmentAttempted: Boolean(assignment.attempted),
         assignmentOk: Boolean(assignment.ok),
         assignmentError: String(assignment.error || ""),
+        notificationAttempted: Boolean(notification.attempted),
+        notificationOk: Boolean(notification.ok),
+        notificationError: String(notification.detail || notification.error || ""),
       });
     } catch (err: unknown) {
       setCopyLeadError(err instanceof Error ? err.message : "Failed to copy lead");
@@ -1640,6 +1647,11 @@ export default function LeadDetail() {
                     ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was assigned in SmartMoving.</div>
                     : <div role="alert" style={{ color: "#ba0517", marginBottom: 10 }}>SmartMoving assignment failed: {copyLeadResult.assignmentError || "Unknown error"}. Assign it manually using the link below.</div>
                 ) : <div style={{ marginBottom: 10 }}>No SmartMoving rep assignment was requested.</div>}
+                {copyLeadResult.assignmentAttempted && copyLeadResult.assignmentOk ? (
+                  copyLeadResult.notificationOk
+                    ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was notified by SMS.</div>
+                    : <div role="alert" style={{ color: "#ba0517", marginBottom: 10 }}>Rep SMS was not sent: {copyLeadResult.notificationError || (copyLeadResult.notificationAttempted ? "Unknown Aircall error" : "The required phone configuration is missing")}</div>
+                ) : null}
                 <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
                   {copyLeadResult.smartMovingId ? <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(copyLeadResult.smartMovingId)}/sales`} target="_blank" rel="noreferrer" style={{ color: "#0b5cab", fontWeight: 700 }}>Open in SmartMoving ↗</a> : <span style={{ color: "#ba0517" }}>SmartMoving link unavailable</span>}
                   <a href={`/leads/${copyLeadResult.crmLeadId}`} target="_blank" rel="noreferrer" style={{ color: "#0b5cab", fontWeight: 700 }}>Open CRM lead ↗</a>
