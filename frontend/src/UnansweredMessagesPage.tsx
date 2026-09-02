@@ -54,17 +54,20 @@ export default function UnansweredMessagesPage() {
   const [messageHasMore, setMessageHasMore] = useState(false);
   const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
   const [counts, setCounts] = useState({ unanswered: 0, ended: 0 });
+  const [globalCounts, setGlobalCounts] = useState({ unanswered: 0, ended: 0 });
   const [missedCalls, setMissedCalls] = useState<MissedCallRow[]>([]);
   const [missedCallCount, setMissedCallCount] = useState(0);
+  const [globalMissedCallCount, setGlobalMissedCallCount] = useState(0);
   const [leadTab, setLeadTab] = useState<LeadTab>("overdue");
   const [firstContactLeads, setFirstContactLeads] = useState<FirstContactLead[]>([]);
   const [firstContactCounts, setFirstContactCounts] = useState({ new: 0, overdue: 0 });
+  const [globalFirstContactCounts, setGlobalFirstContactCounts] = useState({ new: 0, overdue: 0 });
   const [firstContactHasMore, setFirstContactHasMore] = useState(false);
   const [loadingLeads, setLoadingLeads] = useState(false);
   const [followupTab, setFollowupTab] = useState<FollowupTab>("overdue");
   const [followupLeads, setFollowupLeads] = useState<FollowupLead[]>([]);
   const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0 });
-  const [followupGlobalCounts, setFollowupGlobalCounts] = useState({ all: 0, overdue: 0 });
+  const [globalFollowupCounts, setGlobalFollowupCounts] = useState({ all: 0, overdue: 0 });
   const [followupFilterOptions, setFollowupFilterOptions] = useState({ reps: [] as string[], companies: [] as string[] });
   const [followupHasMore, setFollowupHasMore] = useState(false);
   const [loadingFollowups, setLoadingFollowups] = useState(false);
@@ -75,6 +78,8 @@ export default function UnansweredMessagesPage() {
   const [repFilter, setRepFilter] = useState("");
   const [companyFilter, setCompanyFilter] = useState("");
   const [platformFilter, setPlatformFilter] = useState("");
+  const [directoryReps, setDirectoryReps] = useState<string[]>([]);
+  const [directoryCompanies, setDirectoryCompanies] = useState<string[]>([]);
   const processedEvents = useRef(new Set<string>());
   const loadingRef = useRef(true);
   const pendingEvents = useRef<RealtimeEvent[]>([]);
@@ -85,14 +90,33 @@ export default function UnansweredMessagesPage() {
   const refreshFirstContact = useRef(false);
   const refreshFollowups = useRef(false);
 
+  useEffect(() => {
+    Promise.allSettled([
+      fetch(`${API_BASE}/api/users/mine-reps`, { headers: authHeaders(token) }).then((response) => response.ok ? response.json() : []),
+      fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) }).then((response) => response.ok ? response.json() : []),
+    ]).then(([repsResult, companiesResult]) => {
+      if (repsResult.status === "fulfilled" && Array.isArray(repsResult.value)) {
+        setDirectoryReps(repsResult.value.map((item) => String(item.name || "")).filter(Boolean));
+      }
+      if (companiesResult.status === "fulfilled" && Array.isArray(companiesResult.value)) {
+        setDirectoryCompanies(companiesResult.value.map((item) => String(item.name || "")).filter(Boolean));
+      }
+    });
+  }, [token]);
+
   const load = useCallback(async () => {
     loadingRef.current = true;
     setLoading(true);
     setError("");
     try {
+      const messageParams = new URLSearchParams({ ended: String(tab === "ended"), limit: "20" });
+      const callParams = new URLSearchParams({ limit: "100" });
+      if (repFilter) { messageParams.set("rep", repFilter); callParams.set("rep", repFilter); }
+      if (companyFilter) { messageParams.set("company", companyFilter); callParams.set("company", companyFilter); }
+      if (platformFilter) messageParams.set("platform", platformFilter);
       const [messageResponse, callsResponse] = await Promise.all([
-        fetch(`${API_BASE}/api/unanswered-messages?ended=${tab === "ended"}&limit=20`, { headers: authHeaders(token) }),
-        fetch(`${API_BASE}/api/unanswered-messages/missed-calls?limit=100`, { headers: authHeaders(token) }),
+        fetch(`${API_BASE}/api/unanswered-messages?${messageParams.toString()}`, { headers: authHeaders(token) }),
+        fetch(`${API_BASE}/api/unanswered-messages/missed-calls?${callParams.toString()}`, { headers: authHeaders(token) }),
       ]);
       if (!messageResponse.ok) throw new Error(`Messages HTTP ${messageResponse.status}`);
       if (!callsResponse.ok) throw new Error(`Missed calls HTTP ${callsResponse.status}`);
@@ -101,15 +125,17 @@ export default function UnansweredMessagesPage() {
       setMessageCursor(String(messageData.next_cursor || ""));
       setMessageHasMore(Boolean(messageData.has_more));
       setCounts(messageData.counts || { unanswered: 0, ended: 0 });
-      setMissedCalls(callsData.items || []);
-      setMissedCallCount(Number(callsData.count || 0));
+      setGlobalCounts(messageData.global_counts || messageData.counts || { unanswered: 0, ended: 0 });
+      setMissedCalls(platformFilter && platformFilter !== "calls" ? [] : (callsData.items || []));
+      setMissedCallCount(platformFilter && platformFilter !== "calls" ? 0 : Number(callsData.count || 0));
+      setGlobalMissedCallCount(Number(callsData.global_count ?? callsData.count ?? 0));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load messages");
     } finally {
       loadingRef.current = false;
       setLoading(false);
     }
-  }, [tab, token]);
+  }, [tab, token, repFilter, companyFilter, platformFilter]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -117,18 +143,22 @@ export default function UnansweredMessagesPage() {
     if (offset) setLoadingLeads(true);
     else setLoadingLeads(true);
     try {
-      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-leads?category=${leadTab}&limit=50&offset=${offset}&refresh=${refresh}`, { headers: authHeaders(token) });
+      const params = new URLSearchParams({ category: leadTab, limit: "50", offset: String(offset), refresh: String(refresh) });
+      if (repFilter) params.set("rep", repFilter);
+      if (companyFilter) params.set("company", companyFilter);
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-leads?${params.toString()}`, { headers: authHeaders(token) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || `Leads HTTP ${response.status}`);
       setFirstContactLeads((current) => offset ? [...current, ...(data.items || [])] : (data.items || []));
       setFirstContactCounts(data.counts || { new: 0, overdue: 0 });
+      setGlobalFirstContactCounts(data.global_counts || data.counts || { new: 0, overdue: 0 });
       setFirstContactHasMore(Boolean(data.has_more));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load leads awaiting first contact");
     } finally {
       setLoadingLeads(false);
     }
-  }, [leadTab, token]);
+  }, [leadTab, token, repFilter, companyFilter]);
 
   useEffect(() => { void loadFirstContactLeads(0); }, [loadFirstContactLeads]);
 
@@ -144,7 +174,7 @@ export default function UnansweredMessagesPage() {
       if (!response.ok) throw new Error(data.detail || `Follow-ups HTTP ${response.status}`);
       setFollowupLeads((current) => offset ? [...current, ...(data.items || [])] : (data.items || []));
       setFollowupCounts(data.counts || { all: 0, overdue: 0 });
-      setFollowupGlobalCounts(data.global_counts || data.counts || { all: 0, overdue: 0 });
+      setGlobalFollowupCounts(data.global_counts || data.counts || { all: 0, overdue: 0 });
       setFollowupFilterOptions(data.filter_options || { reps: [], companies: [] });
       setFollowupHasMore(Boolean(data.has_more));
     } catch (reason) {
@@ -199,7 +229,11 @@ export default function UnansweredMessagesPage() {
     if (loading || loadingMoreMessages || !messageHasMore || !messageCursor) return;
     setLoadingMoreMessages(true);
     try {
-      const response = await fetch(`${API_BASE}/api/unanswered-messages?ended=${tab === "ended"}&limit=20&cursor=${encodeURIComponent(messageCursor)}`, { headers: authHeaders(token) });
+      const params = new URLSearchParams({ ended: String(tab === "ended"), limit: "20", cursor: messageCursor });
+      if (repFilter) params.set("rep", repFilter);
+      if (companyFilter) params.set("company", companyFilter);
+      if (platformFilter) params.set("platform", platformFilter);
+      const response = await fetch(`${API_BASE}/api/unanswered-messages?${params.toString()}`, { headers: authHeaders(token) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || `Messages HTTP ${response.status}`);
       const incoming = (data.items || []) as MessageRow[];
@@ -214,7 +248,7 @@ export default function UnansweredMessagesPage() {
     } finally {
       setLoadingMoreMessages(false);
     }
-  }, [loading, loadingMoreMessages, messageHasMore, messageCursor, tab, token]);
+  }, [loading, loadingMoreMessages, messageHasMore, messageCursor, tab, token, repFilter, companyFilter, platformFilter]);
 
   useEffect(() => {
     const target = messageLoadSentinel.current;
@@ -253,6 +287,10 @@ export default function UnansweredMessagesPage() {
       unanswered: Math.max(0, current.unanswered + Number(delta.unanswered || 0)),
       ended: Math.max(0, current.ended + Number(delta.ended || 0)),
     }));
+    setGlobalCounts((current) => ({
+      unanswered: Math.max(0, current.unanswered + Number(delta.unanswered || 0)),
+      ended: Math.max(0, current.ended + Number(delta.ended || 0)),
+    }));
 
     const removed = new Set((event.message_ids || event.removed_message_ids || []) as string[]);
     const row = event.row as MessageRow | undefined;
@@ -272,6 +310,7 @@ export default function UnansweredMessagesPage() {
     if (!eventId || processedEvents.current.has(eventId)) return;
     processedEvents.current.add(eventId);
     setMissedCallCount((current) => Math.max(0, current + Number(event.count_delta || 0)));
+    setGlobalMissedCallCount((current) => Math.max(0, current + Number(event.count_delta || 0)));
     const removed = new Set((event.call_ids || []) as string[]);
     const row = event.row as MissedCallRow | undefined;
     setMissedCalls((current) => {
@@ -353,16 +392,17 @@ export default function UnansweredMessagesPage() {
   const filterOptions = useMemo(() => {
     const rows = queueTab === "messages" ? items : queueTab === "calls" ? missedCalls : queueTab === "leads" ? firstContactLeads : followupLeads;
     return {
-      reps: queueTab === "followups" ? followupFilterOptions.reps : [...new Set(rows.map((row) => row.rep).filter(Boolean))].sort(),
-      companies: queueTab === "followups" ? followupFilterOptions.companies : [...new Set(rows.map((row) => row.company).filter(Boolean))].sort(),
-      platforms: queueTab === "messages" ? [...new Set(items.map((row) => row.channel).filter(Boolean))].sort() : queueTab === "calls" ? ["calls"] : [],
+      reps: [...new Set(["Unassigned", ...directoryReps, ...followupFilterOptions.reps, ...rows.map((row) => row.rep).filter(Boolean), repFilter].filter(Boolean))].sort(),
+      companies: [...new Set([...directoryCompanies, ...followupFilterOptions.companies, ...rows.map((row) => row.company).filter(Boolean), companyFilter].filter(Boolean))].sort(),
+      platforms: queueTab === "messages" ? ["instagram", "messenger", "sms"] : queueTab === "calls" ? ["calls"] : [],
     };
-  }, [queueTab, items, missedCalls, firstContactLeads, followupLeads, followupFilterOptions]);
+  }, [queueTab, items, missedCalls, firstContactLeads, followupLeads, followupFilterOptions, directoryReps, directoryCompanies, repFilter, companyFilter]);
   const filteredItems = useMemo(() => items.filter((row) =>
     (!repFilter || row.rep === repFilter) &&
     (!companyFilter || row.company === companyFilter) &&
     (!platformFilter || row.channel === platformFilter)
   ), [items, repFilter, companyFilter, platformFilter]);
+  const filteredMessageCount = counts[tab];
   const filteredMissedCalls = useMemo(() => missedCalls.filter((row) =>
     (!repFilter || row.rep === repFilter) &&
     (!companyFilter || row.company === companyFilter) &&
@@ -378,8 +418,6 @@ export default function UnansweredMessagesPage() {
   ), [followupLeads, repFilter, companyFilter]);
 
   useEffect(() => {
-    setRepFilter("");
-    setCompanyFilter("");
     setPlatformFilter("");
   }, [queueTab]);
 
@@ -397,22 +435,22 @@ export default function UnansweredMessagesPage() {
       <nav aria-label="Sales work queue categories" style={{ display: "flex", flexWrap: "nowrap", gap: 12, overflowX: "auto", paddingBottom: 12, marginBottom: 6 }}>
         <button type="button" onClick={() => setQueueTab("messages")} style={{ ...queueCard, ...(queueTab === "messages" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Unanswered Messages</span>
-          <strong style={queueCardCount}>{counts.unanswered}</strong>
+          <strong style={queueCardCount}>{globalCounts.unanswered}</strong>
           <span style={queueCardDescription}>Client messages waiting for a response</span>
         </button>
         <button type="button" onClick={() => setQueueTab("calls")} style={{ ...queueCard, ...(queueTab === "calls" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Missed Calls</span>
-          <strong style={queueCardCount}>{missedCallCount}</strong>
+          <strong style={queueCardCount}>{globalMissedCallCount}</strong>
           <span style={queueCardDescription}>Missed calls without a later contact attempt</span>
         </button>
         <button type="button" onClick={() => setQueueTab("leads")} style={{ ...queueCard, ...(queueTab === "leads" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Leads Awaiting First Contact</span>
-          <strong style={queueCardCount}>{firstContactCounts.new + firstContactCounts.overdue}</strong>
+          <strong style={queueCardCount}>{globalFirstContactCounts.new + globalFirstContactCounts.overdue}</strong>
           <span style={queueCardDescription}>New leads with no call attempt</span>
         </button>
         <button type="button" onClick={() => setQueueTab("followups")} style={{ ...queueCard, ...(queueTab === "followups" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Priority 0 Follow-ups</span>
-          <strong style={queueCardCount}>{followupGlobalCounts.overdue}</strong>
+          <strong style={queueCardCount}>{globalFollowupCounts.overdue}</strong>
           <span style={queueCardDescription}>Six call periods and three required messages</span>
         </button>
       </nav>
@@ -425,10 +463,10 @@ export default function UnansweredMessagesPage() {
 
       {queueTab === "messages" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px 0" }}>
-          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Unanswered Messages ({counts.unanswered})</h2>
+          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Unanswered Messages ({tab === "unanswered" ? filteredMessageCount : counts.unanswered})</h2>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {([ ["unanswered", "Unanswered Messages", counts.unanswered], ["ended", "Ended Chats", counts.ended] ] as const).map(([key, label, count]) => (
-              <button key={key} type="button" onClick={() => setTab(key)} style={{ border: 0, borderBottom: tab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: tab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: tab === key ? 700 : 500, cursor: "pointer" }}>{label} ({count})</button>
+              <button key={key} type="button" onClick={() => setTab(key)} style={{ border: 0, borderBottom: tab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: tab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: tab === key ? 700 : 500, cursor: "pointer" }}>{label} ({tab === key ? filteredMessageCount : count})</button>
             ))}
           </div>
         </div>

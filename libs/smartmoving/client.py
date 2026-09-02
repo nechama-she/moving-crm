@@ -515,3 +515,115 @@ def update_opportunity_salesperson(opportunity_id: str, salesperson_id: str) -> 
     except Exception as e:
         logger.error("SmartMoving update_opportunity_salesperson exception: %r", e)
         return {"ok": False, "error": str(e)}
+
+
+def update_lead_salesperson(lead_id: str, salesperson_id: str) -> dict:
+    """Assign a SmartMoving lead through the lead PUT endpoint.
+
+    SmartMoving's PUT lead operation requires the existing customer, branch, and
+    referral-source values. Fetch the newly created lead first and preserve all
+    fields exposed by that response, changing only ``salesPersonId``.
+    """
+    if not SMARTMOVING_API_KEY:
+        logger.error("SmartMoving update_lead_salesperson skipped: API key not set")
+        return {"ok": False, "error": "API key not set"}
+
+    lead_url = f"{SMARTMOVING_BASE_URL}/leads/{lead_id}"
+    headers = _headers()
+    try:
+        get_response = _request(httpx.get, lead_url, headers=headers, timeout=15)
+        get_response.raise_for_status()
+        current = get_response.json()
+        if not isinstance(current, dict):
+            return {"ok": False, "error": "SmartMoving returned an invalid lead response"}
+
+        customer_name = str(current.get("customerName") or "").strip()
+        branch_id = str(current.get("branchId") or "").strip()
+        referral_source_id = str(current.get("referralSource") or "").strip()
+        missing = [
+            name
+            for name, value in (
+                ("customerName", customer_name),
+                ("branchId", branch_id),
+                ("referralSourceId", referral_source_id),
+            )
+            if not value
+        ]
+        if missing:
+            return {
+                "ok": False,
+                "error": f"SmartMoving lead is missing required fields: {', '.join(missing)}",
+            }
+
+        payload: dict[str, Any] = {
+            "customerName": customer_name,
+            "branchId": branch_id,
+            "referralSourceId": referral_source_id,
+            "salesPersonId": salesperson_id,
+        }
+
+        optional_fields = {
+            "emailAddress": current.get("emailAddress"),
+            "phoneNumber": current.get("phoneNumber"),
+            "phoneType": current.get("phoneType"),
+            "serviceTypeId": current.get("type"),
+            "moveSizeId": current.get("moveSizeId"),
+        }
+        for field, value in optional_fields.items():
+            if value is not None and value != "":
+                payload[field] = value
+
+        service_date = current.get("serviceDate")
+        if service_date not in (None, "", 0, "0"):
+            date_text = str(service_date).strip().removesuffix(".0")
+            if len(date_text) == 8 and date_text.isdigit():
+                date_text = f"{date_text[:4]}-{date_text[4:6]}-{date_text[6:]}"
+            payload["moveDate"] = date_text
+
+        for payload_field, source_prefix in (
+            ("originAddress", "origin"),
+            ("destinationAddress", "destination"),
+        ):
+            address = {
+                "fullAddress": current.get(f"{source_prefix}AddressFull"),
+                "street": current.get(f"{source_prefix}Street"),
+                "city": current.get(f"{source_prefix}City"),
+                "state": current.get(f"{source_prefix}State"),
+                "zip": current.get(f"{source_prefix}Zip"),
+            }
+            address = {key: value for key, value in address.items() if value not in (None, "")}
+            if address:
+                payload[payload_field] = address
+
+        put_url = f"{SMARTMOVING_BASE_URL}/premium/leads/{lead_id}"
+        put_headers = {**headers, "Content-Type": "application/json"}
+        put_response = _request(
+            httpx.put,
+            put_url,
+            headers=put_headers,
+            json=payload,
+            timeout=15,
+        )
+        response_body = put_response.text[:500] if put_response.text else "(empty)"
+        put_response.raise_for_status()
+        return {
+            "ok": True,
+            "status": put_response.status_code,
+            "body": response_body,
+            "method": "PUT",
+            "resource": "lead",
+        }
+    except httpx.HTTPError as exc:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None) if response is not None else None
+        body = getattr(response, "text", str(exc)) if response is not None else str(exc)
+        logger.error("SmartMoving update_lead_salesperson error: %s %s", status, body[:300])
+        return {
+            "ok": False,
+            "status": status,
+            "body": body[:300],
+            "error": f"HTTP {status}: {body[:300]}",
+        }
+    except Exception as exc:
+        logger.error("SmartMoving update_lead_salesperson exception: %r", exc)
+        return {"ok": False, "error": str(exc)}

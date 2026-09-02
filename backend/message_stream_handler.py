@@ -73,7 +73,7 @@ def _direction(channel: str, item: dict) -> str:
         if value in {"sent", "outbound"}:
             return "outbound"
     role = str(item.get("role") or "").strip().lower()
-    if role == "assistant":
+    if role in {"ai", "assistant", "bot"}:
         return "ignored"
     return "inbound" if role in {"user", "client", "customer"} else "outbound"
 

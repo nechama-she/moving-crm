@@ -533,6 +533,8 @@ def list_followup_calls(
 @router.get("/first-contact-leads")
 def list_first_contact_leads(
     category: str = Query("new", pattern="^(new|overdue)$"),
+    rep: str = Query(""),
+    company: str = Query(""),
     refresh: bool = Query(False),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -577,7 +579,12 @@ def list_first_contact_leads(
         if contacted:
             continue
         pending["new" if created_at > thirty_minutes_ago else "overdue"].append(lead)
-    selected = pending[category]
+    global_counts = {name: len(rows) for name, rows in pending.items()}
+    filtered_pending = {
+        name: [lead for lead in rows if (not rep or (lead.assignee.name if lead.assignee else "Unassigned") == rep) and (not company or (lead.company.name if lead.company else "") == company)]
+        for name, rows in pending.items()
+    }
+    selected = filtered_pending[category]
     if category == "overdue":
         selected.sort(key=lambda lead: lead.created_at)
     page = selected[offset:offset + limit]
@@ -597,10 +604,11 @@ def list_first_contact_leads(
             "created_at": created_at.isoformat(),
             "age_minutes": max(0, int((now - created_at).total_seconds() // 60)),
         })
-    counts = {name: len(rows) for name, rows in pending.items()}
+    counts = {name: len(rows) for name, rows in filtered_pending.items()}
     return {
         "items": items,
         "counts": counts,
+        "global_counts": global_counts,
         "total": len(selected),
         "has_more": offset + limit < len(selected),
         "tracking_start": tracking_start.isoformat(),
@@ -643,6 +651,8 @@ def _ring_target(
 @router.get("/missed-calls")
 def list_missed_calls(
     limit: int = Query(100, ge=1, le=100),
+    rep: str = Query(""),
+    company: str = Query(""),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -653,10 +663,15 @@ def list_missed_calls(
         .all()
     )
     ignored_numbers = _ignored_call_numbers(db)
-    states = [
+    global_states = [
         state for state in states
         if _digits(state.client_identifier) not in ignored_numbers
         and _digits(state.company_identifier) not in ignored_numbers
+    ]
+    states = [
+        state for state in global_states
+        if (not rep or (state.lead.assignee.name if state.lead and state.lead.assignee else "Unassigned") == rep)
+        and (not company or (state.lead.company.name if state.lead and state.lead.company else "") == company)
     ]
     companies_by_phone = {
         _digits(phone): name
@@ -686,7 +701,7 @@ def list_missed_calls(
             "first_missed_at": state.first_missed_at.isoformat(),
             "latest_missed_at": state.latest_missed_at.isoformat(),
         })
-    return {"items": items, "count": len(states)}
+    return {"items": items, "count": len(states), "global_count": len(global_states)}
 
 
 @router.get("/ignored-call-numbers")
@@ -813,25 +828,103 @@ def _preview_messages(states: list[MessageState]) -> dict[tuple[str, str], dict]
         return dict(executor.map(load, states))
 
 
+def _has_later_human_reply(state: MessageState, source: dict) -> bool:
+    """Check one exact source-table conversation; never scan a source table."""
+    raw_timestamp = source.get("timestamp")
+    if raw_timestamp is None:
+        return False
+    table = sms_messages_table if state.channel == "sms" else conversations_table
+    partition_name = "phone_number" if state.channel == "sms" else "user_id"
+    partition_value = source.get(partition_name)
+    if partition_value is None:
+        return False
+    kwargs = {
+        "KeyConditionExpression": Key(partition_name).eq(partition_value) & Key("timestamp").gt(raw_timestamp),
+        "ScanIndexForward": True,
+    }
+    while True:
+        response = table.query(**kwargs)
+        for item in response.get("Items") or []:
+            if state.channel == "sms":
+                if _digits(item.get("company_number")) != _digits(state.company_identifier):
+                    continue
+                direction = str(item.get("direction") or "").strip().lower()
+                sender = str(item.get("sales_name") or item.get("company_name") or "").strip().lower()
+                if direction in {"sent", "outbound"} and sender not in {"ai", "assistant", "bot"}:
+                    return True
+            else:
+                if str(item.get("platform") or "messenger").strip().lower() != state.channel:
+                    continue
+                if str(item.get("page_id") or "").strip() != state.company_identifier:
+                    continue
+                role = str(item.get("role") or "").strip().lower()
+                sender = str(item.get("sales_name") or "").strip().lower()
+                if role not in {"user", "client", "customer", "ai", "assistant", "bot"} and sender not in {"ai", "assistant", "bot"}:
+                    return True
+        last_key = response.get("LastEvaluatedKey")
+        if not last_key:
+            return False
+        kwargs["ExclusiveStartKey"] = last_key
+
+
+def _reconcile_loaded_unanswered(db: Session, states: list[MessageState], messages: dict[tuple[str, str], dict]) -> int:
+    def check(state: MessageState) -> tuple[MessageState, bool]:
+        source = messages.get((state.channel, state.message_id), {})
+        try:
+            return state, _has_later_human_reply(state, source)
+        except (BotoCoreError, ClientError, TypeError, ValueError):
+            logger.exception("Unanswered reconciliation failed channel=%s message_id=%s", state.channel, state.message_id)
+            return state, False
+
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(states)))) as executor:
+        stale = [state for state, answered in executor.map(check, states) if answered]
+    for state in stale:
+        db.delete(state)
+    if stale:
+        db.commit()
+        logger.info("Removed %d stale unanswered message states during initial page load", len(stale))
+    return len(stale)
+
+
 @router.get("")
 def list_message_states(
     ended: bool = Query(False),
     limit: int = Query(20, ge=1, le=100),
     cursor: str = Query(""),
+    rep: str = Query(""),
+    company: str = Query(""),
+    platform: str = Query(""),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     started_at = time.perf_counter()
     ignored_numbers = _ignored_call_numbers(db)
-    visible_filter = True
+    global_visible_filter = True
     if ignored_numbers:
-        visible_filter = ~and_(
+        global_visible_filter = ~and_(
             MessageState.channel == "sms",
             or_(
                 MessageState.client_identifier.in_(ignored_numbers),
                 MessageState.company_identifier.in_(ignored_numbers),
             ),
         )
+    global_count_rows = (
+        db.query(MessageState.conversation_ended, func.count())
+        .filter(global_visible_filter)
+        .group_by(MessageState.conversation_ended)
+        .all()
+    )
+    global_counts_by_ended = {bool(value): int(count) for value, count in global_count_rows}
+    visible_filter = global_visible_filter
+    if platform:
+        visible_filter = and_(visible_filter, MessageState.channel == platform.strip().lower())
+    if rep:
+        if rep == "Unassigned":
+            visible_filter = and_(visible_filter, or_(MessageState.lead_id.is_(None), MessageState.lead.has(Lead.assigned_to.is_(None))))
+        else:
+            visible_filter = and_(visible_filter, MessageState.lead.has(Lead.assignee.has(User.name == rep)))
+    if company:
+        visible_filter = and_(visible_filter, MessageState.lead.has(Lead.company.has(Company.name == company)))
     count_rows = (
         db.query(MessageState.conversation_ended, func.count())
         .filter(visible_filter)
@@ -866,6 +959,30 @@ def list_message_states(
     unanswered_count = counts_by_ended.get(False, 0)
     ended_count = counts_by_ended.get(True, 0)
     messages = _preview_messages(states)
+    if not cursor and not ended:
+        # Keep filling the first page after stale rows are removed. This runs
+        # only for the initial page request, never for scrolling or a timer.
+        while states and _reconcile_loaded_unanswered(db, states, messages):
+            global_count_rows = (
+                db.query(MessageState.conversation_ended, func.count())
+                .filter(global_visible_filter)
+                .group_by(MessageState.conversation_ended)
+                .all()
+            )
+            global_counts_by_ended = {bool(value): int(count) for value, count in global_count_rows}
+            count_rows = (
+                db.query(MessageState.conversation_ended, func.count())
+                .filter(visible_filter)
+                .group_by(MessageState.conversation_ended)
+                .all()
+            )
+            counts_by_ended = {bool(value): int(count) for value, count in count_rows}
+            page = query.limit(limit + 1).all()
+            has_more = len(page) > limit
+            states = page[:limit]
+            unanswered_count = counts_by_ended.get(False, 0)
+            ended_count = counts_by_ended.get(True, 0)
+            messages = _preview_messages(states)
     previews_finished_at = time.perf_counter()
     companies_by_phone = {_digits(phone): name for name, phone in db.query(Company.name, Company.phone).all() if _digits(phone)}
     reps_by_phone = {_digits(phone): name for name, phone in db.query(User.name, User.phone).all() if _digits(phone)}
@@ -906,6 +1023,7 @@ def list_message_states(
     return {
         "items": items,
         "counts": {"unanswered": unanswered_count, "ended": ended_count},
+        "global_counts": {"unanswered": global_counts_by_ended.get(False, 0), "ended": global_counts_by_ended.get(True, 0)},
         "next_cursor": next_cursor,
         "has_more": has_more,
     }
