@@ -392,7 +392,7 @@ export default function UnansweredMessagesPage() {
   const filterOptions = useMemo(() => {
     const rows = queueTab === "messages" ? items : queueTab === "calls" ? missedCalls : queueTab === "leads" ? firstContactLeads : followupLeads;
     return {
-      reps: [...new Set([...directoryReps, ...followupFilterOptions.reps, ...rows.map((row) => row.rep).filter(Boolean), repFilter].filter(Boolean))].sort(),
+      reps: [...new Set(["Unassigned", ...directoryReps, ...followupFilterOptions.reps, ...rows.map((row) => row.rep).filter(Boolean), repFilter].filter(Boolean))].sort(),
       companies: [...new Set([...directoryCompanies, ...followupFilterOptions.companies, ...rows.map((row) => row.company).filter(Boolean), companyFilter].filter(Boolean))].sort(),
       platforms: queueTab === "messages" ? ["instagram", "messenger", "sms"] : queueTab === "calls" ? ["calls"] : [],
     };

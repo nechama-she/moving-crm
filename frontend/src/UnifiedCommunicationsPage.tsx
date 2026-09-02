@@ -218,7 +218,7 @@ export default function UnifiedCommunicationsPage() {
   }, [selected, historyLoading, timeline.length]);
 
   const filterOptions = useMemo(() => ({
-    reps: [...new Set([...directoryReps, ...contacts.flatMap(contactReps)])].sort(),
+    reps: [...new Set(["Unassigned", ...directoryReps, ...contacts.flatMap(contactReps)])].sort(),
     companies: [...new Set([...directoryCompanies, ...contacts.flatMap(contactCompanies)])].sort(),
     platforms: ["calls", "instagram", "messenger", "sms"],
   }), [contacts, directoryCompanies, directoryReps]);
