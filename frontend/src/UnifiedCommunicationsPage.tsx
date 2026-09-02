@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 import MessageAttachments, { attachmentSummary, MessageAttachment } from "./MessageAttachments";
+import ConnectCommunicationLeadModal, { CommunicationTarget } from "./ConnectCommunicationLeadModal";
 
 type Contact = { key: string; lead_id: string; client: string; rep: string; company: string; timestamp: number; last_preview: string; sources: Array<Record<string, unknown>> };
 type TimelineItem = { id: string; kind: "message" | "call"; channel: string; direction: "inbound" | "outbound"; timestamp: number; text: string; attachments?: MessageAttachment[]; senderLabel?: string; answered?: boolean; reason?: string };
@@ -41,7 +42,19 @@ const contactReps = (item: Contact) => [...new Set([
   ...item.sources.filter((source) => source.destination_type === "rep").map((source) => String(source.destination_name || "")),
 ].filter((value) => value && value !== "Unassigned"))];
 
-const CommunicationsContacts = memo(function CommunicationsContacts({ contacts, selected, loading, loadingMore, hasMore, repFilter, companyFilter, platformFilter, onSelect, onLoadMore }: {
+const associationTarget = (item: Contact): CommunicationTarget | null => {
+  for (const source of item.sources) {
+    const channel = String(source.source_type || "");
+    const clientIdentifier = String(source.client_identifier || source.message_partition_key || "");
+    const companyIdentifier = channel === "sms"
+      ? String(source.company_phone_identifier || "")
+      : String(source.company_identifier || "");
+    if (channel && clientIdentifier && companyIdentifier) return { channel, clientIdentifier, companyIdentifier };
+  }
+  return null;
+};
+
+const CommunicationsContacts = memo(function CommunicationsContacts({ contacts, selected, loading, loadingMore, hasMore, repFilter, companyFilter, platformFilter, onSelect, onLoadMore, onConnect }: {
   contacts: Contact[];
   selected: string;
   loading: boolean;
@@ -52,6 +65,7 @@ const CommunicationsContacts = memo(function CommunicationsContacts({ contacts, 
   platformFilter: string;
   onSelect: (key: string) => void;
   onLoadMore: () => void;
+  onConnect: (target: CommunicationTarget) => void;
 }) {
   const [search, setSearch] = useState("");
   const shown = useMemo(() => {
@@ -78,7 +92,7 @@ const CommunicationsContacts = memo(function CommunicationsContacts({ contacts, 
       <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search clients or numbers" style={{ width: "100%", padding: "9px 10px", border: "1px solid #cbd5e1", borderRadius: 6, boxSizing: "border-box" }} />
     </div>
     <div onScroll={(event) => { const element = event.currentTarget; if (element.scrollHeight - element.scrollTop - element.clientHeight < 240) onLoadMore(); }} style={{ maxHeight: "calc(100vh - 190px)", overflowY: "auto" }}>
-      {loading ? <p style={{ padding: 14 }}>Loading…</p> : shown.map((item) => <button key={item.key} type="button" onClick={() => onSelect(item.key)} style={{ display: "block", width: "100%", padding: "12px 14px", textAlign: "left", border: 0, borderBottom: "1px solid #e2e8f0", background: selected === item.key ? "#eef6ff" : "#fff", cursor: "pointer" }}><strong style={{ display: "block", color: "#032d60" }}>{item.client}</strong><span style={{ display: "block", color: "#475569", fontSize: 12 }}>To: {destinationLabel(item)} · {when(item.timestamp)}</span>{companyAndRep(item) ? <span style={{ display: "block", color: "#64748b", fontSize: 12 }}>Assigned: {companyAndRep(item)}</span> : null}<span title={item.last_preview} style={{ display: "block", marginTop: 4, color: "#475569", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.last_preview}</span></button>)}
+      {loading ? <p style={{ padding: 14 }}>Loading…</p> : shown.map((item) => <button key={item.key} type="button" onClick={() => onSelect(item.key)} onContextMenu={!item.lead_id ? (event) => { const target = associationTarget(item); if (target) { event.preventDefault(); onConnect(target); } } : undefined} title={!item.lead_id ? "Right-click to connect this communication to a lead" : undefined} style={{ display: "block", width: "100%", padding: "12px 14px", textAlign: "left", border: 0, borderBottom: "1px solid #e2e8f0", background: selected === item.key ? "#eef6ff" : "#fff", cursor: "pointer" }}><strong style={{ display: "block", color: "#032d60" }}>{item.client}</strong><span style={{ display: "block", color: "#475569", fontSize: 12 }}>To: {destinationLabel(item)} · {when(item.timestamp)}</span>{companyAndRep(item) ? <span style={{ display: "block", color: "#64748b", fontSize: 12 }}>Assigned: {companyAndRep(item)}</span> : null}<span title={item.last_preview} style={{ display: "block", marginTop: 4, color: "#475569", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.last_preview}</span></button>)}
       {loadingMore ? <div style={{ padding: 12, textAlign: "center", color: "#64748b", fontSize: 12 }}>Loading more…</div> : null}
     </div>
   </aside>;
@@ -89,6 +103,7 @@ export default function UnifiedCommunicationsPage() {
   const [repFilter, setRepFilter] = useState(""); const [companyFilter, setCompanyFilter] = useState(""); const [platformFilter, setPlatformFilter] = useState("");
   const [directoryCompanies, setDirectoryCompanies] = useState<string[]>([]); const [directoryReps, setDirectoryReps] = useState<string[]>([]);
   const [cursors, setCursors] = useState({ sms: "", meta: "", calls: "" }); const [more, setMore] = useState({ sms: true, meta: true, calls: true }); const [loadingMore, setLoadingMore] = useState(false);
+  const [connectTarget, setConnectTarget] = useState<CommunicationTarget | null>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const loadingMoreRef = useRef(false);
   useEffect(() => { (async () => { setLoading(true); try {
@@ -216,8 +231,10 @@ export default function UnifiedCommunicationsPage() {
         <header style={{ padding: "12px 18px", borderBottom: "1px solid #d8dde6", background: "#f8fafc" }}>{contact ? <>{contact.lead_id ? <Link to={`/leads/${contact.lead_id}`} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{contact.client}</Link> : <strong>{contact.client}</strong>}<div style={{ color: "#475569", marginTop: 4, fontSize: 12 }}><strong>Sent to:</strong> {destinationLabel(contact)}</div>{companyAndRep(contact) ? <div style={{ color: "#64748b", marginTop: 2, fontSize: 12 }}><strong>Lead assigned to:</strong> {companyAndRep(contact)}</div> : null}</> : "Select a client"}</header>
         <div ref={timelineRef} style={{ padding: 18, maxHeight: "calc(100vh - 230px)", overflowY: "auto" }}>{historyLoading ? <p>Loading communication…</p> : timeline.map((item, index) => { const callback = callbackFor(index); const missed = missedBefore(index); return <div key={item.id} style={{ display: "flex", justifyContent: item.direction === "outbound" ? "flex-end" : "flex-start", margin: "9px 0" }}><article style={{ maxWidth: "72%", padding: "10px 13px", borderRadius: 14, background: item.direction === "outbound" ? "#e3f2fd" : "#f3f4f6", color: "#1e293b" }}>{item.kind === "message" ? <>{item.senderLabel ? <strong style={{ display: "block", marginBottom: 5, color: "#5c2d91", fontSize: 12 }}>{item.senderLabel}</strong> : null}{item.text ? <div style={{ whiteSpace: "pre-wrap" }}>{item.text}</div> : null}<MessageAttachments attachments={item.attachments} /></> : <><strong>{item.direction === "inbound" ? "Inbound call" : "Outbound call"}</strong><div style={{ fontSize: 12, color: "#64748b" }}>{item.answered ? "Answered" : "Not answered"}{item.reason ? ` · ${item.reason}` : ""}</div>{callback ? <div style={{ color: "#2e844a", fontSize: 12, fontWeight: 700 }}>Called back in {elapsed(callback.timestamp - item.timestamp)}</div> : item.direction === "inbound" && !item.answered ? <div style={{ color: "#ba0517", fontSize: 12, fontWeight: 700 }}>No callback yet</div> : null}{missed ? <div style={{ color: "#2e844a", fontSize: 12, fontWeight: 700 }}>Callback after {elapsed(item.timestamp - missed.timestamp)}</div> : null}</>}<footer style={{ marginTop: 5, color: "#64748b", fontSize: 11 }}>{item.channel.toUpperCase()} · {when(item.timestamp)}</footer></article></div>; })}{!historyLoading && contact && timeline.length === 0 ? <p style={{ textAlign: "center", color: "#64748b" }}>No communication history found.</p> : null}</div>
       </section>
-      <CommunicationsContacts contacts={contacts} selected={selected} loading={loading} loadingMore={loadingMore} hasMore={platformFilter === "calls" ? more.calls : platformFilter === "sms" ? more.sms : ["messenger", "instagram"].includes(platformFilter) ? more.meta : Object.values(more).some(Boolean)} repFilter={repFilter} companyFilter={companyFilter} platformFilter={platformFilter} onSelect={setSelected} onLoadMore={loadMore} />
-    </div></main>;
+      <CommunicationsContacts contacts={contacts} selected={selected} loading={loading} loadingMore={loadingMore} hasMore={platformFilter === "calls" ? more.calls : platformFilter === "sms" ? more.sms : ["messenger", "instagram"].includes(platformFilter) ? more.meta : Object.values(more).some(Boolean)} repFilter={repFilter} companyFilter={companyFilter} platformFilter={platformFilter} onSelect={setSelected} onLoadMore={loadMore} onConnect={setConnectTarget} />
+    </div>
+    {connectTarget ? <ConnectCommunicationLeadModal target={connectTarget} token={token} onClose={() => setConnectTarget(null)} onConnected={(lead) => { setContacts((current) => current.map((item) => item.key === selected ? { ...item, lead_id: lead.id, client: lead.name, company: lead.company, rep: lead.rep || "" } : item)); setConnectTarget(null); }} /> : null}
+  </main>;
 }
 
 const filterSelect: React.CSSProperties = { minWidth: 180, padding: "9px 32px 9px 10px", border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", color: "#334155" };

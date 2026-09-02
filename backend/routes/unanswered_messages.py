@@ -879,6 +879,7 @@ def list_message_states(
             "message_id": state.message_id,
             "lead_id": state.lead_id or "",
             "client_identifier": state.client_identifier,
+            "company_identifier": state.company_identifier,
             "client": lead.full_name if lead else state.client_identifier,
             "client_number": _digits(state.client_identifier) if state.channel == "sms" else "",
             "message": str(message.get("text") or ""),

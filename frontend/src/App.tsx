@@ -203,7 +203,7 @@ function ProtectedRoutes() {
           <Route path="/outreach" element={<OutreachEventsPage />} />
           <Route path="/sales-calendar" element={<SalesCalendarPage />} />
           <Route path="/sales-performance" element={<SalesPerformancePage />} />
-          <Route path="/assign-period" element={<PeriodAssignPage />} />
+          <Route path="/assign-period" element={user?.role === "admin" ? <PeriodAssignPage /> : <Navigate to="/" replace />} />
           <Route path="/sales-reps" element={<SalesRepsPage />} />
           <Route path="/admin-users" element={<AdminUsersPage />} />
           <Route path="/dispatch" element={<DispatchPage mode="calendar" />} />

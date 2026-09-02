@@ -4,17 +4,18 @@ import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 import { RealtimeEvent, useRealtimeUpdates } from "./useRealtimeUpdates";
 import MessageAttachments, { attachmentSummary, MessageAttachment } from "./MessageAttachments";
+import ConnectCommunicationLeadModal, { CommunicationTarget } from "./ConnectCommunicationLeadModal";
 
 type MessageTab = "unanswered" | "ended";
 type QueueTab = "messages" | "calls" | "leads" | "followups";
 type LeadTab = "new" | "overdue";
 type FollowupTab = "all" | "overdue";
-type MessageRow = { channel: string; message_id: string; lead_id: string; client_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
+type MessageRow = { channel: string; message_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type FirstContactLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; created_at: string; age_minutes: number };
 type FollowupAttempt = { number?: number; kind: "call" | "message"; label: string; period: string; scheduled_start: string; scheduled_end: string; completed_at: string; status: "completed" | "not_sent" | "on_time" | "delayed" | "overdue" | "open" | "upcoming" };
 type FollowupLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; created_at: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
-type NumberMenu = { number: string; x: number; y: number } | null;
+type NumberMenu = { number: string; x: number; y: number; connectTarget?: CommunicationTarget } | null;
 
 const displayPhone = (value: string) => {
   const digits = String(value || "").replace(/\D/g, "");
@@ -70,6 +71,7 @@ export default function UnansweredMessagesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [numberMenu, setNumberMenu] = useState<NumberMenu>(null);
+  const [connectTarget, setConnectTarget] = useState<CommunicationTarget | null>(null);
   const [repFilter, setRepFilter] = useState("");
   const [companyFilter, setCompanyFilter] = useState("");
   const [platformFilter, setPlatformFilter] = useState("");
@@ -387,8 +389,10 @@ export default function UnansweredMessagesPage() {
       <p style={{ margin: "6px 0 20px", color: "#64748b" }}>Sales items that need attention.</p>
       {error ? <p style={{ color: "#b91c1c" }}>{error}</p> : null}
       {numberMenu ? <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "fixed", zIndex: 1000, left: Math.min(numberMenu.x, window.innerWidth - 190), top: Math.min(numberMenu.y, window.innerHeight - 60), minWidth: 180, padding: 5, border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", boxShadow: "0 6px 18px rgba(15,23,42,.2)" }}>
-        <button type="button" onClick={() => void ignoreNumber(numberMenu.number)} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore this number</button>
+        {numberMenu.connectTarget ? <button type="button" onClick={() => { setConnectTarget(numberMenu.connectTarget || null); setNumberMenu(null); }} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#0b5cab", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Connect to a lead</button> : null}
+        {!numberMenu.connectTarget || numberMenu.connectTarget.channel === "sms" || numberMenu.connectTarget.channel === "phone" ? <button type="button" onClick={() => void ignoreNumber(numberMenu.number)} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore this number</button> : null}
       </div> : null}
+      {connectTarget ? <ConnectCommunicationLeadModal target={connectTarget} token={token} onClose={() => setConnectTarget(null)} onConnected={(lead) => { setItems((current) => current.map((row) => row.channel === connectTarget.channel && row.client_identifier === connectTarget.clientIdentifier && row.company_identifier === connectTarget.companyIdentifier ? { ...row, lead_id: lead.id, client: lead.name, company: lead.company, rep: lead.rep || "Unassigned" } : row)); setMissedCalls((current) => current.map((row) => ["calls", "call", "phone"].includes(connectTarget.channel) && row.client_identifier === connectTarget.clientIdentifier && row.company_identifier === connectTarget.companyIdentifier ? { ...row, lead_id: lead.id, client: lead.name, company: lead.company, rep: lead.rep || "Unassigned" } : row)); setConnectTarget(null); }} /> : null}
 
       <nav aria-label="Sales work queue categories" style={{ display: "flex", flexWrap: "nowrap", gap: 12, overflowX: "auto", paddingBottom: 12, marginBottom: 6 }}>
         <button type="button" onClick={() => setQueueTab("messages")} style={{ ...queueCard, ...(queueTab === "messages" ? activeQueueCard : {}) }}>
@@ -435,7 +439,7 @@ export default function UnansweredMessagesPage() {
             {loading ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading messages…</td></tr> : null}
             {!loading && filteredItems.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{items.length ? "No messages match these filters." : tab === "unanswered" ? "No unanswered messages." : "No ended chats."}</td></tr> : null}
             {!loading && filteredItems.map((row) => <tr key={`${row.channel}:${row.message_id}`}>
-              <td style={cell}>
+              <td style={cell} onContextMenu={!row.lead_id ? (event) => { event.preventDefault(); setNumberMenu({ number: row.client_number || row.client_identifier, x: event.clientX, y: event.clientY, connectTarget: { channel: row.channel, clientIdentifier: row.client_identifier, companyIdentifier: row.company_identifier } }); } : undefined} title={!row.lead_id ? "Right-click to connect this communication to a lead" : undefined}>
                 {row.lead_id ? <Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : row.channel === "messenger" || row.channel === "instagram" ? <a href={`https://www.facebook.com/latest/${encodeURIComponent(row.client)}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</a> : null}
                 {row.channel === "sms" && row.client_number ? <div style={{ marginTop: row.lead_id ? 4 : 0 }}><IgnoreNumberTarget number={row.client_number} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></div> : null}
               </td>
@@ -465,7 +469,7 @@ export default function UnansweredMessagesPage() {
               {loading ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
               {!loading && filteredMissedCalls.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{missedCalls.length ? "No missed calls match these filters." : "No missed calls."}</td></tr> : null}
               {!loading && filteredMissedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
-                <td style={cell}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : null}<div style={{ marginTop: row.lead_id ? 4 : 0 }}><IgnoreNumberTarget number={row.client_identifier} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></div></td>
+                <td style={cell} onContextMenu={!row.lead_id ? (event) => { event.preventDefault(); setNumberMenu({ number: row.client_identifier, x: event.clientX, y: event.clientY, connectTarget: { channel: "calls", clientIdentifier: row.client_identifier, companyIdentifier: row.company_identifier } }); } : undefined} title={!row.lead_id ? "Right-click to connect this call to a lead" : undefined}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : null}<div style={{ marginTop: row.lead_id ? 4 : 0 }}><IgnoreNumberTarget number={row.client_identifier} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></div></td>
                 <td style={cell}>{row.rep}</td>
                 <td style={cell}>{row.company}</td>
                 <td style={cell}><IgnoreNumberTarget number={row.ring_number || row.company_identifier} name={row.ring_target} showUnknown openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></td>

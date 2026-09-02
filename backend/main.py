@@ -11,7 +11,7 @@ from config import get_config
 from database import SessionLocal
 from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
 from models import Lead, User
-from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, duplication_rules, liveswitch, referral_assignment_rules
+from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, duplication_rules, liveswitch, referral_assignment_rules, communication_associations
 from routes.meta import messenger, instagram
 
 cfg = get_config()
@@ -241,6 +241,7 @@ app.include_router(instagram.router, dependencies=[Depends(get_current_user)])
 app.include_router(sms.router, dependencies=[Depends(get_current_user)])
 app.include_router(chats.router)
 app.include_router(unanswered_messages.router)
+app.include_router(communication_associations.router)
 app.include_router(duplication_rules.router)
 app.include_router(referral_assignment_rules.router)
 app.include_router(liveswitch.router)

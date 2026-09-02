@@ -336,6 +336,22 @@ class MissedCallState(Base):
     lead = relationship("Lead")
 
 
+class CommunicationAssociation(Base):
+    __tablename__ = "communication_associations"
+
+    channel = Column(String(20), primary_key=True)
+    client_identifier = Column(String(255), primary_key=True)
+    company_identifier = Column(String(255), primary_key=True)
+    lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
+    company_id = Column(String(36), ForeignKey("companies.id"), nullable=False, index=True)
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+    lead = relationship("Lead")
+    company = relationship("Company")
+
+
 class LeadUpdateLog(Base):
     __tablename__ = "lead_update_logs"
 
