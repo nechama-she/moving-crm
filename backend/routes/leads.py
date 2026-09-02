@@ -1804,6 +1804,36 @@ def create_lead_through_copy_path(
             )
             assignment_result.update(update_result)
             assignment_result["rep_name"] = assigned_rep.name
+            if update_result.get("ok"):
+                if not _clean_optional_text(assigned_rep.phone):
+                    assignment_result["notification"] = {
+                        "attempted": False,
+                        "ok": False,
+                        "error": f"{assigned_rep.name} does not have a phone number configured",
+                    }
+                elif not _clean_optional_text(target_company.aircall_number_id):
+                    assignment_result["notification"] = {
+                        "attempted": False,
+                        "ok": False,
+                        "error": f"{target_company.name} does not have an Aircall number ID configured",
+                    }
+                else:
+                    from libs.aircall import send_sms
+
+                    smartmoving_url = f"https://app.smartmoving.com/opportunities/{smartmoving_lead_id}/sales"
+                    notification_message = (
+                        f"You have been assigned a new lead: {full_name}. "
+                        f"Open it in SmartMoving: {smartmoving_url}"
+                    )
+                    notification_result = send_sms(
+                        to=assigned_rep.phone,
+                        text=notification_message,
+                        number_id=_clean_optional_text(target_company.aircall_number_id),
+                    )
+                    assignment_result["notification"] = {
+                        "attempted": True,
+                        **notification_result,
+                    }
     creation_result["smartmoving_assignment"] = assignment_result
     return created_lead, creation_result
 
