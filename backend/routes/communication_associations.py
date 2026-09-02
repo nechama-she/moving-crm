@@ -21,6 +21,16 @@ class ConnectRequest(BaseModel):
     lead_id: str
 
 
+class CreateAndConnectRequest(BaseModel):
+    channel: str
+    client_identifier: str
+    company_identifier: str
+    company_id: str
+    full_name: str
+    phone: str = ""
+    email: str = ""
+
+
 def _destination_scope(db: Session, channel: str, company_identifier: str) -> tuple[set[str], str]:
     if channel == "phone":
         normalized_company_phone = func.right(func.regexp_replace(Company.phone, r"\D", "", "g"), 10)
@@ -99,3 +109,43 @@ def connect(body: ConnectRequest, admin: User = Depends(require_admin), db: Sess
         db.query(MessageState).filter(MessageState.channel == key[0], MessageState.client_identifier == key[1], MessageState.company_identifier == key[2]).update({MessageState.lead_id: lead.id}, synchronize_session=False)
     db.commit()
     return {"ok": True, "lead": {"id": lead.id, "name": lead.full_name, "company": lead.company.name if lead.company else "", "rep": lead.assignee.name if lead.assignee else ""}}
+
+
+@router.post("/create-lead")
+def create_and_connect(body: CreateAndConnectRequest, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    key = normalized_key(body.channel, body.client_identifier, body.company_identifier)
+    if not all(key):
+        raise HTTPException(status_code=400, detail="Complete communication identifiers are required")
+    company_ids = _company_ids(db, key[0], key[2])
+    if body.company_id not in company_ids:
+        raise HTTPException(status_code=400, detail="The selected company is not available for this destination")
+    full_name = body.full_name.strip()
+    if not full_name:
+        raise HTTPException(status_code=400, detail="Lead name is required")
+    company = db.query(Company).filter(Company.id == body.company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    # This is the same SmartMoving -> canonical CRM creation path used by lead duplication.
+    from routes.leads import create_lead_through_copy_path
+    lead, creation = create_lead_through_copy_path(
+        db=db,
+        target_company=company,
+        full_name=full_name,
+        phone=(body.phone.strip() or key[1]) if key[0] == "phone" else body.phone.strip(),
+        email=body.email.strip(),
+        facebook_user_id=key[1] if key[0] in {"messenger", "instagram"} else "",
+        notes=f"Created from an unmatched {body.channel} communication in Moving CRM",
+    )
+    result = connect(
+        ConnectRequest(
+            channel=body.channel,
+            client_identifier=body.client_identifier,
+            company_identifier=body.company_identifier,
+            lead_id=lead.id,
+        ),
+        admin=admin,
+        db=db,
+    )
+    result["creation"] = creation
+    return result
