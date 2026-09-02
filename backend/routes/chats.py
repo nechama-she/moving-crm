@@ -17,7 +17,7 @@ from database import get_db
 from db import calls_table, conversations_table, sms_messages_table
 from libs.common.phone import normalize_digits
 from libs.common.phone import phone_variants
-from models import Company, Lead, User, UserCompany
+from models import CommunicationAssociation, Company, Lead, User, UserCompany
 
 logger = logging.getLogger("moving-crm")
 router = APIRouter(prefix="/api/chats", tags=["Chats"])
@@ -136,14 +136,26 @@ def get_latest_calls(
     next_key = response.get("LastEvaluatedKey")
 
     client_phones = {_phone(item.get("phone_number")) for item in records if _phone(item.get("phone_number"))}
+    destination_phones = {_phone(item.get("company_number")) for item in records if _phone(item.get("company_number"))}
+    associations = (
+        db.query(CommunicationAssociation).filter(
+            CommunicationAssociation.channel == "phone",
+            CommunicationAssociation.client_identifier.in_(client_phones),
+            CommunicationAssociation.company_identifier.in_(destination_phones),
+        ).all()
+        if client_phones and destination_phones else []
+    )
+    association_by_key = {(row.client_identifier, row.company_identifier): row.lead_id for row in associations}
+    association_lead_ids = {row.lead_id for row in associations}
     normalized_lead_phone = func.right(func.regexp_replace(Lead.phone, r"\D", "", "g"), 10)
     leads = (
         db.query(Lead)
         .options(joinedload(Lead.company), joinedload(Lead.assignee))
-        .filter(Lead.company_id.in_(company_ids), normalized_lead_phone.in_(client_phones))
+        .filter(Lead.company_id.in_(company_ids), or_(normalized_lead_phone.in_(client_phones), Lead.id.in_(association_lead_ids)))
         .all()
-        if client_phones else []
+        if client_phones or association_lead_ids else []
     )
+    leads_by_id = {lead.id: lead for lead in leads}
     leads_by_phone: dict[str, list[Lead]] = {}
     for lead in leads:
         leads_by_phone.setdefault(_phone(lead.phone), []).append(lead)
@@ -181,7 +193,8 @@ def get_latest_calls(
             lead_rep_phone = _phone(lead.assignee.phone) if lead.assignee else ""
             if company_phone and company_phone in {lead_company_phone, lead_rep_phone}:
                 matches.append(lead)
-        lead = matches[0] if len(matches) == 1 else None
+        associated_lead_id = association_by_key.get((client_phone, company_phone))
+        lead = leads_by_id.get(associated_lead_id) if associated_lead_id else (matches[0] if len(matches) == 1 else None)
         direction = str(record.get("direction") or "").strip().lower()
         resolved_company = company_names_by_phone.get(company_phone, "")
         resolved_rep = rep_names_by_phone.get(company_phone, "")
@@ -341,6 +354,24 @@ def get_all_chats(
         if number_id:
             sms_number_ids.add(number_id)
 
+    association_clients = set(meta_user_ids) | set(sms_phones)
+    association_companies = {
+        _phone(message.get("company_number")) for message in sms_messages if _phone(message.get("company_number"))
+    } | {
+        str(message.get("page_id") or "").strip() for message in meta_messages if str(message.get("page_id") or "").strip()
+    }
+    associations = (
+        db.query(CommunicationAssociation).filter(
+            CommunicationAssociation.client_identifier.in_(association_clients),
+            CommunicationAssociation.company_identifier.in_(association_companies),
+        ).all()
+        if association_clients and association_companies else []
+    )
+    association_by_key = {
+        (row.channel, row.client_identifier, row.company_identifier): row.lead_id
+        for row in associations
+    }
+
     number_rep_names: dict[str, str] = {}
     number_company_names: dict[str, str] = {}
     page_company_names: dict[str, str] = {}
@@ -370,6 +401,9 @@ def get_all_chats(
             10,
         )
         match_conditions.append(normalized_lead_phone.in_(sms_phones))
+    association_lead_ids = {row.lead_id for row in associations}
+    if association_lead_ids:
+        match_conditions.append(Lead.id.in_(association_lead_ids))
 
     leads = []
     if match_conditions:
@@ -382,6 +416,7 @@ def get_all_chats(
         )
 
     meta_leads: dict[str, Lead] = {}
+    leads_by_id = {lead.id: lead for lead in leads}
     sms_phone_leads: dict[str, list[Lead]] = {}
     for lead in leads:
         if lead.facebook_user_id:
@@ -431,11 +466,13 @@ def get_all_chats(
         platform = str(message.get("platform") or "").strip().lower()
         if platform not in {"messenger", "instagram"}:
             continue
-        lead = meta_leads.get(str(message.get("user_id") or ""))
+        user_id = str(message.get("user_id") or "").strip()
+        page_id = str(message.get("page_id") or "").strip()
+        associated_lead_id = association_by_key.get((platform, user_id, page_id))
+        lead = leads_by_id.get(associated_lead_id) if associated_lead_id else meta_leads.get(user_id)
         if lead:
             add_message(lead, platform, message)
         else:
-            user_id = str(message.get("user_id") or "").strip()
             if not user_id:
                 continue
             timestamp = _timestamp(message.get("timestamp"))
@@ -481,7 +518,8 @@ def get_all_chats(
                 )
                 if number_id in {rep_number_id, company_number_id}:
                     exact_matches.append(candidate)
-        lead = max(exact_matches, key=_lead_time) if exact_matches else None
+        associated_lead_id = association_by_key.get(("phone", phone, _phone(message.get("company_number"))))
+        lead = leads_by_id.get(associated_lead_id) if associated_lead_id else (max(exact_matches, key=_lead_time) if exact_matches else None)
         if lead:
             # The exact number_id match selected the lead. Rep identity comes
             # from that matched CRM relationship, never from DynamoDB name fields.

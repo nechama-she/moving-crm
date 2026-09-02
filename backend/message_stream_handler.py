@@ -12,6 +12,7 @@ from sqlalchemy.orm import joinedload
 
 from database import SessionLocal
 from models import AppSetting, Company, Lead, MessageState, MissedCallState, User
+from communication_associations import find_association
 from meta_attachment_archiver import archive_meta_attachments
 from realtime import publish_realtime_event
 
@@ -241,7 +242,12 @@ def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[b
             "count_delta": -1,
         }
 
-    lead_id = _valid_explicit_lead_id(db, item.get("lead_id")) or _resolve_sms_lead_id(db, item)
+    lead_id = _valid_explicit_lead_id(db, item.get("lead_id"))
+    if not lead_id:
+        association = find_association(db, "phone", client_identifier, company_identifier)
+        lead_id = association.lead_id if association else None
+    if not lead_id:
+        lead_id = _resolve_sms_lead_id(db, item)
     occurred_at = _occurred_at(timestamp)
     statement = insert(MissedCallState).values(
         client_identifier=client_identifier,
@@ -313,6 +319,9 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
         return True, None
 
     lead_id = _valid_explicit_lead_id(db, item.get("lead_id"))
+    if not lead_id:
+        association = find_association(db, channel, client_identifier, company_identifier)
+        lead_id = association.lead_id if association else None
     if not lead_id:
         lead_id = _resolve_sms_lead_id(db, item) if channel == "sms" else _resolve_meta_lead_id(db, item)
 

@@ -1661,6 +1661,79 @@ class CopyLeadRequest(BaseModel):
     referral_source: str = ""
 
 
+def create_lead_through_copy_path(
+    *,
+    db: Session,
+    target_company: Company,
+    full_name: str,
+    phone: str = "",
+    email: str = "",
+    pickup_zip: str = "",
+    delivery_zip: str = "",
+    move_date: str = "",
+    move_size: str = "",
+    referral_source: str = "",
+    notes: str = "",
+    facebook_user_id: str = "",
+    assigned_to: str = "",
+) -> tuple[Lead, dict]:
+    """Create in SmartMoving, then use the canonical CRM lead-creation path."""
+    branch_id = _clean_optional_text(target_company.samrtmoving_branch_id)
+    provider_key = _smartmoving_provider_key()
+    if not branch_id:
+        raise HTTPException(status_code=400, detail=f"{target_company.name} does not have a SmartMoving branch configured")
+    if not provider_key:
+        raise HTTPException(status_code=500, detail="SmartMoving lead-copy provider is not configured")
+
+    resolved_referral_source = _clean_optional_text(referral_source) or f"Facebook-{target_company.name}-HHG"
+    smartmoving_payload = {
+        "fullName": full_name,
+        "phoneNumber": phone,
+        "email": email,
+        "originZip": pickup_zip,
+        "destinationZip": delivery_zip,
+        "moveDate": move_date,
+        "notes": notes,
+        "referralSource": resolved_referral_source,
+        "serviceType": "Moving",
+        "moveSize": move_size or "Room or Less",
+    }
+    smartmoving_result = create_provider_lead(provider_key, branch_id, smartmoving_payload)
+    if not smartmoving_result.get("ok"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"SmartMoving could not create the copied lead: {smartmoving_result.get('error', 'unknown error')}",
+        )
+
+    api_secret = get_config().get("API_SECRET", os.getenv("API_SECRET", ""))
+    creation_result = create_lead(
+        NewLead(
+            full_name=full_name,
+            email=email,
+            phone_number=phone,
+            pickup_zip=pickup_zip,
+            delivery_zip=delivery_zip,
+            move_size=move_size,
+            move_date=move_date,
+            smartmoving_id=_clean_optional_text(smartmoving_result.get("lead_id")) or None,
+            facebook_user_id=facebook_user_id or None,
+            assigned_to=assigned_to or None,
+            notes=notes,
+            referral_source=resolved_referral_source,
+            service_type="Moving",
+            status="new",
+            company_name=target_company.name,
+            source="Facebook",
+        ),
+        x_api_secret=api_secret,
+        db=db,
+    )
+    created_lead = db.query(Lead).filter(Lead.id == creation_result["lead_id"]).first()
+    if not created_lead:
+        raise HTTPException(status_code=500, detail="Lead was created but could not be reloaded")
+    return created_lead, creation_result
+
+
 @router.post("/leads/{lead_id}/copy")
 def copy_lead(
     lead_id: str,
@@ -1692,57 +1765,20 @@ def copy_lead(
                 "The lead was not created or messaged."
             ),
         )
-    branch_id = _clean_optional_text(target_company.samrtmoving_branch_id)
-    provider_key = _smartmoving_provider_key()
-    if not branch_id:
-        raise HTTPException(status_code=400, detail=f"{target_company.name} does not have a SmartMoving branch configured")
-    if not provider_key:
-        raise HTTPException(status_code=500, detail="SmartMoving lead-copy provider is not configured")
-
     referral_source = _clean_optional_text(body.referral_source) or f"Facebook-{target_company.name}-HHG"
-    smartmoving_payload = {
-        "fullName": source_lead.full_name or "",
-        "phoneNumber": source_lead.phone or "",
-        "email": source_lead.email or "",
-        "originZip": source_lead.pickup_zip or "",
-        "destinationZip": source_lead.delivery_zip or "",
-        "moveDate": source_lead.move_date or "",
-        "notes": f"Copied from Moving CRM lead {source_lead.id}",
-        "referralSource": referral_source,
-        "serviceType": "Moving",
-        "moveSize": source_lead.move_size or "Room or Less",
-    }
-    smartmoving_result = create_provider_lead(provider_key, branch_id, smartmoving_payload)
-    if not smartmoving_result.get("ok"):
-        raise HTTPException(
-            status_code=502,
-            detail=f"SmartMoving could not create the copied lead: {smartmoving_result.get('error', 'unknown error')}",
-        )
-
-    api_secret = get_config().get("API_SECRET", os.getenv("API_SECRET", ""))
-    creation_result = create_lead(
-        NewLead(
-            full_name=source_lead.full_name or "",
-            email=source_lead.email or "",
-            phone_number=source_lead.phone or "",
-            pickup_zip=source_lead.pickup_zip or "",
-            delivery_zip=source_lead.delivery_zip or "",
-            move_size=source_lead.move_size or "",
-            move_date=source_lead.move_date or "",
-            smartmoving_id=_clean_optional_text(smartmoving_result.get("lead_id")) or None,
-            notes=f"Copied from Moving CRM lead {source_lead.id}",
-            referral_source=referral_source,
-            service_type="Moving",
-            status="new",
-            company_name=target_company.name,
-            source="Facebook",
-        ),
-        x_api_secret=api_secret,
+    copied_lead, creation_result = create_lead_through_copy_path(
         db=db,
+        target_company=target_company,
+        full_name=source_lead.full_name or "",
+        phone=source_lead.phone or "",
+        email=source_lead.email or "",
+        pickup_zip=source_lead.pickup_zip or "",
+        delivery_zip=source_lead.delivery_zip or "",
+        move_date=source_lead.move_date or "",
+        move_size=source_lead.move_size or "",
+        referral_source=referral_source,
+        notes=f"Copied from Moving CRM lead {source_lead.id}",
     )
-    copied_lead = db.query(Lead).filter(Lead.id == creation_result["lead_id"]).first()
-    if not copied_lead:
-        raise HTTPException(status_code=500, detail="Copied lead was created but could not be reloaded")
 
     return {
         "ok": True,

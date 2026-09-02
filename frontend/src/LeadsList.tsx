@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
@@ -59,7 +59,6 @@ function cellStyle(key: string): React.CSSProperties {
 }
 
 export default function LeadsList() {
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { token } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -327,7 +326,7 @@ export default function LeadsList() {
             {leads.map((lead, i) => (
               <tr
                 key={lead.id || i}
-                onClick={() => navigate(`/leads/${lead.id}`)}
+                onClick={() => window.open(`/leads/${lead.id}`, "_blank", "noopener,noreferrer")}
                 style={{ cursor: "pointer" }}
                 onMouseOver={(e) =>
                   (e.currentTarget.style.background = "#f0f9ff")
