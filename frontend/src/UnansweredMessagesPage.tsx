@@ -78,6 +78,8 @@ export default function UnansweredMessagesPage() {
   const [repFilter, setRepFilter] = useState("");
   const [companyFilter, setCompanyFilter] = useState("");
   const [platformFilter, setPlatformFilter] = useState("");
+  const [directoryReps, setDirectoryReps] = useState<string[]>([]);
+  const [directoryCompanies, setDirectoryCompanies] = useState<string[]>([]);
   const processedEvents = useRef(new Set<string>());
   const loadingRef = useRef(true);
   const pendingEvents = useRef<RealtimeEvent[]>([]);
@@ -87,6 +89,20 @@ export default function UnansweredMessagesPage() {
   const queueRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshFirstContact = useRef(false);
   const refreshFollowups = useRef(false);
+
+  useEffect(() => {
+    Promise.allSettled([
+      fetch(`${API_BASE}/api/users/mine-reps`, { headers: authHeaders(token) }).then((response) => response.ok ? response.json() : []),
+      fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token) }).then((response) => response.ok ? response.json() : []),
+    ]).then(([repsResult, companiesResult]) => {
+      if (repsResult.status === "fulfilled" && Array.isArray(repsResult.value)) {
+        setDirectoryReps(repsResult.value.map((item) => String(item.name || "")).filter(Boolean));
+      }
+      if (companiesResult.status === "fulfilled" && Array.isArray(companiesResult.value)) {
+        setDirectoryCompanies(companiesResult.value.map((item) => String(item.name || "")).filter(Boolean));
+      }
+    });
+  }, [token]);
 
   const load = useCallback(async () => {
     loadingRef.current = true;
@@ -376,11 +392,11 @@ export default function UnansweredMessagesPage() {
   const filterOptions = useMemo(() => {
     const rows = queueTab === "messages" ? items : queueTab === "calls" ? missedCalls : queueTab === "leads" ? firstContactLeads : followupLeads;
     return {
-      reps: queueTab === "followups" ? followupFilterOptions.reps : [...new Set(rows.map((row) => row.rep).filter(Boolean))].sort(),
-      companies: queueTab === "followups" ? followupFilterOptions.companies : [...new Set(rows.map((row) => row.company).filter(Boolean))].sort(),
-      platforms: queueTab === "messages" ? [...new Set(items.map((row) => row.channel).filter(Boolean))].sort() : queueTab === "calls" ? ["calls"] : [],
+      reps: [...new Set([...directoryReps, ...followupFilterOptions.reps, ...rows.map((row) => row.rep).filter(Boolean), repFilter].filter(Boolean))].sort(),
+      companies: [...new Set([...directoryCompanies, ...followupFilterOptions.companies, ...rows.map((row) => row.company).filter(Boolean), companyFilter].filter(Boolean))].sort(),
+      platforms: queueTab === "messages" ? ["instagram", "messenger", "sms"] : queueTab === "calls" ? ["calls"] : [],
     };
-  }, [queueTab, items, missedCalls, firstContactLeads, followupLeads, followupFilterOptions]);
+  }, [queueTab, items, missedCalls, firstContactLeads, followupLeads, followupFilterOptions, directoryReps, directoryCompanies, repFilter, companyFilter]);
   const filteredItems = useMemo(() => items.filter((row) =>
     (!repFilter || row.rep === repFilter) &&
     (!companyFilter || row.company === companyFilter) &&
