@@ -72,6 +72,8 @@ export default function UnansweredMessagesPage() {
   const [followupHasMore, setFollowupHasMore] = useState(false);
   const [loadingFollowups, setLoadingFollowups] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [validatingTab, setValidatingTab] = useState<QueueTab | null>(null);
+  const [validationNotice, setValidationNotice] = useState("");
   const [error, setError] = useState("");
   const [numberMenu, setNumberMenu] = useState<NumberMenu>(null);
   const [connectTarget, setConnectTarget] = useState<CommunicationTarget | null>(null);
@@ -417,6 +419,60 @@ export default function UnansweredMessagesPage() {
     (!companyFilter || row.company === companyFilter)
   ), [followupLeads, repFilter, companyFilter]);
 
+  const validateCurrentTab = async () => {
+    const rows = queueTab === "messages"
+      ? filteredItems
+      : queueTab === "calls"
+        ? filteredMissedCalls
+        : queueTab === "leads"
+          ? filteredFirstContactLeads
+          : filteredFollowupLeads;
+    const leadIds = [...new Set(rows.map((row) => row.lead_id).filter(Boolean))];
+    setValidatingTab(queueTab);
+    setValidationNotice("");
+    setError("");
+    try {
+      let checked = 0;
+      let removed = 0;
+      let skipped = 0;
+      const failures: string[] = [];
+      for (let index = 0; index < leadIds.length; index += 100) {
+        const response = await fetch(`${API_BASE}/api/leads/validate-smartmoving`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders(token) },
+          body: JSON.stringify({ lead_ids: leadIds.slice(index, index + 100) }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || `SmartMoving validation HTTP ${response.status}`);
+        checked += Number(data.checked || 0);
+        removed += Array.isArray(data.removed_lead_ids) ? data.removed_lead_ids.length : 0;
+        skipped += Array.isArray(data.skipped) ? data.skipped.length : 0;
+        if (Array.isArray(data.errors)) failures.push(...data.errors.map((item: { error?: string }) => item.error || "Check failed"));
+      }
+      if (queueTab === "messages" || queueTab === "calls") await load();
+      else if (queueTab === "leads") await loadFirstContactLeads(0, true);
+      else await loadFollowups(0, true);
+      setValidationNotice(`Checked ${checked} lead${checked === 1 ? "" : "s"}; removed ${removed} stale lead${removed === 1 ? "" : "s"}${skipped ? `; skipped ${skipped} without a SmartMoving ID` : ""}.`);
+      if (failures.length) setError(`${failures.length} SmartMoving check${failures.length === 1 ? "" : "s"} failed. Those leads were not removed.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not validate leads with SmartMoving");
+    } finally {
+      setValidatingTab(null);
+    }
+  };
+
+  const validationButton = (
+    <button
+      type="button"
+      onClick={() => void validateCurrentTab()}
+      disabled={validatingTab !== null}
+      title="Check this tab's linked leads against SmartMoving"
+      style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: validatingTab ? "wait" : "pointer" }}
+    >
+      {validatingTab === queueTab ? "Checking SmartMoving…" : "Refresh from SmartMoving"}
+    </button>
+  );
+
   useEffect(() => {
     setPlatformFilter("");
   }, [queueTab]);
@@ -426,6 +482,7 @@ export default function UnansweredMessagesPage() {
       <h1 style={{ margin: 0, color: "#032d60", fontSize: 24 }}>Sales Work Queue</h1>
       <p style={{ margin: "6px 0 20px", color: "#64748b" }}>Sales items that need attention.</p>
       {error ? <p style={{ color: "#b91c1c" }}>{error}</p> : null}
+      {validationNotice ? <p style={{ color: "#2e844a" }}>{validationNotice}</p> : null}
       {numberMenu ? <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "fixed", zIndex: 1000, left: Math.min(numberMenu.x, window.innerWidth - 190), top: Math.min(numberMenu.y, window.innerHeight - 60), minWidth: 180, padding: 5, border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", boxShadow: "0 6px 18px rgba(15,23,42,.2)" }}>
         {numberMenu.connectTarget ? <button type="button" onClick={() => { setConnectTarget(numberMenu.connectTarget || null); setNumberMenu(null); }} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#0b5cab", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Connect to a lead</button> : null}
         {!numberMenu.connectTarget || numberMenu.connectTarget.channel === "sms" || numberMenu.connectTarget.channel === "phone" ? <button type="button" onClick={() => void ignoreNumber(numberMenu.number)} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore this number</button> : null}
@@ -463,7 +520,7 @@ export default function UnansweredMessagesPage() {
 
       {queueTab === "messages" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px 0" }}>
-          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Unanswered Messages ({tab === "unanswered" ? filteredMessageCount : counts.unanswered})</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Unanswered Messages ({tab === "unanswered" ? filteredMessageCount : counts.unanswered})</h2>{validationButton}</div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {([ ["unanswered", "Unanswered Messages", counts.unanswered], ["ended", "Ended Chats", counts.ended] ] as const).map(([key, label, count]) => (
               <button key={key} type="button" onClick={() => setTab(key)} style={{ border: 0, borderBottom: tab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: tab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: tab === key ? 700 : 500, cursor: "pointer" }}>{label} ({tab === key ? filteredMessageCount : count})</button>
@@ -495,8 +552,8 @@ export default function UnansweredMessagesPage() {
       </section> : null}
 
       {queueTab === "calls" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
-        <div style={{ padding: "16px 18px" }}>
-          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Missed Calls ({missedCallCount})</h2>
+        <div style={{ padding: "16px 18px", display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Missed Calls ({missedCallCount})</h2>{validationButton}
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 920, borderCollapse: "collapse", tableLayout: "fixed" }}>
@@ -523,7 +580,7 @@ export default function UnansweredMessagesPage() {
 
       {queueTab === "leads" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px 0" }}>
-          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Leads Awaiting First Contact ({firstContactCounts.new + firstContactCounts.overdue})</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Leads Awaiting First Contact ({firstContactCounts.new + firstContactCounts.overdue})</h2>{validationButton}</div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {([ ["new", "New Leads", firstContactCounts.new], ["overdue", "Overdue", firstContactCounts.overdue] ] as const).map(([key, label, count]) => (
               <button key={key} type="button" onClick={() => setLeadTab(key)} style={{ border: 0, borderBottom: leadTab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: leadTab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: leadTab === key ? 700 : 500, cursor: "pointer" }}>{label} ({count})</button>
@@ -554,7 +611,7 @@ export default function UnansweredMessagesPage() {
 
       {queueTab === "followups" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px 0" }}>
-          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2>{validationButton}</div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {([ ["all", "All Leads", followupCounts.all], ["overdue", "Overdue Items", followupCounts.overdue] ] as const).map(([key, label, count]) => (
               <button key={key} type="button" onClick={() => setFollowupTab(key)} style={{ border: 0, borderBottom: followupTab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: followupTab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: followupTab === key ? 700 : 500, cursor: "pointer" }}>{label} ({count})</button>

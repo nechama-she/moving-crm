@@ -28,7 +28,20 @@ def migrate() -> None:
         connection.execute(text(statement))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_communication_associations_lead_id ON communication_associations (lead_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_communication_associations_company_id ON communication_associations (company_id)"))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS smartmoving_referral_sources (
+                id VARCHAR(36) PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                normalized_name VARCHAR(255) NOT NULL UNIQUE,
+                is_lead_provider BOOLEAN NOT NULL DEFAULT FALSE,
+                is_public BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_smartmoving_referral_sources_normalized_name ON smartmoving_referral_sources (normalized_name)"))
     logger.info("communication_associations is ready")
+    logger.info("smartmoving_referral_sources is ready")
 
 
 if __name__ == "__main__":

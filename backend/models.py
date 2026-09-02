@@ -77,6 +77,20 @@ class LeadDuplicationRule(Base):
     target_company = relationship("Company", foreign_keys=[target_company_id])
 
 
+class SmartMovingReferralSource(Base):
+    """Local cache of SmartMoving referral-source IDs."""
+
+    __tablename__ = "smartmoving_referral_sources"
+
+    id = Column(String(36), primary_key=True)
+    name = Column(String(255), nullable=False)
+    normalized_name = Column(String(255), nullable=False, unique=True, index=True)
+    is_lead_provider = Column(Boolean, nullable=False, default=False)
+    is_public = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
 # ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------

@@ -193,6 +193,28 @@ def get_opportunity(opportunity_id: str) -> dict:
         return {"error": str(e)}
 
 
+def check_opportunity_exists(opportunity_id: str) -> dict:
+    """Perform a lightweight existence check without loading opportunity expansions."""
+    if not SMARTMOVING_API_KEY:
+        return {"ok": False, "error": "API key not set"}
+    url = f"{SMARTMOVING_BASE_URL}/opportunities/{opportunity_id}"
+    try:
+        response = _request(httpx.get, url, headers=_headers(), timeout=15)
+        if response.status_code == 404:
+            return {"ok": True, "exists": False}
+        if response.status_code == 400 and "opportunity was not found" in (response.text or "").lower():
+            return {"ok": True, "exists": False}
+        response.raise_for_status()
+        return {"ok": True, "exists": True}
+    except httpx.HTTPError as exc:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None) if response is not None else None
+        body = getattr(response, "text", str(exc)) if response is not None else str(exc)
+        return {"ok": False, "status": status, "error": f"HTTP {status}: {body[:300]}"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def get_opportunity_job(opportunity_id: str, job_id: str) -> dict:
     """Fetch the detailed SmartMoving payload for one opportunity job."""
     url = f"{SMARTMOVING_BASE_URL}/premium/opportunities/{opportunity_id}/jobs/{job_id}"
@@ -517,29 +539,71 @@ def update_opportunity_salesperson(opportunity_id: str, salesperson_id: str) -> 
         return {"ok": False, "error": str(e)}
 
 
-def update_lead_salesperson(lead_id: str, salesperson_id: str) -> dict:
-    """Assign a SmartMoving lead through the lead PUT endpoint.
+def get_referral_sources() -> dict:
+    """Fetch public, non-provider referral sources from SmartMoving."""
+    if not SMARTMOVING_API_KEY:
+        return {"ok": False, "error": "API key not set", "items": []}
+    url = f"{SMARTMOVING_BASE_URL}/referral-sources"
+    try:
+        items: list[dict[str, Any]] = []
+        page_number = 1
+        while True:
+            response = _request(
+                httpx.get,
+                url,
+                headers=_headers(),
+                params={
+                    "includePrivate": "false",
+                    "includeLeadProviders": "false",
+                    "pageNumber": page_number,
+                    "pageSize": 200,
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            body = response.json()
+            page_items = body.get("pageResults") if isinstance(body, dict) else None
+            if not isinstance(page_items, list):
+                return {"ok": False, "error": "SmartMoving returned an invalid referral-source response", "items": []}
+            items.extend(item for item in page_items if isinstance(item, dict))
+            if body.get("lastPage", True):
+                break
+            page_number += 1
+        return {"ok": True, "items": items}
+    except httpx.HTTPError as exc:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None) if response is not None else None
+        body = getattr(response, "text", str(exc)) if response is not None else str(exc)
+        logger.error("SmartMoving get_referral_sources error: %s %s", status, body[:300])
+        return {"ok": False, "status": status, "error": f"HTTP {status}: {body[:300]}", "items": []}
+    except Exception as exc:
+        logger.error("SmartMoving get_referral_sources exception: %r", exc)
+        return {"ok": False, "error": str(exc), "items": []}
 
-    SmartMoving's PUT lead operation requires the existing customer, branch, and
-    referral-source values. Fetch the newly created lead first and preserve all
-    fields exposed by that response, changing only ``salesPersonId``.
-    """
+
+def update_lead_salesperson(
+    lead_id: str,
+    salesperson_id: str,
+    referral_source_id: str,
+    *,
+    customer_name: str,
+    branch_id: str,
+    phone_number: str = "",
+    email_address: str = "",
+    move_date: str = "",
+    origin_zip: str = "",
+    destination_zip: str = "",
+) -> dict:
+    """Assign a newly created SmartMoving lead without re-fetching it."""
     if not SMARTMOVING_API_KEY:
         logger.error("SmartMoving update_lead_salesperson skipped: API key not set")
         return {"ok": False, "error": "API key not set"}
 
-    lead_url = f"{SMARTMOVING_BASE_URL}/leads/{lead_id}"
     headers = _headers()
     try:
-        get_response = _request(httpx.get, lead_url, headers=headers, timeout=15)
-        get_response.raise_for_status()
-        current = get_response.json()
-        if not isinstance(current, dict):
-            return {"ok": False, "error": "SmartMoving returned an invalid lead response"}
-
-        customer_name = str(current.get("customerName") or "").strip()
-        branch_id = str(current.get("branchId") or "").strip()
-        referral_source_id = str(current.get("referralSource") or "").strip()
+        customer_name = str(customer_name or "").strip()
+        branch_id = str(branch_id or "").strip()
+        referral_source_id = str(referral_source_id or "").strip()
         missing = [
             name
             for name, value in (
@@ -563,37 +627,19 @@ def update_lead_salesperson(lead_id: str, salesperson_id: str) -> dict:
         }
 
         optional_fields = {
-            "emailAddress": current.get("emailAddress"),
-            "phoneNumber": current.get("phoneNumber"),
-            "phoneType": current.get("phoneType"),
-            "serviceTypeId": current.get("type"),
-            "moveSizeId": current.get("moveSizeId"),
+            "emailAddress": email_address,
+            "phoneNumber": phone_number,
         }
         for field, value in optional_fields.items():
             if value is not None and value != "":
                 payload[field] = value
 
-        service_date = current.get("serviceDate")
-        if service_date not in (None, "", 0, "0"):
-            date_text = str(service_date).strip().removesuffix(".0")
-            if len(date_text) == 8 and date_text.isdigit():
-                date_text = f"{date_text[:4]}-{date_text[4:6]}-{date_text[6:]}"
-            payload["moveDate"] = date_text
-
-        for payload_field, source_prefix in (
-            ("originAddress", "origin"),
-            ("destinationAddress", "destination"),
-        ):
-            address = {
-                "fullAddress": current.get(f"{source_prefix}AddressFull"),
-                "street": current.get(f"{source_prefix}Street"),
-                "city": current.get(f"{source_prefix}City"),
-                "state": current.get(f"{source_prefix}State"),
-                "zip": current.get(f"{source_prefix}Zip"),
-            }
-            address = {key: value for key, value in address.items() if value not in (None, "")}
-            if address:
-                payload[payload_field] = address
+        if move_date:
+            payload["moveDate"] = move_date
+        if origin_zip:
+            payload["originAddress"] = {"zip": origin_zip}
+        if destination_zip:
+            payload["destinationAddress"] = {"zip": destination_zip}
 
         put_url = f"{SMARTMOVING_BASE_URL}/premium/leads/{lead_id}"
         put_headers = {**headers, "Content-Type": "application/json"}
