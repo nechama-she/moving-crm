@@ -36,22 +36,22 @@ class CreateAndConnectRequest(BaseModel):
     referral_source: str = ""
 
 
-def _destination_scope(db: Session, channel: str, company_identifier: str) -> tuple[set[str], str]:
+def _destination_scope(db: Session, channel: str, company_identifier: str) -> tuple[set[str], set[str], str]:
     if channel == "phone":
         normalized_company_phone = func.right(func.regexp_replace(Company.phone, r"\D", "", "g"), 10)
         direct_companies = db.query(Company).filter(normalized_company_phone == company_identifier).all()
         direct = {company.id for company in direct_companies}
         if direct:
-            return direct, ", ".join(sorted(company.name for company in direct_companies))
+            return direct, set(), ", ".join(sorted(company.name for company in direct_companies))
         normalized_rep_phone = func.right(func.regexp_replace(User.phone, r"\D", "", "g"), 10)
         reps = db.query(User).filter(normalized_rep_phone == company_identifier).all()
         rep_ids = [rep.id for rep in reps]
         if rep_ids:
             company_ids = {row[0] for row in db.query(UserCompany.company_id).filter(UserCompany.user_id.in_(rep_ids)).all()}
-            return company_ids, ", ".join(sorted(rep.name for rep in reps))
-        return set(), ""
+            return company_ids, set(rep_ids), ", ".join(sorted(rep.name for rep in reps))
+        return set(), set(), ""
     companies = db.query(Company).filter(Company.facebook_page_id == company_identifier).all()
-    return {company.id for company in companies}, ", ".join(sorted(company.name for company in companies))
+    return {company.id for company in companies}, set(), ", ".join(sorted(company.name for company in companies))
 
 
 def _company_ids(db: Session, channel: str, company_identifier: str) -> set[str]:
@@ -71,10 +71,12 @@ def candidates(
     key = normalized_key(channel, client_identifier, company_identifier)
     if not all(key):
         raise HTTPException(status_code=400, detail="Complete communication identifiers are required")
-    company_ids, scope_label = _destination_scope(db, key[0], key[2])
+    company_ids, rep_ids, scope_label = _destination_scope(db, key[0], key[2])
     if not company_ids:
         raise HTTPException(status_code=404, detail="The destination is not connected to a CRM company")
     query = db.query(Lead).filter(Lead.company_id.in_(company_ids))
+    if rep_ids:
+        query = query.filter(Lead.assigned_to.in_(rep_ids))
     needle = search.strip()
     if needle:
         pattern = f"%{needle}%"
@@ -83,7 +85,21 @@ def candidates(
     return {
         "scope_label": scope_label,
         "companies": [{"id": company.id, "name": company.name} for company in db.query(Company).filter(Company.id.in_(company_ids)).order_by(Company.name).all()],
-        "items": [{"id": lead.id, "name": lead.full_name, "phone": lead.phone or "", "email": lead.email or "", "company_id": lead.company_id, "company": lead.company.name if lead.company else ""} for lead in leads],
+        "items": [{
+            "id": lead.id,
+            "name": lead.full_name,
+            "phone": lead.phone or "",
+            "email": lead.email or "",
+            "company_id": lead.company_id,
+            "company": lead.company.name if lead.company else "",
+            "smartmoving_id": lead.smartmoving_id or "",
+            "pickup_zip": lead.pickup_zip or "",
+            "delivery_zip": lead.delivery_zip or "",
+            "move_date": lead.move_date or "",
+            "move_size": lead.move_size or "",
+            "status": lead.status or "",
+            "rep": lead.assignee.name if lead.assignee else "",
+        } for lead in leads],
     }
 
 
@@ -92,10 +108,13 @@ def connect(body: ConnectRequest, admin: User = Depends(require_admin), db: Sess
     key = normalized_key(body.channel, body.client_identifier, body.company_identifier)
     if not all(key):
         raise HTTPException(status_code=400, detail="Complete communication identifiers are required")
-    company_ids = _company_ids(db, key[0], key[2])
-    lead = db.query(Lead).filter(Lead.id == body.lead_id, Lead.company_id.in_(company_ids)).first()
+    company_ids, rep_ids, _ = _destination_scope(db, key[0], key[2])
+    lead_query = db.query(Lead).filter(Lead.id == body.lead_id, Lead.company_id.in_(company_ids))
+    if rep_ids:
+        lead_query = lead_query.filter(Lead.assigned_to.in_(rep_ids))
+    lead = lead_query.first()
     if not lead:
-        raise HTTPException(status_code=400, detail="The selected lead is not under the communication's destination company")
+        raise HTTPException(status_code=400, detail="The selected lead does not match the communication destination")
     statement = insert(CommunicationAssociation).values(
         channel=key[0], client_identifier=key[1], company_identifier=key[2],
         lead_id=lead.id, company_id=lead.company_id, created_by=admin.id,
@@ -121,7 +140,7 @@ def create_and_connect(body: CreateAndConnectRequest, admin: User = Depends(requ
     key = normalized_key(body.channel, body.client_identifier, body.company_identifier)
     if not all(key):
         raise HTTPException(status_code=400, detail="Complete communication identifiers are required")
-    company_ids = _company_ids(db, key[0], key[2])
+    company_ids, rep_ids, _ = _destination_scope(db, key[0], key[2])
     if body.company_id not in company_ids:
         raise HTTPException(status_code=400, detail="The selected company is not available for this destination")
     full_name = body.full_name.strip()
@@ -145,6 +164,7 @@ def create_and_connect(body: CreateAndConnectRequest, admin: User = Depends(requ
         move_size=body.move_size.strip(),
         referral_source=body.referral_source.strip(),
         facebook_user_id=key[1] if key[0] in {"messenger", "instagram"} else "",
+        assigned_to=next(iter(rep_ids)) if len(rep_ids) == 1 else "",
         notes=f"Created from an unmatched {body.channel} communication in Moving CRM",
     )
     result = connect(

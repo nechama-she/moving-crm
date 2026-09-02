@@ -1675,6 +1675,7 @@ def create_lead_through_copy_path(
     referral_source: str = "",
     notes: str = "",
     facebook_user_id: str = "",
+    assigned_to: str = "",
 ) -> tuple[Lead, dict]:
     """Create in SmartMoving, then use the canonical CRM lead-creation path."""
     branch_id = _clean_optional_text(target_company.samrtmoving_branch_id)
@@ -1716,6 +1717,7 @@ def create_lead_through_copy_path(
             move_date=move_date,
             smartmoving_id=_clean_optional_text(smartmoving_result.get("lead_id")) or None,
             facebook_user_id=facebook_user_id or None,
+            assigned_to=assigned_to or None,
             notes=notes,
             referral_source=resolved_referral_source,
             service_type="Moving",

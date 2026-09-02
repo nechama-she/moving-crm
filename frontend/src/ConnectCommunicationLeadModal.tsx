@@ -8,7 +8,7 @@ export type CommunicationTarget = {
   companyIdentifier: string;
 };
 
-type Candidate = { id: string; name: string; phone: string; email: string; company: string };
+type Candidate = { id: string; name: string; phone: string; email: string; company: string; smartmoving_id: string; pickup_zip: string; delivery_zip: string; move_date: string; move_size: string; status: string; rep: string };
 type CompanyOption = { id: string; name: string };
 
 export default function ConnectCommunicationLeadModal({ target, token, onClose, onConnected }: {
@@ -19,6 +19,7 @@ export default function ConnectCommunicationLeadModal({ target, token, onClose, 
 }) {
   const [search, setSearch] = useState("");
   const [items, setItems] = useState<Candidate[]>([]);
+  const [selectedLead, setSelectedLead] = useState<Candidate | null>(null);
   const [scopeLabel, setScopeLabel] = useState("");
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [creating, setCreating] = useState(false);
@@ -105,9 +106,23 @@ export default function ConnectCommunicationLeadModal({ target, token, onClose, 
   return <div role="presentation" onMouseDown={onClose} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(15,23,42,.42)", display: "grid", placeItems: "center", padding: 16 }}>
     <section role="dialog" aria-modal="true" aria-label="Connect communication to lead" onMouseDown={(event) => event.stopPropagation()} style={{ width: "min(620px, 100%)", maxHeight: "min(720px, 90vh)", overflow: "hidden", background: "#fff", borderRadius: 10, boxShadow: "0 20px 50px rgba(0,0,0,.25)", display: "flex", flexDirection: "column" }}>
       <header style={{ padding: "18px 20px", borderBottom: "1px solid #d8dde6", display: "flex", justifyContent: "space-between", gap: 16 }}><div><h2 style={{ margin: 0, color: "#032d60", fontSize: 20 }}>Connect to a lead</h2><div style={{ marginTop: 5, color: "#64748b", fontSize: 13 }}>{scopeLabel ? `Showing leads under ${scopeLabel}` : "Finding the destination…"}</div></div><button type="button" onClick={onClose} aria-label="Close" style={{ border: 0, background: "transparent", fontSize: 24, cursor: "pointer" }}>×</button></header>
-      <div style={{ padding: 16, borderBottom: "1px solid #e2e8f0" }}><input autoFocus type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, phone, email, or SmartMoving ID" style={{ width: "100%", padding: "11px 12px", border: "1px solid #94a3b8", borderRadius: 6, boxSizing: "border-box" }} /></div>
+      <div style={{ padding: 16, borderBottom: "1px solid #e2e8f0" }}><input autoFocus type="search" value={search} onChange={(event) => { setSearch(event.target.value); setSelectedLead(null); setCreating(false); }} placeholder="Search name, phone, email, or SmartMoving ID" style={{ width: "100%", padding: "11px 12px", border: "1px solid #94a3b8", borderRadius: 6, boxSizing: "border-box" }} /></div>
       {error ? <div style={{ margin: 16, color: "#ba0517" }}>{error}</div> : null}
-      <div style={{ overflowY: "auto", minHeight: 180 }}>{loading ? <p style={{ padding: 20 }}>Loading leads…</p> : items.length ? items.map((lead) => <button key={lead.id} type="button" disabled={Boolean(saving)} onClick={() => void connect(lead)} style={{ width: "100%", border: 0, borderBottom: "1px solid #e2e8f0", background: "#fff", padding: "13px 20px", textAlign: "left", cursor: saving ? "wait" : "pointer" }}><strong style={{ color: "#0b5cab" }}>{lead.name || "Unnamed lead"}</strong><span style={{ display: "block", color: "#475569", fontSize: 12, marginTop: 4 }}>{[lead.company, lead.phone, lead.email].filter(Boolean).join(" · ")}</span></button>) : creating ? <div style={{ padding: 20, display: "grid", gap: 12 }}>
+      <div style={{ overflowY: "auto", minHeight: 180 }}>{loading ? <p style={{ padding: 20 }}>Loading leads…</p> : selectedLead ? <div style={{ padding: 20, display: "grid", gap: 14 }}>
+        <div><strong style={{ color: "#032d60", fontSize: 18 }}>{selectedLead.name || "Unnamed lead"}</strong><div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>{selectedLead.company}</div></div>
+        <dl style={{ display: "grid", gridTemplateColumns: "minmax(110px, 150px) 1fr", gap: "9px 14px", margin: 0, fontSize: 13 }}>
+          <dt style={{ color: "#64748b" }}>Phone</dt><dd style={{ margin: 0 }}>{selectedLead.phone || "—"}</dd>
+          <dt style={{ color: "#64748b" }}>Email</dt><dd style={{ margin: 0 }}>{selectedLead.email || "—"}</dd>
+          <dt style={{ color: "#64748b" }}>Assigned rep</dt><dd style={{ margin: 0 }}>{selectedLead.rep || "Unassigned"}</dd>
+          <dt style={{ color: "#64748b" }}>Status</dt><dd style={{ margin: 0 }}>{selectedLead.status || "—"}</dd>
+          <dt style={{ color: "#64748b" }}>Move size</dt><dd style={{ margin: 0 }}>{selectedLead.move_size || "—"}</dd>
+          <dt style={{ color: "#64748b" }}>Pickup ZIP</dt><dd style={{ margin: 0 }}>{selectedLead.pickup_zip || "—"}</dd>
+          <dt style={{ color: "#64748b" }}>Delivery ZIP</dt><dd style={{ margin: 0 }}>{selectedLead.delivery_zip || "—"}</dd>
+          <dt style={{ color: "#64748b" }}>Move date</dt><dd style={{ margin: 0 }}>{selectedLead.move_date || "—"}</dd>
+          <dt style={{ color: "#64748b" }}>SmartMoving ID</dt><dd style={{ margin: 0 }}>{selectedLead.smartmoving_id ? <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(selectedLead.smartmoving_id)}/sales`} target="_blank" rel="noreferrer" style={{ color: "#0b5cab" }}>{selectedLead.smartmoving_id}</a> : "—"}</dd>
+        </dl>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}><button type="button" onClick={() => setSelectedLead(null)} style={{ padding: "9px 14px", border: "1px solid #0176d3", borderRadius: 5, background: "#fff", color: "#0176d3", cursor: "pointer" }}>Back</button><button type="button" disabled={Boolean(saving)} onClick={() => void connect(selectedLead)} style={{ padding: "9px 14px", border: 0, borderRadius: 5, background: "#0176d3", color: "#fff", cursor: saving ? "wait" : "pointer", fontWeight: 700 }}>{saving === selectedLead.id ? "Connecting…" : "Connect to this lead"}</button></div>
+      </div> : items.length ? items.map((lead) => <button key={lead.id} type="button" disabled={Boolean(saving)} onClick={() => setSelectedLead(lead)} style={{ width: "100%", border: 0, borderBottom: "1px solid #e2e8f0", background: "#fff", padding: "13px 20px", textAlign: "left", cursor: saving ? "wait" : "pointer" }}><strong style={{ color: "#0b5cab" }}>{lead.name || "Unnamed lead"}</strong><span style={{ display: "block", color: "#475569", fontSize: 12, marginTop: 4 }}>{[lead.company, lead.phone, lead.email].filter(Boolean).join(" · ")}</span></button>) : creating ? <div style={{ padding: 20, display: "grid", gap: 12 }}>
         <strong style={{ color: "#032d60" }}>Create a new lead</strong>
         {companies.length > 1 ? <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569" }}>Company<select value={companyId} onChange={(event) => setCompanyId(event.target.value)} style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }}>{companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}</select></label> : null}
         <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569" }}>Full name <span style={{ color: "#ba0517" }}>*</span><input value={fullName} onChange={(event) => setFullName(event.target.value)} style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }} /></label>
