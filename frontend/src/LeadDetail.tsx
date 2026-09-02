@@ -74,6 +74,14 @@ type LeadJobChargeItem = {
   discount_amount: number;
   total_cost: number;
 };
+type CopyConflict = { id: string; name: string; phone: string; email: string; company: string; smartmoving_id: string; matched_fields: string[] };
+type CopyLeadResult = {
+  crmLeadId: string;
+  smartMovingId: string;
+  assignmentAttempted: boolean;
+  assignmentOk: boolean;
+  assignmentError: string;
+};
 
 type LeadJobMaterialItem = {
   id: string;
@@ -317,8 +325,12 @@ export default function LeadDetail() {
   const [copyCompanyId, setCopyCompanyId] = useState("");
   const [copyReferralSource, setCopyReferralSource] = useState("");
   const [copyReferralEdited, setCopyReferralEdited] = useState(false);
+  const [copyAssignedTo, setCopyAssignedTo] = useState("");
+  const [copyConflicts, setCopyConflicts] = useState<CopyConflict[]>([]);
+  const [checkingCopyConflicts, setCheckingCopyConflicts] = useState(false);
   const [copyingLead, setCopyingLead] = useState(false);
   const [copyLeadError, setCopyLeadError] = useState("");
+  const [copyLeadResult, setCopyLeadResult] = useState<CopyLeadResult | null>(null);
   const [defaultCommissionPercent, setDefaultCommissionPercent] = useState<number>(((1 - 0.035) / 3) * 100);
   const [commissionPercentByUserId, setCommissionPercentByUserId] = useState<Map<string, number>>(new Map());
   const [leadJobs, setLeadJobs] = useState<LeadJobItem[]>([]);
@@ -1448,18 +1460,43 @@ export default function LeadDetail() {
       const res = await fetch(`${API_BASE}/api/leads/${leadId}/copy`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
-        body: JSON.stringify({ company_id: copyCompanyId, referral_source: copyReferralSource.trim() }),
+        body: JSON.stringify({ company_id: copyCompanyId, referral_source: copyReferralSource.trim(), assigned_to: copyAssignedTo }),
       });
       const responseBody = await res.json().catch(() => null);
       if (!res.ok) throw new Error(responseBody?.detail || `HTTP ${res.status}`);
       const copiedLeadId = String(responseBody?.lead?.id || "");
       if (!copiedLeadId) throw new Error("The lead was copied, but no CRM lead id was returned");
-      setCopyModalOpen(false);
-      navigate(`/leads/${copiedLeadId}`);
+      const smartMovingId = String(responseBody?.lead?.smartmoving_id || "");
+      const assignment = responseBody?.creation?.smartmoving_assignment || {};
+      setCopyLeadResult({
+        crmLeadId: copiedLeadId,
+        smartMovingId,
+        assignmentAttempted: Boolean(assignment.attempted),
+        assignmentOk: Boolean(assignment.ok),
+        assignmentError: String(assignment.error || ""),
+      });
     } catch (err: unknown) {
       setCopyLeadError(err instanceof Error ? err.message : "Failed to copy lead");
     } finally {
       setCopyingLead(false);
+    }
+  }
+
+  async function selectCopyAssignee(repId: string) {
+    setCopyAssignedTo(repId);
+    setCopyConflicts([]);
+    setCopyLeadError("");
+    if (!repId || !leadId) return;
+    setCheckingCopyConflicts(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/leads/${leadId}/copy-conflicts?assigned_to=${encodeURIComponent(repId)}`, { headers: authHeaders(token) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.detail || "Could not check existing leads");
+      setCopyConflicts(Array.isArray(body.items) ? body.items : []);
+    } catch (reason) {
+      setCopyLeadError(reason instanceof Error ? reason.message : "Could not check existing leads");
+    } finally {
+      setCheckingCopyConflicts(false);
     }
   }
 
@@ -1550,6 +1587,7 @@ export default function LeadDetail() {
                 <span>{String(lead?.phone_number || "No phone")} · {String(lead?.email || "No email")}</span>
                 <small>Copies name, phone, email, move size, pickup, delivery, and move date.</small>
               </div>
+              <div style={{ display: copyLeadResult ? "none" : "contents" }}>
               <label>
                 Copy to company
                 <select value={copyCompanyId} onChange={(event) => {
@@ -1577,13 +1615,44 @@ export default function LeadDetail() {
                   placeholder="Facebook-Company-HHG"
                 />
               </label>
+              <label>
+                Assign to
+                <select value={copyAssignedTo} onChange={(event) => void selectCopyAssignee(event.target.value)}>
+                  <option value="">Unassigned</option>
+                  {users.filter((option) => !["dispatch", "foreman"].includes(option.role)).map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+                </select>
+              </label>
+              {checkingCopyConflicts ? <div style={{ padding: "10px 12px", borderRadius: 6, background: "#f8fafc", color: "#475569", fontSize: 12 }}>Checking this rep’s existing leads…</div> : null}
+              {!checkingCopyConflicts && copyConflicts.length ? <div role="alert" style={{ padding: "12px 14px", border: "1px solid #fe9339", borderLeft: "4px solid #fe9339", borderRadius: 6, background: "#fff7ed", color: "#7c2d12", fontSize: 12 }}>
+                <strong style={{ display: "block", marginBottom: 7 }}>This rep already has {copyConflicts.length} matching lead{copyConflicts.length === 1 ? "" : "s"}. You can copy anyway.</strong>
+                <div style={{ display: "grid", gap: 7 }}>{copyConflicts.map((match) => <div key={match.id}>
+                  <a href={`/leads/${match.id}`} target="_blank" rel="noreferrer" style={{ color: "#0b5cab", fontWeight: 700 }}>{match.name || "Unnamed lead"}</a>
+                  <span> · {match.company || "No company"} · matched by {match.matched_fields.join(", ")}</span>
+                  <div style={{ color: "#9a3412", marginTop: 2 }}>{[match.phone, match.email].filter(Boolean).join(" · ")}{match.smartmoving_id ? <> · <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(match.smartmoving_id)}/sales`} target="_blank" rel="noreferrer" style={{ color: "#0b5cab" }}>SmartMoving</a></> : null}</div>
+                </div>)}</div>
+              </div> : null}
               {copyLeadError ? <div className="copy-lead-error">{copyLeadError}</div> : null}
+              </div>
+              {copyLeadResult ? <div role="status" style={{ padding: "14px", border: `1px solid ${copyLeadResult.assignmentAttempted && !copyLeadResult.assignmentOk ? "#fe9339" : "#91db8b"}`, borderLeftWidth: 4, borderRadius: 6, background: copyLeadResult.assignmentAttempted && !copyLeadResult.assignmentOk ? "#fff7ed" : "#f3fcf2", color: "#16325c" }}>
+                <strong style={{ display: "block", marginBottom: 8 }}>Lead created successfully.</strong>
+                {copyLeadResult.assignmentAttempted ? (
+                  copyLeadResult.assignmentOk
+                    ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was assigned in SmartMoving.</div>
+                    : <div role="alert" style={{ color: "#ba0517", marginBottom: 10 }}>SmartMoving assignment failed: {copyLeadResult.assignmentError || "Unknown error"}. Assign it manually using the link below.</div>
+                ) : <div style={{ marginBottom: 10 }}>No SmartMoving rep assignment was requested.</div>}
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                  {copyLeadResult.smartMovingId ? <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(copyLeadResult.smartMovingId)}/sales`} target="_blank" rel="noreferrer" style={{ color: "#0b5cab", fontWeight: 700 }}>Open in SmartMoving ↗</a> : <span style={{ color: "#ba0517" }}>SmartMoving link unavailable</span>}
+                  <a href={`/leads/${copyLeadResult.crmLeadId}`} target="_blank" rel="noreferrer" style={{ color: "#0b5cab", fontWeight: 700 }}>Open CRM lead ↗</a>
+                </div>
+              </div> : null}
             </div>
             <footer>
-              <button type="button" disabled={copyingLead} onClick={() => setCopyModalOpen(false)}>Cancel</button>
-              <button type="button" className="copy-lead-submit" disabled={copyingLead || !copyCompanyId || !copyReferralSource.trim()} onClick={() => void copyLead()}>
-                {copyingLead ? "Creating in SmartMoving…" : "Copy Lead"}
-              </button>
+              {copyLeadResult ? <button type="button" className="copy-lead-submit" onClick={() => setCopyModalOpen(false)}>Done</button> : <>
+                <button type="button" disabled={copyingLead} onClick={() => setCopyModalOpen(false)}>Cancel</button>
+                <button type="button" className="copy-lead-submit" disabled={copyingLead || checkingCopyConflicts || !copyCompanyId || !copyReferralSource.trim()} onClick={() => void copyLead()}>
+                  {copyingLead ? "Creating in SmartMoving…" : "Copy Lead"}
+                </button>
+              </>}
             </footer>
           </section>
         </div>
@@ -2399,7 +2468,10 @@ export default function LeadDetail() {
                       setCopyCompanyId("");
                       setCopyReferralSource("");
                       setCopyReferralEdited(false);
+                      setCopyAssignedTo("");
+                      setCopyConflicts([]);
                       setCopyLeadError("");
+                      setCopyLeadResult(null);
                       setCopyModalOpen(true);
                     }}
                     title="Copy lead to another company"

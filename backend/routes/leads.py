@@ -18,7 +18,7 @@ from dateutil import parser as date_parser
 from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File, Request
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, cast, text
+from sqlalchemy import func, cast, text, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -1659,6 +1659,61 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
 class CopyLeadRequest(BaseModel):
     company_id: str
     referral_source: str = ""
+    assigned_to: str = ""
+
+
+@router.get("/leads/{lead_id}/copy-conflicts")
+def copy_lead_conflicts(
+    lead_id: str,
+    assigned_to: str = Query(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can check copy conflicts")
+    source_lead = _get_visible_lead_or_404(lead_id, user, db)
+    rep = db.query(User).filter(User.id == assigned_to).first()
+    if not rep:
+        raise HTTPException(status_code=404, detail="Selected rep not found")
+
+    conditions = []
+    normalized_name = (source_lead.full_name or "").strip().lower()
+    normalized_email = (source_lead.email or "").strip().lower()
+    normalized_phone = normalize_digits(source_lead.phone or "")[-10:]
+    if normalized_name:
+        conditions.append(func.lower(func.trim(Lead.full_name)) == normalized_name)
+    if normalized_email:
+        conditions.append(func.lower(func.trim(Lead.email)) == normalized_email)
+    if normalized_phone:
+        conditions.append(func.right(func.regexp_replace(Lead.phone, r"\D", "", "g"), 10) == normalized_phone)
+    matches = (
+        db.query(Lead)
+        .options(joinedload(Lead.company))
+        .filter(Lead.assigned_to == rep.id, or_(*conditions))
+        .order_by(Lead.created_at.desc())
+        .limit(50)
+        .all()
+        if conditions else []
+    )
+    items = []
+    for match in matches:
+        fields = []
+        if normalized_name and (match.full_name or "").strip().lower() == normalized_name:
+            fields.append("name")
+        if normalized_email and (match.email or "").strip().lower() == normalized_email:
+            fields.append("email")
+        if normalized_phone and normalize_digits(match.phone or "")[-10:] == normalized_phone:
+            fields.append("phone")
+        items.append({
+            "id": match.id,
+            "name": match.full_name or "",
+            "phone": match.phone or "",
+            "email": match.email or "",
+            "company": match.company.name if match.company else "",
+            "smartmoving_id": match.smartmoving_id or "",
+            "matched_fields": fields,
+        })
+    return {"rep": {"id": rep.id, "name": rep.name}, "items": items}
 
 
 def create_lead_through_copy_path(
@@ -1731,6 +1786,25 @@ def create_lead_through_copy_path(
     created_lead = db.query(Lead).filter(Lead.id == creation_result["lead_id"]).first()
     if not created_lead:
         raise HTTPException(status_code=500, detail="Lead was created but could not be reloaded")
+    assignment_result: dict = {"attempted": False, "ok": True}
+    if assigned_to:
+        assignment_result = {"attempted": True, "ok": False}
+        assigned_rep = db.query(User).filter(User.id == assigned_to).first()
+        smartmoving_lead_id = _clean_optional_text(smartmoving_result.get("lead_id"))
+        if not assigned_rep:
+            assignment_result["error"] = "Selected CRM rep was not found"
+        elif not _clean_optional_text(assigned_rep.smartmoving_rep_id):
+            assignment_result["error"] = f"{assigned_rep.name} does not have a SmartMoving rep ID configured"
+        elif not smartmoving_lead_id:
+            assignment_result["error"] = "SmartMoving did not return a lead ID"
+        else:
+            update_result = update_opportunity_salesperson(
+                smartmoving_lead_id,
+                _clean_optional_text(assigned_rep.smartmoving_rep_id),
+            )
+            assignment_result.update(update_result)
+            assignment_result["rep_name"] = assigned_rep.name
+    creation_result["smartmoving_assignment"] = assignment_result
     return created_lead, creation_result
 
 
@@ -1778,6 +1852,7 @@ def copy_lead(
         move_size=source_lead.move_size or "",
         referral_source=referral_source,
         notes=f"Copied from Moving CRM lead {source_lead.id}",
+        assigned_to=_clean_optional_text(body.assigned_to),
     )
 
     return {
