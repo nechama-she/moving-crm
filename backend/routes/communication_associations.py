@@ -29,6 +29,11 @@ class CreateAndConnectRequest(BaseModel):
     full_name: str
     phone: str = ""
     email: str = ""
+    pickup_zip: str = ""
+    delivery_zip: str = ""
+    move_date: str = ""
+    move_size: str = ""
+    referral_source: str = ""
 
 
 def _destination_scope(db: Session, channel: str, company_identifier: str) -> tuple[set[str], str]:
@@ -134,6 +139,11 @@ def create_and_connect(body: CreateAndConnectRequest, admin: User = Depends(requ
         full_name=full_name,
         phone=(body.phone.strip() or key[1]) if key[0] == "phone" else body.phone.strip(),
         email=body.email.strip(),
+        pickup_zip=body.pickup_zip.strip(),
+        delivery_zip=body.delivery_zip.strip(),
+        move_date=body.move_date.strip(),
+        move_size=body.move_size.strip(),
+        referral_source=body.referral_source.strip(),
         facebook_user_id=key[1] if key[0] in {"messenger", "instagram"} else "",
         notes=f"Created from an unmatched {body.channel} communication in Moving CRM",
     )

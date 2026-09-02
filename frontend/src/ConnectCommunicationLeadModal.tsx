@@ -26,6 +26,11 @@ export default function ConnectCommunicationLeadModal({ target, token, onClose, 
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState(["sms", "phone", "call", "calls"].includes(target.channel.toLowerCase()) ? target.clientIdentifier : "");
   const [email, setEmail] = useState("");
+  const [pickupZip, setPickupZip] = useState("");
+  const [deliveryZip, setDeliveryZip] = useState("");
+  const [moveDate, setMoveDate] = useState("");
+  const [moveSize, setMoveSize] = useState("");
+  const [referralSource, setReferralSource] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
@@ -82,6 +87,11 @@ export default function ConnectCommunicationLeadModal({ target, token, onClose, 
           full_name: fullName.trim(),
           phone: phone.trim(),
           email: email.trim(),
+          pickup_zip: pickupZip.trim(),
+          delivery_zip: deliveryZip.trim(),
+          move_date: moveDate,
+          move_size: moveSize.trim(),
+          referral_source: referralSource.trim(),
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -100,9 +110,16 @@ export default function ConnectCommunicationLeadModal({ target, token, onClose, 
       <div style={{ overflowY: "auto", minHeight: 180 }}>{loading ? <p style={{ padding: 20 }}>Loading leads…</p> : items.length ? items.map((lead) => <button key={lead.id} type="button" disabled={Boolean(saving)} onClick={() => void connect(lead)} style={{ width: "100%", border: 0, borderBottom: "1px solid #e2e8f0", background: "#fff", padding: "13px 20px", textAlign: "left", cursor: saving ? "wait" : "pointer" }}><strong style={{ color: "#0b5cab" }}>{lead.name || "Unnamed lead"}</strong><span style={{ display: "block", color: "#475569", fontSize: 12, marginTop: 4 }}>{[lead.company, lead.phone, lead.email].filter(Boolean).join(" · ")}</span></button>) : creating ? <div style={{ padding: 20, display: "grid", gap: 12 }}>
         <strong style={{ color: "#032d60" }}>Create a new lead</strong>
         {companies.length > 1 ? <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569" }}>Company<select value={companyId} onChange={(event) => setCompanyId(event.target.value)} style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }}>{companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}</select></label> : null}
-        <input value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Full name" aria-label="Full name" style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }} />
-        <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Phone" aria-label="Phone" style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }} />
-        <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" aria-label="Email" style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }} />
+        <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569" }}>Full name <span style={{ color: "#ba0517" }}>*</span><input value={fullName} onChange={(event) => setFullName(event.target.value)} style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }} /></label>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569" }}>Phone<input value={phone} onChange={(event) => setPhone(event.target.value)} style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }} /></label>
+          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569" }}>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }} /></label>
+          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569" }}>Pickup ZIP<input value={pickupZip} onChange={(event) => setPickupZip(event.target.value)} style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }} /></label>
+          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569" }}>Delivery ZIP<input value={deliveryZip} onChange={(event) => setDeliveryZip(event.target.value)} style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }} /></label>
+          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569" }}>Move date<input type="date" value={moveDate} onChange={(event) => setMoveDate(event.target.value)} style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }} /></label>
+          <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569" }}>Move size<input value={moveSize} onChange={(event) => setMoveSize(event.target.value)} placeholder="For example: 2 Bedrooms" style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }} /></label>
+        </div>
+        <label style={{ display: "grid", gap: 5, fontSize: 12, color: "#475569" }}>Referral source<input value={referralSource} onChange={(event) => setReferralSource(event.target.value)} style={{ padding: 10, border: "1px solid #94a3b8", borderRadius: 6 }} /></label>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}><button type="button" onClick={() => setCreating(false)} style={{ padding: "9px 14px", border: "1px solid #0176d3", borderRadius: 5, background: "#fff", color: "#0176d3", cursor: "pointer" }}>Back</button><button type="button" disabled={!fullName.trim() || !companyId || Boolean(saving)} onClick={() => void createLead()} style={{ padding: "9px 14px", border: 0, borderRadius: 5, background: "#0176d3", color: "#fff", cursor: saving ? "wait" : "pointer", opacity: !fullName.trim() || !companyId ? .55 : 1 }}>{saving === "new" ? "Creating…" : "Create and connect"}</button></div>
       </div> : <div style={{ padding: 20 }}><p style={{ margin: "0 0 14px", color: "#64748b" }}>No matching leads found.</p><button type="button" onClick={() => { setFullName(search.trim()); setCreating(true); }} style={{ padding: "10px 15px", border: 0, borderRadius: 5, background: "#0176d3", color: "#fff", cursor: "pointer", fontWeight: 700 }}>Create new lead</button></div>}</div>
     </section>
