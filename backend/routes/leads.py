@@ -1812,7 +1812,7 @@ def create_lead_through_copy_path(
     branch_id = _clean_optional_text(target_company.samrtmoving_branch_id)
     provider_key = _smartmoving_provider_key()
     if not branch_id:
-        raise HTTPException(status_code=400, detail=f"{target_company.name} does not have a SmartMoving branch configured")
+        raise HTTPException(status_code=400, detail=f"{target_company.name} does not have a SmartMoving branch ID configured")
     if not provider_key:
         raise HTTPException(status_code=500, detail="SmartMoving lead-copy provider is not configured")
 
