@@ -2181,10 +2181,10 @@ export default function LeadDetail() {
                 ) : (
                   <div style={{ display: "grid", gap: 4 }}>
                     <div className="lead-profile-meta" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <div className="lead-profile-name" style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
+                      <div className="lead-profile-name" style={{ order: 0, fontSize: 18, fontWeight: 700, color: "#032d60" }}>
                         {name || "—"}
                       </div>
-                      <div className="lead-profile-selector" ref={statusMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <div className="lead-profile-selector" ref={statusMenuRef} style={{ order: 3, position: "relative", display: "inline-flex", alignItems: "center" }}>
                         <button
                           ref={statusButtonRef}
                           type="button"
@@ -2273,7 +2273,7 @@ export default function LeadDetail() {
                         </div>,
                         document.body
                       ) : null}
-                      <div className="lead-profile-selector" ref={companyMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <div className="lead-profile-selector" ref={companyMenuRef} style={{ order: 1, position: "relative", display: "inline-flex", alignItems: "center" }}>
                       <button
                         type="button"
                         onClick={() => canEditCompany && setCompanyMenuOpen((v) => !v)}
@@ -2353,7 +2353,7 @@ export default function LeadDetail() {
                         </div>
                       ) : null}
                       </div>
-                      <div className="lead-profile-selector lead-profile-assignee" ref={assignMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <div className="lead-profile-selector lead-profile-assignee" ref={assignMenuRef} style={{ order: 2, position: "relative", display: "inline-flex", alignItems: "center" }}>
                         <button
                           type="button"
                           onClick={() => user?.role === "admin" && setAssignMenuOpen((v) => !v)}
