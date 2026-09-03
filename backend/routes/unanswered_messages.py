@@ -62,6 +62,7 @@ class IgnoreMissedCallRequest(BaseModel):
 
 class IgnoredNumberRequest(BaseModel):
     number: str
+    direction: str = "both"
 
 
 def _digits(value: object) -> str:
@@ -615,21 +616,36 @@ def list_first_contact_leads(
     }
 
 
-def _ignored_call_numbers(db: Session) -> set[str]:
+def _ignored_call_numbers(db: Session) -> dict[str, set[str]]:
     row = db.query(AppSetting).filter(AppSetting.key == IGNORED_CALL_NUMBERS_SETTING).first()
     if not row or not row.value:
-        return set()
+        return {}
     try:
         values = json.loads(row.value)
     except (TypeError, ValueError):
         logger.warning("Invalid ignored call numbers setting")
-        return set()
-    return {_digits(value) for value in values if _digits(value)}
+        return {}
+    ignored: dict[str, set[str]] = {}
+    for value in values:
+        if isinstance(value, dict):
+            number = _digits(value.get("number"))
+            direction = str(value.get("direction") or "both").strip().lower()
+        else:
+            number = _digits(value)
+            direction = "both"
+        if number and direction in {"from", "to", "both"}:
+            ignored.setdefault(number, set()).add(direction)
+    return ignored
 
 
-def _save_ignored_call_numbers(db: Session, numbers: set[str]) -> None:
+def _save_ignored_call_numbers(db: Session, numbers: dict[str, set[str]]) -> None:
     row = db.query(AppSetting).filter(AppSetting.key == IGNORED_CALL_NUMBERS_SETTING).first()
-    value = json.dumps(sorted(numbers), separators=(",", ":"))
+    entries = [
+        {"number": number, "direction": direction}
+        for number in sorted(numbers)
+        for direction in sorted(numbers[number])
+    ]
+    value = json.dumps(entries, separators=(",", ":"))
     if row:
         row.value = value
     else:
@@ -663,10 +679,12 @@ def list_missed_calls(
         .all()
     )
     ignored_numbers = _ignored_call_numbers(db)
+    ignored_from = {number for number, directions in ignored_numbers.items() if directions & {"from", "both"}}
+    ignored_to = {number for number, directions in ignored_numbers.items() if directions & {"to", "both"}}
     global_states = [
         state for state in states
-        if _digits(state.client_identifier) not in ignored_numbers
-        and _digits(state.company_identifier) not in ignored_numbers
+        if _digits(state.client_identifier) not in ignored_from
+        and _digits(state.company_identifier) not in ignored_to
     ]
     states = [
         state for state in global_states
@@ -763,7 +781,12 @@ def list_all_missed_call_states(
 
 @router.get("/ignored-call-numbers")
 def list_ignored_call_numbers(_: User = Depends(require_admin), db: Session = Depends(get_db)):
-    return {"numbers": sorted(_ignored_call_numbers(db))}
+    ignored = _ignored_call_numbers(db)
+    return {"items": [
+        {"number": number, "direction": direction}
+        for number in sorted(ignored)
+        for direction in sorted(ignored[number])
+    ]}
 
 
 @router.post("/ignored-call-numbers")
@@ -775,20 +798,34 @@ def add_ignored_call_number(
     number = _digits(body.number)
     if len(number) < 7 or len(number) > 15:
         raise HTTPException(status_code=400, detail="Phone number must contain 7 to 15 digits")
+    direction = body.direction.strip().lower()
+    if direction not in {"from", "to", "both"}:
+        raise HTTPException(status_code=400, detail="Direction must be from, to, or both")
     numbers = _ignored_call_numbers(db)
-    numbers.add(number)
+    if direction == "both":
+        numbers[number] = {"both"}
+    elif "both" not in numbers.get(number, set()):
+        numbers.setdefault(number, set()).add(direction)
     _save_ignored_call_numbers(db, numbers)
-    call_states = db.query(MissedCallState).filter(or_(
-        MissedCallState.client_identifier == number,
-        MissedCallState.company_identifier == number,
-    )).all()
+    side_filter = (
+        or_(MissedCallState.client_identifier == number, MissedCallState.company_identifier == number)
+        if direction == "both"
+        else MissedCallState.client_identifier == number
+        if direction == "from"
+        else MissedCallState.company_identifier == number
+    )
+    call_states = db.query(MissedCallState).filter(side_filter).all()
     call_ids = [state.call_id for state in call_states]
     for state in call_states:
         db.delete(state)
-    message_states = db.query(MessageState).filter(
-        MessageState.channel == "sms",
-        or_(MessageState.client_identifier == number, MessageState.company_identifier == number),
-    ).all()
+    message_side_filter = (
+        or_(MessageState.client_identifier == number, MessageState.company_identifier == number)
+        if direction == "both"
+        else MessageState.client_identifier == number
+        if direction == "from"
+        else MessageState.company_identifier == number
+    )
+    message_states = db.query(MessageState).filter(MessageState.channel == "sms", message_side_filter).all()
     message_ids = [state.message_id for state in message_states]
     unanswered_removed = sum(not state.conversation_ended for state in message_states)
     ended_removed = len(message_states) - unanswered_removed
@@ -812,21 +849,36 @@ def add_ignored_call_number(
     }
     publish_realtime_event(call_event)
     publish_realtime_event(message_event)
-    return {"numbers": sorted(numbers), "events": [call_event, message_event]}
+    return {"items": [
+        {"number": saved_number, "direction": saved_direction}
+        for saved_number in sorted(numbers)
+        for saved_direction in sorted(numbers[saved_number])
+    ], "events": [call_event, message_event]}
 
 
 @router.delete("/ignored-call-numbers/{number}")
 def remove_ignored_call_number(
     number: str,
+    direction: str = Query(""),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     normalized = _digits(number)
     numbers = _ignored_call_numbers(db)
-    numbers.discard(normalized)
+    normalized_direction = direction.strip().lower()
+    if normalized_direction in {"from", "to", "both"}:
+        numbers.get(normalized, set()).discard(normalized_direction)
+        if not numbers.get(normalized):
+            numbers.pop(normalized, None)
+    else:
+        numbers.pop(normalized, None)
     _save_ignored_call_numbers(db, numbers)
     db.commit()
-    return {"numbers": sorted(numbers)}
+    return {"items": [
+        {"number": saved_number, "direction": saved_direction}
+        for saved_number in sorted(numbers)
+        for saved_direction in sorted(numbers[saved_number])
+    ]}
 
 
 @router.delete("/missed-calls")
@@ -898,13 +950,15 @@ def list_message_states(
 ):
     started_at = time.perf_counter()
     ignored_numbers = _ignored_call_numbers(db)
+    ignored_from = {number for number, directions in ignored_numbers.items() if directions & {"from", "both"}}
+    ignored_to = {number for number, directions in ignored_numbers.items() if directions & {"to", "both"}}
     global_visible_filter = True
     if ignored_numbers:
         global_visible_filter = ~and_(
             MessageState.channel == "sms",
             or_(
-                MessageState.client_identifier.in_(ignored_numbers),
-                MessageState.company_identifier.in_(ignored_numbers),
+                MessageState.client_identifier.in_(ignored_from) if ignored_from else False,
+                MessageState.company_identifier.in_(ignored_to) if ignored_to else False,
             ),
         )
     global_count_rows = (

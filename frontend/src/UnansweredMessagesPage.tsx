@@ -428,13 +428,13 @@ export default function UnansweredMessagesPage() {
     if (result.event) applyMissedCallEvent(result.event as RealtimeEvent);
   };
 
-  const ignoreNumber = async (number: string) => {
+  const ignoreNumber = async (number: string, direction: "from" | "to" | "both") => {
     setError("");
     setNumberMenu(null);
     const response = await fetch(`${API_BASE}/api/unanswered-messages/ignored-call-numbers`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
-      body: JSON.stringify({ number }),
+      body: JSON.stringify({ number, direction }),
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) { setError(result.detail || `HTTP ${response.status}`); return; }
@@ -538,9 +538,13 @@ export default function UnansweredMessagesPage() {
       <p style={{ margin: "6px 0 20px", color: "#64748b" }}>Sales items that need attention.</p>
       {error ? <p style={{ color: "#b91c1c" }}>{error}</p> : null}
       {validationNotice ? <p style={{ color: "#2e844a" }}>{validationNotice}</p> : null}
-      {numberMenu ? <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "fixed", zIndex: 1000, left: Math.min(numberMenu.x, window.innerWidth - 190), top: Math.min(numberMenu.y, window.innerHeight - 60), minWidth: 180, padding: 5, border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", boxShadow: "0 6px 18px rgba(15,23,42,.2)" }}>
+      {numberMenu ? <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "fixed", zIndex: 1000, left: Math.min(numberMenu.x, window.innerWidth - 220), top: Math.min(numberMenu.y, window.innerHeight - 175), minWidth: 210, padding: 5, border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", boxShadow: "0 6px 18px rgba(15,23,42,.2)" }}>
         {numberMenu.connectTarget ? <button type="button" onClick={() => { setConnectTarget(numberMenu.connectTarget || null); setNumberMenu(null); }} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#0b5cab", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Connect to a lead</button> : null}
-        {!numberMenu.connectTarget || numberMenu.connectTarget.channel === "sms" || numberMenu.connectTarget.channel === "phone" ? <button type="button" onClick={() => void ignoreNumber(numberMenu.number)} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore this number</button> : null}
+        {!numberMenu.connectTarget || numberMenu.connectTarget.channel === "sms" || numberMenu.connectTarget.channel === "phone" ? <>
+          <button type="button" onClick={() => void ignoreNumber(numberMenu.number, "from")} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore from this number</button>
+          <button type="button" onClick={() => void ignoreNumber(numberMenu.number, "to")} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore to this number</button>
+          <button type="button" onClick={() => void ignoreNumber(numberMenu.number, "both")} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore both directions</button>
+        </> : null}
       </div> : null}
       {connectTarget ? <ConnectCommunicationLeadModal target={connectTarget} token={token} onClose={() => setConnectTarget(null)} onConnected={(lead) => { setItems((current) => current.map((row) => row.channel === connectTarget.channel && row.client_identifier === connectTarget.clientIdentifier && row.company_identifier === connectTarget.companyIdentifier ? { ...row, lead_id: lead.id, client: lead.name, company: lead.company, rep: lead.rep || "Unassigned" } : row)); setMissedCalls((current) => current.map((row) => ["calls", "call", "phone"].includes(connectTarget.channel) && row.client_identifier === connectTarget.clientIdentifier && row.company_identifier === connectTarget.companyIdentifier ? { ...row, lead_id: lead.id, client: lead.name, company: lead.company, rep: lead.rep || "Unassigned" } : row)); setConnectTarget(null); }} /> : null}
 

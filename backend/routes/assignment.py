@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from assignment_conflicts import find_assignment_conflicts
+from assignment_webhook import send_assignment_webhook
 from config import get_config
 from database import get_db
 from libs.smartmoving.client import update_opportunity_salesperson
@@ -566,6 +567,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
         by_company.setdefault(lead.company_id, []).append(lead)
 
     assigned_count = 0
+    completed_assignments: list[tuple[Lead, User]] = []
     touched_companies = 0
     queued_count = 0
     pool_positions: dict[tuple[str, tuple[str, ...]], int] = {}
@@ -744,6 +746,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
                     queued_count += 1
                     continue
                 lead.assigned_to = rep.id
+                completed_assignments.append((lead, rep))
                 success_note = (
                     "Assigned from queued backlog by scheduler run; "
                     f"SmartMoving sync ok (status={sync_result.get('status', 'n/a')} body={sync_result.get('body', '(empty)')})"
@@ -768,6 +771,18 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
 
     db.commit()
 
+    webhook_failures = 0
+    for assigned_lead, assigned_rep in completed_assignments:
+        webhook_result = send_assignment_webhook(assigned_lead, assigned_rep)
+        if not webhook_result.get("ok"):
+            webhook_failures += 1
+            logger.warning(
+                "Assignment Rules webhook failed after committed assignment: lead=%s rep=%s error=%s",
+                assigned_lead.id,
+                assigned_rep.id,
+                webhook_result.get("error", "unknown"),
+            )
+
     logger.info(
         "Backlog run finished: dry_run=%s queued_found=%s assigned=%s queued_events=%s companies_touched=%s",
         dry_run,
@@ -786,6 +801,7 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             "assigned": assigned_count,
             "queued_events": queued_count,
             "companies_touched": touched_companies,
+            "webhook_failures": webhook_failures,
             "window_start_at": active_window_start.isoformat() if active_window_start else "",
         },
     }
