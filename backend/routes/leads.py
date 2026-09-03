@@ -14,6 +14,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import boto3
+import httpx
 from botocore.exceptions import ClientError
 from dateutil import parser as date_parser
 from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File, Request
@@ -881,11 +882,62 @@ def run_pending_lead_duplication_now(
     }
 
 
-def _send_assignment_webhook_todo(lead: Lead, rep: User | None):
+def _send_assignment_webhook(lead: Lead, rep: User | None) -> dict[str, Any]:
+    """Notify meta-webhook after a CRM salesperson assignment."""
     if not rep:
-        return
-    # TODO: Call external assignment webhook/API here to mirror CRM assignment downstream.
-    logger.info("TODO assignment webhook: lead=%s rep=%s(%s)", lead.id, rep.id, rep.name)
+        return {"attempted": False, "ok": False, "error": "No rep was assigned"}
+
+    opportunity_id = _clean_optional_text(lead.smartmoving_id)
+    if not opportunity_id:
+        return {"attempted": False, "ok": False, "error": "Lead does not have a SmartMoving ID"}
+
+    ssm_prefix = os.getenv("SSM_PREFIX", "/moving-crm/dev/").rstrip("/")
+    webhook_url = _clean_optional_text(get_ssm_cached(f"{ssm_prefix}/META_WEBHOOK_URL"))
+    if not webhook_url:
+        return {"attempted": False, "ok": False, "error": "META_WEBHOOK_URL is not configured"}
+
+    payload = {
+        "event-type": "sales-person-changed",
+        "opportunity-id": opportunity_id,
+        "rep-name": _clean_optional_text(rep.name),
+    }
+    try:
+        response = httpx.post(
+            webhook_url,
+            json=payload,
+            headers={"Content-Type": "application/json", "User-Agent": "moving-crm"},
+            timeout=10.0,
+        )
+        response_body = response.text[:1500]
+        if not 200 <= response.status_code < 300:
+            logger.warning(
+                "Meta assignment webhook rejected opportunity=%s rep=%s status=%s body=%s",
+                opportunity_id,
+                rep.id,
+                response.status_code,
+                response_body,
+            )
+            return {
+                "attempted": True,
+                "ok": False,
+                "status": response.status_code,
+                "error": f"HTTP {response.status_code}: {response_body or 'empty response'}",
+            }
+        logger.info(
+            "Meta assignment webhook sent opportunity=%s rep=%s status=%s",
+            opportunity_id,
+            rep.id,
+            response.status_code,
+        )
+        return {"attempted": True, "ok": True, "status": response.status_code}
+    except httpx.RequestError as exc:
+        logger.warning(
+            "Meta assignment webhook failed opportunity=%s rep=%s error=%s",
+            opportunity_id,
+            rep.id,
+            exc,
+        )
+        return {"attempted": True, "ok": False, "error": str(exc)}
 
 
 def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None) -> dict:
@@ -1798,6 +1850,14 @@ def create_lead_through_copy_path(
         else:
             assignment_result["ok"] = True
             assignment_result["rep_name"] = assigned_rep.name
+            assignment_result["smartmoving"] = {
+                "attempted": bool(
+                    _clean_optional_text(created_lead.smartmoving_id)
+                    and _clean_optional_text(assigned_rep.smartmoving_rep_id)
+                ),
+                **_sync_assignment_to_smartmoving(created_lead, assigned_rep),
+            }
+            assignment_result["webhook"] = _send_assignment_webhook(created_lead, assigned_rep)
             if not _clean_optional_text(assigned_rep.phone):
                 assignment_result["notification"] = {
                     "attempted": False,
@@ -4860,7 +4920,7 @@ def create_lead(
                 )
             else:
                 logger.info("Auto-assigned lead %s to rep %s (%s)", lead.id, assigned_to_user_id, assignment_reason)
-                _send_assignment_webhook_todo(lead, assigned_rep)
+                _send_assignment_webhook(lead, assigned_rep)
 
     # Send welcome SMS if phone and smartmoving_id are present
     sms_result = None
