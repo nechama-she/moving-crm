@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
-from sqlalchemy import delete, func, or_
+from sqlalchemy import case, delete, func, or_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import joinedload
 
@@ -249,6 +249,7 @@ def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[b
     if not lead_id:
         lead_id = _resolve_sms_lead_id(db, item)
     occurred_at = _occurred_at(timestamp)
+    state_already_exists = db.query(MissedCallState.call_id).filter(*state_filter).first() is not None
     statement = insert(MissedCallState).values(
         client_identifier=client_identifier,
         company_identifier=company_identifier,
@@ -263,7 +264,12 @@ def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[b
         set_={
             "call_id": statement.excluded.call_id,
             "lead_id": func.coalesce(statement.excluded.lead_id, MissedCallState.lead_id),
-            "missed_count": MissedCallState.missed_count + 1,
+            # A source item can arrive first as INSERT and again as MODIFY.
+            # Count a call only when its call id differs from the latest one.
+            "missed_count": case(
+                (MissedCallState.call_id != statement.excluded.call_id, MissedCallState.missed_count + 1),
+                else_=MissedCallState.missed_count,
+            ),
             "latest_missed_at": statement.excluded.latest_missed_at,
         },
     ).returning(
@@ -282,12 +288,12 @@ def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[b
         "event_id": f"stream:{event_id}",
         "action": "upsert",
         "row": _call_display_row(db, inserted),
-        "count_delta": 1 if inserted["missed_count"] == 1 else 0,
+        "count_delta": 0 if state_already_exists else 1,
     }
 
 
 def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]:
-    if record.get("eventName") != "INSERT":
+    if record.get("eventName") not in {"INSERT", "MODIFY"}:
         return False, None
     item = _image(record)
     arn = str(record.get("eventSourceARN") or "")

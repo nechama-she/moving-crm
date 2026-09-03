@@ -1560,7 +1560,7 @@ Resources:
       FunctionResponseTypes: [ReportBatchItemFailures]
       FilterCriteria:
         Filters:
-          - Pattern: '{"eventName":["INSERT"],"dynamodb":{"NewImage":{"record_type":{"S":["call"]}}}}'
+          - Pattern: '{"eventName":["INSERT","MODIFY"],"dynamodb":{"NewImage":{"record_type":{"S":["call"]}}}}'
 
   RealtimeConnectionsTable:
     Type: AWS::DynamoDB::Table
