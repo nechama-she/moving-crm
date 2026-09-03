@@ -704,6 +704,63 @@ def list_missed_calls(
     return {"items": items, "count": len(states), "global_count": len(global_states)}
 
 
+@router.get("/message-states/all")
+def list_all_message_states(
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Return the CRM message state table exactly as stored, without side effects."""
+    states = (
+        db.query(MessageState)
+        .order_by(MessageState.occurred_at.desc(), MessageState.channel.asc(), MessageState.message_id.asc())
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "channel": state.channel,
+                "message_id": state.message_id,
+                "lead_id": state.lead_id,
+                "client_identifier": state.client_identifier,
+                "company_identifier": state.company_identifier,
+                "direction": state.direction,
+                "conversation_ended": state.conversation_ended,
+                "occurred_at": state.occurred_at.isoformat(),
+            }
+            for state in states
+        ],
+        "count": len(states),
+    }
+
+
+@router.get("/missed-call-states/all")
+def list_all_missed_call_states(
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Return the CRM missed-call state table exactly as stored, without side effects."""
+    states = (
+        db.query(MissedCallState)
+        .order_by(MissedCallState.latest_missed_at.desc(), MissedCallState.client_identifier.asc())
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "client_identifier": state.client_identifier,
+                "company_identifier": state.company_identifier,
+                "call_id": state.call_id,
+                "lead_id": state.lead_id,
+                "missed_count": state.missed_count,
+                "first_missed_at": state.first_missed_at.isoformat(),
+                "latest_missed_at": state.latest_missed_at.isoformat(),
+            }
+            for state in states
+        ],
+        "count": len(states),
+    }
+
+
 @router.get("/ignored-call-numbers")
 def list_ignored_call_numbers(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     return {"numbers": sorted(_ignored_call_numbers(db))}

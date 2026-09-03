@@ -7,7 +7,7 @@ import MessageAttachments, { attachmentSummary, MessageAttachment } from "./Mess
 import ConnectCommunicationLeadModal, { CommunicationTarget } from "./ConnectCommunicationLeadModal";
 
 type MessageTab = "unanswered" | "ended";
-type QueueTab = "messages" | "calls" | "leads" | "followups";
+type QueueTab = "messages" | "calls" | "leads" | "followups" | "message-state" | "missed-call-state";
 type LeadTab = "new" | "overdue";
 type FollowupTab = "all" | "overdue";
 type MessageRow = { channel: string; message_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
@@ -15,6 +15,8 @@ type MissedCallRow = { call_id: string; lead_id: string; client_identifier: stri
 type FirstContactLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; created_at: string; age_minutes: number };
 type FollowupAttempt = { number?: number; kind: "call" | "message"; label: string; period: string; scheduled_start: string; scheduled_end: string; completed_at: string; status: "completed" | "not_sent" | "on_time" | "delayed" | "overdue" | "open" | "upcoming" };
 type FollowupLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; created_at: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
+type RawMessageState = { channel: string; message_id: string; lead_id: string | null; client_identifier: string; company_identifier: string; direction: string; conversation_ended: boolean; occurred_at: string };
+type RawMissedCallState = { client_identifier: string; company_identifier: string; call_id: string; lead_id: string | null; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type NumberMenu = { number: string; x: number; y: number; connectTarget?: CommunicationTarget } | null;
 
 const displayPhone = (value: string) => {
@@ -58,6 +60,10 @@ export default function UnansweredMessagesPage() {
   const [missedCalls, setMissedCalls] = useState<MissedCallRow[]>([]);
   const [missedCallCount, setMissedCallCount] = useState(0);
   const [globalMissedCallCount, setGlobalMissedCallCount] = useState(0);
+  const [messageStates, setMessageStates] = useState<RawMessageState[]>([]);
+  const [loadingMessageStates, setLoadingMessageStates] = useState(false);
+  const [missedCallStates, setMissedCallStates] = useState<RawMissedCallState[]>([]);
+  const [loadingMissedCallStates, setLoadingMissedCallStates] = useState(false);
   const [leadTab, setLeadTab] = useState<LeadTab>("overdue");
   const [firstContactLeads, setFirstContactLeads] = useState<FirstContactLead[]>([]);
   const [firstContactCounts, setFirstContactCounts] = useState({ new: 0, overdue: 0 });
@@ -151,6 +157,44 @@ export default function UnansweredMessagesPage() {
   }, [tab, token, repFilter, companyFilter, platformFilter]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const loadMessageStates = useCallback(async () => {
+    setLoadingMessageStates(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/message-states/all`, { headers: authHeaders(token) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || `Message state HTTP ${response.status}`);
+      setMessageStates(Array.isArray(data.items) ? data.items : []);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load message state table");
+    } finally {
+      setLoadingMessageStates(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (queueTab === "message-state") void loadMessageStates();
+  }, [queueTab, loadMessageStates]);
+
+  const loadMissedCallStates = useCallback(async () => {
+    setLoadingMissedCallStates(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/missed-call-states/all`, { headers: authHeaders(token) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || `Missed-call state HTTP ${response.status}`);
+      setMissedCallStates(Array.isArray(data.items) ? data.items : []);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load missed-call state table");
+    } finally {
+      setLoadingMissedCallStates(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (queueTab === "missed-call-state") void loadMissedCallStates();
+  }, [queueTab, loadMissedCallStates]);
 
   const loadFirstContactLeads = useCallback(async (offset = 0, refresh = false) => {
     if (offset) setLoadingLeads(true);
@@ -403,7 +447,7 @@ export default function UnansweredMessagesPage() {
   const headers = ["Client", "Platform", "Message", "Rep", "Company", "Sent To", "Message Time", "Action"];
   const cell = { padding: "13px 16px", borderBottom: "1px solid #e2e8f0", color: "#334155" } as const;
   const filterOptions = useMemo(() => {
-    const rows = queueTab === "messages" ? items : queueTab === "calls" ? missedCalls : queueTab === "leads" ? firstContactLeads : followupLeads;
+    const rows = queueTab === "messages" ? items : queueTab === "calls" ? missedCalls : queueTab === "leads" ? firstContactLeads : queueTab === "followups" ? followupLeads : [];
     return {
       reps: [...new Set(["Unassigned", ...directoryReps, ...followupFilterOptions.reps, ...rows.map((row) => row.rep).filter(Boolean), repFilter].filter(Boolean))].sort(),
       companies: [...new Set([...directoryCompanies, ...followupFilterOptions.companies, ...rows.map((row) => row.company).filter(Boolean), companyFilter].filter(Boolean))].sort(),
@@ -521,13 +565,78 @@ export default function UnansweredMessagesPage() {
           <strong style={queueCardCount}>{globalFollowupCounts.overdue}</strong>
           <span style={queueCardDescription}>Six call periods and three required messages</span>
         </button>
+        <button type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>Message State Table</span>
+          <strong style={queueCardCount}>{messageStates.length}</strong>
+          <span style={queueCardDescription}>Raw CRM message state rows</span>
+        </button>
+        <button type="button" onClick={() => setQueueTab("missed-call-state")} style={{ ...queueCard, ...(queueTab === "missed-call-state" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>Missed Call State Table</span>
+          <strong style={queueCardCount}>{missedCallStates.length}</strong>
+          <span style={queueCardDescription}>Raw CRM missed-call state rows</span>
+        </button>
       </nav>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+      {queueTab !== "message-state" && queueTab !== "missed-call-state" ? <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
         <select aria-label="Filter work queue by rep" value={repFilter} onChange={(event) => setRepFilter(event.target.value)} style={filterSelect}><option value="">All reps</option>{filterOptions.reps.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         <select aria-label="Filter work queue by company" value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} style={filterSelect}><option value="">All companies</option>{filterOptions.companies.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         {queueTab !== "leads" ? <select aria-label="Filter work queue by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select> : null}
-      </div>
+      </div> : null}
+
+      {queueTab === "message-state" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ padding: "16px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Message State Table ({messageStates.length})</h2>
+          <button type="button" onClick={() => void loadMessageStates()} disabled={loadingMessageStates} style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: loadingMessageStates ? "wait" : "pointer" }}>{loadingMessageStates ? "Loading…" : "Reload"}</button>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
+            <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>
+              {['Channel', 'Message ID', 'Lead ID', 'Client Identifier', 'Company Identifier', 'Direction', 'Ended', 'Occurred At'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+            </tr></thead>
+            <tbody>
+              {loadingMessageStates && messageStates.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading message state table…</td></tr> : null}
+              {!loadingMessageStates && messageStates.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>The message state table is empty.</td></tr> : null}
+              {messageStates.map((row) => <tr key={`${row.channel}:${row.message_id}`}>
+                <td style={cell}>{row.channel}</td>
+                <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.message_id}</td>
+                <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.lead_id || "—"}</td>
+                <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.client_identifier}</td>
+                <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.company_identifier}</td>
+                <td style={cell}>{row.direction}</td>
+                <td style={cell}>{row.conversation_ended ? "Yes" : "No"}</td>
+                <td style={cell}>{new Date(row.occurred_at).toLocaleString()}</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+      </section> : null}
+
+      {queueTab === "missed-call-state" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ padding: "16px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Missed Call State Table ({missedCallStates.length})</h2>
+          <button type="button" onClick={() => void loadMissedCallStates()} disabled={loadingMissedCallStates} style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: loadingMissedCallStates ? "wait" : "pointer" }}>{loadingMissedCallStates ? "Loading…" : "Reload"}</button>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", minWidth: 1080, borderCollapse: "collapse" }}>
+            <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>
+              {['Client Identifier', 'Company Identifier', 'Call ID', 'Lead ID', 'Missed Count', 'First Missed At', 'Latest Missed At'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+            </tr></thead>
+            <tbody>
+              {loadingMissedCallStates && missedCallStates.length === 0 ? <tr><td colSpan={7} style={{ padding: 32, textAlign: "center" }}>Loading missed-call state table…</td></tr> : null}
+              {!loadingMissedCallStates && missedCallStates.length === 0 ? <tr><td colSpan={7} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>The missed-call state table is empty.</td></tr> : null}
+              {missedCallStates.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
+                <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.client_identifier}</td>
+                <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.company_identifier}</td>
+                <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.call_id}</td>
+                <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.lead_id || "—"}</td>
+                <td style={cell}>{row.missed_count}</td>
+                <td style={cell}>{new Date(row.first_missed_at).toLocaleString()}</td>
+                <td style={cell}>{new Date(row.latest_missed_at).toLocaleString()}</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+      </section> : null}
 
       {queueTab === "messages" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px 0" }}>
