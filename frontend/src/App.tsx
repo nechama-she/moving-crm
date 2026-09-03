@@ -25,6 +25,7 @@ const ImpersonateUsersPage = lazy(() => import("./ImpersonateUsersPage"));
 const ChatsPage = lazy(() => import("./UnifiedCommunicationsPage"));
 const UnansweredMessagesPage = lazy(() => import("./UnansweredMessagesPage"));
 const IgnoredCallNumbersPage = lazy(() => import("./IgnoredCallNumbersPage"));
+const StatsPage = lazy(() => import("./StatsPage"));
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -113,6 +114,7 @@ function ProtectedRoutes() {
               <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
               {user?.role === "admin" ? <NavLink to="/chats" style={navLinkStyle}>Communications</NavLink> : null}
               {user?.role === "admin" ? <NavLink to="/sales-work-queue" style={navLinkStyle}>Sales Work Queue</NavLink> : null}
+              {user?.role === "admin" ? <NavLink to="/stats" style={navLinkStyle}>Stats</NavLink> : null}
               <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
               <NavLink to="/sales-performance" style={navLinkStyle}>Performance</NavLink>
               <NavLink to="/outreach" style={navLinkStyle}>Outreach</NavLink>
@@ -177,6 +179,7 @@ function ProtectedRoutes() {
                   <NavLink to="/">Leads</NavLink>
                   {user?.role === "admin" ? <NavLink to="/chats">Communications</NavLink> : null}
                   {user?.role === "admin" ? <NavLink to="/sales-work-queue">Sales Work Queue</NavLink> : null}
+                  {user?.role === "admin" ? <NavLink to="/stats">Stats</NavLink> : null}
                   <NavLink to="/sales-calendar">Sales Calendar</NavLink>
                   <NavLink to="/sales-performance">Sales Performance</NavLink>
                   <NavLink to="/outreach">Outreach</NavLink>
@@ -200,6 +203,7 @@ function ProtectedRoutes() {
           <Route path="/" element={<LeadsList />} />
           <Route path="/chats" element={user?.role === "admin" ? <ChatsPage /> : <Navigate to="/" replace />} />
           <Route path="/sales-work-queue" element={user?.role === "admin" ? <UnansweredMessagesPage /> : <Navigate to="/" replace />} />
+          <Route path="/stats" element={user?.role === "admin" ? <StatsPage /> : <Navigate to="/" replace />} />
           <Route path="/outreach" element={<OutreachEventsPage />} />
           <Route path="/sales-calendar" element={<SalesCalendarPage />} />
           <Route path="/sales-performance" element={<SalesPerformancePage />} />
