@@ -120,17 +120,28 @@ export default function UnansweredMessagesPage() {
         fetch(`${API_BASE}/api/unanswered-messages?${messageParams.toString()}`, { headers: authHeaders(token) }),
         fetch(`${API_BASE}/api/unanswered-messages/missed-calls?${callParams.toString()}`, { headers: authHeaders(token) }),
       ]);
-      if (!messageResponse.ok) throw new Error(`Messages HTTP ${messageResponse.status}`);
-      if (!callsResponse.ok) throw new Error(`Missed calls HTTP ${callsResponse.status}`);
-      const [messageData, callsData] = await Promise.all([messageResponse.json(), callsResponse.json()]);
-      setItems(messageData.items || []);
-      setMessageCursor(String(messageData.next_cursor || ""));
-      setMessageHasMore(Boolean(messageData.has_more));
-      setCounts(messageData.counts || { unanswered: 0, ended: 0 });
-      setGlobalCounts(messageData.global_counts || messageData.counts || { unanswered: 0, ended: 0 });
-      setMissedCalls(platformFilter && platformFilter !== "calls" ? [] : (callsData.items || []));
-      setMissedCallCount(platformFilter && platformFilter !== "calls" ? 0 : Number(callsData.count || 0));
-      setGlobalMissedCallCount(Number(callsData.global_count ?? callsData.count ?? 0));
+      const [messageData, callsData] = await Promise.all([
+        messageResponse.json().catch(() => ({})),
+        callsResponse.json().catch(() => ({})),
+      ]);
+      const failures: string[] = [];
+      if (messageResponse.ok) {
+        setItems(messageData.items || []);
+        setMessageCursor(String(messageData.next_cursor || ""));
+        setMessageHasMore(Boolean(messageData.has_more));
+        setCounts(messageData.counts || { unanswered: 0, ended: 0 });
+        setGlobalCounts(messageData.global_counts || messageData.counts || { unanswered: 0, ended: 0 });
+      } else {
+        failures.push(`Unanswered Messages HTTP ${messageResponse.status}: ${String(messageData.detail || "request failed")}`);
+      }
+      if (callsResponse.ok) {
+        setMissedCalls(platformFilter && platformFilter !== "calls" ? [] : (callsData.items || []));
+        setMissedCallCount(platformFilter && platformFilter !== "calls" ? 0 : Number(callsData.count || 0));
+        setGlobalMissedCallCount(Number(callsData.global_count ?? callsData.count ?? 0));
+      } else {
+        failures.push(`Missed Calls HTTP ${callsResponse.status}: ${String(callsData.detail || "request failed")}`);
+      }
+      if (failures.length) setError(failures.join(" | "));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load messages");
     } finally {

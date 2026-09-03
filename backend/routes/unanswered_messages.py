@@ -828,64 +828,6 @@ def _preview_messages(states: list[MessageState]) -> dict[tuple[str, str], dict]
         return dict(executor.map(load, states))
 
 
-def _has_later_human_reply(state: MessageState, source: dict) -> bool:
-    """Check one exact source-table conversation; never scan a source table."""
-    raw_timestamp = source.get("timestamp")
-    if raw_timestamp is None:
-        return False
-    table = sms_messages_table if state.channel == "sms" else conversations_table
-    partition_name = "phone_number" if state.channel == "sms" else "user_id"
-    partition_value = source.get(partition_name)
-    if partition_value is None:
-        return False
-    kwargs = {
-        "KeyConditionExpression": Key(partition_name).eq(partition_value) & Key("timestamp").gt(raw_timestamp),
-        "ScanIndexForward": True,
-    }
-    while True:
-        response = table.query(**kwargs)
-        for item in response.get("Items") or []:
-            if state.channel == "sms":
-                if _digits(item.get("company_number")) != _digits(state.company_identifier):
-                    continue
-                direction = str(item.get("direction") or "").strip().lower()
-                sender = str(item.get("sales_name") or item.get("company_name") or "").strip().lower()
-                if direction in {"sent", "outbound"} and sender not in {"ai", "assistant", "bot"}:
-                    return True
-            else:
-                if str(item.get("platform") or "messenger").strip().lower() != state.channel:
-                    continue
-                if str(item.get("page_id") or "").strip() != state.company_identifier:
-                    continue
-                role = str(item.get("role") or "").strip().lower()
-                sender = str(item.get("sales_name") or "").strip().lower()
-                if role not in {"user", "client", "customer", "ai", "assistant", "bot"} and sender not in {"ai", "assistant", "bot"}:
-                    return True
-        last_key = response.get("LastEvaluatedKey")
-        if not last_key:
-            return False
-        kwargs["ExclusiveStartKey"] = last_key
-
-
-def _reconcile_loaded_unanswered(db: Session, states: list[MessageState], messages: dict[tuple[str, str], dict]) -> int:
-    def check(state: MessageState) -> tuple[MessageState, bool]:
-        source = messages.get((state.channel, state.message_id), {})
-        try:
-            return state, _has_later_human_reply(state, source)
-        except (BotoCoreError, ClientError, TypeError, ValueError):
-            logger.exception("Unanswered reconciliation failed channel=%s message_id=%s", state.channel, state.message_id)
-            return state, False
-
-    with ThreadPoolExecutor(max_workers=min(8, max(1, len(states)))) as executor:
-        stale = [state for state, answered in executor.map(check, states) if answered]
-    for state in stale:
-        db.delete(state)
-    if stale:
-        db.commit()
-        logger.info("Removed %d stale unanswered message states during initial page load", len(stale))
-    return len(stale)
-
-
 @router.get("")
 def list_message_states(
     ended: bool = Query(False),
@@ -959,30 +901,6 @@ def list_message_states(
     unanswered_count = counts_by_ended.get(False, 0)
     ended_count = counts_by_ended.get(True, 0)
     messages = _preview_messages(states)
-    if not cursor and not ended:
-        # Keep filling the first page after stale rows are removed. This runs
-        # only for the initial page request, never for scrolling or a timer.
-        while states and _reconcile_loaded_unanswered(db, states, messages):
-            global_count_rows = (
-                db.query(MessageState.conversation_ended, func.count())
-                .filter(global_visible_filter)
-                .group_by(MessageState.conversation_ended)
-                .all()
-            )
-            global_counts_by_ended = {bool(value): int(count) for value, count in global_count_rows}
-            count_rows = (
-                db.query(MessageState.conversation_ended, func.count())
-                .filter(visible_filter)
-                .group_by(MessageState.conversation_ended)
-                .all()
-            )
-            counts_by_ended = {bool(value): int(count) for value, count in count_rows}
-            page = query.limit(limit + 1).all()
-            has_more = len(page) > limit
-            states = page[:limit]
-            unanswered_count = counts_by_ended.get(False, 0)
-            ended_count = counts_by_ended.get(True, 0)
-            messages = _preview_messages(states)
     previews_finished_at = time.perf_counter()
     companies_by_phone = {_digits(phone): name for name, phone in db.query(Company.name, Company.phone).all() if _digits(phone)}
     reps_by_phone = {_digits(phone): name for name, phone in db.query(User.name, User.phone).all() if _digits(phone)}
