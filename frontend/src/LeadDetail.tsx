@@ -1470,7 +1470,7 @@ export default function LeadDetail() {
       const copiedLeadId = String(responseBody?.lead?.id || "");
       if (!copiedLeadId) throw new Error("The lead was copied, but no CRM lead id was returned");
       const smartMovingId = String(responseBody?.lead?.smartmoving_id || "");
-      const assignment = responseBody?.creation?.smartmoving_assignment || {};
+      const assignment = responseBody?.creation?.rep_assignment || {};
       const notification = assignment.notification || {};
       setCopyLeadResult({
         crmLeadId: copiedLeadId,
@@ -1644,9 +1644,9 @@ export default function LeadDetail() {
                 <strong style={{ display: "block", marginBottom: 8 }}>Lead created successfully.</strong>
                 {copyLeadResult.assignmentAttempted ? (
                   copyLeadResult.assignmentOk
-                    ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was assigned in SmartMoving.</div>
-                    : <div role="alert" style={{ color: "#ba0517", marginBottom: 10 }}>SmartMoving assignment failed: {copyLeadResult.assignmentError || "Unknown error"}. Assign it manually using the link below.</div>
-                ) : <div style={{ marginBottom: 10 }}>No SmartMoving rep assignment was requested.</div>}
+                    ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was assigned in Moving CRM. Assign the rep manually in SmartMoving using the link below.</div>
+                    : <div role="alert" style={{ color: "#ba0517", marginBottom: 10 }}>CRM assignment failed: {copyLeadResult.assignmentError || "Unknown error"}.</div>
+                ) : <div style={{ marginBottom: 10 }}>No CRM rep assignment was requested.</div>}
                 {copyLeadResult.assignmentAttempted && copyLeadResult.assignmentOk ? (
                   copyLeadResult.notificationOk
                     ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was notified by SMS.</div>
@@ -2181,10 +2181,10 @@ export default function LeadDetail() {
                 ) : (
                   <div style={{ display: "grid", gap: 4 }}>
                     <div className="lead-profile-meta" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <div className="lead-profile-name" style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
+                      <div className="lead-profile-name" style={{ order: 0, fontSize: 18, fontWeight: 700, color: "#032d60" }}>
                         {name || "—"}
                       </div>
-                      <div className="lead-profile-selector" ref={statusMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <div className="lead-profile-selector" ref={statusMenuRef} style={{ order: 3, position: "relative", display: "inline-flex", alignItems: "center" }}>
                         <button
                           ref={statusButtonRef}
                           type="button"
@@ -2273,7 +2273,7 @@ export default function LeadDetail() {
                         </div>,
                         document.body
                       ) : null}
-                      <div className="lead-profile-selector" ref={companyMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <div className="lead-profile-selector" ref={companyMenuRef} style={{ order: 1, position: "relative", display: "inline-flex", alignItems: "center" }}>
                       <button
                         type="button"
                         onClick={() => canEditCompany && setCompanyMenuOpen((v) => !v)}
@@ -2353,7 +2353,7 @@ export default function LeadDetail() {
                         </div>
                       ) : null}
                       </div>
-                      <div className="lead-profile-selector lead-profile-assignee" ref={assignMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                      <div className="lead-profile-selector lead-profile-assignee" ref={assignMenuRef} style={{ order: 2, position: "relative", display: "inline-flex", alignItems: "center" }}>
                         <button
                           type="button"
                           onClick={() => user?.role === "admin" && setAssignMenuOpen((v) => !v)}
