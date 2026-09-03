@@ -81,9 +81,15 @@ type CopyLeadResult = {
   assignmentAttempted: boolean;
   assignmentOk: boolean;
   assignmentError: string;
+  smartMovingAssignmentAttempted: boolean;
+  smartMovingAssignmentOk: boolean;
+  smartMovingAssignmentError: string;
   notificationAttempted: boolean;
   notificationOk: boolean;
   notificationError: string;
+  webhookAttempted: boolean;
+  webhookOk: boolean;
+  webhookError: string;
 };
 
 type LeadJobMaterialItem = {
@@ -1471,16 +1477,24 @@ export default function LeadDetail() {
       if (!copiedLeadId) throw new Error("The lead was copied, but no CRM lead id was returned");
       const smartMovingId = String(responseBody?.lead?.smartmoving_id || "");
       const assignment = responseBody?.creation?.rep_assignment || {};
+      const smartMovingAssignment = assignment.smartmoving || {};
       const notification = assignment.notification || {};
+      const webhook = assignment.webhook || {};
       setCopyLeadResult({
         crmLeadId: copiedLeadId,
         smartMovingId,
         assignmentAttempted: Boolean(assignment.attempted),
         assignmentOk: Boolean(assignment.ok),
         assignmentError: String(assignment.error || ""),
+        smartMovingAssignmentAttempted: Boolean(smartMovingAssignment.attempted),
+        smartMovingAssignmentOk: Boolean(smartMovingAssignment.ok),
+        smartMovingAssignmentError: String(smartMovingAssignment.error || ""),
         notificationAttempted: Boolean(notification.attempted),
         notificationOk: Boolean(notification.ok),
         notificationError: String(notification.detail || notification.error || ""),
+        webhookAttempted: Boolean(webhook.attempted),
+        webhookOk: Boolean(webhook.ok),
+        webhookError: String(webhook.error || ""),
       });
     } catch (err: unknown) {
       setCopyLeadError(err instanceof Error ? err.message : "Failed to copy lead");
@@ -1644,13 +1658,23 @@ export default function LeadDetail() {
                 <strong style={{ display: "block", marginBottom: 8 }}>Lead created successfully.</strong>
                 {copyLeadResult.assignmentAttempted ? (
                   copyLeadResult.assignmentOk
-                    ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was assigned in Moving CRM. Assign the rep manually in SmartMoving using the link below.</div>
+                    ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was assigned in Moving CRM.</div>
                     : <div role="alert" style={{ color: "#ba0517", marginBottom: 10 }}>CRM assignment failed: {copyLeadResult.assignmentError || "Unknown error"}.</div>
                 ) : <div style={{ marginBottom: 10 }}>No CRM rep assignment was requested.</div>}
+                {copyLeadResult.assignmentAttempted && copyLeadResult.assignmentOk ? (
+                  copyLeadResult.smartMovingAssignmentOk
+                    ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was assigned in SmartMoving.</div>
+                    : <div role="alert" style={{ color: "#ba0517", marginBottom: 10 }}>SmartMoving assignment failed: {copyLeadResult.smartMovingAssignmentError || (copyLeadResult.smartMovingAssignmentAttempted ? "Unknown SmartMoving error" : "The rep does not have a SmartMoving rep ID")}. Assign it manually using the link below.</div>
+                ) : null}
                 {copyLeadResult.assignmentAttempted && copyLeadResult.assignmentOk ? (
                   copyLeadResult.notificationOk
                     ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was notified by SMS.</div>
                     : <div role="alert" style={{ color: "#ba0517", marginBottom: 10 }}>Rep SMS was not sent: {copyLeadResult.notificationError || (copyLeadResult.notificationAttempted ? "Unknown Aircall error" : "The required phone configuration is missing")}</div>
+                ) : null}
+                {copyLeadResult.assignmentAttempted && copyLeadResult.assignmentOk ? (
+                  copyLeadResult.webhookOk
+                    ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The assignment event was sent.</div>
+                    : <div role="alert" style={{ color: "#ba0517", marginBottom: 10 }}>Assignment event was not sent: {copyLeadResult.webhookError || (copyLeadResult.webhookAttempted ? "Unknown webhook error" : "META_WEBHOOK_URL is not configured")}</div>
                 ) : null}
                 <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
                   {copyLeadResult.smartMovingId ? <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(copyLeadResult.smartMovingId)}/sales`} target="_blank" rel="noreferrer" style={{ color: "#0b5cab", fontWeight: 700 }}>Open in SmartMoving ↗</a> : <span style={{ color: "#ba0517" }}>SmartMoving link unavailable</span>}
