@@ -47,6 +47,16 @@ function IgnoreNumberTarget({ number, name, showUnknown = false, openMenu }: { n
   </div>;
 }
 
+function FollowupStatus({ attempt }: { attempt: FollowupAttempt }) {
+  const color = attempt.status === "overdue" ? "#b91c1c" : attempt.status === "delayed" ? "#b45309" : attempt.status === "on_time" || attempt.status === "completed" ? "#2e844a" : "#64748b";
+  const label = attempt.status === "on_time" || attempt.status === "completed" ? "Completed" : attempt.status === "delayed" ? "Delayed" : attempt.status === "overdue" ? "Overdue" : attempt.status === "open" ? "Open" : attempt.status === "not_sent" ? "Not sent" : "Upcoming";
+  return <div style={{ display: "grid", gridTemplateColumns: "22px 90px 1fr", gap: 6, alignItems: "baseline", fontSize: 12 }}>
+    <strong>{attempt.number ? `${attempt.number}.` : ""}</strong>
+    <span>{attempt.label}</span>
+    <span style={{ color }}><strong>{label}</strong>{attempt.completed_at ? ` - ${new Date(attempt.completed_at).toLocaleString()}` : ` - due by ${new Date(attempt.scheduled_end).toLocaleString()}`}</span>
+  </div>;
+}
+
 export default function UnansweredMessagesPage() {
   const { token } = useAuth();
   const [queueTab, setQueueTab] = useState<QueueTab>("messages");
@@ -743,9 +753,9 @@ export default function UnansweredMessagesPage() {
           </div>
         </div>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", minWidth: 1050, borderCollapse: "collapse" }}>
+          <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
             <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>
-              {['Client', 'Rep', 'Company', 'Created', 'Progress', 'Required Follow-ups'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+              {['Client', 'Rep', 'Company', 'Created', 'Call Follow-ups', 'Message Follow-ups'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
               {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
@@ -755,10 +765,10 @@ export default function UnansweredMessagesPage() {
                 <td style={cell}>{row.rep || "—"}</td>
                 <td style={cell}>{row.company || "—"}</td>
                 <td style={cell}>{new Date(row.created_at).toLocaleString()}{row.created_time_source === "crm" ? <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>CRM time (SmartMoving time unavailable)</div> : null}</td>
-                <td style={cell}><strong>Calls {row.completed_count}/6</strong><div style={{ marginTop: 3 }}>Messages {row.completed_message_count || 0}/3</div>{row.overdue_count + (row.overdue_message_count || 0) ? <div style={{ color: "#b91c1c", fontSize: 12, marginTop: 3 }}>{row.overdue_count + (row.overdue_message_count || 0)} overdue</div> : null}</td>
-                <td style={{ ...cell, minWidth: 520 }}><div style={{ display: "grid", gap: 6 }}>{row.timeline.map((attempt, activityIndex) => {
+                <td style={{ ...cell, minWidth: 350, verticalAlign: "top" }}><div style={{ marginBottom: 8 }}><strong>{row.completed_count}/6 completed</strong>{row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</div><div style={{ display: "grid", gap: 6 }}>{row.timeline.filter((attempt) => attempt.kind === "call").map((attempt, activityIndex) => <FollowupStatus key={`call-${attempt.number || attempt.label}-${activityIndex}`} attempt={attempt} />)}</div></td>
+                <td style={{ ...cell, minWidth: 350, verticalAlign: "top" }}><div style={{ marginBottom: 8 }}><strong>{row.completed_message_count || 0}/3 completed</strong>{row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</div><div style={{ display: "grid", gap: 6 }}>{row.timeline.filter((attempt) => attempt.kind === "message").map((attempt, activityIndex) => {
                   const color = attempt.status === "overdue" ? "#b91c1c" : attempt.status === "delayed" ? "#b45309" : attempt.status === "on_time" || attempt.status === "completed" ? "#2e844a" : "#64748b";
-                  const label = attempt.status === "on_time" || attempt.status === "completed" ? "Completed" : attempt.status === "delayed" ? "Delayed" : attempt.status === "overdue" ? "Overdue" : attempt.status === "open" ? "Open" : "Upcoming";
+                  const label = attempt.status === "on_time" || attempt.status === "completed" ? "Completed" : attempt.status === "delayed" ? "Delayed" : attempt.status === "overdue" ? "Overdue" : attempt.status === "open" ? "Open" : attempt.status === "not_sent" ? "Not sent" : "Upcoming";
                   return <div key={`${attempt.kind}-${attempt.number || attempt.label}-${activityIndex}`} style={{ display: "grid", gridTemplateColumns: "26px 150px 1fr", gap: 8, alignItems: "baseline", fontSize: 12 }}><strong>{attempt.kind === "call" ? `${attempt.number}.` : ""}</strong><span>{attempt.label}</span><span style={{ color }}><strong>{label}</strong>{attempt.completed_at ? ` · ${new Date(attempt.completed_at).toLocaleString()}` : ` · due by ${new Date(attempt.scheduled_end).toLocaleString()}`}</span></div>;
                 })}</div></td>
               </tr>)}
