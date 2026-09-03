@@ -21,8 +21,10 @@ const HIDDEN_FROM_TABLE = new Set([
 ]);
 
 const TABLE_FIELDS = [
-  "leadgen_id",
   "full_name",
+  "company_name",
+  "assigned_to_name",
+  "leadgen_id",
   "pickup_zip",
   "delivery_zip",
   "when_is_the_move?",
@@ -36,6 +38,8 @@ const TABLE_FIELDS = [
 const COL_WIDTHS: Record<string, number> = {
   leadgen_id: 120,
   full_name: 250,
+  company_name: 190,
+  assigned_to_name: 160,
   pickup_zip: 120,
   delivery_zip: 130,
   "when_is_the_move?": 180,
