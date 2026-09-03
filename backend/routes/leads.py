@@ -20,7 +20,6 @@ from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile
 from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, cast, text, or_
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -43,11 +42,9 @@ from libs.smartmoving.client import (
     get_opportunity_audit_activity,
     get_opportunity_documents,
     finish_request_capture,
-    get_referral_sources,
-    update_lead_salesperson,
     update_opportunity_salesperson,
 )
-from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, SmartMovingReferralSource, MessageState, MissedCallState, CommunicationAssociation
+from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation
 from realtime import publish_realtime_event
 from referral_assignment_rules import configured_rep_ids_for_referral
 from routes.templates import get_company_template, render_template
@@ -1667,77 +1664,6 @@ class CopyLeadRequest(BaseModel):
     assigned_to: str = ""
 
 
-def _normalize_referral_source_name(value: str) -> str:
-    return " ".join((value or "").split()).casefold()
-
-
-def _resolve_smartmoving_referral_source_id(db: Session, referral_source_name: str) -> str:
-    """Resolve from the local cache, refreshing that cache once on a miss."""
-    normalized_name = _normalize_referral_source_name(referral_source_name)
-    if not normalized_name:
-        raise HTTPException(status_code=400, detail="Referral Source is required for SmartMoving assignment")
-
-    cached = db.query(SmartMovingReferralSource).filter(
-        SmartMovingReferralSource.normalized_name == normalized_name
-    ).first()
-    if cached:
-        return cached.id
-
-    result = get_referral_sources()
-    if not result.get("ok"):
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not load SmartMoving referral sources: {result.get('error', 'unknown error')}",
-        )
-
-    now = datetime.now(timezone.utc)
-    cache_rows = []
-    for item in result.get("items", []):
-        source_id = _clean_optional_text(item.get("id"))
-        source_name = _clean_optional_text(item.get("name"))
-        source_normalized_name = _normalize_referral_source_name(source_name)
-        if not source_id or not source_normalized_name:
-            continue
-        cache_rows.append({
-            "id": source_id,
-            "name": source_name,
-            "normalized_name": source_normalized_name,
-            "is_lead_provider": bool(item.get("isLeadProvider", False)),
-            "is_public": bool(item.get("isPublic", False)),
-            "created_at": now,
-            "updated_at": now,
-        })
-    try:
-        if cache_rows:
-            statement = pg_insert(SmartMovingReferralSource).values(cache_rows)
-            statement = statement.on_conflict_do_update(
-                index_elements=[SmartMovingReferralSource.id],
-                set_={
-                    "name": statement.excluded.name,
-                    "normalized_name": statement.excluded.normalized_name,
-                    "is_lead_provider": statement.excluded.is_lead_provider,
-                    "is_public": statement.excluded.is_public,
-                    "updated_at": statement.excluded.updated_at,
-                },
-            )
-            db.execute(statement)
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        logger.exception("Could not refresh SmartMoving referral-source cache")
-        raise HTTPException(status_code=500, detail="Could not update SmartMoving referral-source cache") from exc
-
-    cached = db.query(SmartMovingReferralSource).filter(
-        SmartMovingReferralSource.normalized_name == normalized_name
-    ).first()
-    if not cached:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Referral Source '{referral_source_name}' was not found in SmartMoving",
-        )
-    return cached.id
-
-
 @router.get("/leads/{lead_id}/copy-conflicts")
 def copy_lead_conflicts(
     lead_id: str,
@@ -1869,63 +1795,39 @@ def create_lead_through_copy_path(
         smartmoving_lead_id = _clean_optional_text(smartmoving_result.get("lead_id"))
         if not assigned_rep:
             assignment_result["error"] = "Selected CRM rep was not found"
-        elif not _clean_optional_text(assigned_rep.smartmoving_rep_id):
-            assignment_result["error"] = f"{assigned_rep.name} does not have a SmartMoving rep ID configured"
-        elif not smartmoving_lead_id:
-            assignment_result["error"] = "SmartMoving did not return a lead ID"
         else:
-            try:
-                referral_source_id = _resolve_smartmoving_referral_source_id(
-                    db,
-                    resolved_referral_source,
-                )
-                update_result = update_lead_salesperson(
-                    smartmoving_lead_id,
-                    _clean_optional_text(assigned_rep.smartmoving_rep_id),
-                    referral_source_id,
-                    customer_name=full_name,
-                    branch_id=branch_id,
-                    phone_number=phone,
-                    email_address=email,
-                    move_date=move_date,
-                    origin_zip=pickup_zip,
-                    destination_zip=delivery_zip,
-                )
-            except HTTPException as exc:
-                update_result = {"ok": False, "error": str(exc.detail)}
-            assignment_result.update(update_result)
+            assignment_result["ok"] = True
             assignment_result["rep_name"] = assigned_rep.name
-            if update_result.get("ok"):
-                if not _clean_optional_text(assigned_rep.phone):
-                    assignment_result["notification"] = {
-                        "attempted": False,
-                        "ok": False,
-                        "error": f"{assigned_rep.name} does not have a phone number configured",
-                    }
-                elif not _clean_optional_text(target_company.aircall_number_id):
-                    assignment_result["notification"] = {
-                        "attempted": False,
-                        "ok": False,
-                        "error": f"{target_company.name} does not have an Aircall number ID configured",
-                    }
-                else:
-                    from libs.aircall import send_sms
+            if not _clean_optional_text(assigned_rep.phone):
+                assignment_result["notification"] = {
+                    "attempted": False,
+                    "ok": False,
+                    "error": f"{assigned_rep.name} does not have a phone number configured",
+                }
+            elif not _clean_optional_text(target_company.aircall_number_id):
+                assignment_result["notification"] = {
+                    "attempted": False,
+                    "ok": False,
+                    "error": f"{target_company.name} does not have an Aircall number ID configured",
+                }
+            else:
+                from libs.aircall import send_sms
 
-                    smartmoving_url = f"https://app.smartmoving.com/opportunities/{smartmoving_lead_id}/sales"
-                    notification_message = (
-                        f"You have been assigned a new lead: {full_name}. "
-                        f"Open it in SmartMoving: {smartmoving_url}"
-                    )
-                    notification_result = send_sms(
-                        to=assigned_rep.phone,
-                        text=notification_message,
-                        number_id=_clean_optional_text(target_company.aircall_number_id),
-                    )
-                    assignment_result["notification"] = {
-                        "attempted": True,
-                        **notification_result,
-                    }
-    creation_result["smartmoving_assignment"] = assignment_result
+                smartmoving_url = f"https://app.smartmoving.com/opportunities/{smartmoving_lead_id}/sales"
+                notification_message = (
+                    f"You have been assigned a new lead: {full_name}. "
+                    f"Open it in SmartMoving: {smartmoving_url}"
+                )
+                notification_result = send_sms(
+                    to=assigned_rep.phone,
+                    text=notification_message,
+                    number_id=_clean_optional_text(target_company.aircall_number_id),
+                )
+                assignment_result["notification"] = {
+                    "attempted": True,
+                    **notification_result,
+                }
+    creation_result["rep_assignment"] = assignment_result
     return created_lead, creation_result
 
 
@@ -1972,7 +1874,7 @@ def copy_lead(
         move_date=source_lead.move_date or "",
         move_size=source_lead.move_size or "",
         referral_source=referral_source,
-        notes=f"Copied from Moving CRM lead {source_lead.id}",
+        notes="",
         assigned_to=_clean_optional_text(body.assigned_to),
     )
 

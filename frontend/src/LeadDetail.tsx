@@ -1470,7 +1470,7 @@ export default function LeadDetail() {
       const copiedLeadId = String(responseBody?.lead?.id || "");
       if (!copiedLeadId) throw new Error("The lead was copied, but no CRM lead id was returned");
       const smartMovingId = String(responseBody?.lead?.smartmoving_id || "");
-      const assignment = responseBody?.creation?.smartmoving_assignment || {};
+      const assignment = responseBody?.creation?.rep_assignment || {};
       const notification = assignment.notification || {};
       setCopyLeadResult({
         crmLeadId: copiedLeadId,
@@ -1644,9 +1644,9 @@ export default function LeadDetail() {
                 <strong style={{ display: "block", marginBottom: 8 }}>Lead created successfully.</strong>
                 {copyLeadResult.assignmentAttempted ? (
                   copyLeadResult.assignmentOk
-                    ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was assigned in SmartMoving.</div>
-                    : <div role="alert" style={{ color: "#ba0517", marginBottom: 10 }}>SmartMoving assignment failed: {copyLeadResult.assignmentError || "Unknown error"}. Assign it manually using the link below.</div>
-                ) : <div style={{ marginBottom: 10 }}>No SmartMoving rep assignment was requested.</div>}
+                    ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was assigned in Moving CRM. Assign the rep manually in SmartMoving using the link below.</div>
+                    : <div role="alert" style={{ color: "#ba0517", marginBottom: 10 }}>CRM assignment failed: {copyLeadResult.assignmentError || "Unknown error"}.</div>
+                ) : <div style={{ marginBottom: 10 }}>No CRM rep assignment was requested.</div>}
                 {copyLeadResult.assignmentAttempted && copyLeadResult.assignmentOk ? (
                   copyLeadResult.notificationOk
                     ? <div style={{ color: "#2e844a", marginBottom: 10 }}>The rep was notified by SMS.</div>
