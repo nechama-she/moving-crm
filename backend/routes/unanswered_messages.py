@@ -459,12 +459,26 @@ def list_followup_calls(
                 status = "on_time" if completed_at <= end_utc else "delayed"
                 if status == "delayed":
                     completed_local = completed_at.astimezone(lead_tz)
+                    completed_period_end = completed_local
+                    for _, period_start_hour, period_end_hour in CALL_PERIODS:
+                        if period_start_hour <= completed_local.hour < period_end_hour:
+                            completed_period_end = datetime(
+                                completed_local.year,
+                                completed_local.month,
+                                completed_local.day,
+                                period_end_hour,
+                                tzinfo=lead_tz,
+                            )
+                            break
+                    next_available = completed_period_end
                     for future_index in range(slot_index + 1, len(slots)):
                         future_start, future_end, _ = slots[future_index]
-                        if future_start <= completed_local < future_end:
-                            del slots[future_index]
-                            slots.append(_next_period(slots[-1][1], lead_tz))
-                            break
+                        if future_start < next_available:
+                            replacement = _next_period(next_available, lead_tz)
+                            slots[future_index] = replacement
+                            next_available = replacement[1]
+                        else:
+                            next_available = future_end
             elif now > end_utc:
                 status = "overdue"
             elif now >= start_utc:
