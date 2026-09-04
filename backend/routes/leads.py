@@ -364,7 +364,7 @@ def _build_smartmoving_refresh_payload(opportunity: dict, user: User) -> dict:
     for key, value in (
         ("full_name", customer.get("name")),
         ("smartmoving_id", opportunity.get("id")),
-        ("created_time", opportunity.get("createdAtUtc")),
+        ("smartmoving_created_time", opportunity.get("createdAtUtc")),
         ("leadgen_id", str(opportunity.get("quoteNumber")) if opportunity.get("quoteNumber") not in (None, "") else None),
         ("phone_number", customer.get("phoneNumber")),
         ("email", customer.get("emailAddress")),
@@ -3758,6 +3758,7 @@ class LeadUpdate(BaseModel):
     full_name: str | None = None
     leadgen_id: str | None = None
     smartmoving_id: str | None = None
+    smartmoving_created_time: str | None = None
     phone_number: str | None = None
     email: str | None = None
     move_size: str | None = None
@@ -3914,6 +3915,8 @@ def _apply_lead_update(
         lead.leadgen_id = body.leadgen_id.strip() or None
     if body.smartmoving_id is not None:
         lead.smartmoving_id = body.smartmoving_id.strip() or None
+    if body.smartmoving_created_time is not None:
+        lead.created_time = body.smartmoving_created_time.strip() or None
     if body.phone_number is not None:
         lead.phone = _normalize_phone(body.phone_number)
     if body.email is not None:
@@ -4420,12 +4423,6 @@ def _refresh_lead_from_smartmoving(
             job["booked_move_date"] = booked_iso
 
     body = LeadUpdate.model_validate(payload)
-    smartmoving_created_time = _clean_optional_text(payload.get("created_time"))
-    if smartmoving_created_time:
-        # This value belongs to SmartMoving and must not fall back to the CRM
-        # record creation timestamp. Persist it only when SmartMoving
-        # actually returned createdAtUtc.
-        lead.created_time = smartmoving_created_time
     updated = _apply_lead_update(
         lead.id,
         body,
@@ -4604,6 +4601,7 @@ class NewLead(BaseModel):
     booked_move_date: str | None = None
     move_type: str | None = None
     created_time: str | None = None
+    smartmoving_created_time: str | None = None
     leadgen_id: str | None = None
     smartmoving_id: str | None = None
     smartmoving_job_id: str | None = None
@@ -4795,7 +4793,7 @@ def create_lead(
         move_date=normalized_move_date,
         booked_move_date=parsed_booked_date,
         move_type=MOVE_TYPE_MAP.get(raw_move_type, raw_move_type),
-        created_time=_clean_optional_text(body.created_time),
+        created_time=_clean_optional_text(body.smartmoving_created_time) or _clean_optional_text(body.created_time),
         notes=_clean_optional_text(body.notes) or None,
         referral_source=_clean_optional_text(body.referral_source) or None,
         service_type=_clean_optional_text(body.service_type) or None,
