@@ -505,6 +505,8 @@ def list_followup_calls(
             "client_phone": lead.phone or "",
             "rep": lead.assignee.name if lead.assignee else "",
             "company": lead.company.name if lead.company else "",
+            "status": lead.status or "",
+            "priority": lead.priority,
             "created_at": created_at.isoformat(),
             "smartmoving_created_time": lead.created_time,
             "created_time_source": "smartmoving" if _smartmoving_created_at(lead.created_time) else "crm",

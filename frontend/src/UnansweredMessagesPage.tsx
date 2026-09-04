@@ -14,7 +14,7 @@ type MessageRow = { channel: string; message_id: string; lead_id: string; client
 type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type FirstContactLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; created_at: string; age_minutes: number };
 type FollowupAttempt = { number?: number; kind: "call" | "message"; label: string; period: string; scheduled_start: string; scheduled_end: string; completed_at: string; status: "completed" | "not_sent" | "on_time" | "delayed" | "overdue" | "open" | "upcoming" };
-type FollowupLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; created_at: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
+type FollowupLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; priority: number; created_at: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
 type RawMessageState = { channel: string; message_id: string; lead_id: string | null; client_identifier: string; company_identifier: string; direction: string; conversation_ended: boolean; occurred_at: string };
 type RawMissedCallState = { client_identifier: string; company_identifier: string; call_id: string; lead_id: string | null; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type NumberMenu = { number: string; x: number; y: number; connectTarget?: CommunicationTarget } | null;
@@ -757,11 +757,11 @@ export default function UnansweredMessagesPage() {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
             <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>
-              {['Client', 'Rep', 'Company', 'Created', 'Call Follow-ups', 'Message Follow-ups'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+              {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Created', 'Call Follow-ups', 'Message Follow-ups'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
-              {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
-              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "overdue" ? "No overdue follow-ups." : "No priority 0 leads to show."}</td></tr> : null}
+              {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
+              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "overdue" ? "No overdue follow-ups." : "No priority 0 leads to show."}</td></tr> : null}
               {filteredFollowupLeads.map((row) => {
                 const expanded = expandedFollowups.has(row.lead_id);
                 const toggleExpanded = () => setExpandedFollowups((current) => {
@@ -786,12 +786,14 @@ export default function UnansweredMessagesPage() {
                     </td>
                     <td style={cell}>{row.rep || "—"}</td>
                     <td style={cell}>{row.company || "—"}</td>
+                    <td style={{ ...cell, textTransform: "capitalize" }}>{row.status || "—"}</td>
+                    <td style={cell}>{row.priority ?? "—"}</td>
                     <td style={cell}>{new Date(row.created_at).toLocaleString()}{row.created_time_source === "crm" ? <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>CRM time</div> : null}</td>
                     <td style={cell}><strong>{row.completed_count}/6</strong>{row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</td>
                     <td style={cell}><strong>{row.completed_message_count || 0}/3</strong>{row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</td>
                   </tr>
                   {expanded ? <tr>
-                    <td colSpan={6} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
+                    <td colSpan={8} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
                         <div>
                           <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>Call Follow-ups</h3>
