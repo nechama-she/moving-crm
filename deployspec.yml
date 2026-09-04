@@ -6,16 +6,13 @@ phases:
     runtime-versions:
       python: 3.11
     commands:
-      - echo "Installing backend dependencies for migrations"
-      - cd $CODEBUILD_SRC_DIR/backend && pip install -r requirements.txt --quiet
+      - echo "Installing database migration and seed dependencies"
+      - cd $CODEBUILD_SRC_DIR/backend && pip install -r deploy-requirements.txt --quiet
 
   pre_build:
     commands:
-      - echo "Checking message index migration stage"
-      - cd $CODEBUILD_SRC_DIR/backend && python migrate_message_indexes.py
       - echo "Running database migrations"
       - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
-      - cd $CODEBUILD_SRC_DIR/backend && python add_columns.py
       - echo "Ensuring seed data (admin user + company)"
       - cd $CODEBUILD_SRC_DIR/backend && python -c "from import_leads import ensure_seed_data; from database import SessionLocal; s=SessionLocal(); ensure_seed_data(s); s.commit(); s.close(); print('Seed data OK')"
       - |

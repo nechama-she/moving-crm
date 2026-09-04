@@ -35,6 +35,7 @@ phases:
 
       - echo "Uploading Lambda package to S3"
       - aws s3 cp $CODEBUILD_SRC_DIR/lead-followup/package.zip s3://${FRONTEND_BUCKET}/lead-followup/package.zip
+      - rm -rf $CODEBUILD_SRC_DIR/lead-followup/package $CODEBUILD_SRC_DIR/lead-followup/package.zip
 
       - echo "Packaging lead-duplicate Lambda"
       - cd $CODEBUILD_SRC_DIR/lead-duplicate
@@ -47,6 +48,7 @@ phases:
 
       - echo "Uploading lead-duplicate package to S3"
       - aws s3 cp $CODEBUILD_SRC_DIR/lead-duplicate/package.zip s3://${FRONTEND_BUCKET}/lead-duplicate/package.zip
+      - rm -rf $CODEBUILD_SRC_DIR/lead-duplicate/package $CODEBUILD_SRC_DIR/lead-duplicate/package.zip
 
       - echo "Packaging API backend Lambda"
       - cd $CODEBUILD_SRC_DIR/backend
@@ -61,6 +63,7 @@ phases:
 
       - echo "Uploading API backend package to S3"
       - aws s3 cp $CODEBUILD_SRC_DIR/backend/api-package.zip s3://${FRONTEND_BUCKET}/api-backend/package.zip
+      - rm -rf $CODEBUILD_SRC_DIR/backend/package $CODEBUILD_SRC_DIR/backend/api-package.zip
 
       - echo "Packaging message stream Lambda"
       - cd $CODEBUILD_SRC_DIR/backend
@@ -72,6 +75,7 @@ phases:
 
       - echo "Uploading message stream package to S3"
       - aws s3 cp $CODEBUILD_SRC_DIR/backend/message-stream-package.zip s3://${FRONTEND_BUCKET}/message-stream/package.zip
+      - rm -rf $CODEBUILD_SRC_DIR/backend/message-stream-package $CODEBUILD_SRC_DIR/backend/message-stream-package.zip
 
 artifacts:
   files:

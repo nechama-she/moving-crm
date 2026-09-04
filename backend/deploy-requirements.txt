@@ -1,0 +1,8 @@
+# Dependencies used only by migrate.py and ensure_seed_data during deployment.
+fastapi==0.115.0
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.9
+PyJWT==2.9.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.2.0
+python-dotenv==1.0.1
