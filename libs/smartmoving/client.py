@@ -205,7 +205,10 @@ def check_opportunity_exists(opportunity_id: str) -> dict:
         if response.status_code == 400 and "opportunity was not found" in (response.text or "").lower():
             return {"ok": True, "exists": False}
         response.raise_for_status()
-        return {"ok": True, "exists": True}
+        payload = response.json()
+        created_at_utc = payload.get("createdAtUtc") if isinstance(payload, dict) else None
+        status = payload.get("status") if isinstance(payload, dict) else None
+        return {"ok": True, "exists": True, "created_at_utc": created_at_utc, "status": status}
     except httpx.HTTPError as exc:
         response = getattr(exc, "response", None)
         status = getattr(response, "status_code", None) if response is not None else None

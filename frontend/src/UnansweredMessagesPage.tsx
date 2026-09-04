@@ -50,9 +50,10 @@ function IgnoreNumberTarget({ number, name, showUnknown = false, openMenu }: { n
 function FollowupStatus({ attempt }: { attempt: FollowupAttempt }) {
   const color = attempt.status === "overdue" ? "#b91c1c" : attempt.status === "delayed" ? "#b45309" : attempt.status === "on_time" || attempt.status === "completed" ? "#2e844a" : "#64748b";
   const label = attempt.status === "on_time" || attempt.status === "completed" ? "Completed" : attempt.status === "delayed" ? "Delayed" : attempt.status === "overdue" ? "Overdue" : attempt.status === "open" ? "Open" : attempt.status === "not_sent" ? "Not sent" : "Upcoming";
-  return <div style={{ display: "grid", gridTemplateColumns: "22px 90px 1fr", gap: 6, alignItems: "baseline", fontSize: 12 }}>
-    <strong>{attempt.number ? `${attempt.number}.` : ""}</strong>
-    <span>{attempt.label}</span>
+  const isCall = attempt.kind === "call";
+  return <div style={{ display: "grid", gridTemplateColumns: isCall ? "22px 90px minmax(0, 1fr)" : "140px minmax(0, 1fr)", gap: 6, alignItems: "baseline", fontSize: 12 }}>
+    {isCall ? <strong>{attempt.number ? `${attempt.number}.` : ""}</strong> : null}
+    <span style={{ whiteSpace: "nowrap" }}>{attempt.label}</span>
     <span style={{ color }}><strong>{label}</strong>{attempt.completed_at ? ` - ${new Date(attempt.completed_at).toLocaleString()}` : ` - due by ${new Date(attempt.scheduled_end).toLocaleString()}`}</span>
   </div>;
 }

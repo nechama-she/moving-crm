@@ -364,6 +364,7 @@ def _build_smartmoving_refresh_payload(opportunity: dict, user: User) -> dict:
     for key, value in (
         ("full_name", customer.get("name")),
         ("smartmoving_id", opportunity.get("id")),
+        ("created_time", opportunity.get("createdAtUtc")),
         ("leadgen_id", str(opportunity.get("quoteNumber")) if opportunity.get("quoteNumber") not in (None, "") else None),
         ("phone_number", customer.get("phoneNumber")),
         ("email", customer.get("emailAddress")),
@@ -1966,6 +1967,8 @@ def validate_smartmoving_leads(
                 results[lead_id] = {"ok": False, "error": str(exc)}
 
     removed = []
+    updated_created_times = []
+    updated_statuses = []
     errors = []
     leads_by_id = {lead.id: lead for lead in leads}
     for lead_id, result in results.items():
@@ -1975,11 +1978,25 @@ def validate_smartmoving_leads(
         if result.get("exists") is False:
             _hard_delete_lead(leads_by_id[lead_id], db)
             removed.append(lead_id)
+            continue
+        created_at_utc = _clean_optional_text(result.get("created_at_utc"))
+        if created_at_utc:
+            leads_by_id[lead_id].created_time = created_at_utc
+            updated_created_times.append(lead_id)
+        smartmoving_status = _map_smartmoving_status(result.get("status"))
+        if smartmoving_status:
+            leads_by_id[lead_id].status = smartmoving_status
+            updated_statuses.append(lead_id)
+
+    if updated_created_times or updated_statuses:
+        db.commit()
 
     return {
         "ok": not errors,
         "checked": len(checkable),
         "removed_lead_ids": removed,
+        "updated_created_time_lead_ids": updated_created_times,
+        "updated_status_lead_ids": updated_statuses,
         "skipped": skipped,
         "errors": errors,
     }
@@ -4403,6 +4420,12 @@ def _refresh_lead_from_smartmoving(
             job["booked_move_date"] = booked_iso
 
     body = LeadUpdate.model_validate(payload)
+    smartmoving_created_time = _clean_optional_text(payload.get("created_time"))
+    if smartmoving_created_time:
+        # This value belongs to SmartMoving and must not fall back to the CRM
+        # record creation timestamp. Persist it only when SmartMoving
+        # actually returned createdAtUtc.
+        lead.created_time = smartmoving_created_time
     updated = _apply_lead_update(
         lead.id,
         body,
