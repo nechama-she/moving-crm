@@ -1969,6 +1969,7 @@ def validate_smartmoving_leads(
     removed = []
     updated_created_times = []
     updated_statuses = []
+    updated_priorities = []
     errors = []
     leads_by_id = {lead.id: lead for lead in leads}
     for lead_id, result in results.items():
@@ -1987,8 +1988,12 @@ def validate_smartmoving_leads(
         if smartmoving_status:
             leads_by_id[lead_id].status = smartmoving_status
             updated_statuses.append(lead_id)
+        smartmoving_priority = _parse_smartmoving_priority(result.get("lead_status"))
+        if smartmoving_priority is not None:
+            leads_by_id[lead_id].priority = smartmoving_priority
+            updated_priorities.append(lead_id)
 
-    if updated_created_times or updated_statuses:
+    if updated_created_times or updated_statuses or updated_priorities:
         db.commit()
 
     return {
@@ -1997,6 +2002,7 @@ def validate_smartmoving_leads(
         "removed_lead_ids": removed,
         "updated_created_time_lead_ids": updated_created_times,
         "updated_status_lead_ids": updated_statuses,
+        "updated_priority_lead_ids": updated_priorities,
         "skipped": skipped,
         "errors": errors,
     }
