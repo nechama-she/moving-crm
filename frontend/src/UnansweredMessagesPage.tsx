@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -87,6 +87,7 @@ export default function UnansweredMessagesPage() {
   const [followupFilterOptions, setFollowupFilterOptions] = useState({ reps: [] as string[], companies: [] as string[] });
   const [followupHasMore, setFollowupHasMore] = useState(false);
   const [loadingFollowups, setLoadingFollowups] = useState(false);
+  const [expandedFollowups, setExpandedFollowups] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [validatingTab, setValidatingTab] = useState<QueueTab | null>(null);
   const [validationNotice, setValidationNotice] = useState("");
@@ -603,7 +604,7 @@ export default function UnansweredMessagesPage() {
           <button type="button" onClick={() => void loadMessageStates()} disabled={loadingMessageStates} style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: loadingMessageStates ? "wait" : "pointer" }}>{loadingMessageStates ? "Loading…" : "Reload"}</button>
         </div>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
+          <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse" }}>
             <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>
               {['Channel', 'Message ID', 'Lead ID', 'Client Identifier', 'Company Identifier', 'Direction', 'Ended', 'Occurred At'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
@@ -760,18 +761,50 @@ export default function UnansweredMessagesPage() {
             <tbody>
               {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
               {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "overdue" ? "No overdue follow-ups." : "No priority 0 leads to show."}</td></tr> : null}
-              {filteredFollowupLeads.map((row) => <tr key={row.lead_id}>
-                <td style={cell}><Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</td>
-                <td style={cell}>{row.rep || "—"}</td>
-                <td style={cell}>{row.company || "—"}</td>
-                <td style={cell}>{new Date(row.created_at).toLocaleString()}{row.created_time_source === "crm" ? <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>CRM time (SmartMoving time unavailable)</div> : null}</td>
-                <td style={{ ...cell, minWidth: 350, verticalAlign: "top" }}><div style={{ marginBottom: 8 }}><strong>{row.completed_count}/6 completed</strong>{row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</div><div style={{ display: "grid", gap: 6 }}>{row.timeline.filter((attempt) => attempt.kind === "call").map((attempt, activityIndex) => <FollowupStatus key={`call-${attempt.number || attempt.label}-${activityIndex}`} attempt={attempt} />)}</div></td>
-                <td style={{ ...cell, minWidth: 350, verticalAlign: "top" }}><div style={{ marginBottom: 8 }}><strong>{row.completed_message_count || 0}/3 completed</strong>{row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</div><div style={{ display: "grid", gap: 6 }}>{row.timeline.filter((attempt) => attempt.kind === "message").map((attempt, activityIndex) => {
-                  const color = attempt.status === "overdue" ? "#b91c1c" : attempt.status === "delayed" ? "#b45309" : attempt.status === "on_time" || attempt.status === "completed" ? "#2e844a" : "#64748b";
-                  const label = attempt.status === "on_time" || attempt.status === "completed" ? "Completed" : attempt.status === "delayed" ? "Delayed" : attempt.status === "overdue" ? "Overdue" : attempt.status === "open" ? "Open" : attempt.status === "not_sent" ? "Not sent" : "Upcoming";
-                  return <div key={`${attempt.kind}-${attempt.number || attempt.label}-${activityIndex}`} style={{ display: "grid", gridTemplateColumns: "26px 150px 1fr", gap: 8, alignItems: "baseline", fontSize: 12 }}><strong>{attempt.kind === "call" ? `${attempt.number}.` : ""}</strong><span>{attempt.label}</span><span style={{ color }}><strong>{label}</strong>{attempt.completed_at ? ` · ${new Date(attempt.completed_at).toLocaleString()}` : ` · due by ${new Date(attempt.scheduled_end).toLocaleString()}`}</span></div>;
-                })}</div></td>
-              </tr>)}
+              {filteredFollowupLeads.map((row) => {
+                const expanded = expandedFollowups.has(row.lead_id);
+                const toggleExpanded = () => setExpandedFollowups((current) => {
+                  const next = new Set(current);
+                  if (next.has(row.lead_id)) next.delete(row.lead_id);
+                  else next.add(row.lead_id);
+                  return next;
+                });
+                return <Fragment key={row.lead_id}>
+                  <tr
+                    onClick={toggleExpanded}
+                    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleExpanded(); } }}
+                    tabIndex={0}
+                    aria-expanded={expanded}
+                    style={{ cursor: "pointer", background: expanded ? "#f4f8fc" : "#fff" }}
+                  >
+                    <td style={cell}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                        <span aria-hidden="true" style={{ color: "#0b5cab", fontSize: 14 }}>{expanded ? "▼" : "▶"}</span>
+                        <div><Link onClick={(event) => event.stopPropagation()} to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</div>
+                      </div>
+                    </td>
+                    <td style={cell}>{row.rep || "—"}</td>
+                    <td style={cell}>{row.company || "—"}</td>
+                    <td style={cell}>{new Date(row.created_at).toLocaleString()}{row.created_time_source === "crm" ? <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>CRM time</div> : null}</td>
+                    <td style={cell}><strong>{row.completed_count}/6</strong>{row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</td>
+                    <td style={cell}><strong>{row.completed_message_count || 0}/3</strong>{row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</td>
+                  </tr>
+                  {expanded ? <tr>
+                    <td colSpan={6} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
+                        <div>
+                          <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>Call Follow-ups</h3>
+                          <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "call").map((attempt, activityIndex) => <FollowupStatus key={`call-${attempt.number || attempt.label}-${activityIndex}`} attempt={attempt} />)}</div>
+                        </div>
+                        <div>
+                          <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>Message Follow-ups</h3>
+                          <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "message").map((attempt, activityIndex) => <FollowupStatus key={`message-${attempt.label}-${activityIndex}`} attempt={attempt} />)}</div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr> : null}
+                </Fragment>;
+              })}
             </tbody>
           </table>
         </div>
