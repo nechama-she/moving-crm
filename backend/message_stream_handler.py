@@ -33,16 +33,34 @@ def _digits(value) -> str:
     return digits[-10:] if len(digits) >= 10 else digits
 
 
-def _ignored_call_numbers(db) -> set[str]:
+def _ignored_call_numbers(db) -> dict[str, set[str]]:
     row = db.query(AppSetting).filter(AppSetting.key == IGNORED_CALL_NUMBERS_SETTING).first()
     if not row or not row.value:
-        return set()
+        return {}
     try:
         values = json.loads(row.value)
     except (TypeError, ValueError):
         logger.warning("Invalid ignored call numbers setting")
-        return set()
-    return {_digits(value) for value in values if _digits(value)}
+        return {}
+    ignored: dict[str, set[str]] = {}
+    for value in values:
+        if isinstance(value, dict):
+            number = _digits(value.get("number"))
+            direction = str(value.get("direction") or "both").strip().lower()
+        else:
+            number = _digits(value)
+            direction = "both"
+        if number and direction in {"from", "to", "both"}:
+            ignored.setdefault(number, set()).add(direction)
+    return ignored
+
+
+def _is_ignored(db, client_identifier: str, company_identifier: str) -> bool:
+    ignored = _ignored_call_numbers(db)
+    return (
+        bool(ignored.get(client_identifier, set()) & {"from", "both"})
+        or bool(ignored.get(company_identifier, set()) & {"to", "both"})
+    )
 
 
 def _occurred_at(value) -> datetime:
@@ -211,8 +229,7 @@ def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[b
         logger.warning("Skipping call without complete identifiers")
         return False, None
 
-    ignored_numbers = _ignored_call_numbers(db)
-    if client_identifier in ignored_numbers or company_identifier in ignored_numbers:
+    if _is_ignored(db, client_identifier, company_identifier):
         logger.info("Ignoring call with configured number client=%s destination=%s", client_identifier, company_identifier)
         return True, None
 
@@ -320,7 +337,7 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
         logger.warning("Skipping %s message without complete conversation identifiers", channel)
         return False, None
 
-    if channel == "sms" and ({client_identifier, company_identifier} & _ignored_call_numbers(db)):
+    if channel == "sms" and _is_ignored(db, client_identifier, company_identifier):
         logger.info("Ignoring SMS with configured number client=%s destination=%s", client_identifier, company_identifier)
         return True, None
 

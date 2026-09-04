@@ -14,7 +14,6 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import boto3
-import httpx
 from botocore.exceptions import ClientError
 from dateutil import parser as date_parser
 from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File, Request
@@ -26,6 +25,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from auth import get_current_user
 from assignment_conflicts import find_assignment_conflicts
+from assignment_webhook import send_assignment_webhook
 from company_colors import resolve_company_color
 from config import get_config
 from database import get_db
@@ -364,6 +364,7 @@ def _build_smartmoving_refresh_payload(opportunity: dict, user: User) -> dict:
     for key, value in (
         ("full_name", customer.get("name")),
         ("smartmoving_id", opportunity.get("id")),
+        ("smartmoving_created_time", opportunity.get("createdAtUtc")),
         ("leadgen_id", str(opportunity.get("quoteNumber")) if opportunity.get("quoteNumber") not in (None, "") else None),
         ("phone_number", customer.get("phoneNumber")),
         ("email", customer.get("emailAddress")),
@@ -880,64 +881,6 @@ def run_pending_lead_duplication_now(
         "target_referral_source": referral_source,
         "result": invocation_result.get("result") or {},
     }
-
-
-def _send_assignment_webhook(lead: Lead, rep: User | None) -> dict[str, Any]:
-    """Notify meta-webhook after a CRM salesperson assignment."""
-    if not rep:
-        return {"attempted": False, "ok": False, "error": "No rep was assigned"}
-
-    opportunity_id = _clean_optional_text(lead.smartmoving_id)
-    if not opportunity_id:
-        return {"attempted": False, "ok": False, "error": "Lead does not have a SmartMoving ID"}
-
-    ssm_prefix = os.getenv("SSM_PREFIX", "/moving-crm/dev/").rstrip("/")
-    webhook_url = _clean_optional_text(get_ssm_cached(f"{ssm_prefix}/META_WEBHOOK_URL"))
-    if not webhook_url:
-        return {"attempted": False, "ok": False, "error": "META_WEBHOOK_URL is not configured"}
-
-    payload = {
-        "event-type": "sales-person-changed",
-        "opportunity-id": opportunity_id,
-        "rep-name": _clean_optional_text(rep.name),
-    }
-    try:
-        response = httpx.post(
-            webhook_url,
-            json=payload,
-            headers={"Content-Type": "application/json", "User-Agent": "moving-crm"},
-            timeout=10.0,
-        )
-        response_body = response.text[:1500]
-        if not 200 <= response.status_code < 300:
-            logger.warning(
-                "Meta assignment webhook rejected opportunity=%s rep=%s status=%s body=%s",
-                opportunity_id,
-                rep.id,
-                response.status_code,
-                response_body,
-            )
-            return {
-                "attempted": True,
-                "ok": False,
-                "status": response.status_code,
-                "error": f"HTTP {response.status_code}: {response_body or 'empty response'}",
-            }
-        logger.info(
-            "Meta assignment webhook sent opportunity=%s rep=%s status=%s",
-            opportunity_id,
-            rep.id,
-            response.status_code,
-        )
-        return {"attempted": True, "ok": True, "status": response.status_code}
-    except httpx.RequestError as exc:
-        logger.warning(
-            "Meta assignment webhook failed opportunity=%s rep=%s error=%s",
-            opportunity_id,
-            rep.id,
-            exc,
-        )
-        return {"attempted": True, "ok": False, "error": str(exc)}
 
 
 def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None) -> dict:
@@ -1857,7 +1800,7 @@ def create_lead_through_copy_path(
                 ),
                 **_sync_assignment_to_smartmoving(created_lead, assigned_rep),
             }
-            assignment_result["webhook"] = _send_assignment_webhook(created_lead, assigned_rep)
+            assignment_result["webhook"] = send_assignment_webhook(created_lead, assigned_rep)
             if not _clean_optional_text(assigned_rep.phone):
                 assignment_result["notification"] = {
                     "attempted": False,
@@ -2024,6 +1967,9 @@ def validate_smartmoving_leads(
                 results[lead_id] = {"ok": False, "error": str(exc)}
 
     removed = []
+    updated_created_times = []
+    updated_statuses = []
+    updated_priorities = []
     errors = []
     leads_by_id = {lead.id: lead for lead in leads}
     for lead_id, result in results.items():
@@ -2033,11 +1979,30 @@ def validate_smartmoving_leads(
         if result.get("exists") is False:
             _hard_delete_lead(leads_by_id[lead_id], db)
             removed.append(lead_id)
+            continue
+        created_at_utc = _clean_optional_text(result.get("created_at_utc"))
+        if created_at_utc:
+            leads_by_id[lead_id].created_time = created_at_utc
+            updated_created_times.append(lead_id)
+        smartmoving_status = _map_smartmoving_status(result.get("status"))
+        if smartmoving_status:
+            leads_by_id[lead_id].status = smartmoving_status
+            updated_statuses.append(lead_id)
+        smartmoving_priority = _parse_smartmoving_priority(result.get("lead_status"))
+        if smartmoving_priority is not None:
+            leads_by_id[lead_id].priority = smartmoving_priority
+            updated_priorities.append(lead_id)
+
+    if updated_created_times or updated_statuses or updated_priorities:
+        db.commit()
 
     return {
         "ok": not errors,
         "checked": len(checkable),
         "removed_lead_ids": removed,
+        "updated_created_time_lead_ids": updated_created_times,
+        "updated_status_lead_ids": updated_statuses,
+        "updated_priority_lead_ids": updated_priorities,
         "skipped": skipped,
         "errors": errors,
     }
@@ -3799,6 +3764,7 @@ class LeadUpdate(BaseModel):
     full_name: str | None = None
     leadgen_id: str | None = None
     smartmoving_id: str | None = None
+    smartmoving_created_time: str | None = None
     phone_number: str | None = None
     email: str | None = None
     move_size: str | None = None
@@ -3955,6 +3921,8 @@ def _apply_lead_update(
         lead.leadgen_id = body.leadgen_id.strip() or None
     if body.smartmoving_id is not None:
         lead.smartmoving_id = body.smartmoving_id.strip() or None
+    if body.smartmoving_created_time is not None:
+        lead.created_time = body.smartmoving_created_time.strip() or None
     if body.phone_number is not None:
         lead.phone = _normalize_phone(body.phone_number)
     if body.email is not None:
@@ -4639,6 +4607,7 @@ class NewLead(BaseModel):
     booked_move_date: str | None = None
     move_type: str | None = None
     created_time: str | None = None
+    smartmoving_created_time: str | None = None
     leadgen_id: str | None = None
     smartmoving_id: str | None = None
     smartmoving_job_id: str | None = None
@@ -4830,7 +4799,7 @@ def create_lead(
         move_date=normalized_move_date,
         booked_move_date=parsed_booked_date,
         move_type=MOVE_TYPE_MAP.get(raw_move_type, raw_move_type),
-        created_time=_clean_optional_text(body.created_time),
+        created_time=_clean_optional_text(body.smartmoving_created_time) or _clean_optional_text(body.created_time),
         notes=_clean_optional_text(body.notes) or None,
         referral_source=_clean_optional_text(body.referral_source) or None,
         service_type=_clean_optional_text(body.service_type) or None,
@@ -4920,7 +4889,7 @@ def create_lead(
                 )
             else:
                 logger.info("Auto-assigned lead %s to rep %s (%s)", lead.id, assigned_to_user_id, assignment_reason)
-                _send_assignment_webhook(lead, assigned_rep)
+                send_assignment_webhook(lead, assigned_rep)
 
     # Send welcome SMS if phone and smartmoving_id are present
     sms_result = None

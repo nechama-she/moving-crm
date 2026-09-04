@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -14,7 +14,7 @@ type MessageRow = { channel: string; message_id: string; lead_id: string; client
 type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type FirstContactLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; created_at: string; age_minutes: number };
 type FollowupAttempt = { number?: number; kind: "call" | "message"; label: string; period: string; scheduled_start: string; scheduled_end: string; completed_at: string; status: "completed" | "not_sent" | "on_time" | "delayed" | "overdue" | "open" | "upcoming" };
-type FollowupLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; created_at: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
+type FollowupLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; priority: number; created_at: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
 type RawMessageState = { channel: string; message_id: string; lead_id: string | null; client_identifier: string; company_identifier: string; direction: string; conversation_ended: boolean; occurred_at: string };
 type RawMissedCallState = { client_identifier: string; company_identifier: string; call_id: string; lead_id: string | null; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type NumberMenu = { number: string; x: number; y: number; connectTarget?: CommunicationTarget } | null;
@@ -44,6 +44,17 @@ function IgnoreNumberTarget({ number, name, showUnknown = false, openMenu }: { n
   >
     <strong>{displayPhone(number)}</strong>
     {name || showUnknown ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{name || "Unknown number"}</div> : null}
+  </div>;
+}
+
+function FollowupStatus({ attempt }: { attempt: FollowupAttempt }) {
+  const color = attempt.status === "overdue" ? "#b91c1c" : attempt.status === "delayed" ? "#b45309" : attempt.status === "on_time" || attempt.status === "completed" ? "#2e844a" : "#64748b";
+  const label = attempt.status === "on_time" || attempt.status === "completed" ? "Completed" : attempt.status === "delayed" ? "Delayed" : attempt.status === "overdue" ? "Overdue" : attempt.status === "open" ? "Open" : attempt.status === "not_sent" ? "Not sent" : "Upcoming";
+  const isCall = attempt.kind === "call";
+  return <div style={{ display: "grid", gridTemplateColumns: isCall ? "22px 90px minmax(0, 1fr)" : "140px minmax(0, 1fr)", gap: 6, alignItems: "baseline", fontSize: 12 }}>
+    {isCall ? <strong>{attempt.number ? `${attempt.number}.` : ""}</strong> : null}
+    <span style={{ whiteSpace: "nowrap" }}>{attempt.label}</span>
+    <span style={{ color }}><strong>{label}</strong>{attempt.completed_at ? ` - ${new Date(attempt.completed_at).toLocaleString()}` : ` - due by ${new Date(attempt.scheduled_end).toLocaleString()}`}</span>
   </div>;
 }
 
@@ -77,6 +88,7 @@ export default function UnansweredMessagesPage() {
   const [followupFilterOptions, setFollowupFilterOptions] = useState({ reps: [] as string[], companies: [] as string[] });
   const [followupHasMore, setFollowupHasMore] = useState(false);
   const [loadingFollowups, setLoadingFollowups] = useState(false);
+  const [expandedFollowups, setExpandedFollowups] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [validatingTab, setValidatingTab] = useState<QueueTab | null>(null);
   const [validationNotice, setValidationNotice] = useState("");
@@ -428,13 +440,13 @@ export default function UnansweredMessagesPage() {
     if (result.event) applyMissedCallEvent(result.event as RealtimeEvent);
   };
 
-  const ignoreNumber = async (number: string) => {
+  const ignoreNumber = async (number: string, direction: "from" | "to" | "both") => {
     setError("");
     setNumberMenu(null);
     const response = await fetch(`${API_BASE}/api/unanswered-messages/ignored-call-numbers`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
-      body: JSON.stringify({ number }),
+      body: JSON.stringify({ number, direction }),
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) { setError(result.detail || `HTTP ${response.status}`); return; }
@@ -538,9 +550,13 @@ export default function UnansweredMessagesPage() {
       <p style={{ margin: "6px 0 20px", color: "#64748b" }}>Sales items that need attention.</p>
       {error ? <p style={{ color: "#b91c1c" }}>{error}</p> : null}
       {validationNotice ? <p style={{ color: "#2e844a" }}>{validationNotice}</p> : null}
-      {numberMenu ? <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "fixed", zIndex: 1000, left: Math.min(numberMenu.x, window.innerWidth - 190), top: Math.min(numberMenu.y, window.innerHeight - 60), minWidth: 180, padding: 5, border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", boxShadow: "0 6px 18px rgba(15,23,42,.2)" }}>
+      {numberMenu ? <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "fixed", zIndex: 1000, left: Math.min(numberMenu.x, window.innerWidth - 220), top: Math.min(numberMenu.y, window.innerHeight - 175), minWidth: 210, padding: 5, border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", boxShadow: "0 6px 18px rgba(15,23,42,.2)" }}>
         {numberMenu.connectTarget ? <button type="button" onClick={() => { setConnectTarget(numberMenu.connectTarget || null); setNumberMenu(null); }} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#0b5cab", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Connect to a lead</button> : null}
-        {!numberMenu.connectTarget || numberMenu.connectTarget.channel === "sms" || numberMenu.connectTarget.channel === "phone" ? <button type="button" onClick={() => void ignoreNumber(numberMenu.number)} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore this number</button> : null}
+        {!numberMenu.connectTarget || numberMenu.connectTarget.channel === "sms" || numberMenu.connectTarget.channel === "phone" ? <>
+          <button type="button" onClick={() => void ignoreNumber(numberMenu.number, "from")} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore from this number</button>
+          <button type="button" onClick={() => void ignoreNumber(numberMenu.number, "to")} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore to this number</button>
+          <button type="button" onClick={() => void ignoreNumber(numberMenu.number, "both")} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore both directions</button>
+        </> : null}
       </div> : null}
       {connectTarget ? <ConnectCommunicationLeadModal target={connectTarget} token={token} onClose={() => setConnectTarget(null)} onConnected={(lead) => { setItems((current) => current.map((row) => row.channel === connectTarget.channel && row.client_identifier === connectTarget.clientIdentifier && row.company_identifier === connectTarget.companyIdentifier ? { ...row, lead_id: lead.id, client: lead.name, company: lead.company, rep: lead.rep || "Unassigned" } : row)); setMissedCalls((current) => current.map((row) => ["calls", "call", "phone"].includes(connectTarget.channel) && row.client_identifier === connectTarget.clientIdentifier && row.company_identifier === connectTarget.companyIdentifier ? { ...row, lead_id: lead.id, client: lead.name, company: lead.company, rep: lead.rep || "Unassigned" } : row)); setConnectTarget(null); }} /> : null}
 
@@ -589,7 +605,7 @@ export default function UnansweredMessagesPage() {
           <button type="button" onClick={() => void loadMessageStates()} disabled={loadingMessageStates} style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: loadingMessageStates ? "wait" : "pointer" }}>{loadingMessageStates ? "Loading…" : "Reload"}</button>
         </div>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
+          <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse" }}>
             <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>
               {['Channel', 'Message ID', 'Lead ID', 'Client Identifier', 'Company Identifier', 'Direction', 'Ended', 'Occurred At'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
@@ -739,25 +755,59 @@ export default function UnansweredMessagesPage() {
           </div>
         </div>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", minWidth: 1050, borderCollapse: "collapse" }}>
+          <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
             <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>
-              {['Client', 'Rep', 'Company', 'Created', 'Progress', 'Required Follow-ups'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+              {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Created', 'Call Follow-ups', 'Message Follow-ups'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
-              {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
-              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "overdue" ? "No overdue follow-ups." : "No priority 0 leads to show."}</td></tr> : null}
-              {filteredFollowupLeads.map((row) => <tr key={row.lead_id}>
-                <td style={cell}><Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</td>
-                <td style={cell}>{row.rep || "—"}</td>
-                <td style={cell}>{row.company || "—"}</td>
-                <td style={cell}>{new Date(row.created_at).toLocaleString()}{row.created_time_source === "crm" ? <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>CRM time (SmartMoving time unavailable)</div> : null}</td>
-                <td style={cell}><strong>Calls {row.completed_count}/6</strong><div style={{ marginTop: 3 }}>Messages {row.completed_message_count || 0}/3</div>{row.overdue_count + (row.overdue_message_count || 0) ? <div style={{ color: "#b91c1c", fontSize: 12, marginTop: 3 }}>{row.overdue_count + (row.overdue_message_count || 0)} overdue</div> : null}</td>
-                <td style={{ ...cell, minWidth: 520 }}><div style={{ display: "grid", gap: 6 }}>{row.timeline.map((attempt, activityIndex) => {
-                  const color = attempt.status === "overdue" ? "#b91c1c" : attempt.status === "delayed" ? "#b45309" : attempt.status === "on_time" || attempt.status === "completed" ? "#2e844a" : "#64748b";
-                  const label = attempt.status === "on_time" || attempt.status === "completed" ? "Completed" : attempt.status === "delayed" ? "Delayed" : attempt.status === "overdue" ? "Overdue" : attempt.status === "open" ? "Open" : "Upcoming";
-                  return <div key={`${attempt.kind}-${attempt.number || attempt.label}-${activityIndex}`} style={{ display: "grid", gridTemplateColumns: "26px 150px 1fr", gap: 8, alignItems: "baseline", fontSize: 12 }}><strong>{attempt.kind === "call" ? `${attempt.number}.` : ""}</strong><span>{attempt.label}</span><span style={{ color }}><strong>{label}</strong>{attempt.completed_at ? ` · ${new Date(attempt.completed_at).toLocaleString()}` : ` · due by ${new Date(attempt.scheduled_end).toLocaleString()}`}</span></div>;
-                })}</div></td>
-              </tr>)}
+              {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
+              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "overdue" ? "No overdue follow-ups." : "No priority 0 leads to show."}</td></tr> : null}
+              {filteredFollowupLeads.map((row) => {
+                const expanded = expandedFollowups.has(row.lead_id);
+                const toggleExpanded = () => setExpandedFollowups((current) => {
+                  const next = new Set(current);
+                  if (next.has(row.lead_id)) next.delete(row.lead_id);
+                  else next.add(row.lead_id);
+                  return next;
+                });
+                return <Fragment key={row.lead_id}>
+                  <tr
+                    onClick={toggleExpanded}
+                    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleExpanded(); } }}
+                    tabIndex={0}
+                    aria-expanded={expanded}
+                    style={{ cursor: "pointer", background: expanded ? "#f4f8fc" : "#fff" }}
+                  >
+                    <td style={cell}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                        <span aria-hidden="true" style={{ color: "#0b5cab", fontSize: 14 }}>{expanded ? "▼" : "▶"}</span>
+                        <div><Link onClick={(event) => event.stopPropagation()} to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</div>
+                      </div>
+                    </td>
+                    <td style={cell}>{row.rep || "—"}</td>
+                    <td style={cell}>{row.company || "—"}</td>
+                    <td style={{ ...cell, textTransform: "capitalize" }}>{row.status || "—"}</td>
+                    <td style={cell}>{row.priority ?? "—"}</td>
+                    <td style={cell}>{new Date(row.created_at).toLocaleString()}{row.created_time_source === "crm" ? <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>CRM time</div> : null}</td>
+                    <td style={cell}><strong>{row.completed_count}/6</strong>{row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</td>
+                    <td style={cell}><strong>{row.completed_message_count || 0}/3</strong>{row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</td>
+                  </tr>
+                  {expanded ? <tr>
+                    <td colSpan={8} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
+                        <div>
+                          <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>Call Follow-ups</h3>
+                          <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "call").map((attempt, activityIndex) => <FollowupStatus key={`call-${attempt.number || attempt.label}-${activityIndex}`} attempt={attempt} />)}</div>
+                        </div>
+                        <div>
+                          <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>Message Follow-ups</h3>
+                          <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "message").map((attempt, activityIndex) => <FollowupStatus key={`message-${attempt.label}-${activityIndex}`} attempt={attempt} />)}</div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr> : null}
+                </Fragment>;
+              })}
             </tbody>
           </table>
         </div>
