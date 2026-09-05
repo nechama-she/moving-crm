@@ -639,17 +639,25 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
                 timezone_name=company_timezones.get(company_id),
             )
             if configured_rep_ids is not None:
-                eligible_reps = [rep for rep in active_reps if rep.id in configured_rep_ids]
+                eligible_reps = [
+                    rep
+                    for rep in active_reps
+                    if rep.id in configured_rep_ids and rep.id not in conflicts.excluded_rep_ids
+                ]
             else:
                 eligible_reps = [rep for rep in active_reps if rep.id not in conflicts.excluded_rep_ids]
             if not eligible_reps:
                 no_rep_reason = (
-                    "referral_source_rule_no_available_rep"
+                    "referral_source_rule_all_reps_have_matching_lead"
+                    if configured_rep_ids and conflicts.excluded_rep_ids
+                    else "referral_source_rule_no_available_rep"
                     if configured_rep_ids is not None
                     else "matching_lead_other_company_excluded_all_reps"
                 )
                 no_rep_note = (
-                    "Queued because no rep configured for this Referral Source is currently eligible"
+                    "Not assigned because every configured rep already has this client under another company"
+                    if configured_rep_ids and conflicts.excluded_rep_ids
+                    else "Queued because no rep configured for this Referral Source is currently eligible"
                     if configured_rep_ids is not None
                     else "Not auto-assigned because matching leads in other companies are assigned to every eligible rep"
                 )
@@ -670,16 +678,6 @@ def _run_backlog_core(db: Session, dry_run: bool = False) -> dict:
             pool_position = pool_positions[pool_key]
             rep = eligible_reps[pool_position % len(eligible_reps)]
             pool_positions[pool_key] = (pool_position + 1) % len(eligible_reps)
-            if configured_rep_ids is not None and rep.id in conflicts.excluded_rep_ids:
-                queued_count += _queue_backlog_leads(
-                    [lead],
-                    assignment_reason="referral_source_rule_rep_has_matching_lead_other_company",
-                    note="Not auto-assigned because the rule-selected rep already has the same phone or email under another company",
-                    latest_events_by_lead=latest_events_by_lead,
-                    lead_ids_with_queued_event=lead_ids_with_queued_event,
-                    db=db,
-                )
-                continue
             dry_run_reason = DRY_RUN_BACKLOG_REASON
             if dry_run:
                 latest_event = latest_events_by_lead.get(lead.id)
