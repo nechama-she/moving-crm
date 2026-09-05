@@ -1328,7 +1328,7 @@ Resources:
           SMARTMOVING_API_KEY: !Sub "{{resolve:ssm:/moving-crm/${Environment}/SMARTMOVING_API_KEY}}"
           JWT_SECRET: !Sub "{{resolve:secretsmanager:${JwtSecret}:SecretString}}"
           ENABLE_LEAD_DUPLICATION: !If [IsProd, "true", "false"]
-          AUTO_ASSIGN_DRY_RUN_ONLY: "true"
+          AUTO_ASSIGN_DRY_RUN_ONLY: !If [IsProd, "false", "true"]
           NEW_LEAD_SMS_DRY_RUN: !If [IsProd, "false", "true"]
           REP_ASSIGNMENT_SMS_DRY_RUN: !If [IsProd, "false", "true"]
           CORS_ORIGINS: !If
