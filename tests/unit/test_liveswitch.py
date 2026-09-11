@@ -13,7 +13,7 @@ from fastapi import HTTPException
 def api():
     source = Path(__file__).resolve().parents[2] / 'backend/routes/liveswitch.py'
     tree = ast.parse(source.read_text())
-    names = {'ensure_conversation', 'upload_urls'}
+    names = {'ensure_conversation', 'upload_urls', 'send_participant_sms'}
     functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     for node in functions:
         node.decorator_list = []
@@ -21,10 +21,13 @@ def api():
         node.args.defaults = []
         for arg in node.args.args:
             arg.annotation = None
-    lead = SimpleNamespace(id='lead-1', smartmoving_id='sm-1', quote_number=None, phone=' 1112223333 ', company=SimpleNamespace(phone=' 2405707987 '))
+    lead = SimpleNamespace(id='lead-1', smartmoving_id='sm-1', quote_number=None, phone=' 1112223333 ', assignee=None, company=SimpleNamespace(phone=' 2405707987 ', aircall_number_id='company-number'))
     scope = {'get_opportunity': MagicMock(return_value={'data': {'quoteNumber': 23985}}), 'json': json, 'HTTPException': HTTPException, 'Lead': SimpleNamespace(id='id'),
              'LeadLiveSwitch': MagicMock(), '_get_visible_lead_or_404': MagicMock(return_value=lead),
-             '_ensure_not_dispatch_write': MagicMock(), '_api_post': MagicMock()}
+             '_ensure_not_dispatch_write': MagicMock(), '_api_post': MagicMock(),
+             'SalesRep': SimpleNamespace(name='name'), 'func': MagicMock(),
+             'send_sms': MagicMock(return_value={'ok': True, 'message_id': 'sms-1'}),
+             'find_number_id': MagicMock(return_value=None)}
     exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), 'exec'), scope)
     return scope
 
@@ -106,6 +109,74 @@ def test_missing_quote_number_does_not_create_conversation(api):
         api['ensure_conversation']('lead-1', object(), db)
     assert exc.value.status_code == 400
     api['_api_post'].assert_not_called()
+
+
+@pytest.mark.parametrize('sender', ['assigned-rep', 'sales-reps-table', 'company', 'company-no-rep-match', 'company-phone'])
+def test_participant_sms_uses_correct_sender_and_saved_link(api, sender):
+    db = MagicMock()
+    link = 'https://api.production.liveswitch.com/contact/s/test-link'
+    db.get.return_value = SimpleNamespace(details=json.dumps({'participantJoinUrl': link}))
+    db.query.return_value.filter.return_value.first.return_value = None
+    lead = api['_get_visible_lead_or_404'].return_value
+    expected_number = 'company-number'
+    if sender in ('assigned-rep', 'sales-reps-table', 'company-no-rep-match'):
+        lead.assignee = SimpleNamespace(name=' Eli Jones ', aircall_number_id=None)
+    if sender == 'assigned-rep':
+        lead.assignee.aircall_number_id = 'rep-number'
+        expected_number = 'rep-number'
+    elif sender == 'sales-reps-table':
+        db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(aircall_number_id='mapped-rep-number')
+        expected_number = 'mapped-rep-number'
+    elif sender == 'company-phone':
+        lead.company.aircall_number_id = None
+        api['find_number_id'].return_value = 'resolved-company-number'
+        expected_number = 'resolved-company-number'
+    assert api['send_participant_sms']('lead-1', object(), db) == {'ok': True, 'message_id': 'sms-1'}
+    api['send_sms'].assert_called_once_with(
+        to='1112223333', text=f'Please click this link to join the live video call. {link}', number_id=expected_number,
+    )
+    api['get_opportunity'].assert_not_called()
+    api['_api_post'].assert_not_called()
+    if sender == 'sales-reps-table':
+        api['func'].trim.assert_called_once_with(api['SalesRep'].name)
+        api['func'].lower.return_value.__eq__.assert_called_once_with('eli jones')
+    if sender == 'company-phone':
+        api['find_number_id'].assert_called_once_with(lead.company.phone)
+    else:
+        api['find_number_id'].assert_not_called()
+
+
+@pytest.mark.parametrize('missing,status', [('conversation', 409), ('link', 400), ('phone', 400), ('sender', 400), ('access', 404), ('permission', 403)])
+def test_participant_sms_rejects_missing_data_or_access(api, missing, status):
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(details='{"participantJoinUrl":"https://example.com/join"}')
+    lead = api['_get_visible_lead_or_404'].return_value
+    if missing == 'conversation':
+        db.get.return_value = None
+    elif missing == 'link':
+        db.get.return_value.details = '{}'
+    elif missing == 'phone':
+        lead.phone = ''
+    elif missing == 'sender':
+        lead.company.aircall_number_id = ''
+    elif missing == 'access':
+        api['_get_visible_lead_or_404'].side_effect = HTTPException(404, 'Lead not found')
+    elif missing == 'permission':
+        api['_ensure_not_dispatch_write'].side_effect = HTTPException(403, 'Not allowed')
+    with pytest.raises(HTTPException) as exc:
+        api['send_participant_sms']('lead-1', object(), db)
+    assert exc.value.status_code == status
+    api['send_sms'].assert_not_called()
+
+
+def test_participant_sms_returns_aircall_error(api):
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(details='{"participantJoinUrl":"https://example.com/join"}')
+    api['send_sms'].return_value = {'ok': False, 'detail': 'SMS not enabled for this number'}
+    with pytest.raises(HTTPException) as exc:
+        api['send_participant_sms']('lead-1', object(), db)
+    assert exc.value.status_code == 502
+    assert exc.value.detail == 'SMS not enabled for this number'
 
 
 def test_configured_bearer_token_does_not_require_oauth():

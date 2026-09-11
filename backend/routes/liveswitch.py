@@ -147,10 +147,12 @@ async def oauth_callback(
 from threading import Lock
 from typing import Literal
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import get_db
-from models import Lead, LeadLiveSwitch
+from models import Lead, LeadLiveSwitch, SalesRep
+from libs.aircall.client import send_sms, find_number_id
 from libs.smartmoving.client import get_opportunity
 from routes.leads import _get_visible_lead_or_404, _ensure_not_dispatch_write
 
@@ -230,6 +232,41 @@ def ensure_conversation(lead_id: str, user: User = Depends(get_current_user), db
     db.add(LeadLiveSwitch(lead_id=lead.id, details=json.dumps(details)))
     db.commit()
     return details
+
+
+@router.post("/leads/{lead_id}/participant-sms")
+def send_participant_sms(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    if not saved:
+        raise HTTPException(409, "Start the conversation first")
+    link = str(json.loads(saved.details).get("participantJoinUrl") or "").strip()
+    if not link:
+        raise HTTPException(400, "The participant link is unavailable")
+    phone = (lead.phone or "").strip()
+    if not phone:
+        raise HTTPException(400, "This lead has no phone number")
+
+    rep = lead.assignee
+    number_id = (rep.aircall_number_id or "").strip() if rep else ""
+    if not number_id and rep and (rep.name or "").strip():
+        sales_rep = db.query(SalesRep).filter(
+            func.lower(func.trim(SalesRep.name)) == rep.name.strip().lower()
+        ).first()
+        if sales_rep:
+            number_id = (sales_rep.aircall_number_id or "").strip()
+    if not number_id and lead.company:
+        number_id = (lead.company.aircall_number_id or "").strip()
+        if not number_id and (lead.company.phone or "").strip():
+            number_id = find_number_id(lead.company.phone)
+    if not number_id:
+        raise HTTPException(400, "No Aircall sending number is configured for the assigned rep or this company")
+
+    result = send_sms(to=phone, text=f"Please click this link to join the live video call. {link}", number_id=number_id)
+    if not result.get("ok"):
+        raise HTTPException(502, result.get("detail") or result.get("error") or "Could not send SMS through Aircall")
+    return {"ok": True, "message_id": result.get("message_id", "")}
 
 
 class UploadFileInfo(BaseModel):
