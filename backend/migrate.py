@@ -25,6 +25,7 @@ def migrate() -> None:
     )
     """
     with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS quote_number VARCHAR(100)"))
         connection.execute(text("""CREATE TABLE IF NOT EXISTS lead_liveswitch (
             lead_id VARCHAR(36) PRIMARY KEY REFERENCES leads(id) ON DELETE CASCADE,
             details TEXT NOT NULL

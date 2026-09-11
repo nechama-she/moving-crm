@@ -216,6 +216,7 @@ class Lead(Base):
     # sources: facebook, website, referral, manual
     facebook_user_id = Column(String(100), index=True)
     leadgen_id = Column(String(100), index=True)
+    quote_number = Column(String(100), nullable=True)
     smartmoving_id = Column(String(100), index=True, unique=True)
     inbox_url = Column(Text)
     notes = Column(Text)
@@ -294,6 +295,7 @@ class Lead(Base):
             "company_phone": self.company.phone if self.company else "",
             "aircall_number_id": self.company.aircall_number_id if self.company else "",
             "leadgen_id": self.leadgen_id or "",
+            "quote_number": self.quote_number or "",
             "smartmoving_id": self.smartmoving_id or "",
             "full_name": self.full_name or "",
             "email": self.email or "",

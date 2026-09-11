@@ -365,7 +365,7 @@ def _build_smartmoving_refresh_payload(opportunity: dict, user: User) -> dict:
         ("full_name", customer.get("name")),
         ("smartmoving_id", opportunity.get("id")),
         ("smartmoving_created_time", opportunity.get("createdAtUtc")),
-        ("leadgen_id", str(opportunity.get("quoteNumber")) if opportunity.get("quoteNumber") not in (None, "") else None),
+        ("quote_number", str(opportunity.get("quoteNumber")) if opportunity.get("quoteNumber") not in (None, "") else None),
         ("phone_number", customer.get("phoneNumber")),
         ("email", customer.get("emailAddress")),
         ("referral_source", opportunity.get("referralSource")),
@@ -1757,6 +1757,7 @@ def create_lead_through_copy_path(
             detail=f"SmartMoving could not create the copied lead: {smartmoving_result.get('error', 'unknown error')}",
         )
 
+    smartmoving_response = smartmoving_result.get("response")
     api_secret = get_config().get("API_SECRET", os.getenv("API_SECRET", ""))
     creation_result = create_lead(
         NewLead(
@@ -1768,6 +1769,7 @@ def create_lead_through_copy_path(
             move_size=move_size,
             move_date=move_date,
             smartmoving_id=_clean_optional_text(smartmoving_result.get("lead_id")) or None,
+            quote_number=smartmoving_response.get("quoteNumber") if isinstance(smartmoving_response, dict) else None,
             facebook_user_id=facebook_user_id or None,
             assigned_to=assigned_to or None,
             notes=notes,
@@ -3763,6 +3765,7 @@ class LeadUpdate(BaseModel):
     notes: str | None = None
     full_name: str | None = None
     leadgen_id: str | None = None
+    quote_number: str | int | None = Field(default=None, alias="quoteNumber")
     smartmoving_id: str | None = None
     smartmoving_created_time: str | None = None
     phone_number: str | None = None
@@ -3919,6 +3922,8 @@ def _apply_lead_update(
         lead.full_name = name
     if body.leadgen_id is not None:
         lead.leadgen_id = body.leadgen_id.strip() or None
+    if body.quote_number is not None:
+        lead.quote_number = str(body.quote_number).strip() or None
     if body.smartmoving_id is not None:
         lead.smartmoving_id = body.smartmoving_id.strip() or None
     if body.smartmoving_created_time is not None:
@@ -4609,6 +4614,7 @@ class NewLead(BaseModel):
     created_time: str | None = None
     smartmoving_created_time: str | None = None
     leadgen_id: str | None = None
+    quote_number: str | int | None = Field(default=None, alias="quoteNumber")
     smartmoving_id: str | None = None
     smartmoving_job_id: str | None = None
     facebook_user_id: str | None = None
@@ -4794,6 +4800,7 @@ def create_lead(
         phone=_normalize_phone(body.phone_number),
         source=body.source or "zapier",
         leadgen_id=_clean_optional_text(body.leadgen_id) or None,
+        quote_number=(str(body.quote_number).strip() or None) if body.quote_number is not None else None,
         smartmoving_id=_clean_optional_text(body.smartmoving_id) or None,
         facebook_user_id=_clean_optional_text(body.facebook_user_id) or None,
         pickup_zip=_clean_optional_text(body.pickup_zip),

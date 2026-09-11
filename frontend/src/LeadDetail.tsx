@@ -267,7 +267,7 @@ const MOVE_FIELDS = [
   "when_is_the_move?",
   "are_you_moving_within_the_state_or_out_of_state?",
 ];
-const META_FIELDS = ["smartmoving_quote_number", "leadgen_id", "created_time", "created_at", "page_id", "form_id", "adgroup_id", "ad_id"];
+const META_FIELDS = ["quote_number", "leadgen_id", "created_time", "created_at", "page_id", "form_id", "adgroup_id", "ad_id"];
 const LEAD_STATUS_OPTIONS = [
   "new",
   "contacted",
@@ -1181,8 +1181,8 @@ export default function LeadDetail() {
   }
 
   function renderRow(key: string) {
-    const isQuoteNumber = key === "smartmoving_quote_number";
-    const val = isQuoteNumber ? (lead?.smartmoving_id ? lead.leadgen_id : "") : lead![key];
+    const isQuoteNumber = key === "quote_number";
+    const val = lead![key];
     if (key === "leadgen_id" && lead?.smartmoving_id) return null;
     const isCreationTime = key === "created_time" || key === "created_at";
     if ((val == null || val === "") && !isCreationTime && !isQuoteNumber) return null;
@@ -1202,7 +1202,7 @@ export default function LeadDetail() {
               {String(val)}
             </a>
           ) : (
-            isCreationTime && (val == null || val === "") ? "—" : formatValue(key, val)
+            (isCreationTime || isQuoteNumber) && (val == null || val === "") ? "—" : formatValue(key, val)
           )}
         </td>
       </tr>
@@ -1210,7 +1210,7 @@ export default function LeadDetail() {
   }
 
   function renderSection(title: string, keys: string[]) {
-    const present = keys.filter((k) => k === "smartmoving_quote_number" || allKeys.includes(k));
+    const present = keys.filter((k) => k === "quote_number" || allKeys.includes(k));
     if (present.length === 0) return null;
     return (
       <div style={sectionStyle}>
