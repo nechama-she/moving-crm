@@ -25,6 +25,10 @@ def migrate() -> None:
     )
     """
     with engine.begin() as connection:
+        connection.execute(text("""CREATE TABLE IF NOT EXISTS lead_liveswitch (
+            lead_id VARCHAR(36) PRIMARY KEY REFERENCES leads(id) ON DELETE CASCADE,
+            details TEXT NOT NULL
+        )"""))
         connection.execute(text(statement))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_communication_associations_lead_id ON communication_associations (lead_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_communication_associations_company_id ON communication_associations (company_id)"))

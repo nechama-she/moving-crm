@@ -903,3 +903,8 @@ class PricingService(Base):
             "comments": self.comments,
             "sort_order": self.sort_order,
         }
+
+class LeadLiveSwitch(Base):
+    __tablename__ = "lead_liveswitch"
+    lead_id = Column(String(36), ForeignKey("leads.id", ondelete="CASCADE"), primary_key=True)
+    details = Column(Text, nullable=False)

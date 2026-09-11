@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
+import LiveSwitchPanel from "./LiveSwitchPanel";
 import ChatMessages from "./ChatMessages";
 import TasksPanel from "./TasksPanel";
 import LeadLogsPanel from "./LeadLogsPanel";
@@ -266,7 +267,7 @@ const MOVE_FIELDS = [
   "when_is_the_move?",
   "are_you_moving_within_the_state_or_out_of_state?",
 ];
-const META_FIELDS = ["leadgen_id", "created_time", "created_at", "page_id", "form_id", "adgroup_id", "ad_id"];
+const META_FIELDS = ["smartmoving_quote_number", "leadgen_id", "created_time", "created_at", "page_id", "form_id", "adgroup_id", "ad_id"];
 const LEAD_STATUS_OPTIONS = [
   "new",
   "contacted",
@@ -316,6 +317,7 @@ export default function LeadDetail() {
   const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);
   const [downloadingAttachments, setDownloadingAttachments] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [liveSwitchOpen, setLiveSwitchOpen] = useState(false);
   const [filesModalOpen, setFilesModalOpen] = useState(false);
   const [groupedAttachments, setGroupedAttachments] = useState<Record<string, LeadAttachment[]>>({});
   const [groupedAttachmentsLoading, setGroupedAttachmentsLoading] = useState(false);
@@ -1179,15 +1181,17 @@ export default function LeadDetail() {
   }
 
   function renderRow(key: string) {
-    const val = lead![key];
+    const isQuoteNumber = key === "smartmoving_quote_number";
+    const val = isQuoteNumber ? (lead?.smartmoving_id ? lead.leadgen_id : "") : lead![key];
+    if (key === "leadgen_id" && lead?.smartmoving_id) return null;
     const isCreationTime = key === "created_time" || key === "created_at";
-    if ((val == null || val === "") && !isCreationTime) return null;
+    if ((val == null || val === "") && !isCreationTime && !isQuoteNumber) return null;
     const isInbox = key === "inbox_url";
     const isSmartMovingId = key === "smartmoving_id";
     if (isInbox && !String(val).trim().startsWith("http")) return null;
     return (
       <tr key={key}>
-        <td style={cellLabel}>{formatLabel(key)}</td>
+        <td style={cellLabel}>{isQuoteNumber ? "SmartMoving Quote Number" : formatLabel(key)}</td>
         <td style={cellValue}>
           {isInbox ? (
             <a href={String(val)} target="_blank" rel="noopener noreferrer">
@@ -1206,7 +1210,7 @@ export default function LeadDetail() {
   }
 
   function renderSection(title: string, keys: string[]) {
-    const present = keys.filter((k) => allKeys.includes(k));
+    const present = keys.filter((k) => k === "smartmoving_quote_number" || allKeys.includes(k));
     if (present.length === 0) return null;
     return (
       <div style={sectionStyle}>
@@ -2533,6 +2537,8 @@ export default function LeadDetail() {
                     <span aria-hidden="true">📎</span>
                     <span className="lead-profile-action-label"> Files</span>
                   </button>
+                  <button type="button" className="lead-profile-action-button" onClick={() => setLiveSwitchOpen(true)} style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", color: "#0176d3", cursor: "pointer" }}>Start a LiveSwitch</button>
+                  {liveSwitchOpen && leadId && <LiveSwitchPanel key={leadId} leadId={leadId} onClose={() => setLiveSwitchOpen(false)} onUploaded={() => { void loadAllJobAttachments(); }} />}
                   {canRefreshSmartMoving ? <button
                     type="button"
                     className="lead-profile-action-button lead-profile-refresh-button"
@@ -3387,7 +3393,6 @@ export default function LeadDetail() {
       </div>
 
       {!isDispatchUser && (user?.role === "admin" || user?.role === "sales_rep") &&
-        (otherFields.length > 0 || META_FIELDS.some((k) => allKeys.includes(k))) &&
         renderSection("Other Info", [...META_FIELDS, ...otherFields])}
 
       {canViewLeadCommunications ? (

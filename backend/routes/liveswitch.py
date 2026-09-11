@@ -142,3 +142,104 @@ async def oauth_callback(
         "<main style='font-family:system-ui;padding:40px'>"
         "<h1>LiveSwitch connected</h1><p>You can close this window and return to the CRM.</p></main>"
     )
+
+# Lead conversation endpoints keep OAuth credentials on the server.
+from threading import Lock
+from typing import Literal
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+from auth import get_current_user
+from database import get_db
+from models import Lead, LeadLiveSwitch
+from libs.smartmoving.client import get_opportunity
+from routes.leads import _get_visible_lead_or_404, _ensure_not_dispatch_write
+
+_token_lock = Lock()
+_token_cache = {"value": "", "expires": 0.0}
+
+
+def _access_token():
+    with _token_lock:
+        if _token_cache["expires"] > time.time():
+            return _token_cache["value"]
+        client_id, client_secret, _ = _settings()
+        ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
+        try:
+            refresh = ssm.get_parameter(Name=_refresh_token_parameter(), WithDecryption=True)["Parameter"]["Value"]
+        except Exception as exc:
+            raise HTTPException(503, "Connect LiveSwitch in Settings before starting a conversation") from exc
+        try:
+            response = httpx.post(TOKEN_URL, json={"grant_type": "refresh_token", "refresh_token": refresh,
+                "client_id": client_id, "client_secret": client_secret}, timeout=20)
+            response.raise_for_status()
+            data = response.json()
+            token = data["access_token"]
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            raise HTTPException(502, "LiveSwitch connection needs to be reconnected in Settings") from exc
+        if data.get("refresh_token") and data["refresh_token"] != refresh:
+            ssm.put_parameter(Name=_refresh_token_parameter(), Value=data["refresh_token"], Type="SecureString", Overwrite=True)
+        _token_cache.update(value=token, expires=time.time() + max(0, int(data.get("expires_in", 300)) - 60))
+        return token
+
+
+def _api_post(path, body):
+    try:
+        response = httpx.post(AUDIENCE + "v1/" + path, json=body,
+            headers={"Authorization": "Bearer " + _access_token(), "Accept": "application/json"}, timeout=45)
+        response.raise_for_status()
+        return response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(502, "LiveSwitch could not complete the request. Please try again.") from exc
+
+
+@router.post("/leads/{lead_id}/conversation")
+def ensure_conversation(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    # Lock the parent row so simultaneous opens cannot create duplicate conversations.
+    db.query(Lead).filter(Lead.id == lead.id).with_for_update().one()
+    saved = db.get(LeadLiveSwitch, lead.id)
+    if saved:
+        return json.loads(saved.details)
+    company_phone = (lead.company.phone or "").strip() if lead.company else ""
+    if not company_phone:
+        raise HTTPException(400, "Add a phone number to this lead's company first")
+    if not (lead.smartmoving_id or "").strip():
+        raise HTTPException(400, "Connect this lead to SmartMoving before starting LiveSwitch")
+    opportunity_result = get_opportunity(lead.smartmoving_id)
+    opportunity = opportunity_result.get("data")
+    if opportunity_result.get("error") or not isinstance(opportunity, dict):
+        raise HTTPException(502, "Could not retrieve the SmartMoving quote number. Please try again.")
+    quote_number = str(opportunity.get("quoteNumber") or "").strip()
+    if not quote_number:
+        raise HTTPException(400, "This SmartMoving lead does not have a quote number yet")
+    result = _api_post("conversations", {"type": "LiveConversation", "phone": company_phone, "name": quote_number})
+    if not result.get("id"):
+        raise HTTPException(502, "LiveSwitch did not return a conversation ID")
+    details = {key: result.get(key, "") for key in ("id", "hostJoinUrl", "participantJoinUrl", "conversationUrl", "embeddedConversationUrl")}
+    details["name"] = quote_number
+    db.add(LeadLiveSwitch(lead_id=lead.id, details=json.dumps(details)))
+    db.commit()
+    return details
+
+
+class UploadFileInfo(BaseModel):
+    fileName: str = Field(min_length=1, max_length=255)
+    contentType: str = Field(min_length=1, max_length=150)
+
+
+@router.post("/leads/{lead_id}/upload-urls/{kind}")
+def upload_urls(lead_id: str, kind: Literal["images", "videos", "documents"], files: list[UploadFileInfo],
+                user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    if not saved:
+        raise HTTPException(409, "Start the conversation first")
+    if not 1 <= len(files) <= 20:
+        raise HTTPException(400, "Select between 1 and 20 files per batch")
+    allowed = {"images": {"image/jpeg", "image/png", "image/webp"}, "videos": {"video/mp4", "video/quicktime"}, "documents": {"application/pdf"}}
+    if any(file.contentType not in allowed[kind] for file in files):
+        raise HTTPException(400, "Unsupported file type")
+    conversation_id = json.loads(saved.details)["id"]
+    return _api_post(f"conversations/{conversation_id}/upload-urls/{kind}", [file.model_dump() for file in files])
