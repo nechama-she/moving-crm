@@ -21,7 +21,7 @@ def api():
         node.args.defaults = []
         for arg in node.args.args:
             arg.annotation = None
-    lead = SimpleNamespace(id='lead-1', smartmoving_id='sm-1', phone=' 1112223333 ', company=SimpleNamespace(phone=' 2405707987 '))
+    lead = SimpleNamespace(id='lead-1', smartmoving_id='sm-1', quote_number=None, phone=' 1112223333 ', company=SimpleNamespace(phone=' 2405707987 '))
     scope = {'get_opportunity': MagicMock(return_value={'data': {'quoteNumber': 23985}}), 'json': json, 'HTTPException': HTTPException, 'Lead': SimpleNamespace(id='id'),
              'LeadLiveSwitch': MagicMock(), '_get_visible_lead_or_404': MagicMock(return_value=lead),
              '_ensure_not_dispatch_write': MagicMock(), '_api_post': MagicMock()}
@@ -34,6 +34,7 @@ def test_reuses_conversation_without_api_call(api):
     db.get.return_value = SimpleNamespace(details=json.dumps({'id': 'saved', 'hostJoinUrl': 'host'}))
     assert api['ensure_conversation']('lead-1', object(), db)['id'] == 'saved'
     api['_api_post'].assert_not_called()
+    api['get_opportunity'].assert_not_called()
 
 
 def test_creates_and_saves_all_links(api):
@@ -44,6 +45,23 @@ def test_creates_and_saves_all_links(api):
     assert json.loads(api['LeadLiveSwitch'].call_args.kwargs['details']) == {**details, 'name': '23985'}
     assert api['_api_post'].call_args.args[1]['name'] == '23985'
     assert api['_api_post'].call_args.args[1]['phone'] == '2405707987'
+    api['get_opportunity'].assert_called_once_with('sm-1')
+    assert api['_get_visible_lead_or_404'].return_value.quote_number == '23985'
+    db.commit.assert_called_once()
+
+
+@pytest.mark.parametrize('smartmoving_id', ['sm-1', None])
+def test_uses_stored_quote_without_smartmoving_request(api, smartmoving_id):
+    db = MagicMock(); db.get.return_value = None
+    lead = api['_get_visible_lead_or_404'].return_value
+    lead.quote_number = '12345'
+    lead.smartmoving_id = smartmoving_id
+    api['_api_post'].return_value = {'id': 'new'}
+    result = api['ensure_conversation']('lead-1', object(), db)
+    assert result['name'] == '12345'
+    assert api['_api_post'].call_args.args[1]['name'] == '12345'
+    assert lead.quote_number == '12345'
+    api['get_opportunity'].assert_not_called()
     db.commit.assert_called_once()
 
 

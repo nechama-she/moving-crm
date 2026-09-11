@@ -210,15 +210,18 @@ def ensure_conversation(lead_id: str, user: User = Depends(get_current_user), db
     company_phone = (lead.company.phone or "").strip() if lead.company else ""
     if not company_phone:
         raise HTTPException(400, "Add a phone number to this lead's company first")
-    if not (lead.smartmoving_id or "").strip():
-        raise HTTPException(400, "Connect this lead to SmartMoving before starting LiveSwitch")
-    opportunity_result = get_opportunity(lead.smartmoving_id)
-    opportunity = opportunity_result.get("data")
-    if opportunity_result.get("error") or not isinstance(opportunity, dict):
-        raise HTTPException(502, "Could not retrieve the SmartMoving quote number. Please try again.")
-    quote_number = str(opportunity.get("quoteNumber") or "").strip()
+    quote_number = str(lead.quote_number or "").strip()
     if not quote_number:
-        raise HTTPException(400, "This SmartMoving lead does not have a quote number yet")
+        if not (lead.smartmoving_id or "").strip():
+            raise HTTPException(400, "Connect this lead to SmartMoving before starting LiveSwitch")
+        opportunity_result = get_opportunity(lead.smartmoving_id)
+        opportunity = opportunity_result.get("data")
+        if opportunity_result.get("error") or not isinstance(opportunity, dict):
+            raise HTTPException(502, "Could not retrieve the SmartMoving quote number. Please try again.")
+        quote_number = str(opportunity.get("quoteNumber") or "").strip()
+        if not quote_number:
+            raise HTTPException(400, "This SmartMoving lead does not have a quote number yet")
+        lead.quote_number = quote_number
     result = _api_post("conversations", {"type": "LiveConversation", "phone": company_phone, "name": quote_number})
     if not result.get("id"):
         raise HTTPException(502, "LiveSwitch did not return a conversation ID")
