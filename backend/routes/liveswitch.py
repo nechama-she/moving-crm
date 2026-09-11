@@ -29,9 +29,9 @@ STATE_TTL_SECONDS = 300
 
 def _settings() -> tuple[str, str, str]:
     config = get_config()
-    client_id = str(config.get("LIVESWITCH_CLIENT_ID") or "").strip()
-    client_secret = str(config.get("LIVESWITCH_CLIENT_SECRET") or "").strip()
-    redirect_uri = str(config.get("LIVESWITCH_REDIRECT_URI") or "").strip()
+    client_id = str(config.get("LIVESWITCH_CLIENT_ID") or os.getenv("LIVESWITCH_CLIENT_ID", "")).strip()
+    client_secret = str(config.get("LIVESWITCH_CLIENT_SECRET") or os.getenv("LIVESWITCH_CLIENT_SECRET", "")).strip()
+    redirect_uri = str(config.get("LIVESWITCH_REDIRECT_URI") or os.getenv("LIVESWITCH_REDIRECT_URI", "")).strip()
     if not client_id or not client_secret or not redirect_uri:
         raise HTTPException(status_code=503, detail="LiveSwitch OAuth is not configured")
     return client_id, client_secret, redirect_uri
@@ -159,6 +159,10 @@ _token_cache = {"value": "", "expires": 0.0}
 
 
 def _access_token():
+    # A configured API bearer token supports the direct integration as well as OAuth.
+    configured_token = str(get_config().get("LIVESWITCH_ACCESS_TOKEN") or os.getenv("LIVESWITCH_ACCESS_TOKEN", "")).strip()
+    if configured_token:
+        return configured_token
     with _token_lock:
         if _token_cache["expires"] > time.time():
             return _token_cache["value"]
@@ -186,6 +190,8 @@ def _api_post(path, body):
     try:
         response = httpx.post(AUDIENCE + "v1/" + path, json=body,
             headers={"Authorization": "Bearer " + _access_token(), "Accept": "application/json"}, timeout=45)
+        if response.status_code == 401:
+            raise HTTPException(503, "LiveSwitch authorization has expired. Ask an administrator to reconnect LiveSwitch.")
         response.raise_for_status()
         return response.json()
     except (httpx.HTTPError, ValueError) as exc:

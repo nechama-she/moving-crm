@@ -88,3 +88,14 @@ def test_missing_quote_number_does_not_create_conversation(api):
         api['ensure_conversation']('lead-1', object(), db)
     assert exc.value.status_code == 400
     api['_api_post'].assert_not_called()
+
+
+def test_configured_bearer_token_does_not_require_oauth():
+    source = Path(__file__).resolve().parents[2] / 'backend/routes/liveswitch.py'
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_access_token')
+    settings = MagicMock(side_effect=AssertionError('OAuth should not be required'))
+    scope = {'get_config': lambda: {'LIVESWITCH_ACCESS_TOKEN': 'test-token'}, '_settings': settings}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), scope)
+    assert scope['_access_token']() == 'test-token'
+    settings.assert_not_called()
