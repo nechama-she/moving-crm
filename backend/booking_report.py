@@ -42,10 +42,10 @@ def move_day(value):
 
 def location(value):
     raw = str(value or '').strip()
-    postal = re.search(r'(?<!\d)(\d{5})(?:-\d{4})?(?!\d)', raw)
-    # City/state/ZIP and ZIP-only values describe the same location. Keep
-    # street-level addresses intact so different addresses are not collapsed.
-    if postal and not re.match(r'^\d+\s+\D', raw):
+    matches = list(re.finditer(r'(?<!\d)(\d{5})(?:-\d{4})?(?!\d)', raw))
+    postal = matches[-1] if matches else None
+    # Match by ZIP even when street text differs, per reporting rules.
+    if postal:
         return 'zip:' + postal.group(1)
     return re.sub(r'\W+', ' ', raw.casefold()).strip()
 
@@ -95,11 +95,11 @@ def booking_report(rows, start: date, end: date):
             smart = timestamp(row.get('created_time'))
             crm = timestamp(row.get('created_at'))
             if not smart:
-                issues.add('CRM timestamp used')
+                issues.add('Missing SmartMoving signup time')
             elif crm and smart == crm:
                 issues.add('Created timestamps match')
-            if smart or crm:
-                dates.append(smart or crm)
+            if smart:
+                dates.append(smart)
             else:
                 issues.add('Missing signup time')
             if not all((move_day(row.get('move_date')), location(row.get('pickup')), location(row.get('delivery')))):
@@ -112,7 +112,7 @@ def booking_report(rows, start: date, end: date):
         first = min(dates)
         if not start <= first.astimezone(EASTERN).date() <= end:
             continue
-        representative = min(members, key=lambda r: timestamp(r.get('created_time')) or timestamp(r.get('created_at')) or datetime.max.replace(tzinfo=timezone.utc))
+        representative = min(members, key=lambda r: timestamp(r.get('created_time')) or datetime.max.replace(tzinfo=timezone.utc))
         booked = any(str(r.get('status') or '').casefold() in BOOKED or r.get('booked_move_date') for r in members)
         selected.append({
             'id': representative['id'], 'customer': representative.get('name') or 'Unnamed customer',

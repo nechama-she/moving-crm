@@ -55,8 +55,9 @@ def test_names_alone_do_not_merge_customers():
 
 def test_fallback_and_matching_timestamp_flags():
     result = report([lead('a', created_time='bad'), lead('b', phone='3015551234', email='other@example.com', created_time='2026-09-12T15:00:00Z')])
-    assert result['review_count'] == 2
-    assert any('CRM timestamp used' in r['issues'] for r in result['moves'])
+    assert result['review_count'] == 1
+    assert result['undated_moves'] == 1
+    assert result['total_moves'] == 1
     assert any('Created timestamps match' in r['issues'] for r in result['moves'])
 
 
@@ -108,7 +109,19 @@ def test_job_details_override_blank_or_stale_lead_fields():
     assert report_lead_row(original)['move_date'] == '2026-09-15'
 
 
-def test_different_street_addresses_in_same_zip_stay_separate():
+def test_different_street_addresses_in_same_zip_merge():
     result = report([lead('a', pickup='100 Main St Baltimore MD 21201'),
                      lead('b', pickup='200 Main St Baltimore MD 21201')])
-    assert result['total_moves'] == 2
+    assert result['total_moves'] == 1
+
+
+def test_crm_import_date_never_places_missing_signup_in_september():
+    result = report([lead('a', created_time='', created_at='2026-09-12T18:00:00Z')])
+    assert result['total_moves'] == 0
+    assert result['undated_moves'] == 1
+    assert result['percentage'] is None
+
+
+def test_old_smartmoving_signup_does_not_use_recent_import_date():
+    result = report([lead('a', created_time='2025-01-01T15:00:00Z')])
+    assert result['total_moves'] == 0
