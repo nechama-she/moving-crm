@@ -80,3 +80,23 @@ def priority_one_quote_size(
         day["reps"] = reps
         result.append(day)
     return {"days": result}
+
+from datetime import date
+from fastapi import HTTPException
+from booking_report import booking_report
+
+
+@router.get("/booking-percentage")
+def booking_percentage(start: date, end: date, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    if start > end:
+        raise HTTPException(400, "Start date must be on or before end date")
+    # Never prefilter leads by date: a duplicate's earliest signup and booking
+    # can belong to another company or fall outside the requested date range.
+    leads = db.query(Lead).options(joinedload(Lead.company)).all()
+    return booking_report([{
+        'id': lead.id, 'name': lead.full_name, 'phone': lead.phone, 'email': lead.email,
+        'move_date': lead.move_date, 'pickup': lead.pickup_zip, 'delivery': lead.delivery_zip,
+        'created_time': lead.created_time, 'created_at': lead.created_at,
+        'status': lead.status, 'booked_move_date': lead.booked_move_date,
+        'company': lead.company.name if lead.company else '',
+    } for lead in leads], start, end)
