@@ -58,7 +58,7 @@ def test_fallback_and_matching_timestamp_flags():
     assert result['review_count'] == 1
     assert result['undated_moves'] == 1
     assert result['total_moves'] == 1
-    assert any('Created timestamps match' in r['issues'] for r in result['moves'])
+    assert any(any('exactly matches CRM' in issue for issue in r['issues']) for r in result['moves'])
 
 
 def test_eastern_boundaries_and_zero_denominator():
@@ -98,7 +98,7 @@ def test_job_details_override_blank_or_stale_lead_fields():
     original = SimpleNamespace(id='a', full_name='Matt', phone='6016410186', email='',
         move_date='2026-09-15', pickup_zip='', delivery_zip='',
         created_time='2026-09-12T15:20:54Z', created_at=None,
-        status='quoted', booked_move_date=None, company=None)
+        status='quoted', booked_move_date=None, company=None, company_id='c', assigned_to=None)
     job = SimpleNamespace(move_date='2026-09-16', pickup_zip='Riverdale, Maryland 20737',
         delivery_zip='Sumrall, Mississippi 39482')
     row = report_lead_row(original, job)
@@ -125,3 +125,21 @@ def test_crm_import_date_never_places_missing_signup_in_september():
 def test_old_smartmoving_signup_does_not_use_recent_import_date():
     result = report([lead('a', created_time='2025-01-01T15:00:00Z')])
     assert result['total_moves'] == 0
+
+
+def test_review_reasons_are_specific_to_each_linked_lead():
+    result = report([lead('a', pickup='', move_date=''), lead('b', delivery='')])
+    by_id = {row['id']: row for move in result['moves'] for row in move['leads']}
+    assert by_id['a']['issues'] == ['Move date is missing or invalid', 'Pickup is missing']
+    assert by_id['b']['issues'] == ['Delivery is missing']
+
+
+def test_company_and_rep_filters_preserve_original_cohort():
+    rows = [lead('a', company_id='a', rep_id='r1', created_time='2026-08-10T15:00:00Z'),
+            lead('b', company_id='b', rep_id='r2', status='booked')]
+    august = booking_report(rows, date(2026,8,1), date(2026,8,31), ['b'], ['r2'])
+    assert august['total_moves'] == august['booked_moves'] == 1
+    assert len(august['moves'][0]['leads']) == 1
+    assert booking_report(rows, date(2026,9,1), date(2026,9,30), ['b'])['total_moves'] == 0
+    assert booking_report(rows, date(2026,8,1), date(2026,8,31), ['a'])['booked_moves'] == 0
+    assert booking_report(rows, date(2026,8,1), date(2026,8,31), ['b'], ['r1'])['total_moves'] == 0

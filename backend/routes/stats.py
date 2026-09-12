@@ -82,18 +82,23 @@ def priority_one_quote_size(
     return {"days": result}
 
 from datetime import date
-from fastapi import HTTPException
+from fastapi import HTTPException, Query
 from booking_report import booking_report, report_lead_row
 
 
 @router.get("/booking-percentage")
-def booking_percentage(start: date, end: date, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+def booking_percentage(start: date, end: date, company_ids: list[str] = Query(default=[]), rep_ids: list[str] = Query(default=[]), _: User = Depends(require_admin), db: Session = Depends(get_db)):
     if start > end:
         raise HTTPException(400, "Start date must be on or before end date")
     # Never prefilter leads by date: a duplicate's earliest signup and booking
     # can belong to another company or fall outside the requested date range.
-    leads = db.query(Lead).options(joinedload(Lead.company)).all()
+    leads = db.query(Lead).options(joinedload(Lead.company), joinedload(Lead.assignee)).all()
     primary_jobs = {}
     for job in db.query(LeadJob).order_by(LeadJob.lead_id, LeadJob.job_order, LeadJob.created_at, LeadJob.id).all():
         primary_jobs.setdefault(job.lead_id, job)
-    return booking_report([report_lead_row(lead, primary_jobs.get(lead.id)) for lead in leads], start, end)
+    result = booking_report([report_lead_row(lead, primary_jobs.get(lead.id)) for lead in leads], start, end, company_ids, rep_ids)
+    companies = {lead.company_id: lead.company.name if lead.company else lead.company_id for lead in leads}
+    reps = {lead.assigned_to or '__unassigned__': lead.assignee.name if lead.assignee else 'Unassigned' for lead in leads}
+    result['options'] = {'companies': [{'id': key, 'name': name} for key, name in sorted(companies.items(), key=lambda item: item[1])],
+                         'reps': [{'id': key, 'name': name} for key, name in sorted(reps.items(), key=lambda item: item[1])]}
+    return result

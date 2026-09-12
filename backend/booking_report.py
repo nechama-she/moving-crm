@@ -63,7 +63,25 @@ def identities(row):
     return result
 
 
-def booking_report(rows, start: date, end: date):
+def lead_issues(row):
+    issues = []
+    smart = timestamp(row.get('created_time'))
+    if not smart:
+        issues.append('SmartMoving signup time is missing or invalid')
+    elif smart == timestamp(row.get('created_at')):
+        issues.append('SmartMoving signup time exactly matches CRM creation time; verify it')
+    if not move_day(row.get('move_date')):
+        issues.append('Move date is missing or invalid')
+    if not location(row.get('pickup')):
+        issues.append('Pickup is missing')
+    if not location(row.get('delivery')):
+        issues.append('Delivery is missing')
+    if not identities(row):
+        issues.append('No usable phone number or email for customer matching')
+    return issues
+
+
+def booking_report(rows, start: date, end: date, company_ids=None, rep_ids=None):
     # Resolve identities over ALL dates before choosing a cohort. This also joins
     # phone-only/email-only records when another record contains both identifiers.
     parent = list(range(len(rows)))
@@ -89,29 +107,26 @@ def booking_report(rows, start: date, end: date):
     selected = []
     undated = 0
     for members in groups.values():
+        scoped = [row for row in members
+                  if (not company_ids or row.get('company_id') in company_ids)
+                  and (not rep_ids or (row.get('rep_id') or '__unassigned__') in rep_ids)]
+        if not scoped:
+            continue
         dates = []
         issues = set()
         for row in members:
             smart = timestamp(row.get('created_time'))
-            crm = timestamp(row.get('created_at'))
-            if not smart:
-                issues.add('Missing SmartMoving signup time')
-            elif crm and smart == crm:
-                issues.add('Created timestamps match')
+            issues.update(lead_issues(row))
             if smart:
                 dates.append(smart)
-            else:
-                issues.add('Missing signup time')
-            if not all((move_day(row.get('move_date')), location(row.get('pickup')), location(row.get('delivery')))):
-                issues.add('Incomplete move details; counted separately')
-            if not identities(row):
-                issues.add('Missing customer contact; counted separately')
         if not dates:
             undated += 1
             continue
         first = min(dates)
         if not start <= first.astimezone(EASTERN).date() <= end:
             continue
+        members = scoped
+        issues = {issue for row in members for issue in lead_issues(row)}
         representative = min(members, key=lambda r: timestamp(r.get('created_time')) or datetime.max.replace(tzinfo=timezone.utc))
         booked = any(str(r.get('status') or '').casefold() in BOOKED or r.get('booked_move_date') for r in members)
         selected.append({
@@ -120,7 +135,8 @@ def booking_report(rows, start: date, end: date):
             'pickup': representative.get('pickup') or '', 'delivery': representative.get('delivery') or '',
             'booked': booked, 'issues': sorted(issues),
             'leads': [{'id': r['id'], 'company': r.get('company') or '', 'status': r.get('status') or '',
-                       'created_time': str(r.get('created_time') or ''), 'created_at': str(r.get('created_at') or '')} for r in members],
+                       'created_time': str(r.get('created_time') or ''), 'created_at': str(r.get('created_at') or ''),
+                       'issues': lead_issues(r)} for r in members],
         })
     selected.sort(key=lambda r: (r['first_signup'], r['id']), reverse=True)
     total = len(selected)
@@ -145,4 +161,5 @@ def report_lead_row(lead, primary_job=None):
         'created_time': lead.created_time, 'created_at': lead.created_at,
         'status': lead.status, 'booked_move_date': lead.booked_move_date,
         'company': lead.company.name if lead.company else '',
+        'company_id': lead.company_id, 'rep_id': lead.assigned_to,
     }
