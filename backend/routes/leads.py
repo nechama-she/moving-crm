@@ -1506,13 +1506,21 @@ def get_leads(
             | Lead.email.ilike(q)
         )
 
+    def displayed_location(column, fallback):
+        primary = (db.query(column).filter(LeadJob.lead_id == Lead.id)
+                   .order_by(LeadJob.job_order, LeadJob.created_at, LeadJob.id)
+                   .limit(1).correlate(Lead).scalar_subquery())
+        return func.coalesce(func.nullif(func.trim(primary), ""), fallback)
+
+    pickup = displayed_location(LeadJob.pickup_zip, Lead.pickup_zip)
+    delivery = displayed_location(LeadJob.delivery_zip, Lead.delivery_zip)
     SORTABLE = {
         "created_time": Lead.created_at,
         "full_name": Lead.full_name,
         "status": Lead.status,
         "move_size": Lead.move_size,
-        "pickup_zip": Lead.pickup_zip,
-        "delivery_zip": Lead.delivery_zip,
+        "pickup_zip": pickup,
+        "delivery_zip": delivery,
         "company_name": Company.name,
     }
     if sort_by == "company_name":
@@ -1521,11 +1529,12 @@ def get_leads(
     order = sort_col.asc() if sort_dir == "asc" else sort_col.desc()
     query = query.order_by(order)
     total = query.count()
-    items = query.offset(offset).limit(limit).all()
+    items = query.add_columns(pickup, delivery).offset(offset).limit(limit).all()
     has_more = offset + limit < total
 
     return {
-        "items": [lead.to_dict() for lead in items],
+        "items": [{**lead.to_dict(), "pickup_zip": origin or "", "delivery_zip": destination or ""}
+                  for lead, origin, destination in items],
         "total": total,
         "has_more": has_more,
     }

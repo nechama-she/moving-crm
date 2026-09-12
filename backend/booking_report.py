@@ -41,7 +41,13 @@ def move_day(value):
 
 
 def location(value):
-    return re.sub(r'\W+', ' ', str(value or '').casefold()).strip()
+    raw = str(value or '').strip()
+    postal = re.search(r'(?<!\d)(\d{5})(?:-\d{4})?(?!\d)', raw)
+    # City/state/ZIP and ZIP-only values describe the same location. Keep
+    # street-level addresses intact so different addresses are not collapsed.
+    if postal and not re.match(r'^\d+\s+\D', raw):
+        return 'zip:' + postal.group(1)
+    return re.sub(r'\W+', ' ', raw.casefold()).strip()
 
 
 def identities(row):
@@ -126,3 +132,17 @@ def booking_report(rows, start: date, end: date):
             'lead_count': lead_count, 'duplicates_removed': lead_count - total,
             'review_count': sum(bool(r['issues']) for r in selected), 'undated_moves': undated,
             'moves': selected}
+
+
+def report_lead_row(lead, primary_job=None):
+    def move_value(field):
+        value = getattr(primary_job, field, None) if primary_job else None
+        return value if str(value or '').strip() else getattr(lead, field, None)
+    return {
+        'id': lead.id, 'name': lead.full_name, 'phone': lead.phone, 'email': lead.email,
+        'move_date': move_value('move_date'), 'pickup': move_value('pickup_zip'),
+        'delivery': move_value('delivery_zip'),
+        'created_time': lead.created_time, 'created_at': lead.created_at,
+        'status': lead.status, 'booked_move_date': lead.booked_move_date,
+        'company': lead.company.name if lead.company else '',
+    }

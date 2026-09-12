@@ -80,3 +80,35 @@ def test_incomplete_move_dates_are_not_invented():
     result = report([lead('a', move_date='October 2026'), lead('b', move_date='October 2026')])
     assert result['total_moves'] == 2
     assert all(not row['move_date'] for row in result['moves'])
+
+
+def test_city_state_zip_matches_zip_only_for_matts_move():
+    rows = [lead('a', pickup='Riverdale, Maryland 20737', delivery='Sumrall, Mississippi 39482'),
+            lead('b', pickup='20737', delivery='39482'),
+            lead('c', pickup='Riverdale MD 20737', delivery='Sumrall MS 39482')]
+    result = report(rows)
+    assert result['total_moves'] == 1
+    assert result['duplicates_removed'] == 2
+
+
+def test_job_details_override_blank_or_stale_lead_fields():
+    from types import SimpleNamespace
+    from booking_report import report_lead_row
+    original = SimpleNamespace(id='a', full_name='Matt', phone='6016410186', email='',
+        move_date='2026-09-15', pickup_zip='', delivery_zip='',
+        created_time='2026-09-12T15:20:54Z', created_at=None,
+        status='quoted', booked_move_date=None, company=None)
+    job = SimpleNamespace(move_date='2026-09-16', pickup_zip='Riverdale, Maryland 20737',
+        delivery_zip='Sumrall, Mississippi 39482')
+    row = report_lead_row(original, job)
+    result = report([row])
+    assert result['moves'][0]['move_date'] == '2026-09-16'
+    assert result['moves'][0]['pickup'] == job.pickup_zip
+    assert result['review_count'] == 0
+    assert report_lead_row(original)['move_date'] == '2026-09-15'
+
+
+def test_different_street_addresses_in_same_zip_stay_separate():
+    result = report([lead('a', pickup='100 Main St Baltimore MD 21201'),
+                     lead('b', pickup='200 Main St Baltimore MD 21201')])
+    assert result['total_moves'] == 2

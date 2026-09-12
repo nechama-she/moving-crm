@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from auth import require_admin
 from database import get_db
-from models import Lead, User
+from models import Lead, LeadJob, User
 
 
 router = APIRouter(prefix="/api/stats", tags=["Stats"])
@@ -83,7 +83,7 @@ def priority_one_quote_size(
 
 from datetime import date
 from fastapi import HTTPException
-from booking_report import booking_report
+from booking_report import booking_report, report_lead_row
 
 
 @router.get("/booking-percentage")
@@ -93,10 +93,7 @@ def booking_percentage(start: date, end: date, _: User = Depends(require_admin),
     # Never prefilter leads by date: a duplicate's earliest signup and booking
     # can belong to another company or fall outside the requested date range.
     leads = db.query(Lead).options(joinedload(Lead.company)).all()
-    return booking_report([{
-        'id': lead.id, 'name': lead.full_name, 'phone': lead.phone, 'email': lead.email,
-        'move_date': lead.move_date, 'pickup': lead.pickup_zip, 'delivery': lead.delivery_zip,
-        'created_time': lead.created_time, 'created_at': lead.created_at,
-        'status': lead.status, 'booked_move_date': lead.booked_move_date,
-        'company': lead.company.name if lead.company else '',
-    } for lead in leads], start, end)
+    primary_jobs = {}
+    for job in db.query(LeadJob).order_by(LeadJob.lead_id, LeadJob.job_order, LeadJob.created_at, LeadJob.id).all():
+        primary_jobs.setdefault(job.lead_id, job)
+    return booking_report([report_lead_row(lead, primary_jobs.get(lead.id)) for lead in leads], start, end)
