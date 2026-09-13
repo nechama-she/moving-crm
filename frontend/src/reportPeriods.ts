@@ -13,6 +13,13 @@ export function period(label: string): ReportRange {
   if (label === "This Quarter") { a=new Date(y,Math.floor(m/3)*3,1); b=new Date(y,Math.floor(m/3)*3+3,0); }
   if (label === "This Year") { a=new Date(y,0,1); b=new Date(y,11,31); }
   if (label === "Last Year") { a=new Date(y-1,0,1); b=new Date(y-1,11,31); }
+  if (label === "Last Quarter") { a=new Date(y,Math.floor(m/3)*3-3,1); b=new Date(y,Math.floor(m/3)*3,0); }
+  if (label === "Tomorrow") a=b=new Date(y,m,t.getDate()+1);
+  if (label === "Next Week") { a=new Date(y,m,t.getDate()-t.getDay()+7); b=new Date(a.getFullYear(),a.getMonth(),a.getDate()+6); }
+  if (label === "Next Month") { a=new Date(y,m+1,1); b=new Date(y,m+2,0); }
+  if (label === "Next Quarter") { a=new Date(y,Math.floor(m/3)*3+3,1); b=new Date(y,Math.floor(m/3)*3+6,0); }
+  if (label === "Next Year") { a=new Date(y+1,0,1); b=new Date(y+1,11,31); }
+  if (label === "Next 12 Months") { a=new Date(y,m+1,1); b=new Date(y,m+13,0); }
   if (label === "All Time") { a=new Date(1900,0,1); b=new Date(9999,11,31); }
   return {start:iso(a),end:iso(b),label};
 }
