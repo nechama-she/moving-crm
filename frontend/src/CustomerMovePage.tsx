@@ -8,8 +8,10 @@ type Details = { name:string; phone:string; email:string; move_date:string; pick
 type Pending = {id:string;file:File;status:string;progress:number;preview?:string;error?:string};
 export default function CustomerMovePage() {
   const {accessId}=useParams();
+  const sessionKey = `cm_session_${accessId}`;
   const [key]=useState(()=>new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
-  const [session,setSession]=useState(''),[options,setOptions]=useState<{channel:string;destination:string}[]>([]),[channel,setChannel]=useState('');
+  const [session,setSession]=useState(()=>sessionStorage.getItem(sessionKey)||'');
+  const [options,setOptions]=useState<{channel:string;destination:string}[]>([]),[channel,setChannel]=useState('');
   const [code,setCode]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [data,setData]=useState<Details>(),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
   const [editingMove,setEditingMove]=useState(false);
@@ -18,10 +20,19 @@ export default function CustomerMovePage() {
   const previews=useRef<string[]>([]);
   const base=`${API_BASE}/api/public-moves/${accessId}`;
   const headers={'x-public-link':key,'x-public-session':session};
+
   async function call(path:string, body?:unknown) {
     const response=await fetch(base+path,{method:body===undefined?'GET':'POST',headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
     const result=await response.json();
-    if(!response.ok){if((response.status===401||response.status===404)){setSession('');setData(undefined);setSent(false);}throw new Error(typeof result.detail==='string'?result.detail:'Please check your details and try again.');}
+    if(!response.ok){
+      if((response.status===401||response.status===404)){
+        sessionStorage.removeItem(sessionKey);
+        setSession('');
+        setData(undefined);
+        setSent(false);
+      }
+      throw new Error(typeof result.detail==='string'?result.detail:'Please check your details and try again.');
+    }
     return result;
   }
   useEffect(()=>{
@@ -31,10 +42,41 @@ export default function CustomerMovePage() {
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
   useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setOptions(value.options);setChannel(value.options[0]?.channel||'');}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
-  useEffect(()=>{if(!session)return;let active=true;const load=()=>fetch(base+'/details',{headers:{'x-public-link':key,'x-public-session':session},cache:'no-store'}).then(async r=>{if((r.status===401||r.status===404)){if(active){setSession('');setData(undefined);}return;}if(!r.ok)throw new Error('Your move could not be refreshed.');const next=await r.json();if(active)setData(next);}).catch(e=>{if(active)setError(e.message);});void load();const interval=setInterval(()=>void load(),15000);return ()=>{active=false;clearInterval(interval);};},[base,key,session]);
+  useEffect(()=>{
+    if(!session)return;
+    let active=true;
+    const load=()=>fetch(base+'/details',{headers:{'x-public-link':key,'x-public-session':session},cache:'no-store'}).then(async r=>{
+      if((r.status===401||r.status===404)){
+        if(active){
+          sessionStorage.removeItem(sessionKey);
+          setSession('');
+          setData(undefined);
+        }
+        return;
+      }
+      if(!r.ok)throw new Error('Your move could not be refreshed.');
+      const next=await r.json();
+      if(active)setData(next);
+    }).catch(e=>{if(active)setError(e.message);});
+    void load();
+    const interval=setInterval(()=>void load(),15000);
+    return ()=>{active=false;clearInterval(interval);};
+  },[base,key,session,sessionKey]);
   useEffect(()=>{if(!sent)return;const t=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(t);},[sent]);
   async function send(){setBusy(true);setError('');try{await call('/send-code',{channel});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
-  async function verify(){setBusy(true);setError('');try{const value=await call('/verify',{code});setSession(value.session);setCode('');}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+  async function verify(){
+    setBusy(true);setError('');
+    try{
+      const value=await call('/verify',{code});
+      sessionStorage.setItem(sessionKey, value.session);
+      setSession(value.session);
+      setCode('');
+    }catch(e){
+      setError((e as Error).message);
+    }finally{
+      setBusy(false);
+    }
+  }
   function choose(list:FileList|null){
     if(!list?.length)return;
     try {
@@ -93,6 +135,20 @@ export default function CustomerMovePage() {
     }
   }
 
+  async function refreshDetails(){
+    if(!session)return;
+    setBusy(true);
+    setError('');
+    try{
+      const next=await call('/details');
+      setData(next);
+    }catch(err){
+      setError((err as Error).message);
+    }finally{
+      setBusy(false);
+    }
+  }
+
   const wait=Math.max(0,Math.ceil((resendAt-clock)/1000));
 
   return (
@@ -128,7 +184,21 @@ export default function CustomerMovePage() {
           <p role="status">Opening your move...</p>
         ) : (
           <>
-            <section className="cm-intro"><div><div className="cm-eyebrow">LET'S MAKE YOUR NEXT MOVE EASIER</div><h1>Hi {data.name.split(' ')[0]},<br/>you're in the right place.</h1><p>Share a little more about your home.<br/>We'll take care of the estimate.</p></div><div className="cm-estimate"><span>{data.estimate?'Your moving estimate':'Your estimate'}</span><strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):'We\'re working on it.'}</strong><p>{data.estimate?`${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated`:'Add photos or request a video walkthrough to help us prepare your estimate.'}</p></div></section>
+            <section className="cm-intro">
+              <div>
+                <div className="cm-intro-top">
+                  <div className="cm-eyebrow">LET'S MAKE YOUR NEXT MOVE EASIER</div>
+                  <button type="button" className="cm-refresh-btn" disabled={busy} onClick={()=>void refreshDetails()}>&#8635; Refresh</button>
+                </div>
+                <h1>Hi {data.name.split(' ')[0]},<br/>you're in the right place.</h1>
+                <p>Share a little more about your home.<br/>We'll take care of the estimate.</p>
+              </div>
+              <div className="cm-estimate">
+                <span>{data.estimate?'Your moving estimate':'Your estimate'}</span>
+                <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):'We\'re working on it.'}</strong>
+                <p>{data.estimate?`${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated`:'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+              </div>
+            </section>
             {error&&<div className="cm-error" role="alert">{error}</div>}
             <div className="cm-columns">
               <section className="cm-card cm-route">
