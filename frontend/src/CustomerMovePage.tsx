@@ -12,6 +12,8 @@ export default function CustomerMovePage() {
   const [session,setSession]=useState(''),[options,setOptions]=useState<{channel:string;destination:string}[]>([]),[channel,setChannel]=useState('');
   const [code,setCode]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [data,setData]=useState<Details>(),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
+  const [editingMove,setEditingMove]=useState(false);
+  const [moveDraft,setMoveDraft]=useState({name:'',phone:'',email:'',move_date:'',pickup:'',delivery:''});
   const [resendAt,setResendAt]=useState(0),[clock,setClock]=useState(Date.now());
   const previews=useRef<string[]>([]);
   const base=`${API_BASE}/api/public-moves/${accessId}`;
@@ -62,6 +64,35 @@ export default function CustomerMovePage() {
     }}finally{setBusy(false);}
   }
   async function walkthrough(){setBusy(true);setError('');try{const timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;const result=await call(rescheduling?'/reschedule':'/walkthrough',{availability,timezone});setRequested(true);setRescheduling(false);setData(prev=>prev?{...prev,walkthrough:result,participant_url:''}:prev);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+
+  function startEditMove(){
+    if(!data)return;
+    setMoveDraft({
+      name:data.name||'',
+      phone:data.phone||'',
+      email:data.email||'',
+      move_date:data.move_date?data.move_date.slice(0,10):'',
+      pickup:data.pickup||'',
+      delivery:data.delivery||'',
+    });
+    setEditingMove(true);
+  }
+
+  async function saveMoveDetails(e:React.FormEvent){
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try{
+      const result=await call('/details',moveDraft);
+      setData(result);
+      setEditingMove(false);
+    }catch(err){
+      setError((err as Error).message);
+    }finally{
+      setBusy(false);
+    }
+  }
+
   const wait=Math.max(0,Math.ceil((resendAt-clock)/1000));
 
   return (
@@ -99,7 +130,54 @@ export default function CustomerMovePage() {
           <>
             <section className="cm-intro"><div><div className="cm-eyebrow">LET'S MAKE YOUR NEXT MOVE EASIER</div><h1>Hi {data.name.split(' ')[0]},<br/>you're in the right place.</h1><p>Share a little more about your home.<br/>We'll take care of the estimate.</p></div><div className="cm-estimate"><span>{data.estimate?'Your moving estimate':'Your estimate'}</span><strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):'We\'re working on it.'}</strong><p>{data.estimate?`${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated`:'Add photos or request a video walkthrough to help us prepare your estimate.'}</p></div></section>
             {error&&<div className="cm-error" role="alert">{error}</div>}
-            <div className="cm-columns"><section className="cm-card cm-route"><div className="cm-eyebrow">YOUR MOVE</div><h2>{data.move_date?new Date(data.move_date.slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'Date to be confirmed'}</h2><ol>{[{address:data.pickup,type:'pickup'},...data.stops,{address:data.delivery,type:'delivery'}].map((stop,i)=><li key={i}><small>{stop.type==='pickup'?'Pickup':stop.type==='delivery'?'Delivery':'Stop'}</small><strong>{stop.address}</strong></li>)}</ol><div className="cm-contact"><strong>{data.name}</strong><span>{data.phone}</span><span>{data.email}</span></div></section>
+            <div className="cm-columns">
+              <section className="cm-card cm-route">
+                <div className="cm-route-header">
+                  <div className="cm-eyebrow">YOUR MOVE</div>
+                  {!editingMove && (
+                    <button type="button" className="cm-edit-button" onClick={startEditMove}>Edit</button>
+                  )}
+                </div>
+
+                {!editingMove ? (
+                  <>
+                    <h2>{data.move_date?new Date(data.move_date.slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'Date to be confirmed'}</h2>
+                    <ol>{[{address:data.pickup,type:'pickup'},...data.stops,{address:data.delivery,type:'delivery'}].map((stop,i)=><li key={i}><small>{stop.type==='pickup'?'Pickup':stop.type==='delivery'?'Delivery':'Stop'}</small><strong>{stop.address||'—'}</strong></li>)}</ol>
+                    <div className="cm-contact"><strong>{data.name}</strong><span>{data.phone}</span><span>{data.email}</span></div>
+                  </>
+                ) : (
+                  <form className="cm-route-edit" onSubmit={saveMoveDetails}>
+                    <label>
+                      Move Date
+                      <input type="date" value={moveDraft.move_date} onChange={e=>setMoveDraft(prev=>({...prev,move_date:e.target.value}))} />
+                    </label>
+                    <label>
+                      Pickup Address / Zip
+                      <input type="text" placeholder="123 Main St, City, ST 12345" value={moveDraft.pickup} onChange={e=>setMoveDraft(prev=>({...prev,pickup:e.target.value}))} />
+                    </label>
+                    <label>
+                      Delivery Address / Zip
+                      <input type="text" placeholder="456 Elm St, City, ST 67890" value={moveDraft.delivery} onChange={e=>setMoveDraft(prev=>({...prev,delivery:e.target.value}))} />
+                    </label>
+                    <label>
+                      Full Name
+                      <input type="text" value={moveDraft.name} onChange={e=>setMoveDraft(prev=>({...prev,name:e.target.value}))} />
+                    </label>
+                    <label>
+                      Phone Number
+                      <input type="tel" value={moveDraft.phone} onChange={e=>setMoveDraft(prev=>({...prev,phone:e.target.value}))} />
+                    </label>
+                    <label>
+                      Email Address
+                      <input type="email" value={moveDraft.email} onChange={e=>setMoveDraft(prev=>({...prev,email:e.target.value}))} />
+                    </label>
+                    <div className="cm-route-actions">
+                      <button type="submit" className="cm-save-btn" disabled={busy}>Save changes</button>
+                      <button type="button" className="cm-cancel-btn" disabled={busy} onClick={()=>setEditingMove(false)}>Cancel</button>
+                    </div>
+                  </form>
+                )}
+              </section>
             <section className="cm-card cm-upload"><div className="cm-eyebrow">SHOW US WHAT'S MOVING</div><h2>Add photos, documents<br/>or videos.</h2><p>A few photos of each room help us understand your move. Include any large or delicate items.</p><label className="cm-drop"><span aria-hidden="true">^</span><strong>Choose files</strong><small>Photos, documents or videos · Up to 100 MB each</small><input type="file" multiple disabled={busy} onChange={e=>{choose(e.target.files);e.target.value='';}}/></label>
             {files.length>0 && <p role="status">{files.filter(f=>f.status==='Uploaded').length} of {files.length} files uploaded</p>}
             <div className="cm-file-list">

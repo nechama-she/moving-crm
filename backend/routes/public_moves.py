@@ -285,6 +285,63 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             'files': [{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files]}
 
 
+class CustomerDetailsPatch(BaseModel):
+    name: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=50)
+    email: str | None = Field(default=None, max_length=200)
+    move_date: str | None = None
+    pickup: str | None = Field(default=None, max_length=500)
+    delivery: str | None = Field(default=None, max_length=500)
+
+
+@router.patch('/api/public-moves/{access_id}/details')
+def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter_by(id=access.lead_id).with_for_update().one()
+    job = db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
+
+    if body.name is not None:
+        trimmed_name = body.name.strip()
+        if trimmed_name:
+            lead.full_name = trimmed_name
+    if body.phone is not None:
+        trimmed_phone = body.phone.strip()
+        if trimmed_phone:
+            lead.phone = normalize_phone(trimmed_phone)
+    if body.email is not None:
+        trimmed_email = body.email.strip().lower()
+        if trimmed_email and '@' in trimmed_email:
+            lead.email = trimmed_email
+
+    if body.move_date is not None:
+        raw_date = body.move_date.strip()
+        if raw_date:
+            try:
+                parsed_date = datetime.strptime(raw_date[:10], '%Y-%m-%d').date()
+                formatted_date = parsed_date.strftime('%Y-%m-%d')
+                job.move_date = formatted_date
+                # Check that any scheduled meeting is not after this move date
+                scheduled = db.query(WalkthroughRequest).filter(
+                    WalkthroughRequest.job_id == job.id,
+                    WalkthroughRequest.status.in_(['requested', 'scheduled'])
+                ).all()
+                for req in scheduled:
+                    if req.scheduled_at:
+                        _assert_meeting_before_move_date(job, [req.scheduled_at], label='Existing appointment')
+            except ValueError as e:
+                raise HTTPException(400, 'Invalid move date format (expected YYYY-MM-DD)') from e
+
+    current_pickup, current_stops, current_delivery = _read_job_route(db, job)
+    new_pickup = body.pickup.strip() if body.pickup is not None else current_pickup
+    new_delivery = body.delivery.strip() if body.delivery is not None else current_delivery
+    if body.pickup is not None or body.delivery is not None:
+        job.pickup_zip = new_pickup
+        job.delivery_zip = new_delivery
+        _persist_job_route(db, job.id, new_pickup, current_stops, new_delivery)
+
+    db.commit()
+    return details(access, db)
+
+
 class MeetingBody(BaseModel):
     availability: str = Field(min_length=1, max_length=1000)
     timezone: str = 'America/New_York'
