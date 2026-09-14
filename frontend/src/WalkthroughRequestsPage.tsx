@@ -2,17 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
-import CustomerPageControls from "./CustomerPageControls";
 import ReportControls, { type ReportOptions } from "./ReportControls";
 import { period } from "./reportPeriods";
 import "./ReportsPage.css";
+import "./MeetingRequests.css";
 
 type Meeting={created_at?:string;id:string;status:string;availability:string;timezone:string;scheduled_at:string|null;assigned_to:string};
-type Row={lead_id:string;name:string;company:string;company_id:string;requests:Meeting[]};
+type Row={phone:string;pickup:string;delivery:string;move_date:string;lead_id:string;name:string;company:string;company_id:string;requests:Meeting[]};
 export default function WalkthroughRequestsPage(){
   const {token}=useAuth();
   const [rows,setRows]=useState<Row[]>([]),[options,setOptions]=useState<ReportOptions>({companies:[],reps:[]});
-  const [error,setError]=useState(''),[loading,setLoading]=useState(true),[filter,setFilter]=useState('requested'),[search,setSearch]=useState(''),[active,setActive]=useState('');
+  const [error,setError]=useState(''),[loading,setLoading]=useState(true),[filter,setFilter]=useState('requested'),[search,setSearch]=useState('');
   const [range,setRange]=useState(()=>period('All Time'));
   const [companies,setCompanies]=useState<string[]>([]),[reps,setReps]=useState<string[]>([]);
   const load=useCallback(async()=>{
@@ -36,16 +36,42 @@ export default function WalkthroughRequestsPage(){
     return date>=range.start&&date<=range.end;
   };
   const visible=rows.filter(row=>(!companies.length||companies.includes(row.company_id||'__unassigned__'))&&row.name.toLowerCase().includes(search.toLowerCase())&&(filter!=='unassigned'||!row.company_id)).map(row=>({...row,requests:row.requests.filter(matches)})).filter(row=>row.requests.length||(filter==='unassigned'&&range.label==='All Time'&&!reps.length));
-  return <main className="reports-page">
+  return <main className="reports-page meeting-requests">
     <header><h1>Schedule Meetings</h1></header>
     <ReportControls range={range} companies={companies} reps={reps} options={options} onApply={(next,c,r)=>{setRange(next);setCompanies(c);setReps(r);}} />
     <section className="reports-results">
-      <div className="reports-toolbar"><h2>Meeting requests</h2><input placeholder="Search customer" aria-label="Search customer" value={search} onChange={e=>setSearch(e.target.value)}/><select aria-label="Request status" value={filter} onChange={e=>setFilter(e.target.value)}>{[['requested','Requested'],['scheduled','Scheduled'],['completed','Completed'],['cancelled','Cancelled'],['all','All statuses'],['unassigned','Unassigned company']].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select><button disabled={loading} onClick={()=>void load().catch(e=>setError(e.message))}>Refresh</button></div>
+      <div className="reports-toolbar"><h2>Meeting requests</h2><input placeholder="Search customer" aria-label="Search customer" value={search} onChange={e=>setSearch(e.target.value)}/><select aria-label="Request status" value={filter} onChange={e=>setFilter(e.target.value)}>{[['requested','Requested'],['scheduled','Approved'],['completed','Completed'],['cancelled','Cancelled'],['all','All statuses'],['unassigned','Unassigned company']].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select><button disabled={loading} onClick={()=>void load().catch(e=>setError(e.message))}>Refresh</button></div>
       {error&&<p className="reports-error" role="alert">{error}</p>}
       {loading&&<p role="status">Loading meetings...</p>}
       {!loading&&!error&&!visible.length&&<p className="reports-empty">No meetings match your selection.</p>}
-      {visible.map(row=><section key={row.lead_id} style={{padding:20,borderTop:'1px solid #d8dde6'}}><div style={{display:'flex',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}><div><Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer"><strong>{row.name}</strong></Link><p>{row.company||'Unassigned company'}</p></div><button onClick={()=>setActive(active===row.lead_id?'':row.lead_id)}>Manage customer page / company</button></div>{active===row.lead_id&&<CustomerPageControls leadId={row.lead_id}/>} {row.requests.map(m=><Schedule key={`${m.id}-${m.status}-${m.scheduled_at}-${m.assigned_to}`} meeting={m} reps={options.reps.filter(r=>r.id!=='__unassigned__')} onSave={load}/>)}</section>)}
+      <div className="reports-table"><table><thead><tr>{['Customer','Phone','Moving from','Moving to','Move date','Appointment request','Status',''].map((title,i)=><th key={i}>{title}</th>)}</tr></thead><tbody>
+        {visible.flatMap(row=>row.requests.map(meeting=><tr key={meeting.id}>
+          <td><Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer">{row.name}</Link></td>
+          <td>{row.phone?<a href={`tel:${row.phone}`}>{row.phone}</a>:'?'}</td><td>{row.pickup||'?'}</td><td>{row.delivery||'?'}</td>
+          <td>{row.move_date?new Date(row.move_date.slice(0,10)+'T12:00:00').toLocaleDateString():'?'}</td>
+          <td>{appointment(meeting)}</td><td><span className={`reports-badge ${meeting.status==='scheduled'?'booked':''}`}>{({requested:'Requested',scheduled:'Approved',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[meeting.status]}</span></td>
+          <td><Schedule meeting={meeting} reps={options.reps.filter(r=>r.id!=='__unassigned__')} onSave={load}/></td>
+        </tr>))}
+      </tbody></table></div>
     </section>
   </main>;
 }
-function Schedule({meeting,reps,onSave}:{meeting:Meeting;reps:{id:string;name:string}[];onSave:()=>Promise<void>}){const {token}=useAuth();const [rep,setRep]=useState(meeting.assigned_to),[date,setDate]=useState(()=>{if(!meeting.scheduled_at)return '';const d=new Date(meeting.scheduled_at);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}),[status,setStatus]=useState(meeting.status),[busy,setBusy]=useState(false),[error,setError]=useState('');async function save(){setBusy(true);setError('');try{const r=await fetch(`${API_BASE}/api/walkthrough-requests/${meeting.id}`,{method:'PATCH',headers:{...authHeaders(token),'Content-Type':'application/json'},body:JSON.stringify({status,assigned_to:rep||null,scheduled_at:date?new Date(date).toISOString():null})});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Could not schedule');await onSave();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}return <div style={{borderTop:'1px solid #eee',paddingTop:12}}><p>Customer availability: {meeting.availability} ({meeting.timezone})</p><div style={{display:'flex',gap:12,flexWrap:'wrap'}}><select aria-label="Assigned rep" value={rep} onChange={e=>setRep(e.target.value)}><option value="">Choose rep</option>{reps.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select><label>Appointment (your local time)<input type="datetime-local" value={date} onChange={e=>setDate(e.target.value)}/></label><select aria-label="Status" value={status} onChange={e=>setStatus(e.target.value)}>{['requested','scheduled','completed','cancelled'].map(s=><option key={s}>{s}</option>)}</select><button disabled={busy} onClick={()=>void save()}>Save</button></div>{error&&<p role="alert">{error}</p>}</div>;}
+function requestDates(meeting:Meeting){return meeting.availability.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g)||[];}
+function appointment(meeting:Meeting){
+  const dates=requestDates(meeting);
+  if(meeting.scheduled_at)return new Date(meeting.scheduled_at).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'});
+  if(dates.length){const start=new Date(dates[0]!);return `${start.toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'})}${dates[1]?' - '+new Date(dates[1]).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}):''}`;}
+  return meeting.availability.split(';')[0]||'?';
+}
+function Schedule({meeting,reps,onSave}:{meeting:Meeting;reps:{id:string;name:string}[];onSave:()=>Promise<void>}){
+  const {token}=useAuth();const [rep,setRep]=useState(meeting.assigned_to||''),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  async function save(status:string){setBusy(true);setError('');try{
+    const r=await fetch(`${API_BASE}/api/walkthrough-requests/${meeting.id}`,{method:'PATCH',headers:{...authHeaders(token),'Content-Type':'application/json'},body:JSON.stringify({status,assigned_to:rep||null,scheduled_at:meeting.scheduled_at||requestDates(meeting)[0]||null})});
+    const d=await r.json();if(!r.ok)throw new Error(d.detail||'Could not update meeting');await onSave();
+  }catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+  return <details className="meeting-row-actions"><summary>Manage</summary><div><label>Rep<select value={rep} onChange={e=>setRep(e.target.value)}><option value="">Select rep</option>{reps.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
+    {meeting.status==='requested'&&<button disabled={busy||!rep||!requestDates(meeting).length} onClick={()=>void save('scheduled')}>Approve</button>}
+    {meeting.status==='scheduled'&&<button disabled={busy} onClick={()=>void save('completed')}>Mark completed</button>}
+    {['requested','scheduled'].includes(meeting.status)&&<button disabled={busy} onClick={()=>void save('cancelled')}>Cancel meeting</button>}
+    {error&&<p role="alert">{error}</p>}</div></details>;
+}

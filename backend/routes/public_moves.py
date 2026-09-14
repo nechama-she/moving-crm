@@ -363,7 +363,10 @@ def staff_requests(user: User = Depends(require_admin), db: Session = Depends(ge
     for lead in leads:
         access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).one()
         meetings = db.query(WalkthroughRequest).filter_by(lead_id=lead.id).order_by(WalkthroughRequest.created_at.desc()).all()
+        job = db.get(LeadJob, access.job_id)
         rows.append({'lead_id': lead.id, 'name': lead.full_name, 'company_id': lead.company_id or '',
+                     'phone': lead.phone or '', 'pickup': job.pickup_zip if job else lead.pickup_zip,
+                     'delivery': job.delivery_zip if job else lead.delivery_zip, 'move_date': job.move_date if job else lead.move_date,
                      'company': lead.company.name if lead.company else 'Unassigned', 'job_id': access.job_id,
                      'requests': [meeting_dict(m) for m in meetings]})
     return {'items': rows, 'companies': [{'id': c.id, 'name': c.name} for c in db.query(Company).filter(Company.id.in_(companies)).all()],
