@@ -240,6 +240,28 @@ def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_acce
     return {'session': token, 'expires_in': 28800}
 
 
+def _parse_availability_stamps(value: str) -> list[datetime]:
+    return [datetime.fromisoformat(stamp.replace('Z', '+00:00')).replace(tzinfo=None) for stamp in re.findall(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z', value)]
+
+
+def _meeting_move_date_limit(job: LeadJob | None) -> datetime | None:
+    if job is None or not job.move_date:
+        return None
+    try:
+        parsed = datetime.strptime(str(job.move_date), '%Y-%m-%d')
+    except ValueError:
+        return None
+    return parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+
+def _assert_meeting_before_move_date(job: LeadJob | None, stamps: list[datetime], *, label: str = 'Appointment'):
+    limit = _meeting_move_date_limit(job)
+    if limit is None or not stamps:
+        return
+    if max(stamps) > limit:
+        raise HTTPException(400, f'{label} must be on or before the move date.')
+
+
 def meeting_dict(row):
     return {'id': row.id, 'status': row.status, 'availability': row.availability or '', 'timezone': row.timezone,
             'scheduled_at': row.scheduled_at.isoformat()+'Z' if row.scheduled_at else None, 'assigned_to': row.assigned_to or '',
@@ -277,7 +299,10 @@ class MeetingBody(BaseModel):
 
 @router.post('/api/public-moves/{access_id}/walkthrough')
 def request_meeting(body: MeetingBody, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
+    job = db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
+    available = _parse_availability_stamps(body.availability)
+    if available:
+        _assert_meeting_before_move_date(job, available, label='Requested appointment')
     existing = db.query(WalkthroughRequest).filter(WalkthroughRequest.job_id == access.job_id, WalkthroughRequest.status.in_(['requested', 'scheduled'])).first()
     if existing: return meeting_dict(existing)
     row = WalkthroughRequest(lead_id=access.lead_id, job_id=access.job_id, availability=body.availability, timezone=body.timezone)
@@ -287,13 +312,14 @@ def request_meeting(body: MeetingBody, access: PublicMoveAccess = Depends(verifi
 
 @router.post('/api/public-moves/{access_id}/reschedule')
 def reschedule_meeting(body: MeetingBody, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
+    job = db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
     row = db.query(WalkthroughRequest).filter(WalkthroughRequest.job_id == access.job_id, WalkthroughRequest.status.in_(['requested','scheduled'])).with_for_update().first()
     if not row: raise HTTPException(409, 'This meeting can no longer be rescheduled.')
     stamps = re.findall(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z', body.availability)
     if not stamps: raise HTTPException(400, 'Choose a new appointment window.')
     start = datetime.fromisoformat(stamps[0].replace('Z','+00:00')).replace(tzinfo=None)
     if start <= NOW(): raise HTTPException(400, 'Choose a future appointment window.')
+    _assert_meeting_before_move_date(job, [start], label='Requested appointment')
     if window_count(db, start, row.id) >= 4: raise HTTPException(409, 'This time window is full. Choose another time.')
     row.availability = body.availability; row.timezone = body.timezone
     row.status = 'requested'; row.scheduled_at = None; row.updated_at = NOW()
@@ -413,7 +439,7 @@ def meeting_availability(body: AvailabilityBody, access: PublicMoveAccess = Depe
 
 
 class ScheduleBody(BaseModel):
-    status: Literal['requested', 'scheduled', 'completed', 'cancelled']
+    status: Literal['requested', 'scheduled', 'completed', 'cancelled'] | None = None
     assigned_to: str | None = None
     scheduled_at: datetime | None = None
 
@@ -423,30 +449,48 @@ def schedule(request_id: str, body: ScheduleBody, user: User = Depends(require_a
     row = db.get(WalkthroughRequest, request_id)
     if not row: raise HTTPException(404, 'Request not found')
     staff_access(row.lead_id, user, db)
-    if body.assigned_to:
-        rep = db.get(User, body.assigned_to)
-        if not rep or rep.role not in ('admin', 'sales_rep'): raise HTTPException(400, 'Choose a valid rep')
-        row.assigned_to = rep.id
+    if 'assigned_to' in body.model_fields_set:
+        if body.assigned_to:
+            rep = db.get(User, body.assigned_to)
+            if not rep or rep.role not in ('admin', 'sales_rep'): raise HTTPException(400, 'Choose a valid rep')
+            row.assigned_to = rep.id
+        else:
+            row.assigned_to = None
     if body.scheduled_at:
         if body.scheduled_at.tzinfo is None: raise HTTPException(400, 'Scheduled time must include a timezone')
         row.scheduled_at = body.scheduled_at.astimezone(timezone.utc).replace(tzinfo=None)
-    if body.status == 'scheduled' and (not row.assigned_to or not row.scheduled_at): raise HTTPException(400, 'Choose a rep and scheduled time')
-    if body.status == 'scheduled' and row.scheduled_at <= NOW(): raise HTTPException(400, 'Choose a future appointment time')
-    if body.status in ('requested', 'scheduled'):
+    elif not row.scheduled_at:
+        stamps = _parse_availability_stamps(row.availability)
+        if stamps:
+            row.scheduled_at = stamps[0]
+
+    target_status = body.status if body.status is not None else row.status
+    if target_status == 'scheduled' and not row.assigned_to:
+        raise HTTPException(400, 'Choose a rep before approving')
+    if target_status == 'scheduled' and not row.scheduled_at:
+        raise HTTPException(400, 'No appointment time available to approve')
+
+    if row.scheduled_at is not None:
+        job = db.get(LeadJob, row.job_id)
+        _assert_meeting_before_move_date(job, [row.scheduled_at], label='Appointment')
+
+    if target_status in ('requested', 'scheduled'):
         db.query(LeadJob).filter_by(id=row.job_id).with_for_update().one()
         duplicate = db.query(WalkthroughRequest).filter(WalkthroughRequest.job_id == row.job_id, WalkthroughRequest.id != row.id, WalkthroughRequest.status.in_(['requested','scheduled'])).first()
         if duplicate: raise HTTPException(409, 'This job already has an active request')
-    if body.status == 'scheduled':
+
+    if target_status == 'scheduled' and row.status != 'scheduled':
         from routes.liveswitch import ensure_conversation
         conversation = ensure_conversation(row.lead_id, user, db)
         if not conversation.get('participantJoinUrl'):
             raise HTTPException(502, 'LiveSwitch did not return a participant link. Please retry approval.')
-    if body.status == 'scheduled':
         # Serialize capacity checks after LiveSwitch's transaction has completed.
         db.execute(text('SELECT pg_advisory_xact_lock(784321901)'))
         if window_count(db, row.scheduled_at, row.id) >= 4:
             raise HTTPException(409, 'This time window is full. Choose another appointment time.')
-    row.status = body.status; db.commit()
+
+    row.status = target_status
+    db.commit()
     return meeting_dict(row)
 
 

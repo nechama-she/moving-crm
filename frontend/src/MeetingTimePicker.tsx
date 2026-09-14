@@ -8,9 +8,10 @@ const windows = [
   {label:'4 - 6 PM',start:16,end:18}, {label:'6 - 8 PM',start:18,end:20},
 ];
 type Selection = {date:string;slot:number};
-export default function MeetingTimePicker({ onChange, availabilityUrl, linkKey, session }: { onChange: (value: string) => void; availabilityUrl:string; linkKey:string; session:string }) {
+export default function MeetingTimePicker({ onChange, availabilityUrl, linkKey, session, moveDate }: { onChange: (value: string) => void; availabilityUrl:string; linkKey:string; session:string; moveDate?: string | null }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const moveEnd = moveDate ? new Date(`${moveDate}T23:59:59`) : null;
   const today = key(new Date());
   const [first,setFirst] = useState(today);
   const [slots,setSlots]=useState<Record<string,boolean>>({});
@@ -33,8 +34,12 @@ export default function MeetingTimePicker({ onChange, availabilityUrl, linkKey, 
   const [selected,setSelected] = useState<Selection>();
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const zoneName = new Intl.DateTimeFormat('en-US',{timeZoneName:'long',timeZone:timezone}).formatToParts(day(draft?.date||today)).find(p=>p.type==='timeZoneName')?.value || timezone;
-  const dates = Array.from({length:5},(_,i)=>{const d=day(first);d.setDate(d.getDate()+i);return key(d);});
-  const future = (value:Selection) => {const d=day(value.date);d.setHours(windows[value.slot].start,0,0,0);return d.getTime()>Date.now()&&slots[`${value.date}-${value.slot}`]===true;};
+  const dates = Array.from({length:5},(_,i)=>{const d=day(first);d.setDate(d.getDate()+i);return key(d);}).filter(date => !moveEnd || day(date).getTime() <= moveEnd.getTime());
+  const future = (value:Selection) => {
+    const d=day(value.date);d.setHours(windows[value.slot].start,0,0,0);
+    const isAfterMoveDate = moveEnd ? d.getTime() > moveEnd.getTime() : false;
+    return !isAfterMoveDate && d.getTime()>Date.now() && slots[`${value.date}-${value.slot}`]===true;
+  };
   const describe = (value:Selection) => `${day(value.date).toLocaleDateString('en-US',{month:'short',day:'numeric'})}, ${windows[value.slot].label}`;
   function close(){setCalendar(false);dialog.current?.close();trigger.current?.focus();}
   function apply(){
@@ -54,7 +59,7 @@ export default function MeetingTimePicker({ onChange, availabilityUrl, linkKey, 
         <div className="cm-slot-navigation"><div className="cm-jump"><button type="button" className="cm-jump-trigger" aria-expanded={calendar} onClick={()=>{setMonth(day(first));setCalendar(!calendar);}}>{day(first).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}<span aria-hidden="true">&#9662;</span></button>
           {calendar&&<div className="cm-jump-calendar" aria-label="Choose date" onKeyDown={e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();setCalendar(false);}}}>
             <div className="cm-jump-heading"><button type="button" aria-label="Previous month" disabled={month.getFullYear()===day(today).getFullYear()&&month.getMonth()===day(today).getMonth()} onClick={()=>setMonth(new Date(month.getFullYear(),month.getMonth()-1,1))}>&#8249;</button><strong aria-live="polite">{month.toLocaleDateString('en-US',{month:'long',year:'numeric'})}</strong><button type="button" aria-label="Next month" onClick={()=>setMonth(new Date(month.getFullYear(),month.getMonth()+1,1))}>&#8250;</button></div>
-            <div className="cm-jump-grid">{['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=><span key={d}>{d}</span>)}{Array.from({length:new Date(month.getFullYear(),month.getMonth(),1).getDay()},(_,i)=><span key={`blank${i}`}/>)}{Array.from({length:new Date(month.getFullYear(),month.getMonth()+1,0).getDate()},(_,i)=>{const value=key(new Date(month.getFullYear(),month.getMonth(),i+1));return <button type="button" key={value} disabled={value<today} aria-label={value} aria-pressed={first===value} aria-current={value===today?'date':undefined} onClick={()=>{setFirst(value);setCalendar(false);}}>{i+1}</button>;})}</div>
+            <div className="cm-jump-grid">{['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=><span key={d}>{d}</span>)}{Array.from({length:new Date(month.getFullYear(),month.getMonth(),1).getDay()},(_,i)=><span key={`blank${i}`}/>)}{Array.from({length:new Date(month.getFullYear(),month.getMonth()+1,0).getDate()},(_,i)=>{const value=key(new Date(month.getFullYear(),month.getMonth(),i+1)); const isAfterMoveDate = moveEnd ? new Date(`${value}T12:00:00`).getTime() > moveEnd.getTime() : false; return <button type="button" key={value} disabled={value<today || isAfterMoveDate} aria-label={value} aria-pressed={first===value} aria-current={value===today?'date':undefined} onClick={()=>{setFirst(value);setCalendar(false);}}>{i+1}</button>;})}</div>
             <button type="button" className="cm-jump-today" onClick={()=>{setFirst(today);setCalendar(false);}}>Today</button>
           </div>}
         </div><div><button type="button" aria-label="Previous five days" disabled={first<=today} onClick={()=>{const d=day(first);d.setDate(d.getDate()-5);setFirst(key(d)<today?today:key(d));}}>&#8249;</button><button type="button" aria-label="Next five days" onClick={()=>{const d=day(first);d.setDate(d.getDate()+5);setFirst(key(d));}}>&#8250;</button></div></div>

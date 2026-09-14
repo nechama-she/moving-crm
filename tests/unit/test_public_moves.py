@@ -162,6 +162,22 @@ def test_request_is_idempotent_and_estimate_is_published_snapshot(portal):
     assert mod.details(access,db)['estimate']['price']=='1234.50'
 
 
+def test_request_or_approval_cannot_be_after_move_date(portal):
+    mod,db,lead,access=portal
+    db.get(models.LeadJob, access.job_id).move_date = '2026-10-01'; db.commit()
+    with pytest.raises(HTTPException) as exc:
+        mod.request_meeting(mod.MeetingBody(availability='2026-10-07T08:00:00Z'), access, db)
+    assert exc.value.status_code == 400
+
+    row = models.WalkthroughRequest(id='meeting-1', lead_id=lead.id, job_id=access.job_id, status='requested', availability='2026-10-07T08:00:00Z')
+    db.add(models.User(id='rep-1', name='Rep', role='sales_rep', email='rep@example.com', phone='123', password_hash='x'))
+    db.add(row); db.commit()
+    mod.staff_access = lambda *args: (lead, access)
+    with pytest.raises(HTTPException) as exc:
+        mod.schedule(row.id, mod.ScheduleBody(status='scheduled', assigned_to='rep-1', scheduled_at=datetime(2026, 10, 7, 8, 0)), SimpleNamespace(role='admin'), db)
+    assert exc.value.status_code == 400
+
+
 def test_otp_expired_and_session_cannot_be_used_for_other_move(portal):
     mod,db,lead,access=portal
     access.otp_hash=secret_digest(access.id+':123456'); access.otp_expires=datetime.utcnow()-timedelta(seconds=1);access.contact_hash=contact_fingerprint(lead);db.commit()

@@ -12,7 +12,7 @@ type Row={phone:string;pickup:string;delivery:string;move_date:string;lead_id:st
 export default function WalkthroughRequestsPage(){
   const {token}=useAuth();
   const [rows,setRows]=useState<Row[]>([]),[options,setOptions]=useState<ReportOptions>({companies:[],reps:[]});
-  const [error,setError]=useState(''),[loading,setLoading]=useState(true),[filter,setFilter]=useState('requested'),[search,setSearch]=useState('');
+  const [error,setError]=useState(''),[loading,setLoading]=useState(true),[filter,setFilter]=useState('all'),[search,setSearch]=useState('');
   const [range,setRange]=useState(()=>period('All Time'));
   const [companies,setCompanies]=useState<string[]>([]),[reps,setReps]=useState<string[]>([]);
   const load=useCallback(async()=>{
@@ -37,21 +37,15 @@ export default function WalkthroughRequestsPage(){
   };
   const visible=rows.filter(row=>(!companies.length||companies.includes(row.company_id||'__unassigned__'))&&row.name.toLowerCase().includes(search.toLowerCase())&&(filter!=='unassigned'||!row.company_id)).map(row=>({...row,requests:row.requests.filter(matches)})).filter(row=>row.requests.length||(filter==='unassigned'&&range.label==='All Time'&&!reps.length));
   return <main className="reports-page meeting-requests">
-    <header><h1>Schedule Meetings</h1></header>
+    <header><h1>Meetings Calendar</h1></header>
     <ReportControls range={range} companies={companies} reps={reps} options={options} onApply={(next,c,r)=>{setRange(next);setCompanies(c);setReps(r);}} />
     <section className="reports-results">
-      <div className="reports-toolbar"><h2>Meeting requests</h2><input placeholder="Search customer" aria-label="Search customer" value={search} onChange={e=>setSearch(e.target.value)}/><select aria-label="Request status" value={filter} onChange={e=>setFilter(e.target.value)}>{[['requested','Requested'],['scheduled','Approved'],['completed','Completed'],['cancelled','Cancelled'],['all','All statuses'],['unassigned','Unassigned company']].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select><button disabled={loading} onClick={()=>void load().catch(e=>setError(e.message))}>Refresh</button></div>
+      <div className="reports-toolbar"><h2>Meetings</h2><input placeholder="Search customer" aria-label="Search customer" value={search} onChange={e=>setSearch(e.target.value)}/><select aria-label="Request status" value={filter} onChange={e=>setFilter(e.target.value)}>{[['all','All statuses'],['requested','Requested'],['scheduled','Approved'],['completed','Completed'],['cancelled','Cancelled'],['unassigned','Unassigned company']].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></div>
       {error&&<p className="reports-error" role="alert">{error}</p>}
       {loading&&<p role="status">Loading meetings...</p>}
       {!loading&&!error&&!visible.length&&<p className="reports-empty">No meetings match your selection.</p>}
-      <div className="reports-table"><table><thead><tr>{['Customer','Phone','Moving from','Moving to','Move date','Appointment request','Status',''].map((title,i)=><th key={i}>{title}</th>)}</tr></thead><tbody>
-        {visible.flatMap(row=>row.requests.map(meeting=><tr key={meeting.id}>
-          <td><Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer">{row.name}</Link></td>
-          <td>{row.phone?<a href={`tel:${row.phone}`}>{row.phone}</a>:'?'}</td><td>{row.pickup||'?'}</td><td>{row.delivery||'?'}</td>
-          <td>{row.move_date?new Date(row.move_date.slice(0,10)+'T12:00:00').toLocaleDateString():'?'}</td>
-          <td>{appointment(meeting)}</td><td><span className={`reports-badge ${meeting.status==='scheduled'?'booked':''}`}>{({requested:'Requested',scheduled:'Approved',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[meeting.status]}</span></td>
-          <td><Schedule meeting={meeting} reps={options.reps.filter(r=>r.id!=='__unassigned__')} onSave={load}/></td>
-        </tr>))}
+      <div className="reports-table"><table><thead><tr>{['Customer','Phone','Moving from','Moving to','Move date','Appointment request','Status','Rep'].map((title,i)=><th key={i}>{title}</th>)}</tr></thead><tbody>
+        {visible.flatMap(row=>row.requests.map(meeting=><MeetingRow key={meeting.id} meeting={meeting} row={row} reps={options.reps.filter(r=>r.id!=='__unassigned__')} onSave={load}/>))}
       </tbody></table></div>
     </section>
   </main>;
@@ -61,17 +55,92 @@ function appointment(meeting:Meeting){
   const dates=requestDates(meeting);
   if(meeting.scheduled_at)return new Date(meeting.scheduled_at).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'});
   if(dates.length){const start=new Date(dates[0]!);return `${start.toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'})}${dates[1]?' - '+new Date(dates[1]).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}):''}`;}
-  return meeting.availability.split(';')[0]||'?';
+  return meeting.availability.split(';')[0]||'—';
 }
-function Schedule({meeting,reps,onSave}:{meeting:Meeting;reps:{id:string;name:string}[];onSave:()=>Promise<void>}){
-  const {token}=useAuth();const [rep,setRep]=useState(meeting.assigned_to||''),[busy,setBusy]=useState(false),[error,setError]=useState('');
-  async function save(status:string){setBusy(true);setError('');try{
-    const r=await fetch(`${API_BASE}/api/walkthrough-requests/${meeting.id}`,{method:'PATCH',headers:{...authHeaders(token),'Content-Type':'application/json'},body:JSON.stringify({status,assigned_to:rep||null,scheduled_at:meeting.scheduled_at||requestDates(meeting)[0]||null})});
-    const d=await r.json();if(!r.ok)throw new Error(d.detail||'Could not update meeting');await onSave();
-  }catch(e){setError((e as Error).message);}finally{setBusy(false);}}
-  return <details className="meeting-row-actions"><summary>Manage</summary><div><label>Rep<select value={rep} onChange={e=>setRep(e.target.value)}><option value="">Select rep</option>{reps.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
-    {meeting.status==='requested'&&<button disabled={busy||!rep||!requestDates(meeting).length} onClick={()=>void save('scheduled')}>Approve</button>}
-    {meeting.status==='scheduled'&&<button disabled={busy} onClick={()=>void save('completed')}>Mark completed</button>}
-    {['requested','scheduled'].includes(meeting.status)&&<button disabled={busy} onClick={()=>void save('cancelled')}>Cancel meeting</button>}
-    {error&&<p role="alert">{error}</p>}</div></details>;
+
+function MeetingRow({meeting,row,reps,onSave}:{meeting:Meeting;row:Row;reps:{id:string;name:string}[];onSave:()=>Promise<void>}){
+  const {token}=useAuth();
+  const [currentStatus,setCurrentStatus]=useState(meeting.status);
+  const [currentRep,setCurrentRep]=useState(meeting.assigned_to||'');
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState('');
+
+  useEffect(()=>{
+    setCurrentStatus(meeting.status);
+    setCurrentRep(meeting.assigned_to||'');
+  },[meeting.status,meeting.assigned_to]);
+
+  async function updateMeeting(patch:{status?:string;assigned_to?:string|null}){
+    setBusy(true);
+    setError('');
+    const targetStatus=patch.status!==undefined?patch.status:currentStatus;
+    const targetRep=patch.assigned_to!==undefined?patch.assigned_to:(currentRep||null);
+
+    if(patch.status!==undefined)setCurrentStatus(patch.status);
+    if(patch.assigned_to!==undefined)setCurrentRep(patch.assigned_to||'');
+
+    try{
+      const payload:Record<string,unknown>={
+        status:targetStatus,
+        assigned_to:targetRep,
+        scheduled_at:meeting.scheduled_at||requestDates(meeting)[0]||null,
+      };
+      const r=await fetch(`${API_BASE}/api/walkthrough-requests/${meeting.id}`,{
+        method:'PATCH',
+        headers:{...authHeaders(token),'Content-Type':'application/json'},
+        body:JSON.stringify(payload),
+      });
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.detail||'Could not update meeting');
+      await onSave();
+    }catch(e){
+      setError((e as Error).message);
+      setCurrentStatus(meeting.status);
+      setCurrentRep(meeting.assigned_to||'');
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  return (
+    <tr>
+      <td><Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer">{row.name}</Link></td>
+      <td>{row.phone?<a href={`tel:${row.phone}`}>{row.phone}</a>:'—'}</td>
+      <td>{row.pickup||'—'}</td>
+      <td>{row.delivery||'—'}</td>
+      <td>{row.move_date?new Date(row.move_date.slice(0,10)+'T12:00:00').toLocaleDateString():'—'}</td>
+      <td>{appointment(meeting)}</td>
+      <td>
+        <div className="meeting-status-select-wrap">
+          <select
+            className={`meeting-status-select status-${currentStatus}`}
+            value={currentStatus}
+            disabled={busy}
+            aria-label="Change meeting status"
+            onChange={e=>void updateMeeting({status:e.target.value})}
+          >
+            <option value="requested">Requested</option>
+            <option value="scheduled">Approved</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          {error&&<span className="meeting-row-inline-error" role="alert">{error}</span>}
+        </div>
+      </td>
+      <td>
+        <div className="meeting-rep-select-wrap">
+          <select
+            className={`meeting-rep-select ${!currentRep?'unassigned':''}`}
+            value={currentRep}
+            disabled={busy}
+            aria-label="Assign sales rep"
+            onChange={e=>void updateMeeting({assigned_to:e.target.value||null})}
+          >
+            <option value="">Unassigned</option>
+            {reps.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        </div>
+      </td>
+    </tr>
+  );
 }

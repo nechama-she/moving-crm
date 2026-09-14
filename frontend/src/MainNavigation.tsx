@@ -24,7 +24,7 @@ export default function MainNavigation({ role, mobile = false }: { role?: string
     ] }] : []),
     { label: 'Scheduling', items: [
       item('Sales Calendar', '/sales-calendar'),
-      ...(admin ? [item('Schedule Meetings', '/walkthrough-requests')] : []),
+      ...(admin ? [item('Meetings Calendar', '/walkthrough-requests')] : []),
       ...(admin || dispatch ? [item('Dispatch Calendar', '/dispatch')] : []),
     ] },
     { label: 'Reports', items: [
