@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+﻿import { useEffect, useState, useRef, useCallback } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import { API_BASE } from "./apiConfig";
@@ -64,7 +64,7 @@ function cellStyle(key: string): React.CSSProperties {
 
 export default function LeadsList() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -202,7 +202,7 @@ export default function LeadsList() {
     return ordered;
   };
 
-  if (loading && !hasLoadedRef.current) return <p>Loading…</p>;
+  if (loading && !hasLoadedRef.current) return <p>Loadingâ€¦</p>;
 
   const columns = getColumns(leads);
 
@@ -239,7 +239,7 @@ export default function LeadsList() {
       <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
         <input
           type="text"
-          placeholder="Search by name, ID, phone, or email…"
+          placeholder="Search by name, ID, phone, or emailâ€¦"
           value={searchInput}
           onChange={(e) => handleSearchChange(e.target.value)}
           style={{
@@ -262,13 +262,14 @@ export default function LeadsList() {
             <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
           ))}
         </select>
-        {!companyIdFilter && companies.length > 1 && (
+        {!companyIdFilter && (companies.length > 1 || user?.role === "admin") && (
           <select
             value={companyFilter}
             onChange={(e) => setCompanyFilter(e.target.value)}
             style={{ padding: "8px 12px", border: "1px solid #dddbda", borderRadius: 4, fontSize: 14, background: "#fff", cursor: "pointer" }}
           >
             <option value="">All Companies</option>
+            {user?.role === "admin" && <option value="__unassigned__">Unassigned company</option>}
             {companies.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
@@ -320,7 +321,7 @@ export default function LeadsList() {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {formatLabel(col)}{isActive ? (sortDir === "asc" ? " ▲" : " ▼") : isSortable ? " ⇅" : ""}
+                  {formatLabel(col)}{isActive ? (sortDir === "asc" ? " â–²" : " â–¼") : isSortable ? " â‡…" : ""}
                 </th>
                 );
               })}
@@ -340,7 +341,7 @@ export default function LeadsList() {
                 }
               >
                 {columns.map((col) => {
-                  const text = formatValue(col, lead[col]);
+                  const text = col === "company_name" && !lead.company_id ? "Unassigned company" : formatValue(col, lead[col]);
                   const isCompanyCell = col === "company_name" && lead.company_id;
                   return (
                     <td
@@ -381,7 +382,7 @@ export default function LeadsList() {
           </tbody>
         </table>
         <div ref={sentinelRef} style={{ height: 1 }} />
-        {loadingMore && <p style={{ padding: "8px 12px", margin: 0 }}>Loading more…</p>}
+        {loadingMore && <p style={{ padding: "8px 12px", margin: 0 }}>Loading moreâ€¦</p>}
         </div>
       )}
 
@@ -415,3 +416,4 @@ export default function LeadsList() {
     </div>
   );
 }
+

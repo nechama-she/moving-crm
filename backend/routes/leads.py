@@ -1467,13 +1467,18 @@ def get_leads(
     db: Session = Depends(get_db),
 ):
     company_ids = _get_user_company_ids(user, db)
-    if not company_ids:
+    if not company_ids and user.role != "admin":
         return {"items": [], "total": 0, "has_more": False}
 
-    query = db.query(Lead).filter(Lead.company_id.in_(company_ids))
+    visibility = Lead.company_id.in_(company_ids)
+    if user.role == "admin":
+        visibility = or_(visibility, Lead.company_id.is_(None))
+    query = db.query(Lead).filter(visibility)
 
     # Filter by specific company if requested
-    if company_id:
+    if company_id == "__unassigned__" and user.role == "admin":
+        query = query.filter(Lead.company_id.is_(None))
+    elif company_id:
         if company_id not in company_ids:
             return {"items": [], "total": 0, "has_more": False}
         query = query.filter(Lead.company_id == company_id)
@@ -1524,7 +1529,7 @@ def get_leads(
         "company_name": Company.name,
     }
     if sort_by == "company_name":
-        query = query.join(Company, Lead.company_id == Company.id)
+        query = query.outerjoin(Company, Lead.company_id == Company.id)
     sort_col = SORTABLE.get(sort_by, Lead.created_at)
     order = sort_col.asc() if sort_dir == "asc" else sort_col.desc()
     query = query.order_by(order)

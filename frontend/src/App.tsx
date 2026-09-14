@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation, NavLink } from "react-router-dom";
 import { lazy, Suspense, useEffect, useState } from "react";
+import MainNavigation from "./MainNavigation";
 import { AuthProvider, useAuth } from "./AuthContext";
 
 const CustomerMovePage = lazy(() => import("./CustomerMovePage"));
@@ -100,38 +101,7 @@ function ProtectedRoutes() {
           <span aria-hidden="true">{mobileMenuOpen ? "×" : "☰"}</span>
         </button>
         <div className="crm-nav-links" style={{ display: "flex", flex: 1 }}>
-          {isForemanUser ? (
-            <>
-              <NavLink to="/dispatch" style={navLinkStyle}>My Jobs</NavLink>
-              <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
-            </>
-          ) : isDispatchUser ? (
-            <>
-              <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
-              <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
-              <NavLink to="/sales-performance" style={navLinkStyle}>Performance</NavLink>
-              <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
-            </>
-          ) : (
-            <>
-              <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
-              {user?.role === "admin" ? <NavLink to="/chats" style={navLinkStyle}>Communications</NavLink> : null}
-              {user?.role === "admin" ? <NavLink to="/sales-work-queue" style={navLinkStyle}>Sales Work Queue</NavLink> : null}
-              {user?.role === "admin" ? <NavLink to="/reports" style={navLinkStyle}>Reports</NavLink> : null}
-              {user?.role === "admin" ? <NavLink to="/walkthrough-requests" style={navLinkStyle}>Live Calls</NavLink> : null}
-              {user?.role === "admin" ? <NavLink to="/stats" style={navLinkStyle}>Stats</NavLink> : null}
-              <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
-              <NavLink to="/sales-performance" style={navLinkStyle}>Performance</NavLink>
-              <NavLink to="/outreach" style={navLinkStyle}>Outreach</NavLink>
-                  <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
-                  <NavLink to="/pricing" style={navLinkStyle}>Pricing</NavLink>
-              {user?.role === "admin" && (
-                <>
-                  <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
-                </>
-              )}
-            </>
-          )}
+          <MainNavigation role={user?.role} />
         </div>
         <div className="crm-user-actions" style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {user && <span style={{ color: "#9dc9e8", fontSize: 13 }}>{user.name}</span>}
@@ -166,40 +136,8 @@ function ProtectedRoutes() {
               <span>{user?.role || ""}</span>
             </div>
             <div className="crm-mobile-menu-links">
-              {isForemanUser ? (
-                <>
-                  <NavLink to="/dispatch">My Jobs</NavLink>
-                  <NavLink to="/settings">Settings</NavLink>
-                  {!isImpersonating ? <NavLink to="/change-password">Change Password</NavLink> : null}
-                </>
-              ) : isDispatchUser ? (
-                <>
-                  <NavLink to="/dispatch">Dispatch Calendar</NavLink>
-                  <NavLink to="/sales-calendar">Sales Calendar</NavLink>
-                  <NavLink to="/sales-performance">Sales Performance</NavLink>
-                  <NavLink to="/settings">Settings</NavLink>
-                </>
-              ) : (
-                <>
-                  <NavLink to="/">Leads</NavLink>
-                  {user?.role === "admin" ? <NavLink to="/chats">Communications</NavLink> : null}
-                  {user?.role === "admin" ? <NavLink to="/sales-work-queue">Sales Work Queue</NavLink> : null}
-                  {user?.role === "admin" ? <NavLink to="/reports">Reports</NavLink> : null}
-                  {user?.role === "admin" ? <NavLink to="/walkthrough-requests">Live Calls</NavLink> : null}
-                  {user?.role === "admin" ? <NavLink to="/stats">Stats</NavLink> : null}
-                  <NavLink to="/sales-calendar">Sales Calendar</NavLink>
-                  <NavLink to="/sales-performance">Sales Performance</NavLink>
-                  <NavLink to="/outreach">Outreach</NavLink>
-                  <NavLink to="/settings">Settings</NavLink>
-                  <NavLink to="/pricing">Pricing</NavLink>
-                  {user?.role === "admin" ? (
-                    <>
-                      <NavLink to="/dispatch">Dispatch Calendar</NavLink>
-                    </>
-                  ) : null}
-                  {!isImpersonating ? <NavLink to="/change-password">Change Password</NavLink> : null}
-                </>
-              )}
+              <MainNavigation role={user?.role} mobile />
+              {!isDispatchUser && !isImpersonating ? <NavLink to="/change-password">Change Password</NavLink> : null}
             </div>
             <button type="button" className="crm-mobile-signout" onClick={logout}>Sign Out</button>
           </aside>
