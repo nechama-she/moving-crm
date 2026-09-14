@@ -1494,7 +1494,7 @@ def get_leads(
     if status:
         query = query.filter(Lead.status == status)
 
-    # Assigned-to filter (admin/dispatch only — sales_rep is already forced above)
+    # Assigned-to filter (admin/dispatch only â€” sales_rep is already forced above)
     if assigned_to and user.role != "sales_rep":
         if assigned_to == "__unassigned__":
             query = query.filter(Lead.assigned_to == None)  # noqa: E711
@@ -3843,7 +3843,10 @@ def _apply_lead_update(
     if not (allow_dispatch_smartmoving_refresh and user.role == "dispatch"):
         _ensure_not_dispatch_write(user)
     company_ids = _get_user_company_ids(user, db)
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.company_id.in_(company_ids)).first()
+    visibility = Lead.company_id.in_(company_ids)
+    if user.role == "admin":
+        visibility = or_(visibility, Lead.company_id.is_(None))
+    lead = db.query(Lead).filter(Lead.id == lead_id, visibility).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
@@ -4578,7 +4581,7 @@ def assign_lead_by_name(
     return lead.to_dict()
 
 
-# ---- POST /api/leads — create a new lead from Zapier / external source ----
+# ---- POST /api/leads â€” create a new lead from Zapier / external source ----
 
 MOVE_TYPE_MAP = {
     "out of state": "interstate",
