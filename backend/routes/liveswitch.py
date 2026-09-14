@@ -151,7 +151,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import get_db
-from models import Lead, LeadLiveSwitch, PublicMoveAccess, SalesRep
+from models import Lead, LeadLiveSwitch, PublicMoveAccess, SalesRep, Company
 from libs.aircall.client import send_sms, find_number_id
 from libs.smartmoving.client import get_opportunity
 from routes.leads import _get_visible_lead_or_404, _ensure_not_dispatch_write
@@ -209,9 +209,14 @@ def ensure_conversation(lead_id: str, user: User = Depends(get_current_user), db
     saved = db.get(LeadLiveSwitch, lead.id)
     if saved:
         return json.loads(saved.details)
-    company_phone = (lead.company.phone or "").strip() if lead.company else ""
+    company = lead.company
+    if company is None:
+        company = db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
+    if company is None:
+        raise HTTPException(400, "Select a default company in Settings to start LiveSwitch for an unassigned lead")
+    company_phone = (company.phone or "").strip()
     if not company_phone:
-        raise HTTPException(400, "Add a phone number to this lead's company first")
+        raise HTTPException(400, "Add a phone number to the sending company before starting LiveSwitch")
     quote_number = str(lead.quote_number or "").strip()
     public_move = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
     if public_move and not quote_number:

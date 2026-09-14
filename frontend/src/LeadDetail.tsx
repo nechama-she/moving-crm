@@ -1,9 +1,9 @@
+import LeadMeasurements from "./LeadMeasurements";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import StopTypesEditor from "./StopTypesEditor";
-import CustomerPageControls from "./CustomerPageControls";
 import LiveSwitchPanel from "./LiveSwitchPanel";
 import ChatMessages from "./ChatMessages";
 import TasksPanel from "./TasksPanel";
@@ -2627,13 +2627,12 @@ export default function LeadDetail() {
                 <span style={{ fontSize: 18 }}>⚖️</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={tileLabel}>Volume / Weight</div>
-                  {(hasVolume || hasWeight) ? (
-                    <span style={{ fontSize: 14, color: "#334155", fontWeight: 600 }}>
-                      {hasVolume ? volume.toFixed(2) : "—"} / {hasWeight ? weight.toFixed(2) : "—"}
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 14, color: "#706e6b" }}>—</span>
-                  )}
+                  <LeadMeasurements volume={hasVolume ? volume : 0} weight={hasWeight ? weight : 0} editable={user?.role === "admin" || user?.role === "sales_rep"} onSave={async (values) => {
+                    const response = await fetch(`${API_BASE}/api/leads/${leadId}`, {method:"PATCH",headers:{...authHeaders(token),"Content-Type":"application/json"},body:JSON.stringify(values)});
+                    const updated = await response.json();
+                    if (!response.ok) throw new Error(updated.detail || "Could not save measurements");
+                    setLead(updated);
+                  }} />
                 </div>
               </div>
             </div>
@@ -3395,7 +3394,6 @@ export default function LeadDetail() {
         </div>
       </div>
 
-      {leadId && (user?.role === "admin" || user?.role === "sales_rep") && <CustomerPageControls leadId={leadId} />}
       {!isDispatchUser && (user?.role === "admin" || user?.role === "sales_rep") &&
         renderSection("Other Info", [...META_FIELDS, ...otherFields])}
 

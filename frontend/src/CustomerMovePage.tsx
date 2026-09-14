@@ -5,7 +5,7 @@ import { API_BASE } from "./apiConfig";
 import "./CustomerMovePage.css";
 
 type Details = { name:string; phone:string; email:string; move_date:string; pickup:string; delivery:string; company:string; stops:{address:string;type:string|null}[]; estimate:{price:string;cuft:string}|null; walkthrough:{status:string;availability:string;scheduled_at:string|null;timezone:string}|null; participant_url:string; files:{id:string;name:string;size:number}[] };
-type Pending = {id:string;file:File;status:string;progress:number;preview?:string};
+type Pending = {id:string;file:File;status:string;progress:number;preview?:string;error?:string};
 export default function CustomerMovePage() {
   const {accessId}=useParams();
   const [key]=useState(()=>new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
@@ -33,12 +33,23 @@ export default function CustomerMovePage() {
   useEffect(()=>{if(!sent)return;const t=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(t);},[sent]);
   async function send(){setBusy(true);setError('');try{await call('/send-code',{channel});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   async function verify(){setBusy(true);setError('');try{const value=await call('/verify',{code});setSession(value.session);setCode('');}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
-  function choose(list:FileList|null){if(!list)return;setFiles(prev=>[...prev,...Array.from(list).map(file=>{const preview=file.type.startsWith('image/')?URL.createObjectURL(file):undefined;if(preview)previews.current.push(preview);return {id:crypto.randomUUID(),file,preview,progress:0,status:file.size>15*1024*1024?'Too large (15 MB maximum)':file.size===0?'Empty file':'Ready'};})]);}
+  function choose(list:FileList|null){
+    if(!list?.length)return;
+    try {
+      // Snapshot the browser FileList before the input is reset or React runs the updater.
+      const added:Pending[]=Array.from(list).map(file=>{
+        const preview=file.type.startsWith('image/')?URL.createObjectURL(file):undefined;
+        if(preview)previews.current.push(preview);
+        return {id:crypto.randomUUID(),file,preview,progress:0,status:file.size>15*1024*1024?'Too large (15 MB maximum)':file.size===0?'Empty file':!(/\.(jpe?g|png|webp|pdf|mp4|mov)$/i.test(file.name))?'Unsupported file type':'Ready'};
+      });
+      setFiles(prev=>[...prev,...added]);setError('');
+    } catch {setError('Could not select these files. Please choose them again.');}
+  }
   async function upload(){
     setBusy(true);setError('');
     const mimeTypes:Record<string,string>={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',pdf:'application/pdf',mp4:'video/mp4',mov:'video/quicktime'};
     try{for(const item of files.filter(f=>f.status==='Ready'||f.status==='Try again')){
-      const update=(status:string,progress:number)=>setFiles(prev=>prev.map(f=>f.id===item.id?{...f,status,progress}:f));
+      const update=(status:string,progress:number)=>setFiles(prev=>prev.map(f=>f.id===item.id?{...f,status,progress,error:undefined}:f));
       update('Uploading',0);
       try{
         const mime=mimeTypes[item.file.name.split('.').pop()?.toLowerCase()||''];
@@ -49,7 +60,7 @@ export default function CustomerMovePage() {
           update('Finishing upload',95);await call('/finish-upload',{request_id:item.id});
         }
         update('Uploaded',100);
-      }catch(e){update('Try again',0);setError((e as Error).message);}
+      }catch(e){const message=(e as Error).message;setFiles(prev=>prev.map(f=>f.id===item.id?{...f,status:'Try again',progress:0,error:message}:f));}
     }}finally{setBusy(false);}
   }
   async function walkthrough(){setBusy(true);setError('');try{const timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;const result=await call('/walkthrough',{availability,timezone});setRequested(true);setData(prev=>prev?{...prev,walkthrough:result}:prev);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
@@ -62,7 +73,7 @@ export default function CustomerMovePage() {
       {error&&<div className="cm-error" role="alert">{error}</div>}
       <div className="cm-columns"><section className="cm-card cm-route"><div className="cm-eyebrow">YOUR MOVE</div><h2>{data.move_date?new Date(data.move_date.slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'Date to be confirmed'}</h2><ol>{[{address:data.pickup,type:'pickup'},...data.stops,{address:data.delivery,type:'delivery'}].map((stop,i)=><li key={i}><small>{stop.type==='pickup'?'Pickup':stop.type==='delivery'?'Delivery':'Stop'}</small><strong>{stop.address}</strong></li>)}</ol><div className="cm-contact"><strong>{data.name}</strong><span>{data.phone}</span><span>{data.email}</span></div></section>
       <section className="cm-card cm-upload"><div className="cm-eyebrow">SHOW US WHAT’S MOVING</div><h2>Add photos, documents<br/>or videos.</h2><p>A few photos of each room help us understand your move. Include any large or delicate items.</p><label className="cm-drop"><span aria-hidden="true">＋</span><strong>Choose files</strong><small>Photos, PDF documents or videos · Up to 15 MB each</small><input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,.mp4,.mov" disabled={busy} onChange={e=>{choose(e.target.files);e.target.value='';}}/></label>
-      <div className="cm-file-list">{files.map(item=><article key={item.id}>{item.preview&&<img src={item.preview} alt=""/>}<div><strong>{item.file.name}</strong><small role="status">{item.status}</small><progress max={100} value={item.progress} aria-label={`${item.file.name} upload progress`}/></div>{item.status!=='Uploaded'&&!busy&&<button aria-label={`Remove ${item.file.name}`} onClick={()=>setFiles(prev=>prev.filter(f=>f.id!==item.id))}>×</button>}</article>)}</div>
+      {files.length>0&&<p role="status">{files.filter(f=>f.status==='Uploaded').length} of {files.length} files uploaded</p>}<div className="cm-file-list">{files.map(item=><article key={item.id}>{item.preview&&<img src={item.preview} alt=""/>}<div><strong>{item.file.name}</strong><small role="status">{item.status}{item.status==='Uploading'?` ${item.progress}%`:''}</small>{item.error&&<small role="alert" style={{color:"#974327"}}>{item.error}</small>}<progress max={100} value={item.progress} aria-label={`${item.file.name} upload progress`}/></div>{item.status!=='Uploaded'&&!busy&&<button aria-label={`Remove ${item.file.name}`} onClick={()=>setFiles(prev=>prev.filter(f=>f.id!==item.id))}>×</button>}</article>)}</div>
       <button className="cm-primary" disabled={busy||!files.some(f=>['Ready','Try again'].includes(f.status))} onClick={()=>void upload()}>{busy?'Please wait…':'Upload files'}</button>
       {data.files.length>0&&<details><summary>{data.files.length} saved files</summary>{data.files.map(file=><p key={file.id}>{file.name}</p>)}</details>}</section></div>
       <section className="cm-walkthrough"><div><div className="cm-eyebrow">PREFER TO SHOW US AROUND?</div><h2>Let’s take a live<br/>video walkthrough.</h2><p>Walk us through your home from your phone.<br/>Our team will help you plan what comes next.</p></div><div>{data.walkthrough&&['requested','scheduled'].includes(data.walkthrough.status)?<><h3>{data.walkthrough.status==='scheduled'?'Your walkthrough is scheduled':'Your request is in!'}</h3><p>{data.walkthrough.scheduled_at?new Date(data.walkthrough.scheduled_at).toLocaleString():'Our team will contact you to arrange a convenient time.'}</p>{data.participant_url&&<a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join video walkthrough</a>}</>:<form onSubmit={e=>{e.preventDefault();void walkthrough();}}><MeetingTimePicker onChange={setAvailability} /><button className="cm-primary" disabled={busy||!availability.trim()}>Request a video walkthrough</button>{requested&&<p role="status">Request saved.</p>}</form>}</div></section><footer className="cm-footer">Your move. Your pace. We’re here to help.</footer></>}

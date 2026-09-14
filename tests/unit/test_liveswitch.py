@@ -23,7 +23,7 @@ def api():
             arg.annotation = None
     lead = SimpleNamespace(id='lead-1', smartmoving_id='sm-1', quote_number=None, phone=' 1112223333 ', assignee=None, company=SimpleNamespace(phone=' 2405707987 ', aircall_number_id='company-number'))
     scope = {'get_opportunity': MagicMock(return_value={'data': {'quoteNumber': 23985}}), 'json': json, 'HTTPException': HTTPException, 'Lead': SimpleNamespace(id='id'),
-             'PublicMoveAccess': MagicMock(), 'LeadLiveSwitch': MagicMock(), '_get_visible_lead_or_404': MagicMock(return_value=lead),
+             'Company': MagicMock(), 'PublicMoveAccess': MagicMock(), 'LeadLiveSwitch': MagicMock(), '_get_visible_lead_or_404': MagicMock(return_value=lead),
              '_ensure_not_dispatch_write': MagicMock(), '_api_post': MagicMock(),
              'SalesRep': SimpleNamespace(name='name'), 'func': MagicMock(),
              'send_sms': MagicMock(return_value={'ok': True, 'message_id': 'sms-1'}),
@@ -199,3 +199,29 @@ def test_public_intake_uses_customer_name_without_smartmoving(api):
     assert api['ensure_conversation']('lead-1', object(), db)['name'] == 'Jane Smith'
     api['get_opportunity'].assert_not_called()
     assert lead.quote_number is None
+
+
+def test_unassigned_public_lead_uses_default_company_without_assignment(api):
+    db = MagicMock(); db.get.return_value = None
+    lead = api['_get_visible_lead_or_404'].return_value
+    lead.company = None; lead.company_id = None
+    lead.full_name = 'Jane Smith'; lead.quote_number = None; lead.smartmoving_id = None
+    db.query.return_value.filter.return_value.one_or_none.return_value = SimpleNamespace(phone=' 2405707987 ')
+    db.query.return_value.filter_by.return_value.first.return_value = object()
+    api['_api_post'].return_value = {'id': 'new'}
+    api['ensure_conversation']('lead-1', object(), db)
+    assert api['_api_post'].call_args.args[1] == {'type':'LiveConversation','phone':'2405707987','name':'Jane Smith'}
+    assert lead.company_id is None
+    assert lead.company is None
+    assert lead.quote_number is None
+    api['get_opportunity'].assert_not_called()
+
+
+def test_unassigned_lead_without_default_company_has_clear_error(api):
+    db = MagicMock(); db.get.return_value = None
+    api['_get_visible_lead_or_404'].return_value.company = None
+    db.query.return_value.filter.return_value.one_or_none.return_value = None
+    with pytest.raises(HTTPException) as error:
+        api['ensure_conversation']('lead-1', object(), db)
+    assert 'default company' in error.value.detail
+    api['_api_post'].assert_not_called()
