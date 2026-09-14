@@ -195,3 +195,16 @@ def test_invalid_staged_file_never_creates_attachment(portal):
     assert exc.value.status_code==400
     assert db.query(models.LeadAttachment).count()==0
     s3.delete_object.assert_called_once()
+
+
+def test_global_meeting_window_capacity(portal):
+    mod,db,lead,access=portal
+    start=datetime.utcnow()+timedelta(days=3)
+    for i in range(4):
+        db.add(models.WalkthroughRequest(id=f'capacity-{i}',lead_id=lead.id,job_id=access.job_id,status='scheduled',scheduled_at=start))
+    db.commit()
+    assert mod.window_count(db,start)==4
+    assert mod.window_count(db,start+timedelta(hours=2))==0
+    assert mod.window_count(db,start,'capacity-0')==3
+    db.get(models.WalkthroughRequest,'capacity-0').status='cancelled';db.commit()
+    assert mod.window_count(db,start)==3

@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import boto3
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Header, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import case, func, or_
+from sqlalchemy import case, func, or_, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -285,6 +285,22 @@ def request_meeting(body: MeetingBody, access: PublicMoveAccess = Depends(verifi
     return meeting_dict(row)
 
 
+@router.post('/api/public-moves/{access_id}/reschedule')
+def reschedule_meeting(body: MeetingBody, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
+    row = db.query(WalkthroughRequest).filter(WalkthroughRequest.job_id == access.job_id, WalkthroughRequest.status.in_(['requested','scheduled'])).with_for_update().first()
+    if not row: raise HTTPException(409, 'This meeting can no longer be rescheduled.')
+    stamps = re.findall(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z', body.availability)
+    if not stamps: raise HTTPException(400, 'Choose a new appointment window.')
+    start = datetime.fromisoformat(stamps[0].replace('Z','+00:00')).replace(tzinfo=None)
+    if start <= NOW(): raise HTTPException(400, 'Choose a future appointment window.')
+    if window_count(db, start, row.id) >= 4: raise HTTPException(409, 'This time window is full. Choose another time.')
+    row.availability = body.availability; row.timezone = body.timezone
+    row.status = 'requested'; row.scheduled_at = None; row.updated_at = NOW()
+    db.commit()
+    return meeting_dict(row)
+
+
 @router.post('/api/public-moves/{access_id}/files')
 def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...), x_upload_id: str = Header(min_length=8, max_length=64), access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     access = db.query(PublicMoveAccess).filter_by(id=access.id).with_for_update().one()
@@ -373,6 +389,29 @@ def staff_requests(user: User = Depends(require_admin), db: Session = Depends(ge
             'reps': [{'id': u.id, 'name': u.name} for u in db.query(User).filter(User.role.in_(['admin', 'sales_rep'])).all()]}
 
 
+def window_count(db, start, exclude=None):
+    query = db.query(WalkthroughRequest).filter(
+        WalkthroughRequest.status == 'scheduled',
+        WalkthroughRequest.scheduled_at > start-timedelta(hours=2),
+        WalkthroughRequest.scheduled_at < start+timedelta(hours=2))
+    if exclude: query = query.filter(WalkthroughRequest.id != exclude)
+    return query.count()
+
+
+class AvailabilityBody(BaseModel):
+    starts: list[datetime] = Field(max_length=60)
+
+
+@router.post('/api/public-moves/{access_id}/availability')
+def meeting_availability(body: AvailabilityBody, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    results = []
+    for start in body.starts:
+        if start.tzinfo is None: raise HTTPException(400, 'Timezone required')
+        utc = start.astimezone(timezone.utc).replace(tzinfo=None)
+        results.append(utc > NOW() and window_count(db, utc) < 4)
+    return {'available': results}
+
+
 class ScheduleBody(BaseModel):
     status: Literal['requested', 'scheduled', 'completed', 'cancelled']
     assigned_to: str | None = None
@@ -397,6 +436,16 @@ def schedule(request_id: str, body: ScheduleBody, user: User = Depends(require_a
         db.query(LeadJob).filter_by(id=row.job_id).with_for_update().one()
         duplicate = db.query(WalkthroughRequest).filter(WalkthroughRequest.job_id == row.job_id, WalkthroughRequest.id != row.id, WalkthroughRequest.status.in_(['requested','scheduled'])).first()
         if duplicate: raise HTTPException(409, 'This job already has an active request')
+    if body.status == 'scheduled':
+        from routes.liveswitch import ensure_conversation
+        conversation = ensure_conversation(row.lead_id, user, db)
+        if not conversation.get('participantJoinUrl'):
+            raise HTTPException(502, 'LiveSwitch did not return a participant link. Please retry approval.')
+    if body.status == 'scheduled':
+        # Serialize capacity checks after LiveSwitch's transaction has completed.
+        db.execute(text('SELECT pg_advisory_xact_lock(784321901)'))
+        if window_count(db, row.scheduled_at, row.id) >= 4:
+            raise HTTPException(409, 'This time window is full. Choose another appointment time.')
     row.status = body.status; db.commit()
     return meeting_dict(row)
 
