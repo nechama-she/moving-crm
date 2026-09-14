@@ -1373,6 +1373,10 @@ Resources:
           AUTO_ASSIGN_DRY_RUN_ONLY: !If [IsProd, "false", "true"]
           NEW_LEAD_SMS_DRY_RUN: !If [IsProd, "false", "true"]
           REP_ASSIGNMENT_SMS_DRY_RUN: !If [IsProd, "false", "true"]
+          PUBLIC_MOVE_ORIGIN: !If
+            - IsProd
+            - !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${CloudFrontDistribution.DomainName}"]
+            - !Sub "https://${CloudFrontDistribution.DomainName}"
           CORS_ORIGINS: !If
             - IsProd
             - !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${CloudFrontDistribution.DomainName}"]

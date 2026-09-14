@@ -11,10 +11,13 @@ Deploy only after the feature migration and configuration have been reviewed. Th
 Set these in the existing backend SSM prefix (or environment):
 
 - `PUBLIC_MOVE_API_KEY`: a new random server-to-server secret, stored as SecureString. Keep it out of browser code.
-- `PUBLIC_MOVE_ORIGIN`: the HTTPS frontend origin, for example `https://crm.example.com`, without a trailing path. URL construction never trusts the request Host header.
 - `PUBLIC_MOVE_EMAIL_FROM`: an SES-verified sender address. SES must be enabled for the recipients/environment in use.
 - `PUBLIC_MOVE_SMS_ENABLED`: `true` to enable SNS SMS. The AWS account must have the required SMS production access/origination configuration for destination countries. Leave disabled until this is ready.
 - Existing `JWT_SECRET`, `ATTACHMENTS_BUCKET`, database and LiveSwitch settings remain required.
+
+CloudFormation automatically sets the API Lambda's `PUBLIC_MOVE_ORIGIN` to the deployed frontend: the CloudFront HTTPS address in dev, or the configured custom domain in production (CloudFront when no custom domain is configured). No manual SSM origin parameter is needed. An existing `PUBLIC_MOVE_ORIGIN` SSM parameter still overrides this default; remove it if the deployment-managed address should be used. URL construction never trusts the request Host header. Apply the CloudFormation stack update to activate this configuration; a code-only Lambda update is not sufficient.
+
+To test, call `POST /api/inventory` in Swagger and open the returned `url` in a browser. The frontend's `/move/:accessId` route is a standalone customer page, outside CRM login and navigation. Customer phone/email verification still applies; use contact details you control when testing.
 
 CloudFormation parameter `PublicMoveEmbedOrigins` accepts space-separated HTTPS website origins allowed to embed the page. With its empty default, the `frame-ancestors` response header allows same-origin embedding only. The frontend document remains on the CRM origin when embedded; it calls the API from that origin, so the parent site does not need unrestricted API CORS access.
 
