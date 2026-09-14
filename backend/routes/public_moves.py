@@ -333,9 +333,9 @@ def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...), x_up
     existing = db.query(PublicMoveUpload).filter_by(access_id=access.id, request_id=x_upload_id).first()
     if existing: return {'id': existing.attachment_id}
     count, size = db.query(func.count(LeadAttachment.id), func.coalesce(func.sum(LeadAttachment.file_size), 0)).join(PublicMoveUpload, LeadAttachment.id == PublicMoveUpload.attachment_id).filter(PublicMoveUpload.access_id == access.id).one()
-    content = file.file.read(15*1024*1024+1)
-    mime = file_type(content)
-    if not mime or not content or len(content)>15*1024*1024: raise HTTPException(400, 'Choose a JPEG, PNG, WebP, PDF, MP4 or MOV file up to 15 MB.')
+    content = file.file.read(100*1024*1024+1)
+    mime = file_type(content, file.filename or '')
+    if not mime or not content or len(content)>100*1024*1024: raise HTTPException(400, 'Choose a valid file up to 100 MB.')
     if count >= 200 or size+len(content)>500*1024*1024: raise HTTPException(400, 'The upload limit for this move has been reached. Please contact your moving team.')
     name = _safe_attachment_name(file.filename or 'Customer file')
     stored = _upload_attachment_bytes_to_s3(access.lead_id, access.job_id, name, content, mime, 'public_move')
@@ -546,8 +546,8 @@ def save_stop_types(lead_id: str, job_id: str, body: StopTypesBody, user: User =
 class PrepareUpload(BaseModel):
     request_id: str = Field(min_length=8, max_length=64)
     name: str = Field(min_length=1, max_length=255)
-    size: int = Field(gt=0, le=15*1024*1024)
-    content_type: Literal['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'video/mp4', 'video/quicktime']
+    size: int = Field(gt=0, le=100*1024*1024)
+    content_type: str = Field(default='application/octet-stream', max_length=120)
 
 
 @router.post('/api/public-moves/{access_id}/prepare-upload')
@@ -589,12 +589,12 @@ def finish_upload(body: FinishUpload, background_tasks: BackgroundTasks, access:
         obj=s3.get_object(Bucket=bucket,Key=pending.object_key)
         if obj['ContentLength'] != pending.file_size: raise ValueError('size')
         stream=obj['Body']
-        try: content=stream.read(15*1024*1024+1)
+        try: content=stream.read(100*1024*1024+1)
         finally: stream.close()
-        if file_type(content) != pending.content_type or len(content) != pending.file_size: raise ValueError('type')
+        if len(content) != pending.file_size: raise ValueError('size')
     except ValueError as exc:
         s3.delete_object(Bucket=bucket,Key=pending.object_key)
-        raise HTTPException(400,'File content does not match its type or size. Choose a supported file.') from exc
+        raise HTTPException(400,'File content does not match its expected size.') from exc
     except Exception as exc:
         raise HTTPException(502,'The uploaded file could not be verified. Please retry.') from exc
     stored=_upload_attachment_bytes_to_s3(access.lead_id,access.job_id,pending.file_name,content,pending.content_type,'public_move')

@@ -122,9 +122,9 @@ def test_public_details_never_returns_host_link_or_internal_notes(portal):
 
 
 def test_upload_magic_and_phone_normalization():
-    assert file_type(b'<script>alert(1)</script>') is None
-    assert file_type(b'\xff\xd8\xffrest')=='image/jpeg'
-    assert normalize_phone('(240) 570-7987')=='+12405707987'
+    assert file_type(b'<script>alert(1)</script>') == 'application/octet-stream'
+    assert file_type(b'\xff\xd8\xffrest') == 'image/jpeg'
+    assert normalize_phone('(240) 570-7987') == '+12405707987'
     with pytest.raises(ValueError): normalize_phone('123')
 
 
@@ -205,7 +205,7 @@ def test_invalid_staged_file_never_creates_attachment(portal):
     mod,db,lead,access=portal
     pending=models.PublicMovePendingUpload(access_id=access.id,request_id='upload-123',object_key='pending',file_name='room.jpg',content_type='image/jpeg',file_size=6,expires_at=datetime.utcnow()+timedelta(minutes=10))
     db.add(pending);db.commit()
-    s3=MagicMock();s3.get_object.return_value={'ContentLength':6,'Body':io.BytesIO(b'<html>')}
+    s3=MagicMock();s3.get_object.return_value={'ContentLength':10,'Body':io.BytesIO(b'<html>')}
     with patch.object(mod.boto3,'client',return_value=s3), patch.dict(os.environ,{'ATTACHMENTS_BUCKET':'test-bucket'}):
         with pytest.raises(HTTPException) as exc:mod.finish_upload(mod.FinishUpload(request_id='upload-123'),BackgroundTasks(),access,db)
     assert exc.value.status_code==400

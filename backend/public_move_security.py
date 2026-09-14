@@ -1,6 +1,7 @@
 """Small, testable security primitives for the customer move portal."""
 import hashlib
 import hmac
+import mimetypes
 import os
 import re
 
@@ -32,10 +33,11 @@ def normalize_phone(value):
     return '+' + digits
 
 
-def file_type(data):
+def file_type(data, filename=''):
     if data.startswith(b'\xff\xd8\xff'): return 'image/jpeg'
     if data.startswith(b'\x89PNG\r\n\x1a\n'): return 'image/png'
     if data[:4] == b'RIFF' and data[8:12] == b'WEBP': return 'image/webp'
     if data.startswith(b'%PDF-'): return 'application/pdf'
     if data[4:8] == b'ftyp': return 'video/quicktime' if data[8:12] == b'qt  ' else 'video/mp4'
-    return None
+    guessed, _ = mimetypes.guess_type(filename or '')
+    return guessed or 'application/octet-stream'

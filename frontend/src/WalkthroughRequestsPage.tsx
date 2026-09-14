@@ -9,12 +9,20 @@ import "./MeetingRequests.css";
 
 type Meeting={created_at?:string;id:string;status:string;availability:string;timezone:string;scheduled_at:string|null;assigned_to:string};
 type Row={phone:string;pickup:string;delivery:string;move_date:string;lead_id:string;name:string;company:string;company_id:string;requests:Meeting[]};
+
+const STATUS_OPTIONS = [
+  { id: 'requested', name: 'Requested' },
+  { id: 'scheduled', name: 'Approved' },
+  { id: 'completed', name: 'Completed' },
+  { id: 'cancelled', name: 'Cancelled' },
+];
+
 export default function WalkthroughRequestsPage(){
   const {token}=useAuth();
-  const [rows,setRows]=useState<Row[]>([]),[options,setOptions]=useState<ReportOptions>({companies:[],reps:[]});
-  const [error,setError]=useState(''),[loading,setLoading]=useState(true),[filter,setFilter]=useState('all'),[search,setSearch]=useState('');
+  const [rows,setRows]=useState<Row[]>([]),[options,setOptions]=useState<ReportOptions>({companies:[],reps:[],statuses:STATUS_OPTIONS});
+  const [error,setError]=useState(''),[loading,setLoading]=useState(true),[search,setSearch]=useState('');
   const [range,setRange]=useState(()=>period('All Time'));
-  const [companies,setCompanies]=useState<string[]>([]),[reps,setReps]=useState<string[]>([]);
+  const [companies,setCompanies]=useState<string[]>([]),[reps,setReps]=useState<string[]>([]),[statuses,setStatuses]=useState<string[]>([]);
   const load=useCallback(async()=>{
     setError('');setLoading(true);
     try {
@@ -23,24 +31,24 @@ export default function WalkthroughRequestsPage(){
       setRows(d.items);
       const companyOptions=new Map<string,string>((d.companies||[]).map((c:{id:string;name:string})=>[c.id,c.name]));
       (d.items as Row[]).forEach(row=>companyOptions.set(row.company_id||'__unassigned__',row.company||'Unassigned company'));
-      setOptions({companies:Array.from(companyOptions,([id,name])=>({id,name})),reps:[...d.reps,{id:'__unassigned__',name:'Unassigned rep'}]});
+      setOptions({companies:Array.from(companyOptions,([id,name])=>({id,name})),reps:[...d.reps,{id:'__unassigned__',name:'Unassigned rep'}],statuses:STATUS_OPTIONS});
     } finally {setLoading(false);}
   },[token]);
   useEffect(()=>{void load().catch(e=>setError(e.message));},[load]);
   const matches=(m:Meeting)=>{
-    if(filter!=='all'&&filter!=='unassigned'&&m.status!==filter)return false;
+    if(statuses.length&&!statuses.includes(m.status))return false;
     if(reps.length&&!reps.includes(m.assigned_to||'__unassigned__'))return false;
     if(range.label==='All Time')return true;
     const value=m.scheduled_at||m.created_at;if(!value)return false;
     const date=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
     return date>=range.start&&date<=range.end;
   };
-  const visible=rows.filter(row=>(!companies.length||companies.includes(row.company_id||'__unassigned__'))&&row.name.toLowerCase().includes(search.toLowerCase())&&(filter!=='unassigned'||!row.company_id)).map(row=>({...row,requests:row.requests.filter(matches)})).filter(row=>row.requests.length||(filter==='unassigned'&&range.label==='All Time'&&!reps.length));
+  const visible=rows.filter(row=>(!companies.length||companies.includes(row.company_id||'__unassigned__'))&&row.name.toLowerCase().includes(search.toLowerCase())).map(row=>({...row,requests:row.requests.filter(matches)})).filter(row=>row.requests.length);
   return <main className="reports-page meeting-requests">
     <header><h1>Meetings Calendar</h1></header>
-    <ReportControls range={range} companies={companies} reps={reps} options={options} onApply={(next,c,r)=>{setRange(next);setCompanies(c);setReps(r);}} />
+    <ReportControls range={range} companies={companies} reps={reps} statuses={statuses} options={options} onApply={(next,c,r,s)=>{setRange(next);setCompanies(c);setReps(r);setStatuses(s||[]);}} />
     <section className="reports-results">
-      <div className="reports-toolbar"><h2>Meetings</h2><input placeholder="Search customer" aria-label="Search customer" value={search} onChange={e=>setSearch(e.target.value)}/><select aria-label="Request status" value={filter} onChange={e=>setFilter(e.target.value)}>{[['all','All statuses'],['requested','Requested'],['scheduled','Approved'],['completed','Completed'],['cancelled','Cancelled'],['unassigned','Unassigned company']].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></div>
+      <div className="reports-toolbar"><h2>Meetings</h2><input placeholder="Search customer" aria-label="Search customer" value={search} onChange={e=>setSearch(e.target.value)}/></div>
       {error&&<p className="reports-error" role="alert">{error}</p>}
       {loading&&<p role="status">Loading meetings...</p>}
       {!loading&&!error&&!visible.length&&<p className="reports-empty">No meetings match your selection.</p>}

@@ -40,23 +40,21 @@ export default function CustomerMovePage() {
       const added:Pending[]=Array.from(list).map(file=>{
         const preview=file.type.startsWith('image/')?URL.createObjectURL(file):undefined;
         if(preview)previews.current.push(preview);
-        return {id:crypto.randomUUID(),file,preview,progress:0,status:file.size>15*1024*1024?'Too large (15 MB maximum)':file.size===0?'Empty file':!(/\.(jpe?g|png|webp|pdf|mp4|mov)$/i.test(file.name))?'Unsupported file type':'Ready'};
+        return {id:crypto.randomUUID(),file,preview,progress:0,status:file.size>100*1024*1024?'Too large (100 MB maximum)':file.size===0?'Empty file':'Ready'};
       });
       setFiles(prev=>[...prev,...added]);setError('');
     } catch {setError('Could not select these files. Please choose them again.');}
   }
   async function upload(){
     setBusy(true);setError('');
-    const mimeTypes:Record<string,string>={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',pdf:'application/pdf',mp4:'video/mp4',mov:'video/quicktime'};
     try{for(const item of files.filter(f=>f.status==='Ready'||f.status==='Try again')){
       const update=(status:string,progress:number)=>setFiles(prev=>prev.map(f=>f.id===item.id?{...f,status,progress,error:undefined}:f));
       update('Uploading',0);
       try{
-        const mime=mimeTypes[item.file.name.split('.').pop()?.toLowerCase()||''];
-        if(!mime)throw new Error('Choose a JPEG, PNG, WebP, PDF, MP4 or MOV file.');
+        const mime=item.file.type || 'application/octet-stream';
         const prepared=await call('/prepare-upload',{request_id:item.id,name:item.file.name,size:item.file.size,content_type:mime});
         if(!prepared.completed){
-          await new Promise<void>((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('POST',prepared.upload.url);xhr.timeout=180000;xhr.upload.onprogress=e=>{if(e.lengthComputable)update('Uploading',Math.round(e.loaded/e.total*90));};xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(new Error('Upload interrupted. Please try again.'));xhr.onerror=xhr.ontimeout=()=>reject(new Error('Upload interrupted. Please try again.'));const form=new FormData();Object.entries(prepared.upload.fields as Record<string,string>).forEach(([k,v])=>form.append(k,v));form.append('file',item.file);xhr.send(form);});
+          await new Promise<void>((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('POST',prepared.upload.url);xhr.timeout=300000;xhr.upload.onprogress=e=>{if(e.lengthComputable)update('Uploading',Math.round(e.loaded/e.total*90));};xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(new Error('Upload interrupted. Please try again.'));xhr.onerror=xhr.ontimeout=()=>reject(new Error('Upload interrupted. Please try again.'));const form=new FormData();Object.entries(prepared.upload.fields as Record<string,string>).forEach(([k,v])=>form.append(k,v));form.append('file',item.file);xhr.send(form);});
           update('Finishing upload',95);await call('/finish-upload',{request_id:item.id});
         }
         update('Uploaded',100);
@@ -102,7 +100,7 @@ export default function CustomerMovePage() {
             <section className="cm-intro"><div><div className="cm-eyebrow">LET'S MAKE YOUR NEXT MOVE EASIER</div><h1>Hi {data.name.split(' ')[0]},<br/>you're in the right place.</h1><p>Share a little more about your home.<br/>We'll take care of the estimate.</p></div><div className="cm-estimate"><span>{data.estimate?'Your moving estimate':'Your estimate'}</span><strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):'We\'re working on it.'}</strong><p>{data.estimate?`${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated`:'Add photos or request a video walkthrough to help us prepare your estimate.'}</p></div></section>
             {error&&<div className="cm-error" role="alert">{error}</div>}
             <div className="cm-columns"><section className="cm-card cm-route"><div className="cm-eyebrow">YOUR MOVE</div><h2>{data.move_date?new Date(data.move_date.slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'Date to be confirmed'}</h2><ol>{[{address:data.pickup,type:'pickup'},...data.stops,{address:data.delivery,type:'delivery'}].map((stop,i)=><li key={i}><small>{stop.type==='pickup'?'Pickup':stop.type==='delivery'?'Delivery':'Stop'}</small><strong>{stop.address}</strong></li>)}</ol><div className="cm-contact"><strong>{data.name}</strong><span>{data.phone}</span><span>{data.email}</span></div></section>
-            <section className="cm-card cm-upload"><div className="cm-eyebrow">SHOW US WHAT'S MOVING</div><h2>Add photos, documents<br/>or videos.</h2><p>A few photos of each room help us understand your move. Include any large or delicate items.</p><label className="cm-drop"><span aria-hidden="true">^</span><strong>Choose files</strong><small>Photos, PDF documents or videos · Up to 15 MB each</small><input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,.mp4,.mov" disabled={busy} onChange={e=>{choose(e.target.files);e.target.value='';}}/></label>
+            <section className="cm-card cm-upload"><div className="cm-eyebrow">SHOW US WHAT'S MOVING</div><h2>Add photos, documents<br/>or videos.</h2><p>A few photos of each room help us understand your move. Include any large or delicate items.</p><label className="cm-drop"><span aria-hidden="true">^</span><strong>Choose files</strong><small>Photos, documents or videos · Up to 100 MB each</small><input type="file" multiple disabled={busy} onChange={e=>{choose(e.target.files);e.target.value='';}}/></label>
             {files.length>0 && <p role="status">{files.filter(f=>f.status==='Uploaded').length} of {files.length} files uploaded</p>}
             <div className="cm-file-list">
               {files.map(item => (
