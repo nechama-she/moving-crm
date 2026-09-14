@@ -5,6 +5,7 @@ import re
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from auth import decode_access_token, get_current_user, is_token_valid, require_admin
 from config import get_config
@@ -40,8 +41,8 @@ def _api_secret() -> str:
 async def enforce_authentication(request: Request) -> None:
     if request.method == "OPTIONS":
         return  # CORS preflight — handled by CORSMiddleware
-    if request.url.path == "/api/public-move-intake" and request.method == "POST":
-        return  # This endpoint validates its own server-to-server key.
+    if request.url.path == "/api/inventory" and request.method == "POST":
+        return  # Middleware validates the inventory key before body parsing.
     if re.fullmatch(r"/api/public-moves/[0-9a-f-]{36}/(verify-options|send-code|verify|details|walkthrough|files|prepare-upload|finish-upload)", request.url.path):
         return  # Each endpoint requires a scoped link and, where needed, verified session.
     if request.url.path in PUBLIC_PATHS:
@@ -125,8 +126,17 @@ def _audit_request_context(request: Request) -> tuple[str, str, str]:
 
 @app.middleware("http")
 async def protect_public_move_responses(request: Request, call_next):
-    response = await call_next(request)
-    if request.url.path.startswith("/api/public-move") or request.url.path.endswith("/customer-page"):
+    if request.url.path == "/api/inventory" and request.method == "POST":
+        expected = public_moves.setting("PUBLIC_MOVE_API_KEY")
+        provided = request.headers.get("x-api-secret", "")
+        # Reject before FastAPI parses JSON or validates the request schema.
+        if not expected or not hmac.compare_digest(expected.encode("utf-8"), provided.encode("utf-8")):
+            response = JSONResponse(status_code=401, content={"detail": "Not authorized"})
+        else:
+            response = await call_next(request)
+    else:
+        response = await call_next(request)
+    if request.url.path == "/api/inventory" or request.url.path.startswith("/api/public-move") or request.url.path.endswith("/customer-page"):
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"

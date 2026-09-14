@@ -22,7 +22,7 @@ The template adds SES send-email permission and SNS direct-SMS publish permissio
 
 ## Intake API
 
-`POST /api/public-move-intake`
+`POST /api/inventory`
 
 Headers:
 

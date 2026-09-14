@@ -120,7 +120,7 @@ def public_url(row):
     return f'{origin}/move/{row.id}#key={link_token(row.id)}'
 
 
-@router.post('/api/public-move-intake')
+@router.post('/api/inventory')
 def intake(body: Intake, request: Request, x_api_secret: str = Header(default=''), idempotency_key: str = Header(min_length=8, max_length=128), db: Session = Depends(get_db)):
     expected = setting('PUBLIC_MOVE_API_KEY')
     if not expected or not hmac.compare_digest(expected, x_api_secret): raise HTTPException(401, 'Not authorized')
