@@ -185,6 +185,13 @@ def deliver_code(lead, channel, code, db: Session):
         number_id = str(company.aircall_number_id or '').strip()
         if not number_id and company.phone:
             number_id = find_number_id(company.phone)
+            if number_id:
+                db.query(Company).filter(
+                    Company.id == company.id,
+                    Company.phone == company.phone,
+                    func.trim(func.coalesce(Company.aircall_number_id, '')) == '',
+                ).update({Company.aircall_number_id: number_id}, synchronize_session='fetch')
+                db.commit()
         if not number_id:
             raise HTTPException(503, 'The sending company has no Aircall SMS number configured. Please contact the moving team.')
         # Always pass an explicit number so Aircall cannot use its global default.
