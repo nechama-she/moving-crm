@@ -295,6 +295,7 @@ class CustomerDetailsPatch(BaseModel):
 
 
 @router.patch('/api/public-moves/{access_id}/details')
+@router.post('/api/public-moves/{access_id}/details')
 def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     lead = db.query(Lead).filter_by(id=access.lead_id).with_for_update().one()
     job = db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()

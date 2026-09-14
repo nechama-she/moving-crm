@@ -21,8 +21,9 @@ export default function CustomerMovePage() {
   const base=`${API_BASE}/api/public-moves/${accessId}`;
   const headers={'x-public-link':key,'x-public-session':session};
 
-  async function call(path:string, body?:unknown) {
-    const response=await fetch(base+path,{method:body===undefined?'GET':'POST',headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
+  async function call(path:string, body?:unknown, method?:string) {
+    const httpMethod = method || (body===undefined ? 'GET' : 'POST');
+    const response=await fetch(base+path,{method:httpMethod,headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
     const result=await response.json();
     if(!response.ok){
       if((response.status===401||response.status===404)){
