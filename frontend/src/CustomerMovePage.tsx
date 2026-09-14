@@ -18,7 +18,7 @@ export default function CustomerMovePage() {
   async function call(path:string, body?:unknown) {
     const response=await fetch(base+path,{method:body===undefined?'GET':'POST',headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
     const result=await response.json();
-    if(!response.ok){if(response.status===401){setSession('');setData(undefined);setSent(false);}throw new Error(typeof result.detail==='string'?result.detail:'Please check your details and try again.');}
+    if(!response.ok){if((response.status===401||response.status===404)){setSession('');setData(undefined);setSent(false);}throw new Error(typeof result.detail==='string'?result.detail:'Please check your details and try again.');}
     return result;
   }
   useEffect(()=>{
@@ -28,7 +28,7 @@ export default function CustomerMovePage() {
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
   useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setOptions(value.options);setChannel(value.options[0]?.channel||'');}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
-  useEffect(()=>{if(!session)return;let active=true;const load=()=>fetch(base+'/details',{headers:{'x-public-link':key,'x-public-session':session},cache:'no-store'}).then(async r=>{if(r.status===401){if(active){setSession('');setData(undefined);}return;}if(!r.ok)throw new Error('Your move could not be refreshed.');const next=await r.json();if(active)setData(next);}).catch(e=>{if(active)setError(e.message);});void load();const interval=setInterval(()=>void load(),15000);return ()=>{active=false;clearInterval(interval);};},[base,key,session]);
+  useEffect(()=>{if(!session)return;let active=true;const load=()=>fetch(base+'/details',{headers:{'x-public-link':key,'x-public-session':session},cache:'no-store'}).then(async r=>{if((r.status===401||r.status===404)){if(active){setSession('');setData(undefined);}return;}if(!r.ok)throw new Error('Your move could not be refreshed.');const next=await r.json();if(active)setData(next);}).catch(e=>{if(active)setError(e.message);});void load();const interval=setInterval(()=>void load(),15000);return ()=>{active=false;clearInterval(interval);};},[base,key,session]);
   useEffect(()=>{if(!sent)return;const t=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(t);},[sent]);
   async function send(){setBusy(true);setError('');try{await call('/send-code',{channel});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   async function verify(){setBusy(true);setError('');try{const value=await call('/verify',{code});setSession(value.session);setCode('');}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
@@ -53,7 +53,7 @@ export default function CustomerMovePage() {
   }
   async function walkthrough(){setBusy(true);setError('');try{const timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;const result=await call('/walkthrough',{availability,timezone});setRequested(true);setData(prev=>prev?{...prev,walkthrough:result}:prev);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   const wait=Math.max(0,Math.ceil((resendAt-clock)/1000));
-  return <div className="customer-move"><div className="cm-wrap"><header className="cm-brand"><span aria-hidden="true">↗</span><strong>{data?.company||'Your move, made simple'}</strong><small>YOUR PERSONAL MOVING SPACE</small></header>
+  return <div className="customer-move"><div className="cm-wrap">
     {!session?<section className="cm-verify"><div className="cm-eyebrow">WELCOME</div><h1>Let’s get your<br/>move underway.</h1><p>First, verify it’s you. We’ll send a code to the phone or email you provided.</p>{error&&<div role="alert" className="cm-error">{error}</div>}
       <fieldset><legend>Where should we send your code?</legend>{options.map(option=><label key={option.channel}><input type="radio" name="channel" value={option.channel} checked={channel===option.channel} disabled={busy} onChange={()=>{setChannel(option.channel);setSent(false);}}/>{option.channel==='sms'?'Text message':'Email'} <span>{option.destination}</span></label>)}</fieldset>
       {!sent?<button className="cm-primary" disabled={busy||!channel||!key} onClick={()=>void send()}>{busy?'Sending…':'Send verification code'}</button>:<form onSubmit={e=>{e.preventDefault();void verify();}}><label className="cm-code">Enter your 6-digit code<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))}/></label><button className="cm-primary" disabled={busy||code.length!==6}>{busy?'Checking…':'View my move'}</button><button type="button" className="cm-text-button" disabled={busy||wait>0} onClick={()=>void send()}>{wait?`Send again in ${wait}s`:'Send a new code'}</button></form>}<small className="cm-private">Your information is private. No account or password needed.</small></section>:

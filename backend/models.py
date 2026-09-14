@@ -2,7 +2,7 @@ import uuid
 import json
 from datetime import datetime
 
-from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, Boolean, UniqueConstraint, LargeBinary, Numeric
+from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, Boolean, UniqueConstraint, LargeBinary, Numeric, Index, text
 from sqlalchemy.orm import declarative_base, relationship
 
 from company_colors import resolve_company_color
@@ -23,6 +23,11 @@ def _now() -> datetime:
 # ---------------------------------------------------------------------------
 class Company(Base):
     __tablename__ = "companies"
+    __table_args__ = (
+        Index("uq_companies_default", "is_default_company", unique=True,
+              postgresql_where=text("is_default_company = true"),
+              sqlite_where=text("is_default_company = 1")),
+    )
 
     id = Column(String(36), primary_key=True, default=_uuid)
     name = Column(String(255), nullable=False, unique=True)
@@ -35,6 +40,7 @@ class Company(Base):
     granot_api_id = Column(String(100))
     granot_mover_ref = Column(String(100))
     timezone = Column(String(50), default="America/New_York")
+    is_default_company = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), default=_now)
 
     users = relationship("UserCompany", back_populates="company")
@@ -53,6 +59,7 @@ class Company(Base):
             "granot_api_id": self.granot_api_id or "",
             "granot_mover_ref": self.granot_mover_ref or "",
             "timezone": self.timezone or "America/New_York",
+            "is_default_company": bool(self.is_default_company),
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }
 

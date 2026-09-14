@@ -14,6 +14,7 @@ type Company = {
   granot_api_id?: string;
   granot_mover_ref?: string;
   timezone?: string;
+  is_default_company?: boolean;
 };
 
 type CompanyForm = {
@@ -49,6 +50,7 @@ export default function CompaniesPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingDefault, setSavingDefault] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
@@ -153,6 +155,29 @@ export default function CompaniesPage() {
       setError(err instanceof Error ? err.message : "Failed to save company");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function setDefaultCompany(company: Company, checked: boolean) {
+    setSavingDefault(true);
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/companies/${company.id}/default`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ is_default_company: checked }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(err.detail || "Failed to update default company");
+      }
+      setCompanies(await res.json() as Company[]);
+      setInfo(checked ? `${company.name} is now the default company.` : "Default company cleared.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to update default company");
+    } finally {
+      setSavingDefault(false);
     }
   }
 
@@ -302,6 +327,7 @@ export default function CompaniesPage() {
           <thead>
             <tr>
               <th style={th}>Name</th>
+              <th style={th}>Default company</th>
               <th style={th}>Color</th>
               <th style={th}>Phone</th>
               <th style={th}>Facebook Page ID</th>
@@ -317,19 +343,29 @@ export default function CompaniesPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={11}>Loading...</td>
+                <td style={td} colSpan={12}>Loading...</td>
               </tr>
             ) : null}
 
             {!loading && filteredCompanies.length === 0 ? (
               <tr>
-                <td style={td} colSpan={11}>No companies found.</td>
+                <td style={td} colSpan={12}>No companies found.</td>
               </tr>
             ) : null}
 
             {!loading && filteredCompanies.map((company) => (
               <tr key={company.id} style={{ borderTop: "1px solid #f1f0ef" }}>
                 <td style={td}>{company.name || "-"}</td>
+                <td style={td}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Use ${company.name} as default company`}
+                    title="SMS sender for customer verification when no company is assigned"
+                    checked={!!company.is_default_company}
+                    disabled={savingDefault || saving}
+                    onChange={(e) => void setDefaultCompany(company, e.target.checked)}
+                  />
+                </td>
                 <td style={td}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ width: 16, height: 16, borderRadius: 999, background: company.color || "#ffffff", border: "1px solid #cbd5e1", display: "inline-block" }} />

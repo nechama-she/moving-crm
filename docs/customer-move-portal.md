@@ -12,7 +12,7 @@ Set these in the existing backend SSM prefix (or environment):
 
 - `PUBLIC_MOVE_API_KEY`: a new random server-to-server secret, stored as SecureString. Keep it out of browser code.
 - `PUBLIC_MOVE_EMAIL_FROM`: an SES-verified sender address. SES must be enabled for the recipients/environment in use.
-- `PUBLIC_MOVE_SMS_ENABLED`: `true` to enable SNS SMS. The AWS account must have the required SMS production access/origination configuration for destination countries. Leave disabled until this is ready.
+- SMS verification uses the existing Aircall credentials and the lead company's Aircall number (or its phone matched to an Aircall number). When the lead has no company, it uses the company checked as **Default company** in the Companies directory. Only one company can be selected; selecting another clears the previous default. This does not assign or change the lead/job company. No default is selected automatically. An assigned company with no usable sender produces an error, not a fallback to another company. `PUBLIC_MOVE_SMS_ENABLED` and SNS setup are no longer used for verification texts.
 - Existing `JWT_SECRET`, `ATTACHMENTS_BUCKET`, database and LiveSwitch settings remain required.
 
 CloudFormation automatically sets the API Lambda's `PUBLIC_MOVE_ORIGIN` to the deployed frontend: the CloudFront HTTPS address in dev, or the configured custom domain in production (CloudFront when no custom domain is configured). No manual SSM origin parameter is needed. An existing `PUBLIC_MOVE_ORIGIN` SSM parameter still overrides this default; remove it if the deployment-managed address should be used. URL construction never trusts the request Host header. Apply the CloudFormation stack update to activate this configuration; a code-only Lambda update is not sufficient.
@@ -21,7 +21,7 @@ To test, call `POST /api/inventory` in Swagger and open the returned `url` in a 
 
 CloudFormation parameter `PublicMoveEmbedOrigins` accepts space-separated HTTPS website origins allowed to embed the page. With its empty default, the `frame-ancestors` response header allows same-origin embedding only. The frontend document remains on the CRM origin when embedded; it calls the API from that origin, so the parent site does not need unrestricted API CORS access.
 
-The template adds SES send-email permission and SNS direct-SMS publish permission. Confirm actual delivery with designated test recipients before release. No codes are printed or returned by the API.
+Email verification requires SES send-email permission; verification texts use Aircall, with no SNS fallback. Confirm actual delivery with designated test recipients before release. Verification SMS content and Aircall response bodies are redacted from application logs. No codes are printed or returned by the API.
 
 ## Intake API
 

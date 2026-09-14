@@ -3,6 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from auth import require_admin, get_current_user
@@ -145,6 +146,27 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     db.commit()
     db.refresh(company)
     return company.to_dict()
+
+
+class CompanyDefaultUpdate(BaseModel):
+    is_default_company: bool
+
+
+@router.patch("/{company_id}/default")
+def set_default_company(company_id: str, body: CompanyDefaultUpdate, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    # Serialize switches, including when no company is currently the default.
+    db.execute(text("SELECT pg_advisory_xact_lock(724103, 1)"))
+    company = db.query(Company).filter(Company.id == company_id).with_for_update().first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if body.is_default_company:
+        db.query(Company).filter(Company.is_default_company.is_(True)).update(
+            {Company.is_default_company: False}, synchronize_session="fetch"
+        )
+        db.flush()
+    company.is_default_company = body.is_default_company
+    db.commit()
+    return [c.to_dict() for c in db.query(Company).order_by(Company.name).all()]
 
 
 @router.delete("/{company_id}")

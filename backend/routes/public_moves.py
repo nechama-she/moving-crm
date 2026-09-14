@@ -21,10 +21,11 @@ from sqlalchemy.orm import Session
 from auth import get_current_user, require_admin
 from config import get_config
 from database import get_db
+from libs.aircall.client import find_number_id, send_sms
 from models import Lead, LeadJob, Company, User, LeadAttachment, LeadLiveSwitch, PublicMoveAccess, PublicMoveSession, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload, WalkthroughRequest
 from public_move_security import digest, secret_digest, link_token, contact_fingerprint, normalize_phone, file_type
 from public_move_sync import queue_files, sync_status
-from routes.leads import _get_visible_lead_or_404, _get_user_company_ids, _persist_job_route, _read_job_route, _upload_attachment_bytes_to_s3, _delete_s3_url
+from routes.leads import _get_visible_lead_or_404, _get_user_company_ids, _persist_job_route, _read_job_route, _upload_attachment_bytes_to_s3, _delete_s3_url, _safe_attachment_name
 
 router = APIRouter(tags=['Customer move portal'])
 NOW = datetime.utcnow
@@ -166,7 +167,7 @@ class CodeRequest(BaseModel):
     channel: Literal['sms', 'email']
 
 
-def deliver_code(lead, channel, code):
+def deliver_code(lead, channel, code, db: Session):
     message = f'Your moving estimate verification code is {code}. It expires in 10 minutes. Do not share this code.'
     region = setting('AWS_REGION') or 'us-east-1'
     if channel == 'email':
@@ -175,9 +176,21 @@ def deliver_code(lead, channel, code):
         boto3.client('ses', region_name=region).send_email(Source=sender, Destination={'ToAddresses': [lead.email]}, Message={
             'Subject': {'Data': 'Your verification code'}, 'Body': {'Text': {'Data': message}}})
     else:
-        if setting('PUBLIC_MOVE_SMS_ENABLED').lower() != 'true': raise HTTPException(503, 'Text verification is not configured. Please contact the moving team.')
-        boto3.client('sns', region_name=region).publish(PhoneNumber=lead.phone, Message=message,
-            MessageAttributes={'AWS.SNS.SMS.SMSType': {'DataType': 'String', 'StringValue': 'Transactional'}})
+        # The default supplies a sender only; never assign it to the lead/job.
+        company = db.get(Company, lead.company_id) if lead.company_id else db.query(Company).filter(
+            Company.is_default_company.is_(True)
+        ).one_or_none()
+        if company is None:
+            raise HTTPException(503, 'No verification SMS sender is configured. Please contact the moving team.')
+        number_id = str(company.aircall_number_id or '').strip()
+        if not number_id and company.phone:
+            number_id = find_number_id(company.phone)
+        if not number_id:
+            raise HTTPException(503, 'The sending company has no Aircall SMS number configured. Please contact the moving team.')
+        # Always pass an explicit number so Aircall cannot use its global default.
+        result = send_sms(to=lead.phone, text=message, number_id=number_id, sensitive=True)
+        if not result.get('ok'):
+            raise HTTPException(502, 'Unable to deliver a code. Please try later or contact your moving team.')
 
 
 @router.post('/api/public-moves/{access_id}/send-code')
@@ -194,7 +207,7 @@ def send_code(body: CodeRequest, access: PublicMoveAccess = Depends(public_acces
     access.otp_hash = secret_digest(access.id+':'+code); access.otp_expires = now+timedelta(minutes=10)
     access.otp_attempts = 0; access.otp_sent_at = now; access.otp_sends += 1; access.contact_hash = contact_fingerprint(lead)
     db.commit()
-    try: deliver_code(lead, body.channel, code)
+    try: deliver_code(lead, body.channel, code, db)
     except HTTPException: raise
     except Exception as exc: raise HTTPException(502, 'Unable to deliver a code. Please try later or contact your moving team.') from exc
     return {'sent': True, 'expires_in': 600, 'resend_after': 60}
@@ -275,7 +288,6 @@ def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...), x_up
     mime = file_type(content)
     if not mime or not content or len(content)>15*1024*1024: raise HTTPException(400, 'Choose a JPEG, PNG, WebP, PDF, MP4 or MOV file up to 15 MB.')
     if count >= 200 or size+len(content)>500*1024*1024: raise HTTPException(400, 'The upload limit for this move has been reached. Please contact your moving team.')
-    from routes.leads import _safe_attachment_name
     name = _safe_attachment_name(file.filename or 'Customer file')
     stored = _upload_attachment_bytes_to_s3(access.lead_id, access.job_id, name, content, mime, 'public_move')
     row = LeadAttachment(lead_id=access.lead_id, job_id=access.job_id, file_name=name, content_type=mime, file_size=len(content), file_blob=b'', external_url=stored, is_external_link=True, external_source='public_move_s3', uploaded_by=None)
@@ -444,7 +456,6 @@ def prepare_upload(body: PrepareUpload, access: PublicMoveAccess = Depends(verif
     count, size = db.query(func.count(LeadAttachment.id), func.coalesce(func.sum(LeadAttachment.file_size), 0)).join(PublicMoveUpload, LeadAttachment.id == PublicMoveUpload.attachment_id).filter(PublicMoveUpload.access_id == access.id).one()
     pending_count, pending_size = db.query(func.count(PublicMovePendingUpload.id), func.coalesce(func.sum(PublicMovePendingUpload.file_size), 0)).filter(PublicMovePendingUpload.access_id == access.id, PublicMovePendingUpload.expires_at > NOW(), PublicMovePendingUpload.request_id != body.request_id).one()
     if count+pending_count >= 200 or size+pending_size+body.size > 500*1024*1024: raise HTTPException(400, 'The upload limit for this move has been reached.')
-    from routes.leads import _safe_attachment_name
     if pending and (pending.file_size != body.size or pending.content_type != body.content_type or pending.file_name != _safe_attachment_name(body.name)):
         raise HTTPException(409, 'Upload ID was already used for a different file')
     if not pending:

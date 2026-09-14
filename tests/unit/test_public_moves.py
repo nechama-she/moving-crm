@@ -31,6 +31,7 @@ def portal(monkeypatch):
     mocks['auth'].require_admin = lambda: None
     mocks['database'].get_db = lambda: None
     mocks['config'].get_config = lambda: {}
+    mocks['routes.leads']._safe_attachment_name = lambda name: name
     spec = importlib.util.spec_from_file_location('test_public_moves_module', BACKEND / 'routes/public_moves.py')
     module = importlib.util.module_from_spec(spec)
     with patch.dict(sys.modules, mocks): spec.loader.exec_module(module)
@@ -91,7 +92,7 @@ def test_wrong_code_attempts_lock_challenge(portal):
 
 def test_resend_limits_and_destination_cannot_be_supplied(portal):
     mod,db,lead,access=portal
-    sent=[]; mod.deliver_code=lambda l,c,code: sent.append((l.email,c,code))
+    sent=[]; mod.deliver_code=lambda l,c,code,db: sent.append((l.email,c,code))
     mod.send_code(mod.CodeRequest(channel='email'),access,db)
     assert sent[0][0]=='jane@example.com'
     assert sent[0][2] not in access.otp_hash
