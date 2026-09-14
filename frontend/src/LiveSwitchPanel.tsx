@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import CustomerPageControls from "./CustomerPageControls";
 import { createPortal } from "react-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -200,7 +201,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
         }}
       ><span aria-hidden="true" style={{ width: 4, height: 48, marginLeft: 2, borderRadius: 4, background: resizing ? "#0176d3" : "#8fb4d8" }}/></div>
       <header><span className="ls-logo"><Icon kind="video"/></span><div><h2 id="ls-title">LiveSwitch</h2><p>Connect and share files with your customer</p></div><button aria-label="Close LiveSwitch" disabled={busy} onClick={onClose}>&times;</button></header>
-      <main>{loading ? <p role="status">Preparing your conversation </p> : error ? <div role="alert" className="ls-error">{error}<button onClick={() => void load()}>Try again</button></div> : conversation ? <>
+      <main><CustomerPageControls leadId={leadId}/>{loading ? <p role="status">Preparing your conversation </p> : error ? <div role="alert" className="ls-error">{error}<button onClick={() => void load()}>Try again</button></div> : conversation ? <>
         <section className="ls-card"><h3>Conversation links</h3><p>Copy a link or open it in a new tab.</p>{([['Host', conversation.hostJoinUrl], ['Participant', conversation.participantJoinUrl]] as const).map(([label, url]) => <div className="ls-link" key={label}><div><strong>{label} link</strong><span title={url}>{url || "Link unavailable"}</span></div><button disabled={!url} aria-label={`Copy ${label.toLowerCase()} link`} title="Copy link" onClick={() => void navigator.clipboard.writeText(url).then(() => setNotice(`${label} link copied`)).catch(() => setNotice("Could not copy. Select and copy the link manually."))}><Icon kind="copy"/></button>{url && <a href={url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${label.toLowerCase()} link in a new tab`} title="Open in new tab"><Icon kind="open"/></a>}{label === "Participant" && <button type="button" disabled={!url || smsSending} style={{ flexShrink: 0 }} onClick={() => void sendParticipantSms()}>{smsSending ? "Sending…" : "Send SMS"}</button>}</div>)}{smsNotice && <p role="status">{smsNotice}</p>}{smsError && <div className="ls-error" role="alert">{smsError}</div>}</section>
         <section className="ls-card"><h3>Add Photos, Documents, or Videos</h3><p>Add files right from your device.</p><label className="ls-picker">+ Choose files<input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,.mp4,.mov" disabled={busy} onChange={e => { choose(e.target.files); e.target.value = ""; }}/></label><small>JPEG, PNG, WebP, PDF, MP4 or MOV   Up to 15 MB per file</small>
         {items.length > 0 && <p role="status">{completed} of {items.length} files uploaded{completed > 0 ? ". LiveSwitch may take a moment to process them." : ""}</p>}

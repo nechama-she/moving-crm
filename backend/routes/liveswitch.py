@@ -151,7 +151,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import get_db
-from models import Lead, LeadLiveSwitch, SalesRep
+from models import Lead, LeadLiveSwitch, PublicMoveAccess, SalesRep
 from libs.aircall.client import send_sms, find_number_id
 from libs.smartmoving.client import get_opportunity
 from routes.leads import _get_visible_lead_or_404, _ensure_not_dispatch_write
@@ -213,7 +213,12 @@ def ensure_conversation(lead_id: str, user: User = Depends(get_current_user), db
     if not company_phone:
         raise HTTPException(400, "Add a phone number to this lead's company first")
     quote_number = str(lead.quote_number or "").strip()
-    if not quote_number:
+    public_move = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
+    if public_move and not quote_number:
+        conversation_name = lead.full_name
+    else:
+        conversation_name = quote_number
+    if not quote_number and not public_move:
         if not (lead.smartmoving_id or "").strip():
             raise HTTPException(400, "Connect this lead to SmartMoving before starting LiveSwitch")
         opportunity_result = get_opportunity(lead.smartmoving_id)
@@ -224,11 +229,12 @@ def ensure_conversation(lead_id: str, user: User = Depends(get_current_user), db
         if not quote_number:
             raise HTTPException(400, "This SmartMoving lead does not have a quote number yet")
         lead.quote_number = quote_number
-    result = _api_post("conversations", {"type": "LiveConversation", "phone": company_phone, "name": quote_number})
+    conversation_name = quote_number or conversation_name
+    result = _api_post("conversations", {"type": "LiveConversation", "phone": company_phone, "name": conversation_name})
     if not result.get("id"):
         raise HTTPException(502, "LiveSwitch did not return a conversation ID")
     details = {key: result.get(key, "") for key in ("id", "hostJoinUrl", "participantJoinUrl", "conversationUrl", "embeddedConversationUrl")}
-    details["name"] = quote_number
+    details["name"] = conversation_name
     db.add(LeadLiveSwitch(lead_id=lead.id, details=json.dumps(details)))
     db.commit()
     return details

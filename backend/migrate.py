@@ -25,6 +25,18 @@ def migrate() -> None:
     )
     """
     with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE leads ALTER COLUMN company_id DROP NOT NULL"))
+        connection.execute(text("ALTER TABLE lead_jobs ALTER COLUMN company_id DROP NOT NULL"))
+        connection.execute(text("ALTER TABLE lead_attachments ALTER COLUMN uploaded_by DROP NOT NULL"))
+        connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS stop_types TEXT"))
+        from models import PublicMoveAccess, PublicMoveSession, WalkthroughRequest, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload
+        for model in (PublicMoveAccess, PublicMoveSession, WalkthroughRequest, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload):
+            model.__table__.create(connection, checkfirst=True)
+        connection.execute(text("ALTER TABLE public_move_uploads ADD COLUMN IF NOT EXISTS sync_status VARCHAR(20) NOT NULL DEFAULT 'pending'"))
+        connection.execute(text("ALTER TABLE public_move_uploads ADD COLUMN IF NOT EXISTS sync_token VARCHAR(36)"))
+        connection.execute(text("ALTER TABLE public_move_uploads ADD COLUMN IF NOT EXISTS sync_error TEXT"))
+        connection.execute(text("ALTER TABLE public_move_uploads ADD COLUMN IF NOT EXISTS sync_upload_url TEXT"))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_walkthrough_active_job ON walkthrough_requests(job_id) WHERE status IN ('requested', 'scheduled')"))
         connection.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS quote_number VARCHAR(100)"))
         connection.execute(text("""CREATE TABLE IF NOT EXISTS lead_liveswitch (
             lead_id VARCHAR(36) PRIMARY KEY REFERENCES leads(id) ON DELETE CASCADE,

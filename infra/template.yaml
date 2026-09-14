@@ -2,6 +2,11 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Moving CRM — Full stack (VPC, RDS, S3, CodePipeline, CodeBuild)
 
 Parameters:
+  PublicMoveEmbedOrigins:
+    Type: String
+    Default: ""
+    Description: Space-separated HTTPS origins allowed to embed the customer page. Empty permits same-origin embedding only.
+    AllowedPattern: "^$|^https://[A-Za-z0-9.-]+(:[0-9]+)?( https://[A-Za-z0-9.-]+(:[0-9]+)?)*$"
   Environment:
     Type: String
     Default: dev
@@ -449,6 +454,10 @@ Resources:
               SSEAlgorithm: AES256
       LifecycleConfiguration:
         Rules:
+          - Id: RemovePendingCustomerUploads
+            Status: Enabled
+            Prefix: public-pending/
+            ExpirationInDays: 1
           - Id: RemoveTemporaryDownloads
             Status: Enabled
             Prefix: downloads/
@@ -463,6 +472,7 @@ Resources:
           - AllowedMethods:
               - GET
               - HEAD
+              - POST
             AllowedOrigins:
               - "*"
             AllowedHeaders:
@@ -622,6 +632,21 @@ Resources:
   # The ACM cert is supplied via AcmCertificateArn (created out-of-band so cross-account
   # DNS validation works — the Route 53 zone lives in the management account).
 
+  CustomerPageResponseHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub moving-crm-customer-page-${Environment}
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: !Sub "frame-ancestors 'self' ${PublicMoveEmbedOrigins}; object-src 'none'; base-uri 'self'"
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: no-referrer
+            Override: true
+
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -643,6 +668,7 @@ Resources:
               OriginProtocolPolicy: https-only
               OriginSSLProtocols: [TLSv1.2]
         DefaultCacheBehavior:
+          ResponseHeadersPolicyId: !Ref CustomerPageResponseHeaders
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
           AllowedMethods: [GET, HEAD]
@@ -748,6 +774,11 @@ Resources:
                 Action:
                   - lambda:UpdateFunctionCode
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-*"
+              # Wait for the public move sync worker code update to complete
+              - Effect: Allow
+                Action:
+                  - lambda:GetFunctionConfiguration
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-public-move-sync-${Environment}"
               # CloudFormation (read stack outputs during deploy)
               - Effect: Allow
                 Action:
@@ -1215,6 +1246,13 @@ Resources:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
+                Action: ses:SendEmail
+                Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+              - Effect: Allow
+                Action: sns:Publish
+                NotResource: !Sub "arn:aws:sns:*:${AWS::AccountId}:*"
+
+              - Effect: Allow
                 Action:
                   - ssm:GetParameter
                   - ssm:GetParameters
@@ -1255,6 +1293,10 @@ Resources:
                 Action:
                   - sqs:SendMessage
                 Resource: !GetAtt LeadDuplicateQueue.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt PublicMoveSyncQueue.Arn
               - Effect: Allow
                 Action:
                   - s3:GetObject
@@ -1339,12 +1381,138 @@ Resources:
               - - !Sub "https://${CloudFrontDistribution.DomainName}"
                 - "http://localhost:5173"
           LEAD_DUPLICATE_QUEUE_URL: !GetAtt LeadDuplicateQueue.QueueUrl
+          PUBLIC_MOVE_SYNC_QUEUE_URL: !Ref PublicMoveSyncQueue
           ATTACHMENTS_BUCKET: !Ref AttachmentBucket
           LEAD_DUPLICATE_FUNCTION_ARN: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-lead-duplicate-${Environment}"
           LEAD_DUPLICATE_SCHEDULER_ROLE_ARN: !GetAtt LeadDuplicateSchedulerRole.Arn
           REALTIME_CONNECTIONS_TABLE: !Ref RealtimeConnectionsTable
           REALTIME_MANAGEMENT_ENDPOINT: !Sub "https://${RealtimeApi}.execute-api.${AWS::Region}.amazonaws.com/live"
           REALTIME_FUNCTION_NAME: !Ref RealtimeFunction
+
+  # ===========================================================================
+  # CUSTOMER FILE SYNC — one file per message, isolated from lead duplication
+  # ===========================================================================
+  PublicMoveSyncDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub moving-crm-public-move-sync-dlq-${Environment}
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 1080
+      SqsManagedSseEnabled: true
+
+  PublicMoveSyncQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub moving-crm-public-move-sync-${Environment}
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 1080
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt PublicMoveSyncDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  PublicMoveSyncRole:
+    Type: AWS::IAM::Role
+    Condition: ShouldDeployLambda
+    Properties:
+      RoleName: !Sub moving-crm-public-move-sync-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: PublicMoveSyncPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt PublicMoveSyncQueue.Arn
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/*"
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/LIVESWITCH_REFRESH_TOKEN"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !GetAtt Database.MasterUserSecret.SecretArn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub "${AttachmentBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource:
+                  - !GetAtt PublicMoveSyncQueue.Arn
+                  - !GetAtt PublicMoveSyncDeadLetterQueue.Arn
+
+  PublicMoveSyncFunction:
+    Type: AWS::Lambda::Function
+    Condition: ShouldDeployLambda
+    Properties:
+      FunctionName: !Sub moving-crm-public-move-sync-${Environment}
+      Runtime: python3.11
+      Handler: public_move_sync_handler.handler
+      Timeout: 180
+      MemorySize: 512
+      Role: !GetAtt PublicMoveSyncRole.Arn
+      VpcConfig: !If
+        - IsProd
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+        - !Ref "AWS::NoValue"
+      Code:
+        S3Bucket: !Ref FrontendBucket
+        S3Key: api-backend/package.zip
+      Environment:
+        Variables:
+          SSM_PREFIX: !Sub /moving-crm/${Environment}/
+          AWS_REGION_NAME: !Ref AWS::Region
+          DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
+          SMARTMOVING_API_KEY: !Sub "{{resolve:ssm:/moving-crm/${Environment}/SMARTMOVING_API_KEY}}"
+          JWT_SECRET: !Sub "{{resolve:secretsmanager:${JwtSecret}:SecretString}}"
+          ATTACHMENTS_BUCKET: !Ref AttachmentBucket
+          PUBLIC_MOVE_SYNC_DLQ_ARN: !GetAtt PublicMoveSyncDeadLetterQueue.Arn
+          PUBLIC_MOVE_SYNC_QUEUE_URL: !Ref PublicMoveSyncQueue
+
+  PublicMoveSyncEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Condition: ShouldDeployLambda
+    Properties:
+      EventSourceArn: !GetAtt PublicMoveSyncQueue.Arn
+      FunctionName: !Ref PublicMoveSyncFunction
+      BatchSize: 1
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      ScalingConfig:
+        MaximumConcurrency: 2
+
+  # The same handler distinguishes DLQ records by ARN and persists terminal failure,
+  # including jobs whose normal processing repeatedly hit the Lambda hard timeout.
+  PublicMoveSyncDeadLetterEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Condition: ShouldDeployLambda
+    Properties:
+      EventSourceArn: !GetAtt PublicMoveSyncDeadLetterQueue.Arn
+      FunctionName: !Ref PublicMoveSyncFunction
+      BatchSize: 1
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      ScalingConfig:
+        MaximumConcurrency: 2
 
   MessageStreamLookupRole:
     Type: AWS::IAM::Role

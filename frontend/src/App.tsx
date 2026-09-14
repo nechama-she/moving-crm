@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation, NavLink } from "re
 import { lazy, Suspense, useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./AuthContext";
 
+const CustomerMovePage = lazy(() => import("./CustomerMovePage"));
+const WalkthroughRequestsPage = lazy(() => import("./WalkthroughRequestsPage"));
 const LoginPage = lazy(() => import("./LoginPage"));
 const ChangePasswordPage = lazy(() => import("./ChangePasswordPage"));
 const LeadsList = lazy(() => import("./LeadsList"));
@@ -116,6 +118,7 @@ function ProtectedRoutes() {
               {user?.role === "admin" ? <NavLink to="/chats" style={navLinkStyle}>Communications</NavLink> : null}
               {user?.role === "admin" ? <NavLink to="/sales-work-queue" style={navLinkStyle}>Sales Work Queue</NavLink> : null}
               {user?.role === "admin" ? <NavLink to="/reports" style={navLinkStyle}>Reports</NavLink> : null}
+              {user?.role === "admin" ? <NavLink to="/walkthrough-requests" style={navLinkStyle}>Live Calls</NavLink> : null}
               {user?.role === "admin" ? <NavLink to="/stats" style={navLinkStyle}>Stats</NavLink> : null}
               <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
               <NavLink to="/sales-performance" style={navLinkStyle}>Performance</NavLink>
@@ -182,6 +185,7 @@ function ProtectedRoutes() {
                   {user?.role === "admin" ? <NavLink to="/chats">Communications</NavLink> : null}
                   {user?.role === "admin" ? <NavLink to="/sales-work-queue">Sales Work Queue</NavLink> : null}
                   {user?.role === "admin" ? <NavLink to="/reports">Reports</NavLink> : null}
+                  {user?.role === "admin" ? <NavLink to="/walkthrough-requests">Live Calls</NavLink> : null}
                   {user?.role === "admin" ? <NavLink to="/stats">Stats</NavLink> : null}
                   <NavLink to="/sales-calendar">Sales Calendar</NavLink>
                   <NavLink to="/sales-performance">Sales Performance</NavLink>
@@ -208,6 +212,7 @@ function ProtectedRoutes() {
           <Route path="/sales-work-queue" element={user?.role === "admin" ? <UnansweredMessagesPage /> : <Navigate to="/" replace />} />
           <Route path="/reports" element={user?.role === "admin" ? <Navigate to="/reports/booking-percentage" replace /> : <Navigate to="/" replace />} />
           <Route path="/reports/booking-percentage" element={user?.role === "admin" ? <ReportsPage /> : <Navigate to="/" replace />} />
+          <Route path="/walkthrough-requests" element={user?.role === "admin" ? <WalkthroughRequestsPage /> : <Navigate to="/" replace />} />
           <Route path="/stats" element={user?.role === "admin" ? <StatsPage /> : <Navigate to="/" replace />} />
           <Route path="/outreach" element={<OutreachEventsPage />} />
           <Route path="/sales-calendar" element={<SalesCalendarPage />} />
@@ -242,6 +247,7 @@ function App() {
       <BrowserRouter>
         <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
           <Routes>
+            <Route path="/move/:accessId" element={<CustomerMovePage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/*" element={<ProtectedRoutes />} />
           </Routes>

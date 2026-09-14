@@ -23,7 +23,7 @@ def api():
             arg.annotation = None
     lead = SimpleNamespace(id='lead-1', smartmoving_id='sm-1', quote_number=None, phone=' 1112223333 ', assignee=None, company=SimpleNamespace(phone=' 2405707987 ', aircall_number_id='company-number'))
     scope = {'get_opportunity': MagicMock(return_value={'data': {'quoteNumber': 23985}}), 'json': json, 'HTTPException': HTTPException, 'Lead': SimpleNamespace(id='id'),
-             'LeadLiveSwitch': MagicMock(), '_get_visible_lead_or_404': MagicMock(return_value=lead),
+             'PublicMoveAccess': MagicMock(), 'LeadLiveSwitch': MagicMock(), '_get_visible_lead_or_404': MagicMock(return_value=lead),
              '_ensure_not_dispatch_write': MagicMock(), '_api_post': MagicMock(),
              'SalesRep': SimpleNamespace(name='name'), 'func': MagicMock(),
              'send_sms': MagicMock(return_value={'ok': True, 'message_id': 'sms-1'}),
@@ -41,7 +41,7 @@ def test_reuses_conversation_without_api_call(api):
 
 
 def test_creates_and_saves_all_links(api):
-    db = MagicMock(); db.get.return_value = None
+    db = MagicMock(); db.get.return_value = None; db.query.return_value.filter_by.return_value.first.return_value = None
     details = dict(id='new', hostJoinUrl='host', participantJoinUrl='guest', conversationUrl='page', embeddedConversationUrl='embed')
     api['_api_post'].return_value = details
     assert api['ensure_conversation']('lead-1', object(), db) == {**details, 'name': '23985'}
@@ -55,7 +55,7 @@ def test_creates_and_saves_all_links(api):
 
 @pytest.mark.parametrize('smartmoving_id', ['sm-1', None])
 def test_uses_stored_quote_without_smartmoving_request(api, smartmoving_id):
-    db = MagicMock(); db.get.return_value = None
+    db = MagicMock(); db.get.return_value = None; db.query.return_value.filter_by.return_value.first.return_value = None
     lead = api['_get_visible_lead_or_404'].return_value
     lead.quote_number = '12345'
     lead.smartmoving_id = smartmoving_id
@@ -94,7 +94,7 @@ def test_visibility_checked_before_accessing_conversation(api):
 
 
 def test_missing_company_phone_never_uses_customer_phone(api):
-    db = MagicMock(); db.get.return_value = None
+    db = MagicMock(); db.get.return_value = None; db.query.return_value.filter_by.return_value.first.return_value = None
     api['_get_visible_lead_or_404'].return_value.company.phone = ''
     with pytest.raises(HTTPException) as exc:
         api['ensure_conversation']('lead-1', object(), db)
@@ -103,7 +103,7 @@ def test_missing_company_phone_never_uses_customer_phone(api):
 
 
 def test_missing_quote_number_does_not_create_conversation(api):
-    db = MagicMock(); db.get.return_value = None
+    db = MagicMock(); db.get.return_value = None; db.query.return_value.filter_by.return_value.first.return_value = None
     api['get_opportunity'].return_value = {'data': {}}
     with pytest.raises(HTTPException) as exc:
         api['ensure_conversation']('lead-1', object(), db)
@@ -188,3 +188,14 @@ def test_configured_bearer_token_does_not_require_oauth():
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), scope)
     assert scope['_access_token']() == 'test-token'
     settings.assert_not_called()
+
+
+def test_public_intake_uses_customer_name_without_smartmoving(api):
+    db = MagicMock(); db.get.return_value = None
+    lead = api['_get_visible_lead_or_404'].return_value
+    lead.full_name = 'Jane Smith'; lead.quote_number = None; lead.smartmoving_id = None
+    db.query.return_value.filter_by.return_value.first.return_value = object()
+    api['_api_post'].return_value = {'id': 'new'}
+    assert api['ensure_conversation']('lead-1', object(), db)['name'] == 'Jane Smith'
+    api['get_opportunity'].assert_not_called()
+    assert lead.quote_number is None

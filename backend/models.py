@@ -206,7 +206,7 @@ class Lead(Base):
     __tablename__ = "leads"
 
     id = Column(String(36), primary_key=True, default=_uuid)
-    company_id = Column(String(36), ForeignKey("companies.id"), nullable=False, index=True)
+    company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
     assigned_to = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
 
     full_name = Column(String(255), nullable=False, index=True)
@@ -429,7 +429,7 @@ class LeadAttachment(Base):
     is_external_link = Column(Boolean, nullable=False, default=False)
     external_source = Column(String(50), index=True)
     source_external_id = Column(String(255), index=True)
-    uploaded_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    uploaded_by = Column(String(36), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
 
     def to_dict(self):
@@ -454,7 +454,7 @@ class LeadJob(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid)
     lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
-    company_id = Column(String(36), ForeignKey("companies.id"), nullable=False, index=True)
+    company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
     job_order = Column(Integer, nullable=False, default=1)
     pickup_zip = Column(Text)
     delivery_zip = Column(Text)
@@ -467,6 +467,7 @@ class LeadJob(Base):
     foreman_notes = Column(Text)
     estimated_materials = Column(Text)
     price = Column(Numeric(12, 2))
+    stop_types = Column(Text)
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
 
@@ -910,3 +911,79 @@ class LeadLiveSwitch(Base):
     __tablename__ = "lead_liveswitch"
     lead_id = Column(String(36), ForeignKey("leads.id", ondelete="CASCADE"), primary_key=True)
     details = Column(Text, nullable=False)
+
+class PublicMoveAccess(Base):
+    __tablename__ = 'public_move_access'
+    id = Column(String(36), primary_key=True, default=_uuid)
+    lead_id = Column(String(36), ForeignKey('leads.id', ondelete='CASCADE'), nullable=False, unique=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), nullable=False)
+    key_hash = Column(String(64), nullable=False, unique=True)
+    request_hash = Column(String(64), nullable=False)
+    token_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    revoked = Column(Boolean, nullable=False, default=False)
+    otp_hash = Column(String(64))
+    otp_expires = Column(DateTime)
+    otp_attempts = Column(Integer, nullable=False, default=0)
+    otp_sent_at = Column(DateTime)
+    otp_hour = Column(DateTime)
+    otp_sends = Column(Integer, nullable=False, default=0)
+    contact_hash = Column(String(64))
+    published_price = Column(Numeric(12, 2))
+    published_cuft = Column(Numeric(12, 2))
+    published_at = Column(DateTime)
+    created_at = Column(DateTime, default=_now)
+
+
+class PublicMoveSession(Base):
+    __tablename__ = 'public_move_sessions'
+    token_hash = Column(String(64), primary_key=True)
+    access_id = Column(String(36), ForeignKey('public_move_access.id', ondelete='CASCADE'), nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    contact_hash = Column(String(64), nullable=False)
+
+
+class WalkthroughRequest(Base):
+    __tablename__ = 'walkthrough_requests'
+    id = Column(String(36), primary_key=True, default=_uuid)
+    lead_id = Column(String(36), ForeignKey('leads.id', ondelete='CASCADE'), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), nullable=False)
+    status = Column(String(20), nullable=False, default='requested')
+    availability = Column(Text)
+    timezone = Column(String(80), nullable=False, default='America/New_York')
+    scheduled_at = Column(DateTime)
+    assigned_to = Column(String(36), ForeignKey('users.id'))
+    created_at = Column(DateTime, default=_now)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
+
+
+class PublicMoveUpload(Base):
+    __tablename__ = 'public_move_uploads'
+    attachment_id = Column(String(36), ForeignKey('lead_attachments.id', ondelete='CASCADE'), primary_key=True)
+    access_id = Column(String(36), ForeignKey('public_move_access.id', ondelete='CASCADE'), nullable=False, index=True)
+    request_id = Column(String(64), nullable=False)
+    synced_at = Column(DateTime)
+    sync_status = Column(String(20), nullable=False, default='pending', server_default='pending')
+    sync_token = Column(String(36))
+    sync_error = Column(Text)
+    sync_upload_url = Column(Text)
+    __table_args__ = (UniqueConstraint('access_id', 'request_id'),)
+
+
+class PublicMoveRate(Base):
+    __tablename__ = 'public_move_rates'
+    key = Column(String(64), primary_key=True)
+    window = Column(Integer, nullable=False)
+    count = Column(Integer, nullable=False)
+
+class PublicMovePendingUpload(Base):
+    __tablename__ = 'public_move_pending_uploads'
+    id = Column(String(36), primary_key=True, default=_uuid)
+    access_id = Column(String(36), ForeignKey('public_move_access.id', ondelete='CASCADE'), nullable=False, index=True)
+    request_id = Column(String(64), nullable=False)
+    object_key = Column(Text, nullable=False)
+    file_name = Column(String(255), nullable=False)
+    content_type = Column(String(120), nullable=False)
+    file_size = Column(Integer, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    __table_args__ = (UniqueConstraint('access_id', 'request_id'),)

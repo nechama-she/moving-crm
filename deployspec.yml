@@ -36,6 +36,10 @@ phases:
       - echo "Updating API backend Lambda function code"
       - aws lambda update-function-code --function-name moving-crm-api-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key api-backend/package.zip
 
+      - echo "Updating public move sync Lambda function code"
+      - aws lambda update-function-code --function-name moving-crm-public-move-sync-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key api-backend/package.zip
+      - aws lambda wait function-updated --function-name moving-crm-public-move-sync-${ENVIRONMENT:-dev}
+
       - echo "Updating realtime Lambda function code"
       - aws lambda update-function-code --function-name moving-crm-realtime-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key api-backend/package.zip
 

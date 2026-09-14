@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
+import StopTypesEditor from "./StopTypesEditor";
+import CustomerPageControls from "./CustomerPageControls";
 import LiveSwitchPanel from "./LiveSwitchPanel";
 import ChatMessages from "./ChatMessages";
 import TasksPanel from "./TasksPanel";
@@ -2988,6 +2990,7 @@ export default function LeadDetail() {
                             ))}
                           </div>
 
+                          {canEditJobs && leadId && <StopTypesEditor leadId={leadId} jobId={job.id} stops={job.stops} />}
                           <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 700, color: "#166534" }}>
                             Delivery
                             <input
@@ -3392,6 +3395,7 @@ export default function LeadDetail() {
         </div>
       </div>
 
+      {leadId && (user?.role === "admin" || user?.role === "sales_rep") && <CustomerPageControls leadId={leadId} />}
       {!isDispatchUser && (user?.role === "admin" || user?.role === "sales_rep") &&
         renderSection("Other Info", [...META_FIELDS, ...otherFields])}
 

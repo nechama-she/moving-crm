@@ -1638,18 +1638,7 @@ def delete_lead_by_smartmoving(
 
 @router.get("/leads/{lead_id}")
 def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    company_ids = _get_user_company_ids(user, db)
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.company_id.in_(company_ids)).first()
-    if not lead:
-        # Also try by leadgen_id for backwards compatibility
-        lead = db.query(Lead).filter(Lead.leadgen_id == lead_id, Lead.company_id.in_(company_ids)).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    if user.role == "foreman" and not db.query(LeadJob.id).filter(
-        LeadJob.lead_id == lead.id,
-        LeadJob.foreman_id == user.id,
-    ).first():
-        raise HTTPException(status_code=404, detail="Lead not found")
+    lead = _get_visible_lead_or_404(lead_id, user, db)
 
     # If facebook_user_id is missing, try to find it from sender_info
     if user.role != "foreman" and not lead.facebook_user_id:
@@ -2079,9 +2068,10 @@ JOB_STOPS_SETTING_PREFIX = "lead_job_stops:"
 
 def _get_visible_lead_or_404(lead_id: str, user: User, db: Session) -> Lead:
     company_ids = _get_user_company_ids(user, db)
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.company_id.in_(company_ids)).first()
+    visible = or_(Lead.company_id.in_(company_ids), Lead.company_id.is_(None)) if user.role == "admin" else Lead.company_id.in_(company_ids)
+    lead = db.query(Lead).filter(Lead.id == lead_id, visible).first()
     if not lead:
-        lead = db.query(Lead).filter(Lead.leadgen_id == lead_id, Lead.company_id.in_(company_ids)).first()
+        lead = db.query(Lead).filter(Lead.leadgen_id == lead_id, visible).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     if user.role == "foreman":

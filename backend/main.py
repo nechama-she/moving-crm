@@ -12,6 +12,7 @@ from database import SessionLocal
 from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
 from models import Lead, User
 from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
+from routes import public_moves
 from routes.meta import messenger, instagram
 
 cfg = get_config()
@@ -39,6 +40,10 @@ def _api_secret() -> str:
 async def enforce_authentication(request: Request) -> None:
     if request.method == "OPTIONS":
         return  # CORS preflight — handled by CORSMiddleware
+    if request.url.path == "/api/public-move-intake" and request.method == "POST":
+        return  # This endpoint validates its own server-to-server key.
+    if re.fullmatch(r"/api/public-moves/[0-9a-f-]{36}/(verify-options|send-code|verify|details|walkthrough|files|prepare-upload|finish-upload)", request.url.path):
+        return  # Each endpoint requires a scoped link and, where needed, verified session.
     if request.url.path in PUBLIC_PATHS:
         return
 
@@ -116,6 +121,16 @@ def _audit_request_context(request: Request) -> tuple[str, str, str]:
         db.close()
 
     return lead_id, actor_user_id, actor_name
+
+
+@app.middleware("http")
+async def protect_public_move_responses(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/public-move") or request.url.path.endswith("/customer-page"):
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @app.middleware("http")
@@ -246,6 +261,7 @@ app.include_router(stats.router)
 app.include_router(duplication_rules.router)
 app.include_router(referral_assignment_rules.router)
 app.include_router(liveswitch.router)
+app.include_router(public_moves.router)
 # Triggers backend Lambda processing — admin only.
 app.include_router(smartmoving.router, dependencies=[Depends(require_admin)])
 app.include_router(followups.router)
