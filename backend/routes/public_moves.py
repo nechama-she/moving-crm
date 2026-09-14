@@ -209,7 +209,11 @@ def send_code(body: CodeRequest, access: PublicMoveAccess = Depends(public_acces
     if access.otp_sent_at and (now-access.otp_sent_at).total_seconds() < 60: raise HTTPException(429, 'Wait a minute before requesting another code')
     if not access.otp_hour or (now-access.otp_hour).total_seconds() >= 3600:
         access.otp_hour = now; access.otp_sends = 0
-    if access.otp_sends >= 5: raise HTTPException(429, 'Too many codes requested. Please try again in an hour.')
+    try:
+        hourly_limit = int(setting('PUBLIC_MOVE_OTP_HOURLY_LIMIT') or '50')
+    except (ValueError, TypeError):
+        hourly_limit = 50
+    if access.otp_sends >= hourly_limit: raise HTTPException(429, 'Too many codes requested. Please try again in an hour.')
     code = f'{secrets.randbelow(1000000):06d}'
     access.otp_hash = secret_digest(access.id+':'+code); access.otp_expires = now+timedelta(minutes=10)
     access.otp_attempts = 0; access.otp_sent_at = now; access.otp_sends += 1; access.contact_hash = contact_fingerprint(lead)

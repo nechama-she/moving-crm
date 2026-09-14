@@ -429,6 +429,13 @@ Resources:
       Type: String
       Value: !Ref SmartMovingApiKey
 
+  SSMPublicMoveOtpHourlyLimit:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /moving-crm/${Environment}/PUBLIC_MOVE_OTP_HOURLY_LIMIT
+      Type: String
+      Value: "50"
+
   # ===========================================================================
   # S3 — Frontend hosting + Pipeline artifacts
   # ===========================================================================
