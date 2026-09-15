@@ -189,7 +189,7 @@ export default function CustomerMovePage() {
               <div>
                 <div className="cm-intro-top">
                   <div className="cm-eyebrow">LET'S MAKE YOUR NEXT MOVE EASIER</div>
-                  <button type="button" className="cm-refresh-btn" disabled={busy} onClick={()=>void refreshDetails()}>&#8635; Refresh</button>
+                  <button type="button" className="cm-refresh-btn" aria-label="Refresh move details" title="Refresh move details" disabled={busy} onClick={()=>void refreshDetails()}>&#8635;</button>
                 </div>
                 <h1>Hi {data.name.split(' ')[0]},<br/>you're in the right place.</h1>
                 <p>Share a little more about your home.<br/>We'll take care of the estimate.</p>
