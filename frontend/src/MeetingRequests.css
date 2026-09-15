@@ -169,3 +169,5 @@
   max-width: 180px;
   line-height: 1.3;
 }
+
+.meeting-requests tr.meeting-current-lead td{background:#edf6ff}.meeting-requests tr.meeting-current-lead td:first-child{box-shadow:inset 3px 0 #0176d3}

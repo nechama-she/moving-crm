@@ -427,7 +427,21 @@ def staff_page(lead_id: str, user: User = Depends(get_current_user), db: Session
     pending = db.query(PublicMoveUpload).filter_by(access_id=access.id, synced_at=None).count()
     return {'url': public_url(access), 'revoked': access.revoked, 'job_id': job.id, 'company_id': lead.company_id or '',
             'price': str(job.price) if job.price is not None else '', 'cuft': str(lead.volume) if lead.volume is not None else '',
-            'published': bool(access.published_at), 'pending_uploads': pending, 'requests': [meeting_dict(m) for m in meetings]}
+            'published': bool(access.published_at), 'pending_uploads': pending, 'requests': [{**meeting_dict(m), 'rep_name': (db.get(User, m.assigned_to).name if m.assigned_to and db.get(User, m.assigned_to) else '')} for m in meetings]}
+
+
+@router.post('/api/leads/{lead_id}/customer-page/sms')
+def send_customer_link(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead, access = staff_access(lead_id, user, db)
+    if access.revoked or access.expires_at < NOW(): raise HTTPException(400, 'Customer link is inactive')
+    if not lead.phone: raise HTTPException(400, 'This lead has no phone number')
+    company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
+    number = (company.aircall_number_id or '') if company else ''
+    if not number and company and company.phone: number = find_number_id(company.phone)
+    if not number: raise HTTPException(400, 'Configure an Aircall number for the sending company')
+    result = send_sms(to=lead.phone, text=f'View your move, upload photos, or request a walkthrough: {public_url(access)}', number_id=number, sensitive=True)
+    if not result.get('ok'): raise HTTPException(502, 'Could not send SMS. Please retry.')
+    return {'ok': True}
 
 
 class StaffPagePatch(BaseModel):
@@ -472,7 +486,7 @@ def staff_requests(user: User = Depends(require_admin), db: Session = Depends(ge
                      'phone': lead.phone or '', 'pickup': job.pickup_zip if job else lead.pickup_zip,
                      'delivery': job.delivery_zip if job else lead.delivery_zip, 'move_date': job.move_date if job else lead.move_date,
                      'company': lead.company.name if lead.company else 'Unassigned', 'job_id': access.job_id,
-                     'requests': [meeting_dict(m) for m in meetings]})
+                     'requests': [{**meeting_dict(m), 'rep_name': (db.get(User, m.assigned_to).name if m.assigned_to and db.get(User, m.assigned_to) else '')} for m in meetings]})
     return {'items': rows, 'companies': [{'id': c.id, 'name': c.name} for c in db.query(Company).filter(Company.id.in_(companies)).all()],
             'reps': [{'id': u.id, 'name': u.name} for u in db.query(User).filter(User.role.in_(['admin', 'sales_rep'])).all()]}
 

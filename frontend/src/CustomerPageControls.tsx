@@ -1,44 +1,16 @@
-import "./LeadMeasurements.css";
-import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { API_BASE } from "./apiConfig";
-import { authHeaders, useAuth } from "./AuthContext";
-
-type Meeting={id:string;status:string;availability:string;timezone:string;scheduled_at:string|null;assigned_to:string};
-type Page={url:string;revoked:boolean;company_id:string;job_id:string;price:string;cuft:string;published:boolean;pending_uploads:number;requests:Meeting[]};
-type SyncStatus={files:{id:string;name:string;status:string;error:string}[];pending:number;active:number;synced:number;failed:number};
-export default function CustomerPageControls({leadId}:{leadId:string}){
- const {token,user}=useAuth();const [data,setData]=useState<Page>(),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { API_BASE } from './apiConfig';
+import { authHeaders, useAuth } from './AuthContext';
+type Page={url:string;revoked:boolean;requests:{id:string;status:string;scheduled_at:string;rep_name:string;availability:string}[]};
+function ActionIcon({kind}:{kind:'copy'|'sms'|'revoke'}){return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">{kind==='copy'?<><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></>:kind==='sms'?<path d="M4 3h16v13H9l-5 5V3Z M8 7h8M8 11h6"/>:<><circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/></>}</svg>}
+export default function CustomerPageControls({leadId,section='meeting'}:{leadId:string;section?:'links'|'files'|'meeting'}){
+ const {token}=useAuth();const [data,setData]=useState<Page>(),[files,setFiles]=useState<{id:string;name:string;status:string}[]>([]),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
  const base=`${API_BASE}/api/leads/${leadId}/customer-page`;
- const [syncInfo,setSyncInfo]=useState<SyncStatus>(),[syncError,setSyncError]=useState('');
- const hasPage=!!data;
- const load=useCallback(async()=>{const r=await fetch(base,{headers:authHeaders(token)});if(r.status===404||r.status===403)return;if(!r.ok)throw new Error('Could not load customer page');const d=await r.json();setData(d);},[base,token]);
- useEffect(()=>{void load().catch(e=>setMessage(e.message));},[load]);
- useEffect(()=>{
-  setSyncInfo(undefined);setSyncError('');
-  if(!hasPage)return;
-  const controller=new AbortController();let timer:ReturnType<typeof setTimeout>;
-  async function poll(){
-   try{
-	const r=await fetch(base+'/sync-status',{headers:authHeaders(token),signal:controller.signal,cache:'no-store'});
-	if(!r.ok)throw new Error('Could not refresh file sync status. Reconnecting...');
-	const status:SyncStatus=await r.json();
-	if(!controller.signal.aborted){setSyncInfo(status);setSyncError('');}
-   }catch(e){if(!controller.signal.aborted)setSyncError((e as Error).message);}
-   finally{if(!controller.signal.aborted)timer=setTimeout(()=>void poll(),4000);}
-  }
-  void poll();
-  return ()=>{controller.abort();clearTimeout(timer);};
- },[base,token,hasPage]);
-
- async function save(publish=false,revoke?:boolean){setBusy(true);setMessage('');try{const body:Record<string,unknown>={publish};if(revoke!==undefined)body.revoke=revoke;const r=await fetch(base,{method:'PATCH',headers:{...authHeaders(token),'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Check price and cubic feet');await load();setMessage(publish?'Estimate published to customer page.':'Saved.');}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}}
- async function sync(){setBusy(true);setMessage('');try{const r=await fetch(base+'/sync-files',{method:'POST',headers:authHeaders(token)});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Could not queue files');setSyncInfo(d);setSyncError('');}catch(e){setMessage((e as Error).message);}finally{setBusy(false);}}
+ useEffect(()=>{const controller=new AbortController();async function load(){try{const r=await fetch(base+(section==='files'?'/sync-status':''),{headers:authHeaders(token),signal:controller.signal});if(!r.ok)return;const d=await r.json();if(section==='files')setFiles(d.files);else setData(d);}catch{ /* Aborted or temporarily unavailable. */ }}void load();const timer=setInterval(()=>void load(),15000);return()=>{controller.abort();clearInterval(timer);};},[base,token,section]);
+ async function act(action:'sms'|'revoke'){setBusy(true);setNotice('');try{const r=await fetch(base+(action==='sms'?'/sms':''),{method:action==='sms'?'POST':'PATCH',headers:{...authHeaders(token),'Content-Type':'application/json'},body:action==='revoke'?JSON.stringify({revoke:!data?.revoked}):undefined});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Could not complete action');if(action==='revoke')setData(prev=>prev?{...prev,revoked:!prev.revoked}:prev);setNotice(action==='sms'?'SMS sent.':'Access updated.');}catch(e){setNotice((e as Error).message);}finally{setBusy(false);}}
+ if(section==='files')return files.length?<div className="ls-files">{files.map(file=><article key={file.id}><span className="ls-file-icon">File</span><div className="ls-file-content"><strong>{file.name}</strong><small>Uploaded by customer</small></div><span className="ls-success" aria-label="Saved">&#10003;</span></article>)}</div>:null;
  if(!data)return null;
- return <section className="customer-page-controls" style={{background:'#fff',border:'1px solid #d8dde6',borderRadius:8,padding:18,marginBottom:18}}><h3 style={{margin:'0 0 12px',color:'#032d60'}}>Customer page</h3><div style={{display:'flex',gap:10,flexWrap:'wrap'}}><a href={data.url} target="_blank" rel="noopener noreferrer">Open customer page</a><button onClick={()=>void navigator.clipboard.writeText(data.url).then(()=>setMessage('Link copied.')).catch(()=>setMessage('Could not copy link.'))}>Copy link</button><button disabled={busy} onClick={()=>void save(false,!data.revoked)}>{data.revoked?'Restore access':'Revoke access'}</button></div>
- <button disabled={busy} onClick={()=>void save(true)}>Publish estimate from lead</button><p style={{fontSize:12,color:'#64748b'}}>{data.published?'Customer sees the last published estimate.':'Customer sees: We are preparing your estimate.'}</p>
- <p role="status">{syncInfo?syncInfo.active?`${syncInfo.synced} files synced; ${syncInfo.active} queued or uploading in the background. You can leave this page.`:syncInfo.failed?`${syncInfo.synced} files synced; ${syncInfo.failed} failed. Retry below.`:syncInfo.pending?`${syncInfo.pending} customer files awaiting LiveSwitch sync.`:syncInfo.synced?'All customer files synced to LiveSwitch.':'No customer files to sync.':`${data.pending_uploads} customer files awaiting LiveSwitch sync.`}</p>
- <button disabled={busy||!!syncInfo?.active||!(syncInfo?.pending??data.pending_uploads)} onClick={()=>void sync()}>{syncInfo?.active?'Syncing in background...':syncInfo?.failed?'Retry failed / pending files':'Sync customer files to LiveSwitch'}</button>
- {syncInfo?.files.filter(f=>f.status==='failed').map(f=><details key={f.id} style={{color:'#ba0517',marginTop:8,overflowWrap:'anywhere'}}><summary>{f.name} - View sync error</summary>{f.error}</details>)}
- {syncError&&<p role="alert">{syncError}</p>}
- {data.requests.map(r=><p key={r.id}>Video walkthrough: <strong>{r.status}</strong>{r.scheduled_at?` · ${new Date(r.scheduled_at).toLocaleString()}`:''}</p>)}{user?.role==='admin'&&<Link to="/walkthrough-requests">Manage live call requests</Link>}<p role="status">{message}</p></section>;
+ if(section==='links')return <><div className="ls-link"><div><strong>Customer link{data.revoked?' (revoked)':''}</strong><span title={data.url}>{data.url}</span></div><button title="Copy customer link" aria-label="Copy customer link" onClick={()=>void navigator.clipboard.writeText(data.url).then(()=>setNotice('Link copied.')).catch(()=>setNotice('Could not copy link.'))}><ActionIcon kind="copy"/></button><button title="Send SMS" aria-label="Send customer link by SMS" disabled={busy||data.revoked} onClick={()=>void act('sms')}><ActionIcon kind="sms"/></button><button title={data.revoked?'Restore access':'Revoke access'} aria-label={data.revoked?'Restore customer access':'Revoke customer access'} disabled={busy} onClick={()=>void act('revoke')}><ActionIcon kind="revoke"/></button></div>{notice&&<p role="status">{notice}</p>}</>;
+ const meeting=data.requests[0];return <section className="ls-card"><h3>Scheduled walkthrough</h3>{meeting?<><p><strong>{({scheduled:'Approved',requested:'Requested',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[meeting.status]}</strong>{meeting.scheduled_at?' ? '+new Date(meeting.scheduled_at).toLocaleString():''}</p>{meeting.rep_name&&<p>{meeting.rep_name}</p>}</>:<p>No walkthrough requested</p>}<Link to={`/walkthrough-requests?lead_id=${encodeURIComponent(leadId)}`}>Meeting Calendar</Link></section>;
 }

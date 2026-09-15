@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 import ReportControls, { type ReportOptions } from "./ReportControls";
@@ -19,6 +19,8 @@ const STATUS_OPTIONS = [
 
 export default function WalkthroughRequestsPage(){
   const {token}=useAuth();
+  const [params]=useSearchParams();
+  const currentLead=params.get("lead_id");
   const [rows,setRows]=useState<Row[]>([]),[options,setOptions]=useState<ReportOptions>({companies:[],reps:[],statuses:STATUS_OPTIONS});
   const [error,setError]=useState(''),[loading,setLoading]=useState(true),[search,setSearch]=useState('');
   const [range,setRange]=useState(()=>period('All Time'));
@@ -43,7 +45,7 @@ export default function WalkthroughRequestsPage(){
     const date=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
     return date>=range.start&&date<=range.end;
   };
-  const visible=rows.filter(row=>(!companies.length||companies.includes(row.company_id||'__unassigned__'))&&row.name.toLowerCase().includes(search.toLowerCase())).map(row=>({...row,requests:row.requests.filter(matches)})).filter(row=>row.requests.length);
+  const visible=rows.filter(row=>(!companies.length||companies.includes(row.company_id||'__unassigned__'))&&row.name.toLowerCase().includes(search.toLowerCase())).map(row=>({...row,requests:row.requests.filter(matches)})).filter(row=>row.requests.length).sort((a,b)=>Number(b.lead_id===currentLead)-Number(a.lead_id===currentLead));
   return <main className="reports-page meeting-requests">
     <header><h1>Meetings Calendar</h1></header>
     <ReportControls range={range} companies={companies} reps={reps} statuses={statuses} options={options} onApply={(next,c,r,s)=>{setRange(next);setCompanies(c);setReps(r);setStatuses(s||[]);}} />
