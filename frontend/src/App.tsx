@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation, NavLink } from "react-router-dom";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./AuthContext";
-
+const LiveSwitchCallbackPage = lazy(() => import("./LiveSwitchCallbackPage"));
 const LoginPage = lazy(() => import("./LoginPage"));
 const ChangePasswordPage = lazy(() => import("./ChangePasswordPage"));
 const LeadsList = lazy(() => import("./LeadsList"));
@@ -237,6 +237,7 @@ function App() {
       <BrowserRouter>
         <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
           <Routes>
+            <Route path="/liveswitch/callback" element={<LiveSwitchCallbackPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/*" element={<ProtectedRoutes />} />
           </Routes>
