@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation, NavLink } from "react-router-dom";
 import { AuthProvider, useAuth } from "./AuthContext";
+import LiveSwitchCallbackPage from "./LiveSwitchCallbackPage";
 import LoginPage from "./LoginPage";
 import ChangePasswordPage from "./ChangePasswordPage";
 import LeadsList from "./LeadsList";
@@ -127,6 +128,7 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          <Route path="/liveswitch/callback" element={<LiveSwitchCallbackPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/*" element={<ProtectedRoutes />} />
         </Routes>
