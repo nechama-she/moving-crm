@@ -48,10 +48,9 @@ export function formatValue(key: string, value: unknown): string {
     }
   }
   if (key === "are_you_moving_within_the_state_or_out_of_state?") {
-    const lower = str.toLowerCase();
-    if (lower.includes("within")) return "Local";
-    if (lower.includes("out_of") || lower.includes("out of"))
-      return "Long Distance";
+    const lower = str.trim().toLowerCase().replace(/[_-]/g, " ");
+    if (["local", "intrastate", "in state", "within state", "within the state"].includes(lower)) return "Local";
+    if (["long distance", "interstate", "out of state"].includes(lower)) return "Long Distance";
     return str;
   }
   return str;

@@ -3,9 +3,10 @@ import json
 from datetime import datetime
 
 from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, BigInteger, Boolean, UniqueConstraint, LargeBinary, Numeric, Index, text
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import declarative_base, relationship, validates
 
 from company_colors import resolve_company_color
+from move_types import normalize_move_type
 
 Base = declarative_base()
 
@@ -237,6 +238,11 @@ class Lead(Base):
     move_date = Column(Text)
     booked_move_date = Column(Date)
     move_type = Column(Text)
+
+    @validates("move_type")
+    def normalize_move_category(self, key, value):
+        return normalize_move_type(value)
+
     service_type = Column(String(50))
     referral_source = Column(String(100))
     estimated_total = Column(Text)
@@ -314,7 +320,7 @@ class Lead(Base):
             "weight": float(self.weight) if self.weight is not None else None,
             "when_is_the_move?": self.move_date or "",
             "booked_move_date": self.booked_move_date.isoformat() if self.booked_move_date else "",
-            "are_you_moving_within_the_state_or_out_of_state?": self.move_type or "",
+            "are_you_moving_within_the_state_or_out_of_state?": normalize_move_type(self.move_type),
             "created_time": self.created_time or "",
             "created_at": self.created_at.isoformat() if self.created_at else "",
             "inbox_url": self.inbox_url or "",

@@ -374,7 +374,7 @@ def _build_smartmoving_refresh_payload(opportunity: dict, user: User) -> dict:
         if clean_value:
             payload[key] = clean_value
 
-    move_type = {0: "Local", 1: "Intrastate", 2: "Interstate"}.get(opportunity.get("opportunityType"), "")
+    move_type = {0: "Local", 1: "Local", 2: "Long Distance"}.get(opportunity.get("opportunityType"), "")
     if move_type:
         payload["move_type"] = move_type
 
@@ -2573,6 +2573,43 @@ def replace_lead_job_charges(
         raise HTTPException(status_code=404, detail="Job not found")
 
     _replace_job_charges(row, body.estimated_charges, db)
+    db.commit()
+    db.refresh(row)
+    return _serialize_job_with_addresses(row, db)
+
+
+class SaveJobPriceBody(LeadJobChargesBody):
+    price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+
+
+@router.put("/leads/{lead_id}/jobs/{job_id}/price")
+def save_lead_job_price(
+    lead_id: str,
+    job_id: str,
+    body: SaveJobPriceBody,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_not_dispatch_write(user)
+    row = _get_job_or_404(lead_id, job_id, user, db)
+    charges = []
+    for charge in body.estimated_charges:
+        amounts = [_to_money_decimal(value, field) for value, field in (
+            (charge.subtotal, 'subtotal'), (charge.discount_amount, 'discount_amount'), (charge.total_cost, 'total_cost'))]
+        if not all(amount.is_finite() for amount in amounts):
+            raise HTTPException(400, 'Charges must contain finite amounts')
+        if amounts[0] - amounts[1] != amounts[2]:
+            raise HTTPException(400, 'Charge total must equal subtotal minus discount')
+        if amounts[2] == 0:
+            continue
+        if not (charge.editable_description or charge.name).strip():
+            raise HTTPException(400, 'Each charge needs a name')
+        charges.append(charge)
+    total = sum((_to_money_decimal(charge.total_cost, 'total_cost') for charge in charges), Decimal(0))
+    if total != body.price:
+        raise HTTPException(400, 'Price must match the charge total')
+    _replace_job_charges(row, charges, db)
+    row.price = body.price
     db.commit()
     db.refresh(row)
     return _serialize_job_with_addresses(row, db)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -72,6 +72,10 @@ export default function PricingPage() {
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingPrice, setSavingPrice] = useState(false);
+  const [calculating, setCalculating] = useState(false);
+  const calculationId = useRef(0);
+  const priceSaveRunning = useRef(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
@@ -129,6 +133,8 @@ export default function PricingPage() {
     setLoading(true);
     setError("");
     setEditing(false);
+    calculationId.current++;
+    setCalculating(false);
     setQuote(null);
     void fetch(`${API_BASE}/api/pricing/${selectedId}`, { headers: authHeaders(token) })
       .then(async (response) => {
@@ -242,6 +248,35 @@ export default function PricingPage() {
     patchDraft({ rates: draft.rates.map((row) => row.id === id ? { ...row, ...patch } : row) });
   }
 
+  async function savePrice() {
+    if (!jobContext || !quote || calculating || priceSaveRunning.current || detailedTotal <= 0) return;
+    const cents = (amount: number) => Math.round(amount * 100);
+    const lines = [
+      { id: "transportation", name: quote.match?.destination || "Transportation", description: `${cubicFeet} cf ? ${quote.match?.band_label || "Transportation"}`, amount: quote.base_price || 0 },
+      ...quote.charges.filter(charge => charge.selected).map(charge => ({ id: `charge:${charge.id}`, name: charge.name, description: charge.description, amount: charge.amount })),
+      ...customCharges.map(charge => ({ id: `custom:${charge.id}`, name: charge.title.trim() || "Custom charge", description: "Custom charge", amount: Math.max(0, Number(charge.amount) || 0) })),
+    ];
+    const estimatedCharges = lines.map(line => {
+      const discounts = lineDiscounts(line.id);
+      const subtotal = cents(line.amount);
+      const discount = cents(discounts.reduce((sum, item) => sum + item.amount, 0));
+      return { name: line.name, description: [line.description, ...discounts.filter(item => item.amount > 0).map(item => item.title.trim() || "Discount")].join(" ? "), subtotal: subtotal / 100, discountAmount: discount / 100, totalCost: (subtotal - discount) / 100 };
+    }).filter(line => line.totalCost !== 0).map((line, sortOrder) => ({ ...line, sortOrder }));
+    const price = estimatedCharges.reduce((sum, line) => sum + cents(line.totalCost), 0) / 100;
+    if (!Number.isFinite(price) || price <= 0) { setError("Calculate a price greater than zero before saving."); return; }
+    priceSaveRunning.current = true;
+    setSavingPrice(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(`${API_BASE}/api/leads/${encodeURIComponent(jobContext.lead.id)}/jobs/${encodeURIComponent(jobContext.job.id)}/price`, {
+        method: "PUT", headers: { ...authHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify({ price, estimatedCharges }),
+      });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Could not save price");
+      setNotice(`Price saved to Job ${jobContext.job.job_order}: ${money(price)}.`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save price"); }
+    finally { priceSaveRunning.current = false; setSavingPrice(false); }
+  }
+
   async function save() {
     if (!draft) return;
     setSaving(true);
@@ -272,7 +307,9 @@ export default function PricingPage() {
 
   async function calculate(overrides?: { selected?: Record<string, boolean>; quantities?: Record<string, number>; manual?: Record<string, number> }) {
     if (!active || !destination) return;
-    setError("");
+    const requestId = ++calculationId.current;
+    setCalculating(true); setError(""); setNotice("");
+    try {
     const response = await fetch(`${API_BASE}/api/pricing/${active.id}/calculate`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
@@ -285,13 +322,19 @@ export default function PricingPage() {
         manual_amounts: overrides?.manual || manualAmounts,
       }),
     });
+    if (requestId !== calculationId.current) return;
     if (!response.ok) {
+      setQuote(null);
       setError((await response.json().catch(() => ({}))).detail || "Could not calculate pricing");
       return;
     }
     const result: Calculation = await response.json();
+    if (requestId !== calculationId.current) return;
     setQuote(result);
     setSelectedCharges(Object.fromEntries(result.charges.map((charge) => [charge.id, charge.selected])));
+    } catch (reason) {
+      if (requestId === calculationId.current) { setQuote(null); setError(reason instanceof Error ? reason.message : "Could not calculate pricing"); }
+    } finally { if (requestId === calculationId.current) setCalculating(false); }
   }
 
   useEffect(() => {
@@ -392,8 +435,8 @@ export default function PricingPage() {
                   </div>
                 ) : null}
                 <div className="pricing-calc-fields">
-                  <label>Destination<select value={destination} onChange={(e) => { setDestination(e.target.value); setQuote(null); }}><option value="">Select a supported destination</option>{destinations.map((name) => <option key={name}>{name}</option>)}</select></label>
-                  <label>Cubic feet<input type="number" min="0" value={cubicFeet} onChange={(e) => { setCubicFeet(e.target.value); setQuote(null); }} placeholder="e.g. 650" /></label>
+                  <label>Destination<select value={destination} onChange={(e) => { setDestination(e.target.value); calculationId.current++; setCalculating(false); setQuote(null); }}><option value="">Select a supported destination</option>{destinations.map((name) => <option key={name}>{name}</option>)}</select></label>
+                  <label>Cubic feet<input type="number" min="0" value={cubicFeet} onChange={(e) => { setCubicFeet(e.target.value); calculationId.current++; setCalculating(false); setQuote(null); }} placeholder="e.g. 650" /></label>
                   <button className="slds-button primary" disabled={!destination} onClick={() => void calculate()}>Calculate</button>
                 </div>
                 {quote ? (
@@ -451,6 +494,7 @@ export default function PricingPage() {
                         <div className="pricing-quote-total"><strong>Estimated Total</strong><b>{money(detailedTotal)}</b></div>
                       </div>
                       {quote.warning ? <p>{quote.warning}</p> : null}
+                      {jobContext && !editing && <button type="button" className="slds-button primary" disabled={savingPrice || calculating || detailedTotal <= 0 || quote.base_price == null} onClick={() => void savePrice()}>{savingPrice ? "Saving price?" : "Save price"}</button>}
                     </div>
                     <div className="pricing-charge-picker">
                       <div className="pricing-charge-heading">
