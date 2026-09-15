@@ -4,6 +4,7 @@ import MainNavigation from "./MainNavigation";
 import { AuthProvider, useAuth } from "./AuthContext";
 
 const CustomerMovePage = lazy(() => import("./CustomerMovePage"));
+const LiveSwitchCallbackPage = lazy(() => import("./LiveSwitchCallbackPage"));
 const WalkthroughRequestsPage = lazy(() => import("./WalkthroughRequestsPage"));
 const LoginPage = lazy(() => import("./LoginPage"));
 const ChangePasswordPage = lazy(() => import("./ChangePasswordPage"));
@@ -186,6 +187,7 @@ function App() {
         <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
           <Routes>
             <Route path="/move/:accessId" element={<CustomerMovePage />} />
+            <Route path="/liveswitch/callback" element={<LiveSwitchCallbackPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/*" element={<ProtectedRoutes />} />
           </Routes>
