@@ -295,8 +295,71 @@ def upload_urls(lead_id: str, kind: Literal["images", "videos", "documents"], fi
         raise HTTPException(409, "Start the conversation first")
     if not 1 <= len(files) <= 20:
         raise HTTPException(400, "Select between 1 and 20 files per batch")
-    allowed = {"images": {"image/jpeg", "image/png", "image/webp"}, "videos": {"video/mp4", "video/quicktime"}, "documents": {"application/pdf"}}
-    if any(file.contentType not in allowed[kind] for file in files):
-        raise HTTPException(400, "Unsupported file type")
     conversation_id = json.loads(saved.details)["id"]
     return _api_post(f"conversations/{conversation_id}/upload-urls/{kind}", [file.model_dump() for file in files])
+
+
+class PanelUpload(BaseModel):
+    request_id: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+    name: str = Field(min_length=1, max_length=255)
+    size: int = Field(gt=0)
+    content_type: str = Field(default="application/octet-stream", min_length=1, max_length=120)
+
+
+def panel_upload_context(lead_id, body, user, db):
+    from models import LeadAttachment
+    from routes.leads import _safe_attachment_name, _ensure_attachment_link_columns
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    _ensure_attachment_link_columns(db)
+    existing = db.get(LeadAttachment, body.request_id)
+    if existing and (existing.lead_id != lead.id or existing.uploaded_by != user.id):
+        raise HTTPException(409, "Upload ID is already in use")
+    bucket = os.getenv("ATTACHMENTS_BUCKET", "").strip()
+    if not bucket:
+        raise HTTPException(503, "Upload storage is unavailable")
+    name = _safe_attachment_name(body.name)
+    key = f"public-pending/staff/{lead.id}/{user.id}/{body.request_id}/{name}"
+    return lead, existing, bucket, key, name
+
+
+@router.post("/leads/{lead_id}/prepare-upload")
+def prepare_panel_upload(lead_id: str, body: PanelUpload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead, existing, bucket, key, name = panel_upload_context(lead_id, body, user, db)
+    if existing:
+        return {"completed": True, "id": existing.id}
+    signed = boto3.client("s3").generate_presigned_post(
+        Bucket=bucket, Key=key, Fields={"Content-Type": body.content_type},
+        Conditions=[{"Content-Type": body.content_type}, ["content-length-range", 1, body.size]], ExpiresIn=3600)
+    return {"completed": False, "upload": signed}
+
+
+@router.post("/leads/{lead_id}/finish-upload")
+def finish_panel_upload(lead_id: str, body: PanelUpload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from models import LeadAttachment
+    lead, existing, bucket, key, name = panel_upload_context(lead_id, body, user, db)
+    if existing:
+        return {"id": existing.id}
+    s3 = boto3.client("s3")
+    try:
+        obj = s3.head_object(Bucket=bucket, Key=key)
+    except Exception as exc:
+        raise HTTPException(502, "The uploaded file could not be verified. Please retry.") from exc
+    if obj["ContentLength"] != body.size or obj.get("ContentType") != body.content_type:
+        raise HTTPException(400, "File content does not match its expected size.")
+    destination = f"leads/{lead.id}/jobs/lead/crm/{body.request_id}/{name}"
+    s3.copy({"Bucket": bucket, "Key": key}, bucket, destination, ExtraArgs={"ServerSideEncryption": "AES256"})
+    row = LeadAttachment(id=body.request_id, lead_id=lead.id, file_name=name, content_type=body.content_type,
+        file_size=body.size, file_blob=b"", external_url=f"s3://{bucket}/{destination}",
+        is_external_link=True, external_source="crm_s3", uploaded_by=user.id)
+    try:
+        db.add(row)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    try:
+        s3.delete_object(Bucket=bucket, Key=key)
+    except Exception:
+        pass  # Storage lifecycle removes abandoned staging files.
+    return {"id": row.id}

@@ -104,10 +104,11 @@ def test_intake_contact_and_optional_typed_stops(portal):
     mod,_,_,_=portal
     body=dict(first_name='Jane',last_name='Smith',source='Website',move_date='2026-10-01',pickup='A',delivery='B',stops=[{'address':'C','type':'pickup'},{'address':'D'}])
     with pytest.raises(ValueError): mod.Intake(**body)
-    parsed=mod.Intake(**body,email='JANE@example.com')
+    with pytest.raises(ValueError): mod.Intake(**body,email='JANE@example.com')
+    parsed=mod.Intake(**body,phone='2405707987',email='JANE@example.com')
     assert parsed.company_id is None and parsed.email=='jane@example.com'
     assert parsed.stops[1].type is None
-    with pytest.raises(ValueError): mod.Intake(**body,email='bad')
+    with pytest.raises(ValueError): mod.Intake(**body,phone='2405707987',email='bad')
 
 
 def test_public_details_never_returns_host_link_or_internal_notes(portal):
@@ -205,7 +206,7 @@ def test_invalid_staged_file_never_creates_attachment(portal):
     mod,db,lead,access=portal
     pending=models.PublicMovePendingUpload(access_id=access.id,request_id='upload-123',object_key='pending',file_name='room.jpg',content_type='image/jpeg',file_size=6,expires_at=datetime.utcnow()+timedelta(minutes=10))
     db.add(pending);db.commit()
-    s3=MagicMock();s3.get_object.return_value={'ContentLength':10,'Body':io.BytesIO(b'<html>')}
+    s3=MagicMock();s3.head_object.return_value={'ContentLength':10}
     with patch.object(mod.boto3,'client',return_value=s3), patch.dict(os.environ,{'ATTACHMENTS_BUCKET':'test-bucket'}):
         with pytest.raises(HTTPException) as exc:mod.finish_upload(mod.FinishUpload(request_id='upload-123'),BackgroundTasks(),access,db)
     assert exc.value.status_code==400
@@ -224,3 +225,38 @@ def test_global_meeting_window_capacity(portal):
     assert mod.window_count(db,start,'capacity-0')==3
     db.get(models.WalkthroughRequest,'capacity-0').status='cancelled';db.commit()
     assert mod.window_count(db,start)==3
+
+
+def test_large_video_upload_has_no_application_size_cap(portal):
+    from fastapi import BackgroundTasks
+    mod, db, lead, access = portal
+    size = 3 * 1024 * 1024 * 1024
+    s3 = MagicMock()
+    s3.head_object.return_value = {'ContentLength': size}
+    with patch.object(mod.boto3, 'client', return_value=s3), patch.dict(os.environ, {'ATTACHMENTS_BUCKET': 'test-bucket'}):
+        mod.prepare_upload(mod.PrepareUpload(request_id='large-video', name='video.mov', size=size, content_type='video/quicktime'), access, db)
+        result = mod.finish_upload(mod.FinishUpload(request_id='large-video'), BackgroundTasks(), access, db)
+        again = mod.finish_upload(mod.FinishUpload(request_id='large-video'), BackgroundTasks(), access, db)
+    assert result == again
+    assert db.get(models.LeadAttachment, result['id']).file_size == size
+    s3.copy.assert_called_once()
+    s3.get_object.assert_not_called()
+
+
+@pytest.mark.parametrize('phone', [None, '', '   ', '123'])
+def test_intake_requires_valid_phone_even_with_email(portal, phone):
+    mod, _, _, _ = portal
+    with pytest.raises(ValueError):
+        mod.Intake(first_name='Jane', last_name='Smith', source='Website', move_date='2026-10-01', pickup='A', delivery='B', phone=phone, email='jane@example.com')
+    with pytest.raises(ValueError):
+        mod.CustomerDetailsPatch(phone=phone)
+
+
+@pytest.mark.parametrize('email', [None, '', '   '])
+def test_phone_only_intake_and_optional_email(portal, email):
+    mod, _, _, _ = portal
+    body = dict(first_name='Jane', last_name='Smith', source='Website', move_date='2026-10-01', pickup='A', delivery='B', phone='2405707987')
+    assert mod.Intake(**body).email is None
+    assert mod.Intake(**body, email=email).email is None
+    assert mod.CustomerDetailsPatch(email=email).email is None
+    assert mod.Intake(**body).phone == '+12405707987'

@@ -94,26 +94,26 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
     const names = new Set(items.map(item => item.name));
     const added: Item[] = Array.from(files).map(file => {
       const ext = file.name.split(".").pop()?.toLowerCase() || "";
-      const type = types[ext] || "";
+      const type = types[ext] || file.type || "application/octet-stream";
       let name = file.name; let n = 1;
       while (names.has(name)) name = `${file.name.replace(/\.[^.]+$/, "")} (${n++}).${ext}`;
       names.add(name);
       const preview = type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
       if (preview) previews.current.push(preview);
-      const error = !type ? "Unsupported file type" : file.size === 0 ? "File is empty" : file.size > 15 * 1024 * 1024 ? "File exceeds 15 MB" : undefined;
+      const error = file.size === 0 ? "File is empty" : undefined;
       return { id: crypto.randomUUID(), file, name, type, preview, crm: false, live: false, progress: 0, status: error ? "Cannot upload" : "Ready", error };
     });
     setItems(current => [...current, ...added]);
   }
-  function put(item: Item, url: string) {
+  function put(item: Item, url: string, fields?: Record<string, string>) {
     return new Promise<void>((resolve, reject) => {
-      const xhr = new XMLHttpRequest(); xhr.open("PUT", url); xhr.timeout = 300000;
-      xhr.setRequestHeader("Content-Type", item.type);
+      const xhr = new XMLHttpRequest(); xhr.open(fields ? "POST" : "PUT", url); xhr.timeout = 0;
+      if (!fields) xhr.setRequestHeader("Content-Type", item.type);
       xhr.upload.onprogress = event => { if (event.lengthComputable) update(item.id, { progress: Math.round(event.loaded / event.total * 90) }); };
       xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(uploadErrorMessage(xhr.responseText, xhr.status, xhr.statusText)));
       xhr.onerror = () => reject(new Error("Network error. The browser could not complete the upload or read the server response."));
       xhr.ontimeout = () => reject(new Error("Upload timed out after 5 minutes. Please retry."));
-      xhr.send(item.file);
+      if (fields) { const form = new FormData(); Object.entries(fields).forEach(([key, value]) => form.append(key, value)); form.append("file", item.file); xhr.send(form); } else xhr.send(item.file);
     });
   }
   async function upload() {
@@ -141,9 +141,12 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
             let live = item.live; let crm = item.crm;
             try {
               if (!crm) {
-                const body = new FormData(); body.append("file", item.file, item.name);
-                const response = await fetch(`${API_BASE}/api/leads/${encodeURIComponent(leadId)}/attachments`, { method: "POST", headers: authHeaders(token), body });
-                if (!response.ok) throw new Error(uploadErrorMessage(await response.text(), response.status, response.statusText));
+                const metadata = { request_id: item.id, name: item.name, size: item.file.size, content_type: item.type };
+                const prepared = await request(`${base}/prepare-upload`, metadata);
+                if (!prepared.completed) {
+                  await put(item, prepared.upload.url, prepared.upload.fields);
+                  await request(`${base}/finish-upload`, metadata);
+                }
                 crm = true; update(item.id, { crm });
               }
               if (!live) {
@@ -203,9 +206,9 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
       <header><span className="ls-logo"><Icon kind="video"/></span><div><h2 id="ls-title">LiveSwitch</h2><p>Connect and share files with your customer</p></div><button aria-label="Close LiveSwitch" disabled={busy} onClick={onClose}>&times;</button></header>
       <main>{loading ? <p role="status">Preparing your conversation </p> : error ? <div role="alert" className="ls-error">{error}<button onClick={() => void load()}>Try again</button></div> : conversation ? <>
         <section className="ls-card"><h3>Conversation links</h3><p>Copy a link or open it in a new tab.</p>{([['Host', conversation.hostJoinUrl], ['Participant', conversation.participantJoinUrl]] as const).map(([label, url]) => <div className="ls-link" key={label}><div><strong>{label} link</strong><span title={url}>{url || "Link unavailable"}</span></div><button disabled={!url} aria-label={`Copy ${label.toLowerCase()} link`} title="Copy link" onClick={() => void navigator.clipboard.writeText(url).then(() => setNotice(`${label} link copied`)).catch(() => setNotice("Could not copy. Select and copy the link manually."))}><Icon kind="copy"/></button>{url && <a href={url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${label.toLowerCase()} link in a new tab`} title="Open in new tab"><Icon kind="open"/></a>}{label === "Participant" && <button type="button" disabled={!url || smsSending} style={{ flexShrink: 0 }} title={smsSending ? "Sending SMS" : "Send SMS"} aria-label={smsSending ? "Sending participant link by SMS" : "Send participant link by SMS"} aria-busy={smsSending} onClick={() => void sendParticipantSms()}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M4 3h16v13H9l-5 5V3Z M8 7h8M8 11h6"/></svg></button>}</div>)}<CustomerPageControls leadId={leadId} section="links"/>{smsNotice && <p role="status">{smsNotice}</p>}{smsError && <div className="ls-error" role="alert">{smsError}</div>}</section>
-        <section className="ls-card"><h3>Add Photos, Documents, or Videos</h3><p>Add files right from your device.</p><label className="ls-picker">+ Choose files<input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,.mp4,.mov" disabled={busy} onChange={e => { choose(e.target.files); e.target.value = ""; }}/></label><small>JPEG, PNG, WebP, PDF, MP4 or MOV   Up to 15 MB per file</small>
+        <section className="ls-card"><h3>Add Photos, Documents, or Videos</h3><p>Add files right from your device.</p><label className="ls-picker">+ Choose files<input type="file" multiple disabled={busy} onChange={e => { choose(e.target.files); e.target.value = ""; }}/></label><small>All file types</small>
         {items.length > 0 && <p role="status">{completed} of {items.length} files uploaded{completed > 0 ? ". LiveSwitch may take a moment to process them." : ""}</p>}
-        <CustomerPageControls leadId={leadId} section="files"/><div className="ls-files">{items.map(item => <article key={item.id}>{item.preview ? <img src={item.preview} alt=""/> : <span className="ls-file-icon">{item.type.startsWith("video/") ? "Video" : "PDF"}</span>}<div className="ls-file-content"><strong title={item.name}>{item.name}</strong><small>{(item.file.size / 1024 / 1024).toFixed(1)} MB   {item.status}</small><progress value={item.progress} max={100} aria-label={`${item.name} upload progress`}/>{item.error && <details className="ls-error" style={{ overflowWrap: "anywhere" }}><summary style={{ cursor: "pointer" }}>{item.status === "Cannot upload" ? "Cannot upload" : item.crm ? "LiveSwitch upload failed" : "CRM save failed"} — View error</summary><div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{item.error}</div></details>}</div>{!busy && !item.crm && !item.live && <button aria-label={`Remove ${item.name}`} onClick={() => setItems(current => current.filter(row => row.id !== item.id))}>&times;</button>}{item.crm && item.live && <span className="ls-success" aria-label="Uploaded">&#10003;</span>}</article>)}</div>
+        <CustomerPageControls leadId={leadId} section="files"/><div className="ls-files">{items.map(item => <article key={item.id}>{item.preview ? <img src={item.preview} alt=""/> : <span className="ls-file-icon">{item.type.startsWith("video/") ? "Video" : "File"}</span>}<div className="ls-file-content"><strong title={item.name}>{item.name}</strong><small>{(item.file.size / 1024 / 1024).toFixed(1)} MB   {item.status}</small><progress value={item.progress} max={100} aria-label={`${item.name} upload progress`}/>{item.error && <details className="ls-error" style={{ overflowWrap: "anywhere" }}><summary style={{ cursor: "pointer" }}>{item.status === "Cannot upload" ? "Cannot upload" : item.crm ? "LiveSwitch upload failed" : "CRM save failed"} — View error</summary><div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{item.error}</div></details>}</div>{!busy && !item.crm && !item.live && <button aria-label={`Remove ${item.name}`} onClick={() => setItems(current => current.filter(row => row.id !== item.id))}>&times;</button>}{item.crm && item.live && <span className="ls-success" aria-label="Uploaded">&#10003;</span>}</article>)}</div>
         <div className="ls-actions"><button className="ls-primary" disabled={busy || !items.some(item => !(item.crm && item.live) && item.status !== "Cannot upload")} onClick={() => void upload()}>{busy ? "Uploading " : items.some(item => item.status === "Retry") ? "Upload / Retry failed" : "Upload files"}</button><button disabled={busy || !items.length} onClick={() => setItems(current => current.filter(item => item.crm || item.live))}>Clear selection</button></div></section>
         <CustomerPageControls leadId={leadId}/><section className="ls-card"><button className="ls-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "\u25be" : "\u25b8"} Conversation viewer</button>{expanded && (conversation.embeddedConversationUrl ? <><a href={conversation.conversationUrl} target="_blank" rel="noopener noreferrer">Open conversation in a new tab</a><iframe title="LiveSwitch conversation" src={conversation.embeddedConversationUrl} style={{ pointerEvents: resizing ? "none" : undefined }} allow="camera; microphone; fullscreen; display-capture"/></> : <p>Conversation viewer unavailable.</p>)}</section>
       </> : null}<p className="ls-notice" role="status">{notice}</p></main>

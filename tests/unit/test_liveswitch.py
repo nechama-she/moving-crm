@@ -225,3 +225,31 @@ def test_unassigned_lead_without_default_company_has_clear_error(api):
         api['ensure_conversation']('lead-1', object(), db)
     assert 'default company' in error.value.detail
     api['_api_post'].assert_not_called()
+
+
+def test_accepts_other_document_types(api):
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(details='{"id":"saved"}')
+    file = SimpleNamespace(contentType='application/zip', model_dump=lambda: {'fileName': 'files.zip', 'contentType': 'application/zip'})
+    api['upload_urls']('lead-1', 'documents', [file], object(), db)
+    assert api['_api_post'].call_args.args[1][0]['contentType'] == 'application/zip'
+
+
+def test_panel_prepare_accepts_large_video_without_proxying_bytes():
+    from pydantic import BaseModel, Field
+    source = Path(__file__).resolve().parents[2] / 'backend/routes/liveswitch.py'
+    tree = ast.parse(source.read_text())
+    nodes = [node for node in tree.body if getattr(node, 'name', '') in {'PanelUpload', 'prepare_panel_upload'}]
+    for node in nodes:
+        if isinstance(node, ast.FunctionDef):
+            node.decorator_list = []
+            node.args.defaults = []
+            for arg in node.args.args:
+                arg.annotation = None
+    s3 = MagicMock()
+    scope = {'BaseModel': BaseModel, 'Field': Field, 'boto3': SimpleNamespace(client=lambda _: s3),
+        'panel_upload_context': MagicMock(return_value=(object(), None, 'bucket', 'scoped/key', 'video.mov'))}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
+    body = scope['PanelUpload'](request_id='12345678-1234-1234-1234-123456789012', name='video.mov', size=3*1024*1024*1024)
+    assert not scope['prepare_panel_upload']('lead', body, object(), MagicMock())['completed']
+    assert ['content-length-range', 1, body.size] in s3.generate_presigned_post.call_args.kwargs['Conditions']

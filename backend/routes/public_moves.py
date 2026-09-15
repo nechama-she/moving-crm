@@ -86,7 +86,7 @@ class Intake(BaseModel):
     pickup: str = Field(min_length=1, max_length=1000)
     delivery: str = Field(min_length=1, max_length=1000)
     stops: list[Stop] = Field(default_factory=list, max_length=20)
-    phone: str | None = None
+    phone: str = Field(min_length=1, max_length=50)
     email: str | None = Field(default=None, max_length=254)
 
     @field_validator('first_name', 'last_name', 'source', 'pickup', 'delivery')
@@ -98,20 +98,15 @@ class Intake(BaseModel):
     @field_validator('phone')
     @classmethod
     def phone_number(cls, value):
-        return normalize_phone(value) if value else None
+        return normalize_phone(value)
 
     @field_validator('email')
     @classmethod
     def email_address(cls, value):
-        if not value: return None
+        if not value or not value.strip(): return None
         value = value.strip().lower()
         if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', value): raise ValueError('Provide a valid email address')
         return value
-
-    @model_validator(mode='after')
-    def contact_required(self):
-        if not self.phone and not self.email: raise ValueError('Phone or email is required')
-        return self
 
 
 def public_url(row):
@@ -297,6 +292,18 @@ class CustomerDetailsPatch(BaseModel):
     pickup: str | None = Field(default=None, max_length=500)
     delivery: str | None = Field(default=None, max_length=500)
 
+    @field_validator('phone')
+    @classmethod
+    def phone_number(cls, value):
+        if value is None:
+            raise ValueError('Phone number is required')
+        return normalize_phone(value)
+
+    @field_validator('email')
+    @classmethod
+    def email_address(cls, value):
+        return Intake.email_address(value)
+
 
 @router.patch('/api/public-moves/{access_id}/details')
 @router.post('/api/public-moves/{access_id}/details')
@@ -309,13 +316,9 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
         if trimmed_name:
             lead.full_name = trimmed_name
     if body.phone is not None:
-        trimmed_phone = body.phone.strip()
-        if trimmed_phone:
-            lead.phone = normalize_phone(trimmed_phone)
-    if body.email is not None:
-        trimmed_email = body.email.strip().lower()
-        if trimmed_email and '@' in trimmed_email:
-            lead.email = trimmed_email
+        lead.phone = body.phone
+    if 'email' in body.model_fields_set:
+        lead.email = body.email
 
     if body.move_date is not None:
         raw_date = body.move_date.strip()
@@ -395,10 +398,10 @@ def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...), x_up
     existing = db.query(PublicMoveUpload).filter_by(access_id=access.id, request_id=x_upload_id).first()
     if existing: return {'id': existing.attachment_id}
     count, size = db.query(func.count(LeadAttachment.id), func.coalesce(func.sum(LeadAttachment.file_size), 0)).join(PublicMoveUpload, LeadAttachment.id == PublicMoveUpload.attachment_id).filter(PublicMoveUpload.access_id == access.id).one()
-    content = file.file.read(100*1024*1024+1)
+    content = file.file.read()
     mime = file_type(content, file.filename or '')
-    if not mime or not content or len(content)>100*1024*1024: raise HTTPException(400, 'Choose a valid file up to 100 MB.')
-    if count >= 200 or size+len(content)>500*1024*1024: raise HTTPException(400, 'The upload limit for this move has been reached. Please contact your moving team.')
+    if not mime or not content: raise HTTPException(400, 'Choose a non-empty file.')
+    if count >= 200: raise HTTPException(400, 'The upload limit for this move has been reached. Please contact your moving team.')
     name = _safe_attachment_name(file.filename or 'Customer file')
     stored = _upload_attachment_bytes_to_s3(access.lead_id, access.job_id, name, content, mime, 'public_move')
     row = LeadAttachment(lead_id=access.lead_id, job_id=access.job_id, file_name=name, content_type=mime, file_size=len(content), file_blob=b'', external_url=stored, is_external_link=True, external_source='public_move_s3', uploaded_by=None)
@@ -622,7 +625,7 @@ def save_stop_types(lead_id: str, job_id: str, body: StopTypesBody, user: User =
 class PrepareUpload(BaseModel):
     request_id: str = Field(min_length=8, max_length=64)
     name: str = Field(min_length=1, max_length=255)
-    size: int = Field(gt=0, le=100*1024*1024)
+    size: int = Field(gt=0)
     content_type: str = Field(default='application/octet-stream', max_length=120)
 
 
@@ -634,7 +637,7 @@ def prepare_upload(body: PrepareUpload, access: PublicMoveAccess = Depends(verif
     pending = db.query(PublicMovePendingUpload).filter_by(access_id=access.id, request_id=body.request_id).first()
     count, size = db.query(func.count(LeadAttachment.id), func.coalesce(func.sum(LeadAttachment.file_size), 0)).join(PublicMoveUpload, LeadAttachment.id == PublicMoveUpload.attachment_id).filter(PublicMoveUpload.access_id == access.id).one()
     pending_count, pending_size = db.query(func.count(PublicMovePendingUpload.id), func.coalesce(func.sum(PublicMovePendingUpload.file_size), 0)).filter(PublicMovePendingUpload.access_id == access.id, PublicMovePendingUpload.expires_at > NOW(), PublicMovePendingUpload.request_id != body.request_id).one()
-    if count+pending_count >= 200 or size+pending_size+body.size > 500*1024*1024: raise HTTPException(400, 'The upload limit for this move has been reached.')
+    if count+pending_count >= 200: raise HTTPException(400, 'The upload limit for this move has been reached.')
     if pending and (pending.file_size != body.size or pending.content_type != body.content_type or pending.file_name != _safe_attachment_name(body.name)):
         raise HTTPException(409, 'Upload ID was already used for a different file')
     if not pending:
@@ -662,18 +665,16 @@ def finish_upload(body: FinishUpload, background_tasks: BackgroundTasks, access:
     if not pending or pending.expires_at < NOW(): raise HTTPException(400,'Upload expired. Please try again.')
     bucket = os.getenv('ATTACHMENTS_BUCKET',''); s3=boto3.client('s3')
     try:
-        obj=s3.get_object(Bucket=bucket,Key=pending.object_key)
+        obj=s3.head_object(Bucket=bucket,Key=pending.object_key)
         if obj['ContentLength'] != pending.file_size: raise ValueError('size')
-        stream=obj['Body']
-        try: content=stream.read(100*1024*1024+1)
-        finally: stream.close()
-        if len(content) != pending.file_size: raise ValueError('size')
     except ValueError as exc:
         s3.delete_object(Bucket=bucket,Key=pending.object_key)
         raise HTTPException(400,'File content does not match its expected size.') from exc
     except Exception as exc:
         raise HTTPException(502,'The uploaded file could not be verified. Please retry.') from exc
-    stored=_upload_attachment_bytes_to_s3(access.lead_id,access.job_id,pending.file_name,content,pending.content_type,'public_move')
+    destination=f'leads/{access.lead_id}/jobs/{access.job_id}/public_move/{uuid4()}/{pending.file_name}'
+    s3.copy({'Bucket':bucket,'Key':pending.object_key},bucket,destination,ExtraArgs={'ServerSideEncryption':'AES256'})
+    stored=f's3://{bucket}/{destination}'
     row=LeadAttachment(lead_id=access.lead_id,job_id=access.job_id,file_name=pending.file_name,content_type=pending.content_type,file_size=pending.file_size,file_blob=b'',external_url=stored,is_external_link=True,external_source='public_move_s3',uploaded_by=None)
     temporary_key=pending.object_key
     try:

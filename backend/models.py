@@ -2,7 +2,7 @@ import uuid
 import json
 from datetime import datetime
 
-from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, Boolean, UniqueConstraint, LargeBinary, Numeric, Index, text
+from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, BigInteger, Boolean, UniqueConstraint, LargeBinary, Numeric, Index, text
 from sqlalchemy.orm import declarative_base, relationship
 
 from company_colors import resolve_company_color
@@ -430,7 +430,7 @@ class LeadAttachment(Base):
     job_id = Column(String(36), ForeignKey("lead_jobs.id"), nullable=True, index=True)
     file_name = Column(String(255), nullable=False)
     content_type = Column(String(120), nullable=False, default="application/octet-stream")
-    file_size = Column(Integer, nullable=False, default=0)
+    file_size = Column(BigInteger, nullable=False, default=0)
     file_blob = Column(LargeBinary, nullable=False)
     external_url = Column(Text)
     is_external_link = Column(Boolean, nullable=False, default=False)
@@ -991,6 +991,6 @@ class PublicMovePendingUpload(Base):
     object_key = Column(Text, nullable=False)
     file_name = Column(String(255), nullable=False)
     content_type = Column(String(120), nullable=False)
-    file_size = Column(Integer, nullable=False)
+    file_size = Column(BigInteger, nullable=False)
     expires_at = Column(DateTime, nullable=False)
     __table_args__ = (UniqueConstraint('access_id', 'request_id'),)

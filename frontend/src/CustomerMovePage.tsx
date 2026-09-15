@@ -85,7 +85,7 @@ export default function CustomerMovePage() {
       const added:Pending[]=Array.from(list).map(file=>{
         const preview=file.type.startsWith('image/')?URL.createObjectURL(file):undefined;
         if(preview)previews.current.push(preview);
-        return {id:crypto.randomUUID(),file,preview,progress:0,status:file.size>100*1024*1024?'Too large (100 MB maximum)':file.size===0?'Empty file':'Ready'};
+        return {id:crypto.randomUUID(),file,preview,progress:0,status:file.size===0?'Empty file':'Ready'};
       });
       setFiles(prev=>[...prev,...added]);setError('');
     } catch {setError('Could not select these files. Please choose them again.');}
@@ -99,7 +99,7 @@ export default function CustomerMovePage() {
         const mime=item.file.type || 'application/octet-stream';
         const prepared=await call('/prepare-upload',{request_id:item.id,name:item.file.name,size:item.file.size,content_type:mime});
         if(!prepared.completed){
-          await new Promise<void>((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('POST',prepared.upload.url);xhr.timeout=300000;xhr.upload.onprogress=e=>{if(e.lengthComputable)update('Uploading',Math.round(e.loaded/e.total*90));};xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(new Error('Upload interrupted. Please try again.'));xhr.onerror=xhr.ontimeout=()=>reject(new Error('Upload interrupted. Please try again.'));const form=new FormData();Object.entries(prepared.upload.fields as Record<string,string>).forEach(([k,v])=>form.append(k,v));form.append('file',item.file);xhr.send(form);});
+          await new Promise<void>((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('POST',prepared.upload.url);xhr.timeout=0;xhr.upload.onprogress=e=>{if(e.lengthComputable)update('Uploading',Math.round(e.loaded/e.total*90));};xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(new Error('Upload interrupted. Please try again.'));xhr.onerror=xhr.ontimeout=()=>reject(new Error('Upload interrupted. Please try again.'));const form=new FormData();Object.entries(prepared.upload.fields as Record<string,string>).forEach(([k,v])=>form.append(k,v));form.append('file',item.file);xhr.send(form);});
           update('Finishing upload',95);await call('/finish-upload',{request_id:item.id});
         }
         update('Uploaded',100);
@@ -235,11 +235,11 @@ export default function CustomerMovePage() {
                       <input type="text" value={moveDraft.name} onChange={e=>setMoveDraft(prev=>({...prev,name:e.target.value}))} />
                     </label>
                     <label>
-                      Phone Number
-                      <input type="tel" value={moveDraft.phone} onChange={e=>setMoveDraft(prev=>({...prev,phone:e.target.value}))} />
+                      Phone Number (required)
+                      <input type="tel" required value={moveDraft.phone} onChange={e=>setMoveDraft(prev=>({...prev,phone:e.target.value}))} />
                     </label>
                     <label>
-                      Email Address
+                      Email Address (optional)
                       <input type="email" value={moveDraft.email} onChange={e=>setMoveDraft(prev=>({...prev,email:e.target.value}))} />
                     </label>
                     <div className="cm-route-actions">

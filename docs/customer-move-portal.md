@@ -52,7 +52,7 @@ Example body:
 }
 ```
 
-`company_id` is optional. Phone or email is required; both may be supplied. A stop type may be `pickup`, `delivery`, or omitted. Pickup/delivery themselves are addresses, and stops are preserved in order.
+`company_id` is optional. Phone is required; email is optional. A stop type may be `pickup`, `delivery`, or omitted. Pickup/delivery themselves are addresses, and stops are preserved in order.
 
 Response:
 

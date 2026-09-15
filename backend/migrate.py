@@ -34,6 +34,8 @@ def migrate() -> None:
         from models import PublicMoveAccess, PublicMoveSession, WalkthroughRequest, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload
         for model in (PublicMoveAccess, PublicMoveSession, WalkthroughRequest, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload):
             model.__table__.create(connection, checkfirst=True)
+        connection.execute(text("ALTER TABLE lead_attachments ALTER COLUMN file_size TYPE BIGINT"))
+        connection.execute(text("ALTER TABLE public_move_pending_uploads ALTER COLUMN file_size TYPE BIGINT"))
         connection.execute(text("ALTER TABLE public_move_uploads ADD COLUMN IF NOT EXISTS sync_status VARCHAR(20) NOT NULL DEFAULT 'pending'"))
         connection.execute(text("ALTER TABLE public_move_uploads ADD COLUMN IF NOT EXISTS sync_token VARCHAR(36)"))
         connection.execute(text("ALTER TABLE public_move_uploads ADD COLUMN IF NOT EXISTS sync_error TEXT"))

@@ -76,12 +76,22 @@ def process_file(message, db, dead_letter=False):
             row = locked_upload(db, message)
             if not current_job(row, message):
                 return
-        from routes.leads import _stored_attachment_bytes
-        content = _stored_attachment_bytes(attachment)
-        if not content:
-            raise ValueError('The saved customer file could not be read.')
-        response = httpx.put(row.sync_upload_url, content=content,
-                             headers={'Content-Type': attachment.content_type}, timeout=60)
+        stored = urlparse(attachment.external_url or '')
+        if stored.scheme == 's3':
+            obj = boto3.client('s3').get_object(Bucket=stored.netloc, Key=stored.path.lstrip('/'))
+            stream = obj['Body']
+            try:
+                response = httpx.put(row.sync_upload_url, content=stream.iter_chunks(chunk_size=1024*1024),
+                    headers={'Content-Type': attachment.content_type, 'Content-Length': str(obj['ContentLength'])}, timeout=60)
+            finally:
+                stream.close()
+        else:
+            from routes.leads import _stored_attachment_bytes
+            content = _stored_attachment_bytes(attachment)
+            if not content:
+                raise ValueError('The saved customer file could not be read.')
+            response = httpx.put(row.sync_upload_url, content=content,
+                                 headers={'Content-Type': attachment.content_type}, timeout=60)
         response.raise_for_status()
         row.synced_at = datetime.utcnow()
         row.sync_status = 'synced'
