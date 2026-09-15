@@ -13,7 +13,7 @@ from database import SessionLocal
 from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
 from models import Lead, User
 from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
-from routes import public_moves
+from routes import public_moves, local_pricing
 from routes.meta import messenger, instagram
 
 cfg = get_config()
@@ -279,5 +279,6 @@ app.include_router(outreach.router)
 app.include_router(assignment.router)
 app.include_router(tasks.router)
 app.include_router(templates.router)
+app.include_router(local_pricing.router)
 app.include_router(pricing.router)
 app.include_router(system.router)

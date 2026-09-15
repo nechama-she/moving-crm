@@ -1,0 +1,42 @@
+.local-pricing { display: grid; gap: 16px; }
+.local-pricing h2 { margin: 5px 0 12px; color: #032d60; font-size: 22px; }
+.local-intro { display: flex; justify-content: space-between; align-items: center; gap: 20px; border-top: 3px solid #2e844a; }
+.local-intro p { color: #526477; margin-bottom: 0; }
+.local-badge { white-space: nowrap; background: #edf8f1; color: #226b3b; border: 1px solid #b9ddc5; border-radius: 20px; padding: 7px 12px; font-size: 12px; font-weight: 700; }
+.local-fields, .local-setting-basics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 20px 0; }
+.local-pricing label { display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: #31465c; font-weight: 600; }
+.local-pricing input:not([type=checkbox]), .local-pricing select { width: 100%; box-sizing: border-box; min-height: 38px; border: 1px solid #b8c5d1; border-radius: 5px; background: #fff; padding: 8px 10px; color: #032d60; }
+.local-pricing input:focus, .local-pricing select:focus { outline: 2px solid #0176d3; outline-offset: 1px; }
+.local-pricing .local-pack { display: flex; flex-direction: row; align-items: center; gap: 12px; border: 1px solid #d6e4de; background: #f5faf7; border-radius: 8px; padding: 15px; }
+.local-pack input { width: 18px; height: 18px; accent-color: #2e844a; }
+.local-pack span { flex: 1; } .local-pack small, .local-charge small { display: block; margin-top: 4px; font-weight: 400; color: #526477; }
+.local-pack b { color: #226b3b; white-space: nowrap; }
+.local-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 22px 0; background: #f4f7fa; border-radius: 8px; padding: 16px; gap: 16px; }
+.local-metrics span, .local-metrics small { display: block; color: #526477; font-size: 12px; }
+.local-metrics strong { display: block; font-size: 24px; color: #032d60; margin: 7px 0; }
+.local-total { border: 1px solid #b9ddc5; border-radius: 8px; padding: 16px; }
+.local-charge, .local-total-bottom { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; }
+.local-charge { border-bottom: 1px solid #e1e7ed; font-size: 13px; }
+.local-total-bottom b { font-size: 28px; color: #226b3b; }
+.local-total > button { margin-top: 12px; }
+.local-hint { font-size: 12px; line-height: 1.6; color: #526477; }
+.local-warning { font-size: 13px; line-height: 1.5; padding: 12px; border-radius: 6px; background: #fff7e3; color: #705005; }
+.local-section-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.local-settings fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.local-setting-basics { border-radius: 8px; background: #f4f7fa; padding: 16px; }
+.local-setting-basics strong { font-size: 22px; color: #032d60; }
+.local-table-scroll { overflow-x: auto; border: 1px solid #dce3ea; border-radius: 6px; }
+.local-rate-table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+.local-rate-table caption { text-align: left; font-size: 12px; color: #526477; padding: 12px; background: #fff; }
+.local-rate-table th, .local-rate-table td { padding: 11px 13px; text-align: left; border-bottom: 1px solid #e4e9ee; }
+.local-rate-table thead th { color: #526477; background: #f4f7fa; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+.local-rate-table tbody th { color: #032d60; } .local-rate-table tbody tr:nth-child(even) { background: #fafcfd; }
+.local-rate-table tr:last-child > * { border-bottom: 0; }
+.local-rate-table input { min-width: 85px; max-width: 130px; }
+.local-trucks { margin-top: 20px; } .local-trucks summary { cursor: pointer; font-weight: 700; color: #032d60; padding: 10px 0; }
+.local-trucks summary span { font-size: 12px; font-weight: 400; margin-left: 10px; color: #526477; }
+.local-edit-actions { display: flex; gap: 10px; margin-top: 18px; }
+.pricing-mode { display: flex; gap: 6px; max-width: 1500px; margin: 0 auto 16px; }
+.pricing-mode button { padding: 10px 22px; border-radius: 6px; border: 1px solid #c4ced8; background: #fff; color: #032d60; cursor: pointer; font-weight: 700; }
+.pricing-mode button[aria-pressed=true] { background: #032d60; color: white; border-color: #032d60; }
+@media (max-width: 700px) { .local-fields, .local-setting-basics { grid-template-columns: 1fr; } .local-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .local-intro, .local-section-heading { align-items: flex-start; flex-direction: column; } .local-pack b { font-size: 12px; } }

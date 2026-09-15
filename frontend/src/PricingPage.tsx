@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import LocalPricing from "./LocalPricing";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
@@ -38,6 +39,7 @@ type JobContext = {
   job: { id: string; job_order: number; company_name: string; pickup_zip: string; delivery_zip: string; pickup_state: string; pickup_zip_code: string; delivery_state: string; delivery_zip_code: string; move_date: string; booked_move_date: string };
   plans: PlanSummary[];
   recommended_plan_id: string;
+  move_type: string;
   serviceability: "supported" | "unknown_pickup" | "unsupported_pickup";
 };
 
@@ -65,6 +67,7 @@ function destinationFromAddress(address: string, options: string[], resolvedStat
 export default function PricingPage() {
   const { token, user } = useAuth();
   const [searchParams] = useSearchParams();
+  const [pricingMode, setPricingMode] = useState<"local" | "long-distance">("local");
   const [plans, setPlans] = useState<PlanSummary[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -118,7 +121,8 @@ export default function PricingPage() {
       .then((context: JobContext) => {
         setJobContext(context);
         setPlans(context.plans);
-        setSelectedId(context.recommended_plan_id || "");
+        setPricingMode(context.move_type === "Local" ? "local" : "long-distance");
+        setSelectedId(context.recommended_plan_id || context.plans[0]?.id || "");
         if (!context.recommended_plan_id) {
           setPlan(null);
           setDraft(null);
@@ -338,21 +342,21 @@ export default function PricingPage() {
   }
 
   useEffect(() => {
-    if (!plan || !destination || editing) return;
+    if (!plan || !destination || editing || pricingMode !== "long-distance") return;
     void calculate();
     // Load the unified selectable charge catalog whenever the pricing book changes.
     // User selections are preserved by subsequent checkbox-triggered calculations.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan?.id, destination, editing]);
+  }, [plan?.id, destination, editing, pricingMode]);
 
   return (
     <div className="pricing-page">
       <header className="pricing-heading">
         <div>
           <h1>Pricing</h1>
-          <p>Company rate books, exceptions, and additional services imported from Excel.</p>
+          <p>Local hourly rates and long-distance pricing books.</p>
         </div>
-        {user?.role === "admin" && active ? (
+        {user?.role === "admin" && active && pricingMode === "long-distance" ? (
           <div className="pricing-actions">
             {editing ? (
               <>
@@ -367,6 +371,10 @@ export default function PricingPage() {
       {error ? <div className="pricing-alert error">{error}</div> : null}
       {notice ? <div className="pricing-alert success">{notice}</div> : null}
 
+      <div className="pricing-mode" aria-label="Pricing type">
+        <button type="button" aria-pressed={pricingMode === "local"} onClick={() => setPricingMode("local")}>Local</button>
+        <button type="button" aria-pressed={pricingMode === "long-distance"} onClick={() => setPricingMode("long-distance")}>Long Distance</button>
+      </div>
       <div className="pricing-layout">
         <aside className="pricing-book-list">
           <label>Pricing book</label>
@@ -384,7 +392,9 @@ export default function PricingPage() {
         </aside>
 
         <main className="pricing-content">
-          {jobContext && jobContext.serviceability !== "supported" ? (
+          {pricingMode === "local" ? (
+            selectedId ? <LocalPricing key={`${selectedId}:${jobContext?.job.id || ""}`} planId={selectedId} companyName={plans.find(row => row.id === selectedId)?.company_name || ""} bookName={plans.find(row => row.id === selectedId)?.name || ""} job={jobContext ? { leadId: jobContext.lead.id, jobId: jobContext.job.id, name: jobContext.lead.full_name, order: jobContext.job.job_order, volume: jobContext.lead.volume, pickup: jobContext.job.pickup_zip, delivery: jobContext.job.delivery_zip, moveType: jobContext.move_type } : undefined} /> : <section className="pricing-card">{loading ? "Loading pricing?" : "Select a pricing book to set up Local pricing."}</section>
+          ) : jobContext && jobContext.serviceability !== "supported" ? (
             <section className="pricing-card pricing-unavailable">
               <div className="pricing-unavailable-icon" aria-hidden="true">⌖</div>
               <div>

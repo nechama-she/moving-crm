@@ -376,22 +376,15 @@ def get_job_pricing_context(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    job = (
-        db.query(LeadJob)
-        .filter(LeadJob.id == job_id, LeadJob.lead_id == lead_id)
-        .first()
-    )
-    if not lead or not job:
-        raise HTTPException(status_code=404, detail="Lead job not found")
+    from routes.leads import _get_job_or_404
+    job = _get_job_or_404(lead_id, job_id, user, db)
+    lead = db.get(Lead, job.lead_id)
     plans = (
         _accessible_query(db, user)
         .filter(PricingPlan.company_id == job.company_id, PricingPlan.active.is_(True))
         .order_by(PricingPlan.sort_order, PricingPlan.name)
         .all()
     )
-    if not plans:
-        raise HTTPException(status_code=404, detail="No pricing book is configured for this job company")
     pickup_state, pickup_zip_code = delivery_location(job.pickup_zip)
     delivery_state, delivery_zip_code = delivery_location(job.delivery_zip)
 
@@ -425,6 +418,7 @@ def get_job_pricing_context(
         "plans": [plan.summary_dict() for plan in plans],
         "recommended_plan_id": recommended.id if recommended else "",
         "serviceability": serviceability,
+        "move_type": ("Local" if pickup_state == delivery_state else "Long Distance") if pickup_state and delivery_state else "",
     }
 
 
