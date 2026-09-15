@@ -18,6 +18,12 @@ type CompanyOption = {
   name: string;
 };
 
+function JobActionIcon({ kind }: { kind: "calendar" | "save" }) {
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {kind === "calendar" ? <><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M8 3v4M16 3v4M4 9h16" /></> : <><path d="M5 4h11l3 3v13H5z" /><path d="M8 4v6h8V4M8 20v-6h8v6" /></>}
+  </svg>;
+}
+
 type UserOption = {
   id: string;
   name: string;
@@ -282,6 +288,7 @@ const LEAD_STATUS_OPTIONS = [
 ];
 
 export default function LeadDetail() {
+  const todayInput = new Date().toLocaleDateString("en-CA");
   const { leadId } = useParams<{ leadId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -2859,11 +2866,11 @@ export default function LeadDetail() {
                       <button
                         type="button"
                         onClick={() => navigate(`/dispatch?job_id=${encodeURIComponent(job.id)}`)}
-                        style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "2px 6px", fontSize: 12, cursor: "pointer" }}
+                        className="lead-job-calendar-button"
                         title="Open in calender"
                         aria-label="Open in calender"
                       >
-                        📅
+                        <JobActionIcon kind="calendar" />
                       </button>
                       {primary ? <span style={{ fontSize: 11, color: "#1d4ed8", fontWeight: 700 }}>Primary</span> : null}
                       {canEditJobs ? (
@@ -2875,26 +2882,27 @@ export default function LeadDetail() {
                           aria-label={savingJobId === job.id ? "Saving job" : "Save job"}
                           title={savingJobId === job.id ? "Saving job" : "Save job"}
                         >
-                          {savingJobId === job.id ? "…" : "💾"}
+                          {savingJobId === job.id ? "…" : <JobActionIcon kind="save" />}
                         </button>
                       ) : null}
                     </div>
 
                     <div className="lead-job-summary-grid">
-                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                      <label className="lead-job-summary-field">
                         Company
                         <select
+                          className="lead-job-summary-select"
                           value={draft.company_id}
                           onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, company_id: e.target.value } }))}
                           disabled={!canEditJobs}
-                          style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12, background: "#fff" }}
                         >
                           {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
                         </select>
                       </label>
-                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                      <label className="lead-job-summary-field">
                         Move Type
                         <select
+                          className="lead-job-summary-select"
                           value={String(lead?.move_type ?? "")}
                           onChange={async (e) => {
                             const nextValue = e.target.value;
@@ -2916,7 +2924,6 @@ export default function LeadDetail() {
                             }
                           }}
                           disabled={!canEditJobs}
-                          style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12, background: "#fff" }}
                         >
                           <option value="">Select</option>
                           <option value="Local">Local</option>
@@ -2946,10 +2953,10 @@ export default function LeadDetail() {
                       ) : null}
                       <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
                         Move Date
-                        <input type="date" value={draft.move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, move_date: e.target.value } }))} disabled={!canEditJobs} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+                        <input className="lead-job-date-input" type="date" min={todayInput} value={draft.move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, move_date: e.target.value } }))} disabled={!canEditJobs} />
                       </label>
                       <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
-                        Booked Date
+                        <input className="lead-job-date-input" type="date" min={todayInput} value={newJobDraft.move_date} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, move_date: e.target.value }))} />
                         <input type="date" value={draft.booked_move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, booked_move_date: e.target.value } }))} disabled={!canEditJobs} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
                       </label>
                       <div style={{ gridColumn: "1 / -1", border: "1px solid #d8e6f4", borderRadius: 12, background: "linear-gradient(180deg, #f7fbff 0%, #ffffff 100%)", boxShadow: "0 2px 8px rgba(15,23,42,.05)", overflow: "hidden" }}>

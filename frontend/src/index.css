@@ -1055,10 +1055,74 @@ button:focus-visible {
 .lead-job-files-legacy { display: none !important; }
 
 .lead-job-summary-grid {
-  display: grid;
-  grid-template-columns: minmax(220px, 1.2fr) minmax(145px, 0.8fr) 150px 150px;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: end;
+}
+
+.lead-job-summary-grid > label {
+  flex: 0 0 125px;
+  min-width: 0;
+}
+
+.lead-job-summary-grid > label:first-child {
+  flex-basis: 180px;
+}
+
+.lead-job-summary-grid > label:nth-child(2) {
+  flex-basis: 130px;
+}
+
+.lead-job-summary-grid > div {
+  flex: 1 0 100%;
+}
+
+.lead-job-summary-field {
+  display: grid;
+  gap: 4px;
+  color: #526477;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.lead-job-summary-select {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 16px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lead-job-summary-select:focus {
+  outline: 2px solid #bfdbfe;
+  outline-offset: 1px;
+  border-color: #0176d3;
+}
+
+.lead-job-date-input {
+  width: 125px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 16px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.lead-job-date-input:focus {
+  outline: 2px solid #bfdbfe;
+  outline-offset: 1px;
+  border-color: #0176d3;
 }
 
 .lead-job-save-button {
@@ -1079,6 +1143,39 @@ button:focus-visible {
 .lead-job-save-button:disabled {
   cursor: wait;
   opacity: .65;
+}
+
+.lead-job-save-icon {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.lead-job-calendar-button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: #0176d3;
+  cursor: pointer;
+}
+
+.lead-job-action-icon {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .lead-notes-card {
