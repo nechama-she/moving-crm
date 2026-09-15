@@ -2856,27 +2856,16 @@ export default function LeadDetail() {
                 return (
                   <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: primary ? "#f8fbff" : "#fff" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/dispatch?job_id=${encodeURIComponent(job.id)}`)}
-                          style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "2px 6px", fontSize: 12, cursor: "pointer" }}
-                          title="Open in calender"
-                          aria-label="Open in calender"
-                        >
-                          📅
-                        </button>
-                        {user?.role !== "dispatch" ? (
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/pricing?lead_id=${encodeURIComponent(leadId || "")}&job_id=${encodeURIComponent(job.id)}`)}
-                            style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "3px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                          >
-                            Calculate Price
-                          </button>
-                        ) : null}
-                        {primary ? <span style={{ fontSize: 11, color: "#1d4ed8", fontWeight: 700 }}>Primary</span> : null}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/dispatch?job_id=${encodeURIComponent(job.id)}`)}
+                        style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "2px 6px", fontSize: 12, cursor: "pointer" }}
+                        title="Open in calender"
+                        aria-label="Open in calender"
+                      >
+                        📅
+                      </button>
+                      {primary ? <span style={{ fontSize: 11, color: "#1d4ed8", fontWeight: 700 }}>Primary</span> : null}
                     </div>
 
                     <div className="lead-job-summary-grid">
@@ -3021,6 +3010,13 @@ export default function LeadDetail() {
                           <span style={{ fontSize: 14 }}>$</span>
                           <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.02em" }}>Charges</strong>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/pricing?lead_id=${encodeURIComponent(leadId || "")}&job_id=${encodeURIComponent(job.id)}`)}
+                          style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "3px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                        >
+                          Calculate Price
+                        </button>
                       </div>
 
                       <div style={{ padding: 10, display: "grid", gap: 6 }}>

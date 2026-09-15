@@ -95,8 +95,8 @@ export default function LocalPricing({ planId, companyName, bookName, job }: { p
   }
   if (loading) return <section className="pricing-card" role="status">Loading local pricing?</section>;
   return <div className="local-pricing">
-    {job && <section className="pricing-card pricing-job-context"><div><span className="eyebrow">Pricing Job {job.order}</span><h2>{job.name}</h2><p>{job.pickup} ? {job.delivery}</p></div><Link to={`/leads/${job.leadId}?job_id=${encodeURIComponent(job.jobId)}`}>Back to lead</Link></section>}
-    <section className="pricing-card local-intro"><div><span className="eyebrow">{companyName} ? {bookName}</span><h2>Local moving</h2><p>Same-state moves. One hourly rate for every day of the week.</p></div><span className="local-badge">Hourly pricing</span></section>
+    {job && <section className="pricing-card pricing-job-context"><div><span className="eyebrow">Pricing Job {job.order}</span><h2>{job.name}</h2><p>{job.pickup} → {job.delivery}</p></div><Link to={`/leads/${job.leadId}?job_id=${encodeURIComponent(job.jobId)}`}>Back to lead</Link></section>}
+    <section className="pricing-card local-intro"><div><span className="eyebrow">{companyName} — {bookName}</span><h2>Local moving</h2><p>Same-state moves. One hourly rate for every day of the week.</p></div><span className="local-badge">Hourly pricing</span></section>
     {error && <div className="pricing-alert error" role="alert">{error}</div>}
     {notice && <div className="pricing-alert success" role="status">{notice}</div>}
     {!editing && settings && <section className="pricing-card local-calculator">
@@ -115,7 +115,7 @@ export default function LocalPricing({ planId, companyName, bookName, job }: { p
         </div>}
       </> : <p className="local-hint" role="status">{Number(volume) > 0 ? "Calculating estimate?" : "Enter the move volume to calculate crew, trucks, hours, and price."}</p>}
       {job && job.moveType !== "Local" && <p className="local-warning">{job.moveType === "Long Distance" ? "This job crosses state lines. Use Long Distance pricing for this job." : "Confirm pickup and delivery addresses in the same state before saving local pricing."}</p>}
-      <p className="local-hint">Estimated hours = cubic feet ? (movers ? {settings.capacity_per_mover} cf/hour). Billable hours are at least {settings.minimum_hours}. Trucks are a planning count; no separate truck fee is included.</p>
+      <p className="local-hint">Estimated hours = cubic feet ÷ (movers × {settings.capacity_per_mover} cf/hour). Billable hours are at least {settings.minimum_hours}. Trucks are a planning count; no separate truck fee is included.</p>
     </section>}
     <form className="pricing-card local-settings" onSubmit={saveSettings}>
       <div className="local-section-heading"><div><span className="eyebrow">Rate settings</span><h2>A simple table. Every day.</h2></div>{user?.role === "admin" && !editing && <button type="button" className="slds-button" onClick={() => { setDraft(settings ? structuredClone(settings) : blankSettings()); setEditing(true); setNotice(""); }}>Edit local settings</button>}</div>
@@ -126,11 +126,11 @@ export default function LocalPricing({ planId, companyName, bookName, job }: { p
           <label>Cubic feet per mover / hour{editing ? settingInput("capacity_per_mover", "Cubic feet per mover per hour") : <strong>{settings?.capacity_per_mover ?? "Not set"}</strong>}</label>
           <label>Full packing / hour{editing ? settingInput("full_pack_hourly", "Full packing per hour") : <strong>{money(settings?.full_pack_hourly)}</strong>}</label>
         </div>
-        <div className="local-table-scroll"><table className="local-rate-table"><caption>Hourly crew rates ? Monday?Sunday</caption><thead><tr><th>Movers</th><th>Moving / hr</th><th>With full pack / hr</th><th>Capacity / hr</th><th>Use when volume exceeds</th></tr></thead><tbody>{Array.from({ length: 10 }, (_, i) => {
+        <div className="local-table-scroll"><table className="local-rate-table"><caption>Hourly crew rates — Monday through Sunday</caption><thead><tr><th>Movers</th><th>Moving / hr</th><th>With full pack / hr</th><th>Capacity / hr</th><th>Use when volume exceeds</th></tr></thead><tbody>{Array.from({ length: 10 }, (_, i) => {
           const rate = active?.hourly_rates[i]; const capacity = active?.capacity_per_mover; const pack = active?.full_pack_hourly;
           return <tr key={i}><th scope="row">{i + 1} {i ? "movers" : "mover"}</th><td>{editing ? settingInput("hourly_rates", `Hourly rate for ${i + 1} movers`, i, false) : money(rate)}</td><td>{rate != null && pack != null ? money(rate + pack) : "?"}</td><td>{capacity != null ? `${number(capacity * (i + 1))} cf` : "?"}</td><td>{i === 0 ? "Base crew" : editing ? settingInput("crew_thresholds", `Volume threshold for ${i + 1} movers`, i - 1) : active?.crew_thresholds[i - 1] != null ? `${number(active.crew_thresholds[i - 1])} cf` : "?"}</td></tr>;
         })}</tbody></table></div>
-        <p className="local-hint">Thresholds use ?greater than,? so a crew increases only after its volume threshold is exceeded. Blank rates cannot be quoted.</p>
+        <p className="local-hint">Thresholds use greater than, so a crew increases only after its volume threshold is exceeded. Blank rates cannot be quoted.</p>
         <details className="local-trucks" open={editing}><summary>Truck requirements <span>Volume thresholds</span></summary><div className="local-table-scroll"><table className="local-rate-table"><caption>One truck by default; add trucks at these thresholds.</caption><thead><tr><th>Trucks</th>{Array.from({ length: 9 }, (_, i) => <th key={i}>{i + 2}</th>)}</tr></thead><tbody><tr><th>Above cubic feet</th>{Array.from({ length: 9 }, (_, i) => <td key={i}>{editing ? settingInput("truck_thresholds", `Volume threshold for ${i + 2} trucks`, i) : active?.truck_thresholds[i] ?? "?"}</td>)}</tr></tbody></table></div></details>
         {editing && <div className="local-edit-actions"><button className="slds-button primary" type="submit">{saving ? "Saving?" : "Save local settings"}</button><button type="button" className="slds-button" onClick={() => setEditing(false)}>Cancel</button></div>}
       </fieldset>
