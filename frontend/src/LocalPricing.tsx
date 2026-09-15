@@ -96,10 +96,10 @@ export default function LocalPricing({ planId, companyName, bookName, job }: { p
   if (loading) return <section className="pricing-card" role="status">Loading local pricing?</section>;
   return <div className="local-pricing">
     {job && <section className="pricing-card pricing-job-context"><div><span className="eyebrow">Pricing Job {job.order}</span><h2>{job.name}</h2><p>{job.pickup} → {job.delivery}</p></div><Link to={`/leads/${job.leadId}?job_id=${encodeURIComponent(job.jobId)}`}>Back to lead</Link></section>}
-    <section className="pricing-card local-intro"><div><span className="eyebrow">{companyName} — {bookName}</span><h2>Local moving</h2><p>Same-state moves. One hourly rate for every day of the week.</p></div><span className="local-badge">Hourly pricing</span></section>
+    <section className="pricing-card pricing-overview local-intro"><div><span className="eyebrow">{companyName} — {bookName}</span><h2>Local moving</h2><p>Same-state moves. One hourly rate for every day of the week.</p></div><span className="local-badge">Hourly pricing</span></section>
     {error && <div className="pricing-alert error" role="alert">{error}</div>}
     {notice && <div className="pricing-alert success" role="status">{notice}</div>}
-    {!editing && settings && <section className="pricing-card local-calculator">
+    {!editing && settings && <section className="pricing-card pricing-calculator local-calculator">
       <span className="eyebrow">Build an estimate</span><h2>How much are we moving?</h2>
       <div className="local-fields">
         <label>Volume (cubic feet)<input type="number" min="1" value={volume} placeholder="e.g. 1,000" onChange={e => { setVolume(e.target.value); setNotice(""); }} /></label>
