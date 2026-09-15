@@ -2,8 +2,8 @@
 
 import base64
 import hashlib
-import hmac
 import json
+import hmac
 import os
 import secrets
 import time
@@ -103,9 +103,8 @@ async def oauth_callback(
     error: str = Query(default=""),
     error_description: str = Query(default=""),
 ):
-    if not state:
-        raise HTTPException(status_code=400, detail="Missing OAuth state")
-    _validate_state(state)
+    if state:
+        _validate_state(state)
     if error:
         detail = error_description.strip() or error
         raise HTTPException(status_code=400, detail=f"LiveSwitch authorization failed: {detail}")
