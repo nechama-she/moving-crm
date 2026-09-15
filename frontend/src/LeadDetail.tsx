@@ -1093,15 +1093,26 @@ export default function LeadDetail() {
 
   const estimatedTotalData = (() => {
     const raw = lead.estimatedTotal ?? lead.estimated_total;
-    if (!raw || typeof raw !== "object") return null;
-    const row = raw as Record<string, unknown>;
-    const subtotal = Number(row.subtotal ?? 0);
-    const taxableAmount = Number(row.taxableAmount ?? row.taxable_amount ?? 0);
-    const tax = Number(row.tax ?? 0);
-    const finalTotal = Number(row.finalTotal ?? row.final_total ?? 0);
-    const values = [subtotal, taxableAmount, tax, finalTotal];
-    if (values.some((value) => !Number.isFinite(value))) return null;
-    return { subtotal, taxableAmount, tax, finalTotal };
+    if (raw && typeof raw === "object") {
+      const row = raw as Record<string, unknown>;
+      const subtotal = Number(row.subtotal ?? 0);
+      const taxableAmount = Number(row.taxableAmount ?? row.taxable_amount ?? 0);
+      const tax = Number(row.tax ?? 0);
+      const finalTotal = Number(row.finalTotal ?? row.final_total ?? 0);
+      const values = [subtotal, taxableAmount, tax, finalTotal];
+      if (values.every(Number.isFinite)) return { subtotal, taxableAmount, tax, finalTotal };
+    }
+    // Older calculator saves have job pricing but no lead-level estimate yet.
+    if (jobsLoading || jobsError) return null;
+    const pricedJobs = leadJobs.filter(job => job.price != null || job.charges.length > 0);
+    if (!pricedJobs.length) return null;
+    const cents = (value: number) => Math.round(value * 100);
+    const finalCents = pricedJobs.reduce((sum, job) => sum + (job.price == null
+      ? job.charges.reduce((total, charge) => total + cents(charge.total_cost), 0)
+      : cents(job.price)), 0);
+    const discountCents = pricedJobs.reduce((sum, job) => sum + job.charges.reduce((total, charge) => total + cents(charge.discount_amount), 0), 0);
+    if (finalCents <= 0) return null;
+    return { subtotal: (finalCents + discountCents) / 100, taxableAmount: 0, tax: 0, finalTotal: finalCents / 100 };
   })();
 
   const estimatedDiscountAmount = estimatedTotalData
@@ -3004,6 +3015,70 @@ export default function LeadDetail() {
                       </div>
                     </div>
 
+                    <div style={{ marginTop: 12, border: "1px solid #d8dde6", borderRadius: 8, background: "#f8fafc" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px", borderBottom: "1px solid #e2e8f0" }}>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 14 }}>$</span>
+                          <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.02em" }}>Charges</strong>
+                        </div>
+                      </div>
+
+                      <div style={{ padding: 10, display: "grid", gap: 6 }}>
+                        {job.charges.length > 0 ? (
+                          <div style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: 8, display: "grid", gap: 4 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: "#334155" }}>
+                              <span>Subtotal</span>
+                              <strong>${chargesSubtotal.toFixed(2)}</strong>
+                            </div>
+                            {chargesDiscount > 0 ? (
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: "#0f766e" }}>
+                                <span>Discount</span>
+                                <strong>- ${chargesDiscount.toFixed(2)}</strong>
+                              </div>
+                            ) : null}
+                            <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 6, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: "#0f172a" }}>
+                              <span style={{ fontWeight: 700 }}>Total</span>
+                              <strong>${chargesTotal.toFixed(2)}</strong>
+                            </div>
+                          </div>
+                        ) : null}
+                        {job.charges.length === 0 ? <div style={{ color: "#706e6b", fontSize: 12 }}>No charges for this job yet.</div> : null}
+                        {job.charges.length > 0 ? (
+                          <div style={{ display: "grid", gap: 6 }}>
+                            {job.charges.map((charge) => {
+                              const isMaterials = charge.name.trim().toLowerCase() === "materials";
+                              const isExpanded = Boolean(expandedMaterials[job.id]);
+                              return (
+                              <div key={charge.id} className={isMaterials ? "job-materials-charge" : ""} style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: 8, display: "grid", gap: 4 }}>
+                                <button type="button" disabled={!isMaterials} className="job-charge-heading" onClick={() => isMaterials && setExpandedMaterials((prev) => ({ ...prev, [job.id]: !prev[job.id] }))} aria-expanded={isMaterials ? isExpanded : undefined}>
+                                  <strong>{charge.name}{isMaterials ? <span aria-hidden="true"> {isExpanded ? "▴" : "▾"}</span> : null}</strong>
+                                  <span>${charge.total_cost.toFixed(2)}</span>
+                                </button>
+                                {charge.description ? <div style={{ fontSize: 11, color: "#475569" }}>{charge.description}</div> : null}
+                                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11, color: "#64748b" }}>
+                                  <span>{`Subtotal: $${charge.subtotal.toFixed(2)}`}</span>
+                                  <span>{`Discount: $${charge.discount_amount.toFixed(2)}`}</span>
+                                </div>
+                                {isMaterials && isExpanded ? (
+                                  <div className="job-materials-list">
+                                    {job.estimated_materials.length ? job.estimated_materials.map((material) => (
+                                      <div key={material.id || material.name} className="job-material-row">
+                                        <div><strong>{material.name}</strong>{material.description ? <small>{material.description}</small> : null}</div>
+                                        <span>{material.quantity}</span>
+                                        <span>${material.rate.toFixed(2)}</span>
+                                        <strong>${(material.quantity * material.rate).toFixed(2)}</strong>
+                                      </div>
+                                    )) : <div className="job-materials-empty">No estimated materials for this job.</div>}
+                                  </div>
+                                ) : null}
+                              </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
                     {(() => {
                       const activeNoteTab = noteTabByJob[job.id] || "customer_notes";
                       const noteTabs = [
@@ -3178,69 +3253,6 @@ export default function LeadDetail() {
                       </div>
                     </div>
 
-                    <div style={{ marginTop: 12, border: "1px solid #d8dde6", borderRadius: 8, background: "#f8fafc" }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px", borderBottom: "1px solid #e2e8f0" }}>
-                        <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          <span style={{ fontSize: 14 }}>$</span>
-                          <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.02em" }}>Charges</strong>
-                        </div>
-                      </div>
-
-                      <div style={{ padding: 10, display: "grid", gap: 6 }}>
-                        {job.charges.length > 0 ? (
-                          <div style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: 8, display: "grid", gap: 4 }}>
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: "#334155" }}>
-                              <span>Subtotal</span>
-                              <strong>${chargesSubtotal.toFixed(2)}</strong>
-                            </div>
-                            {chargesDiscount > 0 ? (
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: "#0f766e" }}>
-                                <span>Discount</span>
-                                <strong>- ${chargesDiscount.toFixed(2)}</strong>
-                              </div>
-                            ) : null}
-                            <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 6, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: "#0f172a" }}>
-                              <span style={{ fontWeight: 700 }}>Total</span>
-                              <strong>${chargesTotal.toFixed(2)}</strong>
-                            </div>
-                          </div>
-                        ) : null}
-                        {job.charges.length === 0 ? <div style={{ color: "#706e6b", fontSize: 12 }}>No charges for this job yet.</div> : null}
-                        {job.charges.length > 0 ? (
-                          <div style={{ display: "grid", gap: 6 }}>
-                            {job.charges.map((charge) => {
-                              const isMaterials = charge.name.trim().toLowerCase() === "materials";
-                              const isExpanded = Boolean(expandedMaterials[job.id]);
-                              return (
-                              <div key={charge.id} className={isMaterials ? "job-materials-charge" : ""} style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: 8, display: "grid", gap: 4 }}>
-                                <button type="button" disabled={!isMaterials} className="job-charge-heading" onClick={() => isMaterials && setExpandedMaterials((prev) => ({ ...prev, [job.id]: !prev[job.id] }))} aria-expanded={isMaterials ? isExpanded : undefined}>
-                                  <strong>{charge.name}{isMaterials ? <span aria-hidden="true"> {isExpanded ? "▴" : "▾"}</span> : null}</strong>
-                                  <span>${charge.total_cost.toFixed(2)}</span>
-                                </button>
-                                {charge.description ? <div style={{ fontSize: 11, color: "#475569" }}>{charge.description}</div> : null}
-                                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11, color: "#64748b" }}>
-                                  <span>{`Subtotal: $${charge.subtotal.toFixed(2)}`}</span>
-                                  <span>{`Discount: $${charge.discount_amount.toFixed(2)}`}</span>
-                                </div>
-                                {isMaterials && isExpanded ? (
-                                  <div className="job-materials-list">
-                                    {job.estimated_materials.length ? job.estimated_materials.map((material) => (
-                                      <div key={material.id || material.name} className="job-material-row">
-                                        <div><strong>{material.name}</strong>{material.description ? <small>{material.description}</small> : null}</div>
-                                        <span>{material.quantity}</span>
-                                        <span>${material.rate.toFixed(2)}</span>
-                                        <strong>${(material.quantity * material.rate).toFixed(2)}</strong>
-                                      </div>
-                                    )) : <div className="job-materials-empty">No estimated materials for this job.</div>}
-                                  </div>
-                                ) : null}
-                              </div>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
                   </div>
                 );
               })() : null}

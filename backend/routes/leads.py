@@ -2578,6 +2578,29 @@ def replace_lead_job_charges(
     return _serialize_job_with_addresses(row, db)
 
 
+def _refresh_lead_estimated_total(lead_id: str, db: Session) -> None:
+    """Use all job prices and discounts for the lead summary, retaining existing tax data."""
+    db.flush()
+    lead = db.get(Lead, lead_id)
+    existing = _deserialize_estimated_total(lead.estimated_total) or {}
+    final_before_tax = Decimal(0)
+    discounts = Decimal(0)
+    for job in db.query(LeadJob).filter(LeadJob.lead_id == lead_id).all():
+        db.expire(job, ['charges'])
+        if job.price is not None:
+            final_before_tax += _to_money_decimal(job.price, 'price')
+        else:
+            final_before_tax += sum((_to_money_decimal(charge.total_cost, 'total_cost') for charge in job.charges), Decimal(0))
+        discounts += sum((_to_money_decimal(charge.discount_amount, 'discount_amount') for charge in job.charges), Decimal(0))
+    tax = _to_money_decimal(existing.get('tax'), 'tax')
+    lead.estimated_total = _serialize_estimated_total(EstimatedTotalPayload(
+        subtotal=final_before_tax + discounts,
+        taxableAmount=existing.get('taxableAmount', 0),
+        tax=tax,
+        finalTotal=final_before_tax + tax,
+    ))
+
+
 class SaveJobPriceBody(LeadJobChargesBody):
     price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
 
@@ -2608,8 +2631,10 @@ def save_lead_job_price(
     total = sum((_to_money_decimal(charge.total_cost, 'total_cost') for charge in charges), Decimal(0))
     if total != body.price:
         raise HTTPException(400, 'Price must match the charge total')
+    db.query(Lead).filter(Lead.id == lead_id).with_for_update().one()
     _replace_job_charges(row, charges, db)
     row.price = body.price
+    _refresh_lead_estimated_total(lead_id, db)
     db.commit()
     db.refresh(row)
     return _serialize_job_with_addresses(row, db)

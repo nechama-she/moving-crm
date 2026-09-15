@@ -256,7 +256,7 @@ export default function PricingPage() {
     if (!jobContext || !quote || calculating || priceSaveRunning.current || detailedTotal <= 0) return;
     const cents = (amount: number) => Math.round(amount * 100);
     const lines = [
-      { id: "transportation", name: quote.match?.destination || "Transportation", description: `${cubicFeet} cf ? ${quote.match?.band_label || "Transportation"}`, amount: quote.base_price || 0 },
+      { id: "transportation", name: "Transportation charge", description: `${cubicFeet} cf ? ${quote.match?.band_label || "Transportation"}`, amount: quote.base_price || 0 },
       ...quote.charges.filter(charge => charge.selected).map(charge => ({ id: `charge:${charge.id}`, name: charge.name, description: charge.description, amount: charge.amount })),
       ...customCharges.map(charge => ({ id: `custom:${charge.id}`, name: charge.title.trim() || "Custom charge", description: "Custom charge", amount: Math.max(0, Number(charge.amount) || 0) })),
     ];
@@ -459,7 +459,7 @@ export default function PricingPage() {
                       <div className="pricing-quote-lines">
                         <div className="pricing-quote-line">
                           <div>
-                            <strong>{quote.match?.destination || "Transportation"}</strong>
+                            <strong>Transportation charge</strong>
                             <small>
                               {quote.match
                                 ? `${Number(cubicFeet || 0).toLocaleString()} cf × ${quote.match.rate == null ? quote.match.rate_text || "manual rate" : `${money(quote.match.rate)} / cf`} · ${quote.match.band_label}${quote.minimum_applied ? ` · ${money(quote.minimum)} minimum applied` : ""}`
