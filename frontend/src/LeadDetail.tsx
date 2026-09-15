@@ -2880,6 +2880,34 @@ export default function LeadDetail() {
                           {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
                         </select>
                       </label>
+                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                        Move Type
+                        <select
+                          value={String(lead?.move_type ?? "")}
+                          onChange={async (e) => {
+                            const nextValue = e.target.value;
+                            if (!leadId) return;
+                            try {
+                              const response = await fetch(`${API_BASE}/api/leads/${leadId}`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json", ...authHeaders(token) },
+                                body: JSON.stringify({ move_type: nextValue || null }),
+                              });
+                              const updated = await response.json().catch(() => null);
+                              if (!response.ok) throw new Error(updated?.detail || `HTTP ${response.status}`);
+                              setLead(updated);
+                            } catch (err) {
+                              setJobsError(err instanceof Error ? err.message : "Could not update move type");
+                            }
+                          }}
+                          disabled={!canEditJobs}
+                          style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12, background: "#fff" }}
+                        >
+                          <option value="">Select</option>
+                          <option value="Local">Local</option>
+                          <option value="Long Distance">Long Distance</option>
+                        </select>
+                      </label>
                       {["admin", "dispatch"].includes(user?.role || "") ? (
                         <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
                           Foreman
