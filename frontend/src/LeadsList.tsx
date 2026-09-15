@@ -202,7 +202,7 @@ export default function LeadsList() {
     return ordered;
   };
 
-  if (loading && !hasLoadedRef.current) return <p>Loadingâ€¦</p>;
+  if (loading && !hasLoadedRef.current) return <p>Loading...</p>;
 
   const columns = getColumns(leads);
 
@@ -239,7 +239,7 @@ export default function LeadsList() {
       <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
         <input
           type="text"
-          placeholder="Search by name, ID, phone, or emailâ€¦"
+          placeholder="Search by name, ID, phone, or email..."
           value={searchInput}
           onChange={(e) => handleSearchChange(e.target.value)}
           style={{
@@ -321,7 +321,7 @@ export default function LeadsList() {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {formatLabel(col)}{isActive ? (sortDir === "asc" ? " â–²" : " â–¼") : isSortable ? " â‡…" : ""}
+                  {formatLabel(col)}{isActive ? (sortDir === "asc" ? " ▲" : " ▼") : isSortable ? " ⇅" : ""}
                 </th>
                 );
               })}
@@ -382,7 +382,7 @@ export default function LeadsList() {
           </tbody>
         </table>
         <div ref={sentinelRef} style={{ height: 1 }} />
-        {loadingMore && <p style={{ padding: "8px 12px", margin: 0 }}>Loading moreâ€¦</p>}
+        {loadingMore && <p style={{ padding: "8px 12px", margin: 0 }}>Loading more...</p>}
         </div>
       )}
 

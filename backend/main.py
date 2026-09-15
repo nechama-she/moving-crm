@@ -21,7 +21,7 @@ cfg = get_config()
 # Fail fast: never run the API with an unconfigured/insecure JWT signing key.
 if not os.getenv("JWT_SECRET"):
     raise RuntimeError(
-        "JWT_SECRET is not set â€” refusing to start the API without a signing key."
+        "JWT_SECRET is not set - refusing to start the API without a signing key."
     )
 
 # ---------------------------------------------------------------------------
@@ -29,7 +29,7 @@ if not os.getenv("JWT_SECRET"):
 # ---------------------------------------------------------------------------
 # Every route requires a valid Bearer JWT UNLESS it is explicitly public
 # (login / health) or presents a valid service-to-service x-api-secret (lead
-# intake, auto-assign â€” those endpoints re-validate the secret themselves).
+# intake, auto-assign - those endpoints re-validate the secret themselves).
 # This makes "forgetting to add auth to a new route" fail closed, not open.
 PUBLIC_PATHS = {"/api/health", "/api/auth/login", "/api/liveswitch/oauth/callback"}
 
@@ -40,7 +40,7 @@ def _api_secret() -> str:
 
 async def enforce_authentication(request: Request) -> None:
     if request.method == "OPTIONS":
-        return  # CORS preflight â€” handled by CORSMiddleware
+        return  # CORS preflight - handled by CORSMiddleware
     if request.url.path == "/api/inventory" and request.method == "POST":
         return  # Middleware validates the inventory key before body parsing.
     if re.fullmatch(r"/api/public-moves/[0-9a-f-]{36}/(verify-options|send-code|verify|details|walkthrough|reschedule|availability|files|prepare-upload|finish-upload)", request.url.path):
@@ -272,7 +272,7 @@ app.include_router(duplication_rules.router)
 app.include_router(referral_assignment_rules.router)
 app.include_router(liveswitch.router)
 app.include_router(public_moves.router)
-# Triggers backend Lambda processing â€” admin only.
+# Triggers backend Lambda processing - admin only.
 app.include_router(smartmoving.router, dependencies=[Depends(require_admin)])
 app.include_router(followups.router)
 app.include_router(outreach.router)

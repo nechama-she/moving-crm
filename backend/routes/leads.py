@@ -1494,7 +1494,7 @@ def get_leads(
     if status:
         query = query.filter(Lead.status == status)
 
-    # Assigned-to filter (admin/dispatch only â€” sales_rep is already forced above)
+    # Assigned-to filter (admin/dispatch only - sales_rep is already forced above)
     if assigned_to and user.role != "sales_rep":
         if assigned_to == "__unassigned__":
             query = query.filter(Lead.assigned_to == None)  # noqa: E711
@@ -4581,7 +4581,7 @@ def assign_lead_by_name(
     return lead.to_dict()
 
 
-# ---- POST /api/leads â€” create a new lead from Zapier / external source ----
+# ---- POST /api/leads - create a new lead from Zapier / external source ----
 
 MOVE_TYPE_MAP = {
     "out of state": "interstate",
