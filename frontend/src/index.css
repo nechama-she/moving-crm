@@ -1056,9 +1056,29 @@ button:focus-visible {
 
 .lead-job-summary-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 1.6fr) minmax(150px, 0.8fr) 150px 150px;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(145px, 0.8fr) 150px 150px;
   gap: 8px;
   align-items: end;
+}
+
+.lead-job-save-button {
+  width: 32px;
+  height: 32px;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #0176d3;
+  border-radius: 4px;
+  background: #fff;
+  color: #0176d3;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.lead-job-save-button:disabled {
+  cursor: wait;
+  opacity: .65;
 }
 
 .lead-notes-card {

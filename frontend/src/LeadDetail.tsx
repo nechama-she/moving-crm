@@ -2866,6 +2866,18 @@ export default function LeadDetail() {
                         📅
                       </button>
                       {primary ? <span style={{ fontSize: 11, color: "#1d4ed8", fontWeight: 700 }}>Primary</span> : null}
+                      {canEditJobs ? (
+                        <button
+                          type="button"
+                          onClick={() => void saveJob(job.id)}
+                          disabled={busy}
+                          className="lead-job-save-button"
+                          aria-label={savingJobId === job.id ? "Saving job" : "Save job"}
+                          title={savingJobId === job.id ? "Saving job" : "Save job"}
+                        >
+                          {savingJobId === job.id ? "…" : "💾"}
+                        </button>
+                      ) : null}
                     </div>
 
                     <div className="lead-job-summary-grid">
@@ -2886,7 +2898,9 @@ export default function LeadDetail() {
                           value={String(lead?.move_type ?? "")}
                           onChange={async (e) => {
                             const nextValue = e.target.value;
+                            const previousValue = String(lead?.move_type ?? "");
                             if (!leadId) return;
+                            setLead((current) => current ? { ...current, move_type: nextValue } : current);
                             try {
                               const response = await fetch(`${API_BASE}/api/leads/${leadId}`, {
                                 method: "PATCH",
@@ -2895,8 +2909,9 @@ export default function LeadDetail() {
                               });
                               const updated = await response.json().catch(() => null);
                               if (!response.ok) throw new Error(updated?.detail || `HTTP ${response.status}`);
-                              setLead(updated);
+                              setLead((current) => current ? { ...current, ...(updated || {}), move_type: nextValue } : current);
                             } catch (err) {
+                              setLead((current) => current ? { ...current, move_type: previousValue } : current);
                               setJobsError(err instanceof Error ? err.message : "Could not update move type");
                             }
                           }}
@@ -3183,9 +3198,6 @@ export default function LeadDetail() {
 
                     {canEditJobs ? (
                       <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                        <button type="button" onClick={() => void saveJob(job.id)} disabled={busy} style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}>
-                          {savingJobId === job.id ? "Saving..." : "Save Job"}
-                        </button>
                         <button
                           type="button"
                           onClick={() => {
