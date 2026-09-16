@@ -2888,10 +2888,9 @@ export default function LeadDetail() {
                     </div>
 
                     <div className="lead-job-summary-grid">
-                      <label className="lead-job-summary-field">
+                      <label style={{ width: 200 }}>
                         Company
                         <select
-                          className="lead-job-summary-select"
                           value={draft.company_id}
                           onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, company_id: e.target.value } }))}
                           disabled={!canEditJobs}
@@ -2899,10 +2898,9 @@ export default function LeadDetail() {
                           {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
                         </select>
                       </label>
-                      <label className="lead-job-summary-field">
+                      <label style={{ width: 140 }}>
                         Move Type
                         <select
-                          className="lead-job-summary-select"
                           value={String(lead?.move_type ?? "")}
                           onChange={async (e) => {
                             const nextValue = e.target.value;
@@ -2931,13 +2929,12 @@ export default function LeadDetail() {
                         </select>
                       </label>
                       {["admin", "dispatch"].includes(user?.role || "") ? (
-                        <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                        <label style={{ width: 160 }}>
                           Foreman
                           <select
                             value={job.foreman_id}
                             disabled={savingForemanJobId === job.id}
                             onChange={(event) => void assignJobForeman(job.id, event.target.value)}
-                            style={{ minWidth: 0, width: "100%", border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", background: "#fff", color: "#0f172a", fontSize: 12 }}
                           >
                             <option value="">Unassigned</option>
                             {foremen.filter((foreman) => (foreman.companies || []).some((company) => company.id === job.company_id)).map((foreman) => (
@@ -2946,18 +2943,18 @@ export default function LeadDetail() {
                           </select>
                         </label>
                       ) : job.foreman_name ? (
-                        <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                        <label style={{ width: 160 }}>
                           Foreman
-                          <span style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", background: "#f8fafc", color: "#0f172a", fontSize: 12 }}>{job.foreman_name}</span>
+                          <span style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "4px 8px", background: "#f8fafc", color: "#0f172a", fontSize: 12, height: 32, boxSizing: "border-box", display: "flex", alignItems: "center" }}>{job.foreman_name}</span>
                         </label>
                       ) : null}
-                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
+                      <label style={{ width: 135 }}>
                         Move Date
-                        <input className="lead-job-date-input" type="date" min={todayInput} value={draft.move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, move_date: e.target.value } }))} disabled={!canEditJobs} />
+                        <input type="date" min={todayInput} value={draft.move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, move_date: e.target.value } }))} disabled={!canEditJobs} />
                       </label>
-                      <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
-                        <input className="lead-job-date-input" type="date" min={todayInput} value={newJobDraft.move_date} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, move_date: e.target.value }))} />
-                        <input type="date" value={draft.booked_move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, booked_move_date: e.target.value } }))} disabled={!canEditJobs} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
+                      <label style={{ width: 135 }}>
+                        Booked Date
+                        <input type="date" value={draft.booked_move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, booked_move_date: e.target.value } }))} disabled={!canEditJobs} />
                       </label>
                       <div style={{ gridColumn: "1 / -1", border: "1px solid #d8e6f4", borderRadius: 12, background: "linear-gradient(180deg, #f7fbff 0%, #ffffff 100%)", boxShadow: "0 2px 8px rgba(15,23,42,.05)", overflow: "hidden" }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderBottom: "1px solid #e4eef8", background: "#edf5fd" }}>
