@@ -4,7 +4,21 @@ import { useParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import "./CustomerMovePage.css";
 
-type Details = { name:string; phone:string; email:string; move_date:string; pickup:string; delivery:string; company:string; stops:{address:string;type:string|null}[]; estimate:{price:string;cuft:string}|null; walkthrough:{status:string;availability:string;scheduled_at:string|null;timezone:string}|null; participant_url:string; files:{id:string;name:string;size:number}[] };
+type Details = {
+  name: string;
+  phone: string;
+  email: string;
+  move_date: string;
+  pickup: string;
+  delivery: string;
+  company: string;
+  stops: { address: string; type: string | null }[];
+  estimate: { price: string; cuft: string } | null;
+  spark?: { id: string; status: string; shareUrl?: string } | null;
+  walkthrough: { status: string; availability: string; scheduled_at: string | null; timezone: string } | null;
+  participant_url: string;
+  files: { id: string; name: string; size: number }[];
+};
 type Pending = {id:string;file:File;status:string;progress:number;preview?:string;error?:string};
 export default function CustomerMovePage() {
   const {accessId}=useParams();
@@ -62,9 +76,11 @@ export default function CustomerMovePage() {
       if(active)setData(next);
     }).catch(e=>{if(active)setError(e.message);});
     void load();
-    const interval=setInterval(()=>void load(),15000);
+    // Poll every minute (60s) if spark is queued or running, otherwise standard 15s
+    const isSparkPending = data?.spark && (data.spark.status === 'queued' || data.spark.status === 'running');
+    const interval=setInterval(()=>void load(), isSparkPending ? 60000 : 15000);
     return ()=>{active=false;clearInterval(interval);};
-  },[base,key,session,sessionKey]);
+  },[base,key,session,sessionKey,data?.spark?.status]);
   useEffect(()=>{if(!sent)return;const t=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(t);},[sent]);
   async function send(){setBusy(true);setError('');try{await call('/send-code',{channel});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   async function verify(){
@@ -289,9 +305,21 @@ export default function CustomerMovePage() {
                     }
                   }}
                 >
-                  {reportState === 'running' ? 'Processing inventory...' : reportState === 'done' ? '✓ Inventory report requested' : "Done Uploading — Calculate My Move"}
+                  {reportState === 'running' ? 'Processing inventory...' : (reportState === 'done' || data.spark) ? '✓ Inventory report requested' : "Done Uploading — Calculate My Move"}
                 </button>
                 {reportNotice && <p role="status" style={{ fontSize: 13, color: "#214c3e", marginTop: 8, textAlign: "center" }}>{reportNotice}</p>}
+                {data.spark && (
+                  <div style={{ marginTop: 10, padding: 10, background: "#f0f6ee", borderRadius: 6, fontSize: 13, color: "#214c3e", textAlign: "center" }}>
+                    <span>Report Status: <strong>{data.spark.status === 'completed' ? 'Completed' : data.spark.status === 'running' ? 'Analyzing media...' : 'Queued'}</strong></span>
+                    {data.spark.shareUrl && (
+                      <div style={{ marginTop: 6 }}>
+                        <a href={data.spark.shareUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#214c3e", fontWeight: 700, textDecoration: "underline" }}>
+                          View Inventory Report ↗
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             </section></div>

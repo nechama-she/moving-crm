@@ -291,10 +291,26 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
         except Exception:
             pass
 
+    # Extract spark report details if available
+    spark_info = None
+    if conversation and conversation.details:
+        try:
+            conv_details = json.loads(conversation.details)
+            spark_id = conv_details.get("last_spark_id")
+            if spark_id:
+                spark_info = {
+                    "id": spark_id,
+                    "status": conv_details.get("last_spark_status", "queued"),
+                    "shareUrl": conv_details.get("last_spark_share_url"),
+                }
+        except Exception:
+            pass
+
     return {'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': lead.company.name if lead.company else 'Your moving team',
             'estimate': estimate,
+            'spark': spark_info,
             'walkthrough': meeting_dict(meeting) if meeting else None,
             'participant_url': json.loads(conversation.details).get('participantJoinUrl', '') if conversation and meeting and meeting.status == 'scheduled' else '',
             'files': [{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files]}

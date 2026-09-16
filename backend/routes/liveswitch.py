@@ -342,7 +342,8 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     saved = db.get(LeadLiveSwitch, lead_id)
     if not saved:
         raise HTTPException(409, "Start the LiveSwitch conversation first")
-    conversation_id = json.loads(saved.details).get("id")
+    details = json.loads(saved.details)
+    conversation_id = details.get("id")
     if not conversation_id:
         raise HTTPException(400, "Conversation ID is missing")
 
@@ -351,13 +352,63 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     if not template_id:
         raise HTTPException(400, "No Spark template is configured. Choose one in Settings.")
 
-    payload = {"sparkTemplateId": template_id}
+    payload = {
+        "sparkTemplateId": template_id,
+        "shareWith": ["anyone"],
+    }
     if body and "tasks" in body:
         payload["tasks"] = body["tasks"]
     if body and "shareWith" in body:
         payload["shareWith"] = body["shareWith"]
 
-    return _api_post(f"conversations/{conversation_id}/sparks", payload)
+    result = _api_post(f"conversations/{conversation_id}/sparks", payload)
+    
+    # Save spark ID and status to the lead's LiveSwitch record
+    spark_id = result.get("id") if isinstance(result, dict) else None
+    if spark_id:
+        details["last_spark_id"] = spark_id
+        details["last_spark_status"] = result.get("status", "queued")
+        details["last_spark_at"] = int(time.time())
+        saved.details = json.dumps(details)
+        db.commit()
+
+    return result
+
+
+@router.get("/leads/{lead_id}/spark-status")
+def get_lead_spark_status(
+    lead_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    if not saved:
+        return {"spark": None}
+    details = json.loads(saved.details)
+    spark_id = details.get("last_spark_id")
+    if not spark_id:
+        return {"spark": None}
+    # Poll LiveSwitch for latest status
+    try:
+        remote = _api_get(f"sparks/{spark_id}")
+        if isinstance(remote, dict) and "status" in remote:
+            details["last_spark_status"] = remote.get("status")
+            if remote.get("shareUrl"):
+                details["last_spark_share_url"] = remote.get("shareUrl")
+            saved.details = json.dumps(details)
+            db.commit()
+            return {"spark": remote}
+    except Exception:
+        pass
+    return {
+        "spark": {
+            "id": spark_id,
+            "status": details.get("last_spark_status", "queued"),
+            "shareUrl": details.get("last_spark_share_url"),
+        }
+    }
 
 
 @router.post("/leads/{lead_id}/conversation")

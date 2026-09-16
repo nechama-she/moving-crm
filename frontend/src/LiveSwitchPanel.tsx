@@ -46,6 +46,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
   const [sparkRunning, setSparkRunning] = useState(false);
   const [sparkNotice, setSparkNotice] = useState("");
   const [sparkError, setSparkError] = useState("");
+  const [sparkData, setSparkData] = useState<{ id: string; status: string; shareUrl?: string } | null>(null);
   const [smsSending, setSmsSending] = useState(false);
   const [smsNotice, setSmsNotice] = useState("");
   const [smsError, setSmsError] = useState("");
@@ -59,14 +60,42 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
     if (!response.ok) throw new Error(uploadErrorMessage(await response.text(), response.status, response.statusText));
     return response.json();
   }, [token]);
+
+  const loadSparkStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${base}/spark-status`, { headers: authHeaders(token) });
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json && json.spark) {
+        setSparkData(json.spark);
+      }
+    } catch { /* ignore */ }
+  }, [base, token]);
+
+  useEffect(() => {
+    void loadSparkStatus();
+    // Only poll while the report is active (queued or running)
+    const isPending = sparkData && (sparkData.status === "queued" || sparkData.status === "running");
+    if (!isPending) return;
+
+    const interval = setInterval(() => {
+      void loadSparkStatus();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [loadSparkStatus, sparkData]);
+
   async function runSpark() {
     if (sparkRunning) return;
     setSparkRunning(true);
     setSparkNotice("");
     setSparkError("");
     try {
-      await request(`${base}/run-spark`);
+      const res = await request(`${base}/run-spark`);
       setSparkNotice("Inventory report initiated! LiveSwitch is processing the files.");
+      if (res && res.id) {
+        setSparkData({ id: res.id, status: res.status || "queued" });
+      }
+      setTimeout(() => void loadSparkStatus(), 3000);
     } catch (err) {
       setSparkError(err instanceof Error ? err.message : "Could not run inventory report.");
     } finally {
@@ -241,6 +270,23 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
         </div>
         {sparkNotice && <p role="status" style={{ color: "#2e844a", fontSize: 13, marginTop: 8 }}>{sparkNotice}</p>}
         {sparkError && <div className="ls-error" role="alert" style={{ marginTop: 8 }}>{sparkError}</div>}
+        {sparkData && (
+          <div style={{ marginTop: 12, padding: 10, background: "#f1f5f9", borderRadius: 6, fontSize: 13, color: "#0f172a" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <span>Inventory AI Report: <strong>{sparkData.status === "completed" ? "✓ Completed" : sparkData.status === "running" ? "Analyzing..." : "Queued"}</strong></span>
+              {sparkData.shareUrl && (
+                <a
+                  href={sparkData.shareUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#0176d3", fontWeight: 700, textDecoration: "underline" }}
+                >
+                  View Report ↗
+                </a>
+              )}
+            </div>
+          </div>
+        )}
         </section>
         <CustomerPageControls leadId={leadId}/><section className="ls-card"><button className="ls-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "\u25be" : "\u25b8"} Conversation viewer</button>{expanded && (conversation.embeddedConversationUrl ? <><a href={conversation.conversationUrl} target="_blank" rel="noopener noreferrer">Open conversation in a new tab</a><iframe title="LiveSwitch conversation" src={conversation.embeddedConversationUrl} style={{ pointerEvents: resizing ? "none" : undefined }} allow="camera; microphone; fullscreen; display-capture"/></> : <p>Conversation viewer unavailable.</p>)}</section>
       </> : null}<p className="ls-notice" role="status">{notice}</p></main>
