@@ -275,10 +275,26 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
     meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first()
     files = db.query(LeadAttachment).join(PublicMoveUpload, LeadAttachment.id == PublicMoveUpload.attachment_id).filter(PublicMoveUpload.access_id == access.id).all()
     conversation = db.get(LeadLiveSwitch, lead.id)
+
+    # Resolve estimate: use published estimate if present, otherwise check lead/job price
+    estimate = None
+    if access.published_at and access.published_price is not None:
+        estimate = {'price': str(access.published_price), 'cuft': str(access.published_cuft or lead.volume or 0)}
+    elif job.price is not None and float(job.price) > 0:
+        estimate = {'price': str(job.price), 'cuft': str(lead.volume or 0)}
+    elif lead.estimated_total:
+        try:
+            parsed_total = json.loads(lead.estimated_total)
+            final_total = float(parsed_total.get('finalTotal') or 0)
+            if final_total > 0:
+                estimate = {'price': str(final_total), 'cuft': str(lead.volume or 0)}
+        except Exception:
+            pass
+
     return {'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': lead.company.name if lead.company else 'Your moving team',
-            'estimate': {'price': str(access.published_price), 'cuft': str(access.published_cuft)} if access.published_at else None,
+            'estimate': estimate,
             'walkthrough': meeting_dict(meeting) if meeting else None,
             'participant_url': json.loads(conversation.details).get('participantJoinUrl', '') if conversation and meeting and meeting.status == 'scheduled' else '',
             'files': [{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files]}
@@ -348,6 +364,24 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
 
     db.commit()
     return details(access, db)
+
+
+@router.post('/api/public-moves/{access_id}/generate-inventory-report')
+def customer_generate_inventory_report(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from routes.liveswitch import trigger_lead_spark
+    # Verify that this customer actually uploaded files
+    count = db.query(func.count(LeadAttachment.id)).join(
+        PublicMoveUpload, LeadAttachment.id == PublicMoveUpload.attachment_id
+    ).filter(PublicMoveUpload.access_id == access.id).scalar() or 0
+    if count == 0:
+        raise HTTPException(400, "Please upload photos or videos of your items before generating a report.")
+
+    try:
+        return trigger_lead_spark(access.lead_id, db=db)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Could not generate inventory report: {exc}") from exc
 
 
 class MeetingBody(BaseModel):

@@ -16,6 +16,8 @@ export default function CustomerMovePage() {
   const [data,setData]=useState<Details>(),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
   const [editingMove,setEditingMove]=useState(false);
   const [moveDraft,setMoveDraft]=useState({name:'',phone:'',email:'',move_date:'',pickup:'',delivery:''});
+  const [reportState,setReportState]=useState<'idle'|'running'|'done'>('idle');
+  const [reportNotice,setReportNotice]=useState('');
   const [resendAt,setResendAt]=useState(0),[clock,setClock]=useState(Date.now());
   const previews=useRef<string[]>([]);
   const base=`${API_BASE}/api/public-moves/${accessId}`;
@@ -197,7 +199,7 @@ export default function CustomerMovePage() {
               <div className="cm-estimate">
                 <span>{data.estimate?'Your moving estimate':'Your estimate'}</span>
                 <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):'We\'re working on it.'}</strong>
-                <p>{data.estimate?`${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated`:'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+                <p>{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
               </div>
             </section>
             {error&&<div className="cm-error" role="alert">{error}</div>}
@@ -266,7 +268,33 @@ export default function CustomerMovePage() {
               ))}
             </div>
             <button className="cm-primary" disabled={busy||!files.some(f=>['Ready','Try again'].includes(f.status))} onClick={()=>void upload()}>{busy?'Please wait...':'Upload files'}</button>
-            {data.files.length>0&&<details><summary>{data.files.length} saved files</summary>{data.files.map(file=><p key={file.id}>{file.name}</p>)}</details>}</section></div>
+            {data.files.length>0&&<details><summary>{data.files.length} saved files</summary>{data.files.map(file=><p key={file.id}>{file.name}</p>)}</details>}
+            {data.files.length>0 && (
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px dashed #d2decb" }}>
+                <button
+                  type="button"
+                  className="cm-primary"
+                  style={{ width: "100%", background: "#214c3e" }}
+                  disabled={busy || reportState === 'running'}
+                  onClick={async () => {
+                    setReportState('running');
+                    setReportNotice('');
+                    try {
+                      await call('/generate-inventory-report');
+                      setReportState('done');
+                      setReportNotice("We're analyzing your photos and videos to calculate your total inventory volume.");
+                    } catch (err) {
+                      setReportState('idle');
+                      setError((err as Error).message);
+                    }
+                  }}
+                >
+                  {reportState === 'running' ? 'Processing inventory...' : reportState === 'done' ? '✓ Inventory report requested' : "Done Uploading — Calculate My Move"}
+                </button>
+                {reportNotice && <p role="status" style={{ fontSize: 13, color: "#214c3e", marginTop: 8, textAlign: "center" }}>{reportNotice}</p>}
+              </div>
+            )}
+            </section></div>
             <section className="cm-walkthrough"><div><div className="cm-eyebrow">PREFER TO SHOW US AROUND?</div><h2>Let's take a live<br/>video walkthrough.</h2><p>Walk us through your home from your phone.<br/>Our team will help you plan what comes next.</p></div><div>{data.walkthrough&&!rescheduling?<><span className="cm-meeting-status">{({requested:'Requested',scheduled:'Approved',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status]||data.walkthrough.status}</span><h3>{data.walkthrough.status==='scheduled'?'Your video walkthrough':'Video walkthrough request'}</h3><p className="cm-meeting-time">{meetingTime(data.walkthrough)}</p>{data.walkthrough.status==='scheduled'&&data.participant_url&&<a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join video walkthrough</a>}{['requested','scheduled'].includes(data.walkthrough.status)&&<button type="button" className="cm-reschedule" onClick={()=>{setAvailability('');setRescheduling(true);}}>Reschedule</button>}</>:<form onSubmit={e=>{e.preventDefault();void walkthrough();}}><MeetingTimePicker onChange={setAvailability} availabilityUrl={base+"/availability"} linkKey={key} session={session} moveDate={data.move_date || null} /><button className="cm-primary" disabled={busy||!availability.trim()}>{rescheduling?'Request new time':'Request a video walkthrough'}</button>{rescheduling&&<button type="button" className="cm-reschedule" disabled={busy} onClick={()=>setRescheduling(false)}>Cancel</button>}{requested&&<p role="status">Request saved.</p>}</form>}</div></section>
             <footer className="cm-footer">Your move. Your pace. We're here to help.</footer>
           </>

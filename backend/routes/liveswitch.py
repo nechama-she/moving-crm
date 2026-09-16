@@ -335,7 +335,11 @@ def run_spark_on_conversation(
 ):
     _ensure_not_dispatch_write(user)
     lead = _get_visible_lead_or_404(lead_id, user, db)
-    saved = db.get(LeadLiveSwitch, lead.id)
+    return trigger_lead_spark(lead.id, body, db)
+
+
+def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = None):
+    saved = db.get(LeadLiveSwitch, lead_id)
     if not saved:
         raise HTTPException(409, "Start the LiveSwitch conversation first")
     conversation_id = json.loads(saved.details).get("id")

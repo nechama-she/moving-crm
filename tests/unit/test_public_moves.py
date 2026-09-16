@@ -155,9 +155,9 @@ def test_request_is_idempotent_and_estimate_is_published_snapshot(portal):
     mod.staff_access=lambda *args: (lead,access)
     mod._read_job_route=lambda db,job: ('A',[],'B')
     user=SimpleNamespace(role='admin')
-    mod.update_page(lead.id,mod.StaffPagePatch(price='1234.50',cuft='500'),user,db)
+    mod.update_page(lead.id,mod.StaffPagePatch(cuft='500'),user,db)
     assert mod.details(access,db)['estimate'] is None
-    mod.update_page(lead.id,mod.StaffPagePatch(publish=True),user,db)
+    mod.update_page(lead.id,mod.StaffPagePatch(price='1234.50',publish=True),user,db)
     assert mod.details(access,db)['estimate']=={'price':'1234.50','cuft':'500.00'}
     mod.update_page(lead.id,mod.StaffPagePatch(price='2000'),user,db)
     assert mod.details(access,db)['estimate']['price']=='1234.50'

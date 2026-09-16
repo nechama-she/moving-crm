@@ -43,6 +43,9 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
   const [resizing, setResizing] = useState(false);
   const resizeStart = useRef<{ pointerId: number; x: number; width: number } | null>(null);
   const [notice, setNotice] = useState("");
+  const [sparkRunning, setSparkRunning] = useState(false);
+  const [sparkNotice, setSparkNotice] = useState("");
+  const [sparkError, setSparkError] = useState("");
   const [smsSending, setSmsSending] = useState(false);
   const [smsNotice, setSmsNotice] = useState("");
   const [smsError, setSmsError] = useState("");
@@ -56,6 +59,20 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
     if (!response.ok) throw new Error(uploadErrorMessage(await response.text(), response.status, response.statusText));
     return response.json();
   }, [token]);
+  async function runSpark() {
+    if (sparkRunning) return;
+    setSparkRunning(true);
+    setSparkNotice("");
+    setSparkError("");
+    try {
+      await request(`${base}/run-spark`);
+      setSparkNotice("Inventory report initiated! LiveSwitch is processing the files.");
+    } catch (err) {
+      setSparkError(err instanceof Error ? err.message : "Could not run inventory report.");
+    } finally {
+      setSparkRunning(false);
+    }
+  }
   async function sendParticipantSms() {
     if (smsRunning.current) return;
     smsRunning.current = true;
@@ -209,7 +226,22 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
         <section className="ls-card"><h3>Add Photos, Documents, or Videos</h3><p>Add files right from your device.</p><label className="ls-picker">+ Choose files<input type="file" multiple disabled={busy} onChange={e => { choose(e.target.files); e.target.value = ""; }}/></label><small>All file types</small>
         {items.length > 0 && <p role="status">{completed} of {items.length} files uploaded{completed > 0 ? ". LiveSwitch may take a moment to process them." : ""}</p>}
         <CustomerPageControls leadId={leadId} section="files"/><div className="ls-files">{items.map(item => <article key={item.id}>{item.preview ? <img src={item.preview} alt=""/> : <span className="ls-file-icon">{item.type.startsWith("video/") ? "Video" : "File"}</span>}<div className="ls-file-content"><strong title={item.name}>{item.name}</strong><small>{(item.file.size / 1024 / 1024).toFixed(1)} MB   {item.status}</small><progress value={item.progress} max={100} aria-label={`${item.name} upload progress`}/>{item.error && <details className="ls-error" style={{ overflowWrap: "anywhere" }}><summary style={{ cursor: "pointer" }}>{item.status === "Cannot upload" ? "Cannot upload" : item.crm ? "LiveSwitch upload failed" : "CRM save failed"} — View error</summary><div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{item.error}</div></details>}</div>{!busy && !item.crm && !item.live && <button aria-label={`Remove ${item.name}`} onClick={() => setItems(current => current.filter(row => row.id !== item.id))}>&times;</button>}{item.crm && item.live && <span className="ls-success" aria-label="Uploaded">&#10003;</span>}</article>)}</div>
-        <div className="ls-actions"><button className="ls-primary" disabled={busy || !items.some(item => !(item.crm && item.live) && item.status !== "Cannot upload")} onClick={() => void upload()}>{busy ? "Uploading " : items.some(item => item.status === "Retry") ? "Upload / Retry failed" : "Upload files"}</button><button disabled={busy || !items.length} onClick={() => setItems(current => current.filter(item => item.crm || item.live))}>Clear selection</button></div></section>
+        <div className="ls-actions">
+          <button className="ls-primary" disabled={busy || !items.some(item => !(item.crm && item.live) && item.status !== "Cannot upload")} onClick={() => void upload()}>{busy ? "Uploading " : items.some(item => item.status === "Retry") ? "Upload / Retry failed" : "Upload files"}</button>
+          <button disabled={busy || !items.length} onClick={() => setItems(current => current.filter(item => item.crm || item.live))}>Clear selection</button>
+          <button
+            type="button"
+            className="ls-primary"
+            style={{ marginLeft: "auto", background: "#084e8a" }}
+            disabled={busy || sparkRunning}
+            onClick={() => void runSpark()}
+          >
+            {sparkRunning ? "Running Report..." : "Generate Inventory Report"}
+          </button>
+        </div>
+        {sparkNotice && <p role="status" style={{ color: "#2e844a", fontSize: 13, marginTop: 8 }}>{sparkNotice}</p>}
+        {sparkError && <div className="ls-error" role="alert" style={{ marginTop: 8 }}>{sparkError}</div>}
+        </section>
         <CustomerPageControls leadId={leadId}/><section className="ls-card"><button className="ls-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "\u25be" : "\u25b8"} Conversation viewer</button>{expanded && (conversation.embeddedConversationUrl ? <><a href={conversation.conversationUrl} target="_blank" rel="noopener noreferrer">Open conversation in a new tab</a><iframe title="LiveSwitch conversation" src={conversation.embeddedConversationUrl} style={{ pointerEvents: resizing ? "none" : undefined }} allow="camera; microphone; fullscreen; display-capture"/></> : <p>Conversation viewer unavailable.</p>)}</section>
       </> : null}<p className="ls-notice" role="status">{notice}</p></main>
     </div>
