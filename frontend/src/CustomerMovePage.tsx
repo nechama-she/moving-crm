@@ -212,14 +212,6 @@ export default function CustomerMovePage() {
                 <h1>Hi {data.name.split(' ')[0]},<br/>you're in the right place.</h1>
                 <p>Share a little more about your home.<br/>We'll take care of the estimate.</p>
               </div>
-              <div className="cm-estimate">
-                <span>{data.estimate?'Your moving estimate':'Your estimate'}</span>
-                <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):'We\'re working on it.'}</strong>
-                <p>{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
-              </div>
-            </section>
-            {error&&<div className="cm-error" role="alert">{error}</div>}
-            <div className="cm-columns">
               <section className="cm-card cm-route">
                 <div className="cm-route-header">
                   <div className="cm-eyebrow">YOUR MOVE</div>
@@ -267,7 +259,10 @@ export default function CustomerMovePage() {
                   </form>
                 )}
               </section>
-            <section className="cm-card cm-upload"><div className="cm-eyebrow">SHOW US WHAT'S MOVING</div><h2>Add photos, documents<br/>or videos.</h2><p>A few photos of each room help us understand your move. Include any large or delicate items.</p><label className="cm-drop"><span aria-hidden="true">^</span><strong>Choose files</strong><small>Photos, documents or videos · Up to 100 MB each</small><input type="file" multiple disabled={busy} onChange={e=>{choose(e.target.files);e.target.value='';}}/></label>
+            </section>
+            {error&&<div className="cm-error" role="alert">{error}</div>}
+            <div className="cm-columns">
+              <section className="cm-card cm-upload"><div className="cm-eyebrow">SHOW US WHAT'S MOVING</div><h2>Add photos, documents<br/>or videos.</h2><p>A few photos of each room help us understand your move. Include any large or delicate items.</p><label className="cm-drop"><span aria-hidden="true">^</span><strong>Choose files</strong><small>Photos, documents or videos · Up to 100 MB each</small><input type="file" multiple disabled={busy} onChange={e=>{choose(e.target.files);e.target.value='';}}/></label>
             {files.length>0 && <p role="status">{files.filter(f=>f.status==='Uploaded').length} of {files.length} files uploaded</p>}
             <div className="cm-file-list">
               {files.map(item => (
@@ -325,7 +320,13 @@ export default function CustomerMovePage() {
                 )}
               </div>
             )}
-            </section></div>
+            </section>
+              <div className="cm-estimate">
+                <span>{data.estimate?'Your moving estimate':'Your estimate'}</span>
+                <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):'We\'re working on it.'}</strong>
+                <p>{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+              </div>
+            </div>
             <section className="cm-walkthrough"><div><div className="cm-eyebrow">PREFER TO SHOW US AROUND?</div><h2>Let's take a live<br/>video walkthrough.</h2><p>Walk us through your home from your phone.<br/>Our team will help you plan what comes next.</p></div><div>{data.walkthrough&&!rescheduling?<><span className="cm-meeting-status">{({requested:'Requested',scheduled:'Approved',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status]||data.walkthrough.status}</span><h3>{data.walkthrough.status==='scheduled'?'Your video walkthrough':'Video walkthrough request'}</h3><p className="cm-meeting-time">{meetingTime(data.walkthrough)}</p>{data.walkthrough.status==='scheduled'&&data.participant_url&&<a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join video walkthrough</a>}{['requested','scheduled'].includes(data.walkthrough.status)&&<button type="button" className="cm-reschedule" onClick={()=>{setAvailability('');setRescheduling(true);}}>Reschedule</button>}</>:<form onSubmit={e=>{e.preventDefault();void walkthrough();}}><MeetingTimePicker onChange={setAvailability} availabilityUrl={base+"/availability"} linkKey={key} session={session} moveDate={data.move_date || null} /><button className="cm-primary" disabled={busy||!availability.trim()}>{rescheduling?'Request new time':'Request a video walkthrough'}</button>{rescheduling&&<button type="button" className="cm-reschedule" disabled={busy} onClick={()=>setRescheduling(false)}>Cancel</button>}{requested&&<p role="status">Request saved.</p>}</form>}</div></section>
             <footer className="cm-footer">Your move. Your pace. We're here to help.</footer>
           </>
