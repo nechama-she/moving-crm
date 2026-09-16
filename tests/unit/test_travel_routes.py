@@ -27,13 +27,13 @@ def test_two_legs_and_sixty_mph_rule():
     locations = {'office': (0, 0, 'address', 'office'), 'pickup': (0, 1, 'address', 'pickup'), 'delivery': (0, 2, 'zip', 'delivery')}
     with patch.object(routes, 'locate', side_effect=lambda address: locations[address]):
         result = routes.estimate_travel('office', 'pickup', 'delivery')
-    assert result['office_to_pickup_miles'] == Decimal('69.09')
-    assert result['delivery_to_office_miles'] == Decimal('138.19')
-    assert result['total_miles'] == Decimal('207.28')
+    assert result['office_to_pickup_miles'] == Decimal('96.04')
+    assert result['delivery_to_office_miles'] == Decimal('192.08')
+    assert result['total_miles'] == Decimal('288.12')
     assert result['total_minutes'] == result['total_miles']
     assert result['travel_hours'] == result['total_miles'] / 60
     assert result['uses_zip_centers']
-    assert result['method'] == 'straight_line'
+    assert result['method'] == 'straight_line_plus_39_percent'
 
 
 def test_address_lookup_is_account_free_and_cached():
@@ -82,3 +82,14 @@ def test_blank_address_rejected_without_lookup():
     with patch.object(routes, 'locate') as locate, pytest.raises(HTTPException):
         routes.estimate_travel('', '20850', '21201')
     locate.assert_not_called()
+
+
+def test_mileage_allowance_flows_to_price_once():
+    from local_pricing import LocalSettings, LocalCalculation, calculate_local
+    with patch.object(routes, 'locate', return_value=(0, 0, 'address', 'matched')), patch.object(routes, 'straight_line_miles', side_effect=[Decimal('30'), Decimal('40')]):
+        travel = routes.estimate_travel('office', 'pickup', 'delivery')
+    assert travel['total_miles'] == Decimal('97.30')
+    quote = calculate_local(LocalSettings(), LocalCalculation(cubic_feet=100,
+        office_to_pickup_miles=travel['office_to_pickup_miles'], delivery_to_office_miles=travel['delivery_to_office_miles']))
+    assert quote['travel_hours'] == 2  # 70 miles would round to 1; adjusted 97.30 rounds to 2.
+    assert next(line for line in quote['charges'] if line['name'] == 'Travel fee')['totalCost'] == 300

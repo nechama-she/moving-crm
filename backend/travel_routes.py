@@ -62,12 +62,13 @@ def estimate_travel(office, pickup, delivery):
         raise HTTPException(400, 'Enter the company office, pickup, and delivery addresses before estimating travel.')
     with ThreadPoolExecutor(max_workers=3) as pool:
         office_location, pickup_location, delivery_location = list(pool.map(locate, addresses))
-    outbound = straight_line_miles(office_location, pickup_location)
-    inbound = straight_line_miles(delivery_location, office_location)
+    # Apply the mileage allowance once, before displaying or pricing either leg.
+    outbound = (straight_line_miles(office_location, pickup_location) * Decimal('1.39')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    inbound = (straight_line_miles(delivery_location, office_location) * Decimal('1.39')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     total = outbound + inbound
     return {'office_address': addresses[0], 'pickup_address': addresses[1], 'delivery_address': addresses[2],
             'office_to_pickup_miles': outbound, 'delivery_to_office_miles': inbound,
             'total_miles': total, 'total_minutes': total, 'travel_hours': total / 60,
-            'source': 'US Census / Zippopotam.us', 'method': 'straight_line',
+            'source': 'US Census / Zippopotam.us', 'method': 'straight_line_plus_39_percent',
             'uses_zip_centers': any(location[2] == 'zip' for location in (office_location, pickup_location, delivery_location)),
             'matched_locations': {'office': office_location[3], 'pickup': pickup_location[3], 'delivery': delivery_location[3]}}

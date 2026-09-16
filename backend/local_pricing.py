@@ -70,7 +70,7 @@ def calculate_local(settings: LocalSettings, body: LocalCalculation):
             amount = money(travel_hours * travel_rate)
             if amount:
                 charges.append({'name': 'Travel fee',
-                    'description': f'Office to pickup: {body.office_to_pickup_miles:.2f} miles; delivery to office: {body.delivery_to_office_miles:.2f} miles (approximate straight-line distance, 60 mph). {travel_hours:.0f} rounded hours at ${travel_rate:.2f}/hour',
+                    'description': f'Office to pickup: {body.office_to_pickup_miles:.2f} miles; delivery to office: {body.delivery_to_office_miles:.2f} miles (estimated mileage including 39% allowance, 60 mph). {travel_hours:.0f} rounded hours at ${travel_rate:.2f}/hour',
                     'subtotal': amount, 'discountAmount': Decimal(0), 'totalCost': amount})
         if settings.fuel_charge:
             amount = money(settings.fuel_charge)
