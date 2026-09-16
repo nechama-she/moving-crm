@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation, NavLink } from "re
 import { lazy, Suspense, useEffect, useState } from "react";
 import MainNavigation from "./MainNavigation";
 import { AuthProvider, useAuth } from "./AuthContext";
+import ErrorBoundary from "./ErrorBoundary";
 
 const CustomerMovePage = lazy(() => import("./CustomerMovePage"));
 const LiveSwitchCallbackPage = lazy(() => import("./LiveSwitchCallbackPage"));
@@ -169,7 +170,7 @@ function ProtectedRoutes() {
           <Route path="/settings/ignored-call-numbers" element={user?.role === "admin" ? <IgnoredCallNumbersPage /> : <Navigate to="/" replace />} />
           <Route path="/settings/impersonate" element={<ImpersonateUsersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/pricing" element={<PricingPage />} />
+          <Route path="/pricing" element={<ErrorBoundary><PricingPage /></ErrorBoundary>} />
           <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />
           <Route path="/leads/:leadId" element={<LeadDetail />} />
           <Route path="/change-password" element={<ChangePasswordPage />} />
@@ -184,14 +185,16 @@ function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
-          <Routes>
-            <Route path="/move/:accessId" element={<CustomerMovePage />} />
-            <Route path="/liveswitch/callback" element={<LiveSwitchCallbackPage />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/*" element={<ProtectedRoutes />} />
-          </Routes>
-        </Suspense>
+        <ErrorBoundary>
+          <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
+            <Routes>
+              <Route path="/move/:accessId" element={<CustomerMovePage />} />
+              <Route path="/liveswitch/callback" element={<LiveSwitchCallbackPage />} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/*" element={<ProtectedRoutes />} />
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
       </BrowserRouter>
     </AuthProvider>
   );

@@ -46,12 +46,13 @@ type JobContext = {
 const money = (value: number | null | undefined) =>
   value == null ? "—" : value.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
-function destinationFromAddress(address: string, options: string[], resolvedState = "", resolvedZip = ""): string {
-  const state = resolvedState || address.toUpperCase().match(/(?:,\s*|\b)([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?|\b)/)?.[1];
+function destinationFromAddress(address: string | null | undefined, options: string[] = [], resolvedState = "", resolvedZip = ""): string {
+  const safeAddress = String(address || "");
+  const state = (resolvedState || safeAddress.toUpperCase().match(/(?:,\s*|\b)([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?|\b)/)?.[1] || "").toUpperCase();
   if (!state) return "";
-  const zip = resolvedZip || address.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1] || "";
+  const zip = resolvedZip || safeAddress.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1] || "";
   const zipPrefix = zip ? Number(zip.slice(0, 2)) : null;
-  const stateOptions = options.filter((option) => option.toUpperCase() === state || option.toUpperCase().startsWith(`${state} `) || option.toUpperCase().startsWith(`${state} (`));
+  const stateOptions = (options || []).filter((option) => option && (option.toUpperCase() === state || option.toUpperCase().startsWith(`${state} `) || option.toUpperCase().startsWith(`${state} (`)));
   if (zipPrefix != null) {
     const ranged = stateOptions.find((option) => {
       const range = option.match(/(\d{2})\s*x{3}\s*-\s*(\d{2})\s*x{3}/i);
@@ -148,12 +149,12 @@ export default function PricingPage() {
       .then((row: Plan) => {
         setPlan(row);
         setDraft(structuredClone(row));
-        const options = Array.from(new Set(row.rates.map((rate) => rate.destination)));
+        const options = Array.from(new Set((row.rates || []).map((rate) => rate.destination).filter(Boolean)));
         const inferredDestination = destinationFromAddress(
-          jobContext?.job.delivery_zip || "",
+          jobContext?.job?.delivery_zip || "",
           options,
-          jobContext?.job.delivery_state || "",
-          jobContext?.job.delivery_zip_code || "",
+          jobContext?.job?.delivery_state || "",
+          jobContext?.job?.delivery_zip_code || "",
         );
         setDestination(inferredDestination || (jobContext ? "" : options[0] || ""));
         setSelectedCharges({});
@@ -166,39 +167,39 @@ export default function PricingPage() {
 
   const active = editing ? draft : plan;
   const destinations = useMemo(
-    () => Array.from(new Set((active?.rates || []).map((row) => row.destination))),
+    () => Array.from(new Set((active?.rates || []).map((row) => row.destination).filter(Boolean))),
     [active],
   );
   const bands = useMemo(
-    () => Array.from(new Set((active?.rates || []).map((row) => row.band_label))),
+    () => Array.from(new Set((active?.rates || []).map((row) => row.band_label).filter(Boolean))),
     [active],
   );
   useEffect(() => {
     if (!plan || !jobContext) return;
-    const options = Array.from(new Set(plan.rates.map((rate) => rate.destination)));
+    const options = Array.from(new Set((plan.rates || []).map((rate) => rate.destination).filter(Boolean)));
     const inferred = destinationFromAddress(
-      jobContext.job.delivery_zip,
+      jobContext.job?.delivery_zip || "",
       options,
-      jobContext.job.delivery_state,
-      jobContext.job.delivery_zip_code,
+      jobContext.job?.delivery_state || "",
+      jobContext.job?.delivery_zip_code || "",
     );
     if (inferred) setDestination(inferred);
   }, [jobContext, plan]);
   const rateRows = useMemo(() => {
     const query = search.trim().toLowerCase();
     return destinations
-      .filter((name) => !query || name.toLowerCase().includes(query))
+      .filter((name) => name && (!query || name.toLowerCase().includes(query)))
       .map((name) => ({ name, rates: (active?.rates || []).filter((row) => row.destination === name) }));
   }, [active, destinations, search]);
   const catalogRules = useMemo(() => {
-    if (!active) return [];
-    const serviceNames = active.services.map((service) => service.name.toLowerCase());
-    return active.rules.filter((rule) => {
-      const text = rule.description.toLowerCase();
+    if (!active || !active.rules) return [];
+    const serviceNames = (active.services || []).map((service) => (service.name || "").toLowerCase());
+    return (active.rules || []).filter((rule) => {
+      const text = (rule.description || "").toLowerCase();
       if (text.includes("destination & origin") && serviceNames.some((name) => name.includes("destination & origin"))) return false;
       if (text.includes("company & fuel") && !text.includes("$")) return false;
       if ((text.includes("pick up from") || text.includes("rates period") || text.includes("to area")) && !/(add|take off|reduce|ask|fee|not included)/i.test(text)) return false;
-      if (/^(rates period|exceptions?)$/i.test(rule.description.trim())) return false;
+      if (/^(rates period|exceptions?)$/i.test((rule.description || "").trim())) return false;
       return true;
     });
   }, [active]);
@@ -393,7 +394,7 @@ export default function PricingPage() {
 
         <main className="pricing-content">
           {pricingMode === "local" ? (
-            selectedId ? <LocalPricing key={`${selectedId}:${jobContext?.job.id || ""}`} planId={selectedId} companyName={plans.find(row => row.id === selectedId)?.company_name || ""} bookName={plans.find(row => row.id === selectedId)?.name || ""} job={jobContext ? { leadId: jobContext.lead.id, jobId: jobContext.job.id, name: jobContext.lead.full_name, order: jobContext.job.job_order, volume: jobContext.lead.volume, pickup: jobContext.job.pickup_zip, delivery: jobContext.job.delivery_zip, moveType: jobContext.move_type } : undefined} /> : <section className="pricing-card">{loading ? "Loading pricing?" : "Select a pricing book to set up Local pricing."}</section>
+            selectedId ? <LocalPricing key={`${selectedId}:${jobContext?.job?.id || ""}`} planId={selectedId} companyName={plans.find(row => row.id === selectedId)?.company_name || ""} bookName={plans.find(row => row.id === selectedId)?.name || ""} job={jobContext ? { leadId: jobContext.lead?.id || "", jobId: jobContext.job?.id || "", name: jobContext.lead?.full_name || "", order: jobContext.job?.job_order || 1, volume: jobContext.lead?.volume ?? null, pickup: jobContext.job?.pickup_zip || "", delivery: jobContext.job?.delivery_zip || "", moveType: jobContext.move_type || "" } : undefined} /> : <section className="pricing-card">{loading ? "Loading pricing?" : "Select a pricing book to set up Local pricing."}</section>
           ) : jobContext && jobContext.serviceability !== "supported" ? (
             <section className="pricing-card pricing-unavailable">
               <div className="pricing-unavailable-icon" aria-hidden="true">⌖</div>
@@ -609,29 +610,29 @@ export default function PricingPage() {
                 </div>
               </PricingSection>
 
-              <PricingSection title="Additional services & adjustments" count={active.services.length + catalogRules.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))}>
+              <PricingSection title="Additional services & adjustments" count={(active.services?.length || 0) + catalogRules.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))}>
                 <div className="pricing-services">
-                  {active.services.map((service, index) => (
+                  {(active.services || []).map((service, index) => (
                     <article key={service.id || index}>
                       {editing ? (
                         <>
                           <input value={service.name} onChange={(e) => patchService(index, { name: e.target.value })} />
                           <input value={service.rate_text} onChange={(e) => patchService(index, { rate_text: e.target.value })} />
                           <input value={service.comments} onChange={(e) => patchService(index, { comments: e.target.value })} />
-                          <button className="text-danger" onClick={() => patchDraft({ services: draft!.services.filter((_, idx) => idx !== index) })}>Remove</button>
+                          <button className="text-danger" onClick={() => patchDraft({ services: (draft?.services || []).filter((_, idx) => idx !== index) })}>Remove</button>
                         </>
                       ) : <><div><strong>{service.name}</strong>{service.comments ? <small>{service.comments}</small> : null}</div><b>{service.rate_text || "See note"}</b></>}
                     </article>
                   ))}
                   {catalogRules.map((rule) => {
-                    const index = active.rules.indexOf(rule);
+                    const index = (active.rules || []).indexOf(rule);
                     return (
                     <article key={rule.id || `rule-${index}`} className="pricing-service-rule">
                       {editing ? (
                         <>
                           <input value={rule.title} onChange={(e) => patchRule(index, { title: e.target.value })} />
                           <textarea value={rule.description} onChange={(e) => patchRule(index, { description: e.target.value })} />
-                          <button className="text-danger" onClick={() => patchDraft({ rules: draft!.rules.filter((_, idx) => idx !== index) })}>Remove</button>
+                          <button className="text-danger" onClick={() => patchDraft({ rules: (draft?.rules || []).filter((_, idx) => idx !== index) })}>Remove</button>
                         </>
                       ) : (
                         <>
@@ -642,8 +643,8 @@ export default function PricingPage() {
                     </article>
                     );
                   })}
-                  {editing ? <button className="add-row" onClick={() => patchDraft({ services: [...draft!.services, { name: "", rate_text: "", comments: "" }] })}>+ Add service</button> : null}
-                  {editing ? <button className="add-row" onClick={() => patchDraft({ rules: [...draft!.rules, { category: "general", title: "Pricing adjustment", description: "" }] })}>+ Add adjustment</button> : null}
+                  {editing ? <button className="add-row" onClick={() => patchDraft({ services: [...(draft?.services || []), { name: "", rate_text: "", comments: "" }] })}>+ Add service</button> : null}
+                  {editing ? <button className="add-row" onClick={() => patchDraft({ rules: [...(draft?.rules || []), { category: "general", title: "Pricing adjustment", description: "" }] })}>+ Add adjustment</button> : null}
                 </div>
               </PricingSection>
             </>
