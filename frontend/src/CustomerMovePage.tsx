@@ -281,11 +281,10 @@ export default function CustomerMovePage() {
             <button className="cm-primary" disabled={busy||!files.some(f=>['Ready','Try again'].includes(f.status))} onClick={()=>void upload()}>{busy?'Please wait...':'Upload files'}</button>
             {data.files.length>0&&<details><summary>{data.files.length} saved files</summary>{data.files.map(file=><p key={file.id}>{file.name}</p>)}</details>}
             {data.files.length>0 && (
-              <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px dashed #d2decb" }}>
+              <div className="cm-spark-box">
                 <button
                   type="button"
-                  className="cm-primary"
-                  style={{ width: "100%", background: "#214c3e" }}
+                  className="cm-primary cm-spark-btn"
                   disabled={busy || reportState === 'running'}
                   onClick={async () => {
                     setReportState('running');
@@ -302,19 +301,20 @@ export default function CustomerMovePage() {
                 >
                   {reportState === 'running' ? 'Processing inventory...' : (reportState === 'done' || data.spark) ? '✓ Inventory report requested' : "Done Uploading — Calculate My Move"}
                 </button>
-                {reportNotice && <p role="status" style={{ fontSize: 13, color: "#214c3e", marginTop: 8, textAlign: "center" }}>{reportNotice}</p>}
+                {reportNotice && <p role="status" className="cm-spark-notice">{reportNotice}</p>}
                 {data.spark && (
-                  <div style={{ marginTop: 10, padding: 10, background: "#f0f6ee", borderRadius: 6, fontSize: 13, color: "#214c3e", textAlign: "center" }}>
-                    <span>
-                      Report Status: <strong>{data.spark.status === 'completed' ? '✓ Completed' : data.spark.status === 'running' ? 'Analyzing media...' : 'Queued'}</strong>
-                      {data.spark.cuft ? ` · ${data.spark.cuft} cu ft` : ''}
-                    </span>
+                  <div className="cm-spark-card">
+                    <div className="cm-spark-status-row">
+                      <span className="cm-spark-pill">
+                        <span className={`cm-spark-dot ${data.spark.status === 'completed' ? 'dot-complete' : 'dot-pulse'}`} />
+                        {data.spark.status === 'completed' ? 'Report ready' : data.spark.status === 'running' ? 'Analyzing media...' : 'Queued'}
+                      </span>
+                      {data.spark.cuft ? <strong className="cm-spark-volume">{data.spark.cuft} cu ft</strong> : null}
+                    </div>
                     {data.spark.shareUrl && (
-                      <div style={{ marginTop: 6 }}>
-                        <a href={data.spark.shareUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#214c3e", fontWeight: 700, textDecoration: "underline" }}>
-                          View Inventory Report ↗
-                        </a>
-                      </div>
+                      <a href={data.spark.shareUrl} target="_blank" rel="noopener noreferrer" className="cm-spark-link">
+                        View Itemized Report ↗
+                      </a>
                     )}
                   </div>
                 )}
@@ -322,9 +322,23 @@ export default function CustomerMovePage() {
             )}
             </section>
               <div className="cm-estimate">
-                <span>{data.estimate?'Your moving estimate':'Your estimate'}</span>
+                <span className="cm-estimate-eyebrow">{data.estimate?'Your moving estimate':'Your estimate'}</span>
                 <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):'We\'re working on it.'}</strong>
-                <p>{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+                <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+                {data.estimate && (
+                  <div className="cm-estimate-details">
+                    <div className="cm-estimate-detail-item">
+                      <span>Status</span>
+                      <strong>Ready</strong>
+                    </div>
+                    {Number(data.estimate.cuft) > 0 && (
+                      <div className="cm-estimate-detail-item">
+                        <span>Volume</span>
+                        <strong>{Number(data.estimate.cuft).toLocaleString()} cu ft</strong>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
             <section className="cm-walkthrough"><div><div className="cm-eyebrow">PREFER TO SHOW US AROUND?</div><h2>Let's take a live<br/>video walkthrough.</h2><p>Walk us through your home from your phone.<br/>Our team will help you plan what comes next.</p></div><div>{data.walkthrough&&!rescheduling?<><span className="cm-meeting-status">{({requested:'Requested',scheduled:'Approved',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status]||data.walkthrough.status}</span><h3>{data.walkthrough.status==='scheduled'?'Your video walkthrough':'Video walkthrough request'}</h3><p className="cm-meeting-time">{meetingTime(data.walkthrough)}</p>{data.walkthrough.status==='scheduled'&&data.participant_url&&<a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join video walkthrough</a>}{['requested','scheduled'].includes(data.walkthrough.status)&&<button type="button" className="cm-reschedule" onClick={()=>{setAvailability('');setRescheduling(true);}}>Reschedule</button>}</>:<form onSubmit={e=>{e.preventDefault();void walkthrough();}}><MeetingTimePicker onChange={setAvailability} availabilityUrl={base+"/availability"} linkKey={key} session={session} moveDate={data.move_date || null} /><button className="cm-primary" disabled={busy||!availability.trim()}>{rescheduling?'Request new time':'Request a video walkthrough'}</button>{rescheduling&&<button type="button" className="cm-reschedule" disabled={busy} onClick={()=>setRescheduling(false)}>Cancel</button>}{requested&&<p role="status">Request saved.</p>}</form>}</div></section>

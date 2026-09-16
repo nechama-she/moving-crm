@@ -24,4 +24,21 @@
 
 .cm-meeting-status{display:inline-block;padding:5px 11px;border:1px solid #b7cba9;border-radius:20px;background:#f3f7ee;color:#214c3e;font-size:12px;font-weight:600}.cm-meeting-time{font-size:16px!important;color:#214c3e!important}
 
-.customer-move .cm-reschedule{border:1px solid #9fb59a;background:white;color:#214c3e;border-radius:9px;padding:12px 18px;margin:8px;font-size:13px;font-weight:600}
+.cm-spark-box{margin-top:18px;padding-top:16px;border-top:1px solid #e2e8df;display:grid;gap:10px}
+.cm-spark-btn{width:100%;background:#1d433b!important;color:#fff!important;border:0!important;padding:12px 18px!important;border-radius:10px!important;font-size:13px!important;font-weight:600!important;transition:all .15s}
+.cm-spark-btn:hover:not(:disabled){background:#16362f!important;box-shadow:0 2px 8px rgba(29,67,59,0.2)}
+.cm-spark-notice{font-size:12px;color:#214c3e;text-align:center;margin:0;line-height:1.4}
+.cm-spark-card{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:#f6f9f3;border:1px solid #dbe6d6;border-radius:10px}
+.cm-spark-status-row{display:flex;align-items:center;gap:10px}
+.cm-spark-pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#214c3e}
+.cm-spark-dot{width:7px;height:7px;border-radius:50%}
+.cm-spark-dot.dot-complete{background:#2e844a}
+.cm-spark-dot.dot-pulse{background:#00a9e8;box-shadow:0 0 0 3px rgba(0,169,232,0.2)}
+.cm-spark-volume{font-size:12px;color:#3e544b;padding-left:8px;border-left:1px solid #ccd8c8}
+.cm-spark-link{color:#1e4b3e;font-size:12px;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:3px;padding:4px 8px;border-radius:6px;background:#e7f0e3;transition:background .15s}
+.cm-spark-link:hover{background:#dbe8d6}
+.cm-estimate-eyebrow{display:block;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#4a6358}
+.cm-estimate-desc{font-size:13px;color:#50665b;margin-top:8px;line-height:1.4}
+.cm-estimate-details{margin-top:20px;padding-top:16px;border-top:1px solid #ccd9c5;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.cm-estimate-detail-item span{display:block;font-size:11px;color:#61786e;text-transform:uppercase;letter-spacing:.5px}
+.cm-estimate-detail-item strong{display:block;font-size:15px;color:#183b36;margin-top:2px}
