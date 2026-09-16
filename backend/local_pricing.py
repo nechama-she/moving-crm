@@ -60,7 +60,7 @@ def calculate_local(settings: LocalSettings, body: LocalCalculation):
     travel_rate = rate + (settings.full_pack_hourly if body.full_pack else Decimal(0)) if rate is not None else None
     charges = []
     if rate is not None:
-        charges.append({'name': 'Local moving', 'description': f'{crew} movers ? {hours:.2f} hours at ${rate:.2f}/hour',
+        charges.append({'name': 'Local moving', 'description': f'{crew} movers for {hours:.2f} hours at ${rate:.2f}/hour',
                         'subtotal': money(rate * hours), 'discountAmount': Decimal(0), 'totalCost': money(rate * hours)})
         if body.full_pack and settings.full_pack_hourly:
             amount = money(settings.full_pack_hourly * hours)

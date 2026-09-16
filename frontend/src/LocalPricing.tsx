@@ -11,7 +11,7 @@ type Quote = { travel_complete: boolean; travel_hours: number; travel_hourly_rat
 const blankSettings = (): Settings => ({ travel_hourly_rate: null, travel_in_minimum: false, fuel_charge: 99, minimum_hours: null, capacity_per_mover: null, full_pack_hourly: null, hourly_rates: Array(10).fill(null), crew_thresholds: Array(9).fill(null), truck_thresholds: Array(9).fill(null) });
 const numeric = (value: unknown): number | null => value == null || value === "" ? null : Number(value);
 const normalize = (data: Settings): Settings => ({ travel_hourly_rate: numeric(data.travel_hourly_rate), travel_in_minimum: Boolean(data.travel_in_minimum), fuel_charge: numeric(data.fuel_charge), minimum_hours: numeric(data.minimum_hours), capacity_per_mover: numeric(data.capacity_per_mover), full_pack_hourly: numeric(data.full_pack_hourly), hourly_rates: data.hourly_rates.map(numeric), crew_thresholds: data.crew_thresholds.map(numeric), truck_thresholds: data.truck_thresholds.map(numeric) });
-const money = (value: unknown) => value == null ? "?" : Number(value).toLocaleString("en-US", { style: "currency", currency: "USD" });
+const money = (value: unknown) => value == null ? "Not set" : Number(value).toLocaleString("en-US", { style: "currency", currency: "USD" });
 const number = (value: unknown) => Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 });
 async function failure(response: Response) {
   const body = await response.json().catch(() => ({}));
@@ -126,7 +126,7 @@ export default function LocalPricing({ planId, companyName, bookName, job }: { p
     const value = index == null ? draft[field] as number | null : (draft[field] as (number | null)[])[index];
     return <input aria-label={label} type="number" min={field === "hourly_rates" || field === "minimum_hours" || field === "capacity_per_mover" ? "0.01" : "0"} step={field.includes("thresholds") ? "1" : "0.01"} required={required} value={value ?? ""} placeholder="Not set" onChange={event => patch(field, numeric(event.target.value), index)} />;
   }
-  if (loading) return <section className="pricing-card" role="status">Loading local pricing?</section>;
+  if (loading) return <section className="pricing-card" role="status">Loading local pricing...</section>;
   return <div className="local-pricing">
     {job && <section className="pricing-card pricing-job-context"><div><span className="eyebrow">Pricing Job {job.order}</span><h2>{job.name}</h2><p>{job.pickup} → {job.delivery}</p></div><Link to={`/leads/${job.leadId}?job_id=${encodeURIComponent(job.jobId)}`}>Back to lead</Link></section>}
     <section className="pricing-card pricing-overview local-intro"><div><span className="eyebrow">{companyName} — {bookName}</span><h2>Local moving</h2><p>Same-state moves. One hourly rate for every day of the week.</p></div><span className="local-badge">Hourly pricing</span></section>
@@ -159,9 +159,9 @@ export default function LocalPricing({ planId, companyName, bookName, job }: { p
         {quote.travel_complete && <p className="local-hint"><strong>Billable travel: {number(quote.travel_hours)} {Number(quote.travel_hours) === 1 ? "hour" : "hours"}</strong> (nearest whole hour, minimum 1 hour).</p>}
         {quote.warning && <p role="status" className="local-warning">{quote.warning}</p>}
         {quote.total != null && <div className="local-total"><div>{quote.charges.map(line => <div className="local-charge" key={line.name}><span><strong>{line.name}</strong><small>{line.description}</small></span><b>{money(line.totalCost)}</b></div>)}<div className="local-total-bottom"><strong>{quote.travel_complete ? "Estimated total" : "Estimated total before travel"}</strong><b>{money(quote.total)}</b></div></div>
-          {job && <button className="slds-button primary" disabled={saving || travelBusy || !quote.travel_complete || Number(quote.total) <= 0 || job.moveType !== "Local"} onClick={() => void savePrice()}>{saving ? "Saving?" : "Save price"}</button>}
+          {job && <button className="slds-button primary" disabled={saving || travelBusy || !quote.travel_complete || Number(quote.total) <= 0 || job.moveType !== "Local"} onClick={() => void savePrice()}>{saving ? "Saving..." : "Save price"}</button>}
         </div>}
-      </> : <p className="local-hint" role="status">{Number(volume) > 0 ? "Calculating estimate?" : "Enter the move volume to calculate crew, trucks, hours, and price."}</p>}
+      </> : <p className="local-hint" role="status">{Number(volume) > 0 ? "Calculating estimate..." : "Enter the move volume to calculate crew, trucks, hours, and price."}</p>}
       {job && !travel && <p className="local-hint">Estimate both travel legs before saving the price.</p>}
       {job && job.moveType !== "Local" && <p className="local-warning">{job.moveType === "Long Distance" ? "This job crosses state lines. Use Long Distance pricing for this job." : "Confirm pickup and delivery addresses in the same state before saving local pricing."}</p>}
       <p className="local-hint">Estimated hours = cubic feet ÷ (movers × {settings.capacity_per_mover} cf/hour). Billable hours are at least {settings.minimum_hours}. Trucks are a planning count; no separate truck fee is included.</p>
@@ -182,11 +182,11 @@ export default function LocalPricing({ planId, companyName, bookName, job }: { p
         </div>
         <div className="local-table-scroll"><table className="local-rate-table"><caption>Hourly crew rates — Monday through Sunday</caption><thead><tr><th>Movers</th><th>Moving / hr</th><th>With full pack / hr</th><th>Capacity / hr</th><th>Use when volume exceeds</th></tr></thead><tbody>{Array.from({ length: 10 }, (_, i) => {
           const rate = active?.hourly_rates[i]; const capacity = active?.capacity_per_mover; const pack = active?.full_pack_hourly;
-          return <tr key={i}><th scope="row">{i + 1} {i ? "movers" : "mover"}</th><td>{editing ? settingInput("hourly_rates", `Hourly rate for ${i + 1} movers`, i, false) : money(rate)}</td><td>{rate != null && pack != null ? money(rate + pack) : "?"}</td><td>{capacity != null ? `${number(capacity * (i + 1))} cf` : "?"}</td><td>{i === 0 ? "Base crew" : editing ? settingInput("crew_thresholds", `Volume threshold for ${i + 1} movers`, i - 1) : active?.crew_thresholds[i - 1] != null ? `${number(active.crew_thresholds[i - 1])} cf` : "?"}</td></tr>;
+          return <tr key={i}><th scope="row">{i + 1} {i ? "movers" : "mover"}</th><td>{editing ? settingInput("hourly_rates", `Hourly rate for ${i + 1} movers`, i, false) : money(rate)}</td><td>{rate != null && pack != null ? money(rate + pack) : "Not set"}</td><td>{capacity != null ? `${number(capacity * (i + 1))} cf` : "Not set"}</td><td>{i === 0 ? "Base crew" : editing ? settingInput("crew_thresholds", `Volume threshold for ${i + 1} movers`, i - 1) : active?.crew_thresholds[i - 1] != null ? `${number(active.crew_thresholds[i - 1])} cf` : "Not set"}</td></tr>;
         })}</tbody></table></div>
         <p className="local-hint">Thresholds use greater than, so a crew increases only after its volume threshold is exceeded. Blank rates cannot be quoted.</p>
-        <details className="local-trucks" open={editing}><summary>Truck requirements <span>Volume thresholds</span></summary><div className="local-table-scroll"><table className="local-rate-table"><caption>One truck by default; add trucks at these thresholds.</caption><thead><tr><th>Trucks</th>{Array.from({ length: 9 }, (_, i) => <th key={i}>{i + 2}</th>)}</tr></thead><tbody><tr><th>Above cubic feet</th>{Array.from({ length: 9 }, (_, i) => <td key={i}>{editing ? settingInput("truck_thresholds", `Volume threshold for ${i + 2} trucks`, i) : active?.truck_thresholds[i] ?? "?"}</td>)}</tr></tbody></table></div></details>
-        {editing && <div className="local-edit-actions"><button className="slds-button primary" type="submit">{saving ? "Saving?" : "Save local settings"}</button><button type="button" className="slds-button" onClick={() => setEditing(false)}>Cancel</button></div>}
+        <details className="local-trucks" open={editing}><summary>Truck requirements <span>Volume thresholds</span></summary><div className="local-table-scroll"><table className="local-rate-table"><caption>One truck by default; add trucks at these thresholds.</caption><thead><tr><th>Trucks</th>{Array.from({ length: 9 }, (_, i) => <th key={i}>{i + 2}</th>)}</tr></thead><tbody><tr><th>Above cubic feet</th>{Array.from({ length: 9 }, (_, i) => <td key={i}>{editing ? settingInput("truck_thresholds", `Volume threshold for ${i + 2} trucks`, i) : active?.truck_thresholds[i] ?? "Not set"}</td>)}</tr></tbody></table></div></details>
+        {editing && <div className="local-edit-actions"><button className="slds-button primary" type="submit">{saving ? "Saving..." : "Save local settings"}</button><button type="button" className="slds-button" onClick={() => setEditing(false)}>Cancel</button></div>}
       </fieldset>
     </form>
   </div>;

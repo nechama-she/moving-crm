@@ -447,7 +447,7 @@ export default function PricingPage() {
                 <div className="pricing-calc-fields">
                   <label>Destination<select value={destination} onChange={(e) => { setDestination(e.target.value); calculationId.current++; setCalculating(false); setQuote(null); }}><option value="">Select a supported destination</option>{destinations.map((name) => <option key={name}>{name}</option>)}</select></label>
                   <label>Cubic feet<input type="number" min="0" value={cubicFeet} onChange={(e) => { setCubicFeet(e.target.value); calculationId.current++; setCalculating(false); setQuote(null); }} placeholder="e.g. 650" /></label>
-                  <button className="slds-button primary" disabled={!destination} onClick={() => void calculate()}>Calculate</button>
+                  <button className="slds-button primary" disabled={!destination || calculating} onClick={() => void calculate()}>{calculating ? "Calculating..." : "Calculate"}</button>
                 </div>
                 {quote ? (
                   <>
@@ -503,8 +503,8 @@ export default function PricingPage() {
                         ))}
                         <div className="pricing-quote-total"><strong>Estimated Total</strong><b>{money(detailedTotal)}</b></div>
                       </div>
-                      {quote.warning ? <p>{quote.warning}</p> : null}
-                      {jobContext && !editing && <button type="button" className="slds-button primary" disabled={savingPrice || calculating || detailedTotal <= 0 || quote.base_price == null} onClick={() => void savePrice()}>{savingPrice ? "Saving price?" : "Save price"}</button>}
+                      {quote.warning ? <p className="pricing-quote-warning" role="status">{quote.warning}</p> : null}
+                      {jobContext && !editing && <div className="pricing-quote-actions"><button type="button" className="slds-button primary" disabled={savingPrice || calculating || detailedTotal <= 0 || quote.base_price == null} onClick={() => void savePrice()}>{savingPrice ? "Saving price..." : "Save price"}</button></div>}
                     </div>
                     <div className="pricing-charge-picker">
                       <div className="pricing-charge-heading">
