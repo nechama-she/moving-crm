@@ -2,6 +2,14 @@ import { useEffect, useState } from "react";
 import { authHeaders, useAuth } from "./AuthContext";
 import { API_BASE } from "./apiConfig";
 
+type SparkTemplate = {
+  id: string;
+  name?: string;
+  title?: string;
+  description?: string;
+  codeName?: string;
+};
+
 export default function LiveSwitchSettings() {
   const { token } = useAuth();
   const [clientId, setClientId] = useState("");
@@ -9,6 +17,11 @@ export default function LiveSwitchSettings() {
   const [callback, setCallback] = useState(`${window.location.origin}/liveswitch/callback`);
   const [hasSecret, setHasSecret] = useState(false);
   const [authorized, setAuthorized] = useState(false);
+  const [sparkTemplateId, setSparkTemplateId] = useState("");
+  const [templates, setTemplates] = useState<SparkTemplate[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateNotice, setTemplateNotice] = useState("");
   const [busy, setBusy] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
@@ -20,11 +33,23 @@ export default function LiveSwitchSettings() {
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Could not load LiveSwitch settings.");
         if (!active) return;
-        setClientId(data.client_id);
+        setClientId(data.client_id || "");
         if (data.redirect_uri) setCallback(data.redirect_uri);
         setHasSecret(data.has_secret);
         setAuthorized(data.authorization_saved);
+        setSparkTemplateId(data.spark_template_id || "");
         setLoaded(true);
+
+        if (data.authorization_saved) {
+          setLoadingTemplates(true);
+          fetch(`${API_BASE}/api/liveswitch/spark-templates`, { headers: authHeaders(token) })
+            .then(res => res.ok ? res.json() : [])
+            .then(list => {
+              if (active) setTemplates(Array.isArray(list) ? list : []);
+            })
+            .catch(() => {})
+            .finally(() => { if (active) setLoadingTemplates(false); });
+        }
       })
       .catch(err => { if (active) setError(err.message); })
       .finally(() => { if (active) setBusy(false); });
@@ -35,10 +60,16 @@ export default function LiveSwitchSettings() {
     event.preventDefault();
     setBusy(true);
     setError("");
+    setTemplateNotice("");
     try {
       const saved = await fetch(`${API_BASE}/api/liveswitch/settings`, {
         method: "PUT", headers: { ...authHeaders(token), "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: clientId, client_secret: secret, redirect_uri: callback }),
+        body: JSON.stringify({
+          client_id: clientId,
+          client_secret: secret,
+          redirect_uri: callback,
+          spark_template_id: sparkTemplateId,
+        }),
       });
       if (!saved.ok) {
         const data = await saved.json();
@@ -58,11 +89,60 @@ export default function LiveSwitchSettings() {
     } finally { setBusy(false); }
   }
 
+  async function saveSparkTemplate(selectedId: string) {
+    setSparkTemplateId(selectedId);
+    setSavingTemplate(true);
+    setTemplateNotice("");
+    setError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/liveswitch/settings`, {
+        method: "PUT", headers: { ...authHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId,
+          client_secret: "",
+          redirect_uri: callback,
+          spark_template_id: selectedId,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Could not save Spark template.");
+      }
+      setTemplateNotice("Spark template saved.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save Spark template.");
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
   return <section style={{ border: "1px solid #dddbda", borderRadius: 4, background: "white", padding: 14 }}>
     <h2 style={{ margin: "0 0 8px", fontSize: 13, color: "#3e3e3c", textTransform: "uppercase" }}>LiveSwitch</h2>
     <p style={{ fontSize: 13, color: "#706e6b" }}>
       {authorized ? "LiveSwitch authorization saved. You can reconnect here if needed." : "Paste the Client ID and Client Secret from the LiveSwitch email, then connect and sign in."}
     </p>
+
+    {authorized && (
+      <div style={{ marginBottom: 16, padding: 12, background: "#f8fafc", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+        <label style={label}>Spark Template (AI Prompts)
+          <select
+            style={input}
+            value={sparkTemplateId}
+            disabled={loadingTemplates || savingTemplate}
+            onChange={(e) => void saveSparkTemplate(e.target.value)}
+          >
+            <option value="">{loadingTemplates ? "Loading templates..." : "-- Select a Spark template --"}</option>
+            {templates.map((tpl) => (
+              <option key={tpl.id} value={tpl.id}>
+                {tpl.name || tpl.title || tpl.codeName || tpl.id}
+              </option>
+            ))}
+          </select>
+        </label>
+        {templateNotice && <p style={{ color: "#2e844a", fontSize: 12, margin: "6px 0 0" }}>{templateNotice}</p>}
+      </div>
+    )}
+
     <form onSubmit={connect} style={{ display: "grid", gap: 10 }}>
       <label style={label}>Client ID
         <input style={input} value={clientId} onChange={e => setClientId(e.target.value)} required disabled={busy || !loaded} autoComplete="off" />

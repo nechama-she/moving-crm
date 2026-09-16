@@ -43,7 +43,7 @@ def test_status_does_not_disclose_secret_or_tokens(setup):
     setup.store["/test/LIVESWITCH_REFRESH_TOKEN"] = "private-refresh"
     response = setup.client.get("/api/liveswitch/settings")
     assert response.status_code == 200
-    assert response.json() == {"client_id": "client", "redirect_uri": setup.config["redirect_uri"], "has_secret": True, "authorization_saved": True}
+    assert response.json() == {"client_id": "client", "redirect_uri": setup.config["redirect_uri"], "has_secret": True, "authorization_saved": True, "spark_template_id": ""}
     assert "private-refresh" not in response.text
     assert '"secret"' not in response.text
 

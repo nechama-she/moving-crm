@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/liveswitch", tags=["LiveSwitch"])
 AUTHORIZE_URL = "https://id.liveswitch.com/authorize"
 TOKEN_URL = "https://id.liveswitch.com/oauth/token"
 AUDIENCE = "https://public-api.production.liveswitch.com/"
-SCOPES = "openid profile email offline_access conversations conversations.write contacts webhooks webhooks.write"
+SCOPES = "openid profile email offline_access conversations conversations.write contacts webhooks webhooks.write spark-templates sparks sparks.write"
 STATE_TTL_SECONDS = 300
 
 
@@ -43,8 +43,10 @@ def _connection_config() -> dict:
     except (BotoCoreError, ValueError) as exc:
         raise HTTPException(503, "Could not read LiveSwitch settings. Please try again.") from exc
     config = get_config()
-    return {key: str(config.get("LIVESWITCH_" + key.upper()) or os.getenv("LIVESWITCH_" + key.upper(), "")).strip()
+    res = {key: str(config.get("LIVESWITCH_" + key.upper()) or os.getenv("LIVESWITCH_" + key.upper(), "")).strip()
             for key in ("client_id", "client_secret", "redirect_uri")}
+    res["spark_template_id"] = str(config.get("LIVESWITCH_SPARK_TEMPLATE_ID") or os.getenv("LIVESWITCH_SPARK_TEMPLATE_ID", "")).strip()
+    return res
 
 
 def _settings() -> tuple[str, str, str]:
@@ -59,6 +61,7 @@ class ConnectionSettings(BaseModel):
     client_id: str = Field(min_length=1, max_length=512)
     client_secret: str = Field(default="", max_length=2048)
     redirect_uri: str = Field(min_length=1, max_length=2048)
+    spark_template_id: str | None = Field(default=None, max_length=512)
 
 
 @router.get("/settings")
@@ -75,14 +78,19 @@ def connection_status(admin: User = Depends(require_admin)):
     except BotoCoreError as exc:
         raise HTTPException(503, "Could not check LiveSwitch connection.") from exc
     return {"client_id": config.get("client_id", ""), "redirect_uri": config.get("redirect_uri", ""),
-            "has_secret": bool(config.get("client_secret")), "authorization_saved": token_saved}
+            "has_secret": bool(config.get("client_secret")), "authorization_saved": token_saved,
+            "spark_template_id": config.get("spark_template_id", "")}
 
 
 @router.put("/settings")
 def save_connection_settings(body: ConnectionSettings, admin: User = Depends(require_admin)):
     old = _connection_config()
-    values = {"client_id": body.client_id.strip(), "client_secret": body.client_secret.strip() or old.get("client_secret", ""),
-              "redirect_uri": body.redirect_uri.strip()}
+    values = {
+        "client_id": body.client_id.strip(),
+        "client_secret": body.client_secret.strip() or old.get("client_secret", ""),
+        "redirect_uri": body.redirect_uri.strip(),
+        "spark_template_id": (body.spark_template_id or "").strip(),
+    }
     uri = urlsplit(values["redirect_uri"])
     if (not uri.hostname or uri.username or uri.password or uri.query or uri.fragment
             or uri.path not in ("/api/liveswitch/oauth/callback", "/liveswitch/callback")
@@ -94,15 +102,26 @@ def save_connection_settings(body: ConnectionSettings, admin: User = Depends(req
         raise HTTPException(400, "Enter the Client Secret for the new Client ID.")
     try:
         ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
-        if values != old:
+        # Only invalidate token if credentials/redirect changed
+        credentials_changed = (
+            values["client_id"] != old.get("client_id") or
+            (body.client_secret.strip() and values["client_secret"] != old.get("client_secret")) or
+            values["redirect_uri"] != old.get("redirect_uri")
+        )
+        if credentials_changed:
             try:
                 ssm.delete_parameter(Name=_refresh_token_parameter())
             except ClientError as exc:
                 if exc.response.get("Error", {}).get("Code") != "ParameterNotFound":
                     raise
-            ssm.put_parameter(Name=_refresh_token_parameter().replace("LIVESWITCH_REFRESH_TOKEN", "LIVESWITCH_OAUTH_CONFIG"),
-                              Value=json.dumps(values), Type="SecureString", Overwrite=True)
             _token_cache.update(value="", expires=0.0)
+
+        ssm.put_parameter(
+            Name=_refresh_token_parameter().replace("LIVESWITCH_REFRESH_TOKEN", "LIVESWITCH_OAUTH_CONFIG"),
+            Value=json.dumps(values),
+            Type="SecureString",
+            Overwrite=True,
+        )
     except (BotoCoreError, ClientError) as exc:
         raise HTTPException(503, "Could not save LiveSwitch settings. Please try again.") from exc
     return {"saved": True}
@@ -268,6 +287,22 @@ def _access_token():
         return token
 
 
+def _api_get(path, params=None):
+    try:
+        response = httpx.get(
+            AUDIENCE + "v1/" + path,
+            params=params,
+            headers={"Authorization": "Bearer " + _access_token(), "Accept": "application/json"},
+            timeout=45,
+        )
+        if response.status_code == 401:
+            raise HTTPException(503, "LiveSwitch authorization has expired. Ask an administrator to reconnect LiveSwitch.")
+        response.raise_for_status()
+        return response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(502, "LiveSwitch could not complete the request. Please try again.") from exc
+
+
 def _api_post(path, body):
     try:
         response = httpx.post(AUDIENCE + "v1/" + path, json=body,
@@ -278,6 +313,47 @@ def _api_post(path, body):
         return response.json()
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(502, "LiveSwitch could not complete the request. Please try again.") from exc
+
+
+@router.get("/spark-templates")
+def list_spark_templates(admin: User = Depends(require_admin)):
+    data = _api_get("spark-templates")
+    # LiveSwitch returns either a list directly or an object containing an items/results array
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("items") or data.get("results") or data.get("data") or [data]
+    return []
+
+
+@router.post("/leads/{lead_id}/run-spark")
+def run_spark_on_conversation(
+    lead_id: str,
+    body: dict | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    if not saved:
+        raise HTTPException(409, "Start the LiveSwitch conversation first")
+    conversation_id = json.loads(saved.details).get("id")
+    if not conversation_id:
+        raise HTTPException(400, "Conversation ID is missing")
+
+    config = _connection_config()
+    template_id = (body and body.get("sparkTemplateId")) or config.get("spark_template_id")
+    if not template_id:
+        raise HTTPException(400, "No Spark template is configured. Choose one in Settings.")
+
+    payload = {"sparkTemplateId": template_id}
+    if body and "tasks" in body:
+        payload["tasks"] = body["tasks"]
+    if body and "shareWith" in body:
+        payload["shareWith"] = body["shareWith"]
+
+    return _api_post(f"conversations/{conversation_id}/sparks", payload)
 
 
 @router.post("/leads/{lead_id}/conversation")
