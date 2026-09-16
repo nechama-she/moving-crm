@@ -1,11 +1,12 @@
 """Local hourly pricing transcribed from the supplied rate and capacity tables."""
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
 from pydantic import BaseModel, Field, model_validator
 
 
 class LocalSettings(BaseModel):
     minimum_hours: Decimal = Field(default=Decimal('3'), gt=0, le=24, allow_inf_nan=False)
     capacity_per_mover: Decimal = Field(default=Decimal('50'), gt=0, allow_inf_nan=False)
+    # Retained for previously saved settings; travel now uses the total job hourly rate.
     travel_hourly_rate: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
     travel_in_minimum: bool = False
     fuel_charge: Decimal = Field(default=Decimal('99'), ge=0, allow_inf_nan=False)
@@ -52,9 +53,11 @@ def calculate_local(settings: LocalSettings, body: LocalCalculation):
     travel_hours = max(Decimal('1'), estimated_travel_hours.quantize(Decimal('1'), rounding=ROUND_HALF_UP)) if travel_complete else Decimal(0)
     moving_hours = body.hours if body.hours is not None else estimated_hours
     minimum_moving_hours = max(Decimal(0), settings.minimum_hours - travel_hours) if settings.travel_in_minimum else settings.minimum_hours
-    hours = max(minimum_moving_hours, moving_hours)
+    base_hours = max(minimum_moving_hours, moving_hours)
+    packing_hours = (Decimal(1) + (body.cubic_feet / 1000).to_integral_value(rounding=ROUND_CEILING)) if body.full_pack else Decimal(0)
+    hours = base_hours + packing_hours
     rate = settings.hourly_rates[crew - 1]
-    travel_rate = settings.travel_hourly_rate if settings.travel_hourly_rate is not None else rate
+    travel_rate = rate + (settings.full_pack_hourly if body.full_pack else Decimal(0)) if rate is not None else None
     charges = []
     if rate is not None:
         charges.append({'name': 'Local moving', 'description': f'{crew} movers ? {hours:.2f} hours at ${rate:.2f}/hour',
@@ -75,7 +78,7 @@ def calculate_local(settings: LocalSettings, body: LocalCalculation):
                             'subtotal': amount, 'discountAmount': Decimal(0), 'totalCost': amount})
     return {'estimated_travel_hours': estimated_travel_hours, 'travel_complete': travel_complete, 'travel_hours': travel_hours, 'travel_hourly_rate': travel_rate,
             'recommended_crew': recommended_crew, 'crew_size': crew, 'trucks': trucks,
-            'capacity': capacity, 'estimated_hours': estimated_hours, 'billable_hours': hours,
+            'capacity': capacity, 'estimated_hours': estimated_hours, 'base_hours': base_hours, 'packing_hours': packing_hours, 'billable_hours': hours,
             'hourly_rate': rate, 'full_pack_hourly': settings.full_pack_hourly if body.full_pack else Decimal(0),
             'minimum_applied': moving_hours < minimum_moving_hours,
             'charges': charges, 'total': sum((line['totalCost'] for line in charges), Decimal(0)) if rate is not None else None,

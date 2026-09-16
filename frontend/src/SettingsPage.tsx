@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { useAuth } from "./AuthContext";
+import LiveSwitchSettings from "./LiveSwitchSettings";
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -16,6 +17,7 @@ export default function SettingsPage() {
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
+        {isAdmin ? <LiveSwitchSettings /> : null}
         {canManageForemen ? <section style={card}>
           <h2 style={sectionHeader}>User Management</h2>
           <p style={desc}>{isDispatch ? "Create foremen and manage their company access." : "Create and maintain users who work in the CRM."}</p>

@@ -7,12 +7,14 @@ import hmac
 import os
 import secrets
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import boto3
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
+from botocore.exceptions import BotoCoreError, ClientError
+from pydantic import BaseModel, Field
 
 from auth import require_admin
 from config import get_config
@@ -27,14 +29,83 @@ SCOPES = "openid profile email offline_access conversations conversations.write 
 STATE_TTL_SECONDS = 300
 
 
-def _settings() -> tuple[str, str, str]:
+def _connection_config() -> dict:
+    # Read current credentials on each instance, including already-warm Lambdas.
+    try:
+        value = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1")).get_parameter(
+            Name=_refresh_token_parameter().replace("LIVESWITCH_REFRESH_TOKEN", "LIVESWITCH_OAUTH_CONFIG"),
+            WithDecryption=True,
+        )["Parameter"]["Value"]
+        return json.loads(value)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") != "ParameterNotFound":
+            raise HTTPException(503, "Could not read LiveSwitch settings. Please try again.") from exc
+    except (BotoCoreError, ValueError) as exc:
+        raise HTTPException(503, "Could not read LiveSwitch settings. Please try again.") from exc
     config = get_config()
-    client_id = str(config.get("LIVESWITCH_CLIENT_ID") or os.getenv("LIVESWITCH_CLIENT_ID", "")).strip()
-    client_secret = str(config.get("LIVESWITCH_CLIENT_SECRET") or os.getenv("LIVESWITCH_CLIENT_SECRET", "")).strip()
-    redirect_uri = str(config.get("LIVESWITCH_REDIRECT_URI") or os.getenv("LIVESWITCH_REDIRECT_URI", "")).strip()
+    return {key: str(config.get("LIVESWITCH_" + key.upper()) or os.getenv("LIVESWITCH_" + key.upper(), "")).strip()
+            for key in ("client_id", "client_secret", "redirect_uri")}
+
+
+def _settings() -> tuple[str, str, str]:
+    config = _connection_config()
+    client_id, client_secret, redirect_uri = (config.get(key, "") for key in ("client_id", "client_secret", "redirect_uri"))
     if not client_id or not client_secret or not redirect_uri:
         raise HTTPException(status_code=503, detail="LiveSwitch OAuth is not configured")
     return client_id, client_secret, redirect_uri
+
+
+class ConnectionSettings(BaseModel):
+    client_id: str = Field(min_length=1, max_length=512)
+    client_secret: str = Field(default="", max_length=2048)
+    redirect_uri: str = Field(min_length=1, max_length=2048)
+
+
+@router.get("/settings")
+def connection_status(admin: User = Depends(require_admin)):
+    config = _connection_config()
+    token_saved = False
+    try:
+        boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1")).get_parameter(
+            Name=_refresh_token_parameter(), WithDecryption=False)
+        token_saved = True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") != "ParameterNotFound":
+            raise HTTPException(503, "Could not check LiveSwitch connection.") from exc
+    except BotoCoreError as exc:
+        raise HTTPException(503, "Could not check LiveSwitch connection.") from exc
+    return {"client_id": config.get("client_id", ""), "redirect_uri": config.get("redirect_uri", ""),
+            "has_secret": bool(config.get("client_secret")), "authorization_saved": token_saved}
+
+
+@router.put("/settings")
+def save_connection_settings(body: ConnectionSettings, admin: User = Depends(require_admin)):
+    old = _connection_config()
+    values = {"client_id": body.client_id.strip(), "client_secret": body.client_secret.strip() or old.get("client_secret", ""),
+              "redirect_uri": body.redirect_uri.strip()}
+    uri = urlsplit(values["redirect_uri"])
+    if (not uri.hostname or uri.username or uri.password or uri.query or uri.fragment
+            or uri.path not in ("/api/liveswitch/oauth/callback", "/liveswitch/callback")
+            or not (uri.scheme == "https" or (uri.scheme == "http" and uri.hostname in ("localhost", "127.0.0.1")))):
+        raise HTTPException(400, "Enter the CRM callback address ending in /liveswitch/callback or /api/liveswitch/oauth/callback.")
+    if not values["client_id"] or not values["client_secret"]:
+        raise HTTPException(400, "Enter the Client ID and Client Secret from the LiveSwitch email.")
+    if values["client_id"] != old.get("client_id") and not body.client_secret.strip():
+        raise HTTPException(400, "Enter the Client Secret for the new Client ID.")
+    try:
+        ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
+        if values != old:
+            try:
+                ssm.delete_parameter(Name=_refresh_token_parameter())
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") != "ParameterNotFound":
+                    raise
+            ssm.put_parameter(Name=_refresh_token_parameter().replace("LIVESWITCH_REFRESH_TOKEN", "LIVESWITCH_OAUTH_CONFIG"),
+                              Value=json.dumps(values), Type="SecureString", Overwrite=True)
+            _token_cache.update(value="", expires=0.0)
+    except (BotoCoreError, ClientError) as exc:
+        raise HTTPException(503, "Could not save LiveSwitch settings. Please try again.") from exc
+    return {"saved": True}
 
 
 def _state_secret() -> bytes:
@@ -82,7 +153,7 @@ def _refresh_token_parameter() -> str:
 
 
 @router.get("/oauth/start")
-def start_oauth(admin: User = Depends(require_admin)):
+def start_oauth(response: Response, admin: User = Depends(require_admin)):
     client_id, _, redirect_uri = _settings()
     params = {
         'response_type': 'code',
@@ -93,18 +164,23 @@ def start_oauth(admin: User = Depends(require_admin)):
         'state': _create_state(admin.id),
     }
     authorization_url = f"{AUTHORIZE_URL}?{urlencode(params)}"
+    response.set_cookie("liveswitch_oauth_state", params["state"], max_age=STATE_TTL_SECONDS,
+                        httponly=True, secure=redirect_uri.startswith("https://"), samesite="lax", path="/api/liveswitch/oauth")
+    response.headers["Cache-Control"] = "no-store"
     return {"authorization_url": authorization_url}
 
 
 @router.get("/oauth/callback", response_class=HTMLResponse)
 async def oauth_callback(
+    request: Request,
     code: str = Query(default=""),
     state: str = Query(default=""),
     error: str = Query(default=""),
     error_description: str = Query(default=""),
 ):
-    if state:
-        _validate_state(state)
+    _validate_state(state)
+    if not hmac.compare_digest(state, request.cookies.get("liveswitch_oauth_state", "")):
+        raise HTTPException(400, "Connection attempt expired. Return to Settings and click Connect LiveSwitch again.")
     if error:
         detail = error_description.strip() or error
         raise HTTPException(status_code=400, detail=f"LiveSwitch authorization failed: {detail}")
@@ -136,11 +212,15 @@ async def oauth_callback(
         Type="SecureString",
         Overwrite=True,
     )
-    return HTMLResponse(
+    _token_cache.update(value="", expires=0.0)
+    result = HTMLResponse(
         "<!doctype html><title>LiveSwitch connected</title>"
         "<main style='font-family:system-ui;padding:40px'>"
-        "<h1>LiveSwitch connected</h1><p>You can close this window and return to the CRM.</p></main>"
+        "<h1>LiveSwitch connected</h1><p>Your CRM can now use LiveSwitch.</p><a href='/settings'>Return to Settings</a></main>",
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
     )
+    result.delete_cookie("liveswitch_oauth_state", path="/api/liveswitch/oauth")
+    return result
 
 # Lead conversation endpoints keep OAuth credentials on the server.
 from threading import Lock
@@ -165,9 +245,10 @@ def _access_token():
     if configured_token:
         return configured_token
     with _token_lock:
-        if _token_cache["expires"] > time.time():
-            return _token_cache["value"]
         client_id, client_secret, _ = _settings()
+        credential_key = hashlib.sha256((client_id + "\n" + client_secret).encode()).hexdigest()
+        if _token_cache["expires"] > time.time() and _token_cache.get("credential_key") == credential_key:
+            return _token_cache["value"]
         ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
         try:
             refresh = ssm.get_parameter(Name=_refresh_token_parameter(), WithDecryption=True)["Parameter"]["Value"]
@@ -183,7 +264,7 @@ def _access_token():
             raise HTTPException(502, "LiveSwitch connection needs to be reconnected in Settings") from exc
         if data.get("refresh_token") and data["refresh_token"] != refresh:
             ssm.put_parameter(Name=_refresh_token_parameter(), Value=data["refresh_token"], Type="SecureString", Overwrite=True)
-        _token_cache.update(value=token, expires=time.time() + max(0, int(data.get("expires_in", 300)) - 60))
+        _token_cache.update(value=token, credential_key=credential_key, expires=time.time() + max(0, int(data.get("expires_in", 300)) - 60))
         return token
 
 

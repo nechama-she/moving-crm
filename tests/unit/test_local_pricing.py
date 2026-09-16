@@ -29,11 +29,11 @@ def test_exact_screenshot_thresholds(volume, crew, trucks):
 
 def test_minimum_hours_and_full_pack_is_once_per_hour():
     quote = calculate_local(LocalSettings(), LocalCalculation(cubic_feet=100, full_pack=True))
-    assert quote['billable_hours'] == 3
+    assert quote['billable_hours'] == 5
     assert quote['hourly_rate'] == 150
     assert quote['full_pack_hourly'] == 65
-    assert quote['total'] == Decimal('744.00')
-    assert [line['totalCost'] for line in quote['charges']] == [Decimal('450.00'), Decimal('195.00'), Decimal('99.00')]
+    assert quote['total'] == Decimal('1174.00')
+    assert [line['totalCost'] for line in quote['charges']] == [Decimal('750.00'), Decimal('325.00'), Decimal('99.00')]
 
 
 def test_volume_estimate_and_no_truck_fee():
@@ -67,7 +67,7 @@ def test_configured_rate_and_full_pack_override():
     settings.hourly_rates[6] = Decimal('400')
     settings.full_pack_hourly = Decimal('70')
     quote = calculate_local(settings, LocalCalculation(cubic_feet=4500, hours=10, full_pack=True))
-    assert quote['total'] == Decimal('4799.00')
+    assert quote['total'] == Decimal('7619.00')
 
 
 @pytest.mark.parametrize('body', [{'minimum_hours': 0}, {'capacity_per_mover': 0}, {'full_pack_hourly': -1},
@@ -163,23 +163,23 @@ def test_negative_fuel_rejected():
 
 
 @pytest.mark.parametrize('packing', [False, True])
-def test_travel_charged_once_at_crew_rate_outside_minimum(packing):
+def test_travel_charged_once_at_total_hourly_rate_outside_minimum(packing):
     quote = calculate_local(LocalSettings(), LocalCalculation(cubic_feet=100, full_pack=packing,
         office_to_pickup_miles=30, delivery_to_office_miles=45))
     assert quote['travel_complete']
-    assert quote['billable_hours'] == 3
+    assert quote['billable_hours'] == (5 if packing else 3)
     assert quote['travel_hours'] == Decimal('1')
-    assert quote['travel_hourly_rate'] == 150
+    assert quote['travel_hourly_rate'] == (215 if packing else 150)
     travel = next(line for line in quote['charges'] if line['name'] == 'Travel fee')
-    assert travel['totalCost'] == Decimal('150.00')
-    assert quote['total'] == Decimal('699.00') + (Decimal('195') if packing else 0)
+    assert travel['totalCost'] == (Decimal('215.00') if packing else Decimal('150.00'))
+    assert quote['total'] == Decimal('699.00') + (Decimal('690') if packing else 0)
 
 
-def test_travel_minimum_and_rate_are_editable():
+def test_travel_minimum_is_editable_and_legacy_rate_does_not_override_total_rate():
     quote = calculate_local(LocalSettings(travel_in_minimum=True, travel_hourly_rate=100),
         LocalCalculation(cubic_feet=100, office_to_pickup_miles=30, delivery_to_office_miles=45))
     assert quote['billable_hours'] == Decimal('2')
-    assert quote['total'] == Decimal('499.00')  # 2*150 moving + 1*100 travel + 99 fuel
+    assert quote['total'] == Decimal('549.00')  # 2*150 moving + 1*150 travel + 99 fuel
 
 
 def test_missing_travel_is_incomplete_and_zero_distance_has_minimum_fee():
@@ -226,3 +226,42 @@ def test_travel_rounds_combined_hours_half_up(miles, hours):
     assert quote['travel_hours'] == hours
     assert quote['total'] == Decimal('549') + hours * 150
     assert any(line['name'] == 'Travel fee' for line in quote['charges']) == (hours > 0)
+
+
+def test_travel_full_pack_uses_configured_addon_for_all_travel_hours():
+    quote = calculate_local(LocalSettings(full_pack_hourly=80, travel_hourly_rate=100),
+        LocalCalculation(cubic_feet=100, full_pack=True,
+                         office_to_pickup_miles=45, delivery_to_office_miles=45))
+    assert quote['travel_hours'] == 2
+    assert quote['travel_hourly_rate'] == 230
+    travel = next(line for line in quote['charges'] if line['name'] == 'Travel fee')
+    assert travel['totalCost'] == 460
+    assert '$230.00/hour' in travel['description']
+    assert quote['total'] == 1709  # 5*230 moving/packing + 2*230 travel + 99 fuel
+
+
+@pytest.mark.parametrize('volume,extra', [('1', 2), ('1000', 2), ('1000.01', 3), ('1800', 3), ('2000', 3), ('2000.01', 4)])
+def test_packing_hours_round_each_additional_thousand_up(volume, extra):
+    quote = calculate_local(LocalSettings(), LocalCalculation(cubic_feet=volume, full_pack=True))
+    assert quote['packing_hours'] == extra
+    assert quote['billable_hours'] == quote['base_hours'] + extra
+    without = calculate_local(LocalSettings(), LocalCalculation(cubic_feet=volume))
+    assert without['packing_hours'] == 0
+    assert without['billable_hours'] == quote['base_hours']
+
+
+def test_full_pack_screenshot_has_twelve_hours_and_separate_travel():
+    quote = calculate_local(LocalSettings(), LocalCalculation(cubic_feet=1800, full_pack=True,
+        office_to_pickup_miles=Decimal('12.12'), delivery_to_office_miles=Decimal('25.77')))
+    assert quote['base_hours'] == 9
+    assert quote['packing_hours'] == 3
+    assert quote['billable_hours'] == 12
+    assert quote['travel_hours'] == 1
+    assert [line['totalCost'] for line in quote['charges']] == [2904, 780, 307, 99]
+    assert quote['total'] == 4090
+
+
+def test_packing_is_added_to_manual_moving_hours_even_with_zero_packing_rate():
+    quote = calculate_local(LocalSettings(full_pack_hourly=0), LocalCalculation(cubic_feet=1800, hours=4, full_pack=True))
+    assert quote['billable_hours'] == 7
+    assert quote['total'] == 1793  # 7*242 + 99

@@ -1270,6 +1270,11 @@ Resources:
               - Effect: Allow
                 Action:
                   - ssm:PutParameter
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/LIVESWITCH_REFRESH_TOKEN"
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/LIVESWITCH_OAUTH_CONFIG"
+              - Effect: Allow
+                Action: ssm:DeleteParameter
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/LIVESWITCH_REFRESH_TOKEN"
               - Effect: Allow
                 Action:
