@@ -2558,7 +2558,7 @@ export default function LeadDetail() {
                     <span className="lead-profile-action-label"> Files</span>
                   </button>
                   <button type="button" className="lead-profile-action-button" onClick={() => setLiveSwitchOpen(true)} style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", color: "#0176d3", cursor: "pointer" }}>Start a LiveSwitch</button>
-                  {liveSwitchOpen && leadId && <LiveSwitchPanel key={leadId} leadId={leadId} onClose={() => setLiveSwitchOpen(false)} onUploaded={() => { void loadAllJobAttachments(); }} />}
+                  {liveSwitchOpen && leadId && <LiveSwitchPanel key={leadId} leadId={leadId} onClose={() => setLiveSwitchOpen(false)} onUploaded={() => { void loadAllJobAttachments(); void loadLead(); }} />}
                   {canRefreshSmartMoving ? <button
                     type="button"
                     className="lead-profile-action-button lead-profile-refresh-button"

@@ -5,8 +5,11 @@ import hashlib
 import json
 import hmac
 import os
+import re
 import secrets
 import time
+from datetime import datetime
+from decimal import Decimal
 from urllib.parse import urlencode, urlsplit
 
 import boto3
@@ -375,6 +378,126 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     return result
 
 
+def fetch_and_extract_spark_report(share_url: str) -> tuple[float | None, float | None]:
+    if not share_url:
+        return None, None
+    report_id = share_url.split("/reports/")[-1].split("?")[0].strip()
+    if not report_id:
+        return None, None
+    api_url = f"https://api.scribe.production.liveswitch.com/api/public/reports/{report_id}"
+    try:
+        resp = httpx.get(api_url, timeout=15)
+        if resp.status_code != 200:
+            return None, None
+        data = resp.json()
+    except Exception:
+        return None, None
+
+    cuft = None
+    weight = None
+
+    # Method 1: from structuredResult items
+    sr = data.get("structuredResult")
+    if isinstance(sr, dict):
+        for sec in sr.get("sections", []):
+            if sec.get("id") == "item-list" and "rows" in sec:
+                total_vol = 0.0
+                total_wt = 0.0
+                for row in sec["rows"]:
+                    if row.get("going", True):
+                        qty = float(row.get("quantity") or 0)
+                        u_vol = float(row.get("unit_volume") or 0)
+                        u_wt = float(row.get("unit_weight") or 0)
+                        total_vol += qty * u_vol
+                        total_wt += qty * u_wt
+                if total_vol > 0:
+                    cuft = round(total_vol, 1)
+                    weight = round(total_wt, 1)
+
+    # Method 2: regex fallback on markdown
+    if cuft is None:
+        text = data.get("result", "")
+        pattern = r'\|\s*\*{0,2}Total\*{0,2}\s*\|(?:[^|]*\|){5}\s*([0-9.,]+)\s*\|\s*([0-9.,]+)\s*\|'
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            try:
+                cuft = float(m.group(1).replace(",", ""))
+                weight = float(m.group(2).replace(",", ""))
+            except ValueError:
+                pass
+
+    return cuft, weight
+
+
+def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> dict:
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    saved = db.get(LeadLiveSwitch, lead.id)
+    details = json.loads(saved.details) if saved and saved.details else {}
+
+    cuft, weight = fetch_and_extract_spark_report(share_url)
+    if not cuft or cuft <= 0:
+        return {"ok": False, "detail": "Could not extract volume from report"}
+
+    lead.volume = Decimal(str(cuft))
+    if weight is not None:
+        lead.weight = Decimal(str(weight))
+
+    details["spark_extracted_cuft"] = cuft
+    details["spark_extracted_weight"] = weight
+    details["last_spark_share_url"] = share_url
+    if saved:
+        saved.details = json.dumps(details)
+
+    from models import LeadJob
+    job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order).first()
+    price = None
+    if job:
+        from routes.pricing import calculate_and_save_lead_job_price
+        price = calculate_and_save_lead_job_price(lead, job, db)
+
+    from models import PublicMoveAccess
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
+    if access:
+        access.published_cuft = lead.volume
+        if job and job.price:
+            access.published_price = job.price
+            access.published_at = datetime.utcnow()
+
+    db.commit()
+    return {
+        "ok": True,
+        "cuft": cuft,
+        "weight": weight,
+        "price": price,
+    }
+
+
+class ApplyReportBody(BaseModel):
+    reportUrl: str | None = None
+
+
+@router.post("/leads/{lead_id}/apply-spark-report")
+def apply_spark_report_endpoint(
+    lead_id: str,
+    body: ApplyReportBody | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    details = json.loads(saved.details) if saved and saved.details else {}
+    url = (body and body.reportUrl) or details.get("last_spark_share_url")
+    if not url:
+        raise HTTPException(400, "No Spark report URL provided or found for this lead.")
+    res = apply_spark_results_to_lead(lead.id, url, db)
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("detail", "Failed to apply spark report."))
+    return res
+
+
 @router.get("/leads/{lead_id}/spark-status")
 def get_lead_spark_status(
     lead_id: str,
@@ -395,11 +518,24 @@ def get_lead_spark_status(
         remote = _api_get(f"sparks/{spark_id}")
         if isinstance(remote, dict) and "status" in remote:
             details["last_spark_status"] = remote.get("status")
-            if remote.get("shareUrl"):
-                details["last_spark_share_url"] = remote.get("shareUrl")
+            share_url = remote.get("shareUrl")
+            if share_url:
+                details["last_spark_share_url"] = share_url
             saved.details = json.dumps(details)
             db.commit()
-            return {"spark": remote}
+
+            # Auto-extract and calculate price if report is completed
+            if remote.get("status") == "completed" and share_url and not details.get("spark_extracted_cuft"):
+                try:
+                    apply_spark_results_to_lead(lead.id, share_url, db)
+                except Exception:
+                    pass
+
+            return {
+                "spark": remote,
+                "cuft": details.get("spark_extracted_cuft"),
+                "weight": details.get("spark_extracted_weight"),
+            }
     except Exception:
         pass
     return {
@@ -407,7 +543,9 @@ def get_lead_spark_status(
             "id": spark_id,
             "status": details.get("last_spark_status", "queued"),
             "shareUrl": details.get("last_spark_share_url"),
-        }
+        },
+        "cuft": details.get("spark_extracted_cuft"),
+        "weight": details.get("spark_extracted_weight"),
     }
 
 

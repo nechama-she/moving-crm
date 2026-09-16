@@ -19,9 +19,11 @@ from models import (
     PricingService,
     Lead,
     LeadJob,
+    LeadJobCharge,
     User,
     UserCompany,
 )
+from uuid import uuid4
 from zip_state import delivery_location
 
 router = APIRouter(prefix="/api/pricing", tags=["Pricing"])
@@ -422,14 +424,35 @@ def get_job_pricing_context(
     }
 
 
-@router.post("/{plan_id}/calculate")
-def calculate_pricing(
-    plan_id: str,
-    body: CalculationInput,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    plan = _plan_or_404(db, user, plan_id)
+def destination_from_address(address: str, options: list[str], resolved_state: str = "", resolved_zip: str = "") -> str:
+    state = resolved_state
+    if not state and address:
+        m = re.search(r'(?:,\s*|\b)([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?|\b)', address.upper())
+        if m:
+            state = m.group(1)
+    if not state:
+        return ""
+    zip_code = resolved_zip
+    if not zip_code and address:
+        m = re.search(r'\b(\d{5})(?:-\d{4})?\b', address)
+        if m:
+            zip_code = m.group(1)
+    zip_prefix = int(zip_code[:2]) if zip_code and len(zip_code) >= 2 and zip_code[:2].isdigit() else None
+    
+    state_options = [opt for opt in options if opt.upper() == state or opt.upper().startswith(f"{state} ") or opt.upper().startswith(f"{state} (")]
+    if zip_prefix is not None:
+        for opt in state_options:
+            m = re.search(r'(\d{2})\s*x{3}\s*-\s*(\d{2})\s*x{3}', opt, re.IGNORECASE)
+            if m:
+                if int(m.group(1)) <= zip_prefix <= int(m.group(2)):
+                    return opt
+    for opt in state_options:
+        if opt.upper() == state:
+            return opt
+    return state_options[0] if state_options else ""
+
+
+def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
     normalized = body.destination.strip().lower()
     candidates = [
         row
@@ -469,8 +492,6 @@ def calculate_pricing(
     charges.extend(_packing_service_charges(list(plan.services), body.cubic_feet, body.quantities))
     charges.extend(charge for rule in plan.rules for charge in _rule_charges(rule))
 
-    # The same all-jobs fee can appear in both the notes and additional services.
-    # Keep the structured service entry and suppress repeated normalized descriptions.
     deduped: list[dict] = []
     seen = set()
     for charge in charges:
@@ -541,6 +562,156 @@ def calculate_pricing(
         "total": float(total),
         "warning": "" if matched and matched.rate is not None else "No numeric transportation rate matched. Select another destination or enter manual pricing.",
     }
+
+
+def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> float | None:
+    if not lead or not job:
+        return None
+    vol = float(lead.volume) if lead.volume is not None else 0.0
+    if vol <= 0:
+        return None
+
+    company_id = job.company_id or lead.company_id
+    if not company_id:
+        from models import Company
+        default_co = db.query(Company).filter(Company.is_default_company.is_(True)).first()
+        if default_co:
+            company_id = default_co.id
+            if not job.company_id:
+                job.company_id = default_co.id
+    if not company_id:
+        return None
+
+    pickup_addr = (job.pickup_zip or "").strip()
+    delivery_addr = (job.delivery_zip or "").strip()
+
+    pickup_state, pickup_zip = delivery_location(pickup_addr)
+    delivery_state, delivery_zip = delivery_location(delivery_addr)
+
+    move_type = (lead.move_type or "").strip()
+    if not move_type and pickup_state and delivery_state:
+        move_type = "Local" if pickup_state == delivery_state else "Long Distance"
+    if not move_type:
+        move_type = "Local"
+
+    plans = (
+        db.query(PricingPlan)
+        .filter(PricingPlan.company_id == company_id, PricingPlan.active.is_(True))
+        .order_by(PricingPlan.sort_order, PricingPlan.name)
+        .all()
+    )
+    if not plans:
+        return None
+
+    def plan_matches_pickup(p: PricingPlan) -> bool:
+        if not pickup_state:
+            return False
+        cov = f"{p.pickup_regions} {p.name}".upper()
+        return re.search(rf"\b{re.escape(pickup_state)}\b", cov) is not None
+
+    matched_plan = next((p for p in plans if plan_matches_pickup(p)), None) or plans[0]
+
+    if move_type.lower() == "local":
+        from routes.local_pricing import load_settings
+        from local_pricing import LocalCalculation, calculate_local
+        settings = load_settings(matched_plan, db)
+        if not settings:
+            return None
+        calc = LocalCalculation(cubic_feet=Decimal(str(vol)))
+        quote = calculate_local(settings, calc)
+        total = quote.get("total")
+        if total is None or total <= 0:
+            return None
+
+        db.query(LeadJobCharge).filter_by(job_id=job.id).delete()
+        for idx, line in enumerate(quote.get("charges", [])):
+            if line.get("totalCost", 0) > 0:
+                db.add(LeadJobCharge(
+                    id=str(uuid4()),
+                    job_id=job.id,
+                    name=line["name"],
+                    description=line.get("description", ""),
+                    sort_order=idx,
+                    subtotal=line["subtotal"],
+                    discount_amount=line.get("discountAmount", Decimal(0)),
+                    total_cost=line["totalCost"],
+                ))
+        job.price = total
+        from routes.leads import _refresh_lead_estimated_total
+        _refresh_lead_estimated_total(lead.id, db)
+        return float(total)
+
+    else:
+        options = list(set(r.destination for r in matched_plan.rates))
+        if not options:
+            return None
+        destination = destination_from_address(delivery_addr, options, delivery_state or "", delivery_zip or "")
+        if not destination and delivery_state:
+            destination = next((opt for opt in options if delivery_state.lower() in opt.lower()), None)
+        if not destination and options:
+            destination = options[0]
+        if not destination:
+            return None
+
+        calc_body = CalculationInput(
+            destination=destination,
+            cubic_feet=int(vol),
+            move_date=job.move_date or "",
+        )
+        quote = compute_plan_calculation(matched_plan, calc_body)
+        total = quote.get("total", 0.0)
+        if total <= 0:
+            return None
+
+        lines = []
+        if quote.get("base_price", 0) > 0:
+            lines.append({
+                "name": "Transportation charge",
+                "description": f"{int(vol)} cf · {quote.get('match', {}).get('band_label', 'Transportation')}",
+                "subtotal": Decimal(str(quote["base_price"])),
+                "discount_amount": Decimal(0),
+                "total_cost": Decimal(str(quote["base_price"])),
+            })
+        for c in quote.get("charges", []):
+            if c.get("selected") and c.get("amount", 0) > 0:
+                amt = Decimal(str(c["amount"]))
+                lines.append({
+                    "name": c["name"],
+                    "description": c.get("description", ""),
+                    "subtotal": amt,
+                    "discount_amount": Decimal(0),
+                    "total_cost": amt,
+                })
+        if not lines:
+            return None
+
+        db.query(LeadJobCharge).filter_by(job_id=job.id).delete()
+        for idx, line in enumerate(lines):
+            db.add(LeadJobCharge(
+                id=str(uuid4()),
+                job_id=job.id,
+                name=line["name"],
+                description=line["description"],
+                sort_order=idx,
+                subtotal=line["subtotal"],
+                discount_amount=line["discount_amount"],
+                total_cost=line["total_cost"],
+            ))
+        job.price = sum(l["total_cost"] for l in lines)
+        from routes.leads import _refresh_lead_estimated_total
+        _refresh_lead_estimated_total(lead.id, db)
+        return float(job.price)
+
+
+@router.post("/{plan_id}/calculate")
+def calculate_pricing(
+    plan_id: str,
+    body: CalculationInput,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    plan = _plan_or_404(db, user, plan_id)
+    return compute_plan_calculation(plan, body)
 
 
 @router.get("/{plan_id}")

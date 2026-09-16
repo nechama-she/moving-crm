@@ -46,7 +46,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
   const [sparkRunning, setSparkRunning] = useState(false);
   const [sparkNotice, setSparkNotice] = useState("");
   const [sparkError, setSparkError] = useState("");
-  const [sparkData, setSparkData] = useState<{ id: string; status: string; shareUrl?: string } | null>(null);
+  const [sparkData, setSparkData] = useState<{ id: string; status: string; shareUrl?: string; cuft?: number; weight?: number } | null>(null);
   const [smsSending, setSmsSending] = useState(false);
   const [smsNotice, setSmsNotice] = useState("");
   const [smsError, setSmsError] = useState("");
@@ -67,10 +67,19 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
       if (!res.ok) return;
       const json = await res.json();
       if (json && json.spark) {
-        setSparkData(json.spark);
+        const cuftVal = json.cuft || json.spark.cuft;
+        const weightVal = json.weight || json.spark.weight;
+        setSparkData({
+          ...json.spark,
+          cuft: cuftVal,
+          weight: weightVal,
+        });
+        if (cuftVal) {
+          onUploaded(); // Updates volume, weight, and pricing on lead details
+        }
       }
     } catch { /* ignore */ }
-  }, [base, token]);
+  }, [base, token, onUploaded]);
 
   useEffect(() => {
     void loadSparkStatus();
@@ -273,7 +282,10 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
         {sparkData && (
           <div style={{ marginTop: 12, padding: 10, background: "#f1f5f9", borderRadius: 6, fontSize: 13, color: "#0f172a" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-              <span>Inventory AI Report: <strong>{sparkData.status === "completed" ? "✓ Completed" : sparkData.status === "running" ? "Analyzing..." : "Queued"}</strong></span>
+              <span>
+                Inventory AI Report: <strong>{sparkData.status === "completed" ? "✓ Completed" : sparkData.status === "running" ? "Analyzing..." : "Queued"}</strong>
+                {sparkData.cuft ? ` · ${sparkData.cuft} cu ft` : ""}
+              </span>
               {sparkData.shareUrl && (
                 <a
                   href={sparkData.shareUrl}

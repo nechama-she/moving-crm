@@ -14,7 +14,7 @@ type Details = {
   company: string;
   stops: { address: string; type: string | null }[];
   estimate: { price: string; cuft: string } | null;
-  spark?: { id: string; status: string; shareUrl?: string } | null;
+  spark?: { id: string; status: string; shareUrl?: string; cuft?: number } | null;
   walkthrough: { status: string; availability: string; scheduled_at: string | null; timezone: string } | null;
   participant_url: string;
   files: { id: string; name: string; size: number }[];
@@ -310,7 +310,10 @@ export default function CustomerMovePage() {
                 {reportNotice && <p role="status" style={{ fontSize: 13, color: "#214c3e", marginTop: 8, textAlign: "center" }}>{reportNotice}</p>}
                 {data.spark && (
                   <div style={{ marginTop: 10, padding: 10, background: "#f0f6ee", borderRadius: 6, fontSize: 13, color: "#214c3e", textAlign: "center" }}>
-                    <span>Report Status: <strong>{data.spark.status === 'completed' ? 'Completed' : data.spark.status === 'running' ? 'Analyzing media...' : 'Queued'}</strong></span>
+                    <span>
+                      Report Status: <strong>{data.spark.status === 'completed' ? '✓ Completed' : data.spark.status === 'running' ? 'Analyzing media...' : 'Queued'}</strong>
+                      {data.spark.cuft ? ` · ${data.spark.cuft} cu ft` : ''}
+                    </span>
                     {data.spark.shareUrl && (
                       <div style={{ marginTop: 6 }}>
                         <a href={data.spark.shareUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#214c3e", fontWeight: 700, textDecoration: "underline" }}>

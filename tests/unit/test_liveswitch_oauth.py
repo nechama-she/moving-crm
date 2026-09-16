@@ -1,6 +1,7 @@
 """OAuth setup tests with an in-memory SSM service; no credentials or network."""
 import ast
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -112,3 +113,31 @@ def test_settings_routes_require_admin(setup):
     assert setup.client.get("/api/liveswitch/settings").status_code == 403
     assert setup.client.put("/api/liveswitch/settings", json=setup.config).status_code == 403
     assert setup.client.get("/api/liveswitch/oauth/start").status_code == 403
+
+
+def test_fetch_and_extract_spark_report(monkeypatch):
+    source = Path(__file__).resolve().parents[2] / "backend/routes/liveswitch.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "fetch_and_extract_spark_report")
+    scope = {"httpx": MagicMock(), "re": re}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"), scope)
+    fetch_func = scope["fetch_and_extract_spark_report"]
+
+    sample_data = {
+        "structuredResult": {
+            "sections": [
+                {
+                    "id": "item-list",
+                    "rows": [
+                        {"going": True, "quantity": 2, "unit_volume": 10.0, "unit_weight": 50.0},
+                        {"going": False, "quantity": 1, "unit_volume": 100.0, "unit_weight": 500.0},
+                        {"going": True, "quantity": 1, "unit_volume": 5.5, "unit_weight": 25.0},
+                    ]
+                }
+            ]
+        }
+    }
+    scope["httpx"].get.return_value = SimpleNamespace(status_code=200, json=lambda: sample_data)
+    cuft, weight = fetch_func("https://app.scribe.liveswitch.com/public/reports/test-123")
+    assert cuft == 25.5
+    assert weight == 125.0

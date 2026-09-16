@@ -276,6 +276,41 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
     files = db.query(LeadAttachment).join(PublicMoveUpload, LeadAttachment.id == PublicMoveUpload.attachment_id).filter(PublicMoveUpload.access_id == access.id).all()
     conversation = db.get(LeadLiveSwitch, lead.id)
 
+    # Extract spark report details if available, and auto-process if finished
+    spark_info = None
+    if conversation and conversation.details:
+        try:
+            conv_details = json.loads(conversation.details)
+            spark_id = conv_details.get("last_spark_id")
+            if spark_id:
+                if conv_details.get("last_spark_status") not in ("completed", "failed", "cancelled") or not conv_details.get("spark_extracted_cuft"):
+                    from routes.liveswitch import _api_get, apply_spark_results_to_lead
+                    try:
+                        remote = _api_get(f"sparks/{spark_id}")
+                        if isinstance(remote, dict) and "status" in remote:
+                            conv_details["last_spark_status"] = remote.get("status")
+                            share_url = remote.get("shareUrl")
+                            if share_url:
+                                conv_details["last_spark_share_url"] = share_url
+                            conversation.details = json.dumps(conv_details)
+                            db.commit()
+                            if remote.get("status") == "completed" and share_url and not conv_details.get("spark_extracted_cuft"):
+                                apply_spark_results_to_lead(access.lead_id, share_url, db)
+                                # Reload lead and job for updated estimate
+                                db.refresh(lead)
+                                db.refresh(job)
+                                db.refresh(access)
+                    except Exception:
+                        pass
+                spark_info = {
+                    "id": spark_id,
+                    "status": conv_details.get("last_spark_status", "queued"),
+                    "shareUrl": conv_details.get("last_spark_share_url"),
+                    "cuft": conv_details.get("spark_extracted_cuft"),
+                }
+        except Exception:
+            pass
+
     # Resolve estimate: use published estimate if present, otherwise check lead/job price
     estimate = None
     if access.published_at and access.published_price is not None:
@@ -288,21 +323,6 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             final_total = float(parsed_total.get('finalTotal') or 0)
             if final_total > 0:
                 estimate = {'price': str(final_total), 'cuft': str(lead.volume or 0)}
-        except Exception:
-            pass
-
-    # Extract spark report details if available
-    spark_info = None
-    if conversation and conversation.details:
-        try:
-            conv_details = json.loads(conversation.details)
-            spark_id = conv_details.get("last_spark_id")
-            if spark_id:
-                spark_info = {
-                    "id": spark_id,
-                    "status": conv_details.get("last_spark_status", "queued"),
-                    "shareUrl": conv_details.get("last_spark_share_url"),
-                }
         except Exception:
             pass
 
