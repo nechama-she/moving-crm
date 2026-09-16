@@ -34,6 +34,7 @@ class Company(Base):
     name = Column(String(255), nullable=False, unique=True)
     color = Column(String(7))
     phone = Column(String(30))
+    office_address = Column(Text, nullable=False, default="", server_default="")
     facebook_page_id = Column(String(100), unique=True, index=True)
     aircall_number_id = Column(String(50))
     aircall_name = Column(String(255))
@@ -53,6 +54,7 @@ class Company(Base):
             "name": self.name,
             "color": resolve_company_color(self.name, self.color),
             "phone": self.phone or "",
+            "office_address": self.office_address or "",
             "facebook_page_id": self.facebook_page_id or "",
             "aircall_number_id": self.aircall_number_id or "",
             "aircall_name": self.aircall_name or "",

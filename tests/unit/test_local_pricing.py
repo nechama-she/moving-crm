@@ -32,8 +32,8 @@ def test_minimum_hours_and_full_pack_is_once_per_hour():
     assert quote['billable_hours'] == 3
     assert quote['hourly_rate'] == 150
     assert quote['full_pack_hourly'] == 65
-    assert quote['total'] == Decimal('645.00')
-    assert [line['totalCost'] for line in quote['charges']] == [Decimal('450.00'), Decimal('195.00')]
+    assert quote['total'] == Decimal('744.00')
+    assert [line['totalCost'] for line in quote['charges']] == [Decimal('450.00'), Decimal('195.00'), Decimal('99.00')]
 
 
 def test_volume_estimate_and_no_truck_fee():
@@ -41,8 +41,8 @@ def test_volume_estimate_and_no_truck_fee():
     assert quote['crew_size'] == 4
     assert quote['billable_hours'] == 9
     assert quote['trucks'] == 2
-    assert quote['total'] == Decimal('2178.00')
-    assert len(quote['charges']) == 1
+    assert quote['total'] == Decimal('2277.00')
+    assert len(quote['charges']) == 2
 
 
 def test_manual_crew_hours_and_minimum():
@@ -50,7 +50,7 @@ def test_manual_crew_hours_and_minimum():
     assert quote['recommended_crew'] == 4
     assert quote['crew_size'] == 6
     assert quote['billable_hours'] == 3
-    assert quote['total'] == Decimal('966.00')
+    assert quote['total'] == Decimal('1065.00')
 
 
 def test_missing_rate_blocks_quote_without_extrapolating():
@@ -67,7 +67,7 @@ def test_configured_rate_and_full_pack_override():
     settings.hourly_rates[6] = Decimal('400')
     settings.full_pack_hourly = Decimal('70')
     quote = calculate_local(settings, LocalCalculation(cubic_feet=4500, hours=10, full_pack=True))
-    assert quote['total'] == Decimal('4700.00')
+    assert quote['total'] == Decimal('4799.00')
 
 
 @pytest.mark.parametrize('body', [{'minimum_hours': 0}, {'capacity_per_mover': 0}, {'full_pack_hourly': -1},
@@ -139,3 +139,90 @@ def test_saving_settings_preserves_book_isolation(api):
     assert api.AppSetting.call_args.kwargs['key'] == 'local_pricing:book-1'
     assert LocalSettings.model_validate_json(api.AppSetting.call_args.kwargs['value']).full_pack_hourly == 90
     db.commit.assert_called_once()
+
+
+@pytest.mark.parametrize('fuel', [0, 99, 125])
+def test_fuel_is_editable_flat_fee_and_zero_is_omitted(fuel):
+    quote = calculate_local(LocalSettings(fuel_charge=fuel), LocalCalculation(cubic_feet=1800))
+    assert quote['total'] == Decimal('2178') + fuel
+    lines = [line for line in quote['charges'] if line['name'] == 'Fuel charge']
+    assert len(lines) == (1 if fuel else 0)
+    if fuel:
+        assert lines[0]['totalCost'] == fuel
+
+
+def test_existing_settings_get_default_fuel():
+    data = LocalSettings().model_dump()
+    del data['fuel_charge']
+    assert LocalSettings.model_validate(data).fuel_charge == 99
+
+
+def test_negative_fuel_rejected():
+    with pytest.raises(ValueError):
+        LocalSettings(fuel_charge=-1)
+
+
+@pytest.mark.parametrize('packing', [False, True])
+def test_travel_charged_once_at_crew_rate_outside_minimum(packing):
+    quote = calculate_local(LocalSettings(), LocalCalculation(cubic_feet=100, full_pack=packing,
+        office_to_pickup_miles=30, delivery_to_office_miles=45))
+    assert quote['travel_complete']
+    assert quote['billable_hours'] == 3
+    assert quote['travel_hours'] == Decimal('1')
+    assert quote['travel_hourly_rate'] == 150
+    travel = next(line for line in quote['charges'] if line['name'] == 'Travel fee')
+    assert travel['totalCost'] == Decimal('150.00')
+    assert quote['total'] == Decimal('699.00') + (Decimal('195') if packing else 0)
+
+
+def test_travel_minimum_and_rate_are_editable():
+    quote = calculate_local(LocalSettings(travel_in_minimum=True, travel_hourly_rate=100),
+        LocalCalculation(cubic_feet=100, office_to_pickup_miles=30, delivery_to_office_miles=45))
+    assert quote['billable_hours'] == Decimal('2')
+    assert quote['total'] == Decimal('499.00')  # 2*150 moving + 1*100 travel + 99 fuel
+
+
+def test_missing_travel_is_incomplete_and_zero_distance_has_minimum_fee():
+    missing = calculate_local(LocalSettings(), LocalCalculation(cubic_feet=100))
+    assert not missing['travel_complete']
+    zero = calculate_local(LocalSettings(), LocalCalculation(cubic_feet=100, office_to_pickup_miles=0, delivery_to_office_miles=0))
+    assert zero['travel_complete']
+    assert zero['travel_hours'] == 1
+    assert next(line for line in zero['charges'] if line['name'] == 'Travel fee')['totalCost'] == 150
+    with pytest.raises(ValueError):
+        LocalCalculation(cubic_feet=100, office_to_pickup_miles=30)
+    with pytest.raises(ValueError):
+        LocalCalculation(cubic_feet=100, office_to_pickup_miles=-1, delivery_to_office_miles=0)
+
+
+def test_travel_uses_saved_job_addresses_and_current_company_office(api):
+    plan = SimpleNamespace(id='book', company_id='company')
+    api._plan_or_404.return_value = plan
+    db = MagicMock(); db.get.return_value = SimpleNamespace(office_address='123 Office St, Rockville MD 20850')
+    get_job = MagicMock(return_value=SimpleNamespace(company_id='company', pickup_zip='456 Pickup St, Rockville MD 20850', delivery_zip='789 Delivery St, Baltimore MD 21201'))
+    estimate = MagicMock(return_value={'total_minutes': 75})
+    with patch.dict(sys.modules, {'routes.leads': SimpleNamespace(_get_job_or_404=get_job), 'travel_routes': SimpleNamespace(estimate_travel=estimate)}):
+        result = api.travel_times('book', api.TravelRequest(lead_id='lead', job_id='job', pickup='ignored', delivery='ignored'), object(), db)
+    assert result['total_minutes'] == 75
+    estimate.assert_called_once_with('123 Office St, Rockville MD 20850', '456 Pickup St, Rockville MD 20850', '789 Delivery St, Baltimore MD 21201')
+
+
+def test_travel_rejects_wrong_company_book(api):
+    api._plan_or_404.return_value = SimpleNamespace(company_id='other-company')
+    db = MagicMock(); estimate = MagicMock()
+    get_job = MagicMock(return_value=SimpleNamespace(company_id='company'))
+    with patch.dict(sys.modules, {'routes.leads': SimpleNamespace(_get_job_or_404=get_job), 'travel_routes': SimpleNamespace(estimate_travel=estimate)}):
+        with pytest.raises(HTTPException) as error:
+            api.travel_times('book', api.TravelRequest(lead_id='lead', job_id='job'), object(), db)
+    assert error.value.status_code == 400
+    estimate.assert_not_called()
+
+
+@pytest.mark.parametrize('miles,hours', [('0', 1), ('29.99', 1), ('30', 1), ('60', 1), ('89.99', 1), ('90', 2), ('150', 3)])
+def test_travel_rounds_combined_hours_half_up(miles, hours):
+    half = Decimal(miles) / 2
+    quote = calculate_local(LocalSettings(), LocalCalculation(cubic_feet=100,
+        office_to_pickup_miles=half, delivery_to_office_miles=half))
+    assert quote['travel_hours'] == hours
+    assert quote['total'] == Decimal('549') + hours * 150
+    assert any(line['name'] == 'Travel fee' for line in quote['charges']) == (hours > 0)

@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ class CompanyCreate(BaseModel):
     name: str
     color: Optional[str] = None
     phone: str = ""
+    office_address: str = Field(default="", max_length=1000)
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
     aircall_name: str = ""
@@ -89,6 +90,7 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
         name=company_name,
         color=resolve_company_color(company_name, body.color),
         phone=(body.phone or "").strip(),
+        office_address=body.office_address.strip(),
         facebook_page_id=page_id,
         aircall_number_id=(body.aircall_number_id or "").strip(),
         aircall_name=(body.aircall_name or "").strip() or None,
@@ -107,6 +109,7 @@ class CompanyUpdate(BaseModel):
     name: str
     color: Optional[str] = None
     phone: str = ""
+    office_address: str | None = Field(default=None, max_length=1000)
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
     aircall_name: str = ""
@@ -136,6 +139,8 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     company.name = company_name
     company.color = resolve_company_color(company_name, body.color)
     company.phone = (body.phone or "").strip()
+    if body.office_address is not None:
+        company.office_address = body.office_address.strip()
     company.facebook_page_id = (body.facebook_page_id or "").strip() or None
     company.aircall_number_id = (body.aircall_number_id or "").strip()
     company.aircall_name = (body.aircall_name or "").strip() or None

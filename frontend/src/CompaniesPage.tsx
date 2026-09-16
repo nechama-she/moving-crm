@@ -7,6 +7,7 @@ type Company = {
   name: string;
   color?: string;
   phone?: string;
+  office_address?: string;
   facebook_page_id?: string;
   aircall_number_id?: string;
   aircall_name?: string;
@@ -21,6 +22,7 @@ type CompanyForm = {
   name: string;
   color: string;
   phone: string;
+  office_address: string;
   facebook_page_id: string;
   aircall_number_id: string;
   aircall_name: string;
@@ -34,6 +36,7 @@ const emptyForm: CompanyForm = {
   name: "",
   color: "",
   phone: "",
+  office_address: "",
   facebook_page_id: "",
   aircall_number_id: "",
   aircall_name: "",
@@ -99,6 +102,7 @@ export default function CompaniesPage() {
       name: company.name || "",
       color: company.color || "",
       phone: company.phone || "",
+      office_address: company.office_address || "",
       facebook_page_id: company.facebook_page_id || "",
       aircall_number_id: company.aircall_number_id || "",
       aircall_name: company.aircall_name || "",
@@ -126,6 +130,7 @@ export default function CompaniesPage() {
         name: form.name.trim(),
         color: form.color.trim(),
         phone: form.phone.trim(),
+        office_address: form.office_address.trim(),
         facebook_page_id: form.facebook_page_id.trim(),
         aircall_number_id: form.aircall_number_id.trim(),
         aircall_name: form.aircall_name.trim(),
@@ -212,6 +217,7 @@ export default function CompaniesPage() {
         c.name || "",
         c.color || "",
         c.phone || "",
+        c.office_address || "",
         c.facebook_page_id || "",
         c.aircall_number_id || "",
         c.aircall_name || "",
@@ -257,6 +263,11 @@ export default function CompaniesPage() {
           <label style={fieldLabel}>
             Phone
             <input value={form.phone} onChange={(e) => updateField("phone", e.target.value)} style={inputStyle} />
+          </label>
+          <label style={{ ...fieldLabel, gridColumn: "1 / -1" }}>
+            Office address
+            <input value={form.office_address} onChange={(e) => updateField("office_address", e.target.value)} style={inputStyle} placeholder="Street address, city, state, ZIP" maxLength={1000} />
+            <small>Used for local travel time: office to pickup, and delivery back to office.</small>
           </label>
           <label style={fieldLabel}>
             Facebook Page ID
@@ -330,6 +341,7 @@ export default function CompaniesPage() {
               <th style={th}>Default company</th>
               <th style={th}>Color</th>
               <th style={th}>Phone</th>
+              <th style={th}>Office address</th>
               <th style={th}>Facebook Page ID</th>
               <th style={th}>Aircall Number ID</th>
               <th style={th}>Aircall Name</th>
@@ -343,13 +355,13 @@ export default function CompaniesPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={12}>Loading...</td>
+                <td style={td} colSpan={13}>Loading...</td>
               </tr>
             ) : null}
 
             {!loading && filteredCompanies.length === 0 ? (
               <tr>
-                <td style={td} colSpan={12}>No companies found.</td>
+                <td style={td} colSpan={13}>No companies found.</td>
               </tr>
             ) : null}
 
@@ -373,6 +385,7 @@ export default function CompaniesPage() {
                   </div>
                 </td>
                 <td style={td}>{company.phone || "-"}</td>
+                <td style={td}>{company.office_address || "Not set"}</td>
                 <td style={td}>{company.facebook_page_id || "-"}</td>
                 <td style={td}>{company.aircall_number_id || "-"}</td>
                 <td style={td}>{company.aircall_name || "-"}</td>
