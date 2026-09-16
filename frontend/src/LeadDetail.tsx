@@ -5,6 +5,7 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import StopTypesEditor from "./StopTypesEditor";
 import LiveSwitchPanel from "./LiveSwitchPanel";
+import JobDatePicker from "./JobDatePicker";
 import ChatMessages from "./ChatMessages";
 import TasksPanel from "./TasksPanel";
 import LeadLogsPanel from "./LeadLogsPanel";
@@ -288,7 +289,6 @@ const LEAD_STATUS_OPTIONS = [
 ];
 
 export default function LeadDetail() {
-  const todayInput = new Date().toLocaleDateString("en-CA");
   const { leadId } = useParams<{ leadId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -2948,14 +2948,29 @@ export default function LeadDetail() {
                           <span style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "4px 8px", background: "#f8fafc", color: "#0f172a", fontSize: 12, height: 32, boxSizing: "border-box", display: "flex", alignItems: "center" }}>{job.foreman_name}</span>
                         </label>
                       ) : null}
-                      <label style={{ width: 135 }}>
-                        Move Date
-                        <input type="date" min={todayInput} value={draft.move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, move_date: e.target.value } }))} disabled={!canEditJobs} />
-                      </label>
-                      <label style={{ width: 135 }}>
-                        Booked Date
-                        <input type="date" value={draft.booked_move_date} onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, booked_move_date: e.target.value } }))} disabled={!canEditJobs} />
-                      </label>
+                      <div style={{ width: 140 }}>
+                        <span style={{ display: "block", marginBottom: 4, fontSize: 11, fontWeight: 600, color: "#475569" }}>
+                          Move Date
+                        </span>
+                        <JobDatePicker
+                          value={draft.move_date}
+                          onChange={(dateStr) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, move_date: dateStr } }))}
+                          disabled={!canEditJobs}
+                          type="move"
+                        />
+                      </div>
+                      <div style={{ width: 140 }}>
+                        <span style={{ display: "block", marginBottom: 4, fontSize: 11, fontWeight: 600, color: "#475569" }}>
+                          Booked Date
+                        </span>
+                        <JobDatePicker
+                          value={draft.booked_move_date}
+                          onChange={(dateStr) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, booked_move_date: dateStr } }))}
+                          disabled={!canEditJobs}
+                          type="booked"
+                          alignRight
+                        />
+                      </div>
                       <div style={{ gridColumn: "1 / -1", border: "1px solid #d8e6f4", borderRadius: 12, background: "linear-gradient(180deg, #f7fbff 0%, #ffffff 100%)", boxShadow: "0 2px 8px rgba(15,23,42,.05)", overflow: "hidden" }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderBottom: "1px solid #e4eef8", background: "#edf5fd" }}>
                           <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.03em" }}>ROUTE</strong>
@@ -3310,14 +3325,27 @@ export default function LeadDetail() {
                   {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
                 </select>
               </label>
-              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
-                Move Date
-                <input type="date" value={newJobDraft.move_date} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, move_date: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
-              </label>
-              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
-                Booked Date
-                <input type="date" value={newJobDraft.booked_move_date} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, booked_move_date: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12 }} />
-              </label>
+              <div>
+                <span style={{ display: "block", marginBottom: 4, fontSize: 11, fontWeight: 600, color: "#475569" }}>
+                  Move Date
+                </span>
+                <JobDatePicker
+                  value={newJobDraft.move_date}
+                  onChange={(dateStr) => setNewJobDraft((prev) => ({ ...prev, move_date: dateStr }))}
+                  type="move"
+                />
+              </div>
+              <div>
+                <span style={{ display: "block", marginBottom: 4, fontSize: 11, fontWeight: 600, color: "#475569" }}>
+                  Booked Date
+                </span>
+                <JobDatePicker
+                  value={newJobDraft.booked_move_date}
+                  onChange={(dateStr) => setNewJobDraft((prev) => ({ ...prev, booked_move_date: dateStr }))}
+                  type="booked"
+                  alignRight
+                />
+              </div>
               </div>
               <div style={{ gridColumn: "1 / -1", border: "1px solid #d8e6f4", borderRadius: 12, background: "linear-gradient(180deg, #f7fbff 0%, #ffffff 100%)", boxShadow: "0 2px 8px rgba(15,23,42,.05)", overflow: "hidden" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderBottom: "1px solid #e4eef8", background: "#edf5fd" }}>
