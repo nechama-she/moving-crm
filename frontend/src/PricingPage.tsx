@@ -46,6 +46,22 @@ type JobContext = {
 const money = (value: number | null | undefined) =>
   value == null ? "—" : value.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
+function formatApiError(data: unknown, fallback = "An error occurred"): string {
+  if (!data) return fallback;
+  if (typeof data === "string") return data;
+  const detail = (data as { detail?: unknown; message?: unknown; error?: unknown })?.detail
+    ?? (data as { detail?: unknown; message?: unknown; error?: unknown })?.message
+    ?? (data as { detail?: unknown; message?: unknown; error?: unknown })?.error;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d: unknown) => typeof d === "string" ? d : (d as { msg?: string })?.msg || JSON.stringify(d)).join("; ") || fallback;
+  }
+  if (typeof detail === "object" && detail !== null) {
+    return (detail as { msg?: string }).msg || JSON.stringify(detail);
+  }
+  return fallback;
+}
+
 function destinationFromAddress(address: string | null | undefined, options: string[] = [], resolvedState = "", resolvedZip = ""): string {
   const safeAddress = String(address || "");
   const state = (resolvedState || safeAddress.toUpperCase().match(/(?:,\s*|\b)([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?|\b)/)?.[1] || "").toUpperCase();
@@ -97,7 +113,10 @@ export default function PricingPage() {
   useEffect(() => {
     void fetch(`${API_BASE}/api/pricing`, { headers: authHeaders(token) })
       .then(async (response) => {
-        if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Failed to load pricing");
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(formatApiError(body, "Failed to load pricing"));
+        }
         return response.json();
       })
       .then((rows: PlanSummary[]) => {
@@ -116,7 +135,10 @@ export default function PricingPage() {
     if (!leadId || !jobId) return;
     void fetch(`${API_BASE}/api/pricing/context?lead_id=${encodeURIComponent(leadId)}&job_id=${encodeURIComponent(jobId)}`, { headers: authHeaders(token) })
       .then(async (response) => {
-        if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Failed to load job pricing");
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(formatApiError(body, "Failed to load job pricing"));
+        }
         return response.json();
       })
       .then((context: JobContext) => {
@@ -143,7 +165,10 @@ export default function PricingPage() {
     setQuote(null);
     void fetch(`${API_BASE}/api/pricing/${selectedId}`, { headers: authHeaders(token) })
       .then(async (response) => {
-        if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Failed to load pricing plan");
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(formatApiError(body, "Failed to load pricing plan"));
+        }
         return response.json();
       })
       .then((row: Plan) => {
@@ -276,7 +301,10 @@ export default function PricingPage() {
         method: "PUT", headers: { ...authHeaders(token), "Content-Type": "application/json" },
         body: JSON.stringify({ price, estimatedCharges }),
       });
-      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Could not save price");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(formatApiError(body, "Could not save price"));
+      }
       setNotice(`Price saved to Job ${jobContext.job.job_order}: ${money(price)}.`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save price"); }
     finally { priceSaveRunning.current = false; setSavingPrice(false); }
@@ -297,7 +325,10 @@ export default function PricingPage() {
           rules: draft.rules, rates: draft.rates, services: draft.services,
         }),
       });
-      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Failed to save pricing");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(formatApiError(body, "Failed to save pricing"));
+      }
       const saved: Plan = await response.json();
       setPlan(saved);
       setDraft(structuredClone(saved));
@@ -330,7 +361,8 @@ export default function PricingPage() {
     if (requestId !== calculationId.current) return;
     if (!response.ok) {
       setQuote(null);
-      setError((await response.json().catch(() => ({}))).detail || "Could not calculate pricing");
+      const body = await response.json().catch(() => ({}));
+      setError(formatApiError(body, "Could not calculate pricing"));
       return;
     }
     const result: Calculation = await response.json();

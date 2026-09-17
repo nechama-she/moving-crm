@@ -85,7 +85,7 @@ class PlanUpdate(BaseModel):
 
 class CalculationInput(BaseModel):
     destination: str
-    cubic_feet: int = Field(ge=0)
+    cubic_feet: float = Field(ge=0)
     move_date: str = ""
     selected_charges: dict[str, bool] = Field(default_factory=dict)
     quantities: dict[str, float] = Field(default_factory=dict)
@@ -403,6 +403,11 @@ def get_job_pricing_context(
         serviceability = "unsupported_pickup"
     else:
         serviceability = "supported"
+
+    inferred_move_type = (getattr(lead, "move_type", None) or "").strip()
+    if not inferred_move_type and pickup_state and delivery_state:
+        inferred_move_type = "Local" if pickup_state == delivery_state else "Long Distance"
+
     return {
         "lead": {
             "id": lead.id,
@@ -420,7 +425,7 @@ def get_job_pricing_context(
         "plans": [plan.summary_dict() for plan in plans],
         "recommended_plan_id": recommended.id if recommended else "",
         "serviceability": serviceability,
-        "move_type": ("Local" if pickup_state == delivery_state else "Long Distance") if pickup_state and delivery_state else "",
+        "move_type": inferred_move_type,
     }
 
 
@@ -588,7 +593,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
     pickup_state, pickup_zip = delivery_location(pickup_addr)
     delivery_state, delivery_zip = delivery_location(delivery_addr)
 
-    move_type = (lead.move_type or "").strip()
+    move_type = (getattr(lead, "move_type", None) or "").strip()
     if not move_type and pickup_state and delivery_state:
         move_type = "Local" if pickup_state == delivery_state else "Long Distance"
     if not move_type:
@@ -617,7 +622,25 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         settings = load_settings(matched_plan, db)
         if not settings:
             return None
-        calc = LocalCalculation(cubic_feet=Decimal(str(vol)))
+
+        office_to_pickup_miles = None
+        delivery_to_office_miles = None
+        from models import Company
+        company = db.get(Company, company_id)
+        if company and (company.office_address or "").strip() and pickup_addr and delivery_addr:
+            try:
+                from travel_routes import estimate_travel
+                travel_res = estimate_travel(company.office_address, pickup_addr, delivery_addr)
+                office_to_pickup_miles = travel_res.get("office_to_pickup_miles")
+                delivery_to_office_miles = travel_res.get("delivery_to_office_miles")
+            except Exception:
+                pass
+
+        calc = LocalCalculation(
+            cubic_feet=Decimal(str(vol)),
+            office_to_pickup_miles=office_to_pickup_miles,
+            delivery_to_office_miles=delivery_to_office_miles,
+        )
         quote = calculate_local(settings, calc)
         total = quote.get("total")
         if total is None or total <= 0:
@@ -727,7 +750,7 @@ def get_pricing_plan(
 def lookup_pricing(
     plan_id: str,
     destination: str = Query(min_length=1),
-    cubic_feet: int = Query(ge=0),
+    cubic_feet: float = Query(ge=0),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

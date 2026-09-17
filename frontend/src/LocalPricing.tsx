@@ -15,7 +15,14 @@ const money = (value: unknown) => value == null ? "Not set" : Number(value).toLo
 const number = (value: unknown) => Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 });
 async function failure(response: Response) {
   const body = await response.json().catch(() => ({}));
-  return typeof body.detail === "string" ? body.detail : Array.isArray(body.detail) ? body.detail.map((row: { msg: string }) => row.msg).join("; ") : "Could not complete the request. Please retry.";
+  if (typeof body.detail === "string") return body.detail;
+  if (Array.isArray(body.detail)) {
+    return body.detail.map((row: any) => typeof row === "string" ? row : row?.msg || JSON.stringify(row)).join("; ");
+  }
+  if (typeof body.detail === "object" && body.detail !== null) {
+    return body.detail.msg || JSON.stringify(body.detail);
+  }
+  return "Could not complete the request. Please retry.";
 }
 
 export default function LocalPricing({ planId, companyName, bookName, job }: { planId: string; companyName: string; bookName: string; job?: Job }) {
