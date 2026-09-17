@@ -19,6 +19,7 @@ def health():
 def get_access_logs(
     user_id: str = Query(default=""),
     ip_address: str = Query(default=""),
+    path: str = Query(default=""),
     status_filter: str = Query(default=""),  # "errors", "success", "401", "403", etc.
     method: str = Query(default=""),
     search: str = Query(default=""),
@@ -39,6 +40,9 @@ def get_access_logs(
 
     if ip_address.strip():
         query = query.filter(AccessAuditLog.ip_address.ilike(f"%{ip_address.strip()}%"))
+
+    if path.strip():
+        query = query.filter(AccessAuditLog.path == path.strip())
 
     if method.strip():
         query = query.filter(AccessAuditLog.method == method.strip().upper())

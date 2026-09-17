@@ -286,6 +286,137 @@
   font-style: italic;
 }
 
+/* Expandable rows */
+.expandable-row {
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease;
+}
+
+.expandable-row:hover td {
+  background: #f1f5f9 !important;
+}
+
+.expandable-row.row-expanded td {
+  background: #eef6ff !important;
+  border-bottom-color: #cbd5e1;
+}
+
+.expand-indicator {
+  text-align: center;
+  padding: 8px 4px !important;
+}
+
+.expand-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: #e2e8f0;
+  color: #032d60;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.expandable-row.row-expanded .expand-icon {
+  background: #0176d3;
+  color: #fff;
+}
+
+/* Nested detail panel */
+.expanded-detail-row td {
+  padding: 0 !important;
+  background: #f8fafc !important;
+}
+
+.expanded-detail-cell {
+  border-bottom: 2px solid #cbd5e1 !important;
+}
+
+.nested-requests-panel {
+  padding: 16px 20px 20px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+}
+
+.nested-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.nested-header strong {
+  font-size: 13px;
+  color: #032d60;
+}
+
+.nested-close-btn {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.nested-close-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.nested-loading,
+.nested-empty,
+.nested-error {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #64748b;
+  font-style: italic;
+}
+
+.nested-error {
+  color: #991b1b;
+}
+
+.nested-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  font-size: 11px;
+}
+
+.nested-table th {
+  background: #f1f5f9;
+  color: #475569;
+  font-weight: 700;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 8px 10px;
+  border-bottom: 1px solid #cbd5e1;
+  text-align: left;
+}
+
+.nested-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #1e293b;
+  vertical-align: middle;
+}
+
+.nested-table tr:hover td {
+  background: #fbfcfe;
+}
+
 /* Pagination */
 .access-pagination {
   display: flex;
