@@ -6,8 +6,24 @@ import "./LocalPricing.css";
 
 type Settings = { travel_hourly_rate: number | null; travel_in_minimum: boolean; fuel_charge: number | null; minimum_hours: number | null; capacity_per_mover: number | null; full_pack_hourly: number | null; hourly_rates: (number | null)[]; crew_thresholds: (number | null)[]; truck_thresholds: (number | null)[] };
 type Job = { leadId: string; jobId: string; name: string; order: number; volume: number | null; pickup: string; delivery: string; moveType: string };
+type Service = { id?: string; name: string; rate_text: string; comments: string };
+type BulkyItemPrices = { handling: string; packing: string; crating: string };
 type Travel = { office_address: string; pickup_address: string; delivery_address: string; office_to_pickup_miles: number; delivery_to_office_miles: number; total_miles: number; total_minutes: number; travel_hours: number; source: string; uses_zip_centers: boolean };
 type Quote = { travel_complete: boolean; travel_hours: number; travel_hourly_rate: number | null; recommended_crew: number; crew_size: number; trucks: number; capacity: number; estimated_hours: number; base_hours: number; packing_hours: number; billable_hours: number; hourly_rate: number | null; full_pack_hourly: number; minimum_applied: boolean; total: number | null; warning: string; charges: { name: string; description: string; subtotal: number; discountAmount: number; totalCost: number }[] };
+const BULKY_ITEM_MARKER = "__bulky_item__";
+const BULKY_ITEM_PREFIX = `${BULKY_ITEM_MARKER}:`;
+const isBulkyItem = (service: Service) => service.comments === BULKY_ITEM_MARKER || service.comments.startsWith(BULKY_ITEM_PREFIX);
+function bulkyItemPrices(service: Service): BulkyItemPrices {
+  if (service.comments.startsWith(BULKY_ITEM_PREFIX)) {
+    try {
+      const data = JSON.parse(service.comments.slice(BULKY_ITEM_PREFIX.length)) as Partial<BulkyItemPrices>;
+      return { handling: data.handling || service.rate_text || "", packing: data.packing || "", crating: data.crating || "" };
+    } catch {
+      return { handling: service.rate_text || "", packing: "", crating: "" };
+    }
+  }
+  return { handling: service.rate_text || "", packing: "", crating: "" };
+}
 const blankSettings = (): Settings => ({ travel_hourly_rate: null, travel_in_minimum: false, fuel_charge: 99, minimum_hours: null, capacity_per_mover: null, full_pack_hourly: null, hourly_rates: Array(10).fill(null), crew_thresholds: Array(9).fill(null), truck_thresholds: Array(9).fill(null) });
 const numeric = (value: unknown): number | null => value == null || value === "" ? null : Number(value);
 const normalize = (data: Settings): Settings => ({ travel_hourly_rate: numeric(data.travel_hourly_rate), travel_in_minimum: Boolean(data.travel_in_minimum), fuel_charge: numeric(data.fuel_charge), minimum_hours: numeric(data.minimum_hours), capacity_per_mover: numeric(data.capacity_per_mover), full_pack_hourly: numeric(data.full_pack_hourly), hourly_rates: data.hourly_rates.map(numeric), crew_thresholds: data.crew_thresholds.map(numeric), truck_thresholds: data.truck_thresholds.map(numeric) });
@@ -25,7 +41,7 @@ async function failure(response: Response) {
   return "Could not complete the request. Please retry.";
 }
 
-export default function LocalPricing({ planId, companyName, bookName, job }: { planId: string; companyName: string; bookName: string; job?: Job }) {
+export default function LocalPricing({ planId, companyName, bookName, job, services = [] }: { planId: string; companyName: string; bookName: string; job?: Job; services?: Service[] }) {
   const { token, user } = useAuth();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [draft, setDraft] = useState<Settings>(blankSettings);
@@ -193,6 +209,11 @@ export default function LocalPricing({ planId, companyName, bookName, job }: { p
         })}</tbody></table></div>
         <p className="local-hint">Thresholds use greater than, so a crew increases only after its volume threshold is exceeded. Blank rates cannot be quoted.</p>
         <details className="local-trucks" open={editing}><summary>Truck requirements <span>Volume thresholds</span></summary><div className="local-table-scroll"><table className="local-rate-table"><caption>One truck by default; add trucks at these thresholds.</caption><thead><tr><th>Trucks</th>{Array.from({ length: 9 }, (_, i) => <th key={i}>{i + 2}</th>)}</tr></thead><tbody><tr><th>Above cubic feet</th>{Array.from({ length: 9 }, (_, i) => <td key={i}>{editing ? settingInput("truck_thresholds", `Volume threshold for ${i + 2} trucks`, i) : active?.truck_thresholds[i] ?? "Not set"}</td>)}</tr></tbody></table></div></details>
+        {services.filter(isBulkyItem).length > 0 && <div className="local-bulky-items"><div className="local-section-heading"><span className="eyebrow">Special items</span><h3>Bulky items (50% of long-distance rate)</h3></div><div className="local-services">{services.filter(isBulkyItem).map((item) => {
+          const prices = bulkyItemPrices(item);
+          const handlingRate = prices.handling ? Number(prices.handling) * 0.5 : 0;
+          return <article key={item.id || item.name}><div><strong>{item.name}</strong><small>Handling {handlingRate ? money(handlingRate) : prices.handling || "—"} · Packing {prices.packing ? money(Number(prices.packing) * 0.5) : prices.packing || "—"} · Crating {prices.crating ? money(Number(prices.crating) * 0.5) : prices.crating || "—"}</small></div></article>;
+        })}</div></div>}
         {editing && <div className="local-edit-actions"><button className="slds-button primary" type="submit">{saving ? "Saving..." : "Save local settings"}</button><button type="button" className="slds-button" onClick={() => setEditing(false)}>Cancel</button></div>}
       </fieldset>
     </form>
