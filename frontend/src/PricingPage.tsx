@@ -43,6 +43,10 @@ type JobContext = {
   serviceability: "supported" | "unknown_pickup" | "unsupported_pickup";
 };
 
+const BULKY_ITEM_MARKER = "__bulky_item__";
+
+const isBulkyItem = (service: Service) => service.comments === BULKY_ITEM_MARKER;
+
 const money = (value: number | null | undefined) =>
   value == null ? "—" : value.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
@@ -108,7 +112,7 @@ export default function PricingPage() {
   const [manualAmounts, setManualAmounts] = useState<Record<string, number>>({});
   const [customCharges, setCustomCharges] = useState<CustomCharge[]>([]);
   const [customDiscounts, setCustomDiscounts] = useState<CustomDiscount[]>([]);
-  const [openSections, setOpenSections] = useState({ rates: true, services: true });
+  const [openSections, setOpenSections] = useState({ rates: true, bulkyItems: true, services: true });
 
   useEffect(() => {
     void fetch(`${API_BASE}/api/pricing`, { headers: authHeaders(token) })
@@ -228,6 +232,8 @@ export default function PricingPage() {
       return true;
     });
   }, [active]);
+  const bulkyItems = useMemo(() => (active?.services || []).filter(isBulkyItem), [active]);
+  const pricingServices = useMemo(() => (active?.services || []).filter((service) => !isBulkyItem(service)), [active]);
   const customChargeTotal = useMemo(
     () => customCharges.reduce((sum, charge) => sum + Math.max(0, Number(charge.amount) || 0), 0),
     [customCharges],
@@ -272,6 +278,12 @@ export default function PricingPage() {
   function patchService(index: number, patch: Partial<Service>) {
     if (!draft) return;
     patchDraft({ services: draft.services.map((row, idx) => idx === index ? { ...row, ...patch } : row) });
+  }
+  function addBulkyItem() {
+    patchDraft({ services: [...(draft?.services || []), { name: "Pool table", rate_text: "", comments: BULKY_ITEM_MARKER }] });
+  }
+  function removeService(index: number) {
+    patchDraft({ services: (draft?.services || []).filter((_, idx) => idx !== index) });
   }
   function patchRate(id: string | undefined, patch: Partial<Rate>) {
     if (!draft) return;
@@ -642,20 +654,45 @@ export default function PricingPage() {
                 </div>
               </PricingSection>
 
-              <PricingSection title="Additional services & adjustments" count={(active.services?.length || 0) + catalogRules.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))}>
-                <div className="pricing-services">
-                  {(active.services || []).map((service, index) => (
+              <PricingSection title="Bulky items rates" count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))}>
+                <div className="pricing-services pricing-bulky-rates">
+                  {bulkyItems.map((item) => {
+                    const index = (active.services || []).indexOf(item);
+                    const numericRate = Number(item.rate_text);
+                    return (
+                      <article key={item.id || `bulky-${index}`}>
+                        {editing ? (
+                          <>
+                            <input value={item.name} placeholder="Bulky item" onChange={(e) => patchService(index, { name: e.target.value })} />
+                            <input type="text" inputMode="decimal" value={item.rate_text} placeholder="Price" onChange={(e) => patchService(index, { rate_text: e.target.value, comments: BULKY_ITEM_MARKER })} />
+                            <button className="slds-button text-danger" onClick={() => removeService(index)}>Remove</button>
+                          </>
+                        ) : <><div><strong>{item.name}</strong></div><b>{item.rate_text && !Number.isNaN(numericRate) ? money(numericRate) : item.rate_text || "—"}</b></>}
+                      </article>
+                    );
+                  })}
+                  {editing ? <button className="slds-button add-row" onClick={addBulkyItem}>+ Add bulky item</button> : null}
+                  {!editing && bulkyItems.length === 0 ? <article><div><strong>No bulky item rates</strong></div><b>—</b></article> : null}
+                </div>
+              </PricingSection>
+
+              <PricingSection title="Additional services & adjustments" count={pricingServices.length + catalogRules.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))}>
+                <div className="pricing-services pricing-services-editor">
+                  {pricingServices.map((service) => {
+                    const index = (active.services || []).indexOf(service);
+                    return (
                     <article key={service.id || index}>
                       {editing ? (
                         <>
                           <input value={service.name} onChange={(e) => patchService(index, { name: e.target.value })} />
                           <input value={service.rate_text} onChange={(e) => patchService(index, { rate_text: e.target.value })} />
                           <input value={service.comments} onChange={(e) => patchService(index, { comments: e.target.value })} />
-                          <button className="slds-button text-danger" onClick={() => patchDraft({ services: (draft?.services || []).filter((_, idx) => idx !== index) })}>Remove</button>
+                          <button className="slds-button text-danger" onClick={() => removeService(index)}>Remove</button>
                         </>
                       ) : <><div><strong>{service.name}</strong>{service.comments ? <small>{service.comments}</small> : null}</div><b>{service.rate_text || "See note"}</b></>}
                     </article>
-                  ))}
+                    );
+                  })}
                   {catalogRules.map((rule) => {
                     const index = (active.rules || []).indexOf(rule);
                     return (
