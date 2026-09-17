@@ -34,9 +34,10 @@ type Calculation = {
 };
 type CustomCharge = { id: string; title: string; amount: number };
 type CustomDiscount = { id: string; targetId: string; title: string; type: "amount" | "percent"; value: number };
+type JobMaterial = { name: string; quantity?: number };
 type JobContext = {
   lead: { id: string; full_name: string; volume: number | null; weight: number | null };
-  job: { id: string; job_order: number; company_name: string; pickup_zip: string; delivery_zip: string; pickup_state: string; pickup_zip_code: string; delivery_state: string; delivery_zip_code: string; move_date: string; booked_move_date: string };
+  job: { id: string; job_order: number; company_name: string; pickup_zip: string; delivery_zip: string; pickup_state: string; pickup_zip_code: string; delivery_state: string; delivery_zip_code: string; move_date: string; booked_move_date: string; estimated_materials?: JobMaterial[] };
   plans: PlanSummary[];
   recommended_plan_id: string;
   move_type: string;
@@ -365,6 +366,7 @@ export default function PricingPage() {
         destination,
         cubic_feet: Number(cubicFeet || 0),
         move_date: jobContext?.job.move_date || "",
+        bulky_items: jobContext?.job.estimated_materials?.flatMap((item) => Array.from({ length: Math.max(1, Math.floor(Number(item.quantity) || 1)) }, () => item.name)).filter(Boolean) || [],
         selected_charges: overrides?.selected || selectedCharges,
         quantities: overrides?.quantities || quantities,
         manual_amounts: overrides?.manual || manualAmounts,

@@ -87,6 +87,7 @@ class CalculationInput(BaseModel):
     destination: str
     cubic_feet: float = Field(ge=0)
     move_date: str = ""
+    bulky_items: list[str] = Field(default_factory=list)
     selected_charges: dict[str, bool] = Field(default_factory=dict)
     quantities: dict[str, float] = Field(default_factory=dict)
     manual_amounts: dict[str, float] = Field(default_factory=dict)
@@ -102,6 +103,13 @@ def _parsed_move_date(value: str) -> date | None:
         return date.fromisoformat((value or "").strip()[:10])
     except ValueError:
         return None
+
+
+BULKY_ITEM_MARKER = "__bulky_item__"
+
+
+def _normalize_item_name(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
 
 
 def _seasonal_charge(plan: PricingPlan, move_date: date | None) -> dict | None:
@@ -183,6 +191,8 @@ def _packing_service_charges(
     packing_groups: dict[str, list[PricingService]] = {"full": [], "partial": []}
     remaining: list[PricingService] = []
     for service in services:
+        if service.comments == BULKY_ITEM_MARKER:
+            continue
         match = re.match(r"\s*(full|partial)\s+packing\b", service.name, re.IGNORECASE)
         if match and re.search(r"(?:up\s+to|\d+\s*-\s*\d+|&\s*up)", service.name, re.IGNORECASE):
             packing_groups[match.group(1).lower()].append(service)
@@ -256,6 +266,51 @@ def _packing_service_charges(
         })
         charges.append(charge)
     return charges
+
+
+def _bulky_item_charges(services: list[PricingService], item_names: list[str]) -> list[dict]:
+    matched_counts: dict[str, int] = {}
+    for name in item_names:
+        normalized = _normalize_item_name(name)
+        if normalized:
+            matched_counts[normalized] = matched_counts.get(normalized, 0) + 1
+    if not matched_counts:
+        return []
+    charges: list[dict] = []
+    for service in services:
+        if service.comments != BULKY_ITEM_MARKER:
+            continue
+        matched_count = matched_counts.get(_normalize_item_name(service.name), 0)
+        if matched_count <= 0:
+            continue
+        parsed = _number(service.rate_text)
+        if parsed is None:
+            continue
+        charges.append({
+            "id": f"bulky:{service.id}",
+            "name": service.name,
+            "description": f"Bulky item matched from report · {matched_count:g} × {service.rate_text}",
+            "calculation_type": "fixed",
+            "rate": float(parsed * matched_count),
+            "default_selected": True,
+            "automatic": True,
+            "applies": True,
+            "quantity_label": "",
+        })
+    return charges
+
+
+def _material_item_names(materials: list[dict]) -> list[str]:
+    names: list[str] = []
+    for item in materials:
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        try:
+            quantity = max(1, int(float(item.get("quantity") or 1)))
+        except (TypeError, ValueError):
+            quantity = 1
+        names.extend([str(item["name")] for _ in range(quantity)])
+    return names
 
 
 def _rule_charges(rule: PricingRule) -> list[dict]:
@@ -495,6 +550,7 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
     if seasonal:
         charges.append(seasonal)
     charges.extend(_packing_service_charges(list(plan.services), body.cubic_feet, body.quantities))
+    charges.extend(_bulky_item_charges(list(plan.services), body.bulky_items))
     charges.extend(charge for rule in plan.rules for charge in _rule_charges(rule))
 
     deduped: list[dict] = []
@@ -660,6 +716,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             destination=destination,
             cubic_feet=int(vol),
             move_date=job.move_date or "",
+            bulky_items=_material_item_names(job._estimated_materials_data()),
         )
         quote = compute_plan_calculation(matched_plan, calc_body)
         total = quote.get("total", 0.0)
