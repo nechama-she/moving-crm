@@ -415,7 +415,7 @@ export default function PricingPage() {
   }
 
   useEffect(() => {
-    if (!plan || !destination || editing || pricingMode !== "long-distance") return;
+    if (!plan || !destination || editing || pricingMode !== "long-distance" || !cubicFeet || Number(cubicFeet) <= 0) return;
     void calculate();
     // Load the unified selectable charge catalog whenever the pricing book changes.
     // User selections are preserved by subsequent checkbox-triggered calculations.
