@@ -337,7 +337,7 @@ def _material_item_names(materials: list[dict]) -> list[str]:
             quantity = max(1, int(float(item.get("quantity") or 1)))
         except (TypeError, ValueError):
             quantity = 1
-        names.extend([str(item["name")] for _ in range(quantity)])
+        names.extend(str(item["name"]) for _ in range(quantity))
     return names
 
 
