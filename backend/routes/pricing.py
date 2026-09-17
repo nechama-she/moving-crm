@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+import json
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -106,10 +107,30 @@ def _parsed_move_date(value: str) -> date | None:
 
 
 BULKY_ITEM_MARKER = "__bulky_item__"
+BULKY_ITEM_PREFIX = f"{BULKY_ITEM_MARKER}:"
 
 
 def _normalize_item_name(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def _is_bulky_service(service: PricingService) -> bool:
+    return service.comments == BULKY_ITEM_MARKER or service.comments.startswith(BULKY_ITEM_PREFIX)
+
+
+def _bulky_item_prices(service: PricingService) -> dict[str, str]:
+    if service.comments.startswith(BULKY_ITEM_PREFIX):
+        try:
+            data = json.loads(service.comments[len(BULKY_ITEM_PREFIX):])
+            if isinstance(data, dict):
+                return {
+                    "handling": str(data.get("handling") or service.rate_text or ""),
+                    "packing": str(data.get("packing") or ""),
+                    "crating": str(data.get("crating") or ""),
+                }
+        except (TypeError, ValueError):
+            pass
+    return {"handling": service.rate_text or "", "packing": "", "crating": ""}
 
 
 def _seasonal_charge(plan: PricingPlan, move_date: date | None) -> dict | None:
@@ -191,7 +212,7 @@ def _packing_service_charges(
     packing_groups: dict[str, list[PricingService]] = {"full": [], "partial": []}
     remaining: list[PricingService] = []
     for service in services:
-        if service.comments == BULKY_ITEM_MARKER:
+        if _is_bulky_service(service):
             continue
         match = re.match(r"\s*(full|partial)\s+packing\b", service.name, re.IGNORECASE)
         if match and re.search(r"(?:up\s+to|\d+\s*-\s*\d+|&\s*up)", service.name, re.IGNORECASE):
@@ -278,25 +299,32 @@ def _bulky_item_charges(services: list[PricingService], item_names: list[str]) -
         return []
     charges: list[dict] = []
     for service in services:
-        if service.comments != BULKY_ITEM_MARKER:
+        if not _is_bulky_service(service):
             continue
         matched_count = matched_counts.get(_normalize_item_name(service.name), 0)
         if matched_count <= 0:
             continue
-        parsed = _number(service.rate_text)
-        if parsed is None:
-            continue
-        charges.append({
-            "id": f"bulky:{service.id}",
-            "name": service.name,
-            "description": f"Bulky item matched from report · {matched_count:g} × {service.rate_text}",
-            "calculation_type": "fixed",
-            "rate": float(parsed * matched_count),
-            "default_selected": True,
-            "automatic": True,
-            "applies": True,
-            "quantity_label": "",
-        })
+        prices = _bulky_item_prices(service)
+        for key, label, default_selected, required in (
+            ("handling", "Handling", True, True),
+            ("packing", "Packing", False, False),
+            ("crating", "Crating", False, False),
+        ):
+            parsed = _number(prices.get(key, ""))
+            if parsed is None:
+                continue
+            charges.append({
+                "id": f"bulky:{service.id}:{key}",
+                "name": f"{service.name} {label}",
+                "description": f"Bulky item matched from report · {matched_count:g} × {prices[key]}",
+                "calculation_type": "fixed",
+                "rate": float(parsed * matched_count),
+                "default_selected": default_selected,
+                "automatic": required,
+                "required": required,
+                "applies": True,
+                "quantity_label": "",
+            })
     return charges
 
 
@@ -573,6 +601,8 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
             charge["id"],
             bool(charge["default_selected"] and charge["applies"]),
         )
+        if charge.get("required"):
+            selected = True
         if charge["automatic"] and not charge["applies"]:
             selected = False
         if charge["calculation_type"] == "percent":

@@ -24,6 +24,7 @@ type Plan = PlanSummary & {
 type CalculatedCharge = {
   id: string; name: string; description: string; calculation_type: string;
   rate: number; default_selected: boolean; automatic: boolean; applies: boolean;
+  required?: boolean;
   quantity_label: string; free_months?: number; selected: boolean; amount: number;
   breakdown?: { label: string; amount: number }[];
 };
@@ -45,8 +46,27 @@ type JobContext = {
 };
 
 const BULKY_ITEM_MARKER = "__bulky_item__";
+const BULKY_ITEM_PREFIX = `${BULKY_ITEM_MARKER}:`;
 
-const isBulkyItem = (service: Service) => service.comments === BULKY_ITEM_MARKER;
+type BulkyItemPrices = { handling: string; packing: string; crating: string };
+
+const isBulkyItem = (service: Service) => service.comments === BULKY_ITEM_MARKER || service.comments.startsWith(BULKY_ITEM_PREFIX);
+
+function bulkyItemPrices(service: Service): BulkyItemPrices {
+  if (service.comments.startsWith(BULKY_ITEM_PREFIX)) {
+    try {
+      const data = JSON.parse(service.comments.slice(BULKY_ITEM_PREFIX.length)) as Partial<BulkyItemPrices>;
+      return { handling: data.handling || service.rate_text || "", packing: data.packing || "", crating: data.crating || "" };
+    } catch {
+      return { handling: service.rate_text || "", packing: "", crating: "" };
+    }
+  }
+  return { handling: service.rate_text || "", packing: "", crating: "" };
+}
+
+function bulkyItemComments(prices: BulkyItemPrices) {
+  return `${BULKY_ITEM_PREFIX}${JSON.stringify(prices)}`;
+}
 
 const money = (value: number | null | undefined) =>
   value == null ? "—" : value.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -281,7 +301,13 @@ export default function PricingPage() {
     patchDraft({ services: draft.services.map((row, idx) => idx === index ? { ...row, ...patch } : row) });
   }
   function addBulkyItem() {
-    patchDraft({ services: [...(draft?.services || []), { name: "Pool table", rate_text: "", comments: BULKY_ITEM_MARKER }] });
+    patchDraft({ services: [...(draft?.services || []), { name: "Pool table", rate_text: "", comments: bulkyItemComments({ handling: "", packing: "", crating: "" }) }] });
+  }
+  function patchBulkyItemPrice(index: number, key: keyof BulkyItemPrices, value: string) {
+    const service = active?.services[index];
+    if (!service) return;
+    const prices = { ...bulkyItemPrices(service), [key]: value };
+    patchService(index, { rate_text: prices.handling, comments: bulkyItemComments(prices) });
   }
   function removeService(index: number) {
     patchDraft({ services: (draft?.services || []).filter((_, idx) => idx !== index) });
@@ -564,7 +590,7 @@ export default function PricingPage() {
                             <input
                               type="checkbox"
                               checked={charge.selected}
-                              disabled={charge.automatic && !charge.applies}
+                              disabled={charge.required || (charge.automatic && !charge.applies)}
                               onChange={(event) => {
                                 const next = { ...selectedCharges, [charge.id]: event.target.checked };
                                 setSelectedCharges(next);
@@ -660,16 +686,19 @@ export default function PricingPage() {
                 <div className="pricing-services pricing-bulky-rates">
                   {bulkyItems.map((item) => {
                     const index = (active.services || []).indexOf(item);
-                    const numericRate = Number(item.rate_text);
+                    const prices = bulkyItemPrices(item);
+                    const handlingRate = Number(prices.handling);
                     return (
                       <article key={item.id || `bulky-${index}`}>
                         {editing ? (
                           <>
                             <input value={item.name} placeholder="Bulky item" onChange={(e) => patchService(index, { name: e.target.value })} />
-                            <input type="text" inputMode="decimal" value={item.rate_text} placeholder="Price" onChange={(e) => patchService(index, { rate_text: e.target.value, comments: BULKY_ITEM_MARKER })} />
+                            <input type="text" inputMode="decimal" value={prices.handling} placeholder="Handling" onChange={(e) => patchBulkyItemPrice(index, "handling", e.target.value)} />
+                            <input type="text" inputMode="decimal" value={prices.packing} placeholder="Packing" onChange={(e) => patchBulkyItemPrice(index, "packing", e.target.value)} />
+                            <input type="text" inputMode="decimal" value={prices.crating} placeholder="Crating" onChange={(e) => patchBulkyItemPrice(index, "crating", e.target.value)} />
                             <button className="slds-button text-danger" onClick={() => removeService(index)}>Remove</button>
                           </>
-                        ) : <><div><strong>{item.name}</strong></div><b>{item.rate_text && !Number.isNaN(numericRate) ? money(numericRate) : item.rate_text || "—"}</b></>}
+                        ) : <><div><strong>{item.name}</strong><small>Handling {prices.handling || "—"} · Packing {prices.packing || "—"} · Crating {prices.crating || "—"}</small></div><b>{prices.handling && !Number.isNaN(handlingRate) ? money(handlingRate) : prices.handling || "—"}</b></>}
                       </article>
                     );
                   })}

@@ -991,7 +991,7 @@ button:focus-visible {
 .pricing-services article input { width: 100%; min-width: 0; height: 34px; border: 1px solid #c9c7c5; border-radius: 6px; padding: 6px 9px; box-sizing: border-box; background: #fff; color: #181818; }
 .pricing-services article textarea { width: 100%; min-height: 64px; resize: vertical; border: 1px solid #c9c7c5; border-radius: 6px; padding: 7px 9px; box-sizing: border-box; }
 .pricing-services article.pricing-service-rule { border-left: 4px solid #fe9339; }
-.pricing-bulky-rates article:has(> input),
+.pricing-bulky-rates article:has(> input) { grid-template-columns: minmax(190px, 1fr) repeat(3, minmax(105px, 140px)) auto; }
 .pricing-services-editor article:has(> input):not(.pricing-service-rule) { grid-template-columns: minmax(180px, 1fr) minmax(140px, 180px) auto; }
 .pricing-services-editor article:has(> input):not(.pricing-service-rule) { grid-template-columns: minmax(190px, 1.1fr) minmax(140px, .75fr) minmax(180px, 1fr) auto; }
 .pricing-services-editor article.pricing-service-rule:has(> input) { grid-template-columns: minmax(190px, .9fr) minmax(240px, 1.25fr) auto; }
