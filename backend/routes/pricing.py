@@ -596,8 +596,9 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
     move_type = (getattr(lead, "move_type", None) or "").strip()
     if not move_type and pickup_state and delivery_state:
         move_type = "Local" if pickup_state == delivery_state else "Long Distance"
+        lead.move_type = move_type
     if not move_type:
-        move_type = "Local"
+        return None
 
     plans = (
         db.query(PricingPlan)

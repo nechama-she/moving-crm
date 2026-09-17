@@ -322,6 +322,7 @@ class Lead(Base):
             "weight": float(self.weight) if self.weight is not None else None,
             "when_is_the_move?": self.move_date or "",
             "booked_move_date": self.booked_move_date.isoformat() if self.booked_move_date else "",
+            "move_type": normalize_move_type(self.move_type),
             "are_you_moving_within_the_state_or_out_of_state?": normalize_move_type(self.move_type),
             "created_time": self.created_time or "",
             "created_at": self.created_at.isoformat() if self.created_at else "",
