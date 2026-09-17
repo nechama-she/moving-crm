@@ -1094,12 +1094,15 @@ button:focus-visible {
 .lead-job-save-button {
   width: 32px;
   height: 32px;
+  min-height: 32px;
   margin-left: auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 32px;
   border: 1px solid #0176d3;
   border-radius: 4px;
+  padding: 0;
   background: #fff;
   color: #0176d3;
   font-size: 16px;
@@ -1124,11 +1127,14 @@ button:focus-visible {
 .lead-job-calendar-button {
   width: 32px;
   height: 32px;
+  min-height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 32px;
   border: 1px solid #cbd5e1;
   border-radius: 4px;
+  padding: 0;
   background: #fff;
   color: #0176d3;
   cursor: pointer;

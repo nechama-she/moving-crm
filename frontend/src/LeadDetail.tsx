@@ -20,7 +20,7 @@ type CompanyOption = {
 };
 
 function JobActionIcon({ kind }: { kind: "calendar" | "save" }) {
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+  return <svg className="lead-job-action-icon" viewBox="0 0 24 24" aria-hidden="true">
     {kind === "calendar" ? <><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M8 3v4M16 3v4M4 9h16" /></> : <><path d="M5 4h11l3 3v13H5z" /><path d="M8 4v6h8V4M8 20v-6h8v6" /></>}
   </svg>;
 }
@@ -2867,8 +2867,8 @@ export default function LeadDetail() {
                         type="button"
                         onClick={() => navigate(`/dispatch?job_id=${encodeURIComponent(job.id)}`)}
                         className="slds-button lead-job-calendar-button"
-                        title="Open in calender"
-                        aria-label="Open in calender"
+                        title="Open in calendar"
+                        aria-label="Open in calendar"
                       >
                         <JobActionIcon kind="calendar" />
                       </button>
