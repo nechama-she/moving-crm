@@ -283,7 +283,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             conv_details = json.loads(conversation.details)
             spark_id = conv_details.get("last_spark_id")
             if spark_id:
-                if conv_details.get("last_spark_status") not in ("completed", "failed", "cancelled") or not conv_details.get("spark_extracted_cuft"):
+                if conv_details.get("last_spark_status") not in ("completed", "failed", "cancelled") or conv_details.get("spark_extracted_id") != spark_id:
                     from routes.liveswitch import _api_get, apply_spark_results_to_lead
                     try:
                         remote = _api_get(f"sparks/{spark_id}")
@@ -294,12 +294,14 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
                                 conv_details["last_spark_share_url"] = share_url
                             conversation.details = json.dumps(conv_details)
                             db.commit()
-                            if remote.get("status") == "completed" and share_url and not conv_details.get("spark_extracted_cuft"):
+                            if remote.get("status") == "completed" and share_url and conv_details.get("spark_extracted_id") != spark_id:
                                 apply_spark_results_to_lead(access.lead_id, share_url, db)
                                 # Reload lead and job for updated estimate
                                 db.refresh(lead)
                                 db.refresh(job)
                                 db.refresh(access)
+                                db.refresh(conversation)
+                                conv_details = json.loads(conversation.details)
                     except Exception:
                         pass
                 spark_info = {

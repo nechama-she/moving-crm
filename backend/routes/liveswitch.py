@@ -369,6 +369,9 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     # Save spark ID and status to the lead's LiveSwitch record
     spark_id = result.get("id") if isinstance(result, dict) else None
     if spark_id:
+        # A new report must not reuse the previous report's extracted volume or link.
+        for key in ("spark_extracted_cuft", "spark_extracted_weight", "spark_extracted_id", "last_spark_share_url"):
+            details.pop(key, None)
         details["last_spark_id"] = spark_id
         details["last_spark_status"] = result.get("status", "queued")
         details["last_spark_at"] = int(time.time())
@@ -444,6 +447,7 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> di
     if weight is not None:
         lead.weight = Decimal(str(weight))
 
+    details["spark_extracted_id"] = details.get("last_spark_id")
     details["spark_extracted_cuft"] = cuft
     details["spark_extracted_weight"] = weight
     details["last_spark_share_url"] = share_url
@@ -524,9 +528,10 @@ def get_lead_spark_status(
             db.commit()
 
             # Auto-extract and calculate price if report is completed
-            if remote.get("status") == "completed" and share_url and not details.get("spark_extracted_cuft"):
+            if remote.get("status") == "completed" and share_url and details.get("spark_extracted_id") != spark_id:
                 try:
                     apply_spark_results_to_lead(lead.id, share_url, db)
+                    details = json.loads(saved.details)
                 except Exception:
                     pass
 
