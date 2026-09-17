@@ -630,10 +630,10 @@ export default function PricingPage() {
                       {rateRows.map((group) => (
                         <tr key={group.name}>
                           <th>{group.name}<small>{group.rates[0]?.destination_group}</small></th>
-                          <td>{editing ? <input type="number" value={group.rates[0]?.minimum_price ?? ""} onChange={(e) => group.rates.forEach((rate) => patchRate(rate.id, { minimum_price: e.target.value === "" ? null : Number(e.target.value) }))} /> : money(group.rates[0]?.minimum_price)}</td>
+                          <td>{editing ? <input type="text" inputMode="decimal" value={group.rates[0]?.minimum_text || (group.rates[0]?.minimum_price ?? "")} onChange={(e) => group.rates.forEach((rate) => patchRate(rate.id, { minimum_price: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), minimum_text: e.target.value }))} /> : money(group.rates[0]?.minimum_price)}</td>
                           {bands.map((band) => {
                             const rate = group.rates.find((row) => row.band_label === band);
-                            return <td key={band}>{!rate ? "—" : editing ? <input value={rate.rate ?? rate.rate_text} onChange={(e) => patchRate(rate.id, { rate: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), rate_text: e.target.value })} /> : rate.rate == null ? rate.rate_text : money(rate.rate)}</td>;
+                            return <td key={band}>{!rate ? "—" : editing ? <input type="text" inputMode="decimal" value={rate.rate_text || (rate.rate ?? "")} onChange={(e) => patchRate(rate.id, { rate: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), rate_text: e.target.value })} /> : rate.rate == null ? rate.rate_text : money(rate.rate)}</td>;
                           })}
                         </tr>
                       ))}
