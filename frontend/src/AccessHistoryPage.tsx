@@ -51,12 +51,450 @@ type GroupedPathRow = {
   last_active: string | null;
 };
 
+type GroupedStatusRow = {
+  status_code: number;
+  total_requests: number;
+  distinct_users: number;
+  distinct_ips: number;
+  avg_duration_ms: number;
+  last_active: string | null;
+};
+
+interface DrilldownPanelProps {
+  initialFilter: Record<string, string>;
+  title: string;
+  onClose: () => void;
+  token: string | null;
+}
+
+function DrilldownPanel({ initialFilter, title, onClose, token }: DrilldownPanelProps) {
+  const [filters, setFilters] = useState<Record<string, string>>(initialFilter);
+
+  // Pick sensible initial subGroup
+  const getDefaultSubGroup = (f: Record<string, string>) => {
+    if (!f.status_filter) return "status";
+    if (!f.path) return "path";
+    if (!f.user_id) return "user";
+    if (!f.ip_address) return "ip";
+    return "requests";
+  };
+
+  const [subGroup, setSubGroup] = useState<"status" | "path" | "user" | "ip" | "requests">(() => getDefaultSubGroup(initialFilter));
+  const [subLoading, setSubLoading] = useState(false);
+  const [subError, setSubError] = useState("");
+
+  const [subStatuses, setSubStatuses] = useState<GroupedStatusRow[]>([]);
+  const [subPaths, setSubPaths] = useState<GroupedPathRow[]>([]);
+  const [subUsers, setSubUsers] = useState<GroupedUserRow[]>([]);
+  const [subIps, setSubIps] = useState<GroupedIpRow[]>([]);
+  const [subRequests, setSubRequests] = useState<AccessItem[]>([]);
+
+  const fetchSubData = useCallback(async () => {
+    setSubLoading(true);
+    setSubError("");
+    try {
+      const q = new URLSearchParams();
+      Object.entries(filters).forEach(([k, v]) => {
+        if (v && v.trim()) q.set(k, v.trim());
+      });
+
+      if (subGroup === "requests") {
+        q.set("limit", "50");
+        const res = await fetch(`${API_BASE}/api/system/access-logs?${q.toString()}`, {
+          headers: authHeaders(token),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        setSubRequests(data.items || []);
+      } else {
+        q.set("group_by", subGroup);
+        const res = await fetch(`${API_BASE}/api/system/access-logs/grouped?${q.toString()}`, {
+          headers: authHeaders(token),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        if (subGroup === "status") setSubStatuses(data.results || []);
+        else if (subGroup === "path") setSubPaths(data.results || []);
+        else if (subGroup === "user") setSubUsers(data.results || []);
+        else if (subGroup === "ip") setSubIps(data.results || []);
+      }
+    } catch (err) {
+      setSubError(err instanceof Error ? err.message : "Failed to load grouped details");
+    } finally {
+      setSubLoading(false);
+    }
+  }, [filters, subGroup, token]);
+
+  useEffect(() => {
+    void fetchSubData();
+  }, [fetchSubData]);
+
+  const addFilter = (patch: Record<string, string>, nextSubGroup?: "status" | "path" | "user" | "ip" | "requests") => {
+    const updated = { ...filters, ...patch };
+    setFilters(updated);
+    if (nextSubGroup) {
+      setSubGroup(nextSubGroup);
+    } else {
+      setSubGroup(getDefaultSubGroup(updated));
+    }
+  };
+
+  const removeFilterKey = (key: string) => {
+    const next = { ...filters };
+    delete next[key];
+    if (key === "path") delete next.method;
+    // Don't allow clearing the root filter key if it was the initial basis, but allow resetting sub-filters
+    setFilters(next);
+  };
+
+  const resetToInitial = () => {
+    setFilters(initialFilter);
+    setSubGroup(getDefaultSubGroup(initialFilter));
+  };
+
+  // Available sub-tabs based on what is NOT currently filtered
+  const showStatusTab = !filters.status_filter;
+  const showPathTab = !filters.path;
+  const showUserTab = !filters.user_id;
+  const showIpTab = !filters.ip_address;
+
+  return (
+    <div className="nested-requests-panel">
+      <div className="nested-header">
+        <div className="drilldown-header-left">
+          <strong>{title}</strong>
+          <div className="drilldown-breadcrumbs">
+            {Object.entries(filters).map(([k, v]) => {
+              if (!v) return null;
+              let label = `${k}: ${v}`;
+              if (k === "ip_address") label = `IP: ${v}`;
+              else if (k === "status_filter") label = `Status: ${v}`;
+              else if (k === "path") label = `${filters.method ? filters.method + " " : ""}${v}`;
+              else if (k === "user_id") label = `User: ${v}`;
+              else if (k === "method") return null; // shown with path
+
+              const isInitial = Object.prototype.hasOwnProperty.call(initialFilter, k);
+
+              return (
+                <span key={k} className="drilldown-crumb-badge">
+                  {label}
+                  {!isInitial && (
+                    <button
+                      type="button"
+                      aria-label={`Remove filter ${k}`}
+                      onClick={() => removeFilterKey(k)}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </span>
+              );
+            })}
+            {Object.keys(filters).length > Object.keys(initialFilter).length && (
+              <button
+                type="button"
+                className="drilldown-reset-link"
+                onClick={resetToInitial}
+              >
+                Reset drill-down
+              </button>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="nested-close-btn"
+          onClick={onClose}
+        >
+          ✕ Close
+        </button>
+      </div>
+
+      <div className="drilldown-subtabs-bar">
+        {showStatusTab && (
+          <button
+            type="button"
+            className={`drilldown-subtab-btn ${subGroup === "status" ? "active" : ""}`}
+            onClick={() => setSubGroup("status")}
+          >
+            By Status
+          </button>
+        )}
+        {showPathTab && (
+          <button
+            type="button"
+            className={`drilldown-subtab-btn ${subGroup === "path" ? "active" : ""}`}
+            onClick={() => setSubGroup("path")}
+          >
+            By Endpoint
+          </button>
+        )}
+        {showUserTab && (
+          <button
+            type="button"
+            className={`drilldown-subtab-btn ${subGroup === "user" ? "active" : ""}`}
+            onClick={() => setSubGroup("user")}
+          >
+            By User
+          </button>
+        )}
+        {showIpTab && (
+          <button
+            type="button"
+            className={`drilldown-subtab-btn ${subGroup === "ip" ? "active" : ""}`}
+            onClick={() => setSubGroup("ip")}
+          >
+            By IP Address
+          </button>
+        )}
+        <button
+          type="button"
+          className={`drilldown-subtab-btn ${subGroup === "requests" ? "active" : ""}`}
+          onClick={() => setSubGroup("requests")}
+        >
+          Individual Requests ({subRequests.length})
+        </button>
+      </div>
+
+      {subLoading ? (
+        <div className="nested-loading">Loading grouped drill-down data...</div>
+      ) : subError ? (
+        <div className="nested-error">{subError}</div>
+      ) : subGroup === "status" ? (
+        subStatuses.length === 0 ? (
+          <div className="nested-empty">No status records found.</div>
+        ) : (
+          <table className="nested-table">
+            <thead>
+              <tr>
+                <th>Status Code</th>
+                <th>Total Requests</th>
+                <th>Distinct Users</th>
+                <th>Distinct IPs</th>
+                <th>Avg Latency</th>
+                <th>Last Active</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subStatuses.map((st) => (
+                <tr key={st.status_code}>
+                  <td>
+                    <span className={`status-badge status-${String(st.status_code)[0]}xx`}>
+                      {st.status_code}
+                    </span>
+                  </td>
+                  <td><strong>{st.total_requests.toLocaleString()}</strong></td>
+                  <td>{st.distinct_users} user{st.distinct_users === 1 ? "" : "s"}</td>
+                  <td>{st.distinct_ips} IP{st.distinct_ips === 1 ? "" : "s"}</td>
+                  <td>{st.avg_duration_ms} ms</td>
+                  <td className="time-cell">
+                    {st.last_active ? new Date(st.last_active).toLocaleTimeString("en-US") : "—"}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="drilldown-subaction-btn"
+                      onClick={() => addFilter({ status_filter: String(st.status_code) })}
+                    >
+                      Filter this status ▸
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      ) : subGroup === "path" ? (
+        subPaths.length === 0 ? (
+          <div className="nested-empty">No endpoint records found.</div>
+        ) : (
+          <table className="nested-table">
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Endpoint Path</th>
+                <th>Total Hits</th>
+                <th>Failed Hits</th>
+                <th>Avg Latency</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subPaths.map((p, idx) => (
+                <tr key={`${p.method}-${p.path}-${idx}`}>
+                  <td><span className={`method-badge ${p.method.toLowerCase()}`}>{p.method}</span></td>
+                  <td className="path-cell"><code>{p.path}</code></td>
+                  <td><strong>{p.total_requests.toLocaleString()}</strong></td>
+                  <td>
+                    {p.total_errors > 0 ? (
+                      <span className="pill-badge error">{p.total_errors} errors</span>
+                    ) : (
+                      <span className="pill-badge success">0</span>
+                    )}
+                  </td>
+                  <td>{p.avg_duration_ms} ms</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="drilldown-subaction-btn"
+                      onClick={() => addFilter({ method: p.method, path: p.path })}
+                    >
+                      Filter this endpoint ▸
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      ) : subGroup === "user" ? (
+        subUsers.length === 0 ? (
+          <div className="nested-empty">No user records found.</div>
+        ) : (
+          <table className="nested-table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Role</th>
+                <th>Total Requests</th>
+                <th>Distinct IPs</th>
+                <th>Errors</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subUsers.map((u, idx) => (
+                <tr key={u.user_id || `sub-user-${idx}`}>
+                  <td>
+                    <strong>{u.user_name}</strong>
+                    {u.user_email && <small className="user-email-text">{u.user_email}</small>}
+                  </td>
+                  <td><span className="user-role-badge">{u.user_role}</span></td>
+                  <td><strong>{u.total_requests.toLocaleString()}</strong></td>
+                  <td>{u.distinct_ips} IP{u.distinct_ips === 1 ? "" : "s"}</td>
+                  <td>
+                    {u.total_errors > 0 ? (
+                      <span className="pill-badge error">{u.total_errors}</span>
+                    ) : (
+                      <span className="pill-badge success">0</span>
+                    )}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="drilldown-subaction-btn"
+                      onClick={() => addFilter({ user_id: u.user_id || "anonymous" })}
+                    >
+                      Filter this user ▸
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      ) : subGroup === "ip" ? (
+        subIps.length === 0 ? (
+          <div className="nested-empty">No IP records found.</div>
+        ) : (
+          <table className="nested-table">
+            <thead>
+              <tr>
+                <th>IP Address</th>
+                <th>Total Requests</th>
+                <th>Distinct Users</th>
+                <th>Errors</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subIps.map((ipRow) => (
+                <tr key={ipRow.ip_address}>
+                  <td className="ip-cell"><code>{ipRow.ip_address}</code></td>
+                  <td><strong>{ipRow.total_requests.toLocaleString()}</strong></td>
+                  <td>{ipRow.distinct_users} user{ipRow.distinct_users === 1 ? "" : "s"}</td>
+                  <td>
+                    {ipRow.total_errors > 0 ? (
+                      <span className="pill-badge error">{ipRow.total_errors}</span>
+                    ) : (
+                      <span className="pill-badge success">0</span>
+                    )}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="drilldown-subaction-btn"
+                      onClick={() => addFilter({ ip_address: ipRow.ip_address })}
+                    >
+                      Filter this IP ▸
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      ) : (
+        subRequests.length === 0 ? (
+          <div className="nested-empty">No matching requests found.</div>
+        ) : (
+          <table className="nested-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>User / Role</th>
+                <th>Method</th>
+                <th>Path & Query</th>
+                <th>Status</th>
+                <th>IP Address</th>
+                <th>Latency</th>
+                <th>Device</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subRequests.map((item) => (
+                <tr key={item.id}>
+                  <td className="time-cell">
+                    {item.created_at ? new Date(item.created_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
+                  </td>
+                  <td>
+                    <strong>{item.user_name}</strong>
+                    <small className="user-role-badge">{item.user_role}</small>
+                  </td>
+                  <td><span className={`method-badge ${item.method.toLowerCase()}`}>{item.method}</span></td>
+                  <td className="path-cell">
+                    <span className="path-text" title={item.path}>{item.path}</span>
+                    {item.query_params && <small className="query-text">?{item.query_params}</small>}
+                  </td>
+                  <td><span className={`status-badge status-${String(item.status_code)[0]}xx`}>{item.status_code}</span></td>
+                  <td><code>{item.ip_address}</code></td>
+                  <td>{item.duration_ms} ms</td>
+                  <td className="agent-cell" title={item.user_agent}>
+                    <small>{item.user_agent.slice(0, 45)}…</small>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      )}
+    </div>
+  );
+}
+
 export default function AccessHistoryPage() {
   const { token, user } = useAuth();
   const isAdmin = user?.role === "admin";
 
-  // Tab: 'stream' | 'by-user' | 'by-ip' | 'by-path'
-  const [tab, setTab] = useState<"stream" | "by-user" | "by-ip" | "by-path">("stream");
+  // Tab: 'stream' | 'by-user' | 'by-ip' | 'by-path' | 'by-status'
+  const [tab, setTab] = useState<"stream" | "by-user" | "by-ip" | "by-path" | "by-status">("stream");
 
   // Stream state
   const [items, setItems] = useState<AccessItem[]>([]);
@@ -76,40 +514,15 @@ export default function AccessHistoryPage() {
   const [groupedUsers, setGroupedUsers] = useState<GroupedUserRow[]>([]);
   const [groupedIps, setGroupedIps] = useState<GroupedIpRow[]>([]);
   const [groupedPaths, setGroupedPaths] = useState<GroupedPathRow[]>([]);
+  const [groupedStatuses, setGroupedStatuses] = useState<GroupedStatusRow[]>([]);
   const [groupedLoading, setGroupedLoading] = useState(false);
   const [groupSearch, setGroupSearch] = useState("");
 
-  // Expanded row details state: tracks which row key is open and its fetched items
+  // Expanded row details state: tracks which row key is open
   const [expandedRowKey, setExpandedRowKey] = useState<string | null>(null);
-  const [expandedItems, setExpandedItems] = useState<AccessItem[]>([]);
-  const [expandedLoading, setExpandedLoading] = useState(false);
-  const [expandedError, setExpandedError] = useState("");
 
-  const toggleExpand = async (rowKey: string, params: Record<string, string>) => {
-    if (expandedRowKey === rowKey) {
-      setExpandedRowKey(null);
-      setExpandedItems([]);
-      return;
-    }
-    setExpandedRowKey(rowKey);
-    setExpandedLoading(true);
-    setExpandedError("");
-    try {
-      const q = new URLSearchParams({ limit: "30", ...params });
-      const res = await fetch(`${API_BASE}/api/system/access-logs?${q.toString()}`, {
-        headers: authHeaders(token),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || `Failed to load details (${res.status})`);
-      }
-      const data = await res.json();
-      setExpandedItems(data.items || []);
-    } catch (err) {
-      setExpandedError(err instanceof Error ? err.message : "Failed to load requests");
-    } finally {
-      setExpandedLoading(false);
-    }
+  const toggleExpand = (rowKey: string) => {
+    setExpandedRowKey((prev) => (prev === rowKey ? null : rowKey));
   };
 
   const loadStream = useCallback(async () => {
@@ -146,7 +559,7 @@ export default function AccessHistoryPage() {
     setGroupedLoading(true);
     setError("");
     try {
-      const type = tab === "by-user" ? "user" : tab === "by-ip" ? "ip" : "path";
+      const type = tab === "by-user" ? "user" : tab === "by-ip" ? "ip" : tab === "by-path" ? "path" : "status";
       const params = new URLSearchParams({ group_by: type });
       if (groupSearch.trim()) params.set("search", groupSearch.trim());
 
@@ -160,7 +573,8 @@ export default function AccessHistoryPage() {
       const data = await res.json();
       if (type === "user") setGroupedUsers(data.results || []);
       else if (type === "ip") setGroupedIps(data.results || []);
-      else setGroupedPaths(data.results || []);
+      else if (type === "path") setGroupedPaths(data.results || []);
+      else if (type === "status") setGroupedStatuses(data.results || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load grouped data");
     } finally {
@@ -238,6 +652,13 @@ export default function AccessHistoryPage() {
           onClick={() => { setTab("by-path"); setExpandedRowKey(null); }}
         >
           Grouped by Endpoint
+        </button>
+        <button
+          type="button"
+          className={`access-tab ${tab === "by-status" ? "active" : ""}`}
+          onClick={() => { setTab("by-status"); setExpandedRowKey(null); }}
+        >
+          Grouped by Status
         </button>
       </div>
 
@@ -418,13 +839,12 @@ export default function AccessHistoryPage() {
                   groupedUsers.map((u, idx) => {
                     const rowKey = `user-${u.user_id || "anon"}-${idx}`;
                     const isExpanded = expandedRowKey === rowKey;
-                    const filterParam = u.user_id ? { user_id: u.user_id } : { user_id: "anonymous" };
 
                     return (
                       <Fragment key={rowKey}>
                         <tr
                           className={`expandable-row ${isExpanded ? "row-expanded" : ""}`}
-                          onClick={() => void toggleExpand(rowKey, filterParam)}
+                          onClick={() => toggleExpand(rowKey)}
                         >
                           <td className="expand-indicator">
                             <span className="expand-icon">{isExpanded ? "▾" : "▸"}</span>
@@ -455,59 +875,12 @@ export default function AccessHistoryPage() {
                         {isExpanded && (
                           <tr className="expanded-detail-row">
                             <td colSpan={8} className="expanded-detail-cell">
-                              <div className="nested-requests-panel">
-                                <div className="nested-header">
-                                  <strong>Recent Requests for {u.user_name}</strong>
-                                  <button
-                                    type="button"
-                                    className="nested-close-btn"
-                                    onClick={(e) => { e.stopPropagation(); setExpandedRowKey(null); }}
-                                  >
-                                    ✕ Close
-                                  </button>
-                                </div>
-                                {expandedLoading ? (
-                                  <div className="nested-loading">Loading recent requests...</div>
-                                ) : expandedError ? (
-                                  <div className="nested-error">{expandedError}</div>
-                                ) : expandedItems.length === 0 ? (
-                                  <div className="nested-empty">No requests found.</div>
-                                ) : (
-                                  <table className="nested-table">
-                                    <thead>
-                                      <tr>
-                                        <th>Timestamp</th>
-                                        <th>Method</th>
-                                        <th>Path & Query</th>
-                                        <th>Status</th>
-                                        <th>IP Address</th>
-                                        <th>Latency</th>
-                                        <th>User Agent</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {expandedItems.map((item) => (
-                                        <tr key={item.id}>
-                                          <td className="time-cell">
-                                            {item.created_at ? new Date(item.created_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
-                                          </td>
-                                          <td><span className={`method-badge ${item.method.toLowerCase()}`}>{item.method}</span></td>
-                                          <td className="path-cell">
-                                            <span className="path-text" title={item.path}>{item.path}</span>
-                                            {item.query_params && <small className="query-text">?{item.query_params}</small>}
-                                          </td>
-                                          <td><span className={`status-badge status-${String(item.status_code)[0]}xx`}>{item.status_code}</span></td>
-                                          <td><code>{item.ip_address}</code></td>
-                                          <td>{item.duration_ms} ms</td>
-                                          <td className="agent-cell" title={item.user_agent}>
-                                            <small>{item.user_agent.slice(0, 50)}…</small>
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                )}
-                              </div>
+                              <DrilldownPanel
+                                initialFilter={u.user_id ? { user_id: u.user_id } : { user_id: "anonymous" }}
+                                title={`Drill-down for User: ${u.user_name}`}
+                                onClose={() => setExpandedRowKey(null)}
+                                token={token}
+                              />
                             </td>
                           </tr>
                         )}
@@ -558,13 +931,12 @@ export default function AccessHistoryPage() {
                   groupedIps.map((ipRow) => {
                     const rowKey = `ip-${ipRow.ip_address}`;
                     const isExpanded = expandedRowKey === rowKey;
-                    const filterParam = { ip_address: ipRow.ip_address };
 
                     return (
                       <Fragment key={rowKey}>
                         <tr
                           className={`expandable-row ${isExpanded ? "row-expanded" : ""}`}
-                          onClick={() => void toggleExpand(rowKey, filterParam)}
+                          onClick={() => toggleExpand(rowKey)}
                         >
                           <td className="expand-indicator">
                             <span className="expand-icon">{isExpanded ? "▾" : "▸"}</span>
@@ -595,62 +967,12 @@ export default function AccessHistoryPage() {
                         {isExpanded && (
                           <tr className="expanded-detail-row">
                             <td colSpan={7} className="expanded-detail-cell">
-                              <div className="nested-requests-panel">
-                                <div className="nested-header">
-                                  <strong>Recent Requests from {ipRow.ip_address}</strong>
-                                  <button
-                                    type="button"
-                                    className="nested-close-btn"
-                                    onClick={(e) => { e.stopPropagation(); setExpandedRowKey(null); }}
-                                  >
-                                    ✕ Close
-                                  </button>
-                                </div>
-                                {expandedLoading ? (
-                                  <div className="nested-loading">Loading recent requests...</div>
-                                ) : expandedError ? (
-                                  <div className="nested-error">{expandedError}</div>
-                                ) : expandedItems.length === 0 ? (
-                                  <div className="nested-empty">No requests found.</div>
-                                ) : (
-                                  <table className="nested-table">
-                                    <thead>
-                                      <tr>
-                                        <th>Timestamp</th>
-                                        <th>User / Role</th>
-                                        <th>Method</th>
-                                        <th>Path & Query</th>
-                                        <th>Status</th>
-                                        <th>Latency</th>
-                                        <th>User Agent</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {expandedItems.map((item) => (
-                                        <tr key={item.id}>
-                                          <td className="time-cell">
-                                            {item.created_at ? new Date(item.created_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
-                                          </td>
-                                          <td>
-                                            <strong>{item.user_name}</strong>
-                                            <small className="user-role-badge">{item.user_role}</small>
-                                          </td>
-                                          <td><span className={`method-badge ${item.method.toLowerCase()}`}>{item.method}</span></td>
-                                          <td className="path-cell">
-                                            <span className="path-text" title={item.path}>{item.path}</span>
-                                            {item.query_params && <small className="query-text">?{item.query_params}</small>}
-                                          </td>
-                                          <td><span className={`status-badge status-${String(item.status_code)[0]}xx`}>{item.status_code}</span></td>
-                                          <td>{item.duration_ms} ms</td>
-                                          <td className="agent-cell" title={item.user_agent}>
-                                            <small>{item.user_agent.slice(0, 50)}…</small>
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                )}
-                              </div>
+                              <DrilldownPanel
+                                initialFilter={{ ip_address: ipRow.ip_address }}
+                                title={`Drill-down for IP: ${ipRow.ip_address}`}
+                                onClose={() => setExpandedRowKey(null)}
+                                token={token}
+                              />
                             </td>
                           </tr>
                         )}
@@ -701,13 +1023,12 @@ export default function AccessHistoryPage() {
                   groupedPaths.map((p, idx) => {
                     const rowKey = `path-${p.method}-${p.path}-${idx}`;
                     const isExpanded = expandedRowKey === rowKey;
-                    const filterParam = { method: p.method, path: p.path };
 
                     return (
                       <Fragment key={rowKey}>
                         <tr
                           className={`expandable-row ${isExpanded ? "row-expanded" : ""}`}
-                          onClick={() => void toggleExpand(rowKey, filterParam)}
+                          onClick={() => toggleExpand(rowKey)}
                         >
                           <td className="expand-indicator">
                             <span className="expand-icon">{isExpanded ? "▾" : "▸"}</span>
@@ -734,61 +1055,93 @@ export default function AccessHistoryPage() {
                         {isExpanded && (
                           <tr className="expanded-detail-row">
                             <td colSpan={7} className="expanded-detail-cell">
-                              <div className="nested-requests-panel">
-                                <div className="nested-header">
-                                  <strong>Recent Requests to {p.method} {p.path}</strong>
-                                  <button
-                                    type="button"
-                                    className="nested-close-btn"
-                                    onClick={(e) => { e.stopPropagation(); setExpandedRowKey(null); }}
-                                  >
-                                    ✕ Close
-                                  </button>
-                                </div>
-                                {expandedLoading ? (
-                                  <div className="nested-loading">Loading recent requests...</div>
-                                ) : expandedError ? (
-                                  <div className="nested-error">{expandedError}</div>
-                                ) : expandedItems.length === 0 ? (
-                                  <div className="nested-empty">No requests found.</div>
-                                ) : (
-                                  <table className="nested-table">
-                                    <thead>
-                                      <tr>
-                                        <th>Timestamp</th>
-                                        <th>User / Role</th>
-                                        <th>IP Address</th>
-                                        <th>Query</th>
-                                        <th>Status</th>
-                                        <th>Latency</th>
-                                        <th>User Agent</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {expandedItems.map((item) => (
-                                        <tr key={item.id}>
-                                          <td className="time-cell">
-                                            {item.created_at ? new Date(item.created_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
-                                          </td>
-                                          <td>
-                                            <strong>{item.user_name}</strong>
-                                            <small className="user-role-badge">{item.user_role}</small>
-                                          </td>
-                                          <td><code>{item.ip_address}</code></td>
-                                          <td className="path-cell">
-                                            {item.query_params ? <small className="query-text">?{item.query_params}</small> : <small style={{ color: "#94a3b8" }}>—</small>}
-                                          </td>
-                                          <td><span className={`status-badge status-${String(item.status_code)[0]}xx`}>{item.status_code}</span></td>
-                                          <td>{item.duration_ms} ms</td>
-                                          <td className="agent-cell" title={item.user_agent}>
-                                            <small>{item.user_agent.slice(0, 50)}…</small>
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                )}
-                              </div>
+                              <DrilldownPanel
+                                initialFilter={{ method: p.method, path: p.path }}
+                                title={`Drill-down for Endpoint: ${p.method} ${p.path}`}
+                                onClose={() => setExpandedRowKey(null)}
+                                token={token}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {tab === "by-status" && (
+        <>
+          <div className="access-filters-bar">
+            <input
+              type="text"
+              placeholder="Filter status code (e.g. 401, 200, 500)..."
+              value={groupSearch}
+              onChange={(e) => setGroupSearch(e.target.value)}
+              className="access-input search-input"
+            />
+          </div>
+          <div className="access-table-wrap">
+            <table className="access-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 34 }}></th>
+                  <th>Status Code</th>
+                  <th>Total Requests</th>
+                  <th>Distinct Users</th>
+                  <th>Distinct IPs</th>
+                  <th>Avg Latency</th>
+                  <th>Last Active</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groupedLoading ? (
+                  <tr>
+                    <td colSpan={7} className="access-loading-cell">Aggregating status statistics...</td>
+                  </tr>
+                ) : groupedStatuses.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="access-empty-cell">No status records found.</td>
+                  </tr>
+                ) : (
+                  groupedStatuses.map((st) => {
+                    const rowKey = `status-${st.status_code}`;
+                    const isExpanded = expandedRowKey === rowKey;
+                    return (
+                      <Fragment key={rowKey}>
+                        <tr
+                          className={`expandable-row ${isExpanded ? "row-expanded" : ""}`}
+                          onClick={() => toggleExpand(rowKey)}
+                        >
+                          <td className="expand-indicator">
+                            <span className="expand-icon">{isExpanded ? "▾" : "▸"}</span>
+                          </td>
+                          <td>
+                            <span className={`status-badge status-${String(st.status_code)[0]}xx`}>
+                              {st.status_code}
+                            </span>
+                          </td>
+                          <td><strong>{st.total_requests.toLocaleString()}</strong></td>
+                          <td>{st.distinct_users} user{st.distinct_users === 1 ? "" : "s"}</td>
+                          <td>{st.distinct_ips} IP{st.distinct_ips === 1 ? "" : "s"}</td>
+                          <td>{st.avg_duration_ms} ms</td>
+                          <td className="time-cell">
+                            {st.last_active ? new Date(st.last_active).toLocaleString("en-US") : "—"}
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr className="expanded-detail-row">
+                            <td colSpan={7} className="expanded-detail-cell">
+                              <DrilldownPanel
+                                initialFilter={{ status_filter: String(st.status_code) }}
+                                title={`Drill-down for Status Code ${st.status_code}`}
+                                onClose={() => setExpandedRowKey(null)}
+                                token={token}
+                              />
                             </td>
                           </tr>
                         )}

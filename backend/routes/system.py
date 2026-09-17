@@ -15,23 +15,17 @@ def health():
     return {"status": "ok"}
 
 
-@router.get("/system/access-logs")
-def get_access_logs(
-    user_id: str = Query(default=""),
-    ip_address: str = Query(default=""),
-    path: str = Query(default=""),
-    status_filter: str = Query(default=""),  # "errors", "success", "401", "403", etc.
-    method: str = Query(default=""),
-    search: str = Query(default=""),
-    start_date: str = Query(default=""),
-    end_date: str = Query(default=""),
-    page: int = Query(default=1, ge=1),
-    limit: int = Query(default=50, ge=1, le=200),
-    admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
+def _apply_audit_filters(
+    query,
+    user_id: str = "",
+    ip_address: str = "",
+    path: str = "",
+    method: str = "",
+    status_filter: str = "",
+    search: str = "",
+    start_date: str = "",
+    end_date: str = "",
 ):
-    query = db.query(AccessAuditLog)
-
     if user_id.strip():
         if user_id == "anonymous":
             query = query.filter(AccessAuditLog.user_id.is_(None))
@@ -82,6 +76,36 @@ def get_access_logs(
         except ValueError:
             pass
 
+    return query
+
+
+@router.get("/system/access-logs")
+def get_access_logs(
+    user_id: str = Query(default=""),
+    ip_address: str = Query(default=""),
+    path: str = Query(default=""),
+    status_filter: str = Query(default=""),  # "errors", "success", "401", "403", etc.
+    method: str = Query(default=""),
+    search: str = Query(default=""),
+    start_date: str = Query(default=""),
+    end_date: str = Query(default=""),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=50, ge=1, le=200),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    query = _apply_audit_filters(
+        db.query(AccessAuditLog),
+        user_id=user_id,
+        ip_address=ip_address,
+        path=path,
+        method=method,
+        status_filter=status_filter,
+        search=search,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
     total = query.count()
     items = (
         query.order_by(AccessAuditLog.created_at.desc())
@@ -101,13 +125,19 @@ def get_access_logs(
 @router.get("/system/access-logs/grouped")
 def get_access_logs_grouped(
     group_by: str = Query(default="user"),  # "user", "ip", "path", "status"
+    user_id: str = Query(default=""),
+    ip_address: str = Query(default=""),
+    path: str = Query(default=""),
+    method: str = Query(default=""),
+    status_filter: str = Query(default=""),
+    start_date: str = Query(default=""),
+    end_date: str = Query(default=""),
     search: str = Query(default=""),
     limit: int = Query(default=100, ge=1, le=500),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     if group_by == "user":
-        # Group by user_id & user_name
         query = (
             db.query(
                 AccessAuditLog.user_id,
@@ -128,12 +158,17 @@ def get_access_logs_grouped(
             )
             .order_by(desc("total_requests"))
         )
-        if search.strip():
-            pat = f"%{search.strip()}%"
-            query = query.filter(
-                (AccessAuditLog.user_name.ilike(pat)) |
-                (AccessAuditLog.user_email.ilike(pat))
-            )
+        query = _apply_audit_filters(
+            query,
+            user_id=user_id,
+            ip_address=ip_address,
+            path=path,
+            method=method,
+            status_filter=status_filter,
+            search=search,
+            start_date=start_date,
+            end_date=end_date,
+        )
         rows = query.limit(limit).all()
         return {
             "group_by": "user",
@@ -154,7 +189,6 @@ def get_access_logs_grouped(
         }
 
     elif group_by == "ip":
-        # Group by IP address
         query = (
             db.query(
                 AccessAuditLog.ip_address,
@@ -167,8 +201,17 @@ def get_access_logs_grouped(
             .group_by(AccessAuditLog.ip_address)
             .order_by(desc("total_requests"))
         )
-        if search.strip():
-            query = query.filter(AccessAuditLog.ip_address.ilike(f"%{search.strip()}%"))
+        query = _apply_audit_filters(
+            query,
+            user_id=user_id,
+            ip_address=ip_address,
+            path=path,
+            method=method,
+            status_filter=status_filter,
+            search=search,
+            start_date=start_date,
+            end_date=end_date,
+        )
         rows = query.limit(limit).all()
         return {
             "group_by": "ip",
@@ -186,7 +229,6 @@ def get_access_logs_grouped(
         }
 
     elif group_by == "path":
-        # Group by endpoint / route
         query = (
             db.query(
                 AccessAuditLog.method,
@@ -199,8 +241,17 @@ def get_access_logs_grouped(
             .group_by(AccessAuditLog.method, AccessAuditLog.path)
             .order_by(desc("total_requests"))
         )
-        if search.strip():
-            query = query.filter(AccessAuditLog.path.ilike(f"%{search.strip()}%"))
+        query = _apply_audit_filters(
+            query,
+            user_id=user_id,
+            ip_address=ip_address,
+            path=path,
+            method=method,
+            status_filter=status_filter,
+            search=search,
+            start_date=start_date,
+            end_date=end_date,
+        )
         rows = query.limit(limit).all()
         return {
             "group_by": "path",
@@ -217,6 +268,47 @@ def get_access_logs_grouped(
             ],
         }
 
+    elif group_by == "status":
+        query = (
+            db.query(
+                AccessAuditLog.status_code,
+                func.count(AccessAuditLog.id).label("total_requests"),
+                func.count(func.distinct(AccessAuditLog.user_id)).label("distinct_users"),
+                func.count(func.distinct(AccessAuditLog.ip_address)).label("distinct_ips"),
+                func.avg(AccessAuditLog.duration_ms).label("avg_duration_ms"),
+                func.max(AccessAuditLog.created_at).label("last_active"),
+            )
+            .group_by(AccessAuditLog.status_code)
+            .order_by(desc("total_requests"))
+        )
+        query = _apply_audit_filters(
+            query,
+            user_id=user_id,
+            ip_address=ip_address,
+            path=path,
+            method=method,
+            status_filter=status_filter,
+            search=search,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        rows = query.limit(limit).all()
+        return {
+            "group_by": "status",
+            "results": [
+                {
+                    "status_code": r.status_code,
+                    "total_requests": int(r.total_requests or 0),
+                    "distinct_users": int(r.distinct_users or 0),
+                    "distinct_ips": int(r.distinct_ips or 0),
+                    "avg_duration_ms": round(float(r.avg_duration_ms or 0), 1),
+                    "last_active": r.last_active.isoformat() if r.last_active else None,
+                }
+                for r in rows
+            ],
+        }
+
     else:
+        return {"group_by": group_by, "results": []}
         # Default or fallback
         return {"group_by": group_by, "results": []}
