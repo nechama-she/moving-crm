@@ -159,7 +159,7 @@ export default function OutreachEventsPage() {
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         {tabs.map((tab) => (
-          <button
+          <button className="slds-button"
             key={tab.value}
             onClick={() => {
               setTypeFilter(tab.value);
@@ -256,7 +256,7 @@ export default function OutreachEventsPage() {
                   <td style={tdStyle}>{formatType(item.outreach_type)}</td>
                   <td style={tdStyle}>{yesNo(item.qualified)}</td>
                   <td style={tdStyle}>
-                    <button
+                    <button className="slds-button"
                       type="button"
                       onClick={() => setSelected(item)}
                       style={{
@@ -311,7 +311,7 @@ export default function OutreachEventsPage() {
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
               <h2 style={{ margin: 0, fontSize: 16 }}>Outreach Details</h2>
-              <button
+              <button className="slds-button"
                 type="button"
                 onClick={() => setSelected(null)}
                 style={{ border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", padding: "4px 10px", cursor: "pointer" }}

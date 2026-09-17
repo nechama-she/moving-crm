@@ -39,7 +39,7 @@ export default function MainNavigation({ role, mobile = false }: { role?: string
   }}>
     {!dispatch && link(foreman ? item('My Jobs', '/dispatch') : item('Leads', '/'))}
     {groups.map(group => <div className="navigation-group" key={group.label}>
-      {mobile ? <h3>{group.label}</h3> : <button type="button" className={group.items.some(entry => active(entry.to)) ? 'active' : ''} aria-expanded={open === group.label} aria-controls={`navigation-${group.label}`} onClick={() => setOpen(open === group.label ? null : group.label)}>{group.label}<span aria-hidden="true">⌄</span></button>}
+      {mobile ? <h3>{group.label}</h3> : <button type="button" className={["slds-button", group.items.some(entry => active(entry.to)) ? 'active' : ''].filter(Boolean).join(" ")} aria-expanded={open === group.label} aria-controls={`navigation-${group.label}`} onClick={() => setOpen(open === group.label ? null : group.label)}>{group.label}<span aria-hidden="true">⌄</span></button>}
       {(mobile || open === group.label) && <div id={mobile ? undefined : `navigation-${group.label}`} className="navigation-group-links">{group.items.map(link)}</div>}
     </div>)}
     {link(item('Settings', '/settings'))}

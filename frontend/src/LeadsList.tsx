@@ -214,7 +214,7 @@ export default function LeadsList() {
       {error && (
         <div style={{ marginBottom: 10, padding: "8px 12px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, color: "#b91c1c", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Failed to load leads: {error}</span>
-          <button onClick={() => { setError(""); fetchLeads(0, search); }} style={{ border: "none", background: "none", cursor: "pointer", color: "#b91c1c", fontWeight: 700 }}>Retry</button>
+          <button className="slds-button" onClick={() => { setError(""); fetchLeads(0, search); }} style={{ border: "none", background: "none", cursor: "pointer", color: "#b91c1c", fontWeight: 700 }}>Retry</button>
         </div>
       )}
       {companyIdFilter ? (
@@ -222,7 +222,7 @@ export default function LeadsList() {
           <span>
             Showing company: <strong>{companyNameFilter || companyIdFilter}</strong>
           </span>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => setSearchParams((prev) => {
               const next = new URLSearchParams(prev);

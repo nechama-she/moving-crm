@@ -264,7 +264,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
           const count = counts[tab.key] || 0;
           const isActive = activeTab === tab.key;
           return (
-            <button
+            <button className="slds-button"
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
               style={{
@@ -301,7 +301,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
 
       {activeTab === "messages" && (
         <div style={{ display: "flex", gap: 8, padding: "10px 12px", border: "1px solid #e0e0e0", borderTop: "none", background: "#fff" }}>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => setSmsNumberTab("company")}
             style={{
@@ -314,7 +314,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
           >
             Company Number ({companySmsMessages.length})
           </button>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => setSmsNumberTab("rep")}
             disabled={!repAircallNumberId}
@@ -334,8 +334,8 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
 
       {activeTab === "calls" && (
         <div style={{ display: "flex", gap: 8, padding: "10px 12px", border: "1px solid #e0e0e0", borderTop: "none", background: "#fff" }}>
-          <button type="button" onClick={() => setCallNumberTab("company")} style={{ padding: "7px 14px", borderRadius: 6, border: callNumberTab === "company" ? "1px solid #1976d2" : "1px solid #ccc", background: callNumberTab === "company" ? "#e3f2fd" : "#fff", color: callNumberTab === "company" ? "#1976d2" : "#555", fontWeight: callNumberTab === "company" ? 600 : 400, cursor: "pointer" }}>Company Number ({companyCalls.length})</button>
-          <button type="button" onClick={() => setCallNumberTab("rep")} disabled={!repPhone} style={{ padding: "7px 14px", borderRadius: 6, border: callNumberTab === "rep" ? "1px solid #1976d2" : "1px solid #ccc", background: callNumberTab === "rep" ? "#e3f2fd" : "#fff", color: !repPhone ? "#aaa" : callNumberTab === "rep" ? "#1976d2" : "#555", fontWeight: callNumberTab === "rep" ? 600 : 400, cursor: repPhone ? "pointer" : "default" }}>Assigned Rep Number ({repCalls.length})</button>
+          <button className="slds-button" type="button" onClick={() => setCallNumberTab("company")} style={{ padding: "7px 14px", borderRadius: 6, border: callNumberTab === "company" ? "1px solid #1976d2" : "1px solid #ccc", background: callNumberTab === "company" ? "#e3f2fd" : "#fff", color: callNumberTab === "company" ? "#1976d2" : "#555", fontWeight: callNumberTab === "company" ? 600 : 400, cursor: "pointer" }}>Company Number ({companyCalls.length})</button>
+          <button className="slds-button" type="button" onClick={() => setCallNumberTab("rep")} disabled={!repPhone} style={{ padding: "7px 14px", borderRadius: 6, border: callNumberTab === "rep" ? "1px solid #1976d2" : "1px solid #ccc", background: callNumberTab === "rep" ? "#e3f2fd" : "#fff", color: !repPhone ? "#aaa" : callNumberTab === "rep" ? "#1976d2" : "#555", fontWeight: callNumberTab === "rep" ? 600 : 400, cursor: repPhone ? "pointer" : "default" }}>Assigned Rep Number ({repCalls.length})</button>
         </div>
       )}
 
@@ -442,7 +442,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
               outline: "none",
             }}
           />
-          <button
+          <button className="slds-button"
             onClick={handleSendReply}
             disabled={sending || !replyText.trim()}
             style={{

@@ -405,8 +405,8 @@ export default function PricingPage() {
       {notice ? <div className="pricing-alert success">{notice}</div> : null}
 
       <div className="pricing-mode" aria-label="Pricing type">
-        <button type="button" aria-pressed={pricingMode === "local"} onClick={() => setPricingMode("local")}>Local</button>
-        <button type="button" aria-pressed={pricingMode === "long-distance"} onClick={() => setPricingMode("long-distance")}>Long Distance</button>
+        <button className="slds-button" type="button" aria-pressed={pricingMode === "local"} onClick={() => setPricingMode("local")}>Local</button>
+        <button className="slds-button" type="button" aria-pressed={pricingMode === "long-distance"} onClick={() => setPricingMode("long-distance")}>Long Distance</button>
       </div>
       <div className="pricing-layout">
         <aside className="pricing-book-list">
@@ -416,7 +416,7 @@ export default function PricingPage() {
           </select>
           <div className="pricing-books-desktop">
             {plans.map((row) => (
-              <button key={row.id} className={row.id === selectedId ? "active" : ""} onClick={() => setSelectedId(row.id)}>
+              <button key={row.id} className={["slds-button", row.id === selectedId ? "active" : ""].filter(Boolean).join(" ")} onClick={() => setSelectedId(row.id)}>
                 <strong>{row.company_name}</strong><span>{row.name}</span>
                 <small>{row.rate_count} rates · {row.rule_count} rules</small>
               </button>
@@ -499,7 +499,7 @@ export default function PricingPage() {
                                 : "No transportation rate matched"}
                             </small>
                           </div>
-                          <div className="pricing-line-price"><b>{money(quote.base_price)}</b><button type="button" onClick={() => addLineDiscount("transportation")}>+ Discount</button></div>
+                          <div className="pricing-line-price"><b>{money(quote.base_price)}</b><button className="slds-button" type="button" onClick={() => addLineDiscount("transportation")}>+ Discount</button></div>
                         </div>
                         {lineDiscounts("transportation").map((discount) => (
                           <DiscountRow key={discount.id} discount={discount} originalAmount={discountTargets.transportation || 0} setDiscounts={setCustomDiscounts} />
@@ -516,7 +516,7 @@ export default function PricingPage() {
                                   </span>
                                 ))}
                               </div>
-                              <div className="pricing-line-price"><b className={charge.amount < 0 ? "discount" : ""}>{money(charge.amount)}</b><button type="button" onClick={() => addLineDiscount(`charge:${charge.id}`)}>+ Discount</button></div>
+                              <div className="pricing-line-price"><b className={charge.amount < 0 ? "discount" : ""}>{money(charge.amount)}</b><button className="slds-button" type="button" onClick={() => addLineDiscount(`charge:${charge.id}`)}>+ Discount</button></div>
                             </div>
                             {lineDiscounts(`charge:${charge.id}`).map((discount) => (
                               <DiscountRow key={discount.id} discount={discount} originalAmount={discountTargets[`charge:${charge.id}`] || 0} setDiscounts={setCustomDiscounts} />
@@ -527,7 +527,7 @@ export default function PricingPage() {
                           <div key={`custom-summary-${charge.id}`}>
                             <div className="pricing-quote-line">
                               <div><strong>{charge.title.trim() || "Custom charge"}</strong><small>Custom charge</small></div>
-                              <div className="pricing-line-price"><b>{money(Math.max(0, Number(charge.amount) || 0))}</b><button type="button" onClick={() => addLineDiscount(`custom:${charge.id}`)}>+ Discount</button></div>
+                              <div className="pricing-line-price"><b>{money(Math.max(0, Number(charge.amount) || 0))}</b><button className="slds-button" type="button" onClick={() => addLineDiscount(`custom:${charge.id}`)}>+ Discount</button></div>
                             </div>
                             {lineDiscounts(`custom:${charge.id}`).map((discount) => (
                               <DiscountRow key={discount.id} discount={discount} originalAmount={discountTargets[`custom:${charge.id}`] || 0} setDiscounts={setCustomDiscounts} />
@@ -605,13 +605,13 @@ export default function PricingPage() {
                         <div className="pricing-manual-group">
                           <div className="pricing-manual-title">
                             <div><strong>Custom charges</strong><small>Add any charge that is not listed above.</small></div>
-                            <button type="button" onClick={() => setCustomCharges((rows) => [...rows, { id: crypto.randomUUID(), title: "", amount: 0 }])}>+ Add charge</button>
+                            <button className="slds-button" type="button" onClick={() => setCustomCharges((rows) => [...rows, { id: crypto.randomUUID(), title: "", amount: 0 }])}>+ Add charge</button>
                           </div>
                           {customCharges.map((charge) => (
                             <div className="pricing-manual-row custom-charge" key={charge.id}>
                               <label>Title<input value={charge.title} placeholder="Charge title" onChange={(event) => setCustomCharges((rows) => rows.map((row) => row.id === charge.id ? { ...row, title: event.target.value } : row))} /></label>
                               <label>Amount<input type="number" min="0" step="0.01" value={charge.amount || ""} placeholder="0.00" onChange={(event) => setCustomCharges((rows) => rows.map((row) => row.id === charge.id ? { ...row, amount: Number(event.target.value) } : row))} /></label>
-                              <button type="button" className="text-danger" aria-label="Remove custom charge" onClick={() => setCustomCharges((rows) => rows.filter((row) => row.id !== charge.id))}>Remove</button>
+                              <button type="button" className="slds-button text-danger" aria-label="Remove custom charge" onClick={() => setCustomCharges((rows) => rows.filter((row) => row.id !== charge.id))}>Remove</button>
                             </div>
                           ))}
                         </div>
@@ -651,7 +651,7 @@ export default function PricingPage() {
                           <input value={service.name} onChange={(e) => patchService(index, { name: e.target.value })} />
                           <input value={service.rate_text} onChange={(e) => patchService(index, { rate_text: e.target.value })} />
                           <input value={service.comments} onChange={(e) => patchService(index, { comments: e.target.value })} />
-                          <button className="text-danger" onClick={() => patchDraft({ services: (draft?.services || []).filter((_, idx) => idx !== index) })}>Remove</button>
+                          <button className="slds-button text-danger" onClick={() => patchDraft({ services: (draft?.services || []).filter((_, idx) => idx !== index) })}>Remove</button>
                         </>
                       ) : <><div><strong>{service.name}</strong>{service.comments ? <small>{service.comments}</small> : null}</div><b>{service.rate_text || "See note"}</b></>}
                     </article>
@@ -664,7 +664,7 @@ export default function PricingPage() {
                         <>
                           <input value={rule.title} onChange={(e) => patchRule(index, { title: e.target.value })} />
                           <textarea value={rule.description} onChange={(e) => patchRule(index, { description: e.target.value })} />
-                          <button className="text-danger" onClick={() => patchDraft({ rules: (draft?.rules || []).filter((_, idx) => idx !== index) })}>Remove</button>
+                          <button className="slds-button text-danger" onClick={() => patchDraft({ rules: (draft?.rules || []).filter((_, idx) => idx !== index) })}>Remove</button>
                         </>
                       ) : (
                         <>
@@ -675,8 +675,8 @@ export default function PricingPage() {
                     </article>
                     );
                   })}
-                  {editing ? <button className="add-row" onClick={() => patchDraft({ services: [...(draft?.services || []), { name: "", rate_text: "", comments: "" }] })}>+ Add service</button> : null}
-                  {editing ? <button className="add-row" onClick={() => patchDraft({ rules: [...(draft?.rules || []), { category: "general", title: "Pricing adjustment", description: "" }] })}>+ Add adjustment</button> : null}
+                  {editing ? <button className="slds-button add-row" onClick={() => patchDraft({ services: [...(draft?.services || []), { name: "", rate_text: "", comments: "" }] })}>+ Add service</button> : null}
+                  {editing ? <button className="slds-button add-row" onClick={() => patchDraft({ rules: [...(draft?.rules || []), { category: "general", title: "Pricing adjustment", description: "" }] })}>+ Add adjustment</button> : null}
                 </div>
               </PricingSection>
             </>
@@ -720,11 +720,11 @@ function DiscountRow({
         <small>{discount.type === "percent" ? `${Number(discount.value) || 0}% of original ${money(originalAmount)}` : "Fixed discount"}</small>
         <b>−{money(discount.amount)}</b>
       </div>
-      <button type="button" className="text-danger" aria-label="Remove discount" onClick={() => setDiscounts((rows) => rows.filter((row) => row.id !== discount.id))}>Remove</button>
+      <button type="button" className="slds-button text-danger" aria-label="Remove discount" onClick={() => setDiscounts((rows) => rows.filter((row) => row.id !== discount.id))}>Remove</button>
     </div>
   );
 }
 
 function PricingSection({ title, count, open, toggle, children }: { title: string; count: number; open: boolean; toggle: () => void; children: React.ReactNode }) {
-  return <section className="pricing-card pricing-section"><button className="pricing-section-title" onClick={toggle}><span><strong>{title}</strong><small>{count}</small></span><b>{open ? "−" : "+"}</b></button>{open ? <div className="pricing-section-body">{children}</div> : null}</section>;
+  return <section className="pricing-card pricing-section"><button className="slds-button pricing-section-title" onClick={toggle}><span><strong>{title}</strong><small>{count}</small></span><b>{open ? "−" : "+"}</b></button>{open ? <div className="pricing-section-body">{children}</div> : null}</section>;
 }

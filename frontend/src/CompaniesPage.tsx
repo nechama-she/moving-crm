@@ -300,7 +300,7 @@ export default function CompaniesPage() {
         </div>
 
         <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => void saveCompany()}
             disabled={saving}
@@ -309,7 +309,7 @@ export default function CompaniesPage() {
             {saving ? (editing ? "Saving..." : "Creating...") : (editing ? "Save Company" : "Create Company")}
           </button>
           {editing ? (
-            <button
+            <button className="slds-button"
               type="button"
               onClick={resetForm}
               style={{ border: "1px solid #c9c7c5", background: "#fff", color: "#3e3e3c", borderRadius: 4, padding: "8px 14px", fontWeight: 600 }}
@@ -395,14 +395,14 @@ export default function CompaniesPage() {
                 <td style={td}>{company.timezone || "-"}</td>
                 <td style={td}>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <button
+                    <button className="slds-button"
                       type="button"
                       onClick={() => startEdit(company)}
                       style={{ border: "1px solid #0176d3", color: "#0176d3", background: "#fff", borderRadius: 4, padding: "4px 10px", fontSize: 12, fontWeight: 600 }}
                     >
                       Edit
                     </button>
-                    <button
+                    <button className="slds-button"
                       type="button"
                       onClick={() => void deleteCompany(company)}
                       style={{ border: "1px solid #ba0517", color: "#ba0517", background: "#fff", borderRadius: 4, padding: "4px 10px", fontSize: 12, fontWeight: 600 }}

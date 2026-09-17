@@ -219,8 +219,8 @@ export default function LeadDuplicationRulesPage() {
           </label>
         </div>
         <div style={actions}>
-          <button type="submit" disabled={saving} style={primaryButton}>{saving ? "Saving..." : editingId ? "Save Changes" : "Add Rule"}</button>
-          {editingId ? <button type="button" onClick={cancelEdit} style={secondaryButton}>Cancel</button> : null}
+          <button className="slds-button" type="submit" disabled={saving} style={primaryButton}>{saving ? "Saving..." : editingId ? "Save Changes" : "Add Rule"}</button>
+          {editingId ? <button className="slds-button" type="button" onClick={cancelEdit} style={secondaryButton}>Cancel</button> : null}
         </div>
       </form>
 
@@ -232,8 +232,8 @@ export default function LeadDuplicationRulesPage() {
             <tbody>
               {rules.map((rule) => <tr key={rule.id} style={{ opacity: rule.active ? 1 : 0.6 }}>
                 <td style={td}>{rule.source_company_name}</td><td style={td}>{rule.source_referral_source}</td><td style={td}>{rule.target_company_name}</td><td style={td}>{rule.target_referral_source}</td><td style={td}>{formatDelay(rule.delay_minutes)}</td>
-                <td style={td}><button type="button" onClick={() => void toggle(rule)} style={statusButton}>{rule.active ? "Enabled" : "Disabled"}</button></td>
-                <td style={{ ...td, whiteSpace: "nowrap" }}><button type="button" onClick={() => editRule(rule)} style={linkButton}>Edit</button><button type="button" onClick={() => void remove(rule)} style={{ ...linkButton, color: "#ba0517" }}>Delete</button></td>
+                <td style={td}><button className="slds-button" type="button" onClick={() => void toggle(rule)} style={statusButton}>{rule.active ? "Enabled" : "Disabled"}</button></td>
+                <td style={{ ...td, whiteSpace: "nowrap" }}><button className="slds-button" type="button" onClick={() => editRule(rule)} style={linkButton}>Edit</button><button className="slds-button" type="button" onClick={() => void remove(rule)} style={{ ...linkButton, color: "#ba0517" }}>Delete</button></td>
               </tr>)}
               {!loading && rules.length === 0 ? <tr><td colSpan={7} style={{ ...td, textAlign: "center", color: "#706e6b", padding: 30 }}>No duplication rules configured.</td></tr> : null}
               {loading ? <tr><td colSpan={7} style={{ ...td, textAlign: "center", padding: 30 }}>Loading rules...</td></tr> : null}

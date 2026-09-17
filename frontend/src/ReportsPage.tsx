@@ -40,7 +40,7 @@ export default function ReportsPage() {
     <nav className="reports-tabs" aria-label="Reports"><Link to="/reports/booking-percentage" aria-current="page">Booking Percentage</Link></nav>
     <ReportControls range={range} companies={companies} reps={reps} options={options} onApply={(next, nextCompanies, nextReps) => { setRange(next); setCompanies(nextCompanies); setReps(nextReps); }} />
     {loading && <p role="status">Calculating customer moves...</p>}
-    {error && <div className="reports-error" role="alert">{error}<button onClick={() => setRange({ ...range })}>Try again</button></div>}
+    {error && <div className="reports-error" role="alert">{error}<button className="slds-button" onClick={() => setRange({ ...range })}>Try again</button></div>}
     {report && <>
       <div className="reports-range">First signups: {range.label === "All Time" ? "All time" : `${formatDate(range.start)} - ${formatDate(range.end)}`}</div>
       <section className="reports-metrics" aria-label="Booking summary">
@@ -60,7 +60,7 @@ export default function ReportsPage() {
           {filtered.slice(page * 50, (page + 1) * 50).map(move => <tr key={move.id}><td><Link to={`/leads/${move.id}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0176d3", fontWeight: 600 }}>{move.customer}</Link><details><summary>{move.leads.length} lead{move.leads.length === 1 ? "" : "s"}{move.issues.length ? " - Needs review" : ""}</summary>{move.leads.map(lead => <div className="reports-lead" key={lead.id}><Link to={`/leads/${lead.id}`} target="_blank" rel="noopener noreferrer">{lead.company || "Open lead"}</Link><span>{lead.status}</span><small>SmartMoving signup: {lead.created_time || "Missing"}<br/>CRM created: {lead.created_at || "Missing"}</small>{lead.issues.map(issue => <p className="reports-issue" key={issue}>{issue}</p>)}</div>)}</details></td><td>{formatDate(move.first_signup)}</td><td>{formatDate(move.move_date)}</td><td>{move.pickup || "Not available"}</td><td>{move.delivery || "Not available"}</td><td><span className={`reports-badge ${move.booked ? "booked" : ""}`}>{move.booked ? "Booked" : "Not booked"}</span></td></tr>)}
           {!filtered.length && <tr><td colSpan={6} className="reports-empty">No customer moves match this range and these filters.</td></tr>}
         </tbody></table></div>
-        <footer><span>{filtered.length.toLocaleString()} moves{filtered.length > 0 ? ` - Page ${page + 1} of ${Math.ceil(filtered.length / 50)}` : ""}</span><button disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button><button disabled={(page + 1) * 50 >= filtered.length} onClick={() => setPage(page + 1)}>Next</button></footer>
+        <footer><span>{filtered.length.toLocaleString()} moves{filtered.length > 0 ? ` - Page ${page + 1} of ${Math.ceil(filtered.length / 50)}` : ""}</span><button className="slds-button" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button><button className="slds-button" disabled={(page + 1) * 50 >= filtered.length} onClick={() => setPage(page + 1)}>Next</button></footer>
       </section>
     </>}
   </main>;

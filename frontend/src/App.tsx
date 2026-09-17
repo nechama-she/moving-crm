@@ -80,7 +80,7 @@ function ProtectedRoutes() {
   }
   return (
     <div className="crm-shell" style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      {isImpersonating ? <div className="impersonation-banner"><span>Viewing CRM as <strong>{user?.name}</strong> ({user?.role}).</span><button type="button" onClick={() => { stopImpersonating(); window.location.assign("/settings/impersonate"); }}>Return to {previousUser?.name || "Previous User"}</button></div> : null}
+      {isImpersonating ? <div className="impersonation-banner"><span>Viewing CRM as <strong>{user?.name}</strong> ({user?.role}).</span><button className="slds-button" type="button" onClick={() => { stopImpersonating(); window.location.assign("/settings/impersonate"); }}>Return to {previousUser?.name || "Previous User"}</button></div> : null}
       <nav className="crm-nav" style={{
         background: "#032d60",
         display: "flex",
@@ -95,7 +95,7 @@ function ProtectedRoutes() {
         </span>
         <button
           type="button"
-          className="crm-mobile-menu-button"
+          className="slds-button crm-mobile-menu-button"
           aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
           aria-expanded={mobileMenuOpen}
           onClick={() => setMobileMenuOpen((open) => !open)}
@@ -112,7 +112,7 @@ function ProtectedRoutes() {
               Change Password
             </NavLink>
           ) : null}
-          <button
+          <button className="slds-button"
             onClick={logout}
             style={{
               background: "none", border: "1px solid rgba(255,255,255,.35)",
@@ -128,7 +128,7 @@ function ProtectedRoutes() {
         <>
           <button
             type="button"
-            className="crm-mobile-menu-backdrop"
+            className="slds-button crm-mobile-menu-backdrop"
             aria-label="Close navigation menu"
             onClick={() => setMobileMenuOpen(false)}
           />
@@ -141,7 +141,7 @@ function ProtectedRoutes() {
               <MainNavigation role={user?.role} mobile />
               {!isDispatchUser && !isImpersonating ? <NavLink to="/change-password">Change Password</NavLink> : null}
             </div>
-            <button type="button" className="crm-mobile-signout" onClick={logout}>Sign Out</button>
+            <button type="button" className="slds-button crm-mobile-signout" onClick={logout}>Sign Out</button>
           </aside>
         </>
       ) : null}

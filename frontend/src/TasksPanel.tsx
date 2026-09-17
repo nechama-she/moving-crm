@@ -229,7 +229,7 @@ export default function TasksPanel({ leadId, token }: Props) {
           <span style={{ fontWeight: 700, fontSize: 14, color: "#032d60" }}>Activity</span>
           <span style={{ fontSize: 12, color: "#706e6b" }}>· {openCount} open</span>
         </div>
-        <button
+        <button className="slds-button"
           onClick={() => { setShowNewForm(true); setExpandedId(null); }}
           style={newBtnStyle}
         >
@@ -281,10 +281,10 @@ export default function TasksPanel({ leadId, token }: Props) {
             />
           </label>
           <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
-            <button type="button" onClick={() => { setShowNewForm(false); setNewTitle(""); setNewDueDate(""); setNewNotes(""); }} style={btnGhost}>
+            <button className="slds-button" type="button" onClick={() => { setShowNewForm(false); setNewTitle(""); setNewDueDate(""); setNewNotes(""); }} style={btnGhost}>
               Cancel
             </button>
-            <button type="submit" disabled={saving || !newTitle.trim()} style={{ ...btnPrimary, opacity: !newTitle.trim() ? 0.5 : 1 }}>
+            <button className="slds-button" type="submit" disabled={saving || !newTitle.trim()} style={{ ...btnPrimary, opacity: !newTitle.trim() ? 0.5 : 1 }}>
               {saving ? "Saving…" : "Save"}
             </button>
           </div>
@@ -461,8 +461,8 @@ export default function TasksPanel({ leadId, token }: Props) {
                   />
                 </label>
                 <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
-                  <button onClick={() => setEditingId(null)} style={btnGhost}>Cancel</button>
-                  <button onClick={() => saveEdit(task)} style={btnPrimary}>Save</button>
+                  <button className="slds-button" onClick={() => setEditingId(null)} style={btnGhost}>Cancel</button>
+                  <button className="slds-button" onClick={() => saveEdit(task)} style={btnPrimary}>Save</button>
                 </div>
               </>
             ) : (
@@ -486,8 +486,8 @@ export default function TasksPanel({ leadId, token }: Props) {
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
-                  <button onClick={(e) => { e.stopPropagation(); deleteTask(task); }} style={btnDanger}>Delete</button>
-                  <button onClick={(e) => { e.stopPropagation(); startEdit(task); }} style={btnPrimary}>Edit</button>
+                  <button className="slds-button" onClick={(e) => { e.stopPropagation(); deleteTask(task); }} style={btnDanger}>Delete</button>
+                  <button className="slds-button" onClick={(e) => { e.stopPropagation(); startEdit(task); }} style={btnPrimary}>Edit</button>
                 </div>
               </>
             )}

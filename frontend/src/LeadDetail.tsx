@@ -165,10 +165,10 @@ function RepCommissionEditor({
           if (Number.isFinite(number)) setPercentValue(commissionableAmount > 0 ? (number / commissionableAmount * 100).toFixed(6) : "0.000000");
         }} style={{ width: 115, border: `1px solid ${invalid ? "#ea001e" : "#c9c7c5"}`, borderRadius: 4, padding: "6px 8px" }} />
       </label>
-      <button type="button" disabled={saving || invalid} onClick={() => void onSave(parsedPercent, parsedAmount)} style={{ border: 0, borderRadius: 4, padding: "7px 11px", background: "#0176d3", color: "#fff", fontSize: 11, fontWeight: 700 }}>
+      <button className="slds-button" type="button" disabled={saving || invalid} onClick={() => void onSave(parsedPercent, parsedAmount)} style={{ border: 0, borderRadius: 4, padding: "7px 11px", background: "#0176d3", color: "#fff", fontSize: 11, fontWeight: 700 }}>
         {saving ? "Saving…" : "Save"}
       </button>
-      {overridden ? <button type="button" disabled={saving} onClick={() => void onSave(null, null)} style={{ border: "1px solid #c9c7c5", borderRadius: 4, padding: "6px 10px", background: "#fff", color: "#475569", fontSize: 11 }}>Use rep default</button> : null}
+      {overridden ? <button className="slds-button" type="button" disabled={saving} onClick={() => void onSave(null, null)} style={{ border: "1px solid #c9c7c5", borderRadius: 4, padding: "6px 10px", background: "#fff", color: "#475569", fontSize: 11 }}>Use rep default</button> : null}
     </div>
   );
 }
@@ -224,7 +224,7 @@ function ThirdPartyPayoutEditor({
       </div>
       {invalid ? <div style={{ color: "#ba0517", fontSize: 11 }}>Amount must be between $0 and ${paymentAmount.toFixed(2)}.</div> : null}
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-        <button type="button" disabled={saving || invalid} onClick={() => void onSave({
+        <button className="slds-button" type="button" disabled={saving || invalid} onClick={() => void onSave({
           thirdPartyCommissionTo: recipient.trim(),
           thirdPartyCommissionAmount: parsedAmount,
           ...(parsedAmount === 0 ? { thirdPartyCommissionPaid: false, thirdPartyCommissionPaidAt: "" } : {}),
@@ -233,10 +233,10 @@ function ThirdPartyPayoutEditor({
         </button>
         {hasPayout ? (
           <>
-            <button type="button" disabled={saving} onClick={() => void onSave({ thirdPartyCommissionPaid: !payout.thirdPartyCommissionPaid, thirdPartyCommissionPaidAt: !payout.thirdPartyCommissionPaid ? new Date().toISOString() : "" })} style={{ border: "1px solid #c9c7c5", borderRadius: 4, padding: "7px 12px", background: "#fff", color: "#0176d3", fontSize: 12, fontWeight: 700 }}>
+            <button className="slds-button" type="button" disabled={saving} onClick={() => void onSave({ thirdPartyCommissionPaid: !payout.thirdPartyCommissionPaid, thirdPartyCommissionPaidAt: !payout.thirdPartyCommissionPaid ? new Date().toISOString() : "" })} style={{ border: "1px solid #c9c7c5", borderRadius: 4, padding: "7px 12px", background: "#fff", color: "#0176d3", fontSize: 12, fontWeight: 700 }}>
               Mark {payout.thirdPartyCommissionPaid ? "unpaid" : "paid"}
             </button>
-            <button type="button" disabled={saving} onClick={() => void onSave({ thirdPartyCommissionTo: "", thirdPartyCommissionAmount: 0, thirdPartyCommissionPaid: false, thirdPartyCommissionPaidAt: "" })} style={{ border: "1px solid #c9c7c5", borderRadius: 4, background: "#fff", color: "#ba0517", padding: "7px 12px", fontSize: 12, fontWeight: 700 }}>
+            <button className="slds-button" type="button" disabled={saving} onClick={() => void onSave({ thirdPartyCommissionTo: "", thirdPartyCommissionAmount: 0, thirdPartyCommissionPaid: false, thirdPartyCommissionPaidAt: "" })} style={{ border: "1px solid #c9c7c5", borderRadius: 4, background: "#fff", color: "#ba0517", padding: "7px 12px", fontSize: 12, fontWeight: 700 }}>
               Remove
             </button>
           </>
@@ -1549,7 +1549,7 @@ export default function LeadDetail() {
     <div className="lead-detail-page" style={{ width: "100%", height: "calc(100vh - 52px)", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "24px clamp(16px, 3vw, 28px) 40px", background: "#f6f8fb", fontFamily: "inherit" }}>
       <div style={{ width: "100%", maxWidth: 1120, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 14 }}>
-        <button
+        <button className="slds-button"
           onClick={() => navigate(backTo)}
           style={{
             padding: "5px 14px",
@@ -1565,7 +1565,7 @@ export default function LeadDetail() {
           {backLabel}
         </button>
         {user?.role === "admin" ? (
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => void deleteLead()}
             disabled={deletingLead}
@@ -1601,7 +1601,7 @@ export default function LeadDetail() {
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid #e2e8f0" }}>
               <strong style={{ fontSize: 13, color: "#0f172a" }}>{previewTitle}</strong>
-              <button type="button" onClick={closePreview} style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}>Close</button>
+              <button className="slds-button" type="button" onClick={closePreview} style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}>Close</button>
             </div>
             <div style={{ padding: 12 }}>
               {previewType === "image" ? <img src={previewUrl} alt={previewTitle} style={{ maxWidth: "100%", height: "auto", borderRadius: 6 }} /> : null}
@@ -1624,7 +1624,7 @@ export default function LeadDetail() {
                   <p>Create a new lead in Moving CRM and SmartMoving.</p>
                 </div>
               </div>
-              <button type="button" aria-label="Close" disabled={copyingLead} onClick={() => setCopyModalOpen(false)}>×</button>
+              <button className="slds-button" type="button" aria-label="Close" disabled={copyingLead} onClick={() => setCopyModalOpen(false)}>×</button>
             </header>
             <div className="copy-lead-body">
               <div className="copy-lead-summary">
@@ -1707,9 +1707,9 @@ export default function LeadDetail() {
               </div> : null}
             </div>
             <footer>
-              {copyLeadResult ? <button type="button" className="copy-lead-submit" onClick={() => setCopyModalOpen(false)}>Done</button> : <>
-                <button type="button" disabled={copyingLead} onClick={() => setCopyModalOpen(false)}>Cancel</button>
-                <button type="button" className="copy-lead-submit" disabled={copyingLead || checkingCopyConflicts || !copyCompanyId || !copyReferralSource.trim()} onClick={() => void copyLead()}>
+              {copyLeadResult ? <button type="button" className="slds-button copy-lead-submit" onClick={() => setCopyModalOpen(false)}>Done</button> : <>
+                <button className="slds-button" type="button" disabled={copyingLead} onClick={() => setCopyModalOpen(false)}>Cancel</button>
+                <button type="button" className="slds-button copy-lead-submit" disabled={copyingLead || checkingCopyConflicts || !copyCompanyId || !copyReferralSource.trim()} onClick={() => void copyLead()}>
                   {copyingLead ? "Creating in SmartMoving…" : "Copy Lead"}
                 </button>
               </>}
@@ -1747,7 +1747,7 @@ export default function LeadDetail() {
                 <span aria-hidden="true" style={{ width: 30, height: 30, borderRadius: 6, display: "grid", placeItems: "center", background: "#0176d3", color: "#fff" }}>📎</span>
                 <div><strong style={{ display: "block", fontSize: 14, color: "#032d60" }}>Files</strong><small style={{ color: "#706e6b", fontSize: 11 }}>Lead and job files</small></div>
               </div>
-              <button type="button" onClick={() => setFilesModalOpen(false)} style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}>Close</button>
+              <button className="slds-button" type="button" onClick={() => setFilesModalOpen(false)} style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}>Close</button>
             </div>
             <div style={{ padding: 12, overflowY: "auto", flex: 1 }}>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) auto", gap: 8, marginBottom: 12 }}>
@@ -1768,8 +1768,8 @@ export default function LeadDetail() {
                 </select>
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "0 0 12px" }}>
-                <button
+              <div className="lead-files-toolbar">
+                <button className="slds-button"
                   type="button"
                   disabled={allModalAttachments.length === 0}
                   onClick={() => setSelectedAttachmentIds(
@@ -1780,14 +1780,14 @@ export default function LeadDetail() {
                 >
                   {selectedAttachmentIds.length === allModalAttachments.length && allModalAttachments.length > 0 ? "Clear selection" : "Select all"}
                 </button>
-                <button
+                <button className="slds-button"
                   type="button"
                   disabled={selectedAttachmentIds.length === 0 || downloadingAttachments}
                   onClick={() => void downloadAttachments(selectedAttachmentIds)}
                 >
                   Download selected ({selectedAttachmentIds.length})
                 </button>
-                <button
+                <button className="slds-button"
                   type="button"
                   disabled={allModalAttachments.length === 0 || downloadingAttachments}
                   onClick={() => void downloadAttachments()}
@@ -1835,19 +1835,19 @@ export default function LeadDetail() {
                               {renamingId === attachment.id ? (
                                 <div className="lead-file-rename">
                                   <input value={renameValue} onChange={(event) => setRenameValue(event.target.value)} />
-                                  <button type="button" onClick={() => void renameAttachment(attachment.id, renameValue, "__general__")}>Save</button>
-                                  <button type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }}>Cancel</button>
+                                  <button className="slds-button" type="button" onClick={() => void renameAttachment(attachment.id, renameValue, "__general__")}>Save</button>
+                                  <button className="slds-button" type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }}>Cancel</button>
                                 </div>
                               ) : <strong title={attachment.file_name}>{attachment.file_name}</strong>}
                               <small>{Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB{attachment.created_at ? ` · ${new Date(attachment.created_at).toLocaleString()}` : ""}{attachment.uploaded_by_name ? ` · ${attachment.uploaded_by_name}` : ""}</small>
                             </div>
                             <div className="lead-file-actions">
-                              <button type="button" onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type, "__general__")}>{attachment.is_external_link ? "Open" : "Preview"}</button>
-                              <button type="button" onClick={() => void downloadAttachment(attachment.id, attachment.file_name, "__general__")}>{attachment.is_external_link ? "Open link" : "Download"}</button>
+                              <button className="slds-button" type="button" onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type, "__general__")}>{attachment.is_external_link ? "Open" : "Preview"}</button>
+                              <button className="slds-button" type="button" onClick={() => void downloadAttachment(attachment.id, attachment.file_name, "__general__")}>{attachment.is_external_link ? "Open link" : "Download"}</button>
                               {canEditJobs ? (
                                 <>
-                                  <button type="button" onClick={() => { setRenamingId(attachment.id); setRenameValue(attachment.file_name); }}>Rename</button>
-                                  <button type="button" className="danger" onClick={() => { if (window.confirm("Delete this file?")) void deleteAttachment(attachment.id, "__general__"); }}>Delete</button>
+                                  <button className="slds-button" type="button" onClick={() => { setRenamingId(attachment.id); setRenameValue(attachment.file_name); }}>Rename</button>
+                                  <button type="button" className="slds-button danger" onClick={() => { if (window.confirm("Delete this file?")) void deleteAttachment(attachment.id, "__general__"); }}>Delete</button>
                                 </>
                               ) : null}
                             </div>
@@ -1893,19 +1893,19 @@ export default function LeadDetail() {
                                 {renamingId === attachment.id ? (
                                   <div className="lead-file-rename">
                                     <input value={renameValue} onChange={(event) => setRenameValue(event.target.value)} />
-                                    <button type="button" onClick={() => void renameAttachment(attachment.id, renameValue, job.id)}>Save</button>
-                                    <button type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }}>Cancel</button>
+                                    <button className="slds-button" type="button" onClick={() => void renameAttachment(attachment.id, renameValue, job.id)}>Save</button>
+                                    <button className="slds-button" type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }}>Cancel</button>
                                   </div>
                                 ) : <strong title={attachment.file_name}>{attachment.file_name}</strong>}
                                 <small>{Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB{attachment.created_at ? ` · ${new Date(attachment.created_at).toLocaleString()}` : ""}{attachment.uploaded_by_name ? ` · ${attachment.uploaded_by_name}` : ""}</small>
                               </div>
                               <div className="lead-file-actions">
-                                <button type="button" onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type, job.id)}>{attachment.is_external_link ? "Open" : "Preview"}</button>
-                                <button type="button" onClick={() => void downloadAttachment(attachment.id, attachment.file_name, job.id)}>{attachment.is_external_link ? "Open link" : "Download"}</button>
+                                <button className="slds-button" type="button" onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type, job.id)}>{attachment.is_external_link ? "Open" : "Preview"}</button>
+                                <button className="slds-button" type="button" onClick={() => void downloadAttachment(attachment.id, attachment.file_name, job.id)}>{attachment.is_external_link ? "Open link" : "Download"}</button>
                                 {canEditJobs ? (
                                   <>
-                                    <button type="button" onClick={() => { setRenamingId(attachment.id); setRenameValue(attachment.file_name); }}>Rename</button>
-                                    <button type="button" className="danger" onClick={() => { if (window.confirm("Delete this file?")) void deleteAttachment(attachment.id, job.id); }}>Delete</button>
+                                    <button className="slds-button" type="button" onClick={() => { setRenamingId(attachment.id); setRenameValue(attachment.file_name); }}>Rename</button>
+                                    <button type="button" className="slds-button danger" onClick={() => { if (window.confirm("Delete this file?")) void deleteAttachment(attachment.id, job.id); }}>Delete</button>
                                   </>
                                 ) : null}
                               </div>
@@ -1935,8 +1935,8 @@ export default function LeadDetail() {
                                 onChange={(e) => setRenameValue(e.target.value)}
                                 style={{ border: "1px solid #cbd5e1", borderRadius: 6, padding: "6px 8px", fontSize: 12, width: "min(100%, 280px)", minWidth: 0 }}
                               />
-                              <button type="button" onClick={() => void renameAttachment(attachment.id, renameValue)} style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "3px 8px", fontSize: 11 }}>Save</button>
-                              <button type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }} style={{ border: "1px solid #dddbda", background: "#fff", color: "#475569", borderRadius: 4, padding: "3px 8px", fontSize: 11 }}>Cancel</button>
+                              <button className="slds-button" type="button" onClick={() => void renameAttachment(attachment.id, renameValue)} style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "3px 8px", fontSize: 11 }}>Save</button>
+                              <button className="slds-button" type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }} style={{ border: "1px solid #dddbda", background: "#fff", color: "#475569", borderRadius: 4, padding: "3px 8px", fontSize: 11 }}>Cancel</button>
                             </div>
                           ) : (
                             <div style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{attachment.file_name}</div>
@@ -1949,14 +1949,14 @@ export default function LeadDetail() {
                         </div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end", marginLeft: "auto" }}>
-                        <button
+                        <button className="slds-button"
                           type="button"
                           onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
                           style={{ border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 4, padding: "4px 8px", fontSize: 12 }}
                         >
                           {attachment.is_external_link ? "Open Link" : "Preview"}
                         </button>
-                        <button
+                        <button className="slds-button"
                           type="button"
                           onClick={() => void downloadAttachment(attachment.id, attachment.file_name)}
                           style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "4px 8px", fontSize: 12, fontWeight: 600 }}
@@ -1965,7 +1965,7 @@ export default function LeadDetail() {
                         </button>
                         {canEditJobs ? (
                           <>
-                            <button
+                            <button className="slds-button"
                               type="button"
                               onClick={() => {
                                 setRenamingId(attachment.id);
@@ -1975,7 +1975,7 @@ export default function LeadDetail() {
                             >
                               Rename
                             </button>
-                            <button
+                            <button className="slds-button"
                               type="button"
                               onClick={() => {
                                 if (window.confirm("Delete this file?")) {
@@ -2233,7 +2233,7 @@ export default function LeadDetail() {
                         {name || "—"}
                       </div>
                       <div className="lead-profile-selector" ref={statusMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-                        <button
+                        <button className="slds-button"
                           ref={statusButtonRef}
                           type="button"
                           aria-haspopup="menu"
@@ -2286,7 +2286,7 @@ export default function LeadDetail() {
                             const active = option === statusValue;
                             const optionColor = String((statusStyles[option] || {}).color || "#64748b");
                             return (
-                              <button
+                              <button className="slds-button"
                                 key={option}
                                 type="button"
                                 role="menuitemradio"
@@ -2322,7 +2322,7 @@ export default function LeadDetail() {
                         document.body
                       ) : null}
                       <div className="lead-profile-selector" ref={companyMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-                      <button
+                      <button className="slds-button"
                         type="button"
                         onClick={() => canEditCompany && setCompanyMenuOpen((v) => !v)}
                         disabled={!canEditCompany || savingCompany}
@@ -2375,7 +2375,7 @@ export default function LeadDetail() {
                           {companies.map((company) => {
                             const isCurrent = company.id === String(lead.company_id || "");
                             return (
-                              <button
+                              <button className="slds-button"
                                 key={company.id}
                                 type="button"
                                 onClick={() => {
@@ -2402,7 +2402,7 @@ export default function LeadDetail() {
                       ) : null}
                       </div>
                       <div className="lead-profile-selector lead-profile-assignee" ref={assignMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-                        <button
+                        <button className="slds-button"
                           type="button"
                           onClick={() => user?.role === "admin" && setAssignMenuOpen((v) => !v)}
                           disabled={user?.role !== "admin" || savingAssignedTo}
@@ -2452,7 +2452,7 @@ export default function LeadDetail() {
                             <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
                               Change assignee
                             </div>
-                            <button
+                            <button className="slds-button"
                               type="button"
                               onClick={() => void saveAssignedTo("")}
                               disabled={savingAssignedTo}
@@ -2472,7 +2472,7 @@ export default function LeadDetail() {
                             {users.map((option) => {
                               const isCurrent = option.id === String(lead.assigned_to || "");
                               return (
-                                <button
+                                <button className="slds-button"
                                   key={option.id}
                                   type="button"
                                   onClick={() => void saveAssignedTo(option.id)}
@@ -2502,7 +2502,7 @@ export default function LeadDetail() {
               </div>
               {editingUser ? (
                 <div className="lead-profile-edit-actions" style={{ display: "flex", gap: 6 }}>
-                  <button
+                  <button className="slds-button"
                     type="button"
                     onClick={() => setEditingUser(false)}
                     disabled={savingUser}
@@ -2510,7 +2510,7 @@ export default function LeadDetail() {
                   >
                     Cancel
                   </button>
-                  <button
+                  <button className="slds-button"
                     type="button"
                     onClick={saveUser}
                     disabled={savingUser}
@@ -2523,7 +2523,7 @@ export default function LeadDetail() {
                 <div className="lead-profile-actions lead-profile-view-actions" style={{ display: "flex", gap: 6 }}>
                   {user?.role === "admin" ? <button
                     type="button"
-                    className="lead-profile-action-button lead-profile-copy-button"
+                    className="slds-button lead-profile-action-button lead-profile-copy-button"
                     onClick={() => {
                       setCopyCompanyId("");
                       setCopyReferralSource("");
@@ -2545,7 +2545,7 @@ export default function LeadDetail() {
                   </button> : null}
                   <button
                     type="button"
-                    className="lead-profile-action-button lead-profile-files-button"
+                    className="slds-button lead-profile-action-button lead-profile-files-button"
                     onClick={() => {
                       setFilesModalOpen(true);
                       void loadAllJobAttachments();
@@ -2557,11 +2557,11 @@ export default function LeadDetail() {
                     <span aria-hidden="true">📎</span>
                     <span className="lead-profile-action-label"> Files</span>
                   </button>
-                  <button type="button" className="lead-profile-action-button" onClick={() => setLiveSwitchOpen(true)} style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", color: "#0176d3", cursor: "pointer" }}>Start a LiveSwitch</button>
+                  <button type="button" className="slds-button lead-profile-action-button" onClick={() => setLiveSwitchOpen(true)} style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", color: "#0176d3", cursor: "pointer" }}>Start a LiveSwitch</button>
                   {liveSwitchOpen && leadId && <LiveSwitchPanel key={leadId} leadId={leadId} onClose={() => setLiveSwitchOpen(false)} onUploaded={() => { void loadAllJobAttachments(); void loadLead(); }} />}
                   {canRefreshSmartMoving ? <button
                     type="button"
-                    className="lead-profile-action-button lead-profile-refresh-button"
+                    className="slds-button lead-profile-action-button lead-profile-refresh-button"
                     onClick={() => void refreshFromSmartmoving()}
                     disabled={refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
                     title="Refresh from SmartMoving"
@@ -2571,7 +2571,7 @@ export default function LeadDetail() {
                   </button> : null}
                   {canEditLead ? <button
                     type="button"
-                    className="lead-profile-action-button lead-profile-edit-button"
+                    className="slds-button lead-profile-action-button lead-profile-edit-button"
                     onClick={startEditUser}
                     title="Edit"
                     style={{ padding: "5px 10px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: "pointer" }}
@@ -2807,7 +2807,7 @@ export default function LeadDetail() {
                 {leadJobs.map((job) => {
                   const active = activeJobTabId === job.id;
                   return (
-                    <button
+                    <button className="slds-button"
                       key={job.id}
                       type="button"
                       onClick={() => setActiveJobTabId(job.id)}
@@ -2829,7 +2829,7 @@ export default function LeadDetail() {
                   );
                 })}
                 {canEditJobs ? (
-                  <button
+                  <button className="slds-button"
                     type="button"
                     onClick={() => setActiveJobTabId("__new__")}
                     style={{
@@ -2866,7 +2866,7 @@ export default function LeadDetail() {
                       <button
                         type="button"
                         onClick={() => navigate(`/dispatch?job_id=${encodeURIComponent(job.id)}`)}
-                        className="lead-job-calendar-button"
+                        className="slds-button lead-job-calendar-button"
                         title="Open in calender"
                         aria-label="Open in calender"
                       >
@@ -2878,7 +2878,7 @@ export default function LeadDetail() {
                           type="button"
                           onClick={() => void saveJob(job.id)}
                           disabled={busy}
-                          className="lead-job-save-button"
+                          className="slds-button lead-job-save-button"
                           aria-label={savingJobId === job.id ? "Saving job" : "Save job"}
                           title={savingJobId === job.id ? "Saving job" : "Save job"}
                         >
@@ -2993,7 +2993,7 @@ export default function LeadDetail() {
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                               <div style={{ fontSize: 12, color: "#334155", fontWeight: 700 }}>Stops</div>
                               {canEditJobs ? (
-                                <button
+                                <button className="slds-button"
                                   type="button"
                                   onClick={() => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, stops: [...draft.stops, ""] } }))}
                                   style={{ border: "1px solid #2563eb", background: "#fff", color: "#1d4ed8", borderRadius: 8, padding: "5px 10px", fontSize: 11, fontWeight: 700 }}
@@ -3038,7 +3038,7 @@ export default function LeadDetail() {
                                   style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 10px", fontSize: 13, background: "#fff" }}
                                 />
                                 {canEditJobs ? (
-                                  <button
+                                  <button className="slds-button"
                                     type="button"
                                     onClick={() => {
                                       const next = draft.stops.filter((_, i) => i !== index);
@@ -3072,7 +3072,7 @@ export default function LeadDetail() {
                           <span style={{ fontSize: 14 }}>$</span>
                           <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.02em" }}>Charges</strong>
                         </div>
-                        <button
+                        <button className="slds-button"
                           type="button"
                           onClick={() => navigate(`/pricing?lead_id=${encodeURIComponent(leadId || "")}&job_id=${encodeURIComponent(job.id)}`)}
                           style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "3px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
@@ -3108,7 +3108,7 @@ export default function LeadDetail() {
                               const isExpanded = Boolean(expandedMaterials[job.id]);
                               return (
                               <div key={charge.id} className={isMaterials ? "job-materials-charge" : ""} style={{ border: "1px solid #e2e8f0", background: "#fff", borderRadius: 6, padding: 8, display: "grid", gap: 4 }}>
-                                <button type="button" disabled={!isMaterials} className="job-charge-heading" onClick={() => isMaterials && setExpandedMaterials((prev) => ({ ...prev, [job.id]: !prev[job.id] }))} aria-expanded={isMaterials ? isExpanded : undefined}>
+                                <button type="button" disabled={!isMaterials} className="slds-button job-charge-heading" onClick={() => isMaterials && setExpandedMaterials((prev) => ({ ...prev, [job.id]: !prev[job.id] }))} aria-expanded={isMaterials ? isExpanded : undefined}>
                                   <strong>{charge.name}{isMaterials ? <span aria-hidden="true"> {isExpanded ? "▴" : "▾"}</span> : null}</strong>
                                   <span>${charge.total_cost.toFixed(2)}</span>
                                 </button>
@@ -3149,7 +3149,7 @@ export default function LeadDetail() {
                         <section className="lead-notes-card job-notes-tabs" aria-label={`Job ${job.job_order} notes`}>
                           <div className="job-notes-tabs__bar" role="tablist">
                             {noteTabs.map((tab) => (
-                              <button key={tab.key} type="button" role="tab" aria-selected={activeNoteTab === tab.key} className={activeNoteTab === tab.key ? "active" : ""} onClick={() => setNoteTabByJob((prev) => ({ ...prev, [job.id]: tab.key }))}>
+                              <button key={tab.key} type="button" role="tab" aria-selected={activeNoteTab === tab.key} className={["slds-button", activeNoteTab === tab.key ? "active" : ""].filter(Boolean).join(" ")} onClick={() => setNoteTabByJob((prev) => ({ ...prev, [job.id]: tab.key }))}>
                                 {tab.label}
                               </button>
                             ))}
@@ -3161,7 +3161,7 @@ export default function LeadDetail() {
                           ) : (
                             <>
                               <textarea className="lead-notes-card__input" value={draft[activeNoteTab]} onChange={(event) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, [activeNoteTab]: event.target.value } }))} placeholder="Add notes..." rows={3} />
-                              <div className="lead-notes-card__actions"><button type="button" onClick={() => void saveJobNotes(job.id, activeNoteTab)} disabled={savingNoteJobId === job.id}>Save</button></div>
+                              <div className="lead-notes-card__actions"><button className="slds-button" type="button" onClick={() => void saveJobNotes(job.id, activeNoteTab)} disabled={savingNoteJobId === job.id}>Save</button></div>
                             </>
                           )}
                         </section>
@@ -3186,7 +3186,7 @@ export default function LeadDetail() {
                             rows={4}
                           />
                           <div className="lead-notes-card__actions">
-                            <button type="button" onClick={() => void saveJobNotes(job.id, "notes")} disabled={savingNoteJobId === job.id}>Save Notes</button>
+                            <button className="slds-button" type="button" onClick={() => void saveJobNotes(job.id, "notes")} disabled={savingNoteJobId === job.id}>Save Notes</button>
                           </div>
                         </>
                       ) : (
@@ -3211,13 +3211,13 @@ export default function LeadDetail() {
                           rows={4}
                         />
                       <div className="lead-notes-card__actions">
-                        <button type="button" onClick={() => void saveJobNotes(job.id, "foreman_notes")} disabled={savingNoteJobId === job.id}>Save Foreman Notes</button>
+                        <button className="slds-button" type="button" onClick={() => void saveJobNotes(job.id, "foreman_notes")} disabled={savingNoteJobId === job.id}>Save Foreman Notes</button>
                       </div>
                     </section>
 
                     {canEditJobs ? (
                       <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                        <button
+                        <button className="slds-button"
                           type="button"
                           onClick={() => {
                             if (!primary && window.confirm("Delete this job?")) void deleteJob(job.id);
@@ -3256,7 +3256,7 @@ export default function LeadDetail() {
                               {uploadingCount > 0 ? `Uploading ${uploadingCount}...` : "Upload"}
                             </label>
                           ) : null}
-                          <button
+                          <button className="slds-button"
                             type="button"
                             onClick={() => setFilesModalOpen(true)}
                             style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 6, padding: "5px 9px", fontSize: 11, fontWeight: 700 }}
@@ -3273,7 +3273,7 @@ export default function LeadDetail() {
                         {!attachmentsLoading && quickAttachments.length > 0 ? (
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 7 }}>
                             {quickAttachments.map((attachment) => (
-                              <button
+                              <button className="slds-button"
                                 key={attachment.id}
                                 type="button"
                                 onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type)}
@@ -3295,7 +3295,7 @@ export default function LeadDetail() {
                               </button>
                             ))}
                             {attachments.length > quickAttachments.length ? (
-                              <button
+                              <button className="slds-button"
                                 type="button"
                                 onClick={() => setFilesModalOpen(true)}
                                 style={{ border: "1px dashed #94a3b8", background: "#f8fafc", borderRadius: 8, padding: "8px", fontSize: 11, color: "#334155", textAlign: "center", fontWeight: 700, cursor: "pointer" }}
@@ -3368,7 +3368,7 @@ export default function LeadDetail() {
                   <div style={{ display: "grid", gap: 8 }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                       <div style={{ fontSize: 12, color: "#334155", fontWeight: 700 }}>Stops</div>
-                      <button
+                      <button className="slds-button"
                         type="button"
                         onClick={() => setNewJobDraft((prev) => ({ ...prev, stops: [...prev.stops, ""] }))}
                         style={{ border: "1px solid #2563eb", background: "#fff", color: "#1d4ed8", borderRadius: 8, padding: "5px 10px", fontSize: 11, fontWeight: 700 }}
@@ -3410,7 +3410,7 @@ export default function LeadDetail() {
                           placeholder="Stop address"
                           style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 10px", fontSize: 13, background: "#fff" }}
                         />
-                        <button
+                        <button className="slds-button"
                           type="button"
                           onClick={() => {
                             setNewJobDraft((prev) => ({ ...prev, stops: prev.stops.filter((_, i) => i !== index) }));
@@ -3465,7 +3465,7 @@ export default function LeadDetail() {
               />
             </section>
             <div>
-              <button type="button" onClick={() => void addJob()} disabled={addingJob} style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "6px 12px", fontSize: 12, fontWeight: 600 }}>
+              <button className="slds-button" type="button" onClick={() => void addJob()} disabled={addingJob} style={{ border: "1px solid #0176d3", background: "#0176d3", color: "#fff", borderRadius: 4, padding: "6px 12px", fontSize: 12, fontWeight: 600 }}>
                 {addingJob ? "Adding..." : "Add Job"}
               </button>
             </div>
@@ -3480,7 +3480,7 @@ export default function LeadDetail() {
       {canViewLeadCommunications ? (
         <div style={{ marginTop: 32, border: "1px solid #dddbda", borderRadius: 4, background: "#fff", overflow: "hidden" }}>
           <div style={{ display: "flex", borderBottom: "1px solid #dddbda", background: "#f3f2f2" }}>
-            <button
+            <button className="slds-button"
               onClick={() => setActiveTab("conversations")}
               style={{
                 padding: "10px 18px",
@@ -3495,7 +3495,7 @@ export default function LeadDetail() {
             >
               Conversations
             </button>
-            <button
+            <button className="slds-button"
               onClick={() => setActiveTab("activity")}
               style={{
                 padding: "10px 18px",
@@ -3510,7 +3510,7 @@ export default function LeadDetail() {
             >
               Activity
             </button>
-            <button
+            <button className="slds-button"
               onClick={() => setActiveTab("logs")}
               style={{
                 padding: "10px 18px",

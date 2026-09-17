@@ -71,7 +71,7 @@ export default function ImpersonateUsersPage() {
             <div className="impersonate-avatar">{item.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</div>
             <div className="impersonate-user"><strong>{item.name}</strong><span>{item.email}</span><small>{item.companies?.length ? `${item.companies.length} companies` : "No company scope"}</small></div>
             <span className={`impersonate-role role-${item.role}`}>{roleLabel[item.role] || item.role}</span>
-            <button type="button" disabled={Boolean(busyId)} onClick={() => void beginImpersonation(item)}>{busyId === item.id ? "Opening..." : "View as user"}</button>
+            <button className="slds-button" type="button" disabled={Boolean(busyId)} onClick={() => void beginImpersonation(item)}>{busyId === item.id ? "Opening..." : "View as user"}</button>
           </article>
         ))}
         {!visibleUsers.length ? <div className="impersonate-state">No users match your search.</div> : null}

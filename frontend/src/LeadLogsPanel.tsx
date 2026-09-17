@@ -104,7 +104,7 @@ export default function LeadLogsPanel({ leadId, token }: { leadId: string; token
     <div>
       <div style={toolbar}>
         <span>{items.length} update log{items.length === 1 ? "" : "s"}</span>
-        <button type="button" onClick={() => void load()} disabled={loading} style={refreshButton}>
+        <button className="slds-button" type="button" onClick={() => void load()} disabled={loading} style={refreshButton}>
           {loading ? "Refreshing…" : "Refresh"}
         </button>
       </div>

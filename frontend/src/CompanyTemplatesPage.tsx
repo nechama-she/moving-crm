@@ -205,7 +205,7 @@ export default function CompanyTemplatesPage() {
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
                     {!editingSystemDefault && !usingDefault && isAdmin && (
-                      <button type="button" onClick={() => resetToDefault(f.key)} style={ghostButton}>
+                      <button className="slds-button" type="button" onClick={() => resetToDefault(f.key)} style={ghostButton}>
                         Reset to default
                       </button>
                     )}
@@ -230,7 +230,7 @@ export default function CompanyTemplatesPage() {
           })}
 
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button
+            <button className="slds-button"
               type="button"
               onClick={() => companyId && loadTemplates(companyId)}
               disabled={loading || saving}
@@ -238,7 +238,7 @@ export default function CompanyTemplatesPage() {
             >
               Reload
             </button>
-            <button
+            <button className="slds-button"
               type="button"
               onClick={save}
               disabled={!isAdmin || saving}

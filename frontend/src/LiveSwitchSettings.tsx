@@ -160,7 +160,7 @@ export default function LiveSwitchSettings() {
         <p style={{ fontSize: 12, color: "#706e6b" }}>If LiveSwitch reports an unapproved return address, this is the address their support team needs to approve.</p>
       </details>
       {error && <p role="alert" style={{ color: "#ba0517", fontSize: 13, margin: 0 }}>{error}</p>}
-      <button type="submit" disabled={busy || !loaded} style={{ background: "#0176d3", color: "white", border: 0, borderRadius: 4, padding: "9px 12px", cursor: "pointer" }}>
+      <button className="slds-button" type="submit" disabled={busy || !loaded} style={{ background: "#0176d3", color: "white", border: 0, borderRadius: 4, padding: "9px 12px", cursor: "pointer" }}>
         {busy ? "Please wait…" : authorized ? "Reconnect LiveSwitch" : "Save & Connect LiveSwitch"}
       </button>
     </form>

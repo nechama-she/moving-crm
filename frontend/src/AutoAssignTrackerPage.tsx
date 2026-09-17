@@ -208,7 +208,7 @@ export default function AutoAssignTrackerPage() {
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
         <span style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Run Mode</span>
-        <button
+        <button className="slds-button"
           type="button"
           onClick={() => void setRunModePersisted("dry")}
           style={{
@@ -223,7 +223,7 @@ export default function AutoAssignTrackerPage() {
         >
           Dry Run
         </button>
-        <button
+        <button className="slds-button"
           type="button"
           onClick={() => void setRunModePersisted("live")}
           disabled={dryRunOnly}
@@ -241,7 +241,7 @@ export default function AutoAssignTrackerPage() {
         >
           Live
         </button>
-        <button
+        <button className="slds-button"
           type="button"
           onClick={() => void runBacklogNow()}
           disabled={runBusy}
@@ -268,23 +268,23 @@ export default function AutoAssignTrackerPage() {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 14 }}>
-        <button type="button" style={kpiButton(kpiCard, activeKpiButton("all"))} onClick={() => setModeFilter("")}>
+        <button className="slds-button" type="button" style={kpiButton(kpiCard, activeKpiButton("all"))} onClick={() => setModeFilter("")}>
           <div style={kpiLabel}>Total Events</div>
           <div style={kpiValue}>{stats.total}</div>
         </button>
-        <button type="button" style={kpiButton(kpiCardWarn, activeKpiButton("queued"))} onClick={() => setModeFilter("queued")}>
+        <button className="slds-button" type="button" style={kpiButton(kpiCardWarn, activeKpiButton("queued"))} onClick={() => setModeFilter("queued")}>
           <div style={kpiLabel}>Queued</div>
           <div style={kpiValue}>{stats.queued}</div>
         </button>
-        <button type="button" style={kpiButton(kpiCardGood, activeKpiButton("auto"))} onClick={() => setModeFilter("auto")}>
+        <button className="slds-button" type="button" style={kpiButton(kpiCardGood, activeKpiButton("auto"))} onClick={() => setModeFilter("auto")}>
           <div style={kpiLabel}>Auto Assigned</div>
           <div style={kpiValue}>{stats.auto}</div>
         </button>
-        <button type="button" style={kpiButton(kpiCard, activeKpiButton("error"))} onClick={() => setModeFilter("error")}>
+        <button className="slds-button" type="button" style={kpiButton(kpiCard, activeKpiButton("error"))} onClick={() => setModeFilter("error")}>
           <div style={kpiLabel}>Errors</div>
           <div style={kpiValue}>{stats.error}</div>
         </button>
-        <button type="button" style={kpiButton(kpiCard, activeKpiButton("queued"))} onClick={() => setModeFilter("queued")}>
+        <button className="slds-button" type="button" style={kpiButton(kpiCard, activeKpiButton("queued"))} onClick={() => setModeFilter("queued")}>
           <div style={kpiLabel}>Queue Rate</div>
           <div style={kpiValue}>{disasterRate}%</div>
         </button>

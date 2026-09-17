@@ -42,7 +42,7 @@ export default class ErrorBoundary extends Component<Props, State> {
             </pre>
           )}
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-            <button
+            <button className="slds-button"
               type="button"
               onClick={() => window.location.reload()}
               style={{ background: "#0176d3", color: "#fff", border: 0, borderRadius: 4, padding: "8px 16px", fontWeight: 600, cursor: "pointer" }}

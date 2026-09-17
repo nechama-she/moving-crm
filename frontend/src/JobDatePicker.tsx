@@ -165,7 +165,7 @@ export default function JobDatePicker({
       <button
         type="button"
         disabled={disabled}
-        className={`job-date-picker-trigger ${value ? "has-value" : ""} ${isOpen ? "is-open" : ""}`}
+        className={["slds-button", `job-date-picker-trigger ${value ? "has-value" : ""} ${isOpen ? "is-open" : ""}`].filter(Boolean).join(" ")}
         onClick={() => setIsOpen((prev) => !prev)}
         aria-haspopup="dialog"
         aria-expanded={isOpen}
@@ -193,7 +193,7 @@ export default function JobDatePicker({
                 <button
                   type="button"
                   key={preset.label}
-                  className={`job-date-preset-btn ${isSelected ? "selected" : ""}`}
+                  className={["slds-button", `job-date-preset-btn ${isSelected ? "selected" : ""}`].filter(Boolean).join(" ")}
                   onClick={() => {
                     setSelectedDate(preset.iso);
                     setViewDate(parseIso(preset.iso));
@@ -205,7 +205,7 @@ export default function JobDatePicker({
             })}
             <button
               type="button"
-              className="job-date-preset-btn clear-btn"
+              className="slds-button job-date-preset-btn clear-btn"
               onClick={handleClear}
             >
               Clear Date
@@ -216,7 +216,7 @@ export default function JobDatePicker({
             <div className="job-date-month-nav">
               <button
                 type="button"
-                className="job-date-nav-arrow"
+                className="slds-button job-date-nav-arrow"
                 onClick={prevMonth}
                 aria-label="Previous month"
               >
@@ -239,7 +239,7 @@ export default function JobDatePicker({
               </div>
               <button
                 type="button"
-                className="job-date-nav-arrow"
+                className="slds-button job-date-nav-arrow"
                 onClick={nextMonth}
                 aria-label="Next month"
               >
@@ -266,7 +266,7 @@ export default function JobDatePicker({
                   <button
                     type="button"
                     key={`day-${dayNum}`}
-                    className={`job-date-day-btn ${isSelected ? "selected" : ""} ${isToday ? "today" : ""}`}
+                    className={["slds-button", `job-date-day-btn ${isSelected ? "selected" : ""} ${isToday ? "today" : ""}`].filter(Boolean).join(" ")}
                     onClick={() => handleDaySelect(dayNum)}
                   >
                     {dayNum}
@@ -282,14 +282,14 @@ export default function JobDatePicker({
               <div className="job-date-footer-actions">
                 <button
                   type="button"
-                  className="job-date-btn-secondary"
+                  className="slds-button job-date-btn-secondary"
                   onClick={() => setIsOpen(false)}
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  className="job-date-btn-primary"
+                  className="slds-button job-date-btn-primary"
                   onClick={handleApply}
                 >
                   Apply

@@ -189,12 +189,12 @@ export default function CustomerMovePage() {
               ))}
             </fieldset>
             {!sent ? (
-              <button className="cm-primary" disabled={busy||!channel||!key} onClick={()=>void send()}>{busy?'Sending...':'Send verification code'}</button>
+              <button className="slds-button cm-primary" disabled={busy||!channel||!key} onClick={()=>void send()}>{busy?'Sending...':'Send verification code'}</button>
             ) : (
               <form onSubmit={e=>{e.preventDefault();void verify();}}>
                 <label className="cm-code">Enter your 6-digit code<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))}/></label>
-                <button className="cm-primary" disabled={busy||code.length!==6}>{busy?'Checking...':'View my move'}</button>
-                <button type="button" className="cm-text-button" disabled={busy||wait>0} onClick={()=>void send()}>{wait?`Send again in ${wait}s`:'Send a new code'}</button>
+                <button className="slds-button cm-primary" disabled={busy||code.length!==6}>{busy?'Checking...':'View my move'}</button>
+                <button type="button" className="slds-button cm-text-button" disabled={busy||wait>0} onClick={()=>void send()}>{wait?`Send again in ${wait}s`:'Send a new code'}</button>
               </form>
             )}
             <small className="cm-private">Your information is private. No account or password needed.</small>
@@ -207,7 +207,7 @@ export default function CustomerMovePage() {
               <div>
                 <div className="cm-intro-top">
                   <div className="cm-eyebrow">LET'S MAKE YOUR NEXT MOVE EASIER</div>
-                  <button type="button" className="cm-refresh-btn" aria-label="Refresh move details" title="Refresh move details" disabled={busy} onClick={()=>void refreshDetails()}>&#8635;</button>
+                  <button type="button" className="slds-button cm-refresh-btn" aria-label="Refresh move details" title="Refresh move details" disabled={busy} onClick={()=>void refreshDetails()}>&#8635;</button>
                 </div>
                 <h1>Hi {data.name.split(' ')[0]},<br/>you're in the right place.</h1>
                 <p>Share a little more about your home.<br/>We'll take care of the estimate.</p>
@@ -216,7 +216,7 @@ export default function CustomerMovePage() {
                 <div className="cm-route-header">
                   <div className="cm-eyebrow">YOUR MOVE</div>
                   {!editingMove && (
-                    <button type="button" className="cm-edit-button" onClick={startEditMove}>Edit</button>
+                    <button type="button" className="slds-button cm-edit-button" onClick={startEditMove}>Edit</button>
                   )}
                 </div>
 
@@ -253,8 +253,8 @@ export default function CustomerMovePage() {
                       <input type="email" value={moveDraft.email} onChange={e=>setMoveDraft(prev=>({...prev,email:e.target.value}))} />
                     </label>
                     <div className="cm-route-actions">
-                      <button type="submit" className="cm-save-btn" disabled={busy}>Save changes</button>
-                      <button type="button" className="cm-cancel-btn" disabled={busy} onClick={()=>setEditingMove(false)}>Cancel</button>
+                      <button type="submit" className="slds-button cm-save-btn" disabled={busy}>Save changes</button>
+                      <button type="button" className="slds-button cm-cancel-btn" disabled={busy} onClick={()=>setEditingMove(false)}>Cancel</button>
                     </div>
                   </form>
                 )}
@@ -274,17 +274,17 @@ export default function CustomerMovePage() {
                     {item.error && <small role="alert" style={{color:'#974327'}}>{item.error}</small>}
                     <progress max={100} value={item.progress} aria-label={`${item.file.name} upload progress`} />
                   </div>
-                  {item.status!=='Uploaded' && !busy && <button aria-label={`Remove ${item.file.name}`} onClick={()=>setFiles(prev=>prev.filter(f=>f.id!==item.id))}>x</button>}
+                  {item.status!=='Uploaded' && !busy && <button className="slds-button" aria-label={`Remove ${item.file.name}`} onClick={()=>setFiles(prev=>prev.filter(f=>f.id!==item.id))}>x</button>}
                 </article>
               ))}
             </div>
-            <button className="cm-primary" disabled={busy||!files.some(f=>['Ready','Try again'].includes(f.status))} onClick={()=>void upload()}>{busy?'Please wait...':'Upload files'}</button>
+            <button className="slds-button cm-primary" disabled={busy||!files.some(f=>['Ready','Try again'].includes(f.status))} onClick={()=>void upload()}>{busy?'Please wait...':'Upload files'}</button>
             {data.files.length>0&&<details><summary>{data.files.length} saved files</summary>{data.files.map(file=><p key={file.id}>{file.name}</p>)}</details>}
             {data.files.length>0 && (
               <div className="cm-spark-box">
                 <button
                   type="button"
-                  className="cm-primary cm-spark-btn"
+                  className="slds-button cm-primary cm-spark-btn"
                   disabled={busy || reportState === 'running'}
                   onClick={async () => {
                     setReportState('running');
@@ -341,7 +341,7 @@ export default function CustomerMovePage() {
                 )}
               </div>
             </div>
-            <section className="cm-walkthrough"><div><div className="cm-eyebrow">PREFER TO SHOW US AROUND?</div><h2>Let's take a live<br/>video walkthrough.</h2><p>Walk us through your home from your phone.<br/>Our team will help you plan what comes next.</p></div><div>{data.walkthrough&&!rescheduling?<><span className="cm-meeting-status">{({requested:'Requested',scheduled:'Approved',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status]||data.walkthrough.status}</span><h3>{data.walkthrough.status==='scheduled'?'Your video walkthrough':'Video walkthrough request'}</h3><p className="cm-meeting-time">{meetingTime(data.walkthrough)}</p>{data.walkthrough.status==='scheduled'&&data.participant_url&&<a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join video walkthrough</a>}{['requested','scheduled'].includes(data.walkthrough.status)&&<button type="button" className="cm-reschedule" onClick={()=>{setAvailability('');setRescheduling(true);}}>Reschedule</button>}</>:<form onSubmit={e=>{e.preventDefault();void walkthrough();}}><MeetingTimePicker onChange={setAvailability} availabilityUrl={base+"/availability"} linkKey={key} session={session} moveDate={data.move_date || null} /><button className="cm-primary" disabled={busy||!availability.trim()}>{rescheduling?'Request new time':'Request a video walkthrough'}</button>{rescheduling&&<button type="button" className="cm-reschedule" disabled={busy} onClick={()=>setRescheduling(false)}>Cancel</button>}{requested&&<p role="status">Request saved.</p>}</form>}</div></section>
+            <section className="cm-walkthrough"><div><div className="cm-eyebrow">PREFER TO SHOW US AROUND?</div><h2>Let's take a live<br/>video walkthrough.</h2><p>Walk us through your home from your phone.<br/>Our team will help you plan what comes next.</p></div><div>{data.walkthrough&&!rescheduling?<><span className="cm-meeting-status">{({requested:'Requested',scheduled:'Approved',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status]||data.walkthrough.status}</span><h3>{data.walkthrough.status==='scheduled'?'Your video walkthrough':'Video walkthrough request'}</h3><p className="cm-meeting-time">{meetingTime(data.walkthrough)}</p>{data.walkthrough.status==='scheduled'&&data.participant_url&&<a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join video walkthrough</a>}{['requested','scheduled'].includes(data.walkthrough.status)&&<button type="button" className="slds-button cm-reschedule" onClick={()=>{setAvailability('');setRescheduling(true);}}>Reschedule</button>}</>:<form onSubmit={e=>{e.preventDefault();void walkthrough();}}><MeetingTimePicker onChange={setAvailability} availabilityUrl={base+"/availability"} linkKey={key} session={session} moveDate={data.move_date || null} /><button className="slds-button cm-primary" disabled={busy||!availability.trim()}>{rescheduling?'Request new time':'Request a video walkthrough'}</button>{rescheduling&&<button type="button" className="slds-button cm-reschedule" disabled={busy} onClick={()=>setRescheduling(false)}>Cancel</button>}{requested&&<p role="status">Request saved.</p>}</form>}</div></section>
             <footer className="cm-footer">Your move. Your pace. We're here to help.</footer>
           </>
         )}
