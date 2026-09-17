@@ -62,8 +62,32 @@ def migrate() -> None:
             )
         """))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_smartmoving_referral_sources_normalized_name ON smartmoving_referral_sources (normalized_name)"))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS access_audit_logs (
+                id VARCHAR(36) PRIMARY KEY,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                user_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
+                user_name VARCHAR(255) NOT NULL DEFAULT 'Anonymous',
+                user_email VARCHAR(255),
+                user_role VARCHAR(50) NOT NULL DEFAULT 'anonymous',
+                ip_address VARCHAR(100) NOT NULL,
+                method VARCHAR(10) NOT NULL,
+                path VARCHAR(1000) NOT NULL,
+                query_params TEXT,
+                status_code INTEGER NOT NULL,
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                user_agent TEXT,
+                referer TEXT
+            )
+        """))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_created_at ON access_audit_logs (created_at DESC)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_user_id ON access_audit_logs (user_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_ip_address ON access_audit_logs (ip_address)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_path ON access_audit_logs (path)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_status_code ON access_audit_logs (status_code)"))
     logger.info("communication_associations is ready")
     logger.info("smartmoving_referral_sources is ready")
+    logger.info("access_audit_logs is ready")
 
 
 if __name__ == "__main__":

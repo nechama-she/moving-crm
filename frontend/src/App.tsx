@@ -32,6 +32,7 @@ const UnansweredMessagesPage = lazy(() => import("./UnansweredMessagesPage"));
 const IgnoredCallNumbersPage = lazy(() => import("./IgnoredCallNumbersPage"));
 const ReportsPage = lazy(() => import("./ReportsPage"));
 const StatsPage = lazy(() => import("./StatsPage"));
+const AccessHistoryPage = lazy(() => import("./AccessHistoryPage"));
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -169,6 +170,7 @@ function ProtectedRoutes() {
           <Route path="/settings/duplication-rules" element={user?.role === "admin" ? <LeadDuplicationRulesPage /> : <Navigate to="/" replace />} />
           <Route path="/settings/ignored-call-numbers" element={user?.role === "admin" ? <IgnoredCallNumbersPage /> : <Navigate to="/" replace />} />
           <Route path="/settings/impersonate" element={<ImpersonateUsersPage />} />
+          <Route path="/settings/access-history" element={user?.role === "admin" ? <AccessHistoryPage /> : <Navigate to="/" replace />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/pricing" element={<ErrorBoundary><PricingPage /></ErrorBoundary>} />
           <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />

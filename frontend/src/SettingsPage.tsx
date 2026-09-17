@@ -91,6 +91,12 @@ export default function SettingsPage() {
           <div style={actionsRow}><Link to="/settings/ignored-call-numbers" style={primaryLink}>Manage Ignored Numbers</Link></div>
         </section> : null}
 
+        {isAdmin ? <section style={card}>
+          <h2 style={sectionHeader}>Access History & Audit Logs</h2>
+          <p style={desc}>Monitor all system activity, user logins, IP addresses, and requests to detect unauthorized access.</p>
+          <div style={actionsRow}><Link to="/settings/access-history" style={primaryLink}>View Access Logs</Link></div>
+        </section> : null}
+
         <section style={card}>
           <h2 style={sectionHeader}>Profile & Security</h2>
           <p style={desc}>Manage password and account-level security settings.</p>

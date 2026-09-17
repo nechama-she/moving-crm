@@ -1,7 +1,10 @@
 import hmac
 import json
+import logging
 import os
 import re
+import time
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,11 +14,12 @@ from auth import decode_access_token, get_current_user, is_token_valid, require_
 from config import get_config
 from database import SessionLocal
 from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
-from models import Lead, User
+from models import AccessAuditLog, Lead, User
 from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
 from routes import public_moves, local_pricing
 from routes.meta import messenger, instagram
 
+logger = logging.getLogger("moving-crm.access")
 cfg = get_config()
 
 # Fail fast: never run the API with an unconfigured/insecure JWT signing key.
@@ -122,6 +126,92 @@ def _audit_request_context(request: Request) -> tuple[str, str, str]:
         db.close()
 
     return lead_id, actor_user_id, actor_name
+
+
+def _extract_client_ip(request: Request) -> str:
+    # 1. CloudFront custom header
+    cf_ip = request.headers.get("cloudfront-viewer-address") or request.headers.get("x-forwarded-for")
+    if cf_ip:
+        # x-forwarded-for can be a comma-separated list of IPs (client, proxy1, proxy2...)
+        parts = [p.strip() for p in cf_ip.split(",")]
+        # remove port if present like 1.2.3.4:5678
+        first = parts[0].split(":")[0] if ":" in parts[0] and not parts[0].count(":") > 1 else parts[0]
+        if first:
+            return first
+    if request.client and request.client.host:
+        return request.client.host
+    return "0.0.0.0"
+
+
+def _extract_request_user(request: Request) -> tuple[str | None, str, str | None, str]:
+    auth_header = request.headers.get("Authorization") or ""
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() == "bearer" and token.strip():
+        try:
+            payload = decode_access_token(token.strip())
+            sub = str(payload.get("sub") or "")
+            if sub:
+                db = SessionLocal()
+                try:
+                    user = db.query(User).filter(User.id == sub).first()
+                    if user:
+                        return user.id, user.name, user.email, user.role
+                finally:
+                    db.close()
+        except Exception:
+            pass
+    # Service secret?
+    if request.headers.get("x-api-secret"):
+        return None, "System Service", None, "system"
+    return None, "Anonymous / Public", None, "anonymous"
+
+
+@app.middleware("http")
+async def track_access_history(request: Request, call_next):
+    # Skip preflight OPTIONS and frequent internal healthchecks to keep logs meaningful
+    if request.method == "OPTIONS" or request.url.path in {"/api/health"}:
+        return await call_next(request)
+
+    start_time = time.time()
+    user_id, user_name, user_email, user_role = _extract_request_user(request)
+    ip_address = _extract_client_ip(request)
+    user_agent = request.headers.get("user-agent") or ""
+    referer = request.headers.get("referer") or ""
+    query_params = str(request.url.query) if request.url.query else None
+    path = request.url.path
+
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", 500)
+        raise
+    finally:
+        duration_ms = int((time.time() - start_time) * 1000)
+        try:
+            db = SessionLocal()
+            log_row = AccessAuditLog(
+                id=str(uuid4()),
+                user_id=user_id,
+                user_name=user_name,
+                user_email=user_email,
+                user_role=user_role,
+                ip_address=ip_address[:100],
+                method=request.method,
+                path=path[:1000],
+                query_params=query_params[:2000] if query_params else None,
+                status_code=status_code,
+                duration_ms=duration_ms,
+                user_agent=user_agent[:1000] if user_agent else None,
+                referer=referer[:1000] if referer else None,
+            )
+            db.add(log_row)
+            db.commit()
+            db.close()
+        except Exception as log_err:
+            logger.warning("Could not persist access audit log: %s", log_err)
 
 
 @app.middleware("http")

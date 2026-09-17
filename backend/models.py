@@ -959,6 +959,43 @@ class PublicMoveSession(Base):
     contact_hash = Column(String(64), nullable=False)
 
 
+class AccessAuditLog(Base):
+    __tablename__ = "access_audit_logs"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_name = Column(String(255), nullable=False, default="Anonymous")
+    user_email = Column(String(255), nullable=True)
+    user_role = Column(String(50), nullable=False, default="anonymous")
+    ip_address = Column(String(100), nullable=False, index=True)
+    method = Column(String(10), nullable=False, index=True)
+    path = Column(String(1000), nullable=False, index=True)
+    query_params = Column(Text, nullable=True)
+    status_code = Column(Integer, nullable=False, index=True)
+    duration_ms = Column(Integer, nullable=False, default=0)
+    user_agent = Column(Text, nullable=True)
+    referer = Column(Text, nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "created_at": self.created_at.isoformat() if self.created_at else "",
+            "user_id": self.user_id,
+            "user_name": self.user_name,
+            "user_email": self.user_email,
+            "user_role": self.user_role,
+            "ip_address": self.ip_address,
+            "method": self.method,
+            "path": self.path,
+            "query_params": self.query_params or "",
+            "status_code": self.status_code,
+            "duration_ms": self.duration_ms,
+            "user_agent": self.user_agent or "",
+            "referer": self.referer or "",
+        }
+
+
 class WalkthroughRequest(Base):
     __tablename__ = 'walkthrough_requests'
     id = Column(String(36), primary_key=True, default=_uuid)
