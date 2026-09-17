@@ -301,7 +301,7 @@ export default function PricingPage() {
     patchDraft({ services: draft.services.map((row, idx) => idx === index ? { ...row, ...patch } : row) });
   }
   function addBulkyItem() {
-    patchDraft({ services: [...(draft?.services || []), { name: "Pool table", rate_text: "", comments: bulkyItemComments({ handling: "", packing: "", crating: "" }) }] });
+    patchDraft({ services: [...(draft?.services || []), { name: "", rate_text: "", comments: bulkyItemComments({ handling: "", packing: "", crating: "" }) }] });
   }
   function patchBulkyItemPrice(index: number, key: keyof BulkyItemPrices, value: string) {
     const service = active?.services[index];
