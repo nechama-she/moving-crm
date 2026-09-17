@@ -1,6 +1,6 @@
 from datetime import datetime
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, desc
+from sqlalchemy import case, func, desc
 from sqlalchemy.orm import Session
 
 from auth import require_admin
@@ -112,7 +112,7 @@ def get_access_logs_grouped(
                 AccessAuditLog.user_role,
                 func.count(AccessAuditLog.id).label("total_requests"),
                 func.count(func.distinct(AccessAuditLog.ip_address)).label("distinct_ips"),
-                func.sum(func.case((AccessAuditLog.status_code >= 400, 1), else_=0)).label("total_errors"),
+                func.sum(case((AccessAuditLog.status_code >= 400, 1), else_=0)).label("total_errors"),
                 func.max(AccessAuditLog.created_at).label("last_active"),
                 func.avg(AccessAuditLog.duration_ms).label("avg_duration_ms"),
             )
@@ -156,7 +156,7 @@ def get_access_logs_grouped(
                 AccessAuditLog.ip_address,
                 func.count(AccessAuditLog.id).label("total_requests"),
                 func.count(func.distinct(AccessAuditLog.user_id)).label("distinct_users"),
-                func.sum(func.case((AccessAuditLog.status_code >= 400, 1), else_=0)).label("total_errors"),
+                func.sum(case((AccessAuditLog.status_code >= 400, 1), else_=0)).label("total_errors"),
                 func.max(AccessAuditLog.created_at).label("last_active"),
                 func.max(AccessAuditLog.user_agent).label("sample_user_agent"),
             )
@@ -188,7 +188,7 @@ def get_access_logs_grouped(
                 AccessAuditLog.method,
                 AccessAuditLog.path,
                 func.count(AccessAuditLog.id).label("total_requests"),
-                func.sum(func.case((AccessAuditLog.status_code >= 400, 1), else_=0)).label("total_errors"),
+                func.sum(case((AccessAuditLog.status_code >= 400, 1), else_=0)).label("total_errors"),
                 func.avg(AccessAuditLog.duration_ms).label("avg_duration_ms"),
                 func.max(AccessAuditLog.created_at).label("last_active"),
             )
