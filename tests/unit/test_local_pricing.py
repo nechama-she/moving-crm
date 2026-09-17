@@ -265,3 +265,49 @@ def test_packing_is_added_to_manual_moving_hours_even_with_zero_packing_rate():
     quote = calculate_local(LocalSettings(full_pack_hourly=0), LocalCalculation(cubic_feet=1800, hours=4, full_pack=True))
     assert quote['billable_hours'] == 7
     assert quote['total'] == 1793  # 7*242 + 99
+
+
+@pytest.mark.parametrize('travel_fails', [False, True])
+def test_manual_and_report_use_identical_complete_calculation(api, travel_fails):
+    import ast
+    import re
+    from uuid import uuid4
+    plan = SimpleNamespace(id='book', company_id='company', company_name='Gorilla Haulers', name='East', pickup_regions='MD')
+    lead = SimpleNamespace(id='lead', company_id='company', volume=100, move_type='Local')
+    job = SimpleNamespace(id='job', company_id='company', pickup_zip='pickup', delivery_zip='delivery', price=549)
+    company = SimpleNamespace(office_address='office')
+    db = MagicMock()
+    db.get.side_effect = lambda model, key: company if model is api.Company else None
+    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [plan]
+    api._plan_or_404.return_value = plan
+    travel = MagicMock(return_value={'office_to_pickup_miles': Decimal('16.61'), 'delivery_to_office_miles': Decimal('40.48')})
+    if travel_fails:
+        travel.side_effect = HTTPException(502, 'Travel lookup unavailable')
+    source = BACKEND / 'routes/pricing.py'
+    node = next(n for n in ast.parse(source.read_text(encoding='utf-8')).body if getattr(n, 'name', '') == 'calculate_and_save_lead_job_price')
+    node.returns = None
+    for arg in node.args.args: arg.annotation = None
+    charge = MagicMock()
+    scope = {'Decimal': Decimal, 'PricingPlan': MagicMock(), 'LeadJobCharge': charge, 're': re, 'uuid4': uuid4,
+             'delivery_location': lambda address: ('MD', '20850')}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), scope)
+    modules = {'routes.local_pricing': api, 'travel_routes': SimpleNamespace(estimate_travel=travel),
+               'routes.leads': SimpleNamespace(_get_job_or_404=MagicMock(return_value=job), _refresh_lead_estimated_total=MagicMock())}
+    body = api.BookCalculation(cubic_feet=100, lead_id='lead', job_id='job',
+                              office_to_pickup_miles=0, delivery_to_office_miles=0)
+    with patch.dict(sys.modules, modules):
+        if travel_fails:
+            with pytest.raises(HTTPException): api.calculate('book', body, object(), db)
+            with pytest.raises(HTTPException): scope['calculate_and_save_lead_job_price'](lead, job, db)
+            db.query.return_value.filter_by.return_value.delete.assert_not_called()
+            assert job.price == 549
+        else:
+            manual = api.calculate('book', body, object(), db)
+            saved_total = scope['calculate_and_save_lead_job_price'](lead, job, db)
+            assert manual['total'] == saved_total == 699
+            assert job.price == 699
+            saved_lines = [call.kwargs for call in charge.call_args_list]
+            assert [(line['name'], line['total_cost']) for line in saved_lines] == [(line['name'], line['totalCost']) for line in manual['charges']]
+        assert travel.call_count == 2
+        for call in travel.call_args_list:
+            assert call.args == ('office', 'pickup', 'delivery')

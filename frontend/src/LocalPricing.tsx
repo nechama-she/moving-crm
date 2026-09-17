@@ -50,7 +50,7 @@ export default function LocalPricing({ planId, companyName, bookName, job }: { p
   const [result, setResult] = useState<{ key: string; quote: Quote } | null>(null);
   const savingRef = useRef(false);
   const base = `${API_BASE}/api/pricing/local/${encodeURIComponent(planId)}`;
-  const requestKey = JSON.stringify([planId, settings, volume, crew, hours, fullPack, travel]);
+  const requestKey = JSON.stringify([planId, settings, volume, crew, hours, fullPack, travel, travelKey]);
   const quote = result?.key === requestKey ? result.quote : null;
   const active = editing ? draft : settings;
 
@@ -71,7 +71,7 @@ export default function LocalPricing({ planId, companyName, bookName, job }: { p
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void fetch(`${base}/calculate`, { method: "POST", headers: { ...authHeaders(token), "Content-Type": "application/json" }, signal: controller.signal,
-        body: JSON.stringify({ cubic_feet: Number(volume), crew_size: crew ? Number(crew) : null, hours: hours ? Number(hours) : null, full_pack: fullPack, office_to_pickup_miles: travel?.office_to_pickup_miles ?? null, delivery_to_office_miles: travel?.delivery_to_office_miles ?? null }) })
+        body: JSON.stringify({ cubic_feet: Number(volume), crew_size: crew ? Number(crew) : null, hours: hours ? Number(hours) : null, full_pack: fullPack, ...(job ? { lead_id: job.leadId, job_id: job.jobId } : { pickup: pickupAddress, delivery: deliveryAddress }) }) })
         .then(async response => { if (!response.ok) throw new Error(await failure(response)); return response.json(); })
         .then(data => { setResult({ key: requestKey, quote: data }); setError(""); })
         .catch(reason => { if (!controller.signal.aborted) setError(reason.message); });

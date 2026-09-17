@@ -447,9 +447,6 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> di
     details["spark_extracted_cuft"] = cuft
     details["spark_extracted_weight"] = weight
     details["last_spark_share_url"] = share_url
-    if saved:
-        saved.details = json.dumps(details)
-
     from models import LeadJob
     job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order).first()
     price = None
@@ -465,6 +462,8 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> di
             access.published_price = job.price
             access.published_at = datetime.utcnow()
 
+    if saved:
+        saved.details = json.dumps(details)
     db.commit()
     return {
         "ok": True,
