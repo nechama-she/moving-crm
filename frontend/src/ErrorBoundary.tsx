@@ -11,6 +11,10 @@ interface State {
   error: Error | null;
 }
 
+function isDynamicImportError(error: Error) {
+  return /Failed to fetch dynamically imported module|Importing a module script failed|Loading chunk \d+ failed/i.test(error.message);
+}
+
 export default class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
@@ -23,6 +27,13 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error("ErrorBoundary caught an error:", error, errorInfo);
+    if (isDynamicImportError(error)) {
+      const reloadKey = `dynamic-import-reload:${window.location.pathname}${window.location.search}`;
+      if (sessionStorage.getItem(reloadKey) !== "true") {
+        sessionStorage.setItem(reloadKey, "true");
+        window.location.reload();
+      }
+    }
   }
 
   render() {

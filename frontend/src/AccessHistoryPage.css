@@ -1,6 +1,7 @@
 .access-history-page {
   padding: 24px 32px;
   color: #181818;
+  font-size: 14px;
   max-width: 1600px;
   margin: 0 auto;
 }
@@ -108,12 +109,12 @@
 
 .access-input,
 .access-select {
-  height: 36px;
+  height: 40px;
   border: 1px solid #cbd5e1;
   border-radius: 4px;
   background: #fff;
-  padding: 0 10px;
-  font-size: 12px;
+  padding: 0 12px;
+  font-size: 14px;
   color: #0f172a;
 }
 
@@ -145,7 +146,7 @@
   width: 100%;
   border-collapse: collapse;
   text-align: left;
-  font-size: 12px;
+  font-size: 14px;
   white-space: nowrap;
 }
 
@@ -153,15 +154,15 @@
   background: #f8fafc;
   color: #475569;
   font-weight: 700;
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: .04em;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-bottom: 1px solid #e2e8f0;
 }
 
 .access-table td {
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-bottom: 1px solid #f1f5f9;
   color: #1e293b;
   vertical-align: middle;
@@ -173,7 +174,7 @@
 
 .time-cell {
   color: #64748b;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .user-role-badge {
@@ -198,18 +199,18 @@
 
 .ip-cell code {
   background: #f1f5f9;
-  padding: 2px 6px;
+  padding: 3px 7px;
   border-radius: 4px;
   font-family: monospace;
-  font-size: 11px;
+  font-size: 13px;
   color: #0f172a;
 }
 
 .method-badge {
   display: inline-block;
-  padding: 2px 6px;
+  padding: 3px 7px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -221,7 +222,14 @@
 .method-badge.delete { background: #fee2e2; color: #b91c1c; }
 
 .path-cell {
-  max-width: 320px;
+  max-width: 520px;
+}
+
+.path-cell code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
 }
 
 .path-text {
@@ -242,9 +250,9 @@
 
 .status-badge {
   display: inline-block;
-  padding: 2px 7px;
+  padding: 3px 8px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -255,11 +263,11 @@
 
 .duration-cell {
   color: #64748b;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .agent-cell {
-  max-width: 240px;
+  max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
   color: #94a3b8;
@@ -267,9 +275,9 @@
 
 .pill-badge {
   display: inline-block;
-  padding: 2px 8px;
+  padding: 4px 10px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -304,19 +312,19 @@
 
 .expand-indicator {
   text-align: center;
-  padding: 8px 4px !important;
+  padding: 10px 6px !important;
 }
 
 .expand-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   border-radius: 4px;
   background: #e2e8f0;
   color: #032d60;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -336,7 +344,7 @@
 }
 
 .nested-requests-panel {
-  padding: 16px 20px 20px;
+  padding: 20px 22px 22px;
   background: #f8fafc;
   border-top: 1px solid #e2e8f0;
 }
@@ -345,11 +353,11 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 .nested-header strong {
-  font-size: 13px;
+  font-size: 15px;
   color: #032d60;
 }
 
@@ -374,9 +382,9 @@
   gap: 4px;
   background: #e2e8f0;
   color: #0f172a;
-  padding: 3px 8px;
+  padding: 5px 10px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -386,7 +394,7 @@
   color: #64748b;
   cursor: pointer;
   padding: 0 2px;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1;
 }
 
@@ -398,7 +406,7 @@
   border: 0;
   background: transparent;
   color: #0176d3;
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
   text-decoration: underline;
   padding: 2px 4px;
@@ -406,10 +414,10 @@
 
 .drilldown-subtabs-bar {
   display: flex;
-  gap: 6px;
-  margin: 12px 0;
+  gap: 8px;
+  margin: 14px 0;
   border-bottom: 1px solid #e2e8f0;
-  padding-bottom: 8px;
+  padding-bottom: 10px;
   flex-wrap: wrap;
 }
 
@@ -417,8 +425,8 @@
   border: 1px solid #cbd5e1;
   background: #fff;
   border-radius: 4px;
-  padding: 6px 12px;
-  font-size: 11px;
+  padding: 8px 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #475569;
   cursor: pointer;
@@ -441,8 +449,8 @@
   background: #fff;
   color: #0176d3;
   border-radius: 4px;
-  padding: 3px 8px;
-  font-size: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
   font-weight: 700;
   cursor: pointer;
   transition: all .15s ease;
@@ -457,10 +465,10 @@
   border: 1px solid #cbd5e1;
   background: #fff;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   color: #475569;
-  padding: 4px 10px;
+  padding: 7px 12px;
   cursor: pointer;
 }
 
@@ -474,7 +482,7 @@
 .nested-error {
   padding: 24px 12px;
   text-align: center;
-  font-size: 12px;
+  font-size: 14px;
   color: #64748b;
   font-style: italic;
 }
@@ -491,23 +499,23 @@
   border-radius: 6px;
   overflow: hidden;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .nested-table th {
   background: #f1f5f9;
   color: #475569;
   font-weight: 700;
-  font-size: 10px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: .04em;
-  padding: 8px 10px;
+  padding: 10px 12px;
   border-bottom: 1px solid #cbd5e1;
   text-align: left;
 }
 
 .nested-table td {
-  padding: 7px 10px;
+  padding: 9px 12px;
   border-bottom: 1px solid #f1f5f9;
   color: #1e293b;
   vertical-align: middle;
@@ -515,6 +523,44 @@
 
 .nested-table tr:hover td {
   background: #fbfcfe;
+}
+
+.endpoint-drilldown-table {
+  table-layout: fixed;
+}
+
+.endpoint-drilldown-table th:nth-child(1),
+.endpoint-drilldown-table td:nth-child(1) {
+  width: 72px;
+}
+
+.endpoint-drilldown-table th:nth-child(2),
+.endpoint-drilldown-table td:nth-child(2) {
+  width: auto;
+}
+
+.endpoint-drilldown-table th:nth-child(3),
+.endpoint-drilldown-table td:nth-child(3),
+.endpoint-drilldown-table th:nth-child(4),
+.endpoint-drilldown-table td:nth-child(4),
+.endpoint-drilldown-table th:nth-child(5),
+.endpoint-drilldown-table td:nth-child(5) {
+  width: 110px;
+}
+
+.endpoint-drilldown-table th:nth-child(6),
+.endpoint-drilldown-table td:nth-child(6) {
+  width: 170px;
+  text-align: right;
+}
+
+.endpoint-drilldown-table .path-cell {
+  max-width: none;
+  min-width: 0;
+}
+
+.endpoint-drilldown-table .path-cell code {
+  white-space: nowrap;
 }
 
 /* Pagination */

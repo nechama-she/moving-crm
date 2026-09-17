@@ -315,7 +315,7 @@ function DrilldownPanel({ initialFilter, title, onClose, token }: DrilldownPanel
         subPaths.length === 0 ? (
           <div className="nested-empty">No endpoint records found.</div>
         ) : (
-          <table className="nested-table">
+          <table className="nested-table endpoint-drilldown-table">
             <thead>
               <tr>
                 <th>Method</th>
@@ -344,7 +344,7 @@ function DrilldownPanel({ initialFilter, title, onClose, token }: DrilldownPanel
                     <button
                       type="button"
                       className="drilldown-subaction-btn"
-                      onClick={() => addFilter({ method: p.method, path: p.path })}
+                      onClick={() => addFilter({ method: p.method, path: p.path }, "requests")}
                     >
                       Filter this endpoint ▸
                     </button>
