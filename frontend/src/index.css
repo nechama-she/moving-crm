@@ -982,21 +982,22 @@ button:focus-visible {
 .pricing-rate-table th small { display: block; color: #706e6b; font-weight: 400; margin-top: 2px; }
 .pricing-rate-table input { width: 82px; text-align: right; padding: 5px; }
 .pricing-services { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.pricing-services article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+.pricing-services.pricing-bulky-rates,
+.pricing-services.pricing-services-editor { grid-template-columns: minmax(0, 1fr); }
+.pricing-services article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px; border: 1px solid #dbe4ef; border-radius: 8px; background: #f8fafc; }
 .pricing-services article > div { min-width: 0; }
 .pricing-services strong { font-size: 13px; }
 .pricing-services strong em { margin-left: 6px; padding: 2px 6px; border-radius: 999px; background: #fff1d6; color: #8c4b02; font-size: 9px; font-style: normal; text-transform: uppercase; }
 .pricing-services small { display: block; color: #706e6b; margin-top: 2px; }
 .pricing-services b { color: #2e844a; font-size: 13px; text-align: right; }
-.pricing-services article input { width: 100%; min-width: 0; height: 34px; border: 1px solid #c9c7c5; border-radius: 6px; padding: 6px 9px; box-sizing: border-box; background: #fff; color: #181818; }
+.pricing-services article input { width: 100%; min-width: 0; height: 38px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 10px; box-sizing: border-box; background: #fff; color: #181818; }
 .pricing-services article textarea { width: 100%; min-height: 64px; resize: vertical; border: 1px solid #c9c7c5; border-radius: 6px; padding: 7px 9px; box-sizing: border-box; }
 .pricing-services article.pricing-service-rule { border-left: 4px solid #fe9339; }
-.pricing-bulky-rates article:has(> input) { grid-template-columns: minmax(190px, 1fr) repeat(3, minmax(105px, 140px)) auto; }
-.pricing-services-editor article:has(> input):not(.pricing-service-rule) { grid-template-columns: minmax(180px, 1fr) minmax(140px, 180px) auto; }
-.pricing-services-editor article:has(> input):not(.pricing-service-rule) { grid-template-columns: minmax(190px, 1.1fr) minmax(140px, .75fr) minmax(180px, 1fr) auto; }
-.pricing-services-editor article.pricing-service-rule:has(> input) { grid-template-columns: minmax(190px, .9fr) minmax(240px, 1.25fr) auto; }
-.pricing-services .text-danger { min-height: 34px; padding: 0 10px; color: #ba0517; font-weight: 700; justify-self: end; }
-.pricing-services .add-row { grid-column: 1 / -1; min-height: 44px; border-radius: 8px; }
+.pricing-bulky-rates article:has(> input) { grid-template-columns: minmax(200px, 1fr) repeat(3, minmax(120px, 150px)) auto; }
+.pricing-services-editor article:has(> input):not(.pricing-service-rule) { grid-template-columns: minmax(220px, 1.1fr) minmax(140px, 180px) minmax(220px, 1fr) auto; }
+.pricing-services-editor article.pricing-service-rule:has(> input) { grid-template-columns: minmax(220px, .9fr) minmax(280px, 1.25fr) auto; }
+.pricing-services .text-danger { min-height: 38px; border: 1px solid #fecaca; border-radius: 6px; padding: 0 12px; background: #fff; color: #ba0517; font-weight: 700; justify-self: end; }
+.pricing-services .add-row { grid-column: 1 / -1; min-height: 46px; border-radius: 8px; background: #f8fbff; }
 
 @media (max-width: 900px) {
   .pricing-page { padding: 16px; }
