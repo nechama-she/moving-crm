@@ -27,15 +27,7 @@ type Pending = {id:string;file:File;status:string;progress:number;preview?:strin
 export default function CustomerMovePage() {
   const {accessId}=useParams();
   const sessionKey = `cm_session_${accessId}`;
-  const linkKeyStorage = `cm_key_${accessId}`;
-  const [key]=useState(()=>{
-    const fromHash = new URLSearchParams(window.location.hash.slice(1)).get('key');
-    if (fromHash) {
-      sessionStorage.setItem(linkKeyStorage, fromHash);
-      return fromHash;
-    }
-    return sessionStorage.getItem(linkKeyStorage) || '';
-  });
+  const [key]=useState(()=>new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
   const [session,setSession]=useState(()=>sessionStorage.getItem(sessionKey)||'');
   const [options,setOptions]=useState<{channel:string;destination:string}[]>([]),[channel,setChannel]=useState('');
   const [code,setCode]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -59,11 +51,11 @@ export default function CustomerMovePage() {
   const headers={'x-public-link':key,'x-public-session':session};
 
   async function call(path:string, body?:unknown, method?:string) {
-    const httpMethod = method || (body!==undefined ? 'POST' : 'POST');
+    const httpMethod = method || (body===undefined ? 'GET' : 'POST');
     const response=await fetch(base+path,{method:httpMethod,headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
     const result=await response.json();
     if(!response.ok){
-      if(response.status===401){
+      if((response.status===401||response.status===404)){
         sessionStorage.removeItem(sessionKey);
         setSession('');
         setData(undefined);
@@ -188,7 +180,7 @@ export default function CustomerMovePage() {
     setBusy(true);
     setError('');
     try{
-      const next=await call('/details', undefined, 'GET');
+      const next=await call('/details');
       setData(next);
     }catch(err){
       setError((err as Error).message);
@@ -329,7 +321,7 @@ export default function CustomerMovePage() {
                         setReportState('running');
                         setReportNotice('');
                         try {
-                          await call('/generate-inventory-report');
+                          await call('/generate-inventory-report', {});
                           setReportState('done');
                           setHasNewUploads(false);
                           setReportNotice("We're analyzing your photos and videos to calculate your total inventory volume.");
