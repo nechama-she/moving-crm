@@ -525,15 +525,19 @@ def destination_from_address(address: str, options: list[str], resolved_state: s
         m = re.search(r'\b(\d{5})(?:-\d{4})?\b', address)
         if m:
             zip_code = m.group(1)
-    zip_prefix = int(zip_code[:2]) if zip_code and len(zip_code) >= 2 and zip_code[:2].isdigit() else None
+    zip_digits = re.sub(r"\D", "", zip_code or "")
     
     state_options = [opt for opt in options if opt.upper() == state or opt.upper().startswith(f"{state} ") or opt.upper().startswith(f"{state} (")]
-    if zip_prefix is not None:
+    if zip_digits:
         for opt in state_options:
-            m = re.search(r'(\d{2})\s*x{3}\s*-\s*(\d{2})\s*x{3}', opt, re.IGNORECASE)
-            if m:
-                if int(m.group(1)) <= zip_prefix <= int(m.group(2)):
+            numbers = re.findall(r"\d+", opt)
+            if len(numbers) >= 2 and re.search(r"[-–—]|\bto\b", opt, re.IGNORECASE):
+                width = min(len(numbers[0]), len(numbers[1]))
+                value = int(zip_digits[:width])
+                if int(numbers[0][:width]) <= value <= int(numbers[1][:width]):
                     return opt
+            elif numbers and any(zip_digits.startswith(number) or number.startswith(zip_digits) for number in numbers):
+                return opt
     for opt in state_options:
         if opt.upper() == state:
             return opt

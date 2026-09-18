@@ -92,12 +92,19 @@ function destinationFromAddress(address: string | null | undefined, options: str
   const state = (resolvedState || safeAddress.toUpperCase().match(/(?:,\s*|\b)([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?|\b)/)?.[1] || "").toUpperCase();
   if (!state) return "";
   const zip = resolvedZip || safeAddress.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1] || "";
-  const zipPrefix = zip ? Number(zip.slice(0, 2)) : null;
+  const zipDigits = zip.replace(/\D/g, "");
   const stateOptions = (options || []).filter((option) => option && (option.toUpperCase() === state || option.toUpperCase().startsWith(`${state} `) || option.toUpperCase().startsWith(`${state} (`)));
-  if (zipPrefix != null) {
+  if (zipDigits) {
     const ranged = stateOptions.find((option) => {
-      const range = option.match(/(\d{2})\s*x{3}\s*-\s*(\d{2})\s*x{3}/i);
-      return range ? zipPrefix >= Number(range[1]) && zipPrefix <= Number(range[2]) : false;
+      const numbers = option.match(/\d+/g) || [];
+      if (numbers.length >= 2 && /[-–—]|\bto\b/i.test(option)) {
+        const start = numbers[0] || "";
+        const end = numbers[1] || "";
+        const width = Math.min(start.length, end.length);
+        const value = Number(zipDigits.slice(0, width));
+        return Number(start.slice(0, width)) <= value && value <= Number(end.slice(0, width));
+      }
+      return numbers.some((number) => zipDigits.startsWith(number) || number.startsWith(zipDigits));
     });
     if (ranged) return ranged;
   }
@@ -315,6 +322,24 @@ export default function PricingPage() {
   function patchRate(id: string | undefined, patch: Partial<Rate>) {
     if (!draft) return;
     patchDraft({ rates: draft.rates.map((row) => row.id === id ? { ...row, ...patch } : row) });
+  }
+  function addDestination() {
+    const templates = bands.length
+      ? bands.map((band) => active?.rates.find((row) => row.band_label === band))
+      : [undefined];
+    const rows = templates.map((template, index) => ({
+      id: crypto.randomUUID(),
+      destination: "New destination",
+      destination_group: "",
+      minimum_price: null,
+      minimum_text: "",
+      band_label: bands[index] || "",
+      cubic_feet_min: template?.cubic_feet_min ?? null,
+      cubic_feet_max: template?.cubic_feet_max ?? null,
+      rate: null,
+      rate_text: "",
+    }));
+    patchDraft({ rates: [...(draft?.rates || []), ...rows] });
   }
 
   async function savePrice() {
@@ -669,7 +694,7 @@ export default function PricingPage() {
                     <tbody>
                       {rateRows.map((group) => (
                         <tr key={group.name}>
-                          <th>{group.name}<small>{group.rates[0]?.destination_group}</small></th>
+                          <th>{editing ? <><input value={group.name} placeholder="Destination or ZIP prefix" onChange={(e) => group.rates.forEach((rate) => patchRate(rate.id, { destination: e.target.value }))} /><small>{group.rates[0]?.destination_group}</small></> : <>{group.name}<small>{group.rates[0]?.destination_group}</small></>}</th>
                           <td>{editing ? <input type="text" inputMode="decimal" value={group.rates[0]?.minimum_text || (group.rates[0]?.minimum_price ?? "")} onChange={(e) => group.rates.forEach((rate) => patchRate(rate.id, { minimum_price: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), minimum_text: e.target.value }))} /> : money(group.rates[0]?.minimum_price)}</td>
                           {bands.map((band) => {
                             const rate = group.rates.find((row) => row.band_label === band);
@@ -680,7 +705,7 @@ export default function PricingPage() {
                     </tbody>
                   </table>
                 </div>
-                {editing && <button className="slds-button add-row" onClick={() => patchDraft({ rates: [...(draft?.rates || []), { destination: "", destination_group: "", minimum_price: null, minimum_text: "", band_label: "", cubic_feet_min: null, cubic_feet_max: null, rate: null, rate_text: "" }] })}>+ Add destination</button>}
+                {editing && <button className="slds-button add-row" onClick={addDestination}>+ Add destination</button>}
               </PricingSection>
 
               <PricingSection title="Bulky items rates" count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))}>
