@@ -312,7 +312,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
           </div>
         )}
         </section>
-        <CustomerPageControls leadId={leadId}/><section className="ls-card"><button className="slds-button ls-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "\u25be" : "\u25b8"} Conversation viewer</button>{expanded && (conversation.embeddedConversationUrl ? <><a href={conversation.conversationUrl} target="_blank" rel="noopener noreferrer">Open conversation in a new tab</a><iframe title="LiveSwitch conversation" src={conversation.embeddedConversationUrl} style={{ pointerEvents: resizing ? "none" : undefined }} allow="camera; microphone; fullscreen; display-capture"/></> : <p>Conversation viewer unavailable.</p>)}</section>
+        <CustomerPageControls leadId={leadId}/><section className="ls-card"><button className="slds-button ls-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "\u25be" : "\u25b8"} Conversation viewer</button>{expanded ? <>{conversation.conversationUrl ? <a href={conversation.conversationUrl} target="_blank" rel="noopener noreferrer">Open conversation in a new tab</a> : null}{conversation.embeddedConversationUrl ? <iframe title="LiveSwitch conversation" src={conversation.embeddedConversationUrl} style={{ pointerEvents: resizing ? "none" : undefined }} allow="camera; microphone; fullscreen; display-capture"/> : !conversation.conversationUrl ? <p>Conversation viewer unavailable.</p> : null}</> : null}</section>
       </> : null}<p className="ls-notice" role="status">{notice}</p></main>
     </div>
   </div>, document.body);
