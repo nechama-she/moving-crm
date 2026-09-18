@@ -263,6 +263,9 @@ def _assert_meeting_before_move_date(job: LeadJob | None, stamps: list[datetime]
     limit = _meeting_move_date_limit(job)
     if limit is None or not stamps:
         return
+    # If the move date on file is already in the past, allow scheduling
+    if limit < datetime.utcnow():
+        return
     if max(stamps) > limit:
         raise HTTPException(400, f'{label} must be on or before the move date.')
 

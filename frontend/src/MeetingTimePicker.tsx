@@ -11,7 +11,9 @@ type Selection = {date:string;slot:number};
 export default function MeetingTimePicker({ onChange, availabilityUrl, linkKey, session, moveDate }: { onChange: (value: string) => void; availabilityUrl:string; linkKey:string; session:string; moveDate?: string | null }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  const moveEnd = moveDate ? new Date(`${moveDate}T23:59:59`) : null;
+  const rawMoveEnd = moveDate ? new Date(`${moveDate}T23:59:59`) : null;
+  // If move date has already passed, don't block current/future scheduling dates
+  const moveEnd = rawMoveEnd && rawMoveEnd.getTime() >= Date.now() ? rawMoveEnd : null;
   const today = key(new Date());
   const [first,setFirst] = useState(today);
   const [slots,setSlots]=useState<Record<string,boolean>>({});
