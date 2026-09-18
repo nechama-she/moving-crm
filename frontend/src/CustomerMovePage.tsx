@@ -37,8 +37,8 @@ export default function CustomerMovePage() {
   const [reportState,setReportState]=useState<'idle'|'running'|'done'>('idle');
   const [reportNotice,setReportNotice]=useState('');
   const [resendAt,setResendAt]=useState(0),[clock,setClock]=useState(Date.now());
-  const [showQuestions, setShowQuestions] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
+  const [submittedQuestions, setSubmittedQuestions] = useState(false);
   const [answers, setAnswers] = useState<{
     packingNeeded?: string;
     specialRequirements: string[];
@@ -272,87 +272,108 @@ export default function CustomerMovePage() {
               </section>
             </section>
             {error&&<div className="cm-error" role="alert">{error}</div>}
-            <div className="cm-two-col cm-columns">
-              <section className="cm-card cm-upload"><div className="cm-eyebrow">SHOW US WHAT'S MOVING</div><h2>Add photos, documents<br/>or videos.</h2><p>A few photos of each room help us understand your move. Include any large or delicate items.</p><div className="cm-upload-row"><label className="cm-drop"><span className="cm-drop-icon" aria-hidden="true">📁</span><strong>Choose files or drop here</strong><input type="file" multiple disabled={busy} onChange={e=>{choose(e.target.files);e.target.value='';}}/></label><button className="slds-button cm-primary cm-upload-btn" disabled={busy||!files.some(f=>['Ready','Try again'].includes(f.status))} onClick={()=>void upload()}>{busy?'Please wait...':'Upload files'}</button></div>
-            {files.length>0 && <p role="status">{files.filter(f=>f.status==='Uploaded').length} of {files.length} files uploaded</p>}
-            <div className="cm-file-list">
-              {files.map(item => (
-                <article key={item.id}>
-                  {item.preview && <img src={item.preview} alt="" />}
-                  <div>
-                    <strong>{item.file.name}</strong>
-                    <small role="status">{item.status}{item.status==='Uploading'?` ${item.progress}%`:''}</small>
-                    {item.error && <small role="alert" style={{color:'#974327'}}>{item.error}</small>}
-                    <progress max={100} value={item.progress} aria-label={`${item.file.name} upload progress`} />
-                  </div>
-                  {item.status!=='Uploaded' && !busy && <button className="slds-button" aria-label={`Remove ${item.file.name}`} onClick={()=>setFiles(prev=>prev.filter(f=>f.id!==item.id))}>x</button>}
-                </article>
-              ))}
-            </div>
-            {data.files.length>0&&<details><summary>{data.files.length} saved files</summary>{data.files.map(file=><p key={file.id}>{file.name}</p>)}</details>}
-            {data.files.length > 0 && !data.spark && reportState !== 'done' && (
-              <div className="cm-spark-box">
-                <button
-                  type="button"
-                  className="slds-button cm-primary cm-spark-btn"
-                  disabled={busy || reportState === 'running'}
-                  onClick={async () => {
-                    setReportState('running');
-                    setReportNotice('');
-                    try {
-                      await call('/generate-inventory-report');
-                      setReportState('done');
-                      setReportNotice("We're analyzing your photos and videos to calculate your total inventory volume.");
-                    } catch (err) {
-                      setReportState('idle');
-                      setError((err as Error).message);
-                    }
-                  }}
-                >
-                  {reportState === 'running' ? 'Processing inventory...' : "Done Uploading — Calculate My Move"}
-                </button>
-                {reportNotice && <p role="status" className="cm-spark-notice">{reportNotice}</p>}
-              </div>
-            )}
-            <div className="cm-walkthrough-card">
-              <div className="cm-walkthrough-header">
-                <div>
-                  <span className="cm-eyebrow">LIVE VIDEO WALKTHROUGH</span>
-                  <p className="cm-walkthrough-sub">Prefer to show us around? Schedule a quick video walkthrough.</p>
+            <div className="cm-two-col cm-actions-row">
+              <section className="cm-card cm-upload">
+                <div className="cm-eyebrow">SHOW US WHAT'S MOVING</div>
+                <h2>Add photos, documents<br/>or videos.</h2>
+                <p>A few photos of each room help us understand your move. Include any large or delicate items.</p>
+                <div className="cm-upload-row">
+                  <label className="cm-drop">
+                    <span className="cm-drop-icon" aria-hidden="true">📁</span>
+                    <strong>Choose files or drop here</strong>
+                    <input type="file" multiple disabled={busy} onChange={e=>{choose(e.target.files);e.target.value='';}}/>
+                  </label>
+                  <button className="slds-button cm-primary cm-upload-btn" disabled={busy||!files.some(f=>['Ready','Try again'].includes(f.status))} onClick={()=>void upload()}>{busy?'Please wait...':'Upload files'}</button>
                 </div>
-                {data.walkthrough && (
-                  <span className="cm-meeting-status">
-                    {({requested:'Requested',scheduled:'Approved',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status]||data.walkthrough.status}
-                  </span>
+                {files.length>0 && <p role="status">{files.filter(f=>f.status==='Uploaded').length} of {files.length} files uploaded</p>}
+                <div className="cm-file-list">
+                  {files.map(item => (
+                    <article key={item.id}>
+                      {item.preview && <img src={item.preview} alt="" />}
+                      <div>
+                        <strong>{item.file.name}</strong>
+                        <small role="status">{item.status}{item.status==='Uploading'?` ${item.progress}%`:''}</small>
+                        {item.error && <small role="alert" style={{color:'#974327'}}>{item.error}</small>}
+                        <progress max={100} value={item.progress} aria-label={`${item.file.name} upload progress`} />
+                      </div>
+                      {item.status!=='Uploaded' && !busy && <button className="slds-button" aria-label={`Remove ${item.file.name}`} onClick={()=>setFiles(prev=>prev.filter(f=>f.id!==item.id))}>x</button>}
+                    </article>
+                  ))}
+                </div>
+                {data.files.length>0&&<details><summary>{data.files.length} saved files</summary>{data.files.map(file=><p key={file.id}>{file.name}</p>)}</details>}
+                {data.files.length > 0 && !data.spark && reportState !== 'done' && (
+                  <div className="cm-spark-box">
+                    <button
+                      type="button"
+                      className="slds-button cm-primary cm-spark-btn"
+                      disabled={busy || reportState === 'running'}
+                      onClick={async () => {
+                        setReportState('running');
+                        setReportNotice('');
+                        try {
+                          await call('/generate-inventory-report');
+                          setReportState('done');
+                          setReportNotice("We're analyzing your photos and videos to calculate your total inventory volume.");
+                        } catch (err) {
+                          setReportState('idle');
+                          setError((err as Error).message);
+                        }
+                      }}
+                    >
+                      {reportState === 'running' ? 'Processing inventory...' : "Done Uploading — Calculate My Move"}
+                    </button>
+                    {reportNotice && <p role="status" className="cm-spark-notice">{reportNotice}</p>}
+                  </div>
                 )}
-              </div>
-              {data.walkthrough && !rescheduling ? (
-                <div className="cm-walkthrough-body">
-                  <p className="cm-meeting-time">{meetingTime(data.walkthrough)}</p>
-                  <div className="cm-walkthrough-actions">
-                    {data.walkthrough.status==='scheduled' && data.participant_url && (
-                      <a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join video walkthrough</a>
-                    )}
-                    {['requested','scheduled'].includes(data.walkthrough.status) && (
-                      <button type="button" className="cm-secondary-btn" onClick={()=>{setAvailability('');setRescheduling(true);}}>Reschedule</button>
-                    )}
+              </section>
+
+              <section className="cm-card cm-walkthrough-card">
+                <div className="cm-walkthrough-header">
+                  <div>
+                    <div className="cm-eyebrow">LIVE VIDEO WALKTHROUGH</div>
+                    <h2>Let's take a live<br/>video walkthrough.</h2>
+                    <p className="cm-walkthrough-sub">Walk us through your home from your phone. Our team will help you plan what comes next.</p>
                   </div>
+                  {data.walkthrough && (
+                    <span className="cm-meeting-status">
+                      {({requested:'Requested',scheduled:'Approved',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status]||data.walkthrough.status}
+                    </span>
+                  )}
                 </div>
-              ) : (
-                <form className="cm-walkthrough-form" onSubmit={e=>{e.preventDefault();void walkthrough();}}>
-                  <MeetingTimePicker onChange={setAvailability} availabilityUrl={base+"/availability"} linkKey={key} session={session} moveDate={data.move_date || null} />
-                  <div className="cm-walkthrough-form-actions">
-                    <button className="slds-button cm-primary" disabled={busy||!availability.trim()}>{rescheduling?'Request new time':'Schedule video walkthrough'}</button>
-                    {rescheduling && (
-                      <button type="button" className="cm-secondary-btn" disabled={busy} onClick={()=>setRescheduling(false)}>Cancel</button>
-                    )}
+                {data.walkthrough && !rescheduling ? (
+                  <div className="cm-walkthrough-body">
+                    <p className="cm-meeting-time">{meetingTime(data.walkthrough)}</p>
+                    <div className="cm-walkthrough-actions">
+                      {data.walkthrough.status==='scheduled' && data.participant_url && (
+                        <a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join video walkthrough</a>
+                      )}
+                      {['requested','scheduled'].includes(data.walkthrough.status) && (
+                        <button type="button" className="cm-secondary-btn" onClick={()=>{setAvailability('');setRescheduling(true);}}>Reschedule</button>
+                      )}
+                    </div>
                   </div>
-                  {requested && <p role="status" className="cm-walkthrough-notice">Request saved.</p>}
-                </form>
-              )}
+                ) : (
+                  <form className="cm-walkthrough-form" onSubmit={e=>{e.preventDefault();void walkthrough();}}>
+                    <MeetingTimePicker onChange={setAvailability} availabilityUrl={base+"/availability"} linkKey={key} session={session} moveDate={data.move_date || null} />
+                    <div className="cm-walkthrough-form-actions">
+                      <button className="slds-button cm-primary" disabled={busy||!availability.trim()}>{rescheduling?'Request new time':'Schedule video walkthrough'}</button>
+                      {rescheduling && (
+                        <button type="button" className="cm-secondary-btn" disabled={busy} onClick={()=>setRescheduling(false)}>Cancel</button>
+                      )}
+                    </div>
+                    {requested && <p role="status" className="cm-walkthrough-notice">Request saved.</p>}
+                  </form>
+                )}
+              </section>
             </div>
-            </section>
-              <div className="cm-estimate">
+
+            <div className="cm-estimate cm-estimate-full">
+              <div className="cm-estimate-top">
+                <div className="cm-estimate-main-info">
+                  <span className="cm-estimate-eyebrow">{data.estimate?'Your moving estimate':'Your estimate'}</span>
+                  <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):'We\'re working on it.'}</strong>
+                  <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+                </div>
                 {data.spark && (
                   <div className="cm-spark-card cm-spark-estimate-card">
                     <div className="cm-spark-status-row">
@@ -369,26 +390,25 @@ export default function CustomerMovePage() {
                     )}
                   </div>
                 )}
-                <span className="cm-estimate-eyebrow">{data.estimate?'Your moving estimate':'Your estimate'}</span>
-                <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):'We\'re working on it.'}</strong>
-                <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
-                {data.estimate && (
-                  <div className="cm-estimate-details">
-                    <div className="cm-estimate-detail-item">
-                      <span>Status</span>
-                      <strong>Ready</strong>
-                    </div>
-                    {Number(data.estimate.cuft) > 0 && (
-                      <div className="cm-estimate-detail-item">
-                        <span>Volume</span>
-                        <strong>{Number(data.estimate.cuft).toLocaleString()} cu ft</strong>
-                      </div>
-                    )}
+              </div>
+              {data.estimate && (
+                <div className="cm-estimate-details">
+                  <div className="cm-estimate-detail-item">
+                    <span>Status</span>
+                    <strong>Ready</strong>
                   </div>
-                )}
-                {data.estimate?.charges && data.estimate.charges.length > 0 && (
-                  <div className="cm-estimate-breakdown">
-                    <div className="cm-estimate-breakdown-title">Price Breakdown</div>
+                  {Number(data.estimate.cuft) > 0 && (
+                    <div className="cm-estimate-detail-item">
+                      <span>Volume</span>
+                      <strong>{Number(data.estimate.cuft).toLocaleString()} cu ft</strong>
+                    </div>
+                  )}
+                </div>
+              )}
+              {data.estimate?.charges && data.estimate.charges.length > 0 && (
+                <div className="cm-estimate-breakdown">
+                  <div className="cm-estimate-breakdown-title">Price Breakdown</div>
+                  <div className="cm-estimate-charges-grid">
                     {data.estimate.charges.map((charge, idx) => (
                       <div key={idx} className="cm-estimate-charge-row">
                         <div>
@@ -401,149 +421,128 @@ export default function CustomerMovePage() {
                       </div>
                     ))}
                   </div>
-                )}
-                {data.estimate && (
-                  <div className="cm-finalize-cta-wrap">
-                    <button
-                      type="button"
-                      className="slds-button cm-primary cm-finalize-cta-btn"
-                      onClick={() => {
-                        setCurrentStep(0);
-                        setShowQuestions(true);
-                      }}
-                    >
-                      Finalize price & services →
-                    </button>
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
 
-            {showQuestions && (
-              <div className="cm-modal-overlay" role="dialog" aria-modal="true">
-                <div className="cm-modal-card">
-                  <div className="cm-modal-header">
-                    <div>
-                      <span className="cm-eyebrow">STEP {currentStep + 1} OF 3</span>
-                      <h3>A few quick questions about your move</h3>
-                      <p>Help us finalize your move details and exact pricing.</p>
+            {data.estimate && (
+              <section className="cm-card cm-questions-section">
+                <div className="cm-questions-header">
+                  <div>
+                    <span className="cm-eyebrow">CUSTOMIZE YOUR MOVE · STEP {currentStep + 1} OF 3</span>
+                    <h2>A few quick questions before we finalize your price</h2>
+                    <p>Help us confirm your moving details and any extra services you might need.</p>
+                  </div>
+                  {submittedQuestions && (
+                    <span className="cm-meeting-status">✓ Details Saved</span>
+                  )}
+                </div>
+
+                <div className="cm-questions-body">
+                  {currentStep === 0 && (
+                    <div className="cm-step-content">
+                      <h4>Do you need packing services for your move?</h4>
+                      <p className="cm-step-sub">We can pack everything safely, or just your fragile and delicate items.</p>
+                      <div className="cm-options-grid">
+                        {[
+                          { value: 'full', title: 'Yes, full packing', desc: 'We pack your entire home with boxes and supplies included.' },
+                          { value: 'partial', title: 'Yes, fragile / partial packing', desc: 'We pack TVs, mirrors, artwork, and breakables only.' },
+                          { value: 'none', title: 'No, I will pack myself', desc: 'Everything will be boxed and sealed before moving day.' },
+                        ].map(opt => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            className={`cm-option-card ${answers.packingNeeded === opt.value ? 'selected' : ''}`}
+                            onClick={() => setAnswers(prev => ({ ...prev, packingNeeded: opt.value }))}
+                          >
+                            <strong>{opt.title}</strong>
+                            <small>{opt.desc}</small>
+                          </button>
+                        ))}
+                      </div>
                     </div>
+                  )}
+
+                  {currentStep === 1 && (
+                    <div className="cm-step-content">
+                      <h4>Any special conditions or requirements?</h4>
+                      <p className="cm-step-sub">Select all that apply at either your pickup or delivery location.</p>
+                      <div className="cm-checklist">
+                        {[
+                          { id: 'stairs', label: 'Flights of stairs (no elevator)' },
+                          { id: 'elevator', label: 'Reserved freight / service elevator' },
+                          { id: 'long_carry', label: 'Long carry (truck cannot park close)' },
+                          { id: 'storage', label: 'Storage needed before move-in' },
+                          { id: 'heavy_items', label: 'Extra heavy or bulky items (safe, piano, gym)' },
+                        ].map(item => (
+                          <label key={item.id} className="cm-check-item">
+                            <input
+                              type="checkbox"
+                              checked={answers.specialRequirements.includes(item.id)}
+                              onChange={e => {
+                                const checked = e.target.checked;
+                                setAnswers(prev => ({
+                                  ...prev,
+                                  specialRequirements: checked
+                                    ? [...prev.specialRequirements, item.id]
+                                    : prev.specialRequirements.filter(id => id !== item.id),
+                                }));
+                              }}
+                            />
+                            <span>{item.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {currentStep === 2 && (
+                    <div className="cm-step-content">
+                      <h4>Any additional notes or fragile items?</h4>
+                      <p className="cm-step-sub">Tell our dispatch team anything specific about access, timing, or special care items.</p>
+                      <textarea
+                        className="cm-step-textarea"
+                        rows={4}
+                        placeholder="e.g. Please bring extra mattress bags, narrow hallway at entrance..."
+                        value={answers.additionalNotes || ''}
+                        onChange={e => setAnswers(prev => ({ ...prev, additionalNotes: e.target.value }))}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="cm-questions-footer">
+                  {currentStep > 0 ? (
                     <button
                       type="button"
-                      className="cm-modal-close"
-                      aria-label="Close"
-                      onClick={() => setShowQuestions(false)}
+                      className="cm-secondary-btn"
+                      onClick={() => setCurrentStep(prev => prev - 1)}
                     >
-                      ✕
+                      ← Back
                     </button>
-                  </div>
+                  ) : <span />}
 
-                  <div className="cm-modal-body">
-                    {currentStep === 0 && (
-                      <div className="cm-step-content">
-                        <h4>Do you need packing services for your move?</h4>
-                        <p className="cm-step-sub">We can pack everything safely, or just your fragile and delicate items.</p>
-                        <div className="cm-options-grid">
-                          {[
-                            { value: 'full', title: 'Yes, full packing', desc: 'We pack your entire home with boxes and supplies included.' },
-                            { value: 'partial', title: 'Yes, fragile / partial packing', desc: 'We pack TVs, mirrors, artwork, and breakables only.' },
-                            { value: 'none', title: 'No, I will pack myself', desc: 'Everything will be boxed and sealed before moving day.' },
-                          ].map(opt => (
-                            <button
-                              key={opt.value}
-                              type="button"
-                              className={`cm-option-card ${answers.packingNeeded === opt.value ? 'selected' : ''}`}
-                              onClick={() => setAnswers(prev => ({ ...prev, packingNeeded: opt.value }))}
-                            >
-                              <strong>{opt.title}</strong>
-                              <small>{opt.desc}</small>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {currentStep === 1 && (
-                      <div className="cm-step-content">
-                        <h4>Any special conditions or requirements?</h4>
-                        <p className="cm-step-sub">Select all that apply at either your pickup or delivery location.</p>
-                        <div className="cm-checklist">
-                          {[
-                            { id: 'stairs', label: 'Flights of stairs (no elevator)' },
-                            { id: 'elevator', label: 'Reserved freight / service elevator' },
-                            { id: 'long_carry', label: 'Long carry (truck cannot park close)' },
-                            { id: 'storage', label: 'Storage needed before move-in' },
-                            { id: 'heavy_items', label: 'Extra heavy or bulky items (safe, piano, gym)' },
-                          ].map(item => (
-                            <label key={item.id} className="cm-check-item">
-                              <input
-                                type="checkbox"
-                                checked={answers.specialRequirements.includes(item.id)}
-                                onChange={e => {
-                                  const checked = e.target.checked;
-                                  setAnswers(prev => ({
-                                    ...prev,
-                                    specialRequirements: checked
-                                      ? [...prev.specialRequirements, item.id]
-                                      : prev.specialRequirements.filter(id => id !== item.id),
-                                  }));
-                                }}
-                              />
-                              <span>{item.label}</span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {currentStep === 2 && (
-                      <div className="cm-step-content">
-                        <h4>Any additional notes or fragile items?</h4>
-                        <p className="cm-step-sub">Tell our dispatch team anything specific about access, timing, or special care items.</p>
-                        <textarea
-                          className="cm-step-textarea"
-                          rows={4}
-                          placeholder="e.g. Please bring extra mattress bags, narrow hallway at entrance..."
-                          value={answers.additionalNotes || ''}
-                          onChange={e => setAnswers(prev => ({ ...prev, additionalNotes: e.target.value }))}
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="cm-modal-footer">
-                    {currentStep > 0 ? (
-                      <button
-                        type="button"
-                        className="cm-secondary-btn"
-                        onClick={() => setCurrentStep(prev => prev - 1)}
-                      >
-                        ← Back
-                      </button>
-                    ) : <span />}
-
-                    {currentStep < 2 ? (
-                      <button
-                        type="button"
-                        className="slds-button cm-primary"
-                        onClick={() => setCurrentStep(prev => prev + 1)}
-                      >
-                        Next →
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="slds-button cm-primary"
-                        onClick={() => {
-                          setShowQuestions(false);
-                        }}
-                      >
-                        Submit details
-                      </button>
-                    )}
-                  </div>
+                  {currentStep < 2 ? (
+                    <button
+                      type="button"
+                      className="slds-button cm-primary"
+                      onClick={() => setCurrentStep(prev => prev + 1)}
+                    >
+                      Next question →
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="slds-button cm-primary"
+                      onClick={() => {
+                        setSubmittedQuestions(true);
+                      }}
+                    >
+                      {submittedQuestions ? '✓ Update details' : 'Save & update price'}
+                    </button>
+                  )}
                 </div>
-              </div>
+              </section>
             )}
             <footer className="cm-footer">Your move. Your pace. We're here to help.</footer>
           </>
