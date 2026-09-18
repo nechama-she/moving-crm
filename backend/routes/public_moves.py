@@ -321,16 +321,37 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
 
     # Resolve estimate: use published estimate if present, otherwise check lead/job price
     estimate = None
+    charges_list = [
+        {
+            'name': c.name,
+            'description': c.description or '',
+            'total': float(c.total_cost or 0),
+        }
+        for c in (job.charges or [])
+        if c.total_cost and float(c.total_cost) > 0
+    ]
     if access.published_at and access.published_price is not None:
-        estimate = {'price': str(access.published_price), 'cuft': str(access.published_cuft or lead.volume or 0)}
+        estimate = {
+            'price': str(access.published_price),
+            'cuft': str(access.published_cuft or lead.volume or 0),
+            'charges': charges_list,
+        }
     elif job.price is not None and float(job.price) > 0:
-        estimate = {'price': str(job.price), 'cuft': str(lead.volume or 0)}
+        estimate = {
+            'price': str(job.price),
+            'cuft': str(lead.volume or 0),
+            'charges': charges_list,
+        }
     elif lead.estimated_total:
         try:
             parsed_total = json.loads(lead.estimated_total)
             final_total = float(parsed_total.get('finalTotal') or 0)
             if final_total > 0:
-                estimate = {'price': str(final_total), 'cuft': str(lead.volume or 0)}
+                estimate = {
+                    'price': str(final_total),
+                    'cuft': str(lead.volume or 0),
+                    'charges': charges_list,
+                }
         except Exception:
             pass
 

@@ -13,7 +13,11 @@ type Details = {
   delivery: string;
   company: string;
   stops: { address: string; type: string | null }[];
-  estimate: { price: string; cuft: string } | null;
+  estimate: {
+    price: string;
+    cuft: string;
+    charges?: { name: string; description: string; total: number }[];
+  } | null;
   spark?: { id: string; status: string; shareUrl?: string; cuft?: number } | null;
   walkthrough: { status: string; availability: string; scheduled_at: string | null; timezone: string } | null;
   participant_url: string;
@@ -337,6 +341,22 @@ export default function CustomerMovePage() {
                         <strong>{Number(data.estimate.cuft).toLocaleString()} cu ft</strong>
                       </div>
                     )}
+                  </div>
+                )}
+                {data.estimate?.charges && data.estimate.charges.length > 0 && (
+                  <div className="cm-estimate-breakdown">
+                    <div className="cm-estimate-breakdown-title">Price Breakdown</div>
+                    {data.estimate.charges.map((charge, idx) => (
+                      <div key={idx} className="cm-estimate-charge-row">
+                        <div>
+                          <strong>{charge.name}</strong>
+                          {charge.description && <small>{charge.description}</small>}
+                        </div>
+                        <span>
+                          {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charge.total)}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
