@@ -16,6 +16,15 @@ type Rate = {
   cubic_feet_min: number | null; cubic_feet_max: number | null;
   rate: number | null; rate_text: string;
 };
+type RateGroup = {
+  key: string;
+  rowIds: string[];
+  destination: string;
+  destinationGroup: string;
+  minimumPrice: number | null;
+  minimumText: string;
+  rates: Rate[];
+};
 type Service = { id?: string; name: string; rate_text: string; comments: string };
 type Plan = PlanSummary & {
   active: boolean; source_file: string; source_sheet: string;
@@ -141,8 +150,7 @@ export default function PricingPage() {
   const [customCharges, setCustomCharges] = useState<CustomCharge[]>([]);
   const [customDiscounts, setCustomDiscounts] = useState<CustomDiscount[]>([]);
   const [openSections, setOpenSections] = useState({ rates: true, bulkyItems: true, services: true });
-  const rateTableWrapRef = useRef<HTMLDivElement | null>(null);
-  const [pendingDestinationIds, setPendingDestinationIds] = useState<string[]>([]);
+  const [pendingRateGroups, setPendingRateGroups] = useState<string[][]>([]);
 
   useEffect(() => {
     void fetch(`${API_BASE}/api/pricing`, { headers: authHeaders(token) })
@@ -208,7 +216,7 @@ export default function PricingPage() {
       .then((row: Plan) => {
         setPlan(row);
         setDraft(structuredClone(row));
-        setPendingDestinationIds([]);
+        setPendingRateGroups([]);
         const options = Array.from(new Set((row.rates || []).map((rate) => rate.destination).filter(Boolean)));
         const inferredDestination = destinationFromAddress(
           jobContext?.job?.delivery_zip || "",
@@ -226,13 +234,9 @@ export default function PricingPage() {
   }, [selectedId, token]);
 
   const active = editing ? draft : plan;
-  const pendingDestinationNames = useMemo(
-    () => new Set(pendingDestinationIds.map((id) => active?.rates.find((row) => row.id === id)?.destination).filter(Boolean)),
-    [active, pendingDestinationIds],
-  );
   const destinations = useMemo(
-    () => Array.from(new Set((active?.rates || []).map((row) => row.destination).filter((name) => name && !pendingDestinationNames.has(name)))),
-    [active, pendingDestinationNames],
+    () => Array.from(new Set((active?.rates || []).map((row) => row.destination).filter(Boolean))),
+    [active],
   );
   const bands = useMemo(
     () => Array.from(new Set((active?.rates || []).map((row) => row.band_label).filter(Boolean))),
@@ -251,10 +255,54 @@ export default function PricingPage() {
   }, [jobContext, plan]);
   const rateRows = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return destinations
-      .filter((name) => name && (!query || name.toLowerCase().includes(query)))
-      .map((name) => ({ name, rates: (active?.rates || []).filter((row) => row.destination === name) }));
-  }, [active, destinations, search]);
+    const rows = active?.rates || [];
+    const pendingIdSets = pendingRateGroups.map((ids) => new Set(ids));
+    const usedIds = new Set<string>();
+    const groups: RateGroup[] = [];
+
+    pendingIdSets.forEach((idSet) => {
+      const groupRates = rows.filter((row) => row.id && idSet.has(row.id));
+      if (!groupRates.length) return;
+      groupRates.forEach((row) => { if (row.id) usedIds.add(row.id); });
+      const seed = groupRates[0];
+      groups.push({
+        key: seed.id || groupRates.map((row) => row.band_label).join("|"),
+        rowIds: groupRates.map((row) => row.id).filter((id): id is string => Boolean(id)),
+        destination: seed.destination || "",
+        destinationGroup: seed.destination_group || "",
+        minimumPrice: seed.minimum_price ?? null,
+        minimumText: seed.minimum_text || "",
+        rates: groupRates,
+      });
+    });
+
+    const grouped = new Map<string, Rate[]>();
+    rows.forEach((row) => {
+      if (row.id && usedIds.has(row.id)) return;
+      const key = row.destination.trim() || `blank:${row.id || row.band_label}`;
+      const existing = grouped.get(key);
+      if (existing) existing.push(row);
+      else grouped.set(key, [row]);
+    });
+
+    grouped.forEach((groupRates, key) => {
+      const seed = groupRates[0];
+      groups.push({
+        key,
+        rowIds: groupRates.map((row) => row.id).filter((id): id is string => Boolean(id)),
+        destination: seed.destination || "",
+        destinationGroup: seed.destination_group || "",
+        minimumPrice: seed.minimum_price ?? null,
+        minimumText: seed.minimum_text || "",
+        rates: groupRates,
+      });
+    });
+
+    return groups.filter((group) => {
+      if (!query) return true;
+      return group.destination.toLowerCase().includes(query) || group.destinationGroup.toLowerCase().includes(query);
+    });
+  }, [active, pendingRateGroups, search]);
   const catalogRules = useMemo(() => {
     if (!active || !active.rules) return [];
     const serviceNames = (active.services || []).map((service) => (service.name || "").toLowerCase());
@@ -330,10 +378,11 @@ export default function PricingPage() {
     if (!draft) return;
     patchDraft({ rates: draft.rates.map((row) => row.id === id ? { ...row, ...patch } : row) });
   }
-  function patchDestinationRates(name: string, patch: Partial<Rate>) {
+  function patchRateGroup(rowIds: string[], patch: Partial<Rate>) {
+    if (!rowIds.length) return;
     setDraft((current) => current ? {
       ...current,
-      rates: (current.rates || []).map((row) => row.destination === name ? { ...row, ...patch } : row),
+      rates: (current.rates || []).map((row) => row.id && rowIds.includes(row.id) ? { ...row, ...patch } : row),
     } : current);
   }
   function addDestination() {
@@ -342,7 +391,7 @@ export default function PricingPage() {
       : [undefined];
     const rows = templates.map((template, index) => ({
       id: crypto.randomUUID(),
-      destination: "New destination",
+      destination: "",
       destination_group: "",
       minimum_price: null,
       minimum_text: "",
@@ -353,11 +402,13 @@ export default function PricingPage() {
       rate_text: "",
     }));
     setDraft((current) => current ? { ...current, rates: [...(current.rates || []), ...rows] } : current);
-    setPendingDestinationIds((ids) => [...ids, rows[0].id]);
+    setPendingRateGroups((groups) => [...groups, rows.map((row) => row.id)]);
   }
-  function removeDestination(name: string) {
-    setDraft((current) => current ? { ...current, rates: (current.rates || []).filter((row) => row.destination !== name) } : current);
-    setPendingDestinationIds((ids) => ids.filter((id) => draft?.rates.find((row) => row.id === id)?.destination !== name));
+  function removeRateGroup(rowIds: string[]) {
+    if (!rowIds.length) return;
+    const rowIdSet = new Set(rowIds);
+    setDraft((current) => current ? { ...current, rates: (current.rates || []).filter((row) => !row.id || !rowIdSet.has(row.id)) } : current);
+    setPendingRateGroups((groups) => groups.filter((ids) => ids.some((id) => !rowIdSet.has(id))));
   }
 
   async function savePrice() {
@@ -414,7 +465,7 @@ export default function PricingPage() {
       const saved: Plan = await response.json();
       setPlan(saved);
       setDraft(structuredClone(saved));
-      setPendingDestinationIds([]);
+      setPendingRateGroups([]);
       setEditing(false);
       setNotice("Pricing changes saved.");
     } catch (reason) {
@@ -477,7 +528,7 @@ export default function PricingPage() {
           <div className="pricing-actions">
             {editing ? (
               <>
-                <button className="slds-button secondary" onClick={() => { setDraft(plan ? structuredClone(plan) : null); setEditing(false); }}>Cancel</button>
+                <button className="slds-button secondary" onClick={() => { setDraft(plan ? structuredClone(plan) : null); setPendingRateGroups([]); setEditing(false); }}>Cancel</button>
                 <button className="slds-button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save changes"}</button>
               </>
             ) : <button className="slds-button primary" onClick={() => setEditing(true)}>Edit pricing</button>}
@@ -705,42 +756,25 @@ export default function PricingPage() {
                 ) : null}
               </section>
 
-              <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))} onDoubleClick={() => setEditing(true)} actions={editing ? <><button type="button" className="slds-button pricing-section-action" title="Add destination" aria-label="Add destination" onClick={addDestination}><svg className="pricing-add-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 8v8M8 12h8" /></svg></button><button type="button" className="slds-button lead-job-save-button" title={saving ? "Saving rates" : "Save rates"} aria-label={saving ? "Saving rates" : "Save rates"} disabled={saving} onClick={() => void save()}><svg className="lead-job-save-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z" /><path d="M8 4v6h8V4M8 20v-6h8v6" /></svg></button></> : null}>
+              <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))} onDoubleClick={() => setEditing(true)} actions={editing ? <><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={addDestination}>+ Add destination</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? "Saving rates" : "Save rates"}</button></> : user?.role === "admin" && pricingMode === "long-distance" ? <button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => setEditing(true)}>Edit rates</button> : null}>
                 <div className="pricing-table-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search destination or ZIP area" /><span>{bands.length} cubic-foot bands</span></div>
-                {editing && pendingDestinationIds.length ? <div className="pricing-pending-destinations">
-                  {pendingDestinationIds.map((id) => {
-                    const seed = active?.rates.find((row) => row.id === id);
-                    if (!seed) return null;
-                    const pendingRates = (active?.rates || []).filter((row) => row.destination === seed.destination);
-                    return <article key={id} className="pricing-pending-destination">
-                      <div className="pricing-pending-fields">
-                        <label>Destination<input value={seed.destination} onChange={(e) => patchDestinationRates(seed.destination, { destination: e.target.value })} /></label>
-                        <label>Area<input value={seed.destination_group} placeholder="East Coast" onChange={(e) => patchDestinationRates(seed.destination, { destination_group: e.target.value })} /></label>
-                        <button type="button" className="slds-button text-danger" onClick={() => removeDestination(seed.destination)}>Remove</button>
-                      </div>
-                      <div className="pricing-pending-rates">
-                        {bands.map((band) => {
-                          const rate = pendingRates.find((row) => row.band_label === band);
-                          return rate ? <label key={band}>{band}<input value={rate.rate_text || (rate.rate ?? "")} onChange={(e) => patchRate(rate.id, { rate: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), rate_text: e.target.value })} /></label> : null;
-                        })}
-                      </div>
-                    </article>;
-                  })}
-                </div> : null}
-                <div className="pricing-rate-table-wrap" ref={rateTableWrapRef}>
+                <div className="pricing-rate-table-wrap">
                   <table className="pricing-rate-table">
-                    <thead><tr><th>Destination</th><th>Minimum</th>{bands.map((band) => <th key={band}>{band}</th>)}</tr></thead>
+                    <thead><tr><th>Destination</th><th>Area</th><th>Minimum</th>{bands.map((band) => <th key={band}>{band}</th>)}{editing ? <th>Actions</th> : null}</tr></thead>
                     <tbody>
                       {rateRows.map((group) => (
-                        <tr key={group.name}>
-                          <th>{editing ? <><input value={group.name} placeholder="Destination or ZIP prefix" onChange={(e) => group.rates.forEach((rate) => patchRate(rate.id, { destination: e.target.value }))} /><input className="destination-group-input" value={group.rates[0]?.destination_group || ""} placeholder="Area, e.g. East Coast" onChange={(e) => patchDestinationRates(group.name, { destination_group: e.target.value })} /><button type="button" className="slds-button text-danger" onClick={() => removeDestination(group.name)}>Remove</button></> : <>{group.name}<small>{group.rates[0]?.destination_group}</small></>}</th>
-                          <td>{editing ? <input type="text" inputMode="decimal" value={group.rates[0]?.minimum_text || (group.rates[0]?.minimum_price ?? "")} onChange={(e) => patchDestinationRates(group.name, { minimum_price: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), minimum_text: e.target.value })} /> : money(group.rates[0]?.minimum_price)}</td>
+                        <tr key={group.key}>
+                          <th>{editing ? <input value={group.destination} placeholder="Destination or ZIP prefix" onChange={(e) => patchRateGroup(group.rowIds, { destination: e.target.value })} /> : <>{group.destination || "—"}</>}</th>
+                          <td>{editing ? <input className="destination-group-input" value={group.destinationGroup} placeholder="Area, e.g. East Coast" onChange={(e) => patchRateGroup(group.rowIds, { destination_group: e.target.value })} /> : group.destinationGroup || "—"}</td>
+                          <td>{editing ? <input type="text" inputMode="decimal" value={group.minimumText || (group.minimumPrice ?? "")} onChange={(e) => patchRateGroup(group.rowIds, { minimum_price: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), minimum_text: e.target.value })} /> : money(group.minimumPrice)}</td>
                           {bands.map((band) => {
                             const rate = group.rates.find((row) => row.band_label === band);
                             return <td key={band}>{!rate ? "—" : editing ? <input type="text" inputMode="decimal" value={rate.rate_text || (rate.rate ?? "")} onChange={(e) => patchRate(rate.id, { rate: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), rate_text: e.target.value })} /> : rate.rate == null ? rate.rate_text : money(rate.rate)}</td>;
                           })}
+                          {editing ? <td className="pricing-rate-actions"><button type="button" className="slds-button text-danger" onClick={() => removeRateGroup(group.rowIds)}>Remove</button></td> : null}
                         </tr>
                       ))}
+                      {!rateRows.length ? <tr><td colSpan={bands.length + (editing ? 4 : 3)} className="pricing-rate-empty">No destinations match this search.</td></tr> : null}
                     </tbody>
                   </table>
                 </div>
