@@ -2742,7 +2742,9 @@ def update_lead_job(
 
     row.pickup_zip = next_pickup
     row.delivery_zip = next_delivery
-    derived_move_type = _route_move_type(next_pickup, next_delivery)
+    from routes.pricing import infer_job_move_type
+
+    derived_move_type, _ = infer_job_move_type(lead, row, db)
     if derived_move_type:
         lead.move_type = derived_move_type
     if "move_date" in payload:

@@ -39,6 +39,72 @@ def _route_move_type(pickup_address: str | None, delivery_address: str | None) -
     return "Local" if pickup_state == delivery_state else "Long Distance"
 
 
+def _plan_matches_pickup(plan: PricingPlan, pickup_state: str) -> bool:
+    if not pickup_state:
+        return False
+    coverage = f"{plan.pickup_regions} {plan.name}".upper()
+    return re.search(rf"\b{re.escape(pickup_state)}\b", coverage) is not None
+
+
+def _plan_destination_for_delivery(
+    plan: PricingPlan,
+    delivery_address: str,
+    delivery_state: str,
+    delivery_zip: str,
+) -> str:
+    options = list({row.destination for row in plan.rates if row.destination})
+    if not options:
+        return ""
+    destination = destination_from_address(delivery_address, options, delivery_state or "", delivery_zip or "")
+    if not destination and delivery_state:
+        destination = next((option for option in options if delivery_state.lower() in option.lower()), "")
+    if not destination and options:
+        destination = options[0]
+    return destination
+
+
+def _destination_uses_local_rate(
+    plan: PricingPlan,
+    delivery_address: str,
+    delivery_state: str,
+    delivery_zip: str,
+) -> bool:
+    destination = _plan_destination_for_delivery(plan, delivery_address, delivery_state, delivery_zip)
+    if not destination:
+        return False
+    normalized = destination.strip().lower()
+    rows = [row for row in plan.rates if row.destination.strip().lower() == normalized]
+    return any(row.rate is None and re.search(r"\blocal\b", (row.rate_text or "").strip(), re.IGNORECASE) for row in rows)
+
+
+def infer_job_move_type(
+    lead: Lead,
+    job: LeadJob,
+    db: Session,
+    plans: list[PricingPlan] | None = None,
+) -> tuple[str | None, PricingPlan | None]:
+    pickup_address = (job.pickup_zip or "").strip()
+    delivery_address = (job.delivery_zip or "").strip()
+    pickup_state, _ = delivery_location(pickup_address)
+    delivery_state, delivery_zip = delivery_location(delivery_address)
+    company_id = job.company_id or lead.company_id
+
+    if plans is None and company_id:
+        plans = (
+            db.query(PricingPlan)
+            .filter(PricingPlan.company_id == company_id, PricingPlan.active.is_(True))
+            .order_by(PricingPlan.sort_order, PricingPlan.name)
+            .all()
+        )
+    plans = plans or []
+    matched_plan = next((plan for plan in plans if _plan_matches_pickup(plan, pickup_state or "")), None) or (plans[0] if plans else None)
+
+    if matched_plan and _destination_uses_local_rate(matched_plan, delivery_address, delivery_state or "", delivery_zip or ""):
+        return "Local", matched_plan
+
+    return _route_move_type(pickup_address, delivery_address) or (getattr(lead, "move_type", None) or "").strip() or None, matched_plan
+
+
 def _accessible_query(db: Session, user: User):
     query = db.query(PricingPlan)
     if user.role == "admin":
@@ -498,21 +564,13 @@ def get_job_pricing_context(
     pickup_state, pickup_zip_code = delivery_location(job.pickup_zip)
     delivery_state, delivery_zip_code = delivery_location(job.delivery_zip)
 
-    def plan_matches_pickup(plan: PricingPlan) -> bool:
-        if not pickup_state:
-            return False
-        coverage = f"{plan.pickup_regions} {plan.name}".upper()
-        return re.search(rf"\b{re.escape(pickup_state)}\b", coverage) is not None
-
-    recommended = next((plan for plan in plans if plan_matches_pickup(plan)), None)
+    inferred_move_type, recommended = infer_job_move_type(lead, job, db, plans)
     if not pickup_state:
         serviceability = "unknown_pickup"
     elif recommended is None:
         serviceability = "unsupported_pickup"
     else:
         serviceability = "supported"
-
-    inferred_move_type = _route_move_type(job.pickup_zip, job.delivery_zip) or (getattr(lead, "move_type", None) or "").strip()
 
     return {
         "lead": {
@@ -706,8 +764,6 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
 
     pickup_state, pickup_zip = delivery_location(pickup_addr)
     delivery_state, delivery_zip = delivery_location(delivery_addr)
-
-    move_type = _route_move_type(pickup_addr, delivery_addr) or (getattr(lead, "move_type", None) or "").strip()
     if move_type:
         lead.move_type = move_type
     if not move_type:
@@ -722,13 +778,11 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
     if not plans:
         return None
 
-    def plan_matches_pickup(p: PricingPlan) -> bool:
-        if not pickup_state:
-            return False
-        cov = f"{p.pickup_regions} {p.name}".upper()
-        return re.search(rf"\b{re.escape(pickup_state)}\b", cov) is not None
-
-    matched_plan = next((p for p in plans if plan_matches_pickup(p)), None) or plans[0]
+    move_type, matched_plan = infer_job_move_type(lead, job, db, plans)
+    if move_type:
+        lead.move_type = move_type
+    if not move_type or not matched_plan:
+        return None
 
     if move_type.lower() == "local":
         from routes.local_pricing import calculate_book_price
@@ -758,14 +812,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         return float(total)
 
     else:
-        options = list(set(r.destination for r in matched_plan.rates))
-        if not options:
-            return None
-        destination = destination_from_address(delivery_addr, options, delivery_state or "", delivery_zip or "")
-        if not destination and delivery_state:
-            destination = next((opt for opt in options if delivery_state.lower() in opt.lower()), None)
-        if not destination and options:
-            destination = options[0]
+        destination = _plan_destination_for_delivery(matched_plan, delivery_addr, delivery_state or "", delivery_zip or "")
         if not destination:
             return None
 
