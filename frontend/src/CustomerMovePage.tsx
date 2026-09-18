@@ -50,7 +50,7 @@ export default function CustomerMovePage() {
   const headers={'x-public-link':key,'x-public-session':session};
 
   async function call(path:string, body?:unknown, method?:string) {
-    const httpMethod = method || (body===undefined ? 'GET' : 'POST');
+    const httpMethod = method || (body!==undefined ? 'POST' : 'POST');
     const response=await fetch(base+path,{method:httpMethod,headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
     const result=await response.json();
     if(!response.ok){
@@ -171,7 +171,7 @@ export default function CustomerMovePage() {
     setBusy(true);
     setError('');
     try{
-      const next=await call('/details');
+      const next=await call('/details', undefined, 'GET');
       setData(next);
     }catch(err){
       setError((err as Error).message);
