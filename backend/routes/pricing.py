@@ -68,8 +68,6 @@ def _plan_counts_by_id(db: Session, plan_ids: list[str]) -> tuple[dict[str, int]
 
 
 def _plan_summary_rows(plans: list[PricingPlan], db: Session) -> list[dict]:
-    plan_ids = [row.id for row in plans if row.id]
-    rate_counts, rule_counts, service_counts = _plan_counts_by_id(db, plan_ids)
     rows: list[dict] = []
     for plan in plans:
         rows.append({
@@ -82,9 +80,9 @@ def _plan_summary_rows(plans: list[PricingPlan], db: Session) -> list[dict]:
             "pickup_regions": plan.pickup_regions,
             "fuel_percent": float(plan.fuel_percent) if plan.fuel_percent is not None else None,
             "active": bool(plan.active),
-            "rate_count": rate_counts.get(plan.id, 0),
-            "rule_count": rule_counts.get(plan.id, 0),
-            "service_count": service_counts.get(plan.id, 0),
+            "rate_count": 0,
+            "rule_count": 0,
+            "service_count": 0,
             "updated_at": plan.updated_at.isoformat() if plan.updated_at else "",
         })
     return rows
@@ -607,17 +605,18 @@ def get_job_pricing_context(
     from routes.leads import _get_job_or_404
     job = _get_job_or_404(lead_id, job_id, user, db)
     lead = db.get(Lead, job.lead_id)
-    plans = (
+    all_plans = (
         _accessible_query(db, user)
-        .filter(PricingPlan.company_id == job.company_id, PricingPlan.active.is_(True))
-        .order_by(PricingPlan.sort_order, PricingPlan.name)
+        .filter(PricingPlan.active.is_(True))
+        .order_by(PricingPlan.company_name, PricingPlan.sort_order, PricingPlan.name)
         .all()
     )
+    company_plans = [plan for plan in all_plans if plan.company_id == job.company_id]
     pickup_state, pickup_zip_code = delivery_location(job.pickup_zip)
     delivery_state, delivery_zip_code = delivery_location(job.delivery_zip)
 
-    inferred_move_type, recommended = infer_job_move_type(lead, job, db, plans)
-    selected_plan = recommended or (plans[0] if plans else None)
+    inferred_move_type, recommended = infer_job_move_type(lead, job, db, company_plans)
+    selected_plan = recommended or (company_plans[0] if company_plans else (all_plans[0] if all_plans else None))
     if not pickup_state:
         serviceability = "unknown_pickup"
     elif recommended is None:
@@ -639,7 +638,7 @@ def get_job_pricing_context(
             "delivery_state": delivery_state,
             "delivery_zip_code": delivery_zip_code,
         },
-        "plans": _plan_summary_rows([selected_plan], db) if selected_plan else [],
+        "plans": _plan_summary_rows(all_plans, db),
         "recommended_plan_id": selected_plan.id if selected_plan else "",
         "serviceability": serviceability,
         "move_type": inferred_move_type,

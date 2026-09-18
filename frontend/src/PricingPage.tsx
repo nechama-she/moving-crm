@@ -9,7 +9,6 @@ type PlanSummary = {
   fuel_percent: number | null; rate_count: number; rule_count: number;
   service_count: number; updated_at: string;
 };
-type CompanySummary = { id: string; name: string };
 type Rule = { id?: string; category: string; title: string; description: string };
 type Rate = {
   id?: string; destination: string; destination_group: string;
@@ -140,8 +139,6 @@ export default function PricingPage() {
   const leadId = searchParams.get("lead_id") || "";
   const jobId = searchParams.get("job_id") || "";
   const [pricingMode, setPricingMode] = useState<"local" | "long-distance">("local");
-  const [companies, setCompanies] = useState<CompanySummary[]>([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [plans, setPlans] = useState<PlanSummary[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -174,41 +171,9 @@ export default function PricingPage() {
       return;
     }
     const controller = new AbortController();
-    void fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token), signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
-          throw new Error(formatApiError(body, "Failed to load companies"));
-        }
-        return response.json();
-      })
-      .then((rows: CompanySummary[]) => {
-        if (controller.signal.aborted) return;
-        const next = Array.isArray(rows) ? rows : [];
-        setCompanies(next);
-      })
-      .catch((reason) => {
-        if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Failed to load companies");
-      });
-    return () => controller.abort();
-  }, [token, leadId, jobId]);
-
-  useEffect(() => {
-    if (leadId && jobId) {
-      setLoading(false);
-      return;
-    }
-    if (!selectedCompanyId) {
-      setPlans([]);
-      setSelectedId("");
-      setPlan(null);
-      setDraft(null);
-      setLoading(false);
-      return;
-    }
-    const controller = new AbortController();
     setLoading(true);
-    void fetch(`${API_BASE}/api/pricing?company_id=${encodeURIComponent(selectedCompanyId)}`, { headers: authHeaders(token), signal: controller.signal })
+    setError("");
+    void fetch(`${API_BASE}/api/pricing`, { headers: authHeaders(token), signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
@@ -219,7 +184,11 @@ export default function PricingPage() {
       .then((rows: PlanSummary[]) => {
         if (controller.signal.aborted) return;
         setPlans(rows);
-        setSelectedId((current) => rows.some((row) => row.id === current) ? current : "");
+        setSelectedId((current) => rows.some((row) => row.id === current) ? current : (rows[0]?.id || ""));
+        if (!rows.length) {
+          setPlan(null);
+          setDraft(null);
+        }
       })
       .catch((reason) => {
         if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Failed to load pricing");
@@ -228,7 +197,7 @@ export default function PricingPage() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [token, leadId, jobId, selectedCompanyId]);
+  }, [token, leadId, jobId]);
 
   useEffect(() => {
     if (!leadId || !jobId) return;
@@ -627,32 +596,15 @@ export default function PricingPage() {
       </div>
       <div className="pricing-layout">
         <aside className="pricing-book-list">
-          {!jobContext ? (
-            <>
-              <label>Company</label>
-              <select
-                value={selectedCompanyId}
-                onChange={(event) => {
-                  setSelectedCompanyId(event.target.value);
-                  setSelectedId("");
-                  setPlan(null);
-                  setDraft(null);
-                }}
-              >
-                <option value="">Select a company</option>
-                {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
-              </select>
-            </>
-          ) : null}
           <label>Pricing book</label>
           <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
+            <option value="">Select a pricing book</option>
             {plans.map((row) => <option key={row.id} value={row.id}>{row.company_name} — {row.name}</option>)}
           </select>
           <div className="pricing-books-desktop">
             {plans.map((row) => (
               <button key={row.id} className={["slds-button", row.id === selectedId ? "active" : ""].filter(Boolean).join(" ")} onClick={() => setSelectedId(row.id)}>
                 <strong>{row.company_name}</strong><span>{row.name}</span>
-                <small>{row.rate_count} rates · {row.rule_count} rules</small>
               </button>
             ))}
           </div>
