@@ -45,7 +45,7 @@ from libs.smartmoving.client import (
     finish_request_capture,
     update_opportunity_salesperson,
 )
-from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation
+from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation, PublicMoveAccess
 from realtime import publish_realtime_event
 from referral_assignment_rules import configured_rep_ids_for_referral
 from routes.templates import get_company_template, render_template
@@ -2644,6 +2644,13 @@ def save_lead_job_price(
     _replace_job_charges(row, charges, db)
     row.price = body.price
     _refresh_lead_estimated_total(lead_id, db)
+    lead_obj = db.get(Lead, lead_id)
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
+    if access:
+        access.published_price = row.price
+        if lead_obj and lead_obj.volume:
+            access.published_cuft = lead_obj.volume
+        access.published_at = datetime.utcnow()
     db.commit()
     db.refresh(row)
     return _serialize_job_with_addresses(row, db)

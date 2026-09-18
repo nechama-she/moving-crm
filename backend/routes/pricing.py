@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 import json
 import math
@@ -25,6 +25,7 @@ from models import (
     LeadJob,
     LeadJobCharge,
     LeadSparkInventoryItem,
+    PublicMoveAccess,
     User,
     UserCompany,
 )
@@ -864,6 +865,11 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         job.price = sum((l["totalCost"] for l in all_lines if l.get("totalCost", 0) > 0), Decimal(0))
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
+        access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
+        if access:
+            access.published_price = job.price
+            access.published_cuft = lead.volume
+            access.published_at = datetime.utcnow()
         return float(job.price)
 
     else:
@@ -923,6 +929,11 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         job.price = sum(l["total_cost"] for l in lines)
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
+        access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
+        if access:
+            access.published_price = job.price
+            access.published_cuft = lead.volume
+            access.published_at = datetime.utcnow()
         return float(job.price)
 
 
