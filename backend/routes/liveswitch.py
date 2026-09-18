@@ -349,7 +349,15 @@ def run_spark_on_conversation(
 
 
 def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = None):
-    saved = db.get(LeadLiveSwitch, lead_id)
+    saved = db.get(LeadLiveSwitch, lead_id) if db is not None else None
+    if not saved and db is not None:
+        lead = db.get(Lead, lead_id)
+        if lead:
+            try:
+                ensure_lead_conversation(lead, db)
+                saved = db.get(LeadLiveSwitch, lead_id)
+            except Exception:
+                pass
     if not saved:
         raise HTTPException(409, "Start the LiveSwitch conversation first")
     details = json.loads(saved.details)
@@ -604,12 +612,7 @@ def get_lead_spark_status(
     }
 
 
-@router.post("/leads/{lead_id}/conversation")
-def ensure_conversation(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    _ensure_not_dispatch_write(user)
-    lead = _get_visible_lead_or_404(lead_id, user, db)
-    # Lock the parent row so simultaneous opens cannot create duplicate conversations.
-    db.query(Lead).filter(Lead.id == lead.id).with_for_update().one()
+def ensure_lead_conversation(lead: Lead, db: Session) -> dict:
     saved = db.get(LeadLiveSwitch, lead.id)
     if saved:
         return json.loads(saved.details)
@@ -644,9 +647,19 @@ def ensure_conversation(lead_id: str, user: User = Depends(get_current_user), db
         raise HTTPException(502, "LiveSwitch did not return a conversation ID")
     details = {key: result.get(key, "") for key in ("id", "hostJoinUrl", "participantJoinUrl", "conversationUrl", "embeddedConversationUrl")}
     details["name"] = conversation_name
-    db.add(LeadLiveSwitch(lead_id=lead.id, details=json.dumps(details)))
+    saved = LeadLiveSwitch(lead_id=lead.id, details=json.dumps(details))
+    db.add(saved)
     db.commit()
     return details
+
+
+@router.post("/leads/{lead_id}/conversation")
+def ensure_conversation(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    # Lock the parent row so simultaneous opens cannot create duplicate conversations.
+    db.query(Lead).filter(Lead.id == lead.id).with_for_update().one()
+    return ensure_lead_conversation(lead, db)
 
 
 @router.post("/leads/{lead_id}/participant-sms")

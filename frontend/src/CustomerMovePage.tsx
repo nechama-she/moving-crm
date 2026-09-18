@@ -27,7 +27,15 @@ type Pending = {id:string;file:File;status:string;progress:number;preview?:strin
 export default function CustomerMovePage() {
   const {accessId}=useParams();
   const sessionKey = `cm_session_${accessId}`;
-  const [key]=useState(()=>new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
+  const linkKeyStorage = `cm_key_${accessId}`;
+  const [key]=useState(()=>{
+    const fromHash = new URLSearchParams(window.location.hash.slice(1)).get('key');
+    if (fromHash) {
+      sessionStorage.setItem(linkKeyStorage, fromHash);
+      return fromHash;
+    }
+    return sessionStorage.getItem(linkKeyStorage) || '';
+  });
   const [session,setSession]=useState(()=>sessionStorage.getItem(sessionKey)||'');
   const [options,setOptions]=useState<{channel:string;destination:string}[]>([]),[channel,setChannel]=useState('');
   const [code,setCode]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -55,7 +63,7 @@ export default function CustomerMovePage() {
     const response=await fetch(base+path,{method:httpMethod,headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
     const result=await response.json();
     if(!response.ok){
-      if((response.status===401||response.status===404)){
+      if(response.status===401){
         sessionStorage.removeItem(sessionKey);
         setSession('');
         setData(undefined);
