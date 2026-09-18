@@ -1,6 +1,53 @@
 """Local hourly pricing transcribed from the supplied rate and capacity tables."""
 from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
+import re
 from pydantic import BaseModel, Field, field_validator, model_validator
+from zip_state import STATE_CODES, delivery_location
+
+
+def parse_local_route_region(value: str) -> tuple[str, str | None, str | None]:
+    token = re.sub(r"\s+", "", (value or "").upper()).replace("\u2013", "-").replace("\u2014", "-").replace("TO", "-")
+    match = re.fullmatch(r"([A-Z]{2})(?:\((\d{1,5}X{0,4})(?:-(\d{1,5}X{0,4}))?\))?", token)
+    if not match or match[1] not in STATE_CODES:
+        raise ValueError("Use MD or VA(233XX-24XXX)")
+    start_token = match[2]
+    end_token = match[3] or start_token
+    if start_token is None:
+        return match[1], None, None
+    if len(start_token) > 5 or len(end_token) > 5:
+        raise ValueError("ZIP pattern cannot exceed five digits")
+    start_zip = start_token.replace("X", "0").ljust(5, "0")
+    end_zip = end_token.replace("X", "9").ljust(5, "9")
+    if start_zip > end_zip:
+        raise ValueError("ZIP range must be ascending")
+    return match[1], start_zip, end_zip
+
+
+def extract_state_zip(address: str | None) -> tuple[str, str]:
+    raw = (address or "").strip()
+    if re.fullmatch(r"[A-Za-z]{2}", raw):
+        state = raw.upper()
+        if state in STATE_CODES:
+            return state, ""
+    return delivery_location(raw)
+
+
+def local_route_matches(pickup_address: str | None, delivery_address: str | None, pickup_rule: str, delivery_rule: str) -> bool:
+    pickup_state, pickup_zip = extract_state_zip(pickup_address)
+    delivery_state, delivery_zip = extract_state_zip(delivery_address)
+    if not pickup_state or not delivery_state:
+        return False
+
+    pickup_rule_state, pickup_start, pickup_end = parse_local_route_region(pickup_rule)
+    delivery_rule_state, delivery_start, delivery_end = parse_local_route_region(delivery_rule)
+
+    if pickup_state != pickup_rule_state or delivery_state != delivery_rule_state:
+        return False
+    if pickup_start and (not pickup_zip or not (pickup_start <= pickup_zip <= (pickup_end or pickup_start))):
+        return False
+    if delivery_start and (not delivery_zip or not (delivery_start <= delivery_zip <= (delivery_end or delivery_start))):
+        return False
+    return True
 
 
 class LocalSettings(BaseModel):

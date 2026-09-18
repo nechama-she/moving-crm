@@ -923,6 +923,30 @@ class PricingService(Base):
             "sort_order": self.sort_order,
         }
 
+
+class LocalPricingRoute(Base):
+    __tablename__ = "local_pricing_routes"
+    __table_args__ = (
+        UniqueConstraint("company_id", "pickup", "delivery", name="uq_local_pricing_routes_company_pair"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    company_id = Column(String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    pickup = Column(String(64), nullable=False)
+    delivery = Column(String(64), nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "company_id": self.company_id,
+            "pickup": self.pickup,
+            "delivery": self.delivery,
+            "sort_order": int(self.sort_order or 0),
+        }
+
 class LeadLiveSwitch(Base):
     __tablename__ = "lead_liveswitch"
     lead_id = Column(String(36), ForeignKey("leads.id", ondelete="CASCADE"), primary_key=True)

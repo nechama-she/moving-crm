@@ -5,6 +5,7 @@ import { authHeaders, useAuth } from "./AuthContext";
 import "./LocalPricing.css";
 
 type Settings = { travel_hourly_rate: number | null; travel_in_minimum: boolean; fuel_charge: number | null; minimum_hours: number | null; capacity_per_mover: number | null; full_pack_hourly: number | null; hourly_rates: (number | null)[]; crew_thresholds: (number | null)[]; truck_thresholds: (number | null)[] };
+type LocalRoute = { id?: string; pickup: string; delivery: string };
 type Job = { leadId: string; jobId: string; name: string; order: number; volume: number | null; pickup: string; delivery: string; moveType: string };
 type Service = { id?: string; name: string; rate_text: string; comments: string };
 type BulkyItemPrices = { handling: string; packing: string; crating: string };
@@ -51,6 +52,10 @@ async function failure(response: Response) {
 export default function LocalPricing({ planId, companyName, bookName, job, services = [] }: { planId: string; companyName: string; bookName: string; job?: Job; services?: Service[] }) {
   const { token, user } = useAuth();
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [routes, setRoutes] = useState<LocalRoute[]>([]);
+  const [newRoute, setNewRoute] = useState<LocalRoute>({ pickup: "", delivery: "" });
+  const [routeBusy, setRouteBusy] = useState(false);
+  const [routeSavingId, setRouteSavingId] = useState("");
   const [draft, setDraft] = useState<Settings>(blankSettings);
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -83,7 +88,13 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
     void fetch(base, { headers: authHeaders(token), signal: controller.signal }).then(async response => {
       if (!response.ok) throw new Error(await failure(response));
       return response.json();
-    }).then(data => { const value = data.settings ? normalize(data.settings) : null; setSettings(value); setDraft(value || blankSettings()); setOfficeAddress(data.office_address || ""); })
+    }).then(data => {
+      const value = data.settings ? normalize(data.settings) : null;
+      setSettings(value);
+      setDraft(value || blankSettings());
+      setRoutes(data.routes || []);
+      setOfficeAddress(data.office_address || "");
+    })
       .catch(reason => { if (!controller.signal.aborted) setError(reason.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -135,10 +146,55 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
     try {
       const response = await fetch(base, { method: "PUT", headers: { ...authHeaders(token), "Content-Type": "application/json" }, body: JSON.stringify(draft) });
       if (!response.ok) throw new Error(await failure(response));
-      const data = await response.json(); setSettings(normalize(data.settings)); setDraft(normalize(data.settings)); setEditing(false); setNotice("Local settings saved for this pricing book.");
+      const data = await response.json();
+      setSettings(normalize(data.settings));
+      setDraft(normalize(data.settings));
+      setEditing(false);
+      setNotice("Local settings saved for this pricing book.");
     } catch (reason) { setError((reason as Error).message); }
     finally { savingRef.current = false; setSaving(false); }
   }
+
+  async function createRoute() {
+    if (!newRoute.pickup.trim() || !newRoute.delivery.trim() || routeBusy) return;
+    setRouteBusy(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(`${base}/routes`, { method: "POST", headers: { ...authHeaders(token), "Content-Type": "application/json" }, body: JSON.stringify({ pickup: newRoute.pickup, delivery: newRoute.delivery }) });
+      if (!response.ok) throw new Error(await failure(response));
+      const data = await response.json();
+      setRoutes(data.routes || []);
+      setNewRoute({ pickup: "", delivery: "" });
+      setNotice("Route created.");
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setRouteBusy(false); }
+  }
+
+  async function saveRoute(route: LocalRoute) {
+    if (!route.id || routeBusy) return;
+    setRouteSavingId(route.id); setRouteBusy(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(`${base}/routes/${encodeURIComponent(route.id)}`, { method: "PUT", headers: { ...authHeaders(token), "Content-Type": "application/json" }, body: JSON.stringify({ pickup: route.pickup, delivery: route.delivery }) });
+      if (!response.ok) throw new Error(await failure(response));
+      const data = await response.json();
+      setRoutes(data.routes || []);
+      setNotice("Route updated.");
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setRouteBusy(false); setRouteSavingId(""); }
+  }
+
+  async function removeRoute(route: LocalRoute) {
+    if (!route.id || routeBusy) return;
+    setRouteSavingId(route.id); setRouteBusy(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(`${base}/routes/${encodeURIComponent(route.id)}`, { method: "DELETE", headers: authHeaders(token) });
+      if (!response.ok) throw new Error(await failure(response));
+      const data = await response.json();
+      setRoutes(data.routes || []);
+      setNotice("Route deleted.");
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setRouteBusy(false); setRouteSavingId(""); }
+  }
+
   async function savePrice() {
     if (!job || !quote || Number(quote.total) <= 0 || quote.total == null || savingRef.current || job.moveType !== "Local" || !quote.travel_complete || travelBusy) return;
     savingRef.current = true; setSaving(true); setError(""); setNotice("");
@@ -200,6 +256,23 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
       <div className="local-section-heading"><div><span className="eyebrow">Rate settings</span><h2>A simple table. Every day.</h2></div>{user?.role === "admin" && !editing && <button type="button" className="slds-button" onClick={() => { setDraft(settings ? structuredClone(settings) : blankSettings()); setEditing(true); setNotice(""); }}>Edit local settings</button>}</div>
       {!settings && !editing && <p className="local-warning">Local rates have not been set for this book. Add values in Edit local settings to start quoting.</p>}
       <fieldset disabled={saving}>
+        <div className="local-routes">
+          <div className="local-section-heading"><div><span className="eyebrow">Local Routes</span><h3>Pickup to delivery</h3></div></div>
+          {routes.length === 0 && <p className="local-hint">No local routes configured.</p>}
+          {routes.map((route, index) => (
+            <div className="local-route-row" key={route.id || index}>
+              <label>Pickup
+                {user?.role === "admin" ? <input required placeholder="MD" value={route.pickup} onChange={event => setRoutes(current => current.map((row, i) => i === index ? { ...row, pickup: event.target.value } : row))} /> : <strong>{route.pickup}</strong>}
+              </label>
+              <label>Delivery
+                {user?.role === "admin" ? <input required placeholder="VA(233XX-24XXX)" value={route.delivery} onChange={event => setRoutes(current => current.map((row, i) => i === index ? { ...row, delivery: event.target.value } : row))} /> : <strong>{route.delivery}</strong>}
+              </label>
+              {user?.role === "admin" && <div className="local-route-actions"><button type="button" className="slds-button" disabled={routeBusy} onClick={() => void saveRoute(route)}>{routeSavingId === route.id ? "Saving..." : "Save"}</button><button type="button" className="slds-button local-route-remove" disabled={routeBusy} onClick={() => void removeRoute(route)}>×</button></div>}
+            </div>
+          ))}
+          {user?.role === "admin" && <div className="local-route-row new"><label>Pickup<input required placeholder="MD" value={newRoute.pickup} onChange={event => setNewRoute(current => ({ ...current, pickup: event.target.value }))} /></label><label>Delivery<input required placeholder="VA(233XX-24XXX)" value={newRoute.delivery} onChange={event => setNewRoute(current => ({ ...current, delivery: event.target.value }))} /></label><div className="local-route-actions"><button type="button" className="slds-button" disabled={routeBusy || !newRoute.pickup.trim() || !newRoute.delivery.trim()} onClick={() => void createRoute()}>{routeBusy ? "Saving..." : "Create"}</button></div></div>}
+          <p className="local-hint">Allowed format: MD or VA(233XX-24XXX)</p>
+        </div>
         <div className="local-setting-basics">
           <label>Minimum billable hours{editing ? settingInput("minimum_hours", "Minimum billable hours") : <strong>{settings?.minimum_hours ?? "Not set"}</strong>}</label>
           <label>Cubic feet per mover / hour{editing ? settingInput("capacity_per_mover", "Cubic feet per mover per hour") : <strong>{settings?.capacity_per_mover ?? "Not set"}</strong>}</label>
@@ -221,7 +294,7 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
           const handlingRate = prices.handling ? Number(prices.handling) * 0.5 : 0;
           return <article key={item.id || item.name}><div><strong>{item.name}</strong><small>Handling {handlingRate ? money(handlingRate) : prices.handling || "—"} · Packing {prices.packing ? money(Number(prices.packing) * 0.5) : prices.packing || "—"} · Crating {prices.crating ? money(Number(prices.crating) * 0.5) : prices.crating || "—"}</small></div></article>;
         })}</div></div>}
-        {editing && <div className="local-edit-actions"><button className="slds-button primary" type="submit">{saving ? "Saving..." : "Save local settings"}</button><button type="button" className="slds-button" onClick={() => setEditing(false)}>Cancel</button></div>}
+        {editing && <div className="local-edit-actions"><button className="slds-button primary" type="submit">{saving ? "Saving..." : "Save local settings"}</button><button type="button" className="slds-button" onClick={() => { setEditing(false); setDraft(settings ? structuredClone(settings) : blankSettings()); }}>Cancel</button></div>}
       </fieldset>
     </form>
   </div>;

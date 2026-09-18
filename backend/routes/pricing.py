@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user, require_admin
 from database import get_db
 from models import (
+    LocalPricingRoute,
     PricingPlan,
     PricingRate,
     PricingRule,
@@ -27,16 +28,9 @@ from models import (
 )
 from uuid import uuid4
 from zip_state import delivery_location
+from local_pricing import local_route_matches
 
 router = APIRouter(prefix="/api/pricing", tags=["Pricing"])
-
-
-def _route_move_type(pickup_address: str | None, delivery_address: str | None) -> str | None:
-    pickup_state, _ = delivery_location(pickup_address or "")
-    delivery_state, _ = delivery_location(delivery_address or "")
-    if not pickup_state or not delivery_state:
-        return None
-    return "Local" if pickup_state == delivery_state else "Long Distance"
 
 
 def _plan_matches_pickup(plan: PricingPlan, pickup_state: str) -> bool:
@@ -63,20 +57,6 @@ def _plan_destination_for_delivery(
     return destination
 
 
-def _destination_uses_local_rate(
-    plan: PricingPlan,
-    delivery_address: str,
-    delivery_state: str,
-    delivery_zip: str,
-) -> bool:
-    destination = _plan_destination_for_delivery(plan, delivery_address, delivery_state, delivery_zip)
-    if not destination:
-        return False
-    normalized = destination.strip().lower()
-    rows = [row for row in plan.rates if row.destination.strip().lower() == normalized]
-    return any(row.rate is None and re.search(r"\blocal\b", (row.rate_text or "").strip(), re.IGNORECASE) for row in rows)
-
-
 def infer_job_move_type(
     lead: Lead,
     job: LeadJob,
@@ -86,8 +66,10 @@ def infer_job_move_type(
     pickup_address = (job.pickup_zip or "").strip()
     delivery_address = (job.delivery_zip or "").strip()
     pickup_state, _ = delivery_location(pickup_address)
-    delivery_state, delivery_zip = delivery_location(delivery_address)
+    delivery_state, _ = delivery_location(delivery_address)
     company_id = job.company_id or lead.company_id
+    if not company_id:
+        return None, None
 
     if plans is None and company_id:
         plans = (
@@ -96,13 +78,22 @@ def infer_job_move_type(
             .order_by(PricingPlan.sort_order, PricingPlan.name)
             .all()
         )
-    plans = plans or []
-    matched_plan = next((plan for plan in plans if _plan_matches_pickup(plan, pickup_state or "")), None) or (plans[0] if plans else None)
+    plans = [plan for plan in (plans or []) if plan.company_id == company_id]
+    matched_plan = next((plan for plan in plans if _plan_matches_pickup(plan, pickup_state)), None) or (plans[0] if plans else None)
 
-    if matched_plan and _destination_uses_local_rate(matched_plan, delivery_address, delivery_state or "", delivery_zip or ""):
-        return "Local", matched_plan
+    routes = (
+        db.query(LocalPricingRoute)
+        .filter(LocalPricingRoute.company_id == company_id)
+        .order_by(LocalPricingRoute.sort_order, LocalPricingRoute.created_at)
+        .all()
+    )
+    for route in routes:
+        if local_route_matches(pickup_address, delivery_address, route.pickup, route.delivery):
+            return "Local", matched_plan
 
-    return _route_move_type(pickup_address, delivery_address) or (getattr(lead, "move_type", None) or "").strip() or None, matched_plan
+    if pickup_state and delivery_state:
+        return "Long Distance", matched_plan
+    return (getattr(lead, "move_type", None) or "").strip() or None, matched_plan
 
 
 def _accessible_query(db: Session, user: User):

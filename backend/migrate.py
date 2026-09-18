@@ -84,9 +84,23 @@ def migrate() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_ip_address ON access_audit_logs (ip_address)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_path ON access_audit_logs (path)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_status_code ON access_audit_logs (status_code)"))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS local_pricing_routes (
+                id VARCHAR(36) PRIMARY KEY,
+                company_id VARCHAR(36) NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+                pickup VARCHAR(64) NOT NULL,
+                delivery VARCHAR(64) NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_local_pricing_routes_company_pair UNIQUE (company_id, pickup, delivery)
+            )
+        """))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_local_pricing_routes_company_id ON local_pricing_routes (company_id)"))
     logger.info("communication_associations is ready")
     logger.info("smartmoving_referral_sources is ready")
     logger.info("access_audit_logs is ready")
+    logger.info("local_pricing_routes is ready")
 
 
 if __name__ == "__main__":
