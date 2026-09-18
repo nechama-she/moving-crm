@@ -319,12 +319,35 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
         except Exception:
             pass
 
+def _customer_charge_description(name: str, desc: str) -> str:
+    if not desc:
+        return ''
+    text_val = desc.strip()
+    # Strip internal bulky matching text / local discount notes
+    if 'matched from report' in text_val.lower() or 'bulky item' in text_val.lower():
+        match_qty = re.search(r'(\d+(?:\.\d+)?)\s*×', text_val)
+        if match_qty and float(match_qty.group(1)) > 1:
+            return f'Qty: {float(match_qty.group(1)):g}'
+        return ''
+    # Simplify travel fee formula notes if present
+    if 'estimated mileage including' in text_val.lower() or 'allowance' in text_val.lower():
+        miles = [float(m) for m in re.findall(r'(\d+(?:\.\d+)?)\s*miles', text_val)]
+        hours_rate = re.search(r'(\d+(?:\.\d+)?)\s*(?:rounded\s+)?hours?\s+at\s+(\$\d+(?:\.\d+)?(?:/hour|/hr)?)', text_val)
+        if miles and hours_rate:
+            total_m = sum(miles)
+            return f'{total_m:.2f} total travel miles ({hours_rate.group(1)} travel hours at {hours_rate.group(2)})'
+    # Simplify fuel charge description
+    if text_val.lower() in {'flat fuel charge per move', 'flat fuel charge'}:
+        return 'Standard fuel surcharge'
+    return text_val
+
+
     # Resolve estimate: use published estimate if present, otherwise check lead/job price
     estimate = None
     charges_list = [
         {
             'name': c.name,
-            'description': c.description or '',
+            'description': _customer_charge_description(c.name, c.description or ''),
             'total': float(c.total_cost or 0),
         }
         for c in (job.charges or [])

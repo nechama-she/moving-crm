@@ -455,7 +455,7 @@ def _bulky_item_charges(services: list[PricingService], item_names: list[str], r
             charges.append({
                 "id": f"bulky:{service.id}:{key}",
                 "name": f"{service.name} {label}",
-                "description": f"Bulky item matched from report · {matched_count:g} × {prices[key]}" + (" (50% local rate)" if rate_multiplier != 1.0 else ""),
+                "description": f"Qty: {matched_count:g}" if matched_count > 1 else "",
                 "calculation_type": "fixed",
                 "rate": float(parsed * matched_count) * rate_multiplier,
                 "default_selected": default_selected,
@@ -694,7 +694,7 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
         charges.append({
             "id": "fuel",
             "name": "Fuel surcharge",
-            "description": f"{float(plan.fuel_percent):g}% of transportation/minimum",
+            "description": f"{float(plan.fuel_percent):g}% fuel surcharge",
             "calculation_type": "percent",
             "rate": float(plan.fuel_percent),
             "default_selected": True,
@@ -896,7 +896,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         if quote.get("base_price", 0) > 0:
             lines.append({
                 "name": "Transportation charge",
-                "description": f"{vol} cf · {quote.get('match', {}).get('band_label', 'Transportation')}",
+                "description": f"{vol} cu ft transportation",
                 "subtotal": Decimal(str(quote["base_price"])),
                 "discount_amount": Decimal(0),
                 "total_cost": Decimal(str(quote["base_price"])),
