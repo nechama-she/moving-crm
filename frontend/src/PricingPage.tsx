@@ -680,6 +680,7 @@ export default function PricingPage() {
                     </tbody>
                   </table>
                 </div>
+                {editing && <button className="slds-button add-row" onClick={() => patchDraft({ rates: [...(draft?.rates || []), { destination: "", destination_group: "", minimum_price: null, minimum_text: "", band_label: "", cubic_feet_min: null, cubic_feet_max: null, rate: null, rate_text: "" }] })}>+ Add destination</button>}
               </PricingSection>
 
               <PricingSection title="Bulky items rates" count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))}>
