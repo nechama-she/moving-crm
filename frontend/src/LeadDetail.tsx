@@ -262,6 +262,45 @@ type LeadJobDraft = {
 
 type ForemanOption = { id: string; name: string; companies?: Array<{ id: string; name: string }> };
 
+class ErrorWithDetails extends Error {
+  details: string[];
+
+  constructor(message: string, details: string[]) {
+    super(message);
+    this.name = "ErrorWithDetails";
+    this.details = details;
+  }
+}
+
+function formatErrorDetail(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (!detail || typeof detail !== "object") return String(detail || "Unknown validation error");
+  const row = detail as { loc?: unknown; msg?: unknown };
+  const message = typeof row.msg === "string" && row.msg.trim() ? row.msg.trim() : "Validation error";
+  const loc = Array.isArray(row.loc)
+    ? row.loc.map((part) => String(part)).filter((part) => part && part !== "body").join(".")
+    : "";
+  return loc ? `${loc}: ${message}` : message;
+}
+
+async function throwApiError(response: Response, fallback: string): Promise<never> {
+  const httpError = `HTTP ${response.status}`;
+  const body = await response.json().catch(() => null) as { detail?: unknown; message?: unknown; error?: unknown } | null;
+  if (body) {
+    if (typeof body.detail === "string" && body.detail.trim()) {
+      throw new Error(body.detail.trim());
+    }
+    if (Array.isArray(body.detail) && body.detail.length) {
+      throw new ErrorWithDetails(httpError, body.detail.map(formatErrorDetail));
+    }
+    const message = typeof body.message === "string" ? body.message : typeof body.error === "string" ? body.error : "";
+    if (message.trim()) {
+      throw new Error(message.trim());
+    }
+  }
+  throw new Error(fallback || httpError);
+}
+
 type LeadDetailNavigationState = {
   backTo?: string;
   backLabel?: string;
@@ -358,6 +397,7 @@ export default function LeadDetail() {
   const [savingForemanJobId, setSavingForemanJobId] = useState("");
   const [jobsLoading, setJobsLoading] = useState(true);
   const [jobsError, setJobsError] = useState("");
+  const [jobsErrorDetails, setJobsErrorDetails] = useState<string[]>([]);
   const [jobDrafts, setJobDrafts] = useState<Record<string, LeadJobDraft>>({});
   const [newJobDraft, setNewJobDraft] = useState<LeadJobDraft>({
     company_id: "",
@@ -386,6 +426,21 @@ export default function LeadDetail() {
   const navigationState = (location.state as LeadDetailNavigationState | null) || null;
   const backTo = navigationState?.backTo || (["dispatch", "foreman"].includes(user?.role || "") ? "/dispatch" : "/");
   const backLabel = navigationState?.backLabel || (user?.role === "dispatch" ? "← Back to Dispatch" : "← Back to Leads");
+
+  function clearJobsError() {
+    setJobsError("");
+    setJobsErrorDetails([]);
+  }
+
+  function setJobsErrorFromReason(reason: unknown, fallback: string) {
+    if (reason instanceof ErrorWithDetails) {
+      setJobsError(reason.message);
+      setJobsErrorDetails(reason.details);
+      return;
+    }
+    setJobsError(reason instanceof Error ? reason.message : fallback);
+    setJobsErrorDetails([]);
+  }
 
   async function loadLead() {
     const res = await fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) });
@@ -539,7 +594,7 @@ export default function LeadDetail() {
 
   async function loadLeadJobs() {
     setJobsLoading(true);
-    setJobsError("");
+    clearJobsError();
     try {
       const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs`, { headers: authHeaders(token) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -604,7 +659,7 @@ export default function LeadDetail() {
       setJobDrafts(Object.fromEntries(parsed.map((item) => [item.id, draftFromJob(item)])));
       setNewJobDraft((prev) => ({ ...prev, company_id: prev.company_id || String(lead?.company_id || "") }));
     } catch (err: unknown) {
-      setJobsError(err instanceof Error ? err.message : "Failed to load jobs");
+      setJobsErrorFromReason(err, "Failed to load jobs");
       setLeadJobs([]);
       setJobDrafts({});
     } finally {
@@ -639,18 +694,17 @@ export default function LeadDetail() {
   async function assignJobForeman(jobId: string, foremanId: string) {
     if (!user || !["admin", "dispatch"].includes(user.role)) return;
     setSavingForemanJobId(jobId);
-    setJobsError("");
+    clearJobsError();
     try {
       const response = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
         body: JSON.stringify({ foreman_id: foremanId || null }),
       });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(body?.detail || `HTTP ${response.status}`);
+      if (!response.ok) await throwApiError(response, "Could not assign foreman");
       await loadLeadJobs();
     } catch (reason) {
-      setJobsError(reason instanceof Error ? reason.message : "Could not assign foreman");
+      setJobsErrorFromReason(reason, "Could not assign foreman");
     } finally {
       setSavingForemanJobId("");
     }
@@ -683,12 +737,13 @@ export default function LeadDetail() {
   async function saveJob(jobId: string) {
     if (user?.role === "dispatch") {
       setJobsError("Dispatch users are read-only");
+      setJobsErrorDetails([]);
       return;
     }
     const draft = jobDrafts[jobId];
     if (!draft) return;
     setSavingJobId(jobId);
-    setJobsError("");
+    clearJobsError();
     try {
       const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}`, {
         method: "PATCH",
@@ -706,10 +761,10 @@ export default function LeadDetail() {
           foreman_notes: draft.foreman_notes,
         }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) await throwApiError(res, "Failed to save job");
       await Promise.all([loadLeadJobs(), loadLead()]);
     } catch (err: unknown) {
-      setJobsError(err instanceof Error ? err.message : "Failed to save job");
+      setJobsErrorFromReason(err, "Failed to save job");
     } finally {
       setSavingJobId("");
     }
@@ -718,10 +773,11 @@ export default function LeadDetail() {
   async function addJob() {
     if (user?.role === "dispatch") {
       setJobsError("Dispatch users are read-only");
+      setJobsErrorDetails([]);
       return;
     }
     setAddingJob(true);
-    setJobsError("");
+    clearJobsError();
     try {
       const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs`, {
         method: "POST",
@@ -739,7 +795,7 @@ export default function LeadDetail() {
           foreman_notes: newJobDraft.foreman_notes,
         }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) await throwApiError(res, "Failed to add job");
       setNewJobDraft({
         company_id: String(lead?.company_id || ""),
         pickup_zip: "",
@@ -754,7 +810,7 @@ export default function LeadDetail() {
       });
       await loadLeadJobs();
     } catch (err: unknown) {
-      setJobsError(err instanceof Error ? err.message : "Failed to add job");
+      setJobsErrorFromReason(err, "Failed to add job");
     } finally {
       setAddingJob(false);
     }
@@ -763,19 +819,20 @@ export default function LeadDetail() {
   async function deleteJob(jobId: string) {
     if (user?.role === "dispatch") {
       setJobsError("Dispatch users are read-only");
+      setJobsErrorDetails([]);
       return;
     }
     setDeletingJobId(jobId);
-    setJobsError("");
+    clearJobsError();
     try {
       const res = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}`, {
         method: "DELETE",
         headers: authHeaders(token),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) await throwApiError(res, "Failed to delete job");
       await loadLeadJobs();
     } catch (err: unknown) {
-      setJobsError(err instanceof Error ? err.message : "Failed to delete job");
+      setJobsErrorFromReason(err, "Failed to delete job");
     } finally {
       setDeletingJobId("");
     }
@@ -1391,18 +1448,17 @@ export default function LeadDetail() {
     const draft = jobDrafts[jobId];
     if (!draft) return;
     setSavingNoteJobId(jobId);
-    setJobsError("");
+    clearJobsError();
     try {
       const response = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
         body: JSON.stringify({ [field]: draft[field] }),
       });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(body?.detail || `HTTP ${response.status}`);
+      if (!response.ok) await throwApiError(response, "Failed to save job notes");
       await loadLeadJobs();
     } catch (reason) {
-      setJobsError(reason instanceof Error ? reason.message : "Failed to save job notes");
+      setJobsErrorFromReason(reason, "Failed to save job notes");
     } finally {
       setSavingNoteJobId("");
     }
@@ -2798,7 +2854,19 @@ export default function LeadDetail() {
               </div>
             </div>
           ) : null}
-          {jobsError ? <p style={{ margin: 0, color: "#ba0517", fontSize: 12 }}>{jobsError}</p> : null}
+          {jobsError ? (
+            <div style={{ margin: 0, color: "#ba0517", fontSize: 12, display: "grid", gap: 4 }}>
+              <p style={{ margin: 0 }}>{jobsError}</p>
+              {jobsErrorDetails.length ? (
+                <details>
+                  <summary style={{ cursor: "pointer", color: "#8a3f37", fontWeight: 700 }}>View details</summary>
+                  <div style={{ marginTop: 6, display: "grid", gap: 4 }}>
+                    {jobsErrorDetails.map((item, index) => <div key={`${index}:${item}`} style={{ color: "#8a3f37" }}>{item}</div>)}
+                  </div>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
           {jobsLoading ? <p style={{ margin: 0, color: "#64748b", fontSize: 12 }}>Loading jobs...</p> : null}
 
           {!jobsLoading ? (
@@ -2906,6 +2974,7 @@ export default function LeadDetail() {
                             const nextValue = e.target.value;
                             const previousValue = String(lead?.move_type ?? "");
                             if (!leadId) return;
+                            clearJobsError();
                             setLead((current) => current ? { ...current, move_type: nextValue } : current);
                             try {
                               const response = await fetch(`${API_BASE}/api/leads/${leadId}`, {
@@ -2913,12 +2982,12 @@ export default function LeadDetail() {
                                 headers: { "Content-Type": "application/json", ...authHeaders(token) },
                                 body: JSON.stringify({ move_type: nextValue || null }),
                               });
+                              if (!response.ok) await throwApiError(response, "Could not update move type");
                               const updated = await response.json().catch(() => null);
-                              if (!response.ok) throw new Error(updated?.detail || `HTTP ${response.status}`);
                               setLead((current) => current ? { ...current, ...(updated || {}), move_type: nextValue } : current);
                             } catch (err) {
                               setLead((current) => current ? { ...current, move_type: previousValue } : current);
-                              setJobsError(err instanceof Error ? err.message : "Could not update move type");
+                              setJobsErrorFromReason(err, "Could not update move type");
                             }
                           }}
                           disabled={!canEditJobs}

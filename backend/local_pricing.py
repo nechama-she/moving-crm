@@ -32,22 +32,72 @@ def extract_state_zip(address: str | None) -> tuple[str, str]:
     return delivery_location(raw)
 
 
+def match_region_from_address(
+    address: str | None,
+    options: list[str],
+    resolved_state: str = "",
+    resolved_zip: str = "",
+) -> str:
+    state = (resolved_state or "").upper().strip()
+    raw_address = (address or "").strip()
+    if not state and raw_address:
+        match = re.search(r'(?:,\s*|\b)([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?|\b)', raw_address.upper())
+        if match:
+            state = match.group(1)
+    if not state:
+        return ""
+
+    zip_code = (resolved_zip or "").strip()
+    if not zip_code and raw_address:
+        match = re.search(r'\b(\d{5})(?:-\d{4})?\b', raw_address)
+        if match:
+            zip_code = match.group(1)
+    zip_digits = re.sub(r"\D", "", zip_code)
+
+    state_options = [
+        option for option in options
+        if option and (
+            option.upper() == state
+            or option.upper().startswith(f"{state} ")
+            or option.upper().startswith(f"{state} (")
+            or option.upper().startswith(f"{state}(")
+        )
+    ]
+    if zip_digits:
+        for option in state_options:
+            numbers = re.findall(r"\d+", option)
+            if len(numbers) >= 2 and re.search(r"[-–—]|\bto\b", option, re.IGNORECASE):
+                width = min(len(numbers[0]), len(numbers[1]), len(zip_digits))
+                if width <= 0:
+                    continue
+                value = int(zip_digits[:width])
+                lower = int(numbers[0][:width])
+                upper = int(numbers[1][:width])
+                if lower <= value <= upper:
+                    return option
+            elif numbers and any(zip_digits.startswith(number) or number.startswith(zip_digits) for number in numbers):
+                return option
+    for option in state_options:
+        if option.upper() == state:
+            return option
+    return state_options[0] if state_options else ""
+
+
 def local_route_matches(pickup_address: str | None, delivery_address: str | None, pickup_rule: str, delivery_rule: str) -> bool:
     pickup_state, pickup_zip = extract_state_zip(pickup_address)
     delivery_state, delivery_zip = extract_state_zip(delivery_address)
     if not pickup_state or not delivery_state:
         return False
 
-    pickup_rule_state, pickup_start, pickup_end = parse_local_route_region(pickup_rule)
-    delivery_rule_state, delivery_start, delivery_end = parse_local_route_region(delivery_rule)
-
-    if pickup_state != pickup_rule_state or delivery_state != delivery_rule_state:
+    # Keep strict local format validation while sharing the exact region matcher
+    # used by long-distance destination selection.
+    parse_local_route_region(pickup_rule)
+    parse_local_route_region(delivery_rule)
+    pickup_match = match_region_from_address(pickup_address, [pickup_rule], pickup_state, pickup_zip)
+    if not pickup_match:
         return False
-    if pickup_start and (not pickup_zip or not (pickup_start <= pickup_zip <= (pickup_end or pickup_start))):
-        return False
-    if delivery_start and (not delivery_zip or not (delivery_start <= delivery_zip <= (delivery_end or delivery_start))):
-        return False
-    return True
+    delivery_match = match_region_from_address(delivery_address, [delivery_rule], delivery_state, delivery_zip)
+    return bool(delivery_match)
 
 
 class LocalSettings(BaseModel):

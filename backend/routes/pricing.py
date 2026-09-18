@@ -28,7 +28,7 @@ from models import (
 )
 from uuid import uuid4
 from zip_state import delivery_location
-from local_pricing import local_route_matches
+from local_pricing import local_route_matches, match_region_from_address
 
 router = APIRouter(prefix="/api/pricing", tags=["Pricing"])
 
@@ -49,7 +49,7 @@ def _plan_destination_for_delivery(
     options = list({row.destination for row in plan.rates if row.destination})
     if not options:
         return ""
-    destination = destination_from_address(delivery_address, options, delivery_state or "", delivery_zip or "")
+    destination = match_region_from_address(delivery_address, options, delivery_state or "", delivery_zip or "")
     if not destination and delivery_state:
         destination = next((option for option in options if delivery_state.lower() in option.lower()), "")
     if not destination and options:
@@ -582,38 +582,6 @@ def get_job_pricing_context(
         "serviceability": serviceability,
         "move_type": inferred_move_type,
     }
-
-
-def destination_from_address(address: str, options: list[str], resolved_state: str = "", resolved_zip: str = "") -> str:
-    state = resolved_state
-    if not state and address:
-        m = re.search(r'(?:,\s*|\b)([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?|\b)', address.upper())
-        if m:
-            state = m.group(1)
-    if not state:
-        return ""
-    zip_code = resolved_zip
-    if not zip_code and address:
-        m = re.search(r'\b(\d{5})(?:-\d{4})?\b', address)
-        if m:
-            zip_code = m.group(1)
-    zip_digits = re.sub(r"\D", "", zip_code or "")
-    
-    state_options = [opt for opt in options if opt.upper() == state or opt.upper().startswith(f"{state} ") or opt.upper().startswith(f"{state} (")]
-    if zip_digits:
-        for opt in state_options:
-            numbers = re.findall(r"\d+", opt)
-            if len(numbers) >= 2 and re.search(r"[-–—]|\bto\b", opt, re.IGNORECASE):
-                width = min(len(numbers[0]), len(numbers[1]))
-                value = int(zip_digits[:width])
-                if int(numbers[0][:width]) <= value <= int(numbers[1][:width]):
-                    return opt
-            elif numbers and any(zip_digits.startswith(number) or number.startswith(zip_digits) for number in numbers):
-                return opt
-    for opt in state_options:
-        if opt.upper() == state:
-            return opt
-    return state_options[0] if state_options else ""
 
 
 def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
