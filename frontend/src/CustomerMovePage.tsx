@@ -37,6 +37,13 @@ export default function CustomerMovePage() {
   const [reportState,setReportState]=useState<'idle'|'running'|'done'>('idle');
   const [reportNotice,setReportNotice]=useState('');
   const [resendAt,setResendAt]=useState(0),[clock,setClock]=useState(Date.now());
+  const [showQuestions, setShowQuestions] = useState(false);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [answers, setAnswers] = useState<{
+    packingNeeded?: string;
+    specialRequirements: string[];
+    additionalNotes?: string;
+  }>({ specialRequirements: [] });
   const previews=useRef<string[]>([]);
   const base=`${API_BASE}/api/public-moves/${accessId}`;
   const headers={'x-public-link':key,'x-public-session':session};
@@ -395,8 +402,149 @@ export default function CustomerMovePage() {
                     ))}
                   </div>
                 )}
+                {data.estimate && (
+                  <div className="cm-finalize-cta-wrap">
+                    <button
+                      type="button"
+                      className="slds-button cm-primary cm-finalize-cta-btn"
+                      onClick={() => {
+                        setCurrentStep(0);
+                        setShowQuestions(true);
+                      }}
+                    >
+                      Finalize price & services →
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
+
+            {showQuestions && (
+              <div className="cm-modal-overlay" role="dialog" aria-modal="true">
+                <div className="cm-modal-card">
+                  <div className="cm-modal-header">
+                    <div>
+                      <span className="cm-eyebrow">STEP {currentStep + 1} OF 3</span>
+                      <h3>A few quick questions about your move</h3>
+                      <p>Help us finalize your move details and exact pricing.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="cm-modal-close"
+                      aria-label="Close"
+                      onClick={() => setShowQuestions(false)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="cm-modal-body">
+                    {currentStep === 0 && (
+                      <div className="cm-step-content">
+                        <h4>Do you need packing services for your move?</h4>
+                        <p className="cm-step-sub">We can pack everything safely, or just your fragile and delicate items.</p>
+                        <div className="cm-options-grid">
+                          {[
+                            { value: 'full', title: 'Yes, full packing', desc: 'We pack your entire home with boxes and supplies included.' },
+                            { value: 'partial', title: 'Yes, fragile / partial packing', desc: 'We pack TVs, mirrors, artwork, and breakables only.' },
+                            { value: 'none', title: 'No, I will pack myself', desc: 'Everything will be boxed and sealed before moving day.' },
+                          ].map(opt => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              className={`cm-option-card ${answers.packingNeeded === opt.value ? 'selected' : ''}`}
+                              onClick={() => setAnswers(prev => ({ ...prev, packingNeeded: opt.value }))}
+                            >
+                              <strong>{opt.title}</strong>
+                              <small>{opt.desc}</small>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {currentStep === 1 && (
+                      <div className="cm-step-content">
+                        <h4>Any special conditions or requirements?</h4>
+                        <p className="cm-step-sub">Select all that apply at either your pickup or delivery location.</p>
+                        <div className="cm-checklist">
+                          {[
+                            { id: 'stairs', label: 'Flights of stairs (no elevator)' },
+                            { id: 'elevator', label: 'Reserved freight / service elevator' },
+                            { id: 'long_carry', label: 'Long carry (truck cannot park close)' },
+                            { id: 'storage', label: 'Storage needed before move-in' },
+                            { id: 'heavy_items', label: 'Extra heavy or bulky items (safe, piano, gym)' },
+                          ].map(item => (
+                            <label key={item.id} className="cm-check-item">
+                              <input
+                                type="checkbox"
+                                checked={answers.specialRequirements.includes(item.id)}
+                                onChange={e => {
+                                  const checked = e.target.checked;
+                                  setAnswers(prev => ({
+                                    ...prev,
+                                    specialRequirements: checked
+                                      ? [...prev.specialRequirements, item.id]
+                                      : prev.specialRequirements.filter(id => id !== item.id),
+                                  }));
+                                }}
+                              />
+                              <span>{item.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {currentStep === 2 && (
+                      <div className="cm-step-content">
+                        <h4>Any additional notes or fragile items?</h4>
+                        <p className="cm-step-sub">Tell our dispatch team anything specific about access, timing, or special care items.</p>
+                        <textarea
+                          className="cm-step-textarea"
+                          rows={4}
+                          placeholder="e.g. Please bring extra mattress bags, narrow hallway at entrance..."
+                          value={answers.additionalNotes || ''}
+                          onChange={e => setAnswers(prev => ({ ...prev, additionalNotes: e.target.value }))}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="cm-modal-footer">
+                    {currentStep > 0 ? (
+                      <button
+                        type="button"
+                        className="cm-secondary-btn"
+                        onClick={() => setCurrentStep(prev => prev - 1)}
+                      >
+                        ← Back
+                      </button>
+                    ) : <span />}
+
+                    {currentStep < 2 ? (
+                      <button
+                        type="button"
+                        className="slds-button cm-primary"
+                        onClick={() => setCurrentStep(prev => prev + 1)}
+                      >
+                        Next →
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="slds-button cm-primary"
+                        onClick={() => {
+                          setShowQuestions(false);
+                        }}
+                      >
+                        Submit details
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
             <footer className="cm-footer">Your move. Your pace. We're here to help.</footer>
           </>
         )}
