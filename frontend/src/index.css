@@ -981,6 +981,22 @@ button:focus-visible {
 .pricing-rate-table tbody tr:hover td, .pricing-rate-table tbody tr:hover th { background: #f8fbff; }
 .pricing-rate-table th small { display: block; color: #706e6b; font-weight: 400; margin-top: 2px; }
 .pricing-rate-table input { width: 82px; text-align: right; padding: 5px; }
+.pricing-rate-table th:first-child input { width: 220px; max-width: 100%; text-align: left; }
+.pricing-rate-table th:first-child input.destination-group-input { width: 180px; font-size: 11px; }
+.pricing-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pricing-section-actions { display: flex; align-items: center; gap: 4px; }
+.pricing-section-action, .pricing-section-toggle { min-width: 28px; height: 28px; padding: 2px 8px; border: 1px solid #c9c7c5; border-radius: 4px; background: #fff; color: #0176d3; font-weight: 700; }
+.pricing-section-action:disabled { opacity: .55; cursor: default; }
+.pricing-section-action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
+.pricing-add-icon { width: 17px; height: 17px; }
+.pricing-pending-destinations { display: grid; gap: 8px; margin: 10px 0; }
+.pricing-pending-destination { padding: 10px; border: 1px dashed #0176d3; border-radius: 4px; background: #f8fbff; }
+.pricing-pending-fields, .pricing-pending-rates { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
+.pricing-pending-fields label, .pricing-pending-rates label { display: grid; gap: 3px; color: #032d60; font-size: 11px; font-weight: 700; }
+.pricing-pending-fields input { width: 220px; }
+.pricing-pending-fields label:nth-child(2) input { width: 180px; }
+.pricing-pending-rates { margin-top: 8px; }
+.pricing-pending-rates input { width: 82px; }
 .pricing-services { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .pricing-services.pricing-bulky-rates,
 .pricing-services.pricing-services-editor { grid-template-columns: minmax(0, 1fr); }
