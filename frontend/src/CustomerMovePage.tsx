@@ -266,7 +266,7 @@ export default function CustomerMovePage() {
             </section>
             {error&&<div className="cm-error" role="alert">{error}</div>}
             <div className="cm-two-col cm-columns">
-              <section className="cm-card cm-upload"><div className="cm-eyebrow">SHOW US WHAT'S MOVING</div><h2>Add photos, documents<br/>or videos.</h2><p>A few photos of each room help us understand your move. Include any large or delicate items.</p><label className="cm-drop"><span className="cm-drop-icon" aria-hidden="true">📁</span><strong>Choose files or drop here</strong><small>(Up to 100 MB)</small><input type="file" multiple disabled={busy} onChange={e=>{choose(e.target.files);e.target.value='';}}/></label>
+              <section className="cm-card cm-upload"><div className="cm-eyebrow">SHOW US WHAT'S MOVING</div><h2>Add photos, documents<br/>or videos.</h2><p>A few photos of each room help us understand your move. Include any large or delicate items.</p><div className="cm-upload-row"><label className="cm-drop"><span className="cm-drop-icon" aria-hidden="true">📁</span><strong>Choose files or drop here</strong><input type="file" multiple disabled={busy} onChange={e=>{choose(e.target.files);e.target.value='';}}/></label><button className="slds-button cm-primary cm-upload-btn" disabled={busy||!files.some(f=>['Ready','Try again'].includes(f.status))} onClick={()=>void upload()}>{busy?'Please wait...':'Upload files'}</button></div>
             {files.length>0 && <p role="status">{files.filter(f=>f.status==='Uploaded').length} of {files.length} files uploaded</p>}
             <div className="cm-file-list">
               {files.map(item => (
@@ -282,7 +282,6 @@ export default function CustomerMovePage() {
                 </article>
               ))}
             </div>
-            <button className="slds-button cm-primary" disabled={busy||!files.some(f=>['Ready','Try again'].includes(f.status))} onClick={()=>void upload()}>{busy?'Please wait...':'Upload files'}</button>
             {data.files.length>0&&<details><summary>{data.files.length} saved files</summary>{data.files.map(file=><p key={file.id}>{file.name}</p>)}</details>}
             {data.files.length > 0 && !data.spark && reportState !== 'done' && (
               <div className="cm-spark-box">
