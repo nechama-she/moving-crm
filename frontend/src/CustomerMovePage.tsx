@@ -36,6 +36,7 @@ export default function CustomerMovePage() {
   const [moveDraft,setMoveDraft]=useState({name:'',phone:'',email:'',move_date:'',pickup:'',delivery:''});
   const [reportState,setReportState]=useState<'idle'|'running'|'done'>('idle');
   const [reportNotice,setReportNotice]=useState('');
+  const [hasNewUploads, setHasNewUploads] = useState(false);
   const [resendAt,setResendAt]=useState(0),[clock,setClock]=useState(Date.now());
   const [showQuestions, setShowQuestions] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
@@ -122,6 +123,7 @@ export default function CustomerMovePage() {
   }
   async function upload(){
     setBusy(true);setError('');
+    let uploadedAny = false;
     try{for(const item of files.filter(f=>f.status==='Ready'||f.status==='Try again')){
       const update=(status:string,progress:number)=>setFiles(prev=>prev.map(f=>f.id===item.id?{...f,status,progress,error:undefined}:f));
       update('Uploading',0);
@@ -133,8 +135,15 @@ export default function CustomerMovePage() {
           update('Finishing upload',95);await call('/finish-upload',{request_id:item.id});
         }
         update('Uploaded',100);
+        uploadedAny = true;
       }catch(e){const message=(e as Error).message;setFiles(prev=>prev.map(f=>f.id===item.id?{...f,status:'Try again',progress:0,error:message}:f));}
-    }}finally{setBusy(false);}
+    }
+    if(uploadedAny){
+      setHasNewUploads(true);
+      setReportState('idle');
+      void refreshDetails();
+    }
+    }finally{setBusy(false);}
   }
   async function walkthrough(){setBusy(true);setError('');try{const timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;const result=await call(rescheduling?'/reschedule':'/walkthrough',{availability,timezone});setRequested(true);setRescheduling(false);setData(prev=>prev?{...prev,walkthrough:result,participant_url:''}:prev);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
 
@@ -302,7 +311,7 @@ export default function CustomerMovePage() {
                   ))}
                 </div>
                 {data.files.length>0&&<details><summary>{data.files.length} saved files</summary>{data.files.map(file=><p key={file.id}>{file.name}</p>)}</details>}
-                {data.files.length > 0 && !data.spark && reportState !== 'done' && (
+                {data.files.length > 0 && (!data.spark || hasNewUploads) && reportState !== 'done' && (
                   <div className="cm-spark-box">
                     <button
                       type="button"
@@ -314,14 +323,16 @@ export default function CustomerMovePage() {
                         try {
                           await call('/generate-inventory-report');
                           setReportState('done');
+                          setHasNewUploads(false);
                           setReportNotice("We're analyzing your photos and videos to calculate your total inventory volume.");
+                          void refreshDetails();
                         } catch (err) {
                           setReportState('idle');
                           setError((err as Error).message);
                         }
                       }}
                     >
-                      {reportState === 'running' ? 'Processing inventory...' : "Done Uploading — Calculate My Move"}
+                      {reportState === 'running' ? 'Processing inventory...' : data.spark ? "Done Uploading — Recalculate My Move" : "Done Uploading — Calculate My Move"}
                     </button>
                     {reportNotice && <p role="status" className="cm-spark-notice">{reportNotice}</p>}
                   </div>
