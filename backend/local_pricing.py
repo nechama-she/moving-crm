@@ -89,15 +89,28 @@ def local_route_matches(pickup_address: str | None, delivery_address: str | None
     if not pickup_state or not delivery_state:
         return False
 
-    # Keep strict local format validation while sharing the exact region matcher
-    # used by long-distance destination selection.
-    parse_local_route_region(pickup_rule)
-    parse_local_route_region(delivery_rule)
-    pickup_match = match_region_from_address(pickup_address, [pickup_rule], pickup_state, pickup_zip)
-    if not pickup_match:
+    # No fallbacks: explicit state/ZIP rule match only.
+    pickup_rule_state, pickup_start_zip, pickup_end_zip = parse_local_route_region(pickup_rule)
+    delivery_rule_state, delivery_start_zip, delivery_end_zip = parse_local_route_region(delivery_rule)
+
+    if pickup_state != pickup_rule_state or delivery_state != delivery_rule_state:
         return False
-    delivery_match = match_region_from_address(delivery_address, [delivery_rule], delivery_state, delivery_zip)
-    return bool(delivery_match)
+
+    if pickup_start_zip and pickup_end_zip:
+        if not pickup_zip:
+            return False
+        pickup_digits = re.sub(r"\D", "", pickup_zip)[:5]
+        if len(pickup_digits) != 5 or not (pickup_start_zip <= pickup_digits <= pickup_end_zip):
+            return False
+
+    if delivery_start_zip and delivery_end_zip:
+        if not delivery_zip:
+            return False
+        delivery_digits = re.sub(r"\D", "", delivery_zip)[:5]
+        if len(delivery_digits) != 5 or not (delivery_start_zip <= delivery_digits <= delivery_end_zip):
+            return False
+
+    return True
 
 
 class LocalSettings(BaseModel):
