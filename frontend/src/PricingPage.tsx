@@ -244,7 +244,8 @@ export default function PricingPage() {
       .finally(() => setLoading(false));
   }, [selectedId, token]);
 
-  const active = editing ? draft : plan;
+  const hasPendingRateGroups = pendingRateGroups.length > 0;
+  const active = editing || hasPendingRateGroups ? draft : plan;
   const destinations = useMemo(
     () => Array.from(new Set((active?.rates || []).map((row) => row.destination).filter(Boolean))),
     [active],
@@ -314,6 +315,10 @@ export default function PricingPage() {
       return group.destination.toLowerCase().includes(query) || group.destinationGroup.toLowerCase().includes(query);
     });
   }, [active, pendingRateGroups, search]);
+  const pendingRateGroupKeys = useMemo(
+    () => new Set(pendingRateGroups.map((ids) => ids.join("|"))),
+    [pendingRateGroups],
+  );
   const catalogRules = useMemo(() => {
     if (!active || !active.rules) return [];
     const serviceNames = (active.services || []).map((service) => (service.name || "").toLowerCase());
@@ -397,6 +402,9 @@ export default function PricingPage() {
     } : current);
   }
   function addDestination() {
+    if (!draft && plan) {
+      setDraft(structuredClone(plan));
+    }
     const templates = bands.length
       ? bands.map((band) => active?.rates.find((row) => row.band_label === band))
       : [undefined];
@@ -420,6 +428,11 @@ export default function PricingPage() {
     const rowIdSet = new Set(rowIds);
     setDraft((current) => current ? { ...current, rates: (current.rates || []).filter((row) => !row.id || !rowIdSet.has(row.id)) } : current);
     setPendingRateGroups((groups) => groups.filter((ids) => ids.some((id) => !rowIdSet.has(id))));
+  }
+
+  function discardPendingRateGroups() {
+    setDraft(plan ? structuredClone(plan) : null);
+    setPendingRateGroups([]);
   }
 
   async function savePrice() {
@@ -767,25 +780,28 @@ export default function PricingPage() {
                 ) : null}
               </section>
 
-              <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))} onDoubleClick={() => setEditing(true)} actions={editing ? <><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={addDestination}>+ Add destination</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? "Saving rates" : "Save rates"}</button></> : user?.role === "admin" && pricingMode === "long-distance" ? <button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => setEditing(true)}>Edit rates</button> : null}>
+              <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))} onDoubleClick={() => setEditing(true)} actions={user?.role === "admin" && pricingMode === "long-distance" ? <>{!editing ? <button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={addDestination}>+ Add destination</button> : null}{editing ? <><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={addDestination}>+ Add destination</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? "Saving rates" : "Save rates"}</button></> : hasPendingRateGroups ? <><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={discardPendingRateGroups}>Discard new rows</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? "Saving new rows" : "Save new rows"}</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => setEditing(true)}>Edit rates</button></> : <button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => setEditing(true)}>Edit rates</button>}</> : null}>
                 <div className="pricing-table-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search destination or ZIP area" /><span>{bands.length} cubic-foot bands</span></div>
                 <div className="pricing-rate-table-wrap">
                   <table className="pricing-rate-table">
-                    <thead><tr><th>Destination</th><th>Area</th><th>Minimum</th>{bands.map((band) => <th key={band}>{band}</th>)}{editing ? <th>Actions</th> : null}</tr></thead>
+                    <thead><tr><th>Destination</th><th>Area</th><th>Minimum</th>{bands.map((band) => <th key={band}>{band}</th>)}{editing || hasPendingRateGroups ? <th>Actions</th> : null}</tr></thead>
                     <tbody>
-                      {rateRows.map((group) => (
-                        <tr key={group.key}>
-                          <th>{editing ? <input value={group.destination} placeholder="Destination or ZIP prefix" onChange={(e) => patchRateGroup(group.rowIds, { destination: e.target.value })} /> : <>{group.destination || "—"}</>}</th>
-                          <td>{editing ? <input className="destination-group-input" value={group.destinationGroup} placeholder="Area, e.g. East Coast" onChange={(e) => patchRateGroup(group.rowIds, { destination_group: e.target.value })} /> : group.destinationGroup || "—"}</td>
-                          <td>{editing ? <input type="text" inputMode="decimal" value={group.minimumText || (group.minimumPrice ?? "")} onChange={(e) => patchRateGroup(group.rowIds, { minimum_price: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), minimum_text: e.target.value })} /> : money(group.minimumPrice)}</td>
+                      {rateRows.map((group) => {
+                        const isPendingGroup = pendingRateGroupKeys.has(group.rowIds.join("|"));
+                        const groupEditable = editing || isPendingGroup;
+                        return (
+                        <tr key={group.key} className={isPendingGroup ? "pricing-rate-row-pending" : undefined}>
+                          <th>{groupEditable ? <input value={group.destination} placeholder="Destination or ZIP prefix" onChange={(e) => patchRateGroup(group.rowIds, { destination: e.target.value })} /> : <>{group.destination || "—"}</>}</th>
+                          <td>{groupEditable ? <input className="destination-group-input" value={group.destinationGroup} placeholder="Area, e.g. East Coast" onChange={(e) => patchRateGroup(group.rowIds, { destination_group: e.target.value })} /> : group.destinationGroup || "—"}</td>
+                          <td>{groupEditable ? <input type="text" inputMode="decimal" value={group.minimumText || (group.minimumPrice ?? "")} onChange={(e) => patchRateGroup(group.rowIds, { minimum_price: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), minimum_text: e.target.value })} /> : money(group.minimumPrice)}</td>
                           {bands.map((band) => {
                             const rate = group.rates.find((row) => row.band_label === band);
-                            return <td key={band}>{!rate ? "—" : editing ? <input type="text" inputMode="decimal" value={rate.rate_text || (rate.rate ?? "")} onChange={(e) => patchRate(rate.id, { rate: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), rate_text: e.target.value })} /> : rate.rate == null ? rate.rate_text : money(rate.rate)}</td>;
+                            return <td key={band}>{!rate ? "—" : groupEditable ? <input type="text" inputMode="decimal" value={rate.rate_text || (rate.rate ?? "")} onChange={(e) => patchRate(rate.id, { rate: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), rate_text: e.target.value })} /> : rate.rate == null ? rate.rate_text : money(rate.rate)}</td>;
                           })}
-                          {editing ? <td className="pricing-rate-actions"><button type="button" className="slds-button text-danger" onClick={() => removeRateGroup(group.rowIds)}>Remove</button></td> : null}
+                          {editing || isPendingGroup ? <td className="pricing-rate-actions"><button type="button" className="slds-button text-danger" onClick={() => removeRateGroup(group.rowIds)}>{isPendingGroup ? "Remove new row" : "Remove"}</button></td> : null}
                         </tr>
-                      ))}
-                      {!rateRows.length ? <tr><td colSpan={bands.length + (editing ? 4 : 3)} className="pricing-rate-empty">No destinations match this search.</td></tr> : null}
+                      );})}
+                      {!rateRows.length ? <tr><td colSpan={bands.length + (editing || hasPendingRateGroups ? 4 : 3)} className="pricing-rate-empty">No destinations match this search.</td></tr> : null}
                     </tbody>
                   </table>
                 </div>

@@ -980,12 +980,13 @@ button:focus-visible {
 .pricing-rate-table thead th:first-child { z-index: 3; background: #fafaf9; }
 .pricing-rate-table thead th:nth-child(2), .pricing-rate-table td:nth-child(2) { text-align: left; min-width: 170px; }
 .pricing-rate-table tbody tr:hover td, .pricing-rate-table tbody tr:hover th { background: #f8fbff; }
+.pricing-rate-table tbody tr.pricing-rate-row-pending td, .pricing-rate-table tbody tr.pricing-rate-row-pending th { background: #eef4ff; }
 .pricing-rate-table th small { display: block; color: #706e6b; font-weight: 400; margin-top: 2px; }
 .pricing-rate-table input { width: 82px; min-height: 34px; border: 1px solid #c9c7c5; border-radius: 6px; padding: 5px 8px; background: #fff; text-align: right; }
 .pricing-rate-table th:first-child input { width: 220px; max-width: 100%; text-align: left; }
 .pricing-rate-table input.destination-group-input { width: 180px; max-width: 100%; font-size: 12px; text-align: left; }
 .pricing-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.pricing-section-actions { display: flex; align-items: center; gap: 4px; }
+.pricing-section-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .pricing-section-action, .pricing-section-toggle { min-width: 28px; height: 28px; padding: 2px 8px; border: 1px solid #c9c7c5; border-radius: 4px; background: #fff; color: #0176d3; font-weight: 700; }
 .pricing-section-action:disabled { opacity: .55; cursor: default; }
 .pricing-section-action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
