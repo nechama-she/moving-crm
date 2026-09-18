@@ -391,6 +391,14 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
         details["last_spark_status"] = result.get("status", "queued")
         details["last_spark_at"] = int(time.time())
         saved.details = json.dumps(details)
+
+        # Clear published estimate while new report is processing
+        access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
+        if access:
+            access.published_price = None
+            access.published_cuft = None
+            access.published_at = None
+
         db.commit()
 
     return result

@@ -346,7 +346,9 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             pass
 
     # Resolve estimate: use published estimate if present, otherwise check lead/job price
+    # If a spark report is currently pending/running, hide the old estimate until it completes
     estimate = None
+    is_spark_pending = bool(spark_info and spark_info.get("status") in ("queued", "running"))
     charges_list = [
         {
             'name': c.name,
@@ -356,30 +358,31 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
         for c in (job.charges or [])
         if c.total_cost and float(c.total_cost) > 0
     ]
-    if access.published_at and access.published_price is not None:
-        estimate = {
-            'price': str(access.published_price),
-            'cuft': str(access.published_cuft or lead.volume or 0),
-            'charges': charges_list,
-        }
-    elif job.price is not None and float(job.price) > 0:
-        estimate = {
-            'price': str(job.price),
-            'cuft': str(lead.volume or 0),
-            'charges': charges_list,
-        }
-    elif lead.estimated_total:
-        try:
-            parsed_total = json.loads(lead.estimated_total)
-            final_total = float(parsed_total.get('finalTotal') or 0)
-            if final_total > 0:
-                estimate = {
-                    'price': str(final_total),
-                    'cuft': str(lead.volume or 0),
-                    'charges': charges_list,
-                }
-        except Exception:
-            pass
+    if not is_spark_pending:
+        if access.published_at and access.published_price is not None:
+            estimate = {
+                'price': str(access.published_price),
+                'cuft': str(access.published_cuft or lead.volume or 0),
+                'charges': charges_list,
+            }
+        elif job.price is not None and float(job.price) > 0:
+            estimate = {
+                'price': str(job.price),
+                'cuft': str(lead.volume or 0),
+                'charges': charges_list,
+            }
+        elif lead.estimated_total:
+            try:
+                parsed_total = json.loads(lead.estimated_total)
+                final_total = float(parsed_total.get('finalTotal') or 0)
+                if final_total > 0:
+                    estimate = {
+                        'price': str(final_total),
+                        'cuft': str(lead.volume or 0),
+                        'charges': charges_list,
+                    }
+            except Exception:
+                pass
 
     return {'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],

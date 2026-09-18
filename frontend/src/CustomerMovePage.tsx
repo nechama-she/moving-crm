@@ -383,8 +383,8 @@ export default function CustomerMovePage() {
               <div className="cm-estimate-top">
                 <div className="cm-estimate-main-info">
                   <span className="cm-estimate-eyebrow">{data.estimate?'Your moving estimate':'Your estimate'}</span>
-                  <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):'We\'re working on it.'}</strong>
-                  <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+                  <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':'We\'re working on it.'}</strong>
+                  <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
                 </div>
                 {data.spark && (
                   <div className="cm-spark-card cm-spark-estimate-card">
@@ -393,9 +393,9 @@ export default function CustomerMovePage() {
                         <span className={`cm-spark-dot ${data.spark.status === 'completed' ? 'dot-complete' : data.spark.status === 'failed' ? 'dot-failed' : 'dot-pulse'}`} />
                         {data.spark.status === 'completed' ? 'Report ready' : data.spark.status === 'running' ? 'Analyzing media...' : data.spark.status === 'failed' ? 'Report failed' : 'Queued'}
                       </span>
-                      {data.spark.cuft ? <strong className="cm-spark-volume">{data.spark.cuft} cu ft</strong> : null}
+                      {data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{data.spark.cuft} cu ft</strong> : null}
                     </div>
-                    {data.spark.shareUrl && (
+                    {data.spark.status === 'completed' && data.spark.shareUrl && (
                       <a href={data.spark.shareUrl} target="_blank" rel="noopener noreferrer" className="cm-spark-link">
                         View Itemized Report ↗
                       </a>
@@ -403,18 +403,12 @@ export default function CustomerMovePage() {
                   </div>
                 )}
               </div>
-              {data.estimate && (
+              {data.estimate && Number(data.estimate.cuft) > 0 && (
                 <div className="cm-estimate-details">
                   <div className="cm-estimate-detail-item">
-                    <span>Status</span>
-                    <strong>Ready</strong>
+                    <span>Volume</span>
+                    <strong>{Number(data.estimate.cuft).toLocaleString()} cu ft</strong>
                   </div>
-                  {Number(data.estimate.cuft) > 0 && (
-                    <div className="cm-estimate-detail-item">
-                      <span>Volume</span>
-                      <strong>{Number(data.estimate.cuft).toLocaleString()} cu ft</strong>
-                    </div>
-                  )}
                 </div>
               )}
               {data.estimate?.charges && data.estimate.charges.length > 0 && (
