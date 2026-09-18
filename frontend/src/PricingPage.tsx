@@ -141,6 +141,7 @@ export default function PricingPage() {
   const [customCharges, setCustomCharges] = useState<CustomCharge[]>([]);
   const [customDiscounts, setCustomDiscounts] = useState<CustomDiscount[]>([]);
   const [openSections, setOpenSections] = useState({ rates: true, bulkyItems: true, services: true });
+  const rateTableWrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     void fetch(`${API_BASE}/api/pricing`, { headers: authHeaders(token) })
@@ -339,7 +340,11 @@ export default function PricingPage() {
       rate: null,
       rate_text: "",
     }));
-    patchDraft({ rates: [...(draft?.rates || []), ...rows] });
+    setDraft((current) => current ? { ...current, rates: [...(current.rates || []), ...rows] } : current);
+    requestAnimationFrame(() => {
+      const table = rateTableWrapRef.current;
+      if (table) table.scrollTop = table.scrollHeight;
+    });
   }
 
   async function savePrice() {
@@ -688,7 +693,7 @@ export default function PricingPage() {
 
               <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))}>
                 <div className="pricing-table-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search destination or ZIP area" /><span>{bands.length} cubic-foot bands</span></div>
-                <div className="pricing-rate-table-wrap">
+                <div className="pricing-rate-table-wrap" ref={rateTableWrapRef}>
                   <table className="pricing-rate-table">
                     <thead><tr><th>Destination</th><th>Minimum</th>{bands.map((band) => <th key={band}>{band}</th>)}</tr></thead>
                     <tbody>
@@ -705,7 +710,7 @@ export default function PricingPage() {
                     </tbody>
                   </table>
                 </div>
-                {editing && <button className="slds-button add-row" onClick={addDestination}>+ Add destination</button>}
+                {editing && <button type="button" className="slds-button add-row" onClick={addDestination}>+ Add destination</button>}
               </PricingSection>
 
               <PricingSection title="Bulky items rates" count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))}>
