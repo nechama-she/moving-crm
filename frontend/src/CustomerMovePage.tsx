@@ -307,6 +307,43 @@ export default function CustomerMovePage() {
                 {reportNotice && <p role="status" className="cm-spark-notice">{reportNotice}</p>}
               </div>
             )}
+            <div className="cm-walkthrough-card">
+              <div className="cm-walkthrough-header">
+                <div>
+                  <span className="cm-eyebrow">LIVE VIDEO WALKTHROUGH</span>
+                  <p className="cm-walkthrough-sub">Prefer to show us around? Schedule a quick video walkthrough.</p>
+                </div>
+                {data.walkthrough && (
+                  <span className="cm-meeting-status">
+                    {({requested:'Requested',scheduled:'Approved',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status]||data.walkthrough.status}
+                  </span>
+                )}
+              </div>
+              {data.walkthrough && !rescheduling ? (
+                <div className="cm-walkthrough-body">
+                  <p className="cm-meeting-time">{meetingTime(data.walkthrough)}</p>
+                  <div className="cm-walkthrough-actions">
+                    {data.walkthrough.status==='scheduled' && data.participant_url && (
+                      <a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join video walkthrough</a>
+                    )}
+                    {['requested','scheduled'].includes(data.walkthrough.status) && (
+                      <button type="button" className="cm-secondary-btn" onClick={()=>{setAvailability('');setRescheduling(true);}}>Reschedule</button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <form className="cm-walkthrough-form" onSubmit={e=>{e.preventDefault();void walkthrough();}}>
+                  <MeetingTimePicker onChange={setAvailability} availabilityUrl={base+"/availability"} linkKey={key} session={session} moveDate={data.move_date || null} />
+                  <div className="cm-walkthrough-form-actions">
+                    <button className="slds-button cm-primary" disabled={busy||!availability.trim()}>{rescheduling?'Request new time':'Schedule video walkthrough'}</button>
+                    {rescheduling && (
+                      <button type="button" className="cm-secondary-btn" disabled={busy} onClick={()=>setRescheduling(false)}>Cancel</button>
+                    )}
+                  </div>
+                  {requested && <p role="status" className="cm-walkthrough-notice">Request saved.</p>}
+                </form>
+              )}
+            </div>
             </section>
               <div className="cm-estimate">
                 {data.spark && (
@@ -360,7 +397,6 @@ export default function CustomerMovePage() {
                 )}
               </div>
             </div>
-            <section className="cm-walkthrough"><div><div className="cm-eyebrow">PREFER TO SHOW US AROUND?</div><h2>Let's take a live<br/>video walkthrough.</h2><p>Walk us through your home from your phone.<br/>Our team will help you plan what comes next.</p></div><div>{data.walkthrough&&!rescheduling?<><span className="cm-meeting-status">{({requested:'Requested',scheduled:'Approved',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status]||data.walkthrough.status}</span><h3>{data.walkthrough.status==='scheduled'?'Your video walkthrough':'Video walkthrough request'}</h3><p className="cm-meeting-time">{meetingTime(data.walkthrough)}</p>{data.walkthrough.status==='scheduled'&&data.participant_url&&<a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join video walkthrough</a>}{['requested','scheduled'].includes(data.walkthrough.status)&&<button type="button" className="slds-button cm-reschedule" onClick={()=>{setAvailability('');setRescheduling(true);}}>Reschedule</button>}</>:<form onSubmit={e=>{e.preventDefault();void walkthrough();}}><MeetingTimePicker onChange={setAvailability} availabilityUrl={base+"/availability"} linkKey={key} session={session} moveDate={data.move_date || null} /><button className="slds-button cm-primary" disabled={busy||!availability.trim()}>{rescheduling?'Request new time':'Request a video walkthrough'}</button>{rescheduling&&<button type="button" className="slds-button cm-reschedule" disabled={busy} onClick={()=>setRescheduling(false)}>Cancel</button>}{requested&&<p role="status">Request saved.</p>}</form>}</div></section>
             <footer className="cm-footer">Your move. Your pace. We're here to help.</footer>
           </>
         )}
