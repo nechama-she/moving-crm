@@ -24,6 +24,7 @@ from models import (
     Lead,
     LeadJob,
     LeadJobCharge,
+    LeadSparkInventoryItem,
     User,
     UserCompany,
 )
@@ -478,6 +479,20 @@ def _material_item_names(materials: list[dict]) -> list[str]:
     return names
 
 
+def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
+    if not job_id:
+        return []
+    items = db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job_id).all()
+    res = []
+    for item in items:
+        try:
+            qty = max(1, int(float(item.amount or 1)))
+        except (TypeError, ValueError):
+            qty = 1
+        res.append({"name": item.name or "", "quantity": qty})
+    return res
+
+
 def _rule_charges(rule: PricingRule) -> list[dict]:
     text = rule.description
     lower = text.lower()
@@ -624,6 +639,12 @@ def get_job_pricing_context(
     else:
         serviceability = "supported"
 
+        job_dict = job.to_dict()
+        spark_items = _job_spark_inventory_items(job.id, db)
+        if spark_items:
+            existing_mat = job_dict.get("estimated_materials") or []
+            job_dict["estimated_materials"] = existing_mat + spark_items
+
     return {
         "lead": {
             "id": lead.id,
@@ -632,7 +653,7 @@ def get_job_pricing_context(
             "weight": float(lead.weight) if lead.weight is not None else None,
         },
         "job": {
-            **job.to_dict(),
+            **job_dict,
             "pickup_state": pickup_state,
             "pickup_zip_code": pickup_zip_code,
             "delivery_state": delivery_state,
@@ -832,11 +853,15 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         if not destination:
             return None
 
+        all_materials = (
+            _material_item_names(job._estimated_materials_data())
+            + _material_item_names(_job_spark_inventory_items(job.id, db))
+        )
         calc_body = CalculationInput(
             destination=destination,
             cubic_feet=vol,
             move_date=job.move_date or "",
-            bulky_items=_material_item_names(job._estimated_materials_data()),
+            bulky_items=all_materials,
         )
         quote = compute_plan_calculation(matched_plan, calc_body)
         total = quote.get("total", 0.0)
