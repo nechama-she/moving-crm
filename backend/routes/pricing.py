@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 import json
+import math
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from auth import get_current_user, require_admin
@@ -28,6 +29,14 @@ from uuid import uuid4
 from zip_state import delivery_location
 
 router = APIRouter(prefix="/api/pricing", tags=["Pricing"])
+
+
+def _route_move_type(pickup_address: str | None, delivery_address: str | None) -> str | None:
+    pickup_state, _ = delivery_location(pickup_address or "")
+    delivery_state, _ = delivery_location(delivery_address or "")
+    if not pickup_state or not delivery_state:
+        return None
+    return "Local" if pickup_state == delivery_state else "Long Distance"
 
 
 def _accessible_query(db: Session, user: User):
@@ -86,12 +95,28 @@ class PlanUpdate(BaseModel):
 
 class CalculationInput(BaseModel):
     destination: str
-    cubic_feet: float = Field(ge=0)
+    cubic_feet: int = Field(ge=0)
     move_date: str = ""
     bulky_items: list[str] = Field(default_factory=list)
     selected_charges: dict[str, bool] = Field(default_factory=dict)
     quantities: dict[str, float] = Field(default_factory=dict)
     manual_amounts: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("cubic_feet", mode="before")
+    @classmethod
+    def round_up_cubic_feet(cls, value: object) -> int:
+        if value is None or value == "":
+            return 0
+        parsed = float(value)
+        if parsed < 0:
+            return parsed
+        return math.ceil(parsed)
+
+
+def _rounded_cubic_feet(value: float | int | Decimal | None) -> int:
+    if value is None:
+        return 0
+    return max(0, math.ceil(float(value)))
 
 
 def _number(value: str) -> Decimal | None:
@@ -487,9 +512,7 @@ def get_job_pricing_context(
     else:
         serviceability = "supported"
 
-    inferred_move_type = (getattr(lead, "move_type", None) or "").strip()
-    if not inferred_move_type and pickup_state and delivery_state:
-        inferred_move_type = "Local" if pickup_state == delivery_state else "Long Distance"
+    inferred_move_type = _route_move_type(job.pickup_zip, job.delivery_zip) or (getattr(lead, "move_type", None) or "").strip()
 
     return {
         "lead": {
@@ -545,17 +568,18 @@ def destination_from_address(address: str, options: list[str], resolved_state: s
 
 
 def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
+    cubic_feet = _rounded_cubic_feet(body.cubic_feet)
     normalized = body.destination.strip().lower()
     candidates = [
         row
         for row in plan.rates
         if row.destination.strip().lower() == normalized
-        and (row.cubic_feet_min is None or body.cubic_feet >= row.cubic_feet_min)
-        and (row.cubic_feet_max is None or body.cubic_feet <= row.cubic_feet_max)
+        and (row.cubic_feet_min is None or cubic_feet >= row.cubic_feet_min)
+        and (row.cubic_feet_max is None or cubic_feet <= row.cubic_feet_max)
     ]
     matched = candidates[0] if candidates else None
     transport = (
-        Decimal(body.cubic_feet) * matched.rate
+        Decimal(cubic_feet) * matched.rate
         if matched and matched.rate is not None
         else None
     )
@@ -581,7 +605,7 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
     seasonal = _seasonal_charge(plan, _parsed_move_date(body.move_date))
     if seasonal:
         charges.append(seasonal)
-    charges.extend(_packing_service_charges(list(plan.services), body.cubic_feet, body.quantities))
+    charges.extend(_packing_service_charges(list(plan.services), cubic_feet, body.quantities))
     charges.extend(_bulky_item_charges(list(plan.services), body.bulky_items))
     charges.extend(charge for rule in plan.rules for charge in _rule_charges(rule))
 
@@ -614,7 +638,7 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
         else:
             amount = _charge_amount(
                 charge,
-                body.cubic_feet,
+                cubic_feet,
                 quantity,
                 body.manual_amounts.get(charge["id"], 0),
             )
@@ -662,7 +686,7 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
 def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> float | None:
     if not lead or not job:
         return None
-    vol = float(lead.volume) if lead.volume is not None else 0.0
+    vol = _rounded_cubic_feet(lead.volume)
     if vol <= 0:
         return None
 
@@ -683,9 +707,8 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
     pickup_state, pickup_zip = delivery_location(pickup_addr)
     delivery_state, delivery_zip = delivery_location(delivery_addr)
 
-    move_type = (getattr(lead, "move_type", None) or "").strip()
-    if not move_type and pickup_state and delivery_state:
-        move_type = "Local" if pickup_state == delivery_state else "Long Distance"
+    move_type = _route_move_type(pickup_addr, delivery_addr) or (getattr(lead, "move_type", None) or "").strip()
+    if move_type:
         lead.move_type = move_type
     if not move_type:
         return None
@@ -710,7 +733,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
     if move_type.lower() == "local":
         from routes.local_pricing import calculate_book_price
         from local_pricing import LocalCalculation
-        quote = calculate_book_price(matched_plan, LocalCalculation(cubic_feet=Decimal(str(vol))),
+        quote = calculate_book_price(matched_plan, LocalCalculation(cubic_feet=Decimal(vol)),
                                      db, pickup_addr, delivery_addr)
         total = quote.get("total")
         if total is None or total <= 0:
@@ -748,7 +771,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
 
         calc_body = CalculationInput(
             destination=destination,
-            cubic_feet=int(vol),
+            cubic_feet=vol,
             move_date=job.move_date or "",
             bulky_items=_material_item_names(job._estimated_materials_data()),
         )
@@ -761,7 +784,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         if quote.get("base_price", 0) > 0:
             lines.append({
                 "name": "Transportation charge",
-                "description": f"{int(vol)} cf · {quote.get('match', {}).get('band_label', 'Transportation')}",
+                "description": f"{vol} cf · {quote.get('match', {}).get('band_label', 'Transportation')}",
                 "subtotal": Decimal(str(quote["base_price"])),
                 "discount_amount": Decimal(0),
                 "total_cost": Decimal(str(quote["base_price"])),
@@ -826,17 +849,18 @@ def lookup_pricing(
     db: Session = Depends(get_db),
 ):
     plan = _plan_or_404(db, user, plan_id)
+    rounded_cubic_feet = _rounded_cubic_feet(cubic_feet)
     normalized = destination.strip().lower()
     candidates = [
         row
         for row in plan.rates
         if row.destination.strip().lower() == normalized
-        and (row.cubic_feet_min is None or cubic_feet >= row.cubic_feet_min)
-        and (row.cubic_feet_max is None or cubic_feet <= row.cubic_feet_max)
+        and (row.cubic_feet_min is None or rounded_cubic_feet >= row.cubic_feet_min)
+        and (row.cubic_feet_max is None or rounded_cubic_feet <= row.cubic_feet_max)
     ]
     rate = candidates[0] if candidates else None
     transport = (
-        Decimal(cubic_feet) * rate.rate if rate and rate.rate is not None else None
+        Decimal(rounded_cubic_feet) * rate.rate if rate and rate.rate is not None else None
     )
     minimum = rate.minimum_price if rate else None
     base = max(transport, minimum) if transport is not None and minimum is not None else transport or minimum

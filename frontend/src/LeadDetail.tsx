@@ -707,7 +707,7 @@ export default function LeadDetail() {
         }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      await loadLeadJobs();
+      await Promise.all([loadLeadJobs(), loadLead()]);
     } catch (err: unknown) {
       setJobsError(err instanceof Error ? err.message : "Failed to save job");
     } finally {

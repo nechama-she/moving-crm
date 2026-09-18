@@ -1,6 +1,6 @@
 """Local hourly pricing transcribed from the supplied rate and capacity tables."""
 from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class LocalSettings(BaseModel):
@@ -33,6 +33,13 @@ class LocalCalculation(BaseModel):
     full_pack: bool = False
     office_to_pickup_miles: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
     delivery_to_office_miles: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
+
+    @field_validator('cubic_feet', mode='before')
+    @classmethod
+    def round_up_cubic_feet(cls, value):
+        if value is None or value == '':
+            return value
+        return Decimal(str(value)).to_integral_value(rounding=ROUND_CEILING)
 
     @model_validator(mode='after')
     def both_travel_legs(self):

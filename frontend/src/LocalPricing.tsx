@@ -29,6 +29,13 @@ const numeric = (value: unknown): number | null => value == null || value === ""
 const normalize = (data: Settings): Settings => ({ travel_hourly_rate: numeric(data.travel_hourly_rate), travel_in_minimum: Boolean(data.travel_in_minimum), fuel_charge: numeric(data.fuel_charge), minimum_hours: numeric(data.minimum_hours), capacity_per_mover: numeric(data.capacity_per_mover), full_pack_hourly: numeric(data.full_pack_hourly), hourly_rates: data.hourly_rates.map(numeric), crew_thresholds: data.crew_thresholds.map(numeric), truck_thresholds: data.truck_thresholds.map(numeric) });
 const money = (value: unknown) => value == null ? "Not set" : Number(value).toLocaleString("en-US", { style: "currency", currency: "USD" });
 const number = (value: unknown) => Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 });
+const roundedCubicFeet = (value: string | number | null | undefined) => {
+  if (value == null || value === "") return "";
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return "";
+  return String(Math.ceil(parsed));
+};
+const cubicFeetValue = (value: string | number | null | undefined) => Number(roundedCubicFeet(value) || 0);
 async function failure(response: Response) {
   const body = await response.json().catch(() => ({}));
   if (typeof body.detail === "string") return body.detail;
@@ -50,7 +57,7 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [volume, setVolume] = useState(job?.volume == null ? "" : String(job.volume));
+  const [volume, setVolume] = useState(roundedCubicFeet(job?.volume));
   const [crew, setCrew] = useState("");
   const [hours, setHours] = useState("");
   const [fullPack, setFullPack] = useState(false);
@@ -83,11 +90,11 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
   }, [base, token]);
 
   useEffect(() => {
-    if (!settings || editing || !(Number(volume) > 0) || (hours !== "" && !(Number(hours) > 0))) return;
+    if (!settings || editing || !(cubicFeetValue(volume) > 0) || (hours !== "" && !(Number(hours) > 0))) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void fetch(`${base}/calculate`, { method: "POST", headers: { ...authHeaders(token), "Content-Type": "application/json" }, signal: controller.signal,
-        body: JSON.stringify({ cubic_feet: Number(volume), crew_size: crew ? Number(crew) : null, hours: hours ? Number(hours) : null, full_pack: fullPack, ...(job ? { lead_id: job.leadId, job_id: job.jobId } : { pickup: pickupAddress, delivery: deliveryAddress }) }) })
+        body: JSON.stringify({ cubic_feet: cubicFeetValue(volume), crew_size: crew ? Number(crew) : null, hours: hours ? Number(hours) : null, full_pack: fullPack, ...(job ? { lead_id: job.leadId, job_id: job.jobId } : { pickup: pickupAddress, delivery: deliveryAddress }) }) })
         .then(async response => { if (!response.ok) throw new Error(await failure(response)); return response.json(); })
         .then(data => { setResult({ key: requestKey, quote: data }); setError(""); })
         .catch(reason => { if (!controller.signal.aborted) setError(reason.message); });
@@ -158,7 +165,7 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
     {!editing && settings && <section className="pricing-card pricing-calculator local-calculator">
       <span className="eyebrow">Build an estimate</span><h2>How much are we moving?</h2>
       <div className="local-fields">
-        <label>Volume (cubic feet)<input type="number" min="1" value={volume} placeholder="e.g. 1,000" onChange={e => { setVolume(e.target.value); setNotice(""); }} /></label>
+        <label>Volume (cubic feet)<input type="number" min="1" step="1" value={volume} placeholder="e.g. 1,000" onChange={e => { setVolume(roundedCubicFeet(e.target.value)); setNotice(""); }} /></label>
         <label>Movers<select value={crew} onChange={e => { setCrew(e.target.value); setNotice(""); }}><option value="">Automatic from volume</option>{Array.from({ length: 10 }, (_, i) => <option key={i} value={i + 1}>{i + 1} {i ? "movers" : "mover"}</option>)}</select></label>
         <label>Moving hours override (before packing)<input type="number" min="0.01" step="0.01" placeholder="Automatic from volume" value={hours} onChange={e => { setHours(e.target.value); setNotice(""); }} /></label>
       </div>
@@ -184,7 +191,7 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
         {quote.total != null && <div className="local-total"><div>{quote.charges.map(line => <div className="local-charge" key={line.name}><span><strong>{line.name}</strong><small>{line.description}</small></span><b>{money(line.totalCost)}</b></div>)}<div className="local-total-bottom"><strong>{quote.travel_complete ? "Estimated total" : "Estimated total before travel"}</strong><b>{money(quote.total)}</b></div></div>
           {job && <button className="slds-button primary" disabled={saving || travelBusy || !quote.travel_complete || Number(quote.total) <= 0 || job.moveType !== "Local"} onClick={() => void savePrice()}>{saving ? "Saving..." : "Save price"}</button>}
         </div>}
-      </> : <p className="local-hint" role="status">{Number(volume) > 0 ? "Calculating estimate..." : "Enter the move volume to calculate crew, trucks, hours, and price."}</p>}
+      </> : <p className="local-hint" role="status">{cubicFeetValue(volume) > 0 ? "Calculating estimate..." : "Enter the move volume to calculate crew, trucks, hours, and price."}</p>}
       {job && !travel && <p className="local-hint">Estimate both travel legs before saving the price.</p>}
       {job && job.moveType !== "Local" && <p className="local-warning">{job.moveType === "Long Distance" ? "This job crosses state lines. Use Long Distance pricing for this job." : "Confirm pickup and delivery addresses in the same state before saving local pricing."}</p>}
       <p className="local-hint">Estimated hours = cubic feet ÷ (movers × {settings.capacity_per_mover} cf/hour). Billable hours are at least {settings.minimum_hours}. Trucks are a planning count; no separate truck fee is included.</p>

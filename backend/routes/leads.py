@@ -49,6 +49,7 @@ from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEven
 from realtime import publish_realtime_event
 from referral_assignment_rules import configured_rep_ids_for_referral
 from routes.templates import get_company_template, render_template
+from zip_state import delivery_location
 
 logger = logging.getLogger("moving-crm")
 
@@ -2388,6 +2389,14 @@ def _normalize_stops_list(value: list[str] | None) -> list[str]:
     return out
 
 
+def _route_move_type(pickup_address: str | None, delivery_address: str | None) -> str | None:
+    pickup_state, _ = delivery_location(pickup_address or "")
+    delivery_state, _ = delivery_location(delivery_address or "")
+    if not pickup_state or not delivery_state:
+        return None
+    return "Local" if pickup_state == delivery_state else "Long Distance"
+
+
 def _read_addresses_from_setting(db: Session, key: str) -> list[str]:
     row = db.query(AppSetting).filter(AppSetting.key == key).first()
     if not row or not (row.value or "").strip():
@@ -2733,6 +2742,9 @@ def update_lead_job(
 
     row.pickup_zip = next_pickup
     row.delivery_zip = next_delivery
+    derived_move_type = _route_move_type(next_pickup, next_delivery)
+    if derived_move_type:
+        lead.move_type = derived_move_type
     if "move_date" in payload:
         row.move_date = _normalize_move_date(payload.get("move_date") or "")
 
@@ -2758,6 +2770,21 @@ def update_lead_job(
             row.price = price_value
 
     _persist_job_route(db, row.id, next_pickup, next_stops, next_delivery)
+
+    should_recalculate_price = bool({
+        "company_id",
+        "pickup_zip",
+        "delivery_zip",
+        "stops",
+        "pickup_addresses",
+        "delivery_addresses",
+        "move_date",
+        "price",
+    } & set(payload))
+    if should_recalculate_price:
+        from routes.pricing import calculate_and_save_lead_job_price
+
+        calculate_and_save_lead_job_price(lead, row, db)
 
     db.commit()
     db.refresh(row)

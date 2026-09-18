@@ -80,6 +80,17 @@ function bulkyItemComments(prices: BulkyItemPrices) {
 const money = (value: number | null | undefined) =>
   value == null ? "—" : value.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
+function roundedCubicFeet(value: string | number | null | undefined): string {
+  if (value == null || value === "") return "";
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return "";
+  return String(Math.ceil(parsed));
+}
+
+function cubicFeetValue(value: string | number | null | undefined): number {
+  return Number(roundedCubicFeet(value) || 0);
+}
+
 function formatApiError(data: unknown, fallback = "An error occurred"): string {
   if (!data) return fallback;
   if (typeof data === "string") return data;
@@ -192,7 +203,7 @@ export default function PricingPage() {
           setPlan(null);
           setDraft(null);
         }
-        setCubicFeet(context.lead.volume == null ? "" : String(context.lead.volume));
+        setCubicFeet(roundedCubicFeet(context.lead.volume));
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load job pricing"));
   }, [searchParams, token]);
@@ -415,7 +426,7 @@ export default function PricingPage() {
     if (!jobContext || !quote || calculating || priceSaveRunning.current || detailedTotal <= 0) return;
     const cents = (amount: number) => Math.round(amount * 100);
     const lines = [
-      { id: "transportation", name: "Transportation charge", description: `${cubicFeet} cf ? ${quote.match?.band_label || "Transportation"}`, amount: quote.base_price || 0 },
+      { id: "transportation", name: "Transportation charge", description: `${cubicFeetValue(cubicFeet)} cf ? ${quote.match?.band_label || "Transportation"}`, amount: quote.base_price || 0 },
       ...quote.charges.filter(charge => charge.selected).map(charge => ({ id: `charge:${charge.id}`, name: charge.name, description: charge.description, amount: charge.amount })),
       ...customCharges.map(charge => ({ id: `custom:${charge.id}`, name: charge.title.trim() || "Custom charge", description: "Custom charge", amount: Math.max(0, Number(charge.amount) || 0) })),
     ];
@@ -485,7 +496,7 @@ export default function PricingPage() {
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
       body: JSON.stringify({
         destination,
-        cubic_feet: Number(cubicFeet || 0),
+        cubic_feet: cubicFeetValue(cubicFeet),
         move_date: jobContext?.job.move_date || "",
         bulky_items: jobContext?.job.estimated_materials?.flatMap((item) => Array.from({ length: Math.max(1, Math.floor(Number(item.quantity) || 1)) }, () => item.name)).filter(Boolean) || [],
         selected_charges: overrides?.selected || selectedCharges,
@@ -510,7 +521,7 @@ export default function PricingPage() {
   }
 
   useEffect(() => {
-    if (!plan || !destination || editing || pricingMode !== "long-distance" || !cubicFeet || Number(cubicFeet) <= 0) return;
+    if (!plan || !destination || editing || pricingMode !== "long-distance" || cubicFeetValue(cubicFeet) <= 0) return;
     void calculate();
     // Load the unified selectable charge catalog whenever the pricing book changes.
     // User selections are preserved by subsequent checkbox-triggered calculations.
@@ -614,7 +625,7 @@ export default function PricingPage() {
                 ) : null}
                 <div className="pricing-calc-fields">
                   <label>Destination<select value={destination} onChange={(e) => { setDestination(e.target.value); calculationId.current++; setCalculating(false); setQuote(null); }}><option value="">Select a supported destination</option>{destinations.map((name) => <option key={name}>{name}</option>)}</select></label>
-                  <label>Cubic feet<input type="number" min="0" value={cubicFeet} onChange={(e) => { setCubicFeet(e.target.value); calculationId.current++; setCalculating(false); setQuote(null); }} placeholder="e.g. 650" /></label>
+                  <label>Cubic feet<input type="number" min="0" step="1" value={cubicFeet} onChange={(e) => { setCubicFeet(roundedCubicFeet(e.target.value)); calculationId.current++; setCalculating(false); setQuote(null); }} placeholder="e.g. 650" /></label>
                   <button className="slds-button primary" disabled={!destination || calculating} onClick={() => void calculate()}>{calculating ? "Calculating..." : "Calculate"}</button>
                 </div>
                 {quote ? (
@@ -630,7 +641,7 @@ export default function PricingPage() {
                             <strong>Transportation charge</strong>
                             <small>
                               {quote.match
-                                ? `${Number(cubicFeet || 0).toLocaleString()} cf × ${quote.match.rate == null ? quote.match.rate_text || "manual rate" : `${money(quote.match.rate)} / cf`} · ${quote.match.band_label}${quote.minimum_applied ? ` · ${money(quote.minimum)} minimum applied` : ""}`
+                                ? `${cubicFeetValue(cubicFeet).toLocaleString()} cf × ${quote.match.rate == null ? quote.match.rate_text || "manual rate" : `${money(quote.match.rate)} / cf`} · ${quote.match.band_label}${quote.minimum_applied ? ` · ${money(quote.minimum)} minimum applied` : ""}`
                                 : "No transportation rate matched"}
                             </small>
                           </div>
