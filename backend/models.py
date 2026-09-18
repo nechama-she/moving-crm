@@ -952,6 +952,29 @@ class LeadLiveSwitch(Base):
     lead_id = Column(String(36), ForeignKey("leads.id", ondelete="CASCADE"), primary_key=True)
     details = Column(Text, nullable=False)
 
+
+class LeadSparkInventoryItem(Base):
+    __tablename__ = "lead_spark_inventory_items"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    job_id = Column(String(36), ForeignKey("lead_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(Text, nullable=False)
+    cuft = Column(Numeric(12, 2))
+    amount = Column(Numeric(12, 2))
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "name": self.name or "",
+            "cuft": float(self.cuft) if self.cuft is not None else None,
+            "amount": float(self.amount) if self.amount is not None else None,
+            "sort_order": int(self.sort_order or 0),
+        }
+
 class PublicMoveAccess(Base):
     __tablename__ = 'public_move_access'
     id = Column(String(36), primary_key=True, default=_uuid)

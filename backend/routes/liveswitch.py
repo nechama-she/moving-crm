@@ -257,6 +257,13 @@ from libs.aircall.client import send_sms, find_number_id
 from libs.smartmoving.client import get_opportunity
 from routes.leads import _get_visible_lead_or_404, _ensure_not_dispatch_write
 
+
+def _safe_float(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
 _token_lock = Lock()
 _token_cache = {"value": "", "expires": 0.0}
 
@@ -381,23 +388,24 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     return result
 
 
-def fetch_and_extract_spark_report(share_url: str) -> tuple[float | None, float | None]:
+def fetch_and_extract_spark_report(share_url: str) -> tuple[float | None, float | None, list[dict[str, object]]]:
     if not share_url:
-        return None, None
+        return None, None, []
     report_id = share_url.split("/reports/")[-1].split("?")[0].strip()
     if not report_id:
-        return None, None
+        return None, None, []
     api_url = f"https://api.scribe.production.liveswitch.com/api/public/reports/{report_id}"
     try:
         resp = httpx.get(api_url, timeout=15)
         if resp.status_code != 200:
-            return None, None
+            return None, None, []
         data = resp.json()
     except Exception:
-        return None, None
+        return None, None, []
 
     cuft = None
     weight = None
+    inventory_rows: list[dict[str, object]] = []
 
     # Method 1: from structuredResult items
     sr = data.get("structuredResult")
@@ -408,11 +416,19 @@ def fetch_and_extract_spark_report(share_url: str) -> tuple[float | None, float 
                 total_wt = 0.0
                 for row in sec["rows"]:
                     if row.get("going", True):
-                        qty = float(row.get("quantity") or 0)
-                        u_vol = float(row.get("unit_volume") or 0)
-                        u_wt = float(row.get("unit_weight") or 0)
+                        qty = _safe_float(row.get("quantity"))
+                        u_vol = _safe_float(row.get("unit_volume"))
+                        u_wt = _safe_float(row.get("unit_weight"))
+                        row_cuft = round(qty * u_vol, 2)
                         total_vol += qty * u_vol
                         total_wt += qty * u_wt
+                        name = str(row.get("item_name") or row.get("name") or row.get("item") or "").strip()
+                        if name or qty > 0 or row_cuft > 0:
+                            inventory_rows.append({
+                                "name": name or "Item",
+                                "cuft": row_cuft if row_cuft > 0 else 0.0,
+                                "amount": round(qty, 2) if qty > 0 else 0.0,
+                            })
                 if total_vol > 0:
                     cuft = round(total_vol, 1)
                     weight = round(total_wt, 1)
@@ -429,7 +445,7 @@ def fetch_and_extract_spark_report(share_url: str) -> tuple[float | None, float 
             except ValueError:
                 pass
 
-    return cuft, weight
+    return cuft, weight, inventory_rows
 
 
 def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> dict:
@@ -439,7 +455,7 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> di
     saved = db.get(LeadLiveSwitch, lead.id)
     details = json.loads(saved.details) if saved and saved.details else {}
 
-    cuft, weight = fetch_and_extract_spark_report(share_url)
+    cuft, weight, inventory_rows = fetch_and_extract_spark_report(share_url)
     if not cuft or cuft <= 0:
         return {"ok": False, "detail": "Could not extract volume from report"}
 
@@ -451,10 +467,20 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> di
     details["spark_extracted_cuft"] = cuft
     details["spark_extracted_weight"] = weight
     details["last_spark_share_url"] = share_url
-    from models import LeadJob
+    from models import LeadJob, LeadSparkInventoryItem
     job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order).first()
     price = None
     if job:
+        db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job.id).delete(synchronize_session=False)
+        for index, row in enumerate(inventory_rows):
+            db.add(LeadSparkInventoryItem(
+                job_id=job.id,
+                name=str(row.get("name") or "Item"),
+                cuft=Decimal(str(row.get("cuft") or 0)),
+                amount=Decimal(str(row.get("amount") or 0)),
+                sort_order=index,
+            ))
+
         from routes.pricing import calculate_and_save_lead_job_price
         price = calculate_and_save_lead_job_price(lead, job, db)
 
@@ -474,6 +500,31 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> di
         "cuft": cuft,
         "weight": weight,
         "price": price,
+        "inventory_count": len(inventory_rows),
+        "job_id": job.id if job else None,
+    }
+
+
+@router.get("/leads/{lead_id}/spark-inventory")
+def get_lead_spark_inventory(
+    lead_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+
+    from models import LeadJob, LeadSparkInventoryItem
+    job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order).first()
+    if not job:
+        return {"job_id": None, "rows": []}
+
+    rows = db.query(LeadSparkInventoryItem).filter_by(job_id=job.id).order_by(
+        LeadSparkInventoryItem.sort_order.asc(), LeadSparkInventoryItem.created_at.asc()
+    ).all()
+    return {
+        "job_id": job.id,
+        "rows": [row.to_dict() for row in rows],
     }
 
 

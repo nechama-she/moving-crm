@@ -5,7 +5,25 @@ import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 import "./LiveSwitchPanel.css";
 
-type Conversation = { id: string; hostJoinUrl: string; participantJoinUrl: string; conversationUrl: string; embeddedConversationUrl: string };
+type Conversation = {
+  id: string;
+  hostJoinUrl: string;
+  participantJoinUrl: string;
+  conversationUrl: string;
+  embeddedConversationUrl: string;
+  last_spark_id?: string;
+  last_spark_status?: string;
+  last_spark_share_url?: string;
+  spark_extracted_cuft?: number;
+  spark_extracted_weight?: number;
+};
+type SparkInventoryRow = {
+  id: string;
+  name: string;
+  cuft: number | null;
+  amount: number | null;
+  sort_order: number;
+};
 type Item = { id: string; file: File; name: string; type: string; preview?: string; crm: boolean; live: boolean; progress: number; status: string; error?: string };
 const types: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", pdf: "application/pdf", mp4: "video/mp4", mov: "video/quicktime" };
 function uploadErrorMessage(body: string, status: number, statusText: string): string {
@@ -47,6 +65,11 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
   const [sparkNotice, setSparkNotice] = useState("");
   const [sparkError, setSparkError] = useState("");
   const [sparkData, setSparkData] = useState<{ id: string; status: string; shareUrl?: string; cuft?: number; weight?: number } | null>(null);
+  const [inventoryExpanded, setInventoryExpanded] = useState(false);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [inventoryLoaded, setInventoryLoaded] = useState(false);
+  const [inventoryError, setInventoryError] = useState("");
+  const [inventoryRows, setInventoryRows] = useState<SparkInventoryRow[]>([]);
   const [smsSending, setSmsSending] = useState(false);
   const [smsNotice, setSmsNotice] = useState("");
   const [smsError, setSmsError] = useState("");
@@ -61,12 +84,38 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
     return response.json();
   }, [token]);
 
+  const loadSparkInventory = useCallback(async (force = false) => {
+    if (inventoryLoading) return;
+    if (!force && inventoryLoaded) return;
+    setInventoryLoading(true);
+    setInventoryError("");
+    try {
+      const res = await fetch(`${base}/spark-inventory`, { headers: authHeaders(token) });
+      if (!res.ok) throw new Error(uploadErrorMessage(await res.text(), res.status, res.statusText));
+      const json = await res.json();
+      const rows = Array.isArray(json?.rows) ? json.rows : [];
+      setInventoryRows(rows.map((row: any, index: number) => ({
+        id: String(row?.id || `${index}`),
+        name: String(row?.name || ""),
+        cuft: typeof row?.cuft === "number" ? row.cuft : null,
+        amount: typeof row?.amount === "number" ? row.amount : null,
+        sort_order: Number(row?.sort_order || 0),
+      })));
+      setInventoryLoaded(true);
+    } catch (err) {
+      setInventoryError(err instanceof Error ? err.message : "Could not load inventory.");
+    } finally {
+      setInventoryLoading(false);
+    }
+  }, [base, token, inventoryLoading, inventoryLoaded]);
+
   const loadSparkStatus = useCallback(async () => {
     try {
       const res = await fetch(`${base}/spark-status`, { headers: authHeaders(token) });
       if (!res.ok) return;
       const json = await res.json();
       if (json && json.spark) {
+        const status = String(json.spark.status || "");
         const cuftVal = json.cuft || json.spark.cuft;
         const weightVal = json.weight || json.spark.weight;
         setSparkData({
@@ -74,16 +123,19 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
           cuft: cuftVal,
           weight: weightVal,
         });
+        if ((inventoryExpanded || inventoryLoaded) && status === "completed") {
+          void loadSparkInventory(true);
+        }
         if (cuftVal) {
           onUploaded(); // Updates volume, weight, and pricing on lead details
         }
       }
     } catch { /* ignore */ }
-  }, [base, token, onUploaded]);
+  }, [base, token, onUploaded, inventoryExpanded, inventoryLoaded, loadSparkInventory]);
 
   useEffect(() => {
-    void loadSparkStatus();
-    // Only poll while the report is active (queued or running)
+    // Do not call spark status on panel open.
+    // Poll only while a known report is still pending.
     const isPending = sparkData && (sparkData.status === "queued" || sparkData.status === "running");
     if (!isPending) return;
 
@@ -104,6 +156,9 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
       if (res && res.id) {
         setSparkData({ id: res.id, status: res.status || "queued" });
       }
+      setInventoryLoaded(false);
+      setInventoryError("");
+      setInventoryRows([]);
       setTimeout(() => void loadSparkStatus(), 3000);
     } catch (err) {
       setSparkError(err instanceof Error ? err.message : "Could not run inventory report.");
@@ -139,6 +194,18 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
         }
       });
       setConversation(nextConversation);
+      setSparkData(current => {
+        if (current) return current;
+        const reportId = String(nextConversation?.last_spark_id || "").trim();
+        if (!reportId) return null;
+        return {
+          id: reportId,
+          status: String(nextConversation?.last_spark_status || "queued"),
+          shareUrl: String(nextConversation?.last_spark_share_url || ""),
+          cuft: Number(nextConversation?.spark_extracted_cuft || 0) || undefined,
+          weight: Number(nextConversation?.spark_extracted_weight || 0) || undefined,
+        };
+      });
     }
     catch (err) { setError(err instanceof Error ? err.message : "Could not start LiveSwitch"); }
     finally { setLoading(false); }
@@ -309,6 +376,52 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
                 </a>
               )}
             </div>
+            <div style={{ marginTop: 10 }}>
+              <button
+                type="button"
+                className="slds-button"
+                onClick={() => {
+                  setInventoryExpanded(current => {
+                    const next = !current;
+                    if (next && !inventoryLoaded) {
+                      void loadSparkInventory();
+                    }
+                    return next;
+                  });
+                }}
+              >
+                {inventoryExpanded ? "Hide inventory" : "Show inventory"}
+              </button>
+            </div>
+            {inventoryExpanded && (
+              <div style={{ marginTop: 10 }}>
+                {inventoryLoading && <p role="status" style={{ margin: 0 }}>Loading inventory...</p>}
+                {!inventoryLoading && inventoryError && <div className="ls-error" role="alert" style={{ marginTop: 0 }}>{inventoryError}</div>}
+                {!inventoryLoading && !inventoryError && inventoryRows.length === 0 && <p style={{ margin: 0 }}>No inventory saved for this job yet.</p>}
+                {!inventoryLoading && !inventoryError && inventoryRows.length > 0 && (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 4 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: "left", borderBottom: "1px solid #cbd5e1", padding: "6px 4px" }}>Name</th>
+                          <th style={{ textAlign: "right", borderBottom: "1px solid #cbd5e1", padding: "6px 4px" }}>CuFt</th>
+                          <th style={{ textAlign: "right", borderBottom: "1px solid #cbd5e1", padding: "6px 4px" }}>Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {inventoryRows.map(row => (
+                          <tr key={row.id}>
+                            <td style={{ borderBottom: "1px solid #e2e8f0", padding: "6px 4px" }}>{row.name || "-"}</td>
+                            <td style={{ textAlign: "right", borderBottom: "1px solid #e2e8f0", padding: "6px 4px" }}>{row.cuft ?? 0}</td>
+                            <td style={{ textAlign: "right", borderBottom: "1px solid #e2e8f0", padding: "6px 4px" }}>{row.amount ?? 0}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
         </section>

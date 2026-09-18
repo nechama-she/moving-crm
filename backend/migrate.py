@@ -97,10 +97,24 @@ def migrate() -> None:
             )
         """))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_local_pricing_routes_company_id ON local_pricing_routes (company_id)"))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS lead_spark_inventory_items (
+                id VARCHAR(36) PRIMARY KEY,
+                job_id VARCHAR(36) NOT NULL REFERENCES lead_jobs(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                cuft NUMERIC(12, 2),
+                amount NUMERIC(12, 2),
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_spark_inventory_items_job_id ON lead_spark_inventory_items (job_id)"))
     logger.info("communication_associations is ready")
     logger.info("smartmoving_referral_sources is ready")
     logger.info("access_audit_logs is ready")
     logger.info("local_pricing_routes is ready")
+    logger.info("lead_spark_inventory_items is ready")
 
 
 if __name__ == "__main__":
