@@ -209,19 +209,19 @@ export default function CustomerMovePage() {
           <>
             <section className="cm-two-col cm-intro">
               <div>
-                <div className="cm-intro-top">
-                  <div className="cm-eyebrow">LET'S MAKE YOUR NEXT MOVE EASIER</div>
-                  <button type="button" className="slds-button cm-refresh-btn" aria-label="Refresh move details" title="Refresh move details" disabled={busy} onClick={()=>void refreshDetails()}>&#8635;</button>
-                </div>
+                <div className="cm-eyebrow">LET'S MAKE YOUR NEXT MOVE EASIER</div>
                 <h1>Hi {data.name.split(' ')[0]},<br/>you're in the right place.</h1>
                 <p>Share a little more about your home.<br/>We'll take care of the estimate.</p>
               </div>
               <section className="cm-card cm-route">
                 <div className="cm-route-header">
                   <div className="cm-eyebrow">YOUR MOVE</div>
-                  {!editingMove && (
-                    <button type="button" className="slds-button cm-edit-button" onClick={startEditMove}>Edit</button>
-                  )}
+                  <div className="cm-route-actions-top">
+                    <button type="button" className="slds-button cm-refresh-btn" aria-label="Refresh move details" title="Refresh move details" disabled={busy} onClick={()=>void refreshDetails()}>&#8635;</button>
+                    {!editingMove && (
+                      <button type="button" className="slds-button cm-edit-button" onClick={startEditMove}>Edit</button>
+                    )}
+                  </div>
                 </div>
 
                 {!editingMove ? (
