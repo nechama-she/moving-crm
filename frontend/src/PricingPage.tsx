@@ -9,6 +9,7 @@ type PlanSummary = {
   fuel_percent: number | null; rate_count: number; rule_count: number;
   service_count: number; updated_at: string;
 };
+type CompanySummary = { id: string; name: string };
 type Rule = { id?: string; category: string; title: string; description: string };
 type Rate = {
   id?: string; destination: string; destination_group: string;
@@ -136,7 +137,11 @@ function destinationFromAddress(address: string | null | undefined, options: str
 export default function PricingPage() {
   const { token, user } = useAuth();
   const [searchParams] = useSearchParams();
+  const leadId = searchParams.get("lead_id") || "";
+  const jobId = searchParams.get("job_id") || "";
   const [pricingMode, setPricingMode] = useState<"local" | "long-distance">("local");
+  const [companies, setCompanies] = useState<CompanySummary[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [plans, setPlans] = useState<PlanSummary[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -164,7 +169,46 @@ export default function PricingPage() {
   const [pendingRateGroups, setPendingRateGroups] = useState<string[][]>([]);
 
   useEffect(() => {
-    void fetch(`${API_BASE}/api/pricing`, { headers: authHeaders(token) })
+    if (leadId && jobId) {
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    void fetch(`${API_BASE}/api/companies/mine`, { headers: authHeaders(token), signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(formatApiError(body, "Failed to load companies"));
+        }
+        return response.json();
+      })
+      .then((rows: CompanySummary[]) => {
+        if (controller.signal.aborted) return;
+        const next = Array.isArray(rows) ? rows : [];
+        setCompanies(next);
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Failed to load companies");
+      });
+    return () => controller.abort();
+  }, [token, leadId, jobId]);
+
+  useEffect(() => {
+    if (leadId && jobId) {
+      setLoading(false);
+      return;
+    }
+    if (!selectedCompanyId) {
+      setPlans([]);
+      setSelectedId("");
+      setPlan(null);
+      setDraft(null);
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setLoading(true);
+    void fetch(`${API_BASE}/api/pricing?company_id=${encodeURIComponent(selectedCompanyId)}`, { headers: authHeaders(token), signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
@@ -173,20 +217,23 @@ export default function PricingPage() {
         return response.json();
       })
       .then((rows: PlanSummary[]) => {
+        if (controller.signal.aborted) return;
         setPlans(rows);
-        if (!searchParams.get("lead_id") || !searchParams.get("job_id")) {
-          setSelectedId((current) => current || rows[0]?.id || "");
-        }
+        setSelectedId((current) => rows.some((row) => row.id === current) ? current : "");
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load pricing"))
-      .finally(() => setLoading(false));
-  }, [searchParams, token]);
+      .catch((reason) => {
+        if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Failed to load pricing");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [token, leadId, jobId, selectedCompanyId]);
 
   useEffect(() => {
-    const leadId = searchParams.get("lead_id");
-    const jobId = searchParams.get("job_id");
     if (!leadId || !jobId) return;
-    void fetch(`${API_BASE}/api/pricing/context?lead_id=${encodeURIComponent(leadId)}&job_id=${encodeURIComponent(jobId)}`, { headers: authHeaders(token) })
+    const controller = new AbortController();
+    void fetch(`${API_BASE}/api/pricing/context?lead_id=${encodeURIComponent(leadId)}&job_id=${encodeURIComponent(jobId)}`, { headers: authHeaders(token), signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
@@ -195,6 +242,7 @@ export default function PricingPage() {
         return response.json();
       })
       .then((context: JobContext) => {
+        if (controller.signal.aborted) return;
         setJobContext(context);
         setPlans(context.plans);
         setPricingMode(context.move_type === "Local" ? "local" : "long-distance");
@@ -205,18 +253,22 @@ export default function PricingPage() {
         }
         setCubicFeet(roundedCubicFeet(context.lead.volume));
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load job pricing"));
-  }, [searchParams, token]);
+      .catch((reason) => {
+        if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Failed to load job pricing");
+      });
+    return () => controller.abort();
+  }, [token, leadId, jobId]);
 
   useEffect(() => {
     if (!selectedId) return;
+    const controller = new AbortController();
     setLoading(true);
     setError("");
     setEditing(false);
     calculationId.current++;
     setCalculating(false);
     setQuote(null);
-    void fetch(`${API_BASE}/api/pricing/${selectedId}`, { headers: authHeaders(token) })
+    void fetch(`${API_BASE}/api/pricing/${selectedId}`, { headers: authHeaders(token), signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
@@ -225,6 +277,7 @@ export default function PricingPage() {
         return response.json();
       })
       .then((row: Plan) => {
+        if (controller.signal.aborted) return;
         setPlan(row);
         setDraft(structuredClone(row));
         setPendingRateGroups([]);
@@ -240,8 +293,13 @@ export default function PricingPage() {
         setQuantities({});
         setManualAmounts({});
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load pricing plan"))
-      .finally(() => setLoading(false));
+      .catch((reason) => {
+        if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Failed to load pricing plan");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   }, [selectedId, token]);
 
   const hasPendingRateGroups = pendingRateGroups.length > 0;
@@ -569,6 +627,23 @@ export default function PricingPage() {
       </div>
       <div className="pricing-layout">
         <aside className="pricing-book-list">
+          {!jobContext ? (
+            <>
+              <label>Company</label>
+              <select
+                value={selectedCompanyId}
+                onChange={(event) => {
+                  setSelectedCompanyId(event.target.value);
+                  setSelectedId("");
+                  setPlan(null);
+                  setDraft(null);
+                }}
+              >
+                <option value="">Select a company</option>
+                {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+              </select>
+            </>
+          ) : null}
           <label>Pricing book</label>
           <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
             {plans.map((row) => <option key={row.id} value={row.id}>{row.company_name} — {row.name}</option>)}

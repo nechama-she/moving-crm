@@ -10,6 +10,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import get_current_user, require_admin
@@ -31,6 +32,62 @@ from zip_state import delivery_location
 from local_pricing import local_route_matches, match_region_from_address
 
 router = APIRouter(prefix="/api/pricing", tags=["Pricing"])
+
+
+def _plan_counts_by_id(db: Session, plan_ids: list[str]) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
+    if not plan_ids:
+        return {}, {}, {}
+    rate_counts = {
+        str(plan_id): int(count or 0)
+        for plan_id, count in (
+            db.query(PricingRate.plan_id, func.count(PricingRate.id))
+            .filter(PricingRate.plan_id.in_(plan_ids))
+            .group_by(PricingRate.plan_id)
+            .all()
+        )
+    }
+    rule_counts = {
+        str(plan_id): int(count or 0)
+        for plan_id, count in (
+            db.query(PricingRule.plan_id, func.count(PricingRule.id))
+            .filter(PricingRule.plan_id.in_(plan_ids))
+            .group_by(PricingRule.plan_id)
+            .all()
+        )
+    }
+    service_counts = {
+        str(plan_id): int(count or 0)
+        for plan_id, count in (
+            db.query(PricingService.plan_id, func.count(PricingService.id))
+            .filter(PricingService.plan_id.in_(plan_ids))
+            .group_by(PricingService.plan_id)
+            .all()
+        )
+    }
+    return rate_counts, rule_counts, service_counts
+
+
+def _plan_summary_rows(plans: list[PricingPlan], db: Session) -> list[dict]:
+    plan_ids = [row.id for row in plans if row.id]
+    rate_counts, rule_counts, service_counts = _plan_counts_by_id(db, plan_ids)
+    rows: list[dict] = []
+    for plan in plans:
+        rows.append({
+            "id": plan.id,
+            "company_id": plan.company_id or "",
+            "company_name": plan.company_name,
+            "name": plan.name,
+            "source_file": plan.source_file,
+            "source_sheet": plan.source_sheet,
+            "pickup_regions": plan.pickup_regions,
+            "fuel_percent": float(plan.fuel_percent) if plan.fuel_percent is not None else None,
+            "active": bool(plan.active),
+            "rate_count": rate_counts.get(plan.id, 0),
+            "rule_count": rule_counts.get(plan.id, 0),
+            "service_count": service_counts.get(plan.id, 0),
+            "updated_at": plan.updated_at.isoformat() if plan.updated_at else "",
+        })
+    return rows
 
 
 def _plan_matches_pickup(plan: PricingPlan, pickup_state: str) -> bool:
@@ -525,15 +582,19 @@ def _charge_amount(charge: dict, cubic_feet: int, quantity: float, manual: float
 
 @router.get("")
 def list_pricing_plans(
+    company_id: str | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    query = _accessible_query(db, user)
+    if company_id:
+        query = query.filter(PricingPlan.company_id == company_id)
     plans = (
-        _accessible_query(db, user)
+        query
         .order_by(PricingPlan.company_name, PricingPlan.sort_order, PricingPlan.name)
         .all()
     )
-    return [plan.summary_dict() for plan in plans]
+    return _plan_summary_rows(plans, db)
 
 
 @router.get("/context")
@@ -556,6 +617,7 @@ def get_job_pricing_context(
     delivery_state, delivery_zip_code = delivery_location(job.delivery_zip)
 
     inferred_move_type, recommended = infer_job_move_type(lead, job, db, plans)
+    selected_plan = recommended or (plans[0] if plans else None)
     if not pickup_state:
         serviceability = "unknown_pickup"
     elif recommended is None:
@@ -577,8 +639,8 @@ def get_job_pricing_context(
             "delivery_state": delivery_state,
             "delivery_zip_code": delivery_zip_code,
         },
-        "plans": [plan.summary_dict() for plan in plans],
-        "recommended_plan_id": recommended.id if recommended else "",
+        "plans": _plan_summary_rows([selected_plan], db) if selected_plan else [],
+        "recommended_plan_id": selected_plan.id if selected_plan else "",
         "serviceability": serviceability,
         "move_type": inferred_move_type,
     }
