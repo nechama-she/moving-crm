@@ -116,6 +116,15 @@ def public_url(row):
     return f'{origin}/move/{row.id}#key={link_token(row.id)}'
 
 
+def create_customer_page_access(db, lead, job, key_hash, request_hash):
+    access_id = str(uuid4())
+    access = PublicMoveAccess(id=access_id, lead_id=lead.id, job_id=job.id, key_hash=key_hash,
+                              request_hash=request_hash, token_hash=digest(link_token(access_id)),
+                              expires_at=NOW()+timedelta(days=90))
+    db.add(access)
+    return access
+
+
 @router.post('/api/inventory')
 def intake(body: Intake, request: Request, x_api_secret: str = Header(default=''), idempotency_key: str = Header(min_length=8, max_length=128), db: Session = Depends(get_db)):
     expected = setting('PUBLIC_MOVE_API_KEY')
@@ -139,12 +148,9 @@ def intake(body: Intake, request: Request, x_api_secret: str = Header(default=''
                   stop_types=json.dumps([s.model_dump() for s in body.stops]))
     db.add(job); db.flush()
     _persist_job_route(db, job.id, body.pickup, [s.address for s in body.stops], body.delivery)
-    access_id = str(uuid4())
-    row = PublicMoveAccess(id=access_id, lead_id=lead.id, job_id=job.id, key_hash=key, request_hash=payload_hash,
-                           token_hash=digest(link_token(access_id)), expires_at=NOW()+timedelta(days=90))
-    url = public_url(row)
-    db.add(row); db.commit()
-    return {'lead_id': lead.id, 'job_id': job.id, 'url': url}
+    access = create_customer_page_access(db, lead, job, key, payload_hash)
+    db.commit()
+    return {'lead_id': lead.id, 'job_id': job.id, 'url': public_url(access)}
 
 
 @router.get('/api/public-moves/{access_id}/verify-options')
@@ -489,7 +495,8 @@ def staff_access(lead_id, user, db):
     lead = _get_visible_lead_or_404(lead_id, user, db)
     if user.role not in ('admin', 'sales_rep'): raise HTTPException(403, 'Staff access required')
     if user.role == 'sales_rep' and lead.assigned_to != user.id: raise HTTPException(403, 'Only the assigned rep can manage this move')
-    access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
+    db.query(Lead).filter(Lead.id == lead.id).with_for_update().one()
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).with_for_update().first()
     if not access: raise HTTPException(404, 'This lead has no customer page')
     return lead, access
 
@@ -503,6 +510,34 @@ def staff_page(lead_id: str, user: User = Depends(get_current_user), db: Session
     return {'url': public_url(access), 'revoked': access.revoked, 'job_id': job.id, 'company_id': lead.company_id or '',
             'price': str(job.price) if job.price is not None else '', 'cuft': str(lead.volume) if lead.volume is not None else '',
             'published': bool(access.published_at), 'pending_uploads': pending, 'requests': [{**meeting_dict(m), 'rep_name': (db.get(User, m.assigned_to).name if m.assigned_to and db.get(User, m.assigned_to) else '')} for m in meetings]}
+
+
+@router.post('/api/leads/{lead_id}/customer-page/generate')
+def generate_customer_page(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    if user.role not in ('admin', 'sales_rep'):
+        raise HTTPException(403, 'Staff access required')
+    if user.role == 'sales_rep' and lead.assigned_to != user.id:
+        raise HTTPException(403, 'Only the assigned rep can manage this move')
+
+    db.query(Lead).filter(Lead.id == lead.id).with_for_update().one()
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).with_for_update().first()
+    if access:
+        return {'url': public_url(access), 'lead_id': lead.id, 'job_id': access.job_id}
+
+    job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order.asc()).first()
+    if not job:
+        raise HTTPException(400, 'Create a job for this lead before generating a customer page')
+
+    access = create_customer_page_access(
+        db,
+        lead,
+        job,
+        secret_digest(f'generated:{lead.id}:{job.id}'),
+        digest(f'generated:{lead.id}:{job.id}'),
+    )
+    db.commit()
+    return {'url': public_url(access), 'lead_id': lead.id, 'job_id': job.id}
 
 
 @router.post('/api/leads/{lead_id}/customer-page/sms')

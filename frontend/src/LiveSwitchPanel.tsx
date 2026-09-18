@@ -127,10 +127,22 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
   }
   const load = useCallback(async () => {
     setLoading(true); setError("");
-    try { setConversation(await request(`${base}/conversation`)); }
+    try {
+      const nextConversation = await request(`${base}/conversation`);
+      await fetch(`${API_BASE}/api/leads/${encodeURIComponent(leadId)}/customer-page/generate`, {
+        method: "POST",
+        headers: authHeaders(token),
+      }).then(async response => {
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          throw new Error(result.detail || "Could not generate customer page");
+        }
+      });
+      setConversation(nextConversation);
+    }
     catch (err) { setError(err instanceof Error ? err.message : "Could not start LiveSwitch"); }
     finally { setLoading(false); }
-  }, [base, request]);
+  }, [base, leadId, request, token]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     const clampWidth = () => setPanelWidth(width => Math.min(window.innerWidth, Math.max(360, width)));
