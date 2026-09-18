@@ -764,10 +764,6 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
 
     pickup_state, pickup_zip = delivery_location(pickup_addr)
     delivery_state, delivery_zip = delivery_location(delivery_addr)
-    if move_type:
-        lead.move_type = move_type
-    if not move_type:
-        return None
 
     plans = (
         db.query(PricingPlan)
