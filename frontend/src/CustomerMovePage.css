@@ -29,10 +29,12 @@
 .cm-spark-btn:hover:not(:disabled){background:#16362f!important;box-shadow:0 2px 8px rgba(29,67,59,0.2)}
 .cm-spark-notice{font-size:12px;color:#214c3e;text-align:center;margin:0;line-height:1.4}
 .cm-spark-card{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:#f6f9f3;border:1px solid #dbe6d6;border-radius:10px}
+.cm-spark-estimate-card{margin-bottom:18px;background:#f0f5ec;border-color:#c8d7c2}
 .cm-spark-status-row{display:flex;align-items:center;gap:10px}
 .cm-spark-pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#214c3e}
 .cm-spark-dot{width:7px;height:7px;border-radius:50%}
 .cm-spark-dot.dot-complete{background:#2e844a}
+.cm-spark-dot.dot-failed{background:#ba0517}
 .cm-spark-dot.dot-pulse{background:#00a9e8;box-shadow:0 0 0 3px rgba(0,169,232,0.2)}
 .cm-spark-volume{font-size:12px;color:#3e544b;padding-left:8px;border-left:1px solid #ccd8c8}
 .cm-spark-link{color:#1e4b3e;font-size:12px;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:3px;padding:4px 8px;border-radius:6px;background:#e7f0e3;transition:background .15s}

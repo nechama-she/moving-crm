@@ -284,7 +284,7 @@ export default function CustomerMovePage() {
             </div>
             <button className="slds-button cm-primary" disabled={busy||!files.some(f=>['Ready','Try again'].includes(f.status))} onClick={()=>void upload()}>{busy?'Please wait...':'Upload files'}</button>
             {data.files.length>0&&<details><summary>{data.files.length} saved files</summary>{data.files.map(file=><p key={file.id}>{file.name}</p>)}</details>}
-            {data.files.length>0 && (
+            {data.files.length > 0 && !data.spark && reportState !== 'done' && (
               <div className="cm-spark-box">
                 <button
                   type="button"
@@ -303,15 +303,19 @@ export default function CustomerMovePage() {
                     }
                   }}
                 >
-                  {reportState === 'running' ? 'Processing inventory...' : (reportState === 'done' || data.spark) ? '✓ Inventory report requested' : "Done Uploading — Calculate My Move"}
+                  {reportState === 'running' ? 'Processing inventory...' : "Done Uploading — Calculate My Move"}
                 </button>
                 {reportNotice && <p role="status" className="cm-spark-notice">{reportNotice}</p>}
+              </div>
+            )}
+            </section>
+              <div className="cm-estimate">
                 {data.spark && (
-                  <div className="cm-spark-card">
+                  <div className="cm-spark-card cm-spark-estimate-card">
                     <div className="cm-spark-status-row">
                       <span className="cm-spark-pill">
-                        <span className={`cm-spark-dot ${data.spark.status === 'completed' ? 'dot-complete' : 'dot-pulse'}`} />
-                        {data.spark.status === 'completed' ? 'Report ready' : data.spark.status === 'running' ? 'Analyzing media...' : 'Queued'}
+                        <span className={`cm-spark-dot ${data.spark.status === 'completed' ? 'dot-complete' : data.spark.status === 'failed' ? 'dot-failed' : 'dot-pulse'}`} />
+                        {data.spark.status === 'completed' ? 'Report ready' : data.spark.status === 'running' ? 'Analyzing media...' : data.spark.status === 'failed' ? 'Report failed' : 'Queued'}
                       </span>
                       {data.spark.cuft ? <strong className="cm-spark-volume">{data.spark.cuft} cu ft</strong> : null}
                     </div>
@@ -322,10 +326,6 @@ export default function CustomerMovePage() {
                     )}
                   </div>
                 )}
-              </div>
-            )}
-            </section>
-              <div className="cm-estimate">
                 <span className="cm-estimate-eyebrow">{data.estimate?'Your moving estimate':'Your estimate'}</span>
                 <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):'We\'re working on it.'}</strong>
                 <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
