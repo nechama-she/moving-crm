@@ -427,7 +427,7 @@ def _packing_service_charges(
     return charges
 
 
-def _bulky_item_charges(services: list[PricingService], item_names: list[str]) -> list[dict]:
+def _bulky_item_charges(services: list[PricingService], item_names: list[str], rate_multiplier: float = 1.0) -> list[dict]:
     matched_counts: dict[str, int] = {}
     for name in item_names:
         normalized = _normalize_item_name(name)
@@ -454,9 +454,9 @@ def _bulky_item_charges(services: list[PricingService], item_names: list[str]) -
             charges.append({
                 "id": f"bulky:{service.id}:{key}",
                 "name": f"{service.name} {label}",
-                "description": f"Bulky item matched from report · {matched_count:g} × {prices[key]}",
+                "description": f"Bulky item matched from report · {matched_count:g} × {prices[key]}" + (" (50% local rate)" if rate_multiplier != 1.0 else ""),
                 "calculation_type": "fixed",
-                "rate": float(parsed * matched_count),
+                "rate": float(parsed * matched_count) * rate_multiplier,
                 "default_selected": default_selected,
                 "automatic": required,
                 "required": required,
@@ -830,8 +830,26 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         if total is None or total <= 0:
             return None
 
+        all_materials = (
+            _material_item_names(job._estimated_materials_data())
+            + _material_item_names(_job_spark_inventory_items(job.id, db))
+        )
+        bulky_charges = _bulky_item_charges(list(matched_plan.services), all_materials, rate_multiplier=0.5)
+
         db.query(LeadJobCharge).filter_by(job_id=job.id).delete()
-        for idx, line in enumerate(quote.get("charges", [])):
+        all_lines = list(quote.get("charges", []))
+        for b_charge in bulky_charges:
+            if b_charge.get("selected", True) and b_charge.get("rate", 0) > 0:
+                amt = Decimal(str(b_charge["rate"]))
+                all_lines.append({
+                    "name": b_charge["name"],
+                    "description": b_charge.get("description", ""),
+                    "subtotal": amt,
+                    "discountAmount": Decimal(0),
+                    "totalCost": amt,
+                })
+
+        for idx, line in enumerate(all_lines):
             if line.get("totalCost", 0) > 0:
                 db.add(LeadJobCharge(
                     id=str(uuid4()),
@@ -843,10 +861,10 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
                     discount_amount=line.get("discountAmount", Decimal(0)),
                     total_cost=line["totalCost"],
                 ))
-        job.price = total
+        job.price = sum((l["totalCost"] for l in all_lines if l.get("totalCost", 0) > 0), Decimal(0))
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
-        return float(total)
+        return float(job.price)
 
     else:
         destination = _plan_destination_for_delivery(matched_plan, delivery_addr, delivery_state or "", delivery_zip or "")
