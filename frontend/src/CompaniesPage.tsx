@@ -337,6 +337,7 @@ export default function CompaniesPage() {
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1080 }}>
           <thead>
             <tr>
+              <th style={th}>Company ID</th>
               <th style={th}>Name</th>
               <th style={th}>Default company</th>
               <th style={th}>Color</th>
@@ -355,18 +356,19 @@ export default function CompaniesPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={13}>Loading...</td>
+                <td style={td} colSpan={14}>Loading...</td>
               </tr>
             ) : null}
 
             {!loading && filteredCompanies.length === 0 ? (
               <tr>
-                <td style={td} colSpan={13}>No companies found.</td>
+                <td style={td} colSpan={14}>No companies found.</td>
               </tr>
             ) : null}
 
             {!loading && filteredCompanies.map((company) => (
               <tr key={company.id} style={{ borderTop: "1px solid #f1f0ef" }}>
+                <td style={{ ...td, fontFamily: "monospace", fontSize: 12, userSelect: "all" }}>{company.id}</td>
                 <td style={td}>{company.name || "-"}</td>
                 <td style={td}>
                   <input
