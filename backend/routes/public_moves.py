@@ -156,12 +156,20 @@ def intake(body: Intake, request: Request, x_api_secret: str = Header(default=''
 @router.get('/api/public-moves/{access_id}/verify-options')
 def verify_options(access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db)):
     lead = db.get(Lead, access.lead_id)
+    active_company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
+    company_color = active_company.color if active_company and active_company.color else resolve_company_color(active_company.name if active_company else None, None)
     options = []
     if lead.email:
         local, domain = lead.email.split('@', 1)
         options.append({'channel': 'email', 'destination': local[:1]+'***@'+domain})
     if lead.phone: options.append({'channel': 'sms', 'destination': '***'+lead.phone[-4:]})
-    return {'options': options}
+    return {
+        'options': options,
+        'company': {
+            'name': active_company.name if active_company else 'Your moving team',
+            'color': company_color,
+        }
+    }
 
 
 class CodeRequest(BaseModel):
@@ -385,10 +393,12 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
                 pass
 
     active_company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
+    company_color = active_company.color if active_company and active_company.color else resolve_company_color(active_company.name if active_company else None, None)
     company_data = {
         'name': active_company.name if active_company else 'Your moving team',
         'phone': active_company.phone or '' if active_company else '',
         'office_address': active_company.office_address or '' if active_company else '',
+        'color': company_color,
     }
 
     return {'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',

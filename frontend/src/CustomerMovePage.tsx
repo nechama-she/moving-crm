@@ -1,5 +1,5 @@
 import MeetingTimePicker from "./MeetingTimePicker";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import "./CustomerMovePage.css";
@@ -51,6 +51,7 @@ export default function CustomerMovePage() {
     specialRequirements: string[];
     additionalNotes?: string;
   }>({ specialRequirements: [] });
+  const [themeColor, setThemeColor] = useState<string>('#214c3e');
   const previews=useRef<string[]>([]);
   const base=`${API_BASE}/api/public-moves/${accessId}`;
   const headers={'x-public-link':key,'x-public-session':session};
@@ -76,7 +77,7 @@ export default function CustomerMovePage() {
     const urls=previews.current;
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
-  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setOptions(value.options);setChannel(value.options[0]?.channel||'');}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
+  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setOptions(value.options);setChannel(value.options[0]?.channel||'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
   useEffect(()=>{
     if(!session)return;
     let active=true;
@@ -91,7 +92,10 @@ export default function CustomerMovePage() {
       }
       if(!r.ok)throw new Error('Your move could not be refreshed.');
       const next=await r.json();
-      if(active)setData(next);
+      if(active){
+        setData(next);
+        if(next.company_details?.color)setThemeColor(next.company_details.color);
+      }
     }).catch(e=>{if(active)setError(e.message);});
     void load();
     // Poll every minute (60s) if spark is queued or running, otherwise standard 15s
@@ -196,8 +200,42 @@ export default function CustomerMovePage() {
 
   const wait=Math.max(0,Math.ceil((resendAt-clock)/1000));
 
+  const paletteStyle = useMemo(() => {
+    let c = (themeColor || '#214c3e').replace('#', '');
+    if (c.length === 3) c = c.split('').map(x => x + x).join('');
+    const r = parseInt(c.slice(0, 2), 16) / 255 || 0;
+    const g = parseInt(c.slice(2, 4), 16) / 255 || 0;
+    const b = parseInt(c.slice(4, 6), 16) / 255 || 0;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h = 0, s = 0, l = (max + min) / 2;
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: h = (b - r) / d + 2; break;
+        case b: h = (r - g) / d + 4; break;
+      }
+      h = Math.round(h * 60);
+    }
+    s = Math.round(s * 100);
+    l = Math.round(l * 100);
+    return {
+      '--cm-primary': themeColor || '#214c3e',
+      '--cm-primary-hover': `hsl(${h}, ${Math.min(100, s + 10)}%, ${Math.max(12, l - 8)}%)`,
+      '--cm-primary-dark': `hsl(${h}, ${Math.min(100, s + 15)}%, ${Math.max(8, l - 16)}%)`,
+      '--cm-tint': `hsl(${h}, ${Math.min(45, Math.round(s * 0.45))}%, 96%)`,
+      '--cm-tint-strong': `hsl(${h}, ${Math.min(40, Math.round(s * 0.4))}%, 91%)`,
+      '--cm-tint-hover': `hsl(${h}, ${Math.min(45, Math.round(s * 0.45))}%, 93%)`,
+      '--cm-border': `hsl(${h}, ${Math.min(30, Math.round(s * 0.35))}%, 80%)`,
+      '--cm-border-soft': `hsl(${h}, ${Math.min(25, Math.round(s * 0.3))}%, 88%)`,
+      '--cm-text': `hsl(${h}, ${Math.min(40, Math.round(s * 0.5))}%, 15%)`,
+      '--cm-text-muted': `hsl(${h}, ${Math.min(25, Math.round(s * 0.35))}%, 38%)`,
+    } as React.CSSProperties;
+  }, [themeColor]);
+
   return (
-    <div className="customer-move">
+    <div className="customer-move" style={paletteStyle}>
       <div className="cm-wrap">
         {!session ? (
           <section className="cm-verify">
