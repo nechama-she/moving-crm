@@ -20,6 +20,7 @@ const CompanyTemplatesPage = lazy(() => import("./CompanyTemplatesPage"));
 const SettingsPage = lazy(() => import("./SettingsPage"));
 const AutoAssignTrackerPage = lazy(() => import("./AutoAssignTrackerPage"));
 const AdminUsersPage = lazy(() => import("./AdminUsersPage"));
+const SystemUsersPage = lazy(() => import("./SystemUsersPage"));
 const SalesCalendarPage = lazy(() => import("./SalesCalendarPage"));
 const PendingDuplicationsPage = lazy(() => import("./PendingDuplicationsPage"));
 const LeadDuplicationRulesPage = lazy(() => import("./LeadDuplicationRulesPage"));
@@ -161,6 +162,7 @@ function ProtectedRoutes() {
           <Route path="/assign-period" element={user?.role === "admin" ? <PeriodAssignPage /> : <Navigate to="/" replace />} />
           <Route path="/sales-reps" element={<SalesRepsPage />} />
           <Route path="/admin-users" element={<AdminUsersPage />} />
+          <Route path="/system-users" element={user?.role === "admin" ? <SystemUsersPage /> : <Navigate to="/" replace />} />
           <Route path="/dispatch" element={<DispatchPage mode="calendar" />} />
           <Route path="/dispatch-users" element={<DispatchPage mode="manage" />} />
           <Route path="/foremen" element={<ForemenPage />} />

@@ -115,14 +115,21 @@ class User(Base):
     aircall_number_id = Column(String(50))
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False, default="sales_rep")
+    system_permissions = Column(Text, nullable=True)
     manager_dispatch_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     must_change_password = Column(Boolean, nullable=False, default=False)
-    # roles: admin, sales_rep, dispatch, foreman
+    # roles: admin, sales_rep, dispatch, foreman, system_user
     created_at = Column(DateTime(timezone=True), default=_now)
 
     companies = relationship("UserCompany", back_populates="user")
 
     def to_dict(self):
+        perms = None
+        if self.system_permissions:
+            try:
+                perms = json.loads(self.system_permissions)
+            except Exception:
+                perms = None
         return {
             "id": self.id,
             "email": self.email,
@@ -131,6 +138,7 @@ class User(Base):
             "smartmoving_rep_id": self.smartmoving_rep_id or "",
             "aircall_number_id": self.aircall_number_id or "",
             "role": self.role,
+            "system_permissions": perms,
             "manager_dispatch_id": self.manager_dispatch_id or "",
             "must_change_password": bool(self.must_change_password),
             "companies": [uc.company.to_dict() for uc in self.companies],

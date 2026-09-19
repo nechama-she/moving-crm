@@ -23,6 +23,7 @@ export default function SettingsPage() {
           <p style={desc}>{isDispatch ? "Create foremen and manage their company access." : "Create and maintain users who work in the CRM."}</p>
           <div style={actionsRow}>
             {isAdmin ? <Link to="/admin-users" style={primaryLink}>Manage Admin Users</Link> : null}
+            {isAdmin ? <Link to="/system-users" style={primaryLink}>Manage System Users</Link> : null}
             {isAdmin ? <Link to="/sales-reps" style={primaryLink}>Manage Sales Reps</Link> : null}
             {isAdmin ? <Link to="/dispatch-users" style={ghostLink}>Manage Dispatch</Link> : null}
             {canManageForemen ? <Link to="/foremen" style={ghostLink}>Manage Foremen</Link> : null}

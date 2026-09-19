@@ -9,6 +9,8 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
+from starlette.routing import Match
 
 from auth import decode_access_token, get_current_user, is_token_valid, require_admin
 from config import get_config
@@ -42,6 +44,59 @@ def _api_secret() -> str:
     return cfg.get("API_SECRET") or os.getenv("API_SECRET", "")
 
 
+def _check_system_user_permission(actor: User, request: Request) -> bool:
+    if not actor.system_permissions:
+        return False
+    try:
+        perms = json.loads(actor.system_permissions)
+    except Exception:
+        return False
+    if not isinstance(perms, list):
+        return False
+
+    req_method = request.method.upper()
+    path = request.url.path
+    scope_dict = {"type": "http", "method": req_method, "path": path, "headers": []}
+
+    matched_route = None
+    for r in app.routes:
+        if isinstance(r, APIRoute):
+            m, _ = r.matches(scope_dict)
+            if m == Match.FULL:
+                matched_route = r
+                break
+    if not matched_route:
+        for r in app.routes:
+            if isinstance(r, APIRoute):
+                m, _ = r.matches({"type": "http", "method": "GET", "path": path, "headers": []})
+                if m in (Match.FULL, Match.PARTIAL):
+                    matched_route = r
+                    break
+    if not matched_route:
+        return False
+
+    route_tags = matched_route.tags or ["Other"]
+    route_path = matched_route.path
+
+    for perm in perms:
+        if not isinstance(perm, dict):
+            continue
+        allowed_methods = [str(m).upper() for m in perm.get("methods", [])]
+        method_ok = ("*" in allowed_methods) or ("ALL" in allowed_methods) or (req_method in allowed_methods)
+        if not method_ok:
+            continue
+
+        perm_scope = perm.get("scope")
+        if perm_scope and perm_scope in route_tags:
+            return True
+
+        perm_path = perm.get("path")
+        if perm_path and (perm_path == route_path or perm_path == path):
+            return True
+
+    return False
+
+
 async def enforce_authentication(request: Request) -> None:
     if request.method == "OPTIONS":
         return  # CORS preflight - handled by CORSMiddleware
@@ -64,11 +119,16 @@ async def enforce_authentication(request: Request) -> None:
     auth_header = request.headers.get("Authorization") or ""
     scheme, _, token = auth_header.partition(" ")
     if scheme.lower() == "bearer" and token.strip() and is_token_valid(token.strip()):
-        if request.method not in {"GET", "HEAD", "OPTIONS"} and request.url.path != "/api/auth/change-password":
-            payload = decode_access_token(token.strip())
-            db = SessionLocal()
-            try:
-                actor = db.query(User).filter(User.id == str(payload.get("sub") or "")).first()
+        payload = decode_access_token(token.strip())
+        db = SessionLocal()
+        try:
+            actor = db.query(User).filter(User.id == str(payload.get("sub") or "")).first()
+            if actor and actor.role == "system_user":
+                if not _check_system_user_permission(actor, request):
+                    raise HTTPException(status_code=403, detail="Access denied for this system user")
+                return
+
+            if request.method not in {"GET", "HEAD", "OPTIONS"} and request.url.path != "/api/auth/change-password":
                 foreman_job_patch = (
                     request.method == "PATCH"
                     and re.fullmatch(r"/api/leads/[^/]+/jobs/[^/]+", request.url.path) is not None
@@ -82,8 +142,8 @@ async def enforce_authentication(request: Request) -> None:
                 )
                 if actor and actor.role == "foreman" and not (foreman_job_patch or foreman_file_upload):
                     raise HTTPException(status_code=403, detail="Foreman users are read-only")
-            finally:
-                db.close()
+        finally:
+            db.close()
         return
 
     raise HTTPException(status_code=401, detail="Not authenticated")
