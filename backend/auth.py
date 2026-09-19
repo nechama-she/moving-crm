@@ -102,8 +102,8 @@ def get_current_user(
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    """FastAPI dependency — requires admin role."""
-    if user.role != "admin":
+    """FastAPI dependency — requires admin role, or system_user whose endpoint access was already approved."""
+    if user.role != "admin" and user.role != "system_user":
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 

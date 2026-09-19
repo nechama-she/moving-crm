@@ -1,8 +1,10 @@
+import json
 import logging
 from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -26,7 +28,8 @@ class UserCreate(BaseModel):
     smartmoving_rep_id: str = ""
     aircall_number_id: str = ""
     password: str
-    role: str = "sales_rep"  # admin, sales_rep, dispatch, foreman
+    role: str = "sales_rep"  # admin, sales_rep, dispatch, foreman, system_user
+    system_permissions: Optional[List[dict]] = None
 
 
 class ForemanCreate(BaseModel):
@@ -57,6 +60,7 @@ class UserUpdate(BaseModel):
     phone: Optional[str] = None
     smartmoving_rep_id: Optional[str] = None
     aircall_number_id: Optional[str] = None
+    system_permissions: Optional[List[dict]] = None
 
 
 class AssignCompany(BaseModel):
@@ -437,6 +441,25 @@ def delete_foreman(
     return {"ok": True}
 
 
+@router.get("/system-endpoints")
+def get_system_endpoints(admin: User = Depends(require_admin)):
+    import main
+    endpoints = []
+    for r in main.app.routes:
+        if isinstance(r, APIRoute):
+            methods = sorted(r.methods - {"HEAD", "OPTIONS"})
+            if not methods:
+                continue
+            endpoints.append({
+                "path": r.path,
+                "methods": methods,
+                "tag": r.tags[0] if r.tags else "Other",
+                "summary": r.summary or r.name or "",
+            })
+    endpoints.sort(key=lambda x: (x["tag"], x["path"]))
+    return endpoints
+
+
 @router.get("")
 def list_users(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     users = db.query(User).order_by(User.name).all()
@@ -445,7 +468,7 @@ def list_users(admin: User = Depends(require_admin), db: Session = Depends(get_d
 
 @router.post("")
 def create_user(body: UserCreate, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
-    if body.role not in ("admin", "sales_rep", "dispatch"):
+    if body.role not in ("admin", "sales_rep", "dispatch", "system_user"):
         raise HTTPException(status_code=400, detail="Invalid role")
 
     if body.role == "sales_rep" and not (body.phone or "").strip():
@@ -457,6 +480,8 @@ def create_user(body: UserCreate, admin: User = Depends(require_admin), db: Sess
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
 
+    system_perms_json = json.dumps(body.system_permissions) if body.system_permissions is not None else None
+
     user = User(
         email=body.email,
         name=body.name,
@@ -465,6 +490,7 @@ def create_user(body: UserCreate, admin: User = Depends(require_admin), db: Sess
         aircall_number_id=(body.aircall_number_id or "").strip() or None,
         password_hash=hash_password(body.password),
         role=body.role,
+        system_permissions=system_perms_json,
         must_change_password=True,
     )
     db.add(user)
@@ -492,6 +518,8 @@ def update_user(
         user.smartmoving_rep_id = body.smartmoving_rep_id.strip() or None
     if body.aircall_number_id is not None:
         user.aircall_number_id = body.aircall_number_id.strip() or None
+    if body.system_permissions is not None:
+        user.system_permissions = json.dumps(body.system_permissions)
 
     db.commit()
     db.refresh(user)

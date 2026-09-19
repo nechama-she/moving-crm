@@ -40,8 +40,10 @@ def migrate() -> None:
             )
         """))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_smartmoving_referral_sources_normalized_name ON smartmoving_referral_sources (normalized_name)"))
+        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS system_permissions TEXT"))
     logger.info("communication_associations is ready")
     logger.info("smartmoving_referral_sources is ready")
+    logger.info("users.system_permissions is ready")
 
 
 if __name__ == "__main__":
