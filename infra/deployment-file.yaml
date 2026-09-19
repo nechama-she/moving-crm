@@ -1,6 +1,7 @@
 template-file-path: infra/template.yaml
 parameters:
   Environment: dev
+  PublicMoveEmbedOrigins: "http://127.0.0.1:4321 http://localhost:4321"
   DBInstanceClass: db.t3.micro
   DBName: moving_crm
   DBMasterUsername: crm_admin
