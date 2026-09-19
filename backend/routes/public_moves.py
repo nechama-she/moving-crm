@@ -384,9 +384,17 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             except Exception:
                 pass
 
+    active_company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
+    company_data = {
+        'name': active_company.name if active_company else 'Your moving team',
+        'phone': active_company.phone or '' if active_company else '',
+        'office_address': active_company.office_address or '' if active_company else '',
+    }
+
     return {'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
-            'company': lead.company.name if lead.company else 'Your moving team',
+            'company': company_data['name'],
+            'company_details': company_data,
             'estimate': estimate,
             'spark': spark_info,
             'walkthrough': meeting_dict(meeting) if meeting else None,

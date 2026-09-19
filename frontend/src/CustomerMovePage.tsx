@@ -12,6 +12,11 @@ type Details = {
   pickup: string;
   delivery: string;
   company: string;
+  company_details?: {
+    name: string;
+    phone: string;
+    office_address: string;
+  };
   stops: { address: string; type: string | null }[];
   estimate: {
     price: string;
@@ -224,6 +229,32 @@ export default function CustomerMovePage() {
           <p role="status">Opening your move...</p>
         ) : (
           <>
+            <header className="cm-company-header">
+              <div className="cm-company-header-left">
+                <div className="cm-company-logo-placeholder" aria-hidden="true">
+                  <span>LOGO</span>
+                </div>
+                <div>
+                  <span className="cm-company-welcome">Welcome to</span>
+                  <h2 className="cm-company-name">{data.company_details?.name || data.company || 'Your Moving Team'}</h2>
+                </div>
+              </div>
+              {(data.company_details?.phone || data.company_details?.office_address) && (
+                <div className="cm-company-header-right">
+                  {data.company_details.phone && (
+                    <a className="cm-company-phone" href={`tel:${data.company_details.phone}`}>
+                      📞 {data.company_details.phone}
+                    </a>
+                  )}
+                  {data.company_details.office_address && (
+                    <span className="cm-company-address">
+                      📍 {data.company_details.office_address}
+                    </span>
+                  )}
+                </div>
+              )}
+            </header>
+
             <section className="cm-two-col cm-intro">
               <div>
                 <div className="cm-eyebrow">LET'S MAKE YOUR NEXT MOVE EASIER</div>
