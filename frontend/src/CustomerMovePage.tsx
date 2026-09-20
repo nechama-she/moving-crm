@@ -1,3 +1,4 @@
+import CustomerPackingOptions, { type PackingPackage, type PackingSelection } from "./CustomerPackingOptions";
 import MeetingTimePicker from "./MeetingTimePicker";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
@@ -5,6 +6,7 @@ import { API_BASE } from "./apiConfig";
 import "./CustomerMovePage.css";
 
 type Details = {
+  packing_package: PackingPackage | null;
   packing_items: { id: string; label: string; price: number; selected: boolean; selected_service: string | null; services: { kind: string; price: number }[] }[];
   packing_saved: boolean;
   name: string;
@@ -47,6 +49,8 @@ export default function CustomerMovePage() {
   const [resendAt,setResendAt]=useState(0),[clock,setClock]=useState(Date.now());
   const [showQuestions, setShowQuestions] = useState(false);
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
+  const [packingStep, setPackingStep] = useState<'bulky' | 'package'>('bulky');
+  const [packageSelection, setPackageSelection] = useState<PackingSelection>({ mode: 'none', unpacking: false, item_ids: [] });
   const [packingSaving, setPackingSaving] = useState(false);
   const [packingError, setPackingError] = useState('');
   const money = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
@@ -58,7 +62,7 @@ export default function CustomerMovePage() {
     setPackingSaving(true);
     setPackingError('');
     try {
-      setData(await call('/packing', { selections: packingSelection }));
+      setData(await call('/packing', { selections: packingSelection, ...(data?.packing_package ? { package: packageSelection } : {}) }));
       setShowQuestions(false);
     } catch (err) {
       setPackingError((err as Error).message);
@@ -514,13 +518,15 @@ export default function CustomerMovePage() {
                 </div>
               )}
 
-              {data.estimate && data.packing_items?.length > 0 && (
+              {data.estimate && (data.packing_items?.length > 0 || data.packing_package) && (
                 <div className="cm-estimate-extra-actions">
                   <button
                     type="button"
                     className="slds-button cm-primary cm-extra-services-btn"
                     onClick={() => {
                       setPackingSelection(Object.fromEntries(data.packing_items.filter(item => item.selected).map(item => [item.id, item.selected_service || ''])));
+                      setPackingStep(data.packing_items.length ? 'bulky' : 'package');
+                      setPackageSelection(data.packing_package?.selection || { mode: 'none', unpacking: false, item_ids: [] });
                       setPackingError('');
                       setShowQuestions(true);
                     }}
@@ -540,12 +546,13 @@ export default function CustomerMovePage() {
                   <div className="cm-modal-header">
                     <div>
                       <span className="cm-eyebrow">EXTRA SERVICES</span>
-                      <h3 id="packing-title">Packing & crating for your bulky items</h3>
-                      <p>Select each item you want us to pack or crate.</p>
+                      <h3 id="packing-title">{packingStep === 'bulky' ? 'Packing & crating for your bulky items' : 'Packing services'}</h3>
+                      <p>{packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : 'Choose packing and optional unpacking for your move.'}</p>
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" disabled={packingSaving} onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
                   <div className="cm-modal-body">
+                    {packingStep === 'bulky' ? <>
                     <p className="cm-step-sub">Unchecked items will be packed by owner. When both services are available, choose one.</p>
                     <div className="cm-checklist">
                       {data.packing_items.map(item => (
@@ -577,11 +584,15 @@ export default function CustomerMovePage() {
                       ))}
                     </div>
                     <p><strong>Selected services total: {money(data.packing_items.reduce((sum, item) => sum + (item.services.find(service => service.kind === packingSelection[item.id])?.price || 0), 0))}</strong></p>
+                    </> : data.packing_package && <CustomerPackingOptions config={data.packing_package} selection={packageSelection} onChange={setPackageSelection} disabled={packingSaving} />}
                     {packingError && <p role="alert">{packingError}</p>}
                   </div>
                   <div className="cm-modal-footer">
-                    <button type="button" className="cm-secondary-btn" disabled={packingSaving} onClick={() => setShowQuestions(false)}>Cancel</button>
-                    <button type="button" className="slds-button cm-primary" disabled={packingSaving} onClick={() => void savePacking()}>{packingSaving ? 'Saving...' : 'Save & update price'}</button>
+                    <button type="button" className="cm-secondary-btn" disabled={packingSaving} onClick={() => packingStep === 'package' && data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)}>{packingStep === 'package' && data.packing_items.length ? 'Back' : 'Cancel'}</button>
+                    {packingStep === 'bulky' && data.packing_package ? <button type="button" className="slds-button cm-primary" onClick={() => {
+                      if (Object.values(packingSelection).some(value => !value)) { setPackingError('Choose packing or crating for each checked item.'); return; }
+                      setPackingError(''); setPackingStep('package');
+                    }}>Next: packing services</button> : <button type="button" className="slds-button cm-primary" disabled={packingSaving} onClick={() => void savePacking()}>{packingSaving ? 'Saving...' : 'Save & update price'}</button>}
                   </div>
                 </div>
               </div>

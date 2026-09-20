@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user, require_admin
 from database import get_db
+from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, packing_card
 from models import (
     LocalPricingRoute,
     PricingPlan,
@@ -196,6 +197,13 @@ class ServiceInput(BaseModel):
     rate_text: str = ""
     comments: str = ""
 
+    @field_validator('comments')
+    @classmethod
+    def validate_packing_card(cls, value):
+        if value.startswith(PACKING_CARD_PREFIX):
+            PackingCard.model_validate_json(value[len(PACKING_CARD_PREFIX):])
+        return value
+
 
 class PlanUpdate(BaseModel):
     name: str
@@ -350,7 +358,16 @@ def _packing_service_charges(
     """Collapse imported rate tiers into simple job-level packing and storage choices."""
     packing_groups: dict[str, list[PricingService]] = {"full": [], "partial": []}
     remaining: list[PricingService] = []
+    card = packing_card(services)
     for service in services:
+        if service.comments.startswith(PACKING_CARD_PREFIX):
+            continue
+        if card:
+            category = re.match(r"\s*(full\s+packing|partial\s+packing|unpacking)\b", service.name, re.IGNORECASE)
+            if category:
+                key = category.group(1).lower().split()[0]
+                if getattr(card, key) is not None:
+                    continue
         if _is_bulky_service(service):
             continue
         match = re.match(r"\s*(full|partial)\s+packing\b", service.name, re.IGNORECASE)
@@ -367,6 +384,16 @@ def _packing_service_charges(
         remaining = [service for service in remaining if service not in storage_services]
 
     charges = [_service_charge(service) for service in remaining]
+    if card:
+        for key, label in (('full', 'Full packing'), ('partial', 'Partial packing'), ('unpacking', 'Unpacking')):
+            rate = getattr(card, key)
+            if rate is not None:
+                charges.append({
+                    'id': f'packing:{key}', 'name': label,
+                    'description': f'${rate:g} / CF' + (' - Required-box items and materials included; excludes boxes of personal belongings' if key == 'partial' else ''),
+                    'calculation_type': 'per_cf', 'rate': float(rate),
+                    'default_selected': False, 'automatic': False, 'applies': True, 'quantity_label': '',
+                })
     for packing_type, tiers in packing_groups.items():
         if not tiers:
             continue
@@ -817,6 +844,66 @@ def customer_packing_options(lead, job, db, plan=None, move_type=None):
     return options
 
 
+def customer_packing_package(lead, job, db, plan=None, move_type=None):
+    if plan is None:
+        move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or not move_type or move_type.lower() == 'local':
+        return None
+    card = packing_card(plan.services)
+    if card is None:
+        return None
+    volume = _rounded_cubic_feet(lead.volume)
+    if volume <= 0:
+        return None
+    rates = {}
+    for kind in ('full', 'partial', 'unpacking'):
+        rate = getattr(card, kind)
+        if rate is not None:
+            rates[kind] = {'rate': float(rate), 'total': float((rate * volume).quantize(Decimal('0.01')))}
+    names = (_material_item_names(job._estimated_materials_data())
+             + _material_item_names(_job_spark_inventory_items(job.id, db)))
+    items = []
+    for item in card.items:
+        count = sum(_normalize_item_name(name) == _normalize_item_name(item.name) for name in names)
+        for index in range(count):
+            items.append({'id': f'{item.id}:{index + 1}',
+                          'label': f'{item.name} ({index + 1} of {count})' if count > 1 else item.name,
+                          'price': float(item.price)})
+    return {'cubic_feet': volume, 'rates': rates, 'items': items,
+            'selection': json.loads(job.customer_packing_package or '{"mode":"none","unpacking":false,"item_ids":[]}')}
+
+
+def customer_package_lines(package, selection):
+    if not package:
+        return []
+    lines = []
+    mode = selection.get('mode', 'none')
+    for kind in (mode, 'unpacking' if selection.get('unpacking') else 'none'):
+        if kind in package['rates']:
+            rate = package['rates'][kind]
+            name = {'full': 'Full packing', 'partial': 'Partial packing', 'unpacking': 'Unpacking'}[kind]
+            lines.append({'id': f'package:{kind}', 'name': name,
+                          'description': f"{package['cubic_feet']} cu ft at ${rate['rate']:g} / cu ft",
+                          'amount': Decimal(str(rate['total']))})
+    if mode == 'none':
+        for item in package['items']:
+            if item['id'] in selection.get('item_ids', []):
+                lines.append({'id': f"box:{item['id']}", 'name': f"{item['label']} Boxing",
+                              'description': 'Required box and packing materials included', 'amount': Decimal(str(item['price']))})
+    return lines
+
+
+def add_customer_package_charges(lead, job, db, plan, move_type):
+    package = customer_packing_package(lead, job, db, plan, move_type)
+    total = Decimal(0)
+    for index, line in enumerate(customer_package_lines(package, package['selection'] if package else {})):
+        db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, line['id']), job_id=job.id,
+                            name=line['name'], description=line['description'], sort_order=2000 + index,
+                            subtotal=line['amount'], discount_amount=0, total_cost=line['amount']))
+        total += line['amount']
+    return total
+
+
 def customer_packing_charge_id(job_id, item_id):
     from uuid import uuid5, NAMESPACE_URL
     return str(uuid5(NAMESPACE_URL, f'customer-packing:{job_id}:{item_id}'))
@@ -915,6 +1002,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
                 ))
         job.price = sum((l["totalCost"] for l in all_lines if l.get("totalCost", 0) > 0), Decimal(0))
         job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
+        job.price += add_customer_package_charges(lead, job, db, matched_plan, move_type)
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
         access = db.query(PublicMoveAccess).filter_by(job_id=job.id).first()
@@ -980,6 +1068,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             ))
         job.price = sum(l["total_cost"] for l in lines)
         job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
+        job.price += add_customer_package_charges(lead, job, db, matched_plan, move_type)
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
         access = db.query(PublicMoveAccess).filter_by(job_id=job.id).first()

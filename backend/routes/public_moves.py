@@ -403,11 +403,13 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
     }
 
     packing_items = []
+    packing_package = None
     if estimate and (job.company_id or lead.company_id):
-        from routes.pricing import customer_packing_options
+        from routes.pricing import customer_packing_options, customer_packing_package
+        packing_package = customer_packing_package(lead, job, db)
         packing_items = customer_packing_options(lead, job, db)
 
-    return {'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    return {'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': company_data['name'],
             'company_details': company_data,
@@ -418,7 +420,14 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             'files': [{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files]}
 
 
+class CustomerPackageSelection(BaseModel):
+    mode: Literal['full', 'partial', 'none'] = 'none'
+    unpacking: bool = False
+    item_ids: list[str] = Field(default_factory=list, max_length=1000)
+
+
 class CustomerPackingPatch(BaseModel):
+    package: CustomerPackageSelection | None = None
     selected_ids: list[str] = Field(default_factory=list, max_length=1000)
     selections: dict[str, Literal['packing', 'crating']] = Field(default_factory=dict, max_length=1000)
 
@@ -440,10 +449,28 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     for item in options:
         if item['id'] in choices and choices[item['id']] not in {service['kind'] for service in item['services']}:
             raise HTTPException(409, 'That service is unavailable for this item. Refresh and select again.')
+    package_lines = None
+    package_old_ids = []
+    if body.package is not None:
+        from routes.pricing import customer_packing_package, customer_package_lines
+        package = customer_packing_package(lead, job, db)
+        if package is None:
+            raise HTTPException(409, 'Long-distance packing is not available. Refresh your estimate.')
+        selection = body.package.model_dump()
+        if (selection['mode'] != 'none' and selection['mode'] not in package['rates']) or (selection['unpacking'] and 'unpacking' not in package['rates']):
+            raise HTTPException(409, 'That packing service is not priced. Refresh your estimate.')
+        if not set(selection['item_ids']).issubset({item['id'] for item in package['items']}):
+            raise HTTPException(409, 'Your required-box items changed. Refresh your estimate.')
+        if selection['mode'] != 'none':
+            selection['item_ids'] = []
+        previous_package = json.loads(job.customer_packing_package or '{}')
+        package_old_ids = ['package:full', 'package:partial', 'package:unpacking'] + [f'box:{item_id}' for item_id in previous_package.get('item_ids', [])]
+        package_lines = customer_package_lines(package, selection)
     if job.price is None:
         raise HTTPException(409, 'Your estimate is not ready yet.')
     previous = set(json.loads(job.customer_packing or '[]'))
     ids = [customer_packing_charge_id(job.id, item_id) for item_id in previous | selected]
+    ids.extend(customer_packing_charge_id(job.id, item_id) for item_id in package_old_ids)
     old_rows = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id, LeadJobCharge.id.in_(ids)).all()
     old_total = sum((row.total_cost for row in old_rows), Decimal(0))
     for row in old_rows:
@@ -458,6 +485,13 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                                 name=f"{item['label']} {choices[item['id']].title()}", description='', sort_order=1000 + index,
                                 subtotal=amount, discount_amount=0, total_cost=amount))
             new_total += amount
+    if package_lines is not None:
+        for index, line in enumerate(package_lines):
+            db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, line['id']), job_id=job.id,
+                                name=line['name'], description=line['description'], sort_order=2000 + index,
+                                subtotal=line['amount'], discount_amount=0, total_cost=line['amount']))
+            new_total += line['amount']
+        job.customer_packing_package = json.dumps(selection)
     job.customer_packing = json.dumps(choices, sort_keys=True)
     delta = new_total - old_total
     job.price += delta

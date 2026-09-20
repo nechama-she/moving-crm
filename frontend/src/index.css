@@ -1514,3 +1514,14 @@ button:focus-visible {
 .communications-contacts { grid-column: 1; grid-row: 1; }
 .communications-timeline { grid-column: 2; grid-row: 1; }
 @media (max-width: 800px) { .communications-workspace { grid-template-columns: 1fr; } .communications-contacts { grid-column: 1; grid-row: 1; } .communications-timeline { grid-column: 1; grid-row: 2; } }
+
+.ld-packing-card > p { color: #526171; margin: 8px 0 18px; max-width: 850px; }
+.ld-packing-rates { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.ld-packing-rates > label, .ld-packing-rates > div { display: flex; flex-direction: column; gap: 10px; padding: 16px; border: 1px solid #d9e2eb; border-radius: 8px; }
+.ld-packing-rates small, .ld-box-item small { color: #526171; }
+.ld-packing-rate-input { display: flex; align-items: center; gap: 8px; }
+.ld-packing-rate-input input { min-width: 0; width: 100%; }
+.ld-packing-rate-input span { white-space: nowrap; }
+.ld-box-items { display: grid; gap: 12px; }
+.ld-box-item { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 12px; border-bottom: 1px solid #d9e2eb; }
+.ld-box-item label { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 180px; }

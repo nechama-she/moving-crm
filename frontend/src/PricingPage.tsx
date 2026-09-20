@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import LocalPricing from "./LocalPricing";
+import LongDistancePackingCard, { isPackingCard } from "./LongDistancePackingCard";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
@@ -359,7 +360,7 @@ export default function PricingPage() {
     });
   }, [active]);
   const bulkyItems = useMemo(() => (active?.services || []).filter(isBulkyItem), [active]);
-  const pricingServices = useMemo(() => (active?.services || []).filter((service) => !isBulkyItem(service)), [active]);
+  const pricingServices = useMemo(() => (active?.services || []).filter((service) => !isBulkyItem(service) && !isPackingCard(service)), [active]);
   const customChargeTotal = useMemo(
     () => customCharges.reduce((sum, charge) => sum + Math.max(0, Number(charge.amount) || 0), 0),
     [customCharges],
@@ -833,6 +834,8 @@ export default function PricingPage() {
                   </table>
                 </div>
               </PricingSection>
+
+              <LongDistancePackingCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
 
               <PricingSection title="Bulky items rates" count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))}>
                 <div className="pricing-services pricing-bulky-rates">

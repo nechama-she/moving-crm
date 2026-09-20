@@ -268,9 +268,11 @@ def packing_pricing(monkeypatch):
     from decimal import Decimal
     source = (BACKEND / 'routes/pricing.py').read_text(encoding='utf-8')
     names = {'_normalize_item_name', '_is_bulky_service', '_bulky_item_prices', '_bulky_item_charges',
-             '_material_item_names', 'customer_packing_options', 'customer_packing_charge_id', 'add_customer_packing_charges'}
+             '_material_item_names', 'customer_packing_options', 'customer_packing_charge_id', 'add_customer_packing_charges', 'customer_packing_package', 'customer_package_lines', 'add_customer_package_charges', '_packing_service_charges', '_charge_amount'}
     nodes = [n for n in ast.parse(source).body if getattr(n, 'name', '') in names]
-    scope = {'json': json, 're': re, 'Decimal': Decimal, 'PricingService': object, 'LeadJobCharge': models.LeadJobCharge,
+    from long_distance_packing import packing_card
+    import math
+    scope = {'PACKING_CARD_PREFIX': '__ld_packing__:', 'packing_card': packing_card, '_rounded_cubic_feet': lambda value: math.ceil(float(value or 0)), 'json': json, 're': re, 'Decimal': Decimal, 'PricingService': object, 'LeadJobCharge': models.LeadJobCharge,
              'BULKY_ITEM_MARKER': '__bulky_item__', 'BULKY_ITEM_PREFIX': '__bulky_item__:',
              '_number': lambda value: Decimal(value) if value else None,
              '_job_spark_inventory_items': lambda *args: []}
@@ -368,3 +370,80 @@ def test_packing_and_crating_availability(packing_pricing, prices, expected):
         assert items[0]['price'] == 150
     elif items:
         assert not items[0]['selected']
+
+
+def test_long_distance_package_inventory_volume_and_materials(portal, packing_pricing):
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    lead.volume = 500.4
+    job.estimated_materials = json.dumps([{'name': 'Mirror', 'quantity': 2}, {'name': 'Chair'}])
+    service = SimpleNamespace(comments='__ld_packing__:' + json.dumps({
+        'full': '2', 'partial': '1', 'unpacking': '.50',
+        'items': [{'id': 'mirror', 'name': 'Mirror', 'price': '30'}, {'id': 'tv', 'name': 'TV', 'price': '50'}]}))
+    plan = SimpleNamespace(services=[service])
+    package = packing_pricing.customer_packing_package(lead, job, db, plan, 'Long Distance')
+    assert package['cubic_feet'] == 501
+    assert package['rates']['full']['total'] == 1002
+    assert len(package['items']) == 2
+    lines = packing_pricing.customer_package_lines(package, {'mode': 'none', 'unpacking': True, 'item_ids': ['mirror:2']})
+    assert [line['name'] for line in lines] == ['Unpacking', 'Mirror (2 of 2) Boxing']
+    assert sum(line['amount'] for line in lines) == 280.5
+    lines = packing_pricing.customer_package_lines(package, {'mode': 'partial', 'unpacking': True, 'item_ids': ['mirror:2']})
+    assert [line['name'] for line in lines] == ['Partial packing', 'Unpacking']
+    assert sum(line['amount'] for line in lines) == 751.5
+    assert packing_pricing.customer_packing_package(lead, job, db, plan, 'Local') is None
+    job.customer_packing_package = json.dumps({'mode': 'partial', 'unpacking': True, 'item_ids': []})
+    assert packing_pricing.add_customer_package_charges(lead, job, db, plan, 'Long Distance') == 751.5
+    db.flush()
+    assert db.query(models.LeadJobCharge).count() == 2
+
+
+def test_package_save_switch_and_validation(portal, packing_pricing, monkeypatch):
+    from decimal import Decimal
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    job.price = Decimal('1000')
+    access.published_price = Decimal('1000')
+    db.commit()
+    package = {'cubic_feet': 500, 'rates': {'full': {'rate': 2, 'total': 1000}, 'unpacking': {'rate': 1, 'total': 500}},
+               'items': [{'id': 'mirror:1', 'label': 'Mirror', 'price': 30}]}
+    monkeypatch.setattr(packing_pricing, 'customer_packing_options', lambda *args: [])
+    monkeypatch.setattr(packing_pricing, 'customer_packing_package', lambda *args: package)
+    leads = ModuleType('routes.leads')
+    leads._refresh_lead_estimated_total = lambda *args: None
+    monkeypatch.setitem(sys.modules, 'routes.leads', leads)
+    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    for _ in range(2):
+        mod.save_customer_packing(mod.CustomerPackingPatch(package={'mode': 'full', 'unpacking': True}), access, db)
+        assert job.price == Decimal('2500')
+        assert db.query(models.LeadJobCharge).count() == 2
+    for selection in [{'mode': 'partial'}, {'mode': 'none', 'item_ids': ['fake']}]:
+        with pytest.raises(HTTPException):
+            mod.save_customer_packing(mod.CustomerPackingPatch(package=selection), access, db)
+        assert job.price == Decimal('2500')
+    mod.save_customer_packing(mod.CustomerPackingPatch(package={'mode': 'none', 'item_ids': ['mirror:1']}), access, db)
+    assert job.price == Decimal('1030')
+    assert access.published_price == Decimal('1030')
+    assert db.query(models.LeadJobCharge).one().name == 'Mirror Boxing'
+    mod.save_customer_packing(mod.CustomerPackingPatch(package={'mode': 'none'}), access, db)
+    assert job.price == Decimal('1000')
+    assert db.query(models.LeadJobCharge).count() == 0
+
+
+def test_packing_card_rejects_invalid_rates_and_items():
+    from long_distance_packing import PackingCard
+    from pydantic import ValidationError
+    for payload in [{'full': '-1'}, {'unpacking': 'NaN'}, {'items': [{'id': 'x', 'name': ' ', 'price': 10}]},
+                    {'items': [{'id': 'x', 'name': 'TV', 'price': ''}]}]:
+        with pytest.raises(ValidationError):
+            PackingCard.model_validate(payload)
+    assert PackingCard.model_validate({'full': ''}).full is None
+
+
+def test_pricing_calculator_uses_configured_cf_rates_once(packing_pricing):
+    config = SimpleNamespace(comments='__ld_packing__:' + json.dumps({'full': '2', 'partial': '1', 'unpacking': '.5'}))
+    legacy = SimpleNamespace(name='Full packing up to 500', comments='', rate_text='$9 / cf')
+    charges = packing_pricing._packing_service_charges([config, legacy], 501, {})
+    assert [charge['id'] for charge in charges] == ['packing:full', 'packing:partial', 'packing:unpacking']
+    assert [packing_pricing._charge_amount(charge, 501, 1, 0) for charge in charges] == [1002, 501, 250.5]
+    assert all(not charge['default_selected'] for charge in charges)
