@@ -151,3 +151,5 @@
 
 /* Keep layout stable while unavailable actions are hidden. */
 .customer-move button:disabled{visibility:hidden}
+
+.cm-actions-stack{display:grid;grid-template-columns:minmax(0,1fr);gap:32px}@media(max-width:700px){.cm-actions-stack{gap:22px}}

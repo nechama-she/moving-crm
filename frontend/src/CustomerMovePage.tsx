@@ -403,7 +403,7 @@ export default function CustomerMovePage() {
               </section>
             </section>
             {error&&<div className="cm-error" role="alert">{error}</div>}
-            <div className="cm-two-col cm-actions-row">
+            <div className="cm-actions-stack cm-actions-row">
               <section className="cm-card cm-upload">
                 <div className="cm-eyebrow">SHOW US WHAT'S MOVING</div>
                 <button type="button" className="slds-button" style={{ marginTop: 12 }} onClick={() => setShowInventoryList(true)}>+ Add a list</button>
