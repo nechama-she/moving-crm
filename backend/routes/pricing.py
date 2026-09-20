@@ -694,27 +694,33 @@ def get_job_pricing_context(
     }
 
 
-def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
-    cubic_feet = _rounded_cubic_feet(body.cubic_feet)
-    normalized = body.destination.strip().lower()
-    candidates = [
-        row
-        for row in plan.rates
-        if row.destination.strip().lower() == normalized
-        and (row.cubic_feet_min is None or cubic_feet >= row.cubic_feet_min)
-        and (row.cubic_feet_max is None or cubic_feet <= row.cubic_feet_max)
-    ]
-    matched = candidates[0] if candidates else None
-    transport = (
-        Decimal(cubic_feet) * matched.rate
-        if matched and matched.rate is not None
-        else None
-    )
+def _transportation_price(plan, destination, cubic_feet):
+    normalized = destination.strip().lower()
+    rates = [row for row in plan.rates if row.destination.strip().lower() == normalized]
+    matched = next((row for row in rates
+                    if (row.cubic_feet_min is None or cubic_feet >= row.cubic_feet_min)
+                    and (row.cubic_feet_max is None or cubic_feet <= row.cubic_feet_max)), None)
+    below_first_band = False
+    if matched is None and rates:
+        first = min(rates, key=lambda row: row.cubic_feet_min or 0)
+        if (first.cubic_feet_min is not None and cubic_feet < first.cubic_feet_min
+                and first.minimum_price is not None):
+            matched = first
+            below_first_band = True
+    transport = Decimal(cubic_feet) * matched.rate if matched and matched.rate is not None else None
     minimum = matched.minimum_price if matched else None
-    if transport is not None and minimum is not None:
+    if below_first_band:
+        base = minimum
+    elif transport is not None and minimum is not None:
         base = max(transport, minimum)
     else:
         base = transport if transport is not None else minimum
+    return matched, transport, minimum, base
+
+
+def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
+    cubic_feet = _rounded_cubic_feet(body.cubic_feet)
+    matched, transport, minimum, base = _transportation_price(plan, body.destination, cubic_feet)
 
     charges: list[dict] = []
     if plan.fuel_percent is not None:
@@ -1109,20 +1115,7 @@ def lookup_pricing(
 ):
     plan = _plan_or_404(db, user, plan_id)
     rounded_cubic_feet = _rounded_cubic_feet(cubic_feet)
-    normalized = destination.strip().lower()
-    candidates = [
-        row
-        for row in plan.rates
-        if row.destination.strip().lower() == normalized
-        and (row.cubic_feet_min is None or rounded_cubic_feet >= row.cubic_feet_min)
-        and (row.cubic_feet_max is None or rounded_cubic_feet <= row.cubic_feet_max)
-    ]
-    rate = candidates[0] if candidates else None
-    transport = (
-        Decimal(rounded_cubic_feet) * rate.rate if rate and rate.rate is not None else None
-    )
-    minimum = rate.minimum_price if rate else None
-    base = max(transport, minimum) if transport is not None and minimum is not None else transport or minimum
+    rate, transport, minimum, base = _transportation_price(plan, destination, rounded_cubic_feet)
     fuel = (
         base * plan.fuel_percent / Decimal(100)
         if base is not None and plan.fuel_percent is not None
