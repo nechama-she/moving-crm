@@ -471,8 +471,8 @@ export default function CustomerMovePage() {
               <div className="cm-estimate-top">
                 <div className="cm-estimate-main-info">
                   <span className="cm-estimate-eyebrow">{data.estimate?'Your moving estimate':'Your estimate'}</span>
-                  <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':'We\'re working on it.'}</strong>
-                  <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+                  <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'?'Your report is ready. Pricing is pending.':'We\'re working on it.'}</strong>
+                  <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
                 </div>
                 {data.spark && (
                   <div className="cm-spark-card cm-spark-estimate-card">
@@ -518,7 +518,7 @@ export default function CustomerMovePage() {
                 </div>
               )}
 
-              {data.estimate && (data.packing_items?.length > 0 || data.packing_package) && (
+              {(data.packing_items?.length > 0 || data.packing_package) && (
                 <div className="cm-estimate-extra-actions">
                   <button
                     type="button"
@@ -585,6 +585,7 @@ export default function CustomerMovePage() {
                     </div>
                     <p><strong>Selected services total: {money(data.packing_items.reduce((sum, item) => sum + (item.services.find(service => service.kind === packingSelection[item.id])?.price || 0), 0))}</strong></p>
                     </> : data.packing_package && <CustomerPackingOptions config={data.packing_package} selection={packageSelection} onChange={setPackageSelection} disabled={packingSaving} />}
+                    {!data.estimate && <p>Your choices will be saved and included when your estimate is ready.</p>}
                     {packingError && <p role="alert">{packingError}</p>}
                   </div>
                   <div className="cm-modal-footer">
@@ -592,7 +593,7 @@ export default function CustomerMovePage() {
                     {packingStep === 'bulky' && data.packing_package ? <button type="button" className="slds-button cm-primary" onClick={() => {
                       if (Object.values(packingSelection).some(value => !value)) { setPackingError('Choose packing or crating for each checked item.'); return; }
                       setPackingError(''); setPackingStep('package');
-                    }}>Next: packing services</button> : <button type="button" className="slds-button cm-primary" disabled={packingSaving} onClick={() => void savePacking()}>{packingSaving ? 'Saving...' : 'Save & update price'}</button>}
+                    }}>Next: packing services</button> : <button type="button" className="slds-button cm-primary" disabled={packingSaving} onClick={() => void savePacking()}>{packingSaving ? 'Saving...' : data.estimate ? 'Save & update price' : 'Save selections'}</button>}
                   </div>
                 </div>
               </div>

@@ -29,16 +29,22 @@ export default function LongDistancePackingCard({ services, editing, onChange }:
     </div>
     <h4>Items that must be boxed</h4>
     <p>These items cannot be shipped with blanket wrapping alone. With no packing selected, the customer can pay us to pack individual items or pack them themselves. Boxing is required either way.</p>
-    <div className="pricing-services pricing-packing-rates">
-      {config.items.map(item => <article className={editing ? "ld-box-item-edit" : undefined} key={item.id}>
-        {editing ? <>
-          <label>Item<input value={item.name} placeholder="Item name" onChange={e => update({ items: config.items.map(row => row.id === item.id ? { ...row, name: e.target.value } : row) })} /></label>
-          <label>Packing price per item<input type="number" min="0" step="0.01" value={item.price} placeholder="0.00" onChange={e => update({ items: config.items.map(row => row.id === item.id ? { ...row, price: e.target.value } : row) })} /></label>
-          <button type="button" className="slds-button text-danger" onClick={() => update({ items: config.items.filter(row => row.id !== item.id) })}>Remove</button>
-        </> : <><div><strong>{item.name}</strong><small>Must be boxed</small></div><b>{money(item.price)} / item</b></>}
-      </article>)}
-      {!config.items.length && <article><div><strong>No required-box items configured.</strong></div></article>}
-      {editing && <button type="button" className="slds-button add-row" onClick={() => update({ items: [...config.items, { id: crypto.randomUUID(), name: '', price: '' }] })}>+ Add required-box item</button>}
+    <div className="ld-box-table-wrap">
+      <table className="slds-table slds-table_bordered ld-box-table" aria-label="Items that must be boxed">
+        <thead><tr>
+          <th scope="col">Item</th>
+          <th scope="col" className="ld-box-price">Packing price / item</th>
+          {editing && <th scope="col" className="ld-box-action"><button type="button" className="slds-button ld-box-icon" aria-label="Add required-box item" title="Add item" onClick={() => update({ items: [...config.items, { id: crypto.randomUUID(), name: '', price: '' }] })}>+</button></th>}
+        </tr></thead>
+        <tbody>
+          {config.items.map((item, index) => <tr key={item.id}>
+            <td>{editing ? <input className="slds-input" aria-label={`Item ${index + 1} name`} value={item.name} placeholder="Item name" onChange={e => update({ items: config.items.map(row => row.id === item.id ? { ...row, name: e.target.value } : row) })} /> : item.name}</td>
+            <td className="ld-box-price">{editing ? <input className="slds-input" aria-label={`Item ${index + 1} packing price`} type="number" min="0" step="0.01" value={item.price} placeholder="0.00" onChange={e => update({ items: config.items.map(row => row.id === item.id ? { ...row, price: e.target.value } : row) })} /> : money(item.price)}</td>
+            {editing && <td className="ld-box-action"><button type="button" className="slds-button ld-box-icon" aria-label={`Remove ${item.name || `item ${index + 1}`}`} title="Remove item" onClick={() => update({ items: config.items.filter(row => row.id !== item.id) })}>&times;</button></td>}
+          </tr>)}
+          {!config.items.length && <tr><td colSpan={editing ? 3 : 2} className="ld-box-empty">No required-box items configured.{editing && ' Use + to add an item.'}</td></tr>}
+        </tbody>
+      </table>
     </div>
   </div>;
 }

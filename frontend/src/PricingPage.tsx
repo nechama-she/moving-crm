@@ -403,7 +403,7 @@ export default function PricingPage() {
     return editing ? <>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={cancelServiceEdit}>Cancel changes</button>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save changes'}</button>
-    </> : <button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => startServiceEdit(section)}>Edit</button>;
+    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
   }
 
   function patchDraft(patch: Partial<Plan>) {

@@ -1515,16 +1515,29 @@ button:focus-visible {
 .communications-timeline { grid-column: 2; grid-row: 1; }
 @media (max-width: 800px) { .communications-workspace { grid-template-columns: 1fr; } .communications-contacts { grid-column: 1; grid-row: 1; } .communications-timeline { grid-column: 1; grid-row: 2; } }
 
- .ld-packing-card > p { color: #706e6b; font-size: 13px; margin: 0 0 14px; }
+.ld-packing-card > p { color: #706e6b; font-size: 13px; margin: 0 0 14px; }
 .ld-packing-card > h4 { margin: 22px 0 8px; font-size: 13px; }
 .pricing-services.pricing-packing-rates { grid-template-columns: minmax(0, 1fr); }
 .ld-packing-rate-input { display: flex; align-items: center; gap: 8px; width: 190px; }
 .ld-packing-rate-input input { min-width: 0; }
 .ld-packing-rate-input span { white-space: nowrap; color: #706e6b; font-size: 12px; }
-.pricing-packing-rates article.ld-box-item-edit { grid-template-columns: minmax(0, 1fr) minmax(140px, 190px) auto; }
-.ld-box-item-edit label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #706e6b; }
 @media (max-width: 600px) {
-  .pricing-packing-rates article, .pricing-packing-rates article.ld-box-item-edit { grid-template-columns: minmax(0, 1fr); padding: 12px; }
+  .pricing-packing-rates article { grid-template-columns: minmax(0, 1fr); padding: 12px; }
   .pricing-packing-rates b { text-align: left; }
   .ld-packing-rate-input { width: 100%; }
 }
+
+.ld-box-table-wrap { overflow-x: auto; border: 1px solid #dddbda; border-radius: 4px; }
+.ld-box-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; background: #fff; }
+.ld-box-table th, .ld-box-table td { padding: 6px 10px; border-bottom: 1px solid #dddbda; text-align: left; vertical-align: middle; overflow-wrap: anywhere; }
+.ld-box-table th { background: #fafaf9; color: #514f4d; font-size: 12px; font-weight: 700; }
+.ld-box-table tr:last-child td { border-bottom: 0; }
+.ld-box-table tbody tr:hover { background: #f3f3f3; }
+.ld-box-table .ld-box-price { width: 170px; text-align: right; }
+.ld-box-table .ld-box-action { width: 44px; padding: 4px; text-align: center; }
+.ld-box-table input { width: 100%; min-width: 0; height: 32px; box-sizing: border-box; border: 1px solid #c9c7c5; border-radius: 4px; padding: 4px 8px; background: #fff; color: #181818; }
+.ld-box-table .ld-box-price input { text-align: right; }
+.ld-box-table .ld-box-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; min-height: 28px; margin: 0; padding: 0; border: 1px solid #c9c7c5; border-radius: 4px; background: #fff; color: #0176d3; font-size: 20px; line-height: 1; }
+.ld-box-table .ld-box-icon:hover { background: #eef4ff; border-color: #0176d3; }
+.ld-box-table .ld-box-empty { padding: 12px 10px; color: #706e6b; }
+@media (max-width: 600px) { .ld-box-table .ld-box-price { width: 130px; } }

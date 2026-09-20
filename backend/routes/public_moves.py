@@ -404,7 +404,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
 
     packing_items = []
     packing_package = None
-    if estimate and (job.company_id or lead.company_id):
+    if not is_spark_pending and (job.company_id or lead.company_id):
         from routes.pricing import customer_packing_options, customer_packing_package
         packing_package = customer_packing_package(lead, job, db)
         packing_items = customer_packing_options(lead, job, db)
@@ -467,7 +467,13 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         package_old_ids = ['package:full', 'package:partial', 'package:unpacking'] + [f'box:{item_id}' for item_id in previous_package.get('item_ids', [])]
         package_lines = customer_package_lines(package, selection)
     if job.price is None:
-        raise HTTPException(409, 'Your estimate is not ready yet.')
+        # Keep customer choices while the base estimate is still being prepared.
+        # Repricing applies these selections when a complete price is available.
+        job.customer_packing = json.dumps(choices, sort_keys=True)
+        if body.package is not None:
+            job.customer_packing_package = json.dumps(selection)
+        db.commit()
+        return details(access, db)
     previous = set(json.loads(job.customer_packing or '[]'))
     ids = [customer_packing_charge_id(job.id, item_id) for item_id in previous | selected]
     ids.extend(customer_packing_charge_id(job.id, item_id) for item_id in package_old_ids)

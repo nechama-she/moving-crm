@@ -496,3 +496,36 @@ def test_packing_route_uses_customer_session_through_global_auth(portal, packing
         assert client.post(path, headers=headers, json=body).status_code == 200
         assert job.price == Decimal('2500')
         assert client.get('/api/staff-only', headers=headers).status_code == 401
+
+
+def test_customer_can_save_inventory_choices_before_base_price(portal, packing_pricing, monkeypatch):
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    assert job.price is None
+    monkeypatch.setattr(packing_pricing, 'customer_packing_options', lambda *args: [
+        {'id': 'piano:1', 'label': 'Piano', 'services': [{'kind': 'packing', 'price': 500}]}])
+    leads = ModuleType('routes.leads')
+    leads._refresh_lead_estimated_total = lambda *args: None
+    monkeypatch.setitem(sys.modules, 'routes.leads', leads)
+    monkeypatch.setattr(mod, 'details', lambda *args: {'estimate': None})
+    result = mod.save_customer_packing(mod.CustomerPackingPatch(selections={'piano:1': 'packing'}), access, db)
+    assert result['estimate'] is None
+    assert json.loads(job.customer_packing) == {'piano:1': 'packing'}
+    assert job.price is None
+    assert db.query(models.LeadJobCharge).count() == 0
+
+
+def test_details_exposes_inventory_questions_without_estimate(portal, packing_pricing, monkeypatch):
+    mod, db, lead, access = portal
+    company = models.Company(id='packing-company', name='Moving company')
+    db.add(company)
+    job = db.get(models.LeadJob, access.job_id)
+    job.company_id = company.id
+    db.commit()
+    mod._read_job_route = lambda db, job: ('A', [], 'B')
+    items = [{'id': 'piano:1', 'label': 'Piano', 'services': [{'kind': 'packing', 'price': 500}]}]
+    monkeypatch.setattr(packing_pricing, 'customer_packing_options', lambda *args: items)
+    monkeypatch.setattr(packing_pricing, 'customer_packing_package', lambda *args: None)
+    result = mod.details(access, db)
+    assert result['estimate'] is None
+    assert result['packing_items'] == items
