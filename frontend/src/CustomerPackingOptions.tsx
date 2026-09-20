@@ -10,32 +10,36 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
   config: PackingPackage; selection: PackingSelection; onChange: (value: PackingSelection) => void; disabled: boolean;
 }) {
   const total = (selection.mode !== 'none' ? config.rates[selection.mode]?.total || 0 : config.items.filter(item => selection.item_ids.includes(item.id)).reduce((sum, item) => sum + item.price, 0)) + (selection.unpacking ? config.rates.unpacking?.total || 0 : 0);
-  return <>
-    <h4>How would you like your move packed?</h4>
-    <p className="cm-step-sub">Packing and unpacking rates are based on {config.cubic_feet.toLocaleString()} cu ft.</p>
-    <div className="cm-options-grid">
-      {(['full', 'partial', 'none'] as const).filter(mode => mode === 'none' || config.rates[mode]).map(mode => <label key={mode} className={`cm-option-card ${selection.mode === mode ? 'selected' : ''}`}>
+  return <div className="cm-packing-options">
+    <div className="cm-packing-heading"><h4>Choose your packing service</h4><span>{config.cubic_feet.toLocaleString()} cu ft</span></div>
+    <div className="cm-packing-choices">
+      {(['full', 'partial', 'none'] as const).filter(mode => mode === 'none' || config.rates[mode]).map(mode => <label key={mode} className={`cm-packing-choice ${selection.mode === mode ? 'selected' : ''}`}>
         <input type="radio" name="packing-package" disabled={disabled} checked={selection.mode === mode} onChange={() => onChange({ ...selection, mode, item_ids: [] })} />
-        <strong>{mode === 'full' ? 'Full packing' : mode === 'partial' ? 'Partial packing' : 'No packing'}</strong>
-        <small>{mode === 'full' ? 'We pack your belongings, including boxes of personal items. Packing materials included.' : mode === 'partial' ? 'We pack items that cannot go on the truck without a box. All required materials included at no extra charge. Excludes packing boxes of personal belongings.' : 'You pack your belongings. You can choose individual items for us to pack below.'}</small>
-        {mode !== 'none' && <strong>{money(config.rates[mode]!.rate)} / cu ft ? {money(config.rates[mode]!.total)}</strong>}
+        <span className="cm-packing-copy"><strong className="cm-packing-title"><span>{mode === 'full' ? 'Full packing' : mode === 'partial' ? 'Partial packing' : 'No packing'}</span><span className="cm-packing-inline-price">&middot; {mode === 'none' ? '$0' : <>{money(config.rates[mode]!.rate)} / cu ft &middot; {money(config.rates[mode]!.total)}</>}</span></strong>
+        <small>{mode === 'full' ? 'All belongings, including personal-item boxes. Materials included.' : mode === 'partial' ? 'We box items that require it. Materials included; personal-item boxes excluded.' : 'Pack yourself, or choose individual items below.'}</small></span>
       </label>)}
     </div>
-    {selection.mode === 'none' && <>
+    {selection.mode === 'none' && <section className="cm-packing-items">
       <h4>These items must be boxed</h4>
-      <p className="cm-step-sub">Blanket wrapping alone is not sufficient. Select any items you want us to pack, or leave all unchecked and pack them yourself. Every item listed must be properly boxed before loading.</p>
+      <p className="cm-step-sub">These inventory items need boxes before loading; blankets are not enough. Select items for us to pack, or box them yourself.</p>
       <div className="cm-checklist">
-        {config.items.map(item => <label key={item.id} className="cm-check-item">
+        {config.items.map(item => <label key={item.id} className="cm-packing-choice">
           <input type="checkbox" disabled={disabled} checked={selection.item_ids.includes(item.id)} onChange={e => onChange({ ...selection, item_ids: e.target.checked ? [...selection.item_ids, item.id] : selection.item_ids.filter(id => id !== item.id) })} />
-          <span>{item.label} ? {money(item.price)}<small style={{ display: 'block' }}>Box and packing materials included. Must be boxed even if packed by owner.</small></span>
+          <span className="cm-packing-copy"><strong>{item.label}</strong><small>Box and materials included</small></span><strong className="cm-packing-price">{money(item.price)}</strong>
         </label>)}
       </div>
       {!config.items.length && <p>No required-box items have been identified in your current inventory.</p>}
-    </>}
-    {config.rates.unpacking && <label className="cm-check-item">
-      <input type="checkbox" disabled={disabled} checked={selection.unpacking} onChange={e => onChange({ ...selection, unpacking: e.target.checked })} />
-      <span>Add unpacking ? {money(config.rates.unpacking.rate)} / cu ft ? {money(config.rates.unpacking.total)}<small style={{ display: 'block' }}>Available with any packing choice.</small></span>
-    </label>}
-    <p><strong>Packing and unpacking total: {money(total)}</strong></p>
-  </>;
+    </section>}
+    {config.rates.unpacking && <section className="cm-unpacking-addon" aria-labelledby="cm-unpacking-heading">
+      <h4 id="cm-unpacking-heading">Optional add-on</h4>
+      <label className="cm-unpacking-control">
+        <input type="checkbox" disabled={disabled} checked={selection.unpacking} onChange={e => onChange({ ...selection, unpacking: e.target.checked })} />
+        <span className="cm-packing-copy">
+          <strong className="cm-packing-title"><span>Add unpacking</span><span className="cm-packing-inline-price">&middot; {money(config.rates.unpacking.rate)} / cu ft &middot; {money(config.rates.unpacking.total)}</span></strong>
+          <small>A separate service for your move. Available with full, partial, or no packing.</small>
+        </span>
+      </label>
+    </section>}
+    <div className="cm-packing-total" aria-live="polite"><span>Packing &amp; unpacking total</span><strong>{money(total)}</strong></div>
+  </div>;
 }
