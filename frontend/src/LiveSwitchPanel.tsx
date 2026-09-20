@@ -1,3 +1,4 @@
+import SparkProcessingLog from "./SparkProcessingLog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import CustomerPageControls from "./CustomerPageControls";
 import { createPortal } from "react-dom";
@@ -376,6 +377,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
                 </a>
               )}
             </div>
+            {sparkData.status === "completed" && <SparkProcessingLog key={sparkData.id} base={base} token={token || ""} reportId={sparkData.id} />}
             <div style={{ marginTop: 10 }}>
               <button
                 type="button"

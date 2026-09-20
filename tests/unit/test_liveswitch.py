@@ -268,25 +268,25 @@ def reports():
         node.returns = None
         node.args.defaults = []
         for arg in node.args.args: arg.annotation = None
-    scope = {'json': json, 'time': time, 'Decimal': Decimal, 'datetime': datetime, 'HTTPException': HTTPException,
+    scope = {'PublicMoveAccess': MagicMock(), 'SparkProcessingLog': MagicMock(), 'json': json, 'time': time, 'Decimal': Decimal, 'datetime': datetime, 'HTTPException': HTTPException,
              'LeadLiveSwitch': object(), 'Lead': object(), '_connection_config': lambda: {'spark_template_id': 'template'},
              '_api_post': MagicMock(return_value={'id': 'new-report', 'status': 'queued'}),
              '_api_get': MagicMock(return_value={'id': 'new-report', 'status': 'completed', 'shareUrl': 'new-url'}),
              '_ensure_not_dispatch_write': MagicMock(), '_get_visible_lead_or_404': MagicMock(return_value=SimpleNamespace(id='lead')),
-             'fetch_and_extract_spark_report': MagicMock(return_value=(1200, 8400))}
+             'fetch_and_extract_spark_report': MagicMock(return_value=(1200, 8400, []))}
     exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), 'exec'), scope)
     return scope
 
 
 def test_new_report_clears_old_extracted_values_and_link(reports):
     saved = SimpleNamespace(details=json.dumps({'id': 'conversation', 'last_spark_id': 'old',
-        'spark_extracted_id': 'old', 'spark_extracted_cuft': 86.3, 'spark_extracted_weight': 604, 'last_spark_share_url': 'old-url'}))
+        'spark_extracted_id': 'old', 'spark_extracted_cuft': 86.3, 'spark_extracted_weight': 604, 'last_spark_share_url': 'old-url', 'spark_processing': {'report_id': 'old'}}))
     db = MagicMock(); db.get.return_value = saved
     reports['trigger_lead_spark']('lead', None, db)
     data = json.loads(saved.details)
     assert data['last_spark_id'] == 'new-report'
     assert data['id'] == 'conversation'
-    assert all(key not in data for key in ('spark_extracted_id', 'spark_extracted_cuft', 'spark_extracted_weight', 'last_spark_share_url'))
+    assert all(key not in data for key in ('spark_extracted_id', 'spark_extracted_cuft', 'spark_extracted_weight', 'last_spark_share_url', 'spark_processing'))
 
 
 def test_latest_completed_report_replaces_old_cuft_in_same_status_response(reports):
@@ -309,7 +309,7 @@ def test_apply_latest_report_reads_volume_again_and_reprices(reports):
     from unittest.mock import patch
     lead = SimpleNamespace(id='lead', volume=86.3, weight=604)
     saved = SimpleNamespace(details=json.dumps({'last_spark_id': 'new-report', 'spark_extracted_cuft': 86.3}))
-    job = SimpleNamespace(price=699)
+    job = SimpleNamespace(id='job', job_order=1, price=699)
     access = SimpleNamespace()
     db = MagicMock(); db.get.side_effect = [lead, saved]
     db.query.return_value.filter_by.return_value.order_by.return_value.first.return_value = job
@@ -321,7 +321,7 @@ def test_apply_latest_report_reads_volume_again_and_reprices(reports):
     calc = MagicMock(side_effect=recalculate)
     with patch.dict(sys.modules, {'models': MagicMock(), 'routes.pricing': SimpleNamespace(calculate_and_save_lead_job_price=calc)}):
         result = reports['apply_spark_results_to_lead']('lead', 'new-url', db)
-    reports['fetch_and_extract_spark_report'].assert_called_once_with('new-url')
+    reports['fetch_and_extract_spark_report'].assert_called_once_with('new-url', processing=reports['SparkProcessingLog'].return_value)
     assert result['cuft'] == access.published_cuft == 1200
     assert result['price'] == access.published_price == 2000
     assert json.loads(saved.details)['spark_extracted_id'] == 'new-report'

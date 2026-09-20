@@ -10,6 +10,7 @@ import secrets
 import time
 from datetime import datetime
 from decimal import Decimal
+from spark_processing import SparkProcessingLog
 from urllib.parse import urlencode, urlsplit
 
 import boto3
@@ -385,7 +386,7 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     spark_id = result.get("id") if isinstance(result, dict) else None
     if spark_id:
         # A new report must not reuse the previous report's extracted volume or link.
-        for key in ("spark_extracted_cuft", "spark_extracted_weight", "spark_extracted_id", "last_spark_share_url"):
+        for key in ("spark_extracted_cuft", "spark_extracted_weight", "spark_extracted_id", "last_spark_share_url", "spark_processing"):
             details.pop(key, None)
         details["last_spark_id"] = spark_id
         details["last_spark_status"] = result.get("status", "queued")
@@ -404,20 +405,22 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     return result
 
 
-def fetch_and_extract_spark_report(share_url: str) -> tuple[float | None, float | None, list[dict[str, object]]]:
+def fetch_and_extract_spark_report(share_url: str, processing=None) -> tuple[float | None, float | None, list[dict[str, object]]]:
     if not share_url:
-        return None, None, []
-    report_id = share_url.split("/reports/")[-1].split("?")[0].strip()
+        raise ValueError('Completed report has no share URL')
+    report_id = share_url.split('/reports/')[-1].split('?')[0].strip()
     if not report_id:
-        return None, None, []
-    api_url = f"https://api.scribe.production.liveswitch.com/api/public/reports/{report_id}"
-    try:
-        resp = httpx.get(api_url, timeout=15)
-        if resp.status_code != 200:
-            return None, None, []
-        data = resp.json()
-    except Exception:
-        return None, None, []
+        raise ValueError('Report URL has no report ID')
+    api_url = f'https://api.scribe.production.liveswitch.com/api/public/reports/{report_id}'
+    resp = httpx.get(api_url, timeout=15)
+    if resp.status_code != 200:
+        raise RuntimeError(f'Report download returned HTTP {resp.status_code}')
+    if processing:
+        processing.mark('download', 'success', f'Report received (HTTP {resp.status_code})')
+        processing.mark('extract', 'running')
+    data = resp.json()
+    if not isinstance(data, dict):
+        raise ValueError('Report response is not a JSON object')
 
     cuft = None
     weight = None
@@ -471,54 +474,92 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> di
     saved = db.get(LeadLiveSwitch, lead.id)
     details = json.loads(saved.details) if saved and saved.details else {}
 
-    cuft, weight, inventory_rows = fetch_and_extract_spark_report(share_url)
-    if not cuft or cuft <= 0:
-        return {"ok": False, "detail": "Could not extract volume from report"}
+    processing = SparkProcessingLog(details.get('last_spark_id'))
+    processing.mark('download', 'running')
+    processing.persist(db, lead_id)
+    try:
+        cuft, weight, inventory_rows = fetch_and_extract_spark_report(share_url, processing=processing)
+        if not cuft or cuft <= 0:
+            raise ValueError('No positive volume could be extracted from structuredResult item-list rows or the report total')
 
-    lead.volume = Decimal(str(cuft))
-    if weight is not None:
-        lead.weight = Decimal(str(weight))
+        processing.mark('extract', 'success', f'{len(inventory_rows)} inventory rows; {cuft:g} cu ft')
+        processing.mark('inventory', 'running')
+        lead.volume = Decimal(str(cuft))
+        if weight is not None:
+            lead.weight = Decimal(str(weight))
 
-    details["spark_extracted_id"] = details.get("last_spark_id")
-    details["spark_extracted_cuft"] = cuft
-    details["spark_extracted_weight"] = weight
-    details["last_spark_share_url"] = share_url
-    from models import LeadJob, LeadSparkInventoryItem
-    job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order).first()
-    price = None
-    if job:
-        db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job.id).delete(synchronize_session=False)
-        for index, row in enumerate(inventory_rows):
-            db.add(LeadSparkInventoryItem(
-                job_id=job.id,
-                name=str(row.get("name") or "Item"),
-                cuft=Decimal(str(row.get("cuft") or 0)),
-                amount=Decimal(str(row.get("amount") or 0)),
-                sort_order=index,
-            ))
+        details["spark_extracted_id"] = details.get("last_spark_id")
+        details["spark_extracted_cuft"] = cuft
+        details["spark_extracted_weight"] = weight
+        details["last_spark_share_url"] = share_url
+        from models import LeadJob, LeadSparkInventoryItem
+        job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order).first()
+        price = None
+        if not job:
+            raise ValueError('No job found for this lead')
+        if job:
+            db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job.id).delete(synchronize_session=False)
+            for index, row in enumerate(inventory_rows):
+                db.add(LeadSparkInventoryItem(
+                    job_id=job.id,
+                    name=str(row.get("name") or "Item"),
+                    cuft=Decimal(str(row.get("cuft") or 0)),
+                    amount=Decimal(str(row.get("amount") or 0)),
+                    sort_order=index,
+                ))
 
-        from routes.pricing import calculate_and_save_lead_job_price
-        price = calculate_and_save_lead_job_price(lead, job, db)
+            db.flush()
+            processing.mark('inventory', 'success', f'{len(inventory_rows)} rows prepared for job {job.job_order}')
+            processing.mark('pricing', 'running')
+            from routes.pricing import calculate_and_save_lead_job_price
+            price = calculate_and_save_lead_job_price(lead, job, db)
+            if price is None:
+                processing.mark('pricing', 'error', 'No price returned - click to view details',
+                                'The pricing calculator returned no price. Check move volume, company, active pricing book, pickup/delivery matching, and configured rates.')
+            else:
+                processing.mark('pricing', 'success', f'Calculated ${price:,.2f}')
+            processing.mark('publish', 'running')
 
-    from models import PublicMoveAccess
-    access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
-    if access:
-        access.published_cuft = lead.volume
-        if job and job.price:
-            access.published_price = job.price
-            access.published_at = datetime.utcnow()
+        from models import PublicMoveAccess
+        access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
+        if access:
+            access.published_cuft = lead.volume
+            if job and job.price:
+                access.published_price = job.price
+                access.published_at = datetime.utcnow()
 
-    if saved:
-        saved.details = json.dumps(details)
-    db.commit()
-    return {
-        "ok": True,
-        "cuft": cuft,
-        "weight": weight,
-        "price": price,
-        "inventory_count": len(inventory_rows),
-        "job_id": job.id if job else None,
-    }
+        processing.mark('inventory', 'success', f'{len(inventory_rows)} rows saved to job {job.job_order}')
+        processing.mark('publish', 'success' if price is not None else 'skipped',
+                        'Estimate saved' if price is not None else 'Inventory saved; no new estimate to publish')
+        processing.finish()
+        if saved:
+            processing.attach(details)
+            saved.details = json.dumps(details)
+        db.commit()
+        return {
+            "ok": True,
+            "cuft": cuft,
+            "weight": weight,
+            "price": price,
+            "inventory_count": len(inventory_rows),
+            "job_id": job.id if job else None,
+        }
+    except Exception as exc:
+        db.rollback()
+        processing.fail(exc)
+        processing.persist(db, lead_id)
+        return {'ok': False, 'detail': 'Report processing failed. Your moving team can view the processing log in the CRM.'}
+
+
+@router.get('/leads/{lead_id}/spark-processing')
+def get_spark_processing(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    details = json.loads(saved.details or '{}') if saved else {}
+    processing = details.get('spark_processing')
+    if processing and processing.get('report_id') != details.get('last_spark_id'):
+        processing = None
+    return {'processing': processing}
 
 
 @router.get("/leads/{lead_id}/spark-inventory")

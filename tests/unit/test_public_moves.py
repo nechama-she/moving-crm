@@ -577,3 +577,97 @@ def test_calculate_price_calls_existing_completion_function(portal, monkeypatch,
             liveswitch.apply_spark_results_to_lead.assert_called_once_with(lead.id, report_url, db)
         else:
             liveswitch.apply_spark_results_to_lead.assert_not_called()
+
+
+@pytest.fixture
+def processing_api():
+    import ast
+    import re
+    import httpx
+    from decimal import Decimal
+    from spark_processing import SparkProcessingLog
+    source = BACKEND / 'routes/liveswitch.py'
+    names = {'_safe_float', 'fetch_and_extract_spark_report', 'apply_spark_results_to_lead', 'get_spark_processing'}
+    nodes = [n for n in ast.parse(source.read_text(encoding='utf-8')).body if getattr(n, 'name', '') in names]
+    for node in nodes:
+        node.decorator_list = []
+        if node.name == 'get_spark_processing':
+            node.args.defaults = []
+            for arg in node.args.args:
+                arg.annotation = None
+    scope = {'Lead': models.Lead, 'LeadLiveSwitch': models.LeadLiveSwitch, 'Session': Session,
+             'SparkProcessingLog': SparkProcessingLog, 'json': json, 're': re,
+             'httpx': SimpleNamespace(get=MagicMock()), 'Decimal': Decimal, 'datetime': datetime, 'HTTPException': HTTPException}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
+    return scope
+
+
+@pytest.mark.parametrize('failure,failed_step', [('download', 'download'), ('extract', 'extract'), ('pricing', 'pricing'), ('no_price', 'pricing'), ('none', None)])
+def test_processing_steps_persist_success_and_failure(portal, processing_api, monkeypatch, failure, failed_step):
+    mod, db, lead, access = portal
+    api = processing_api
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'last_spark_id': 'report', 'last_spark_status': 'completed'})))
+    db.commit()
+    payload = {'structuredResult': {'sections': [{'id': 'item-list', 'rows': [
+        {'item_name': 'TV', 'quantity': 3, 'unit_volume': 20, 'unit_weight': 0}]}]}}
+    if failure == 'extract':
+        payload = {'structuredResult': {'sections': []}}
+    api['httpx'].get.return_value = SimpleNamespace(status_code=404 if failure == 'download' else 200, json=lambda: payload)
+    pricing = ModuleType('routes.pricing')
+    def calculate(lead, job, db):
+        if failure == 'pricing':
+            raise RuntimeError('Missing rate for selected destination')
+        if failure == 'no_price':
+            return None
+        job.price = 750
+        return 750
+    pricing.calculate_and_save_lead_job_price = calculate
+    monkeypatch.setitem(sys.modules, 'routes.pricing', pricing)
+    result = api['apply_spark_results_to_lead'](lead.id, 'https://example.com/reports/report', db)
+    log = json.loads(db.get(models.LeadLiveSwitch, lead.id).details)['spark_processing']
+    assert log['report_id'] == 'report'
+    assert log['status'] == ('success' if failure == 'none' else 'error')
+    assert len(log['steps']) == 5
+    if failed_step:
+        step = next(row for row in log['steps'] if row['id'] == failed_step)
+        assert step['status'] == 'error'
+        assert step['error']
+    if failure == 'pricing':
+        assert next(row for row in log['steps'] if row['id'] == 'inventory')['status'] == 'rolled_back'
+        assert db.query(models.LeadSparkInventoryItem).count() == 0
+        assert 'Missing rate' not in json.dumps(result)
+    if failure == 'download':
+        assert 'HTTP 404' in log['steps'][0]['error']
+    if failure == 'none':
+        assert result['price'] == 750
+        assert all(row['status'] == 'success' for row in log['steps'])
+        assert db.query(models.LeadSparkInventoryItem).one().amount == 3
+
+
+def test_processing_log_stays_out_of_customer_response(portal, processing_api):
+    mod, db, lead, access = portal
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'last_spark_id': 'report',
+        'last_spark_status': 'completed', 'spark_extracted_id': 'report',
+        'spark_processing': {'report_id': 'report', 'status': 'error', 'steps': [{'error': 'STAFF-ONLY-DIAGNOSTIC'}]}})))
+    db.commit()
+    mod._read_job_route = lambda *args: ('A', [], 'B')
+    assert 'STAFF-ONLY-DIAGNOSTIC' not in json.dumps(mod.details(access, db))
+    processing_api['_get_visible_lead_or_404'] = lambda *args: lead
+    result = processing_api['get_spark_processing'](lead.id, object(), db)
+    assert result['processing']['steps'][0]['error'] == 'STAFF-ONLY-DIAGNOSTIC'
+
+
+def test_processing_errors_redact_credentials():
+    from spark_processing import error_detail
+    message = error_detail(RuntimeError('token=secretvalue password=private Bearer accessvalue https://example.com/path?key=value'))
+    assert all(value not in message for value in ('secretvalue', 'private', 'accessvalue', 'key=value'))
+
+
+def test_processing_log_requires_visible_lead(portal, processing_api):
+    mod, db, lead, access = portal
+    def deny(*args):
+        raise HTTPException(404, 'Lead not found')
+    processing_api['_get_visible_lead_or_404'] = deny
+    with pytest.raises(HTTPException) as exc:
+        processing_api['get_spark_processing'](lead.id, object(), db)
+    assert exc.value.status_code == 404
