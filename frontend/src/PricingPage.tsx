@@ -163,7 +163,7 @@ export default function PricingPage() {
   const [manualAmounts, setManualAmounts] = useState<Record<string, number>>({});
   const [customCharges, setCustomCharges] = useState<CustomCharge[]>([]);
   const [customDiscounts, setCustomDiscounts] = useState<CustomDiscount[]>([]);
-  const [openSections, setOpenSections] = useState({ rates: true, bulkyItems: true, services: true });
+  const [openSections, setOpenSections] = useState({ rates: true, packing: true, bulkyItems: true, services: true });
   const [pendingRateGroups, setPendingRateGroups] = useState<string[][]>([]);
 
   useEffect(() => {
@@ -386,6 +386,25 @@ export default function PricingPage() {
   );
   const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
   const detailedTotal = Math.max(0, discountBase - discountTotal);
+
+  function startServiceEdit(section: 'packing' | 'bulkyItems') {
+    if (user?.role !== 'admin' || saving) return;
+    setOpenSections(current => ({ ...current, [section]: true }));
+    setEditing(true);
+  }
+  function cancelServiceEdit() {
+    setDraft(plan ? structuredClone(plan) : null);
+    setPendingRateGroups([]);
+    setEditing(false);
+    setError('');
+  }
+  function serviceEditActions(section: 'packing' | 'bulkyItems') {
+    if (user?.role !== 'admin') return null;
+    return editing ? <>
+      <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={cancelServiceEdit}>Cancel changes</button>
+      <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save changes'}</button>
+    </> : <button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => startServiceEdit(section)}>Edit</button>;
+  }
 
   function patchDraft(patch: Partial<Plan>) {
     setDraft((current) => current ? { ...current, ...patch } : current);
@@ -835,9 +854,11 @@ export default function PricingPage() {
                 </div>
               </PricingSection>
 
-              <LongDistancePackingCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
+              <PricingSection title="Packing rates" count={4} open={openSections.packing} toggle={() => setOpenSections(s => ({ ...s, packing: !s.packing }))} onDoubleClick={() => startServiceEdit('packing')} actions={serviceEditActions('packing')}>
+                <LongDistancePackingCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
+              </PricingSection>
 
-              <PricingSection title="Bulky items rates" count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))}>
+              <PricingSection title="Bulky items rates" count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))} onDoubleClick={() => startServiceEdit('bulkyItems')} actions={serviceEditActions('bulkyItems')}>
                 <div className="pricing-services pricing-bulky-rates">
                   {bulkyItems.map((item) => {
                     const index = (active.services || []).indexOf(item);
