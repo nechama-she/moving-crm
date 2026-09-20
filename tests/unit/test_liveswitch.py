@@ -18,7 +18,7 @@ def api():
     for node in functions:
         node.decorator_list = []
         node.returns = None
-        node.args.defaults = []
+        node.args.defaults = node.args.defaults[-1:] if node.name == 'apply_spark_results_to_lead' else []
         for arg in node.args.args:
             arg.annotation = None
     lead = SimpleNamespace(id='lead-1', smartmoving_id='sm-1', quote_number=None, phone=' 1112223333 ', assignee=None, company=SimpleNamespace(phone=' 2405707987 ', aircall_number_id='company-number'))
@@ -266,9 +266,12 @@ def reports():
     for node in functions:
         node.decorator_list = []
         node.returns = None
-        node.args.defaults = []
+        node.args.defaults = node.args.defaults[-1:] if node.name == 'apply_spark_results_to_lead' else []
         for arg in node.args.args: arg.annotation = None
-    scope = {'PublicMoveAccess': MagicMock(), 'SparkProcessingLog': MagicMock(), 'json': json, 'time': time, 'Decimal': Decimal, 'datetime': datetime, 'HTTPException': HTTPException,
+    import sys
+    sys.path.insert(0, str(source.parents[1]))
+    from spark_history import remember_report
+    scope = {'remember_report': remember_report, 'PublicMoveAccess': MagicMock(), 'SparkProcessingLog': MagicMock(), 'json': json, 'time': time, 'Decimal': Decimal, 'datetime': datetime, 'HTTPException': HTTPException,
              'LeadLiveSwitch': object(), 'Lead': object(), '_connection_config': lambda: {'spark_template_id': 'template'},
              '_api_post': MagicMock(return_value={'id': 'new-report', 'status': 'queued'}),
              '_api_get': MagicMock(return_value={'id': 'new-report', 'status': 'completed', 'shareUrl': 'new-url'}),
@@ -286,6 +289,9 @@ def test_new_report_clears_old_extracted_values_and_link(reports):
     data = json.loads(saved.details)
     assert data['last_spark_id'] == 'new-report'
     assert data['id'] == 'conversation'
+    assert len(data['spark_history']) == 2
+    assert data['spark_history'][0]['last_spark_share_url'] == 'old-url'
+    assert data['spark_history'][1]['last_spark_id'] == 'new-report'
     assert all(key not in data for key in ('spark_extracted_id', 'spark_extracted_cuft', 'spark_extracted_weight', 'last_spark_share_url', 'spark_processing'))
 
 

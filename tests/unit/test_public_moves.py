@@ -586,17 +586,20 @@ def processing_api():
     import httpx
     from decimal import Decimal
     from spark_processing import SparkProcessingLog
+    from spark_history import remember_report, report_history, activate_report
     source = BACKEND / 'routes/liveswitch.py'
-    names = {'_safe_float', 'fetch_and_extract_spark_report', 'apply_spark_results_to_lead', 'get_spark_processing'}
+    names = {'_safe_float', 'fetch_and_extract_spark_report', 'apply_spark_results_to_lead', 'get_spark_processing', 'select_spark_report', 'get_report_history'}
     nodes = [n for n in ast.parse(source.read_text(encoding='utf-8')).body if getattr(n, 'name', '') in names]
     for node in nodes:
         node.decorator_list = []
-        if node.name == 'get_spark_processing':
+        if node.name in ('get_spark_processing', 'get_report_history'):
             node.args.defaults = []
             for arg in node.args.args:
                 arg.annotation = None
     scope = {'Lead': models.Lead, 'LeadLiveSwitch': models.LeadLiveSwitch, 'Session': Session,
              'SparkProcessingLog': SparkProcessingLog, 'json': json, 're': re,
+             'remember_report': remember_report, 'report_history': report_history, 'activate_report': activate_report,
+             'PublicMoveAccess': models.PublicMoveAccess,
              'httpx': SimpleNamespace(get=MagicMock()), 'Decimal': Decimal, 'datetime': datetime, 'HTTPException': HTTPException}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
     return scope
@@ -671,3 +674,132 @@ def test_processing_log_requires_visible_lead(portal, processing_api):
     with pytest.raises(HTTPException) as exc:
         processing_api['get_spark_processing'](lead.id, object(), db)
     assert exc.value.status_code == 404
+
+
+def test_selecting_history_reimports_and_reprices(portal, processing_api, monkeypatch):
+    from spark_history import remember_report, report_history
+    mod, db, lead, access = portal
+    report = {'last_spark_id': 'older', 'last_spark_status': 'completed', 'last_spark_at': 100,
+              'last_spark_share_url': 'https://example.com/reports/older', 'spark_extracted_id': 'older'}
+    remember_report(report)
+    report.update(last_spark_id='newer', last_spark_at=200,
+                  last_spark_share_url='https://example.com/reports/newer', spark_extracted_id='newer')
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps(report)))
+    db.commit()
+    pricing = ModuleType('routes.pricing')
+    def calculate(lead, job, db):
+        job.price = float(lead.volume) * 10
+        return job.price
+    pricing.calculate_and_save_lead_job_price = calculate
+    monkeypatch.setitem(sys.modules, 'routes.pricing', pricing)
+    payload = {'structuredResult': {'sections': [{'id': 'item-list', 'rows': [
+        {'item_name': 'TV', 'quantity': 2, 'unit_volume': 20}]}]}}
+    processing_api['httpx'].get.return_value = SimpleNamespace(status_code=200, json=lambda: payload)
+    result = processing_api['select_spark_report'](lead.id, 'older', db)
+    assert result['ok'] and result['price'] == 400
+    assert float(lead.volume) == 40
+    assert float(access.published_price) == 400
+    assert db.query(models.LeadSparkInventoryItem).one().amount == 2
+    reports = report_history(json.loads(db.get(models.LeadLiveSwitch, lead.id).details))
+    assert [row['id'] for row in reports] == ['newer', 'older']
+    assert [row['id'] for row in reports if row['current']] == ['older']
+    assert reports[1]['inventory'][0]['name'] == 'TV'
+    # Invalid / foreign report IDs cannot change this lead's active report.
+    with pytest.raises(HTTPException) as exc:
+        processing_api['select_spark_report'](lead.id, 'another-leads-report', db)
+    assert exc.value.status_code == 409
+    assert json.loads(db.get(models.LeadLiveSwitch, lead.id).details)['last_spark_id'] == 'older'
+
+
+def test_history_requires_visible_lead(portal, processing_api):
+    mod, db, lead, access = portal
+    def deny(*args):
+        raise HTTPException(404, 'Lead not found')
+    processing_api['_get_visible_lead_or_404'] = deny
+    with pytest.raises(HTTPException):
+        processing_api['get_report_history'](lead.id, object(), db)
+
+
+def test_history_selection_is_blocked_while_new_run_is_pending(portal, processing_api):
+    mod, db, lead, access = portal
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'last_spark_id': 'new', 'last_spark_status': 'running'})))
+    db.commit()
+    with pytest.raises(HTTPException) as exc:
+        processing_api['select_spark_report'](lead.id, 'old', db)
+    assert exc.value.status_code == 409
+    processing_api['httpx'].get.assert_not_called()
+
+
+@pytest.mark.parametrize('authenticated', [False, True])
+def test_customer_report_selection_uses_verified_route(portal, monkeypatch, authenticated):
+    import ast
+    import re
+    from uuid import uuid4
+    from fastapi import Depends, FastAPI, Request
+    from fastapi.testclient import TestClient
+    mod, db, lead, access = portal
+    access.id = str(uuid4())
+    access.token_hash = digest(link_token(access.id))
+    token = 'history-session'
+    db.add(models.PublicMoveSession(token_hash=digest(token), access_id=access.id,
+        expires_at=datetime.utcnow() + timedelta(hours=1), contact_hash=contact_fingerprint(lead)))
+    db.commit()
+    liveswitch = ModuleType('routes.liveswitch')
+    liveswitch.select_spark_report = MagicMock(return_value={'ok': True, 'price': 400})
+    monkeypatch.setitem(sys.modules, 'routes.liveswitch', liveswitch)
+    source = ast.parse((BACKEND / 'main.py').read_text(encoding='utf-8'))
+    node = next(node for node in source.body if getattr(node, 'name', '') == 'enforce_authentication')
+    scope = {'Request': Request, 're': re, 'HTTPException': HTTPException, 'PUBLIC_PATHS': set()}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), '<global-auth>', 'exec'), scope)
+    app = FastAPI(dependencies=[Depends(scope['enforce_authentication'])])
+    app.include_router(mod.router)
+    app.dependency_overrides[mod.get_db] = lambda: db
+    with TestClient(app) as client:
+        headers = {'x-public-link': link_token(access.id)}
+        if authenticated:
+            headers['x-public-session'] = token
+        response = client.post(f'/api/public-moves/{access.id}/reports/older/select', json={}, headers=headers)
+        assert response.status_code == (200 if authenticated else 401), response.text
+    if authenticated:
+        liveswitch.select_spark_report.assert_called_once_with(lead.id, 'older', db)
+    else:
+        liveswitch.select_spark_report.assert_not_called()
+
+
+def test_old_import_cannot_replace_a_new_current_report(portal, processing_api):
+    mod, db, lead, access = portal
+    saved = models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'last_spark_id': 'old', 'last_spark_status': 'completed'}))
+    db.add(saved)
+    db.commit()
+    original_volume = lead.volume
+    def download(*args, **kwargs):
+        # Simulate a new report starting while the old HTTP request is in flight.
+        saved.details = json.dumps({'last_spark_id': 'new', 'last_spark_status': 'queued'})
+        db.commit()
+        return SimpleNamespace(status_code=200, json=lambda: {'structuredResult': {'sections': [
+            {'id': 'item-list', 'rows': [{'item_name': 'TV', 'quantity': 1, 'unit_volume': 20}]}]}})
+    processing_api['httpx'].get.side_effect = download
+    result = processing_api['apply_spark_results_to_lead'](lead.id, 'https://example.com/reports/old', db)
+    assert result['ok'] is False
+    assert json.loads(saved.details)['last_spark_id'] == 'new'
+    assert lead.volume == original_volume
+    assert db.query(models.LeadSparkInventoryItem).count() == 0
+
+
+def test_pending_report_selection_hides_previous_estimate(portal, monkeypatch):
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    job.price = 999
+    access.published_price = 999
+    access.published_at = datetime.utcnow()
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'last_spark_id': 'selected',
+        'last_spark_status': 'completed', 'spark_pricing_ready': False})))
+    db.commit()
+    mod._read_job_route = lambda *args: ('A', [], 'B')
+    liveswitch = ModuleType('routes.liveswitch')
+    liveswitch._api_get = MagicMock(side_effect=RuntimeError('offline'))
+    liveswitch.apply_spark_results_to_lead = MagicMock()
+    monkeypatch.setitem(sys.modules, 'routes.liveswitch', liveswitch)
+    result = mod.details(access, db)
+    assert result['estimate'] is None
+    assert result['report_history'][0]['current']

@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 from decimal import Decimal
 from spark_processing import SparkProcessingLog
+from spark_history import remember_report, report_history, activate_report
 from urllib.parse import urlencode, urlsplit
 
 import boto3
@@ -385,12 +386,17 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     # Save spark ID and status to the lead's LiveSwitch record
     spark_id = result.get("id") if isinstance(result, dict) else None
     if spark_id:
+        db.refresh(saved, with_for_update=True)
+        details = json.loads(saved.details)
+        remember_report(details)
         # A new report must not reuse the previous report's extracted volume or link.
-        for key in ("spark_extracted_cuft", "spark_extracted_weight", "spark_extracted_id", "last_spark_share_url", "spark_processing"):
+        for key in ("spark_extracted_cuft", "spark_extracted_weight", "spark_extracted_id", "last_spark_share_url", "spark_processing", "spark_inventory_snapshot"):
             details.pop(key, None)
+        details["spark_pricing_ready"] = False
         details["last_spark_id"] = spark_id
         details["last_spark_status"] = result.get("status", "queued")
         details["last_spark_at"] = int(time.time())
+        remember_report(details)
         saved.details = json.dumps(details)
 
         # Clear published estimate while new report is processing
@@ -467,18 +473,28 @@ def fetch_and_extract_spark_report(share_url: str, processing=None) -> tuple[flo
     return cuft, weight, inventory_rows
 
 
-def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> dict:
+def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expected_report_id: str | None = None) -> dict:
     lead = db.get(Lead, lead_id)
     if not lead:
         raise HTTPException(404, "Lead not found")
     saved = db.get(LeadLiveSwitch, lead.id)
     details = json.loads(saved.details) if saved and saved.details else {}
 
+    if expected_report_id is not None and details.get('last_spark_id') != expected_report_id:
+        return {'ok': False, 'detail': 'A different report is now current. Refresh to see its results.'}
     processing = SparkProcessingLog(details.get('last_spark_id'))
     processing.mark('download', 'running')
     processing.persist(db, lead_id)
     try:
         cuft, weight, inventory_rows = fetch_and_extract_spark_report(share_url, processing=processing)
+        if saved:
+            # A new run/selection may have arrived while downloading this report.
+            db.refresh(saved, with_for_update=True)
+            current_details = json.loads(saved.details or '{}')
+            if current_details.get('last_spark_id') != details.get('last_spark_id'):
+                db.rollback()
+                return {'ok': False, 'detail': 'A different report is now current. Refresh to see its results.'}
+            details = current_details
         if not cuft or cuft <= 0:
             raise ValueError('No positive volume could be extracted from structuredResult item-list rows or the report total')
 
@@ -492,6 +508,7 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> di
         details["spark_extracted_cuft"] = cuft
         details["spark_extracted_weight"] = weight
         details["last_spark_share_url"] = share_url
+        details["spark_inventory_snapshot"] = inventory_rows
         from models import LeadJob, LeadSparkInventoryItem
         job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order).first()
         price = None
@@ -524,13 +541,14 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> di
         access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
         if access:
             access.published_cuft = lead.volume
-            if job and job.price:
+            if price is not None:
                 access.published_price = job.price
                 access.published_at = datetime.utcnow()
 
         processing.mark('inventory', 'success', f'{len(inventory_rows)} rows saved to job {job.job_order}')
         processing.mark('publish', 'success' if price is not None else 'skipped',
                         'Estimate saved' if price is not None else 'Inventory saved; no new estimate to publish')
+        details["spark_pricing_ready"] = price is not None
         processing.finish()
         if saved:
             processing.attach(details)
@@ -549,6 +567,47 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session) -> di
         processing.fail(exc)
         processing.persist(db, lead_id)
         return {'ok': False, 'detail': 'Report processing failed. Your moving team can view the processing log in the CRM.'}
+
+
+def select_spark_report(lead_id: str, report_id: str, db: Session):
+    saved = db.get(LeadLiveSwitch, lead_id)
+    if saved:
+        db.refresh(saved, with_for_update=True)
+    details = json.loads(saved.details or '{}') if saved else {}
+    if details.get('last_spark_status') in ('queued', 'running'):
+        raise HTTPException(409, 'Wait for the new report to finish before choosing an earlier report.')
+    try:
+        activate_report(details, report_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    # The selected report is pending import, even if it was imported previously.
+    details.pop('spark_extracted_id', None)
+    details['spark_pricing_ready'] = False
+    saved.details = json.dumps(details)
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
+    if access:
+        access.published_price = None
+        access.published_cuft = None
+        access.published_at = None
+    db.commit()
+    return apply_spark_results_to_lead(lead_id, details['last_spark_share_url'], db, expected_report_id=report_id)
+
+
+@router.get('/leads/{lead_id}/report-history')
+def get_report_history(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    return {'reports': report_history(json.loads(saved.details or '{}') if saved else {}, staff=True)}
+
+
+@router.post('/leads/{lead_id}/reports/{report_id}/select')
+def select_report_endpoint(lead_id: str, report_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    result = select_spark_report(lead.id, report_id, db)
+    if not result.get('ok'):
+        raise HTTPException(422, result.get('detail'))
+    return result
 
 
 @router.get('/leads/{lead_id}/spark-processing')
@@ -627,6 +686,11 @@ def get_lead_spark_status(
     # Poll LiveSwitch for latest status
     try:
         remote = _api_get(f"sparks/{spark_id}")
+        db.refresh(saved, with_for_update=True)
+        details = json.loads(saved.details)
+        if details.get("last_spark_id") != spark_id:
+            spark_id = details.get("last_spark_id")
+            remote = None
         if isinstance(remote, dict) and "status" in remote:
             details["last_spark_status"] = remote.get("status")
             share_url = remote.get("shareUrl")

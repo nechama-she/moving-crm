@@ -1,3 +1,4 @@
+import ReportHistory, { type ReportRun } from "./ReportHistory";
 import CustomerPackingOptions, { type PackingPackage, type PackingSelection } from "./CustomerPackingOptions";
 import MeetingTimePicker from "./MeetingTimePicker";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -6,6 +7,7 @@ import { API_BASE } from "./apiConfig";
 import "./CustomerMovePage.css";
 
 type Details = {
+  report_history?: ReportRun[];
   packing_package: PackingPackage | null;
   packing_items: { id: string; label: string; price: number; selected: boolean; selected_service: string | null; services: { kind: string; price: number }[] }[];
   packing_saved: boolean;
@@ -56,6 +58,15 @@ export default function CustomerMovePage() {
   const [packingSaving, setPackingSaving] = useState(false);
   const [packingError, setPackingError] = useState('');
   const money = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+  async function selectReport(id: string) {
+    setCalculatingPrice(true);
+    try {
+      await call(`/reports/${encodeURIComponent(id)}/select`, {});
+    } finally {
+      try { setData(await call('/details')); }
+      finally { setCalculatingPrice(false); }
+    }
+  }
   async function savePacking() {
     if (Object.values(packingSelection).some(value => !value)) {
       setPackingError('Choose packing or crating for each checked item.');
@@ -555,6 +566,7 @@ export default function CustomerMovePage() {
                   )}
                 </div>
               )}
+              <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={calculatingPrice || packingSaving || reportState === 'running'} />
             </div>
 
             {showQuestions && (

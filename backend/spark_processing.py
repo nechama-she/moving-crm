@@ -49,7 +49,9 @@ class SparkProcessingLog:
         self.data.update(status='error' if any(row['status'] == 'error' for row in self.data['steps']) else 'success', finished_at=self.now())
 
     def attach(self, details):
+        from spark_history import remember_report
         details['spark_processing'] = self.data
+        remember_report(details)
 
     def persist(self, db, lead_id):
         from models import LeadLiveSwitch

@@ -1,3 +1,4 @@
+import ReportHistory, { type ReportRun } from "./ReportHistory";
 import SparkProcessingLog from "./SparkProcessingLog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import CustomerPageControls from "./CustomerPageControls";
@@ -64,6 +65,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
   const [notice, setNotice] = useState("");
   const [sparkRunning, setSparkRunning] = useState(false);
   const [calculatingPrice, setCalculatingPrice] = useState(false);
+  const [reportHistory, setReportHistory] = useState<ReportRun[]>([]);
   const [processingRevision, setProcessingRevision] = useState(0);
   const priceRequestRunning = useRef(false);
   const [sparkNotice, setSparkNotice] = useState("");
@@ -148,6 +150,31 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
     }, 60000);
     return () => clearInterval(interval);
   }, [loadSparkStatus, sparkData]);
+
+  const loadReportHistory = useCallback(async () => {
+    const response = await fetch(`${base}/report-history`, { headers: authHeaders(token), cache: 'no-store' });
+    if (!response.ok) throw new Error('Could not load report history.');
+    setReportHistory((await response.json()).reports || []);
+  }, [base, token]);
+  useEffect(() => {
+    void loadReportHistory().catch(err => setSparkError(err.message));
+  }, [loadReportHistory, sparkData?.id, sparkData?.status, processingRevision]);
+  async function selectReport(id: string) {
+    setCalculatingPrice(true);
+    try {
+      await request(`${base}/reports/${encodeURIComponent(id)}/select`, {});
+    } finally {
+      try {
+        await loadSparkStatus();
+        await loadReportHistory();
+        await loadSparkInventory(true);
+        onUploaded();
+      } finally {
+        setProcessingRevision(value => value + 1);
+        setCalculatingPrice(false);
+      }
+    }
+  }
 
   async function calculateReportPrice() {
     if (priceRequestRunning.current || sparkData?.status !== 'completed') return;
@@ -379,7 +406,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
             type="button"
             className="slds-button ls-primary"
             style={{ marginLeft: "auto", background: "#084e8a" }}
-            disabled={busy || sparkRunning}
+            disabled={busy || sparkRunning || calculatingPrice}
             onClick={() => void runSpark()}
           >
             {sparkRunning ? "Running Report..." : "Generate Inventory Report"}
@@ -459,6 +486,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
             )}
           </div>
         )}
+        <ReportHistory reports={reportHistory} onSelect={selectReport} disabled={sparkRunning || calculatingPrice} staff />
         </section>
         <CustomerPageControls leadId={leadId}/><section className="ls-card"><button className="slds-button ls-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "\u25be" : "\u25b8"} Conversation viewer</button>{expanded ? <>{conversation.conversationUrl ? <a href={conversation.conversationUrl} target="_blank" rel="noopener noreferrer">Open conversation in a new tab</a> : null}{conversation.embeddedConversationUrl ? <iframe title="LiveSwitch conversation" src={conversation.embeddedConversationUrl} style={{ pointerEvents: resizing ? "none" : undefined }} allow="camera; microphone; fullscreen; display-capture"/> : !conversation.conversationUrl ? <p>Conversation viewer unavailable.</p> : null}</> : null}</section>
       </> : null}<p className="ls-notice" role="status">{notice}</p></main>

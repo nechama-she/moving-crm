@@ -1,4 +1,5 @@
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
+from spark_history import report_history
 import hmac
 import json
 import os
@@ -319,6 +320,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
 
     # Extract spark report details if available, and auto-process if finished
     spark_info = None
+    conv_details = {}
     if conversation and conversation.details:
         try:
             conv_details = json.loads(conversation.details)
@@ -328,6 +330,11 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
                     from routes.liveswitch import _api_get, apply_spark_results_to_lead
                     try:
                         remote = _api_get(f"sparks/{spark_id}")
+                        db.refresh(conversation, with_for_update=True)
+                        conv_details = json.loads(conversation.details)
+                        if conv_details.get("last_spark_id") != spark_id:
+                            spark_id = conv_details.get("last_spark_id")
+                            remote = None
                         if isinstance(remote, dict) and "status" in remote:
                             conv_details["last_spark_status"] = remote.get("status")
                             share_url = remote.get("shareUrl")
@@ -367,7 +374,8 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
         for c in (job.charges or [])
         if c.total_cost and float(c.total_cost) > 0
     ]
-    if not is_spark_pending:
+    report_import_pending = bool(spark_info and conv_details.get('spark_extracted_id') != spark_info['id'])
+    if not is_spark_pending and not report_import_pending and conv_details.get('spark_pricing_ready') is not False:
         if access.published_at and access.published_price is not None:
             estimate = {
                 'price': str(access.published_price),
@@ -404,7 +412,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
 
     packing_items = []
     packing_package = None
-    if not is_spark_pending and (job.company_id or lead.company_id):
+    if not is_spark_pending and not report_import_pending and (job.company_id or lead.company_id):
         from routes.pricing import customer_packing_options, customer_packing_package
         packing_package = customer_packing_package(lead, job, db)
         packing_items = customer_packing_options(lead, job, db)
@@ -415,9 +423,19 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             'company_details': company_data,
             'estimate': estimate,
             'spark': spark_info,
+            'report_history': report_history(conv_details),
             'walkthrough': meeting_dict(meeting) if meeting else None,
             'participant_url': json.loads(conversation.details).get('participantJoinUrl', '') if conversation and meeting and meeting.status == 'scheduled' else '',
             'files': [{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files]}
+
+
+@router.post('/api/public-moves/{access_id}/reports/{report_id}/select')
+def select_customer_report(report_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from routes.liveswitch import select_spark_report
+    result = select_spark_report(access.lead_id, report_id, db)
+    if not result.get('ok'):
+        raise HTTPException(422, result.get('detail'))
+    return result
 
 
 @router.post('/api/public-moves/{access_id}/calculate-price')
