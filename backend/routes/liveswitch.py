@@ -426,6 +426,23 @@ def start_ready_report(lead_id: str, db: Session):
         saved.details = json.dumps(details)
         db.commit()
         return
+    # LiveSwitch needs time to ingest the last uploaded file before analysis.
+    if rows:
+        import math
+        import boto3
+        remaining = 60 - (datetime.utcnow() - max(row.synced_at for row in rows)).total_seconds()
+        if remaining > 0:
+            if details.get('spark_start_queued_for') != details.get('last_spark_id'):
+                boto3.client('sqs').send_message(
+                    QueueUrl=os.environ['PUBLIC_MOVE_SYNC_QUEUE_URL'],
+                    DelaySeconds=min(900, max(1, math.ceil(remaining))),
+                    MessageBody=json.dumps({'start_report': details['last_spark_id'], 'lead_id': lead_id}),
+                )
+                details['spark_start_queued_for'] = details['last_spark_id']
+            details['last_spark_status'] = 'queued'
+            saved.details = json.dumps(details)
+            db.commit()
+            return
     result = _api_post(f"conversations/{details['id']}/sparks", payload)
     if not result.get('id'):
         raise HTTPException(502, 'LiveSwitch did not return a report ID.')
@@ -513,7 +530,13 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
     processing.mark('download', 'running')
     processing.persist(db, lead_id)
     try:
-        cuft, weight, inventory_rows = fetch_and_extract_spark_report(share_url, processing=processing)
+        if details.get('report_source') == 'manual':
+            cuft, weight = details.get('spark_extracted_cuft'), details.get('spark_extracted_weight')
+            inventory_rows = details.get('spark_inventory_snapshot', [])
+            processing.mark('download', 'success', 'Using saved room inventory; no LiveSwitch request')
+            processing.mark('extract', 'running')
+        else:
+            cuft, weight, inventory_rows = fetch_and_extract_spark_report(share_url, processing=processing)
         if saved:
             # A new run/selection may have arrived while downloading this report.
             db.refresh(saved, with_for_update=True)
@@ -625,7 +648,7 @@ def select_spark_report(lead_id: str, report_id: str, db: Session):
         access.published_cuft = None
         access.published_at = None
     db.commit()
-    return apply_spark_results_to_lead(lead_id, details['last_spark_share_url'], db, expected_report_id=report_id)
+    return apply_spark_results_to_lead(lead_id, details.get('last_spark_share_url', ''), db, expected_report_id=report_id)
 
 
 @router.get('/leads/{lead_id}/report-history')
@@ -695,7 +718,7 @@ def apply_spark_report_endpoint(
     saved = db.get(LeadLiveSwitch, lead.id)
     details = json.loads(saved.details) if saved and saved.details else {}
     url = (body and body.reportUrl) or details.get("last_spark_share_url")
-    if not url:
+    if not url and details.get("report_source") != "manual":
         raise HTTPException(400, "No Spark report URL provided or found for this lead.")
     res = apply_spark_results_to_lead(lead.id, url, db)
     if not res.get("ok"):
@@ -718,6 +741,9 @@ def get_lead_spark_status(
     spark_id = details.get("last_spark_id")
     if not spark_id:
         return {"spark": None}
+    if details.get('report_source') == 'manual':
+        return {'spark': {'id': spark_id, 'status': 'completed', 'source': 'manual'},
+                'cuft': details.get('spark_extracted_cuft'), 'weight': details.get('spark_extracted_weight')}
     # File transfer must finish before asking LiveSwitch to analyze the new conversation.
     if details.get("pending_spark_payload"):
         start_ready_report(lead.id, db)
@@ -769,7 +795,7 @@ def get_lead_spark_status(
 
 def ensure_lead_conversation(lead: Lead, db: Session, fresh: bool = False) -> dict:
     saved = db.get(LeadLiveSwitch, lead.id)
-    if saved and not fresh:
+    if saved and not fresh and json.loads(saved.details or "{}").get("id"):
         return json.loads(saved.details)
     company = lead.company
     if company is None:
@@ -804,8 +830,14 @@ def ensure_lead_conversation(lead: Lead, db: Session, fresh: bool = False) -> di
     details["name"] = conversation_name
     if fresh:
         return details
-    saved = LeadLiveSwitch(lead_id=lead.id, details=json.dumps(details))
-    db.add(saved)
+    if saved:
+        existing = json.loads(saved.details or '{}')
+        existing.update(details)
+        details = existing
+        saved.details = json.dumps(details)
+    else:
+        saved = LeadLiveSwitch(lead_id=lead.id, details=json.dumps(details))
+        db.add(saved)
     db.commit()
     return details
 

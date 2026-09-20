@@ -1,6 +1,7 @@
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
+from manual_inventory import ManualInventoryInput, catalog, submit_inventory
 from spark_history import report_history
-from report_files import move_files, file_list, remove_report_file
+from report_files import move_files, file_list, remove_report_file, preview_report_file
 import hmac
 import json
 import os
@@ -395,7 +396,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
                 conv_details = json.loads(conversation.details)
             spark_id = conv_details.get("last_spark_id")
             if spark_id:
-                if not conv_details.get("pending_spark_payload") and (conv_details.get("last_spark_status") not in ("completed", "failed", "cancelled") or conv_details.get("spark_extracted_id") != spark_id):
+                if conv_details.get("report_source") != "manual" and not conv_details.get("pending_spark_payload") and (conv_details.get("last_spark_status") not in ("completed", "failed", "cancelled") or conv_details.get("spark_extracted_id") != spark_id):
                     from routes.liveswitch import _api_get, apply_spark_results_to_lead
                     try:
                         remote = _api_get(f"sparks/{spark_id}")
@@ -423,6 +424,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
                         pass
                 spark_info = {
                     "id": spark_id,
+                    "source": conv_details.get("report_source", "liveswitch"),
                     "status": conv_details.get("last_spark_status", "queued"),
                     "shareUrl": conv_details.get("last_spark_share_url"),
                     "cuft": conv_details.get("spark_extracted_cuft"),
@@ -510,14 +512,27 @@ def select_customer_report(report_id: str, access: PublicMoveAccess = Depends(ve
     return result
 
 
+@router.get('/api/public-moves/{access_id}/inventory-catalog')
+def get_customer_inventory_catalog(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    return catalog(db)
+
+
+@router.post('/api/public-moves/{access_id}/manual-inventory')
+def submit_customer_inventory(body: ManualInventoryInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    result = submit_inventory(body, access, db)
+    if not result.get('ok'):
+        raise HTTPException(422, result.get('detail'))
+    return result
+
+
 @router.post('/api/public-moves/{access_id}/calculate-price')
 def calculate_report_price(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from routes.liveswitch import apply_spark_results_to_lead
     conversation = db.get(LeadLiveSwitch, access.lead_id)
     report = json.loads(conversation.details or '{}') if conversation else {}
-    if report.get('last_spark_status') != 'completed' or not report.get('last_spark_share_url'):
+    if report.get('last_spark_status') != 'completed' or (report.get('report_source') != 'manual' and not report.get('last_spark_share_url')):
         raise HTTPException(409, 'Your report is not ready yet.')
-    result = apply_spark_results_to_lead(access.lead_id, report['last_spark_share_url'], db)
+    result = apply_spark_results_to_lead(access.lead_id, report.get('last_spark_share_url', ''), db)
     if not result.get('ok'):
         raise HTTPException(422, result.get('detail') or 'Could not process the report.')
     if result.get('price') is None:
@@ -678,6 +693,11 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
 
     db.commit()
     return details(access, db)
+
+
+@router.get('/api/public-moves/{access_id}/file-preview/{attachment_id}')
+def customer_file_preview(attachment_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    return preview_report_file(access, attachment_id, db)
 
 
 @router.delete('/api/public-moves/{access_id}/files/{attachment_id}')

@@ -1112,3 +1112,20 @@ class PublicMovePendingUpload(Base):
     file_size = Column(BigInteger, nullable=False)
     expires_at = Column(DateTime, nullable=False)
     __table_args__ = (UniqueConstraint('access_id', 'request_id'),)
+
+
+class InventoryRoomType(Base):
+    __tablename__ = 'inventory_room_types'
+    id = Column(String(36), primary_key=True)
+    name = Column(String(100), nullable=False, unique=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class InventoryCatalogItem(Base):
+    __tablename__ = 'inventory_catalog_items'
+    id = Column(String(36), primary_key=True)
+    name = Column(String(255), nullable=False, index=True)
+    description = Column(Text, nullable=False, default='')
+    cuft = Column(Numeric(12, 2), nullable=False)
+    weight = Column(Numeric(12, 2), nullable=False)
+    active = Column(Boolean, nullable=False, default=True)

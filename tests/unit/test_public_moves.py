@@ -959,6 +959,21 @@ def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_a
     api['_api_post'].assert_not_called()
     rows[1].synced_at = datetime.utcnow()
     db.commit()
+    import boto3
+    queue = MagicMock()
+    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: queue)
+    api['start_ready_report'](lead.id, db)
+    api['_api_post'].assert_not_called()
+    assert queue.send_message.call_args.kwargs['DelaySeconds'] == 60
+    api['start_ready_report'](lead.id, db)
+    assert queue.send_message.call_count == 1
+    rows[0].synced_at = datetime.utcnow() - timedelta(seconds=120)
+    rows[1].synced_at = datetime.utcnow() - timedelta(seconds=59)
+    db.commit()
+    api['start_ready_report'](lead.id, db)
+    api['_api_post'].assert_not_called()
+    rows[1].synced_at = datetime.utcnow() - timedelta(seconds=61)
+    db.commit()
     api['start_ready_report'](lead.id, db)
     api['_api_post'].assert_called_once_with('conversations/conversation-new/sparks', {'sparkTemplateId': 'template', 'shareWith': ['anyone']})
     api['start_ready_report'](lead.id, db)
@@ -1098,3 +1113,156 @@ def test_file_delete_requires_verified_customer_session(portal, monkeypatch, aut
         response = client.delete(f'/api/public-moves/{access.id}/files/photo', headers=headers)
         assert response.status_code == (200 if authenticated else 401), response.text
     assert remove.call_count == (1 if authenticated else 0)
+
+
+@pytest.fixture
+def manual_catalog(portal):
+    mod, db, lead, access = portal
+    db.add(models.InventoryRoomType(id='bedroom', name='Bedroom', sort_order=0))
+    db.add(models.InventoryCatalogItem(id='chair', name='Chair', cuft=10, weight=70, description=''))
+    db.add(models.InventoryCatalogItem(id='table', name='Table', cuft=20, weight=140, description=''))
+    db.commit()
+    return portal
+
+
+def test_manual_list_uses_shared_pricing_without_liveswitch(manual_catalog, processing_api, monkeypatch):
+    from manual_inventory import ManualInventoryInput, submit_inventory
+    from spark_history import report_history
+    from uuid import uuid4
+    mod, db, lead, access = manual_catalog
+    liveswitch = ModuleType('routes.liveswitch')
+    liveswitch.apply_spark_results_to_lead = processing_api['apply_spark_results_to_lead']
+    monkeypatch.setitem(sys.modules, 'routes.liveswitch', liveswitch)
+    pricing = ModuleType('routes.pricing')
+    def calculate(lead, job, db):
+        job.price = lead.volume * 10
+        return float(job.price)
+    pricing.calculate_and_save_lead_job_price = MagicMock(side_effect=calculate)
+    monkeypatch.setitem(sys.modules, 'routes.pricing', pricing)
+    body = ManualInventoryInput(request_id=uuid4(), rooms=[{'room_type_id': 'bedroom', 'name': 'Bedroom 1',
+        'items': [{'item_id': 'chair', 'quantity': 2}, {'item_id': 'table', 'quantity': 1}]}])
+    result = submit_inventory(body, access, db)
+    assert result['ok'] and result['price'] == 400
+    assert float(lead.volume) == 40 and float(lead.weight) == 280
+    assert float(access.published_price) == 400
+    assert db.query(models.LeadSparkInventoryItem).count() == 2
+    processing_api['httpx'].get.assert_not_called()
+    pricing.calculate_and_save_lead_job_price.assert_called_once()
+    saved = db.get(models.LeadLiveSwitch, lead.id)
+    first_id = json.loads(saved.details)['last_spark_id']
+    assert report_history(json.loads(saved.details))[0]['source'] == 'manual'
+    assert report_history(json.loads(saved.details))[0]['inventory'][0]['room'] == 'Bedroom 1'
+    # Replaying the same submission does not create another history entry.
+    assert submit_inventory(body, access, db)['ok']
+    assert len(report_history(json.loads(saved.details))) == 1
+    body.request_id = uuid4()
+    body.rooms[0].items[0].quantity = 1
+    assert submit_inventory(body, access, db)['price'] == 300
+    assert len(report_history(json.loads(saved.details))) == 2
+    # Historical totals come from the saved list, even if catalog values later change.
+    db.get(models.InventoryCatalogItem, 'chair').cuft = 99
+    db.commit()
+    assert processing_api['select_spark_report'](lead.id, first_id, db)['price'] == 400
+    processing_api['httpx'].get.assert_not_called()
+    mod._read_job_route = lambda *args: ('A', [], 'B')
+    response = mod.details(access, db)
+    assert response['spark']['source'] == 'manual'
+    assert response['estimate']['price'] == '400.00'
+
+
+def test_manual_inventory_rejects_unknown_items_and_client_measurements(manual_catalog):
+    from manual_inventory import ManualInventoryInput, build_inventory
+    from uuid import uuid4
+    mod, db, lead, access = manual_catalog
+    body = {'request_id': str(uuid4()), 'rooms': [{'room_type_id': 'bedroom', 'name': 'Bedroom',
+             'items': [{'item_id': 'chair', 'quantity': 2}]}]}
+    assert build_inventory(ManualInventoryInput(**body), db)[2:] == (20, 140)
+    body['rooms'][0]['items'][0]['cuft'] = 1
+    with pytest.raises(ValueError):
+        ManualInventoryInput(**body)
+    del body['rooms'][0]['items'][0]['cuft']
+    body['rooms'][0]['items'][0]['item_id'] = 'unknown'
+    with pytest.raises(HTTPException):
+        build_inventory(ManualInventoryInput(**body), db)
+    body['rooms'][0]['items'][0]['item_id'] = 'chair'
+    body['rooms'][0]['items'][0]['quantity'] = -1
+    with pytest.raises(ValueError):
+        ManualInventoryInput(**body)
+
+
+def test_catalog_seed_is_idempotent_and_preserves_volume_variants(portal):
+    from inventory_catalog_seed import seed_inventory_catalog
+    mod, db, lead, access = portal
+    seed_inventory_catalog(db.connection())
+    seed_inventory_catalog(db.connection())
+    db.commit()
+    assert db.query(models.InventoryCatalogItem).count() == 770
+    assert db.query(models.InventoryRoomType).count() == 16
+    values = db.query(models.InventoryCatalogItem).filter_by(name='Bed Platform').all()
+    assert {float(r.cuft) for r in values} == {15, 30}
+    assert {float(r.weight) for r in values} == {105, 210}
+
+
+@pytest.mark.parametrize('authenticated', [False, True])
+def test_manual_inventory_endpoints_require_verification(manual_catalog, monkeypatch, authenticated):
+    import ast
+    import re
+    from uuid import uuid4
+    from fastapi import Depends, FastAPI, Request
+    from fastapi.testclient import TestClient
+    mod, db, lead, access = manual_catalog
+    access.id = str(uuid4())
+    access.token_hash = digest(link_token(access.id))
+    token = 'manual-session'
+    db.add(models.PublicMoveSession(token_hash=digest(token), access_id=access.id,
+        expires_at=datetime.utcnow() + timedelta(hours=1), contact_hash=contact_fingerprint(lead)))
+    db.commit()
+    save = MagicMock(return_value={'ok': True, 'price': 400})
+    monkeypatch.setattr(mod, 'submit_inventory', save)
+    source = ast.parse((BACKEND / 'main.py').read_text(encoding='utf-8'))
+    node = next(node for node in source.body if getattr(node, 'name', '') == 'enforce_authentication')
+    scope = {'Request': Request, 're': re, 'HTTPException': HTTPException, 'PUBLIC_PATHS': set()}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), '<global-auth>', 'exec'), scope)
+    app = FastAPI(dependencies=[Depends(scope['enforce_authentication'])])
+    app.include_router(mod.router)
+    app.dependency_overrides[mod.get_db] = lambda: db
+    with TestClient(app) as client:
+        headers = {'x-public-link': link_token(access.id)}
+        if authenticated:
+            headers['x-public-session'] = token
+        base = f'/api/public-moves/{access.id}'
+        response = client.get(base + '/inventory-catalog', headers=headers)
+        assert response.status_code == (200 if authenticated else 401), response.text
+        if authenticated:
+            assert response.json()['items'][0]['cuft'] == 10
+        response = client.post(base + '/manual-inventory', headers=headers, json={'request_id': str(uuid4()),
+            'rooms': [{'room_type_id': 'bedroom', 'name': 'Bedroom', 'items': [{'item_id': 'chair', 'quantity': 2}]}]})
+        assert response.status_code == (200 if authenticated else 401), response.text
+    assert save.call_count == (1 if authenticated else 0)
+
+
+def test_gallery_preview_is_scoped_and_hides_deleted_files(portal, monkeypatch):
+    import boto3
+    from unittest.mock import Mock
+    mod, db, lead, access = portal
+    client = Mock()
+    client.generate_presigned_url.return_value = 'https://signed.example/photo'
+    monkeypatch.setattr(boto3, 'client', lambda service: client)
+    db.add(models.LeadJob(id='gallery-other-job', lead_id=lead.id, job_order=2))
+    db.flush()
+    for item_id, job, mime in [('photo', access.job_id, 'image/jpeg'), ('other', 'gallery-other-job', 'image/jpeg'), ('document', access.job_id, 'application/pdf')]:
+        db.add(models.LeadAttachment(id=item_id, lead_id=lead.id, job_id=job,
+            file_name=item_id, file_size=5, file_blob=b'', content_type=mime, external_url='s3://bucket/photos/image.jpg'))
+    db.commit()
+    assert mod.customer_file_preview('photo', access, db)['url'] == 'https://signed.example/photo'
+    client.generate_presigned_url.assert_called_once_with('get_object', Params={
+        'Bucket': 'bucket', 'Key': 'photos/image.jpg', 'ResponseContentType': 'image/jpeg',
+        'ResponseContentDisposition': 'inline'}, ExpiresIn=3600)
+    assert mod.customer_file_preview('document', access, db) == {'url': None}
+    with pytest.raises(HTTPException) as exc:
+        mod.customer_file_preview('other', access, db)
+    assert exc.value.status_code == 404
+    mod.delete_customer_report_file('photo', access, db)
+    with pytest.raises(HTTPException) as exc:
+        mod.customer_file_preview('photo', access, db)
+    assert exc.value.status_code == 404

@@ -5,7 +5,7 @@ REPORT_KEYS = ('last_spark_id', 'last_spark_status', 'last_spark_at', 'last_spar
                'spark_extracted_id', 'spark_extracted_cuft', 'spark_extracted_weight',
                'spark_processing', 'spark_inventory_snapshot', 'spark_pricing_ready',
                'report_conversation', 'report_files', 'pending_spark_payload',
-               'report_customer_packing', 'report_customer_package')
+               'report_customer_packing', 'report_customer_package', 'report_source', 'manual_rooms')
 
 
 CONVERSATION_KEYS = ('id', 'name', 'hostJoinUrl', 'participantJoinUrl', 'conversationUrl', 'embeddedConversationUrl')
@@ -41,6 +41,7 @@ def report_history(details, staff=False):
                 'created_at': row.get('last_spark_at'), 'shareUrl': row.get('last_spark_share_url'),
                 'cuft': row.get('spark_extracted_cuft'), 'weight': row.get('spark_extracted_weight'),
                 'current': row['last_spark_id'] == details.get('last_spark_id'),
+                'source': row.get('report_source', 'liveswitch'), 'rooms': row.get('manual_rooms', []),
                 'inventory': row.get('spark_inventory_snapshot', []), 'files': row.get('report_files', [])}
         if staff:
             item['processing'] = row.get('spark_processing')
@@ -53,7 +54,7 @@ def activate_report(details, report_id):
     row = next((row for row in details.get('spark_history', []) if row.get('last_spark_id') == report_id), None)
     if row is None:
         raise ValueError('Report does not belong to this move.')
-    if row.get('last_spark_status') != 'completed' or not row.get('last_spark_share_url'):
+    if row.get('last_spark_status') != 'completed' or (row.get('report_source') != 'manual' and not row.get('last_spark_share_url')):
         raise ValueError('Only completed reports can be selected for pricing.')
     for key in REPORT_KEYS:
         details.pop(key, None)

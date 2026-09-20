@@ -25,6 +25,8 @@ def migrate() -> None:
     )
     """
     with engine.begin() as connection:
+        from inventory_catalog_seed import seed_inventory_catalog
+        seed_inventory_catalog(connection)
         connection.execute(text("ALTER TABLE lead_attachments ADD COLUMN IF NOT EXISTS report_deleted_at TIMESTAMP"))
         connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS office_address TEXT NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_default_company BOOLEAN NOT NULL DEFAULT FALSE"))

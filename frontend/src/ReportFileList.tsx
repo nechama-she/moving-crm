@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import './ReportFileList.css';
-export type EditableReportFile = { id: string; name: string; size?: number };
+export type EditableReportFile = { id: string; name: string; size?: number; content_type?: string };
 export default function ReportFileList({ files, onRemove, disabled = false }: {
   files: EditableReportFile[]; onRemove: (id: string) => Promise<void>; disabled?: boolean;
 }) {

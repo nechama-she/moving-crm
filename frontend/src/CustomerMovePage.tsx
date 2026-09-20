@@ -1,4 +1,6 @@
-import ReportFileList, { type EditableReportFile } from "./ReportFileList";
+import ManualInventoryModal from "./ManualInventoryModal";
+import type { EditableReportFile } from "./ReportFileList";
+import ReportFileGallery from "./ReportFileGallery";
 import ReportHistory, { type ReportRun } from "./ReportHistory";
 import CustomerPackingOptions, { type PackingPackage, type PackingSelection } from "./CustomerPackingOptions";
 import MeetingTimePicker from "./MeetingTimePicker";
@@ -33,7 +35,7 @@ type Details = {
     cuft: string;
     charges?: { name: string; description: string; total: number }[];
   } | null;
-  spark?: { id: string; status: string; shareUrl?: string; cuft?: number } | null;
+  spark?: { id: string; status: string; source?: string; shareUrl?: string; cuft?: number } | null;
   walkthrough: { status: string; availability: string; scheduled_at: string | null; timezone: string } | null;
   participant_url: string;
   files: { id: string; name: string; size: number }[];
@@ -55,6 +57,7 @@ export default function CustomerMovePage() {
   const [hasNewUploads, setHasNewUploads] = useState(false);
   const [resendAt,setResendAt]=useState(0),[clock,setClock]=useState(Date.now());
   const [showQuestions, setShowQuestions] = useState(false);
+  const [showInventoryList, setShowInventoryList] = useState(false);
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
   const [packingStep, setPackingStep] = useState<'bulky' | 'package'>('bulky');
   const [packageSelection, setPackageSelection] = useState<PackingSelection>({ mode: 'none', unpacking: false, item_ids: [] });
@@ -403,6 +406,7 @@ export default function CustomerMovePage() {
             <div className="cm-two-col cm-actions-row">
               <section className="cm-card cm-upload">
                 <div className="cm-eyebrow">SHOW US WHAT'S MOVING</div>
+                <button type="button" className="slds-button" style={{ marginTop: 12 }} onClick={() => setShowInventoryList(true)}>+ Add a list</button>
                 <h2>Add photos, documents<br/>or videos.</h2>
                 <p>A few photos of each room help us understand your move. Include any large or delicate items.</p>
                 <div className="cm-upload-row">
@@ -429,7 +433,7 @@ export default function CustomerMovePage() {
                   ))}
                 </div>
                 {!!data.new_file_count && <p>{data.new_file_count} new {data.new_file_count === 1 ? 'file is' : 'files are'} saved for the next report.</p>}
-                <ReportFileList files={data.editable_files || data.files} onRemove={removeReportFile} disabled={busy || reportState === 'running'} />
+                <ReportFileGallery files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={busy || reportState === 'running'} />
                 {(data.editable_files || data.files).length > 0 && (!data.spark || hasNewUploads || data.files_changed) && (reportState !== 'done' || data.files_changed) && (
                   <div className="cm-spark-box">
                     <button
@@ -524,10 +528,11 @@ export default function CustomerMovePage() {
                     <div className="cm-spark-status-row">
                       <span className="cm-spark-pill">
                         <span className={`cm-spark-dot ${data.spark.status === 'completed' ? 'dot-complete' : data.spark.status === 'failed' ? 'dot-failed' : 'dot-pulse'}`} />
-                        {data.spark.status === 'completed' ? 'Report ready' : data.spark.status === 'running' ? 'Analyzing media...' : data.spark.status === 'failed' ? 'Report failed' : 'Queued'}
+                        {data.spark.status === 'completed' ? (data.spark.source === 'manual' ? 'Inventory list ready' : 'Report ready') : data.spark.status === 'running' ? 'Analyzing media...' : data.spark.status === 'failed' ? 'Report failed' : 'Queued'}
                       </span>
                       {data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{data.spark.cuft} cu ft</strong> : null}
                     </div>
+                    {data.spark.source === 'manual' && <button type="button" className="cm-spark-link" onClick={() => { const history = document.getElementById('inventory-history'); const current = history?.querySelector<HTMLDetailsElement>('details[data-current="true"]'); if (current) current.open = true; history?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>View itemized list</button>}
                     {data.spark.status === 'completed' && data.spark.shareUrl && (
                       <a href={data.spark.shareUrl} target="_blank" rel="noopener noreferrer" className="cm-spark-link">
                         View Itemized Report ↗
@@ -587,6 +592,13 @@ export default function CustomerMovePage() {
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || packingSaving || reportState === 'running'} />
             </div>
 
+            {showInventoryList && <ManualInventoryModal loadCatalog={() => call('/inventory-catalog')} onClose={() => setShowInventoryList(false)} submit={async body => {
+              const result = await call('/manual-inventory', body);
+              setData(await call('/details'));
+              setShowInventoryList(false);
+              setCalculationError(result.price == null ? 'Your list is saved. Your moving team needs to review pricing before an estimate is available.' : '');
+              setReportState('idle');
+            }} />}
             {showQuestions && (
               <div className="cm-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="packing-title">
                 <div className="cm-modal-card">

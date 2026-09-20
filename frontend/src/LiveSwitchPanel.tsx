@@ -13,6 +13,7 @@ type Conversation = {
   participantJoinUrl: string;
   conversationUrl: string;
   embeddedConversationUrl: string;
+  report_source?: string;
   last_spark_id?: string;
   last_spark_status?: string;
   last_spark_share_url?: string;
@@ -70,7 +71,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
   const priceRequestRunning = useRef(false);
   const [sparkNotice, setSparkNotice] = useState("");
   const [sparkError, setSparkError] = useState("");
-  const [sparkData, setSparkData] = useState<{ id: string; status: string; shareUrl?: string; cuft?: number; weight?: number } | null>(null);
+  const [sparkData, setSparkData] = useState<{ id: string; status: string; source?: string; shareUrl?: string; cuft?: number; weight?: number } | null>(null);
   const [inventoryExpanded, setInventoryExpanded] = useState(false);
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [inventoryLoaded, setInventoryLoaded] = useState(false);
@@ -260,6 +261,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
         if (!reportId) return null;
         return {
           id: reportId,
+          source: nextConversation?.report_source,
           status: String(nextConversation?.last_spark_status || "queued"),
           shareUrl: String(nextConversation?.last_spark_share_url || ""),
           cuft: Number(nextConversation?.spark_extracted_cuft || 0) || undefined,
@@ -406,7 +408,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
           <div style={{ marginTop: 12, padding: 10, background: "#f1f5f9", borderRadius: 6, fontSize: 13, color: "#0f172a" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
               <span>
-                Inventory AI Report: <strong>{sparkData.status === "completed" ? "✓ Completed" : sparkData.status === "running" ? "Analyzing..." : sparkData.status === "failed" ? "Failed" : "Preparing report..."}</strong>
+                {sparkData.source === 'manual' ? 'Inventory list' : 'Inventory AI Report'}: <strong>{sparkData.status === "completed" ? "✓ Completed" : sparkData.status === "running" ? "Analyzing..." : sparkData.status === "failed" ? "Failed" : "Preparing report..."}</strong>
                 {sparkData.cuft ? ` · ${sparkData.cuft} cu ft` : ""}
               </span>
               {sparkData.shareUrl && (

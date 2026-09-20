@@ -29,6 +29,11 @@ def current_job(row, message):
 def process_file(message, db, dead_letter=False):
     row = locked_upload(db, message)
     if not current_job(row, message):
+        if not dead_letter and row and row.synced_at and row.sync_token == message['sync_token']:
+            access = db.get(PublicMoveAccess, message['access_id'])
+            if access:
+                from routes.liveswitch import start_ready_report
+                start_ready_report(access.lead_id, db)
         return
     if dead_letter:
         row.sync_status = 'failed'
@@ -105,6 +110,9 @@ def process_file(message, db, dead_letter=False):
     except Exception as exc:
         db.rollback()
         row = locked_upload(db, message)
+        if row and row.synced_at and row.sync_token == message['sync_token']:
+            # Retry scheduling without re-uploading a file that already succeeded.
+            raise
         if current_job(row, message):
             row.sync_status = 'failed'
             # Never expose presigned URL credentials through httpx exception text.
@@ -158,7 +166,13 @@ def handler(event, context):
             message = json.loads(record['body'])
             dead_letter = bool(os.getenv('PUBLIC_MOVE_SYNC_DLQ_ARN')) and record.get('eventSourceARN') == os.getenv('PUBLIC_MOVE_SYNC_DLQ_ARN')
             with SessionLocal() as db:
-                if 'attachment_ids' in message:
+                if 'start_report' in message:
+                    saved = db.get(LeadLiveSwitch, message['lead_id'])
+                    details = json.loads(saved.details or '{}') if saved else {}
+                    if not dead_letter and details.get('last_spark_id') == message['start_report']:
+                        from routes.liveswitch import start_ready_report
+                        start_ready_report(message['lead_id'], db)
+                elif 'attachment_ids' in message:
                     dispatch_files(message, db, dead_letter)
                 else:
                     process_file(message, db, dead_letter)
