@@ -114,3 +114,5 @@
 .cm-step-textarea{width:100%;border:1.5px solid var(--cm-border);border-radius:10px;padding:12px 14px;font:inherit;font-size:13px;color:var(--cm-text);resize:vertical;box-sizing:border-box}
 .cm-step-textarea:focus{outline:none;border-color:var(--cm-primary);box-shadow:0 0 0 2px rgba(33,76,62,0.15)}
 .cm-modal-footer{padding:16px 28px 24px;border-top:1px solid #eef2ec;display:flex;align-items:center;justify-content:space-between;gap:12px}
+
+.cm-get-price{display:inline-flex;align-items:center;justify-content:center;margin-top:14px;padding:10px 20px;border-radius:8px;min-height:40px;width:auto}

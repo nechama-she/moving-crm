@@ -603,3 +603,8 @@
   font-size: 12px;
   margin-bottom: 14px;
 }
+
+.access-api-error { margin-top: 5px; font-size: 12px; white-space: normal; }
+.access-api-error summary { color: #ba0517; cursor: pointer; width: fit-content; }
+.access-api-error pre { margin: 6px 0 0; padding: 10px; max-height: 220px; max-width: 650px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid #f1c5c9; border-radius: 4px; background: #fff8f8; color: #8e030f; font: 12px/1.5 monospace; user-select: text; }
+.access-api-error-missing { display: block; margin-top: 5px; color: #706e6b; font-size: 11px; }

@@ -16,6 +16,7 @@ type AccessItem = {
   path: string;
   query_params: string;
   status_code: number;
+  error_message?: string;
   duration_ms: number;
   user_agent: string;
   referer: string;
@@ -65,6 +66,11 @@ interface DrilldownPanelProps {
   title: string;
   onClose: () => void;
   token: string | null;
+}
+
+function ApiErrorDetail({ item }: { item: AccessItem }) {
+  if (item.status_code < 400) return null;
+  return item.error_message ? <details className="access-api-error"><summary>View API error</summary><pre>{item.error_message}</pre></details> : <small className="access-api-error-missing">Error message not recorded</small>;
 }
 
 function DrilldownPanel({ initialFilter, title, onClose, token }: DrilldownPanelProps) {
@@ -472,6 +478,7 @@ function DrilldownPanel({ initialFilter, title, onClose, token }: DrilldownPanel
                   <td className="path-cell">
                     <span className="path-text" title={item.path}>{item.path}</span>
                     {item.query_params && <small className="query-text">?{item.query_params}</small>}
+                    <ApiErrorDetail item={item} />
                   </td>
                   <td><span className={`status-badge status-${String(item.status_code)[0]}xx`}>{item.status_code}</span></td>
                   <td><code>{item.ip_address}</code></td>
@@ -758,6 +765,7 @@ export default function AccessHistoryPage() {
                       <td className="path-cell">
                         <span className="path-text" title={row.path}>{row.path}</span>
                         {row.query_params && <small className="query-text">?{row.query_params}</small>}
+                        <ApiErrorDetail item={row} />
                       </td>
                       <td>
                         <span className={`status-badge status-${String(row.status_code)[0]}xx`}>

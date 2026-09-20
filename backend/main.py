@@ -17,6 +17,7 @@ from config import get_config
 from database import SessionLocal
 from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
 from models import AccessAuditLog, Lead, User
+from access_errors import capture_response_error, exception_message
 from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
 from routes import public_moves, local_pricing
 from routes.meta import messenger, instagram
@@ -241,12 +242,15 @@ async def track_access_history(request: Request, call_next):
     path = request.url.path
 
     status_code = 500
+    error_message = None
     try:
         response = await call_next(request)
         status_code = response.status_code
+        error_message = await capture_response_error(response)
         return response
     except Exception as exc:
         status_code = getattr(exc, "status_code", 500)
+        error_message = exception_message(exc)
         raise
     finally:
         duration_ms = int((time.time() - start_time) * 1000)
@@ -263,6 +267,7 @@ async def track_access_history(request: Request, call_next):
                 path=path[:1000],
                 query_params=query_params[:2000] if query_params else None,
                 status_code=status_code,
+                error_message=error_message,
                 duration_ms=duration_ms,
                 user_agent=user_agent[:1000] if user_agent else None,
                 referer=referer[:1000] if referer else None,
