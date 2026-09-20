@@ -447,3 +447,52 @@ def test_pricing_calculator_uses_configured_cf_rates_once(packing_pricing):
     assert [charge['id'] for charge in charges] == ['packing:full', 'packing:partial', 'packing:unpacking']
     assert [packing_pricing._charge_amount(charge, 501, 1, 0) for charge in charges] == [1002, 501, 250.5]
     assert all(not charge['default_selected'] for charge in charges)
+
+
+def test_packing_route_uses_customer_session_through_global_auth(portal, packing_pricing, monkeypatch):
+    import ast
+    import re
+    from decimal import Decimal
+    from uuid import uuid4
+    from fastapi import Depends, FastAPI, Request
+    from fastapi.testclient import TestClient
+    mod, db, lead, access = portal
+    access.id = str(uuid4())
+    access.token_hash = digest(link_token(access.id))
+    job = db.get(models.LeadJob, access.job_id)
+    job.price = Decimal('1000')
+    token = 'verified-customer-session'
+    db.add(models.PublicMoveSession(token_hash=digest(token), access_id=access.id,
+                                   expires_at=datetime.utcnow() + timedelta(hours=1),
+                                   contact_hash=contact_fingerprint(lead)))
+    db.commit()
+    monkeypatch.setattr(packing_pricing, 'customer_packing_options', lambda *args: [
+        {'id': 'piano:1', 'label': 'Piano', 'services': [{'kind': 'crating', 'price': 1500}]}])
+    leads = ModuleType('routes.leads')
+    leads._refresh_lead_estimated_total = lambda *args: None
+    monkeypatch.setitem(sys.modules, 'routes.leads', leads)
+    monkeypatch.setattr(mod, 'details', lambda *args: {'saved': True})
+    source = ast.parse((BACKEND / 'main.py').read_text(encoding='utf-8'))
+    auth = next(node for node in source.body if getattr(node, 'name', '') == 'enforce_authentication')
+    scope = {'Request': Request, 're': re, 'HTTPException': HTTPException, 'PUBLIC_PATHS': set()}
+    exec(compile(ast.Module(body=[auth], type_ignores=[]), '<global-auth>', 'exec'), scope)
+    app = FastAPI(dependencies=[Depends(scope['enforce_authentication'])])
+    app.include_router(mod.router)
+    app.dependency_overrides[mod.get_db] = lambda: db
+    @app.get('/api/staff-only')
+    def staff_only():
+        return {'staff': True}
+    with TestClient(app) as client:
+        path = f'/api/public-moves/{access.id}/packing'
+        headers = {'x-public-link': link_token(access.id)}
+        body = {'selections': {'piano:1': 'crating'}}
+        response = client.post(path, headers=headers, json=body)
+        assert response.status_code == 401
+        assert 'verify' in response.json()['detail'].lower()
+        headers['x-public-session'] = token
+        response = client.post(path, headers=headers, json=body)
+        assert response.status_code == 200, response.text
+        assert job.price == Decimal('2500')
+        assert client.post(path, headers=headers, json=body).status_code == 200
+        assert job.price == Decimal('2500')
+        assert client.get('/api/staff-only', headers=headers).status_code == 401
