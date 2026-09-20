@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user, require_admin
 from config import get_config
+from company_colors import resolve_company_color
 from database import get_db
 from libs.aircall.client import find_number_id, send_sms
 from models import Lead, LeadJob, Company, User, LeadAttachment, LeadLiveSwitch, PublicMoveAccess, PublicMoveSession, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload, WalkthroughRequest
@@ -401,7 +402,12 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
         'color': company_color,
     }
 
-    return {'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    packing_items = []
+    if estimate and (job.company_id or lead.company_id):
+        from routes.pricing import customer_packing_options
+        packing_items = customer_packing_options(lead, job, db)
+
+    return {'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': company_data['name'],
             'company_details': company_data,
@@ -410,6 +416,57 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             'walkthrough': meeting_dict(meeting) if meeting else None,
             'participant_url': json.loads(conversation.details).get('participantJoinUrl', '') if conversation and meeting and meeting.status == 'scheduled' else '',
             'files': [{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files]}
+
+
+class CustomerPackingPatch(BaseModel):
+    selected_ids: list[str] = Field(default_factory=list, max_length=1000)
+    selections: dict[str, Literal['packing', 'crating']] = Field(default_factory=dict, max_length=1000)
+
+
+@router.post('/api/public-moves/{access_id}/packing')
+def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from models import LeadJobCharge
+    from routes.pricing import customer_packing_options, customer_packing_charge_id
+    from routes.leads import _refresh_lead_estimated_total
+    job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
+    lead = db.get(Lead, access.lead_id)
+    options = customer_packing_options(lead, job, db)
+    choices = dict(body.selections)
+    for item_id in body.selected_ids:
+        choices.setdefault(item_id, 'packing')
+    selected = set(choices)
+    if not selected.issubset({item['id'] for item in options}):
+        raise HTTPException(409, 'Your inventory or pricing changed. Refresh and select your items again.')
+    for item in options:
+        if item['id'] in choices and choices[item['id']] not in {service['kind'] for service in item['services']}:
+            raise HTTPException(409, 'That service is unavailable for this item. Refresh and select again.')
+    if job.price is None:
+        raise HTTPException(409, 'Your estimate is not ready yet.')
+    previous = set(json.loads(job.customer_packing or '[]'))
+    ids = [customer_packing_charge_id(job.id, item_id) for item_id in previous | selected]
+    old_rows = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id, LeadJobCharge.id.in_(ids)).all()
+    old_total = sum((row.total_cost for row in old_rows), Decimal(0))
+    for row in old_rows:
+        db.delete(row)
+    db.flush()
+    new_total = Decimal(0)
+    for index, item in enumerate(options):
+        if item['id'] in selected:
+            service = next(service for service in item['services'] if service['kind'] == choices[item['id']])
+            amount = Decimal(str(service['price']))
+            db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, item['id']), job_id=job.id,
+                                name=f"{item['label']} {choices[item['id']].title()}", description='', sort_order=1000 + index,
+                                subtotal=amount, discount_amount=0, total_cost=amount))
+            new_total += amount
+    job.customer_packing = json.dumps(choices, sort_keys=True)
+    delta = new_total - old_total
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    _refresh_lead_estimated_total(lead.id, db)
+    db.commit()
+    return details(access, db)
 
 
 class CustomerDetailsPatch(BaseModel):

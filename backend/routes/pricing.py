@@ -783,6 +783,57 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
     }
 
 
+def customer_packing_options(lead, job, db, plan=None, move_type=None):
+    if plan is None:
+        move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or not move_type:
+        return []
+    names = (_material_item_names(job._estimated_materials_data())
+             + _material_item_names(_job_spark_inventory_items(job.id, db)))
+    saved = json.loads(job.customer_packing or '{}')
+    selected = {item_id: 'packing' for item_id in saved} if isinstance(saved, list) else saved
+    multiplier = Decimal('0.5') if move_type.lower() == 'local' else Decimal(1)
+    options = []
+    for service in plan.services:
+        if not _is_bulky_service(service):
+            continue
+        count = sum(_normalize_item_name(n) == _normalize_item_name(service.name) for n in names)
+        prices = _bulky_item_prices(service)
+        services = []
+        for kind in ('packing', 'crating'):
+            parsed = _number(prices.get(kind, ''))
+            if parsed is not None and parsed >= 0:
+                price = (Decimal(str(parsed)) * multiplier).quantize(Decimal('0.01'))
+                services.append({'kind': kind, 'price': float(price)})
+        if not services:
+            continue
+        for index in range(count):
+            item_id = f'{service.id}:{index + 1}'
+            chosen = next((option for option in services if option['kind'] == selected.get(item_id)), None)
+            options.append({'id': item_id, 'name': service.name,
+                            'label': f'{service.name} ({index + 1} of {count})' if count > 1 else service.name,
+                            'services': services, 'selected_service': chosen['kind'] if chosen else None,
+                            'price': chosen['price'] if chosen else services[0]['price'], 'selected': chosen is not None})
+    return options
+
+
+def customer_packing_charge_id(job_id, item_id):
+    from uuid import uuid5, NAMESPACE_URL
+    return str(uuid5(NAMESPACE_URL, f'customer-packing:{job_id}:{item_id}'))
+
+
+def add_customer_packing_charges(lead, job, db, plan, move_type):
+    total = Decimal(0)
+    for index, item in enumerate(customer_packing_options(lead, job, db, plan, move_type)):
+        if item['selected']:
+            amount = Decimal(str(item['price']))
+            db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, item['id']), job_id=job.id,
+                                name=f"{item['label']} {item['selected_service'].title()}", description='', sort_order=1000 + index,
+                                subtotal=amount, discount_amount=0, total_cost=amount))
+            total += amount
+    return total
+
+
 def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> float | None:
     if not lead or not job:
         return None
@@ -840,7 +891,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         db.query(LeadJobCharge).filter_by(job_id=job.id).delete()
         all_lines = list(quote.get("charges", []))
         for b_charge in bulky_charges:
-            if b_charge.get("selected", True) and b_charge.get("rate", 0) > 0:
+            if b_charge.get("default_selected", False) and b_charge.get("rate", 0) > 0:
                 amt = Decimal(str(b_charge["rate"]))
                 all_lines.append({
                     "name": b_charge["name"],
@@ -863,9 +914,10 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
                     total_cost=line["totalCost"],
                 ))
         job.price = sum((l["totalCost"] for l in all_lines if l.get("totalCost", 0) > 0), Decimal(0))
+        job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
-        access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
+        access = db.query(PublicMoveAccess).filter_by(job_id=job.id).first()
         if access:
             access.published_price = job.price
             access.published_cuft = lead.volume
@@ -927,9 +979,10 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
                 total_cost=line["total_cost"],
             ))
         job.price = sum(l["total_cost"] for l in lines)
+        job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
-        access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
+        access = db.query(PublicMoveAccess).filter_by(job_id=job.id).first()
         if access:
             access.published_price = job.price
             access.published_cuft = lead.volume

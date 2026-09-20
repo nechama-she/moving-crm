@@ -490,6 +490,7 @@ class LeadJob(Base):
     customer_notes = Column(Text)
     foreman_notes = Column(Text)
     estimated_materials = Column(Text)
+    customer_packing = Column(Text)
     price = Column(Numeric(12, 2))
     stop_types = Column(Text)
     created_at = Column(DateTime(timezone=True), default=_now, index=True)

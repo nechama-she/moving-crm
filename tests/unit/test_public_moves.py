@@ -260,3 +260,111 @@ def test_phone_only_intake_and_optional_email(portal, email):
     assert mod.Intake(**body, email=email).email is None
     assert mod.CustomerDetailsPatch(email=email).email is None
     assert mod.Intake(**body).phone == '+12405707987'
+
+@pytest.fixture
+def packing_pricing(monkeypatch):
+    import ast
+    import re
+    from decimal import Decimal
+    source = (BACKEND / 'routes/pricing.py').read_text(encoding='utf-8')
+    names = {'_normalize_item_name', '_is_bulky_service', '_bulky_item_prices', '_bulky_item_charges',
+             '_material_item_names', 'customer_packing_options', 'customer_packing_charge_id', 'add_customer_packing_charges'}
+    nodes = [n for n in ast.parse(source).body if getattr(n, 'name', '') in names]
+    scope = {'json': json, 're': re, 'Decimal': Decimal, 'PricingService': object, 'LeadJobCharge': models.LeadJobCharge,
+             'BULKY_ITEM_MARKER': '__bulky_item__', 'BULKY_ITEM_PREFIX': '__bulky_item__:',
+             '_number': lambda value: Decimal(value) if value else None,
+             '_job_spark_inventory_items': lambda *args: []}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), '<packing-pricing>', 'exec'), scope)
+    module = ModuleType('routes.pricing')
+    module.__dict__.update(scope)
+    monkeypatch.setitem(sys.modules, 'routes.pricing', module)
+    return module
+
+
+def test_packing_options_per_item_and_local_rates(packing_pricing):
+    pricing = packing_pricing
+    service = SimpleNamespace(id='piano', name='Piano', rate_text='500',
+                              comments='__bulky_item__:' + json.dumps({'packing': '120', 'handling': '500'}))
+    plan = SimpleNamespace(services=[service])
+    job = SimpleNamespace(id='job', customer_packing='["piano:2"]',
+                          _estimated_materials_data=lambda: [{'name': 'Piano', 'quantity': 2}, {'name': 'Chair'}])
+    items = pricing.customer_packing_options(None, job, None, plan, 'Local')
+    assert len(items) == 2
+    assert [i['price'] for i in items] == [60, 60]
+    assert [i['selected'] for i in items] == [False, True]
+    assert items[1]['label'] == 'Piano (2 of 2)'
+    assert pricing.customer_packing_options(None, job, None, plan, 'Long Distance')[0]['price'] == 120
+
+
+def test_packing_save_repeat_remove_and_reject_unknown(portal, packing_pricing, monkeypatch):
+    from decimal import Decimal
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    job.price = Decimal('1000')
+    access.published_price = Decimal('1000')
+    db.add(models.LeadJobCharge(job_id=job.id, name='Transportation', subtotal=1000, total_cost=1000))
+    db.commit()
+    monkeypatch.setattr(packing_pricing, 'customer_packing_options', lambda *args: [
+        {'id': 'piano:1', 'label': 'Piano', 'price': 120, 'services': [{'kind': 'packing', 'price': 120}, {'kind': 'crating', 'price': 300}]}])
+    leads = ModuleType('routes.leads')
+    leads._refresh_lead_estimated_total = lambda *args: None
+    monkeypatch.setitem(sys.modules, 'routes.leads', leads)
+    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    for _ in range(2):
+        mod.save_customer_packing(mod.CustomerPackingPatch(selected_ids=['piano:1']), access, db)
+        assert job.price == Decimal('1120')
+        assert access.published_price == Decimal('1120')
+        assert db.query(models.LeadJobCharge).count() == 2
+        assert json.loads(job.customer_packing) == {'piano:1': 'packing'}
+    mod.save_customer_packing(mod.CustomerPackingPatch(selections={'piano:1': 'crating'}), access, db)
+    assert job.price == Decimal('1300')
+    assert access.published_price == Decimal('1300')
+    assert db.query(models.LeadJobCharge).filter_by(name='Piano Crating').one().total_cost == Decimal('300')
+    assert db.query(models.LeadJobCharge).count() == 2
+    with pytest.raises(HTTPException) as exc:
+        mod.save_customer_packing(mod.CustomerPackingPatch(selected_ids=['other-job-item']), access, db)
+    assert exc.value.status_code == 409
+    mod.save_customer_packing(mod.CustomerPackingPatch(selected_ids=[]), access, db)
+    assert job.price == Decimal('1000')
+    assert access.published_price == Decimal('1000')
+    assert db.query(models.LeadJobCharge).one().name == 'Transportation'
+
+
+@pytest.mark.parametrize('kind,price', [('packing', '60'), ('crating', '150')])
+def test_saved_packing_can_be_rebuilt_during_repricing(portal, packing_pricing, kind, price):
+    from decimal import Decimal
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    job.estimated_materials = json.dumps([{'name': 'Piano', 'quantity': 2}])
+    job.customer_packing = json.dumps({'piano:2': kind})
+    service = SimpleNamespace(id='piano', name='Piano', rate_text='500',
+                              comments='__bulky_item__:' + json.dumps({'packing': '120', 'crating': '300', 'handling': '500'}))
+    plan = SimpleNamespace(services=[service])
+    total = packing_pricing.add_customer_packing_charges(lead, job, db, plan, 'Local')
+    db.flush()
+    assert total == Decimal(price)
+    row = db.query(models.LeadJobCharge).one()
+    assert row.name == f'Piano (2 of 2) {kind.title()}'
+    assert row.total_cost == Decimal(price)
+    automatic = packing_pricing._bulky_item_charges([service], ['Piano'])
+    assert [c['name'] for c in automatic if c['default_selected']] == ['Piano Handling']
+
+
+@pytest.mark.parametrize('prices,expected', [
+    ({'packing': '120'}, ['packing']),
+    ({'crating': '300'}, ['crating']),
+    ({'packing': '120', 'crating': '300'}, ['packing', 'crating']),
+    ({}, []),
+])
+def test_packing_and_crating_availability(packing_pricing, prices, expected):
+    service = SimpleNamespace(id='piano', name='Piano', rate_text='500',
+                              comments='__bulky_item__:' + json.dumps(prices))
+    job = SimpleNamespace(id='job', customer_packing='{"piano:1":"crating"}',
+                          _estimated_materials_data=lambda: [{'name': 'Piano'}])
+    items = packing_pricing.customer_packing_options(None, job, None, SimpleNamespace(services=[service]), 'Local')
+    assert ([s['kind'] for s in items[0]['services']] if items else []) == expected
+    if 'crating' in expected:
+        assert items[0]['selected_service'] == 'crating'
+        assert items[0]['price'] == 150
+    elif items:
+        assert not items[0]['selected']
