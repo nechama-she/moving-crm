@@ -61,6 +61,54 @@ def migrate() -> None:
             )
         """))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_smartmoving_referral_sources_normalized_name ON smartmoving_referral_sources (normalized_name)"))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS access_audit_logs (
+                id VARCHAR(36) PRIMARY KEY,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                user_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
+                user_name VARCHAR(255) NOT NULL DEFAULT 'Anonymous',
+                user_email VARCHAR(255),
+                user_role VARCHAR(50) NOT NULL DEFAULT 'anonymous',
+                ip_address VARCHAR(100) NOT NULL,
+                method VARCHAR(10) NOT NULL,
+                path VARCHAR(1000) NOT NULL,
+                query_params TEXT,
+                status_code INTEGER NOT NULL,
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                user_agent TEXT,
+                referer TEXT
+            )
+        """))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_created_at ON access_audit_logs (created_at DESC)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_user_id ON access_audit_logs (user_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_ip_address ON access_audit_logs (ip_address)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_path ON access_audit_logs (path)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_status_code ON access_audit_logs (status_code)"))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS local_pricing_routes (
+                id VARCHAR(36) PRIMARY KEY,
+                company_id VARCHAR(36) NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+                pickup VARCHAR(64) NOT NULL,
+                delivery VARCHAR(64) NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_local_pricing_routes_company_pair UNIQUE (company_id, pickup, delivery)
+            )
+        """))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_local_pricing_routes_company_id ON local_pricing_routes (company_id)"))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS lead_spark_inventory_items (
+                id VARCHAR(36) PRIMARY KEY,
+                job_id VARCHAR(36) NOT NULL REFERENCES lead_jobs(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                cuft NUMERIC(12, 2),
+                amount NUMERIC(12, 2),
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_spark_inventory_items_job_id ON lead_spark_inventory_items (job_id)"))
         connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS system_permissions TEXT"))
     logger.info("communication_associations is ready")
