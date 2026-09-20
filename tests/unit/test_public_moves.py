@@ -928,9 +928,10 @@ def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_a
            'last_spark_id': 'report-old', 'last_spark_status': 'completed', 'last_spark_share_url': 'report-url',
            'spark_extracted_cuft': 50, 'report_files': [{'id': 'a', 'name': 'first.jpg'}]}
     db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps(old)))
-    for file_id, job_id in [('a', access.job_id), ('b', None)]:
+    for file_id, job_id in [('a', access.job_id), ('b', None), ('deleted', access.job_id)]:
         db.add(models.LeadAttachment(id=file_id, lead_id=lead.id, job_id=job_id, file_name=file_id+'.jpg',
-               file_blob=b'image', file_size=5, content_type='image/jpeg'))
+               file_blob=b'image', file_size=5, content_type='image/jpeg',
+               report_deleted_at=datetime.utcnow() if file_id == 'deleted' else None))
     db.commit()
     monkeypatch.setenv('PUBLIC_MOVE_SYNC_QUEUE_URL', 'test-queue')
     sync = ModuleType('public_move_sync')
@@ -1015,3 +1016,85 @@ def test_file_worker_uses_pinned_conversation_even_if_selection_changes(portal, 
     liveswitch.start_ready_report.assert_called_once_with(lead.id, db)
     worker.process_file(message, db)
     assert put.call_count == 1
+
+
+def test_delete_report_file_excludes_it_but_preserves_history(portal):
+    from report_files import move_files
+    mod, db, lead, access = portal
+    for item_id in ['keep', 'remove']:
+        db.add(models.LeadAttachment(id=item_id, lead_id=lead.id, job_id=access.job_id,
+            file_name=item_id+'.jpg', file_blob=b'image', file_size=5, content_type='image/jpeg'))
+    snapshot = [{'id': item_id, 'name': item_id+'.jpg'} for item_id in ['keep', 'remove']]
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'last_spark_id': 'old',
+        'last_spark_status': 'completed', 'spark_extracted_id': 'old', 'report_files': snapshot})))
+    db.commit()
+    assert mod.delete_customer_report_file('remove', access, db)['ok']
+    assert mod.delete_customer_report_file('remove', access, db)['ok']  # Repeat is harmless.
+    assert [f.id for f in move_files(access, db)] == ['keep']
+    assert db.get(models.LeadAttachment, 'remove').file_blob == b'image'
+    mod._read_job_route = lambda *args: ('A', [], 'B')
+    result = mod.details(access, db)
+    assert result['files'] == snapshot
+    assert result['report_history'][0]['files'] == snapshot
+    assert [f['id'] for f in result['editable_files']] == ['keep']
+    assert result['files_changed']
+    mod.delete_customer_report_file('keep', access, db)
+    with pytest.raises(HTTPException) as exc:
+        mod.customer_generate_inventory_report(access, db)
+    assert exc.value.status_code == 400
+
+
+def test_delete_file_rejects_another_move(portal):
+    mod, db, lead, access = portal
+    other_job = models.LeadJob(id='different-job', lead_id=lead.id, job_order=2)
+    db.add(other_job)
+    db.flush()
+    db.add(models.LeadAttachment(id='other-file', lead_id=lead.id, job_id=other_job.id,
+        file_name='other.jpg', file_blob=b'image', file_size=5, content_type='image/jpeg'))
+    db.commit()
+    with pytest.raises(HTTPException) as exc:
+        mod.delete_customer_report_file('other-file', access, db)
+    assert exc.value.status_code == 404
+    assert db.get(models.LeadAttachment, 'other-file').report_deleted_at is None
+
+
+def test_staff_file_delete_checks_staff_access(portal):
+    mod, db, lead, access = portal
+    def forbidden(*args):
+        raise HTTPException(403, 'Not assigned')
+    mod.staff_access = forbidden
+    with pytest.raises(HTTPException) as exc:
+        mod.delete_staff_report_file(lead.id, 'file', object(), db)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.parametrize('authenticated', [False, True])
+def test_file_delete_requires_verified_customer_session(portal, monkeypatch, authenticated):
+    import ast
+    import re
+    from uuid import uuid4
+    from fastapi import Depends, FastAPI, Request
+    from fastapi.testclient import TestClient
+    mod, db, lead, access = portal
+    access.id = str(uuid4())
+    access.token_hash = digest(link_token(access.id))
+    token = 'delete-session'
+    db.add(models.PublicMoveSession(token_hash=digest(token), access_id=access.id,
+        expires_at=datetime.utcnow() + timedelta(hours=1), contact_hash=contact_fingerprint(lead)))
+    db.commit()
+    remove = MagicMock(return_value={'ok': True})
+    monkeypatch.setattr(mod, 'remove_report_file', remove)
+    source = ast.parse((BACKEND / 'main.py').read_text(encoding='utf-8'))
+    node = next(node for node in source.body if getattr(node, 'name', '') == 'enforce_authentication')
+    scope = {'Request': Request, 're': re, 'HTTPException': HTTPException, 'PUBLIC_PATHS': set()}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), '<global-auth>', 'exec'), scope)
+    app = FastAPI(dependencies=[Depends(scope['enforce_authentication'])])
+    app.include_router(mod.router)
+    app.dependency_overrides[mod.get_db] = lambda: db
+    with TestClient(app) as client:
+        headers = {'x-public-link': link_token(access.id)}
+        if authenticated:
+            headers['x-public-session'] = token
+        response = client.delete(f'/api/public-moves/{access.id}/files/photo', headers=headers)
+        assert response.status_code == (200 if authenticated else 401), response.text
+    assert remove.call_count == (1 if authenticated else 0)

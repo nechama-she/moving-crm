@@ -1,5 +1,6 @@
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
 from spark_history import report_history
+from report_files import move_files, file_list, remove_report_file
 import hmac
 import json
 import os
@@ -379,8 +380,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
     pickup, stops, delivery = _read_job_route(db, job)
     typed = json.loads(job.stop_types or '[]')
     meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first()
-    files = db.query(LeadAttachment).filter(LeadAttachment.lead_id == lead.id,
-        (LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None)).all()
+    files = move_files(access, db)
     conversation = db.get(LeadLiveSwitch, lead.id)
 
     # Extract spark report details if available, and auto-process if finished
@@ -493,6 +493,8 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             'estimate': estimate,
             'spark': spark_info,
             'report_history': report_history(conv_details),
+            'editable_files': file_list(files),
+            'files_changed': {f.id for f in files} != {row['id'] for row in conv_details.get('report_files', [])},
             'new_file_count': sum(f.id not in {row['id'] for row in conv_details.get('report_files', [])} for f in files) if 'report_files' in conv_details else 0,
             'walkthrough': meeting_dict(meeting) if meeting else None,
             'participant_url': json.loads(conversation.details).get('participantJoinUrl', '') if conversation and meeting and meeting.status == 'scheduled' else '',
@@ -678,17 +680,19 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
     return details(access, db)
 
 
+@router.delete('/api/public-moves/{access_id}/files/{attachment_id}')
+def delete_customer_report_file(attachment_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    return remove_report_file(access, attachment_id, db)
+
+
 @router.post('/api/public-moves/{access_id}/generate-inventory-report')
 def customer_generate_inventory_report(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    from routes.liveswitch import trigger_lead_spark
     # Verify that this customer actually uploaded files
-    count = db.query(func.count(LeadAttachment.id)).filter(
-        LeadAttachment.lead_id == access.lead_id,
-        (LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None),
-    ).scalar() or 0
+    count = len(move_files(access, db))
     if count == 0:
         raise HTTPException(400, "Please upload photos or videos of your items before generating a report.")
 
+    from routes.liveswitch import trigger_lead_spark
     try:
         return trigger_lead_spark(access.lead_id, db=db)
     except HTTPException:
@@ -952,10 +956,18 @@ def schedule(request_id: str, body: ScheduleBody, user: User = Depends(require_a
     return meeting_dict(row)
 
 
+@router.delete('/api/leads/{lead_id}/customer-page/files/{attachment_id}')
+def delete_staff_report_file(lead_id: str, attachment_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _, access = staff_access(lead_id, user, db)
+    return remove_report_file(access, attachment_id, db)
+
+
 @router.get('/api/leads/{lead_id}/customer-page/sync-status')
 def file_sync_status(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _, access = staff_access(lead_id, user, db)
-    return sync_status(access.id, db)
+    result = sync_status(access.id, db)
+    result['editable_files'] = file_list(move_files(access, db))
+    return result
 
 
 @router.post('/api/leads/{lead_id}/customer-page/sync-files', status_code=202)

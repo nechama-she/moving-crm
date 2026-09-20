@@ -363,8 +363,8 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
     if not access:
         raise HTTPException(409, 'Generate the customer page before running an inventory report.')
-    files = db.query(LeadAttachment).filter(LeadAttachment.lead_id == lead_id,
-        (LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None)).all()
+    from report_files import move_files
+    files = move_files(access, db)
     if not files:
         raise HTTPException(400, 'Upload files to the move before running a report.')
     config = _connection_config()

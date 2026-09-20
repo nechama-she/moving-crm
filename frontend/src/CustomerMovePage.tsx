@@ -1,3 +1,4 @@
+import ReportFileList, { type EditableReportFile } from "./ReportFileList";
 import ReportHistory, { type ReportRun } from "./ReportHistory";
 import CustomerPackingOptions, { type PackingPackage, type PackingSelection } from "./CustomerPackingOptions";
 import MeetingTimePicker from "./MeetingTimePicker";
@@ -9,6 +10,8 @@ import "./CustomerMovePage.css";
 type Details = {
   report_history?: ReportRun[];
   new_file_count?: number;
+  editable_files?: EditableReportFile[];
+  files_changed?: boolean;
   packing_package: PackingPackage | null;
   packing_items: { id: string; label: string; price: number; selected: boolean; selected_service: string | null; services: { kind: string; price: number }[] }[];
   packing_saved: boolean;
@@ -70,6 +73,15 @@ export default function CustomerMovePage() {
       try { setData(await call('/details')); }
       finally { setCalculatingPrice(false); }
     }
+  }
+  async function removeReportFile(id: string) {
+    setBusy(true);
+    try {
+      await call(`/files/${encodeURIComponent(id)}`, undefined, 'DELETE');
+      setData(await call('/details'));
+      setReportState('idle');
+      setHasNewUploads(true);
+    } finally { setBusy(false); }
   }
   async function savePacking() {
     if (Object.values(packingSelection).some(value => !value)) {
@@ -403,7 +415,7 @@ export default function CustomerMovePage() {
                 </div>
                 {files.length>0 && <p role="status">{files.filter(f=>f.status==='Uploaded').length} of {files.length} files uploaded</p>}
                 <div className="cm-file-list">
-                  {files.map(item => (
+                  {files.filter(item => item.status !== 'Uploaded').map(item => (
                     <article key={item.id}>
                       {item.preview && <img src={item.preview} alt="" />}
                       <div>
@@ -417,8 +429,8 @@ export default function CustomerMovePage() {
                   ))}
                 </div>
                 {!!data.new_file_count && <p>{data.new_file_count} new {data.new_file_count === 1 ? 'file is' : 'files are'} saved for the next report.</p>}
-                {data.files.length>0&&<details><summary>{data.files.length} saved files</summary>{data.files.map(file=><p key={file.id}>{file.name}</p>)}</details>}
-                {(data.files.length > 0 || !!data.new_file_count) && (!data.spark || hasNewUploads || !!data.new_file_count) && reportState !== 'done' && (
+                <ReportFileList files={data.editable_files || data.files} onRemove={removeReportFile} disabled={busy || reportState === 'running'} />
+                {(data.editable_files || data.files).length > 0 && (!data.spark || hasNewUploads || data.files_changed) && (reportState !== 'done' || data.files_changed) && (
                   <div className="cm-spark-box">
                     <button
                       type="button"
