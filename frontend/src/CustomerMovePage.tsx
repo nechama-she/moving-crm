@@ -51,6 +51,8 @@ export default function CustomerMovePage() {
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
   const [packingStep, setPackingStep] = useState<'bulky' | 'package'>('bulky');
   const [packageSelection, setPackageSelection] = useState<PackingSelection>({ mode: 'none', unpacking: false, item_ids: [] });
+  const [calculatingPrice, setCalculatingPrice] = useState(false);
+  const [calculationError, setCalculationError] = useState('');
   const [packingSaving, setPackingSaving] = useState(false);
   const [packingError, setPackingError] = useState('');
   const money = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
@@ -483,6 +485,20 @@ export default function CustomerMovePage() {
                       </span>
                       {data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{data.spark.cuft} cu ft</strong> : null}
                     </div>
+                    {data.spark.status === 'completed' && (
+                      <button type="button" className="slds-button cm-primary" disabled={calculatingPrice} onClick={async () => {
+                        setCalculatingPrice(true);
+                        setCalculationError('');
+                        try {
+                          await call('/calculate-price', {});
+                          setData(await call('/details'));
+                        } catch (err) {
+                          setCalculationError((err as Error).message);
+                        } finally {
+                          setCalculatingPrice(false);
+                        }
+                      }}>{calculatingPrice ? 'Calculating...' : 'Calculate price'}</button>
+                    )}
                     {data.spark.status === 'completed' && data.spark.shareUrl && (
                       <a href={data.spark.shareUrl} target="_blank" rel="noopener noreferrer" className="cm-spark-link">
                         View Itemized Report ↗
@@ -491,6 +507,7 @@ export default function CustomerMovePage() {
                   </div>
                 )}
               </div>
+              {calculationError && <p role="alert">{calculationError}</p>}
               {data.estimate && Number(data.estimate.cuft) > 0 && (
                 <div className="cm-estimate-details">
                   <div className="cm-estimate-detail-item">

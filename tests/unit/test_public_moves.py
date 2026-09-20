@@ -529,3 +529,51 @@ def test_details_exposes_inventory_questions_without_estimate(portal, packing_pr
     result = mod.details(access, db)
     assert result['estimate'] is None
     assert result['packing_items'] == items
+
+
+@pytest.mark.parametrize('ready,result,status', [
+    (True, {'ok': True, 'price': 1250}, 200),
+    (False, {'ok': True, 'price': 1250}, 409),
+    (True, {'ok': False, 'detail': 'Could not extract volume from report'}, 422),
+    (True, {'ok': True, 'price': None}, 422),
+])
+def test_calculate_price_calls_existing_completion_function(portal, monkeypatch, ready, result, status):
+    import ast
+    import re
+    from uuid import uuid4
+    from fastapi import Depends, FastAPI, Request
+    from fastapi.testclient import TestClient
+    mod, db, lead, access = portal
+    access.id = str(uuid4())
+    access.token_hash = digest(link_token(access.id))
+    report_url = 'https://example.com/reports/ready-report'
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+        'last_spark_status': 'completed' if ready else 'running',
+        'last_spark_share_url': report_url})))
+    token = 'calculation-customer-session'
+    db.add(models.PublicMoveSession(token_hash=digest(token), access_id=access.id,
+                                   expires_at=datetime.utcnow() + timedelta(hours=1),
+                                   contact_hash=contact_fingerprint(lead)))
+    db.commit()
+    liveswitch = ModuleType('routes.liveswitch')
+    liveswitch.apply_spark_results_to_lead = MagicMock(return_value=result)
+    monkeypatch.setitem(sys.modules, 'routes.liveswitch', liveswitch)
+    source = ast.parse((BACKEND / 'main.py').read_text(encoding='utf-8'))
+    auth = next(node for node in source.body if getattr(node, 'name', '') == 'enforce_authentication')
+    scope = {'Request': Request, 're': re, 'HTTPException': HTTPException, 'PUBLIC_PATHS': set()}
+    exec(compile(ast.Module(body=[auth], type_ignores=[]), '<global-auth>', 'exec'), scope)
+    app = FastAPI(dependencies=[Depends(scope['enforce_authentication'])])
+    app.include_router(mod.router)
+    app.dependency_overrides[mod.get_db] = lambda: db
+    with TestClient(app) as client:
+        path = f'/api/public-moves/{access.id}/calculate-price'
+        headers = {'x-public-link': link_token(access.id)}
+        assert client.post(path, headers=headers, json={}).status_code == 401
+        liveswitch.apply_spark_results_to_lead.assert_not_called()
+        headers['x-public-session'] = token
+        response = client.post(path, headers=headers, json={})
+        assert response.status_code == status, response.text
+        if ready:
+            liveswitch.apply_spark_results_to_lead.assert_called_once_with(lead.id, report_url, db)
+        else:
+            liveswitch.apply_spark_results_to_lead.assert_not_called()

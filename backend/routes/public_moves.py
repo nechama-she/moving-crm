@@ -420,6 +420,21 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             'files': [{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files]}
 
 
+@router.post('/api/public-moves/{access_id}/calculate-price')
+def calculate_report_price(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from routes.liveswitch import apply_spark_results_to_lead
+    conversation = db.get(LeadLiveSwitch, access.lead_id)
+    report = json.loads(conversation.details or '{}') if conversation else {}
+    if report.get('last_spark_status') != 'completed' or not report.get('last_spark_share_url'):
+        raise HTTPException(409, 'Your report is not ready yet.')
+    result = apply_spark_results_to_lead(access.lead_id, report['last_spark_share_url'], db)
+    if not result.get('ok'):
+        raise HTTPException(422, result.get('detail') or 'Could not process the report.')
+    if result.get('price') is None:
+        raise HTTPException(422, 'The report was imported, but no price could be calculated. Please contact your moving team to check pricing.')
+    return result
+
+
 class CustomerPackageSelection(BaseModel):
     mode: Literal['full', 'partial', 'none'] = 'none'
     unpacking: bool = False
