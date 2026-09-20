@@ -379,7 +379,8 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
     pickup, stops, delivery = _read_job_route(db, job)
     typed = json.loads(job.stop_types or '[]')
     meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first()
-    files = db.query(LeadAttachment).join(PublicMoveUpload, LeadAttachment.id == PublicMoveUpload.attachment_id).filter(PublicMoveUpload.access_id == access.id).all()
+    files = db.query(LeadAttachment).filter(LeadAttachment.lead_id == lead.id,
+        (LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None)).all()
     conversation = db.get(LeadLiveSwitch, lead.id)
 
     # Extract spark report details if available, and auto-process if finished
@@ -388,9 +389,13 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
     if conversation and conversation.details:
         try:
             conv_details = json.loads(conversation.details)
+            if conv_details.get('pending_spark_payload'):
+                from routes.liveswitch import start_ready_report
+                start_ready_report(lead.id, db)
+                conv_details = json.loads(conversation.details)
             spark_id = conv_details.get("last_spark_id")
             if spark_id:
-                if conv_details.get("last_spark_status") not in ("completed", "failed", "cancelled") or conv_details.get("spark_extracted_id") != spark_id:
+                if not conv_details.get("pending_spark_payload") and (conv_details.get("last_spark_status") not in ("completed", "failed", "cancelled") or conv_details.get("spark_extracted_id") != spark_id):
                     from routes.liveswitch import _api_get, apply_spark_results_to_lead
                     try:
                         remote = _api_get(f"sparks/{spark_id}")
@@ -488,9 +493,10 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             'estimate': estimate,
             'spark': spark_info,
             'report_history': report_history(conv_details),
+            'new_file_count': sum(f.id not in {row['id'] for row in conv_details.get('report_files', [])} for f in files) if 'report_files' in conv_details else 0,
             'walkthrough': meeting_dict(meeting) if meeting else None,
             'participant_url': json.loads(conversation.details).get('participantJoinUrl', '') if conversation and meeting and meeting.status == 'scheduled' else '',
-            'files': [{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files]}
+            'files': conv_details.get('report_files', [{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files])}
 
 
 @router.post('/api/public-moves/{access_id}/reports/{report_id}/select')
@@ -676,9 +682,10 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
 def customer_generate_inventory_report(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from routes.liveswitch import trigger_lead_spark
     # Verify that this customer actually uploaded files
-    count = db.query(func.count(LeadAttachment.id)).join(
-        PublicMoveUpload, LeadAttachment.id == PublicMoveUpload.attachment_id
-    ).filter(PublicMoveUpload.access_id == access.id).scalar() or 0
+    count = db.query(func.count(LeadAttachment.id)).filter(
+        LeadAttachment.lead_id == access.lead_id,
+        (LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None),
+    ).scalar() or 0
     if count == 0:
         raise HTTPException(400, "Please upload photos or videos of your items before generating a report.")
 
@@ -958,7 +965,9 @@ def sync_files(lead_id: str, user: User = Depends(get_current_user), db: Session
 
 
 def queue_uploaded_file(access, attachment_id, db):
-    if not db.get(LeadLiveSwitch, access.lead_id):
+    conversation = db.get(LeadLiveSwitch, access.lead_id)
+    if not conversation or json.loads(conversation.details or '{}').get('last_spark_id'):
+        # Stage new files in CRM; never append them to a previous report's conversation.
         return
     try:
         queue_files(access.id, db, attachment_id=attachment_id)

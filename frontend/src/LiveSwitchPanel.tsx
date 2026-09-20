@@ -163,6 +163,8 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
     setCalculatingPrice(true);
     try {
       await request(`${base}/reports/${encodeURIComponent(id)}/select`, {});
+      setConversation(await request(`${base}/conversation`));
+      setItems([]);
     } finally {
       try {
         await loadSparkStatus();
@@ -208,7 +210,9 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
     setSparkError("");
     try {
       const res = await request(`${base}/run-spark`);
-      setSparkNotice("Inventory report initiated! LiveSwitch is processing the files.");
+      setConversation(await request(`${base}/conversation`));
+      setProcessingRevision(value => value + 1);
+      setSparkNotice("New conversation created. Copying move files before generating the report.");
       if (res && res.id) {
         setSparkData({ id: res.id, status: res.status || "queued" });
       }
@@ -315,17 +319,6 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
         const group = pending.filter(item => (item.type.startsWith("image/") ? "images" : item.type.startsWith("video/") ? "videos" : "documents") === kind);
         for (let offset = 0; offset < group.length; offset += 20) {
           const batch = group.slice(offset, offset + 20);
-          const needUrls = batch.filter(item => !item.live);
-          let results: Array<{ fileName: string; presignedUrl?: string; errorMessage?: string }> = [];
-          let preparationError = "";
-          if (needUrls.length) {
-            try {
-              const data = await request(`${base}/upload-urls/${kind}`, needUrls.map(item => ({ fileName: item.name, contentType: item.type })));
-              results = data.results || [];
-            } catch (err) {
-              preparationError = err instanceof Error ? err.message : "Could not prepare upload";
-            }
-          }
           for (const item of batch) {
             update(item.id, { status: "Uploading", error: undefined });
             let live = item.live; let crm = item.crm;
@@ -339,13 +332,8 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
                 }
                 crm = true; update(item.id, { crm });
               }
-              if (!live) {
-                if (preparationError) throw new Error(preparationError);
-                const result = results.find(result => result.fileName === item.name);
-                if (!result?.presignedUrl || result.errorMessage) throw new Error(result?.errorMessage || "LiveSwitch did not return an upload URL for this file.");
-                await put(item, result.presignedUrl); live = true;
-              }
-              update(item.id, { live, crm, progress: 100, status: "Uploaded", error: undefined });
+              live = true; // Saved files are copied into the new conversation when a report starts.
+              update(item.id, { live, crm, progress: 100, status: "Saved for next report", error: undefined });
             } catch (err) { update(item.id, { live, crm, status: "Retry", error: err instanceof Error ? err.message : "Upload failed" }); }
           }
         }
@@ -397,8 +385,8 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
       <main>{loading ? <p role="status">Preparing your conversation </p> : error ? <div role="alert" className="ls-error">{error}<button className="slds-button" onClick={() => void load()}>Try again</button></div> : conversation ? <>
         <section className="ls-card"><h3>Conversation links</h3><p>Copy a link or open it in a new tab.</p>{([['Host', conversation.hostJoinUrl], ['Participant', conversation.participantJoinUrl]] as const).map(([label, url]) => <div className="ls-link" key={label}><div><strong>{label} link</strong><span title={url}>{url || "Link unavailable"}</span></div><button className="slds-button" disabled={!url} aria-label={`Copy ${label.toLowerCase()} link`} title="Copy link" onClick={() => void navigator.clipboard.writeText(url).then(() => setNotice(`${label} link copied`)).catch(() => setNotice("Could not copy. Select and copy the link manually."))}><Icon kind="copy"/></button>{url && <a href={url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${label.toLowerCase()} link in a new tab`} title="Open in new tab"><Icon kind="open"/></a>}{label === "Participant" && <button className="slds-button" type="button" disabled={!url || smsSending} style={{ flexShrink: 0 }} title={smsSending ? "Sending SMS" : "Send SMS"} aria-label={smsSending ? "Sending participant link by SMS" : "Send participant link by SMS"} aria-busy={smsSending} onClick={() => void sendParticipantSms()}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M4 3h16v13H9l-5 5V3Z M8 7h8M8 11h6"/></svg></button>}</div>)}<CustomerPageControls leadId={leadId} section="links"/>{smsNotice && <p role="status">{smsNotice}</p>}{smsError && <div className="ls-error" role="alert">{smsError}</div>}</section>
         <section className="ls-card"><h3>Add Photos, Documents, or Videos</h3><p>Add files right from your device.</p><label className="ls-picker">+ Choose files<input type="file" multiple disabled={busy} onChange={e => { choose(e.target.files); e.target.value = ""; }}/></label><small>All file types</small>
-        {items.length > 0 && <p role="status">{completed} of {items.length} files uploaded{completed > 0 ? ". LiveSwitch may take a moment to process them." : ""}</p>}
-        <CustomerPageControls leadId={leadId} section="files"/><div className="ls-files">{items.map(item => <article key={item.id}>{item.preview ? <img src={item.preview} alt=""/> : <span className="ls-file-icon">{item.type.startsWith("video/") ? "Video" : "File"}</span>}<div className="ls-file-content"><strong title={item.name}>{item.name}</strong><small>{(item.file.size / 1024 / 1024).toFixed(1)} MB   {item.status}</small><progress value={item.progress} max={100} aria-label={`${item.name} upload progress`}/>{item.error && <details className="ls-error" style={{ overflowWrap: "anywhere" }}><summary style={{ cursor: "pointer" }}>{item.status === "Cannot upload" ? "Cannot upload" : item.crm ? "LiveSwitch upload failed" : "CRM save failed"} — View error</summary><div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{item.error}</div></details>}</div>{!busy && !item.crm && !item.live && <button className="slds-button" aria-label={`Remove ${item.name}`} onClick={() => setItems(current => current.filter(row => row.id !== item.id))}>&times;</button>}{item.crm && item.live && <span className="ls-success" aria-label="Uploaded">&#10003;</span>}</article>)}</div>
+        {items.length > 0 && <p role="status">{completed} of {items.length} files uploaded{completed > 0 ? ". Files will be included in the next report." : ""}</p>}
+        <CustomerPageControls key={`files:${sparkData?.id}`} leadId={leadId} section="files"/><div className="ls-files">{items.map(item => <article key={item.id}>{item.preview ? <img src={item.preview} alt=""/> : <span className="ls-file-icon">{item.type.startsWith("video/") ? "Video" : "File"}</span>}<div className="ls-file-content"><strong title={item.name}>{item.name}</strong><small>{(item.file.size / 1024 / 1024).toFixed(1)} MB   {item.status}</small><progress value={item.progress} max={100} aria-label={`${item.name} upload progress`}/>{item.error && <details className="ls-error" style={{ overflowWrap: "anywhere" }}><summary style={{ cursor: "pointer" }}>{item.status === "Cannot upload" ? "Cannot upload" : item.crm ? "LiveSwitch upload failed" : "CRM save failed"} — View error</summary><div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{item.error}</div></details>}</div>{!busy && !item.crm && !item.live && <button className="slds-button" aria-label={`Remove ${item.name}`} onClick={() => setItems(current => current.filter(row => row.id !== item.id))}>&times;</button>}{item.crm && item.live && <span className="ls-success" aria-label="Uploaded">&#10003;</span>}</article>)}</div>
         <div className="ls-actions">
           <button className="slds-button ls-primary" disabled={busy || !items.some(item => !(item.crm && item.live) && item.status !== "Cannot upload")} onClick={() => void upload()}>{busy ? "Uploading " : items.some(item => item.status === "Retry") ? "Upload / Retry failed" : "Upload files"}</button>
           <button className="slds-button" disabled={busy || !items.length} onClick={() => setItems(current => current.filter(item => item.crm || item.live))}>Clear selection</button>
@@ -418,7 +406,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
           <div style={{ marginTop: 12, padding: 10, background: "#f1f5f9", borderRadius: 6, fontSize: 13, color: "#0f172a" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
               <span>
-                Inventory AI Report: <strong>{sparkData.status === "completed" ? "✓ Completed" : sparkData.status === "running" ? "Analyzing..." : "Queued"}</strong>
+                Inventory AI Report: <strong>{sparkData.status === "completed" ? "✓ Completed" : sparkData.status === "running" ? "Analyzing..." : sparkData.status === "failed" ? "Failed" : "Preparing report..."}</strong>
                 {sparkData.cuft ? ` · ${sparkData.cuft} cu ft` : ""}
               </span>
               {sparkData.shareUrl && (
@@ -486,7 +474,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
             )}
           </div>
         )}
-        <ReportHistory reports={reportHistory} onSelect={selectReport} disabled={sparkRunning || calculatingPrice} staff />
+        <ReportHistory reports={reportHistory} onSelect={selectReport} disabled={busy || sparkRunning || calculatingPrice} staff />
         </section>
         <CustomerPageControls leadId={leadId}/><section className="ls-card"><button className="slds-button ls-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "\u25be" : "\u25b8"} Conversation viewer</button>{expanded ? <>{conversation.conversationUrl ? <a href={conversation.conversationUrl} target="_blank" rel="noopener noreferrer">Open conversation in a new tab</a> : null}{conversation.embeddedConversationUrl ? <iframe title="LiveSwitch conversation" src={conversation.embeddedConversationUrl} style={{ pointerEvents: resizing ? "none" : undefined }} allow="camera; microphone; fullscreen; display-capture"/> : !conversation.conversationUrl ? <p>Conversation viewer unavailable.</p> : null}</> : null}</section>
       </> : null}<p className="ls-notice" role="status">{notice}</p></main>

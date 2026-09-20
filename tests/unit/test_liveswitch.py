@@ -281,19 +281,6 @@ def reports():
     return scope
 
 
-def test_new_report_clears_old_extracted_values_and_link(reports):
-    saved = SimpleNamespace(details=json.dumps({'id': 'conversation', 'last_spark_id': 'old',
-        'spark_extracted_id': 'old', 'spark_extracted_cuft': 86.3, 'spark_extracted_weight': 604, 'last_spark_share_url': 'old-url', 'spark_processing': {'report_id': 'old'}}))
-    db = MagicMock(); db.get.return_value = saved
-    reports['trigger_lead_spark']('lead', None, db)
-    data = json.loads(saved.details)
-    assert data['last_spark_id'] == 'new-report'
-    assert data['id'] == 'conversation'
-    assert len(data['spark_history']) == 2
-    assert data['spark_history'][0]['last_spark_share_url'] == 'old-url'
-    assert data['spark_history'][1]['last_spark_id'] == 'new-report'
-    assert all(key not in data for key in ('spark_extracted_id', 'spark_extracted_cuft', 'spark_extracted_weight', 'last_spark_share_url', 'spark_processing'))
-
 
 def test_latest_completed_report_replaces_old_cuft_in_same_status_response(reports):
     saved = SimpleNamespace(details=json.dumps({'last_spark_id': 'new-report', 'spark_extracted_id': 'old-report', 'spark_extracted_cuft': 86.3}))

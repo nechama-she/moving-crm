@@ -42,7 +42,9 @@ def process_file(message, db, dead_letter=False):
     db.commit()
     try:
         conversation = db.get(LeadLiveSwitch, access.lead_id)
-        if conversation:
+        if message.get('conversation_id'):
+            details = {'id': message['conversation_id']}
+        elif conversation:
             details = json.loads(conversation.details)
         else:
             # The requesting staff user is rechecked by the existing conversation flow.
@@ -55,7 +57,7 @@ def process_file(message, db, dead_letter=False):
         if not current_job(row, message):
             return
         attachment = db.get(LeadAttachment, row.attachment_id)
-        if not attachment or attachment.lead_id != access.lead_id or attachment.job_id != access.job_id:
+        if not attachment or attachment.lead_id != access.lead_id or attachment.job_id not in (None, access.job_id):
             raise ValueError('The customer file is no longer available on this job.')
         if not row.sync_upload_url:
             from routes.liveswitch import _api_post
@@ -98,6 +100,8 @@ def process_file(message, db, dead_letter=False):
         row.sync_error = None
         row.sync_upload_url = None
         db.commit()  # Persist this file now, never at the end of an entire move.
+        from routes.liveswitch import start_ready_report
+        start_ready_report(access.lead_id, db)
     except Exception as exc:
         db.rollback()
         row = locked_upload(db, message)

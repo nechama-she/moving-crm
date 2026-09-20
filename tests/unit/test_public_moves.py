@@ -588,7 +588,7 @@ def processing_api():
     from spark_processing import SparkProcessingLog
     from spark_history import remember_report, report_history, activate_report
     source = BACKEND / 'routes/liveswitch.py'
-    names = {'_safe_float', 'fetch_and_extract_spark_report', 'apply_spark_results_to_lead', 'get_spark_processing', 'select_spark_report', 'get_report_history'}
+    names = {'_safe_float', 'fetch_and_extract_spark_report', 'apply_spark_results_to_lead', 'get_spark_processing', 'select_spark_report', 'get_report_history', 'trigger_lead_spark', 'start_ready_report'}
     nodes = [n for n in ast.parse(source.read_text(encoding='utf-8')).body if getattr(n, 'name', '') in names]
     for node in nodes:
         node.decorator_list = []
@@ -599,7 +599,7 @@ def processing_api():
     scope = {'Lead': models.Lead, 'LeadLiveSwitch': models.LeadLiveSwitch, 'Session': Session,
              'SparkProcessingLog': SparkProcessingLog, 'json': json, 're': re,
              'remember_report': remember_report, 'report_history': report_history, 'activate_report': activate_report,
-             'PublicMoveAccess': models.PublicMoveAccess,
+             'PublicMoveAccess': models.PublicMoveAccess, 'os': os, 'time': __import__('time'),
              'httpx': SimpleNamespace(get=MagicMock()), 'Decimal': Decimal, 'datetime': datetime, 'HTTPException': HTTPException}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
     return scope
@@ -919,3 +919,99 @@ def test_rep_http_flow_injects_request_and_reuses_move_page(rep_portal):
         response = client.get(base + '/details', headers=headers)
         assert response.status_code == 200, response.text
         assert response.json()['name'] == lead.full_name
+
+
+def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_api, monkeypatch):
+    from spark_history import activate_report
+    mod, db, lead, access = portal
+    old = {'id': 'conversation-old', 'hostJoinUrl': 'host-old', 'participantJoinUrl': 'participant-old',
+           'last_spark_id': 'report-old', 'last_spark_status': 'completed', 'last_spark_share_url': 'report-url',
+           'spark_extracted_cuft': 50, 'report_files': [{'id': 'a', 'name': 'first.jpg'}]}
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps(old)))
+    for file_id, job_id in [('a', access.job_id), ('b', None)]:
+        db.add(models.LeadAttachment(id=file_id, lead_id=lead.id, job_id=job_id, file_name=file_id+'.jpg',
+               file_blob=b'image', file_size=5, content_type='image/jpeg'))
+    db.commit()
+    monkeypatch.setenv('PUBLIC_MOVE_SYNC_QUEUE_URL', 'test-queue')
+    sync = ModuleType('public_move_sync')
+    sync.queue_files = MagicMock()
+    monkeypatch.setitem(sys.modules, 'public_move_sync', sync)
+    api = processing_api
+    api['_connection_config'] = lambda: {'spark_template_id': 'template'}
+    api['ensure_lead_conversation'] = MagicMock(return_value={'id': 'conversation-new', 'hostJoinUrl': 'host-new', 'participantJoinUrl': 'participant-new'})
+    api['_api_post'] = MagicMock(return_value={'id': 'report-new', 'status': 'queued'})
+    result = api['trigger_lead_spark'](lead.id, None, db)
+    assert result['status'] == 'queued'
+    api['ensure_lead_conversation'].assert_called_once_with(lead, db, fresh=True)
+    api['_api_post'].assert_not_called()
+    sync.queue_files.assert_called_once_with(access.id, db)
+    saved = db.get(models.LeadLiveSwitch, lead.id)
+    snapshot = json.loads(saved.details)
+    assert snapshot['id'] == 'conversation-new'
+    assert {f['id'] for f in snapshot['report_files']} == {'a', 'b'}
+    assert 'spark_extracted_cuft' not in snapshot
+    # A partial transfer must not start a report.
+    rows = db.query(models.PublicMoveUpload).all()
+    rows[0].synced_at = datetime.utcnow()
+    db.commit()
+    api['start_ready_report'](lead.id, db)
+    api['_api_post'].assert_not_called()
+    rows[1].synced_at = datetime.utcnow()
+    db.commit()
+    api['start_ready_report'](lead.id, db)
+    api['_api_post'].assert_called_once_with('conversations/conversation-new/sparks', {'sparkTemplateId': 'template', 'shareWith': ['anyone']})
+    api['start_ready_report'](lead.id, db)
+    assert api['_api_post'].call_count == 1
+    snapshot = json.loads(saved.details)
+    assert snapshot['last_spark_id'] == 'report-new'
+    assert len(snapshot['spark_history']) == 2
+    activate_report(snapshot, 'report-old')
+    assert snapshot['id'] == 'conversation-old'
+    assert snapshot['hostJoinUrl'] == 'host-old'
+    assert snapshot['participantJoinUrl'] == 'participant-old'
+    assert snapshot['report_files'] == [{'id': 'a', 'name': 'first.jpg'}]
+
+
+def test_customer_file_list_uses_selected_report_snapshot(portal):
+    mod, db, lead, access = portal
+    snapshot = [{'id': 'old-photo', 'name': 'old.jpg', 'size': 10}]
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'last_spark_id': 'old',
+        'last_spark_status': 'completed', 'spark_extracted_id': 'old', 'report_files': snapshot})))
+    db.commit()
+    mod._read_job_route = lambda *args: ('A', [], 'B')
+    assert mod.details(access, db)['files'] == snapshot
+
+
+def test_file_worker_uses_pinned_conversation_even_if_selection_changes(portal, monkeypatch):
+    mod, db, lead, access = portal
+    attachment = models.LeadAttachment(id='pinned-photo', lead_id=lead.id, job_id=None,
+        file_name='photo.jpg', file_blob=b'image', file_size=5, content_type='image/jpeg')
+    db.add(attachment)
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'id': 'different-conversation'})))
+    db.flush()
+    row = models.PublicMoveUpload(attachment_id=attachment.id, access_id=access.id, request_id='file',
+        sync_token='token', sync_status='queued')
+    db.add(row)
+    db.commit()
+    liveswitch = ModuleType('routes.liveswitch')
+    liveswitch._api_post = MagicMock(return_value={'results': [{'fileName': 'pinned-photo-photo.jpg',
+        'presignedUrl': 'https://bucket.s3.amazonaws.com/upload'}]})
+    liveswitch.start_ready_report = MagicMock()
+    monkeypatch.setitem(sys.modules, 'routes.liveswitch', liveswitch)
+    leads = ModuleType('routes.leads')
+    leads._stored_attachment_bytes = lambda attachment: b'image'
+    monkeypatch.setitem(sys.modules, 'routes.leads', leads)
+    spec = importlib.util.spec_from_file_location('test_sync_worker', BACKEND / 'public_move_sync_handler.py')
+    worker = importlib.util.module_from_spec(spec)
+    with patch.dict(sys.modules, {'database': SimpleNamespace(SessionLocal=None)}):
+        spec.loader.exec_module(worker)
+    put = MagicMock()
+    monkeypatch.setattr(worker.httpx, 'put', put)
+    message = {'attachment_id': attachment.id, 'access_id': access.id, 'sync_token': 'token',
+               'conversation_id': 'original-conversation'}
+    worker.process_file(message, db)
+    assert row.synced_at is not None
+    assert liveswitch._api_post.call_args.args[0] == 'conversations/original-conversation/upload-urls/images'
+    liveswitch.start_ready_report.assert_called_once_with(lead.id, db)
+    worker.process_file(message, db)
+    assert put.call_count == 1

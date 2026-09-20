@@ -8,6 +8,7 @@ import "./CustomerMovePage.css";
 
 type Details = {
   report_history?: ReportRun[];
+  new_file_count?: number;
   packing_package: PackingPackage | null;
   packing_items: { id: string; label: string; price: number; selected: boolean; selected_service: string | null; services: { kind: string; price: number }[] }[];
   packing_saved: boolean;
@@ -63,6 +64,8 @@ export default function CustomerMovePage() {
     setCalculatingPrice(true);
     try {
       await call(`/reports/${encodeURIComponent(id)}/select`, {});
+      setFiles([]);
+      setHasNewUploads(false);
     } finally {
       try { setData(await call('/details')); }
       finally { setCalculatingPrice(false); }
@@ -413,8 +416,9 @@ export default function CustomerMovePage() {
                     </article>
                   ))}
                 </div>
+                {!!data.new_file_count && <p>{data.new_file_count} new {data.new_file_count === 1 ? 'file is' : 'files are'} saved for the next report.</p>}
                 {data.files.length>0&&<details><summary>{data.files.length} saved files</summary>{data.files.map(file=><p key={file.id}>{file.name}</p>)}</details>}
-                {data.files.length > 0 && (!data.spark || hasNewUploads) && reportState !== 'done' && (
+                {(data.files.length > 0 || !!data.new_file_count) && (!data.spark || hasNewUploads || !!data.new_file_count) && reportState !== 'done' && (
                   <div className="cm-spark-box">
                     <button
                       type="button"
@@ -568,7 +572,7 @@ export default function CustomerMovePage() {
                   )}
                 </div>
               )}
-              <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={calculatingPrice || packingSaving || reportState === 'running'} />
+              <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || packingSaving || reportState === 'running'} />
             </div>
 
             {showQuestions && (

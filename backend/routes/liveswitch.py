@@ -351,64 +351,91 @@ def run_spark_on_conversation(
 
 
 def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = None):
-    saved = db.get(LeadLiveSwitch, lead_id) if db is not None else None
-    if not saved and db is not None:
-        lead = db.get(Lead, lead_id)
-        if lead:
-            try:
-                ensure_lead_conversation(lead, db)
-                saved = db.get(LeadLiveSwitch, lead_id)
-            except Exception:
-                pass
-    if not saved:
-        raise HTTPException(409, "Start the LiveSwitch conversation first")
-    details = json.loads(saved.details)
-    conversation_id = details.get("id")
-    if not conversation_id:
-        raise HTTPException(400, "Conversation ID is missing")
-
+    from models import LeadAttachment, PublicMoveUpload, LeadJob
+    from public_move_sync import queue_files
+    from uuid import uuid4
+    from spark_history import REPORT_KEYS
+    if not os.getenv('PUBLIC_MOVE_SYNC_QUEUE_URL', '').strip():
+        raise HTTPException(503, 'Customer file sync worker is not configured')
+    lead = db.query(Lead).filter_by(id=lead_id).with_for_update().one_or_none()
+    if not lead:
+        raise HTTPException(404, 'Lead not found')
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
+    if not access:
+        raise HTTPException(409, 'Generate the customer page before running an inventory report.')
+    files = db.query(LeadAttachment).filter(LeadAttachment.lead_id == lead_id,
+        (LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None)).all()
+    if not files:
+        raise HTTPException(400, 'Upload files to the move before running a report.')
     config = _connection_config()
-    template_id = (body and body.get("sparkTemplateId")) or config.get("spark_template_id")
+    template_id = (body and body.get('sparkTemplateId')) or config.get('spark_template_id')
     if not template_id:
-        raise HTTPException(400, "No Spark template is configured. Choose one in Settings.")
+        raise HTTPException(400, 'No Spark template is configured. Choose one in Settings.')
+    payload = {'sparkTemplateId': template_id, 'shareWith': ['anyone']}
+    for key in ('tasks', 'shareWith'):
+        if body and key in body:
+            payload[key] = body[key]
+    conversation = ensure_lead_conversation(lead, db, fresh=True)
+    saved = db.get(LeadLiveSwitch, lead_id)
+    details = json.loads(saved.details or '{}') if saved else {}
+    job = db.get(LeadJob, access.job_id)
+    details['report_customer_packing'] = job.customer_packing
+    details['report_customer_package'] = job.customer_packing_package
+    remember_report(details)
+    job.customer_packing = job.customer_packing_package = None
+    for key in REPORT_KEYS:
+        details.pop(key, None)
+    details.update(conversation)
+    details.update(last_spark_id='pending-' + str(uuid4()), last_spark_status='queued',
+                   last_spark_at=int(time.time()), spark_pricing_ready=False,
+                   report_conversation=conversation, pending_spark_payload=payload,
+                   report_files=[{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files])
+    remember_report(details)
+    if not saved:
+        saved = LeadLiveSwitch(lead_id=lead_id)
+        db.add(saved)
+    saved.details = json.dumps(details)
+    for attachment in files:
+        row = db.get(PublicMoveUpload, attachment.id)
+        if row is None:
+            row = PublicMoveUpload(attachment_id=attachment.id, access_id=access.id, request_id='report-' + attachment.id)
+            db.add(row)
+        row.synced_at = None
+        row.sync_status = 'pending'
+        row.sync_token = None
+        row.sync_upload_url = None
+        row.sync_error = None
+    access.published_price = access.published_cuft = access.published_at = None
+    db.commit()
+    queue_files(access.id, db)
+    return {'id': details['last_spark_id'], 'status': 'queued'}
 
-    payload = {
-        "sparkTemplateId": template_id,
-        "shareWith": ["anyone"],
-    }
-    if body and "tasks" in body:
-        payload["tasks"] = body["tasks"]
-    if body and "shareWith" in body:
-        payload["shareWith"] = body["shareWith"]
 
-    result = _api_post(f"conversations/{conversation_id}/sparks", payload)
-    
-    # Save spark ID and status to the lead's LiveSwitch record
-    spark_id = result.get("id") if isinstance(result, dict) else None
-    if spark_id:
-        db.refresh(saved, with_for_update=True)
-        details = json.loads(saved.details)
-        remember_report(details)
-        # A new report must not reuse the previous report's extracted volume or link.
-        for key in ("spark_extracted_cuft", "spark_extracted_weight", "spark_extracted_id", "last_spark_share_url", "spark_processing", "spark_inventory_snapshot"):
-            details.pop(key, None)
-        details["spark_pricing_ready"] = False
-        details["last_spark_id"] = spark_id
-        details["last_spark_status"] = result.get("status", "queued")
-        details["last_spark_at"] = int(time.time())
-        remember_report(details)
+def start_ready_report(lead_id: str, db: Session):
+    """Start a queued run only after every snapshot file reaches its conversation."""
+    from models import PublicMoveUpload
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).populate_existing().with_for_update().first()
+    details = json.loads(saved.details or '{}') if saved else {}
+    payload = details.get('pending_spark_payload')
+    if not payload:
+        return
+    file_ids = [row['id'] for row in details.get('report_files', [])]
+    rows = db.query(PublicMoveUpload).filter(PublicMoveUpload.attachment_id.in_(file_ids)).all()
+    if len(rows) != len(file_ids) or any(not row.synced_at for row in rows):
+        details['last_spark_status'] = 'failed' if any(row.sync_status == 'failed' for row in rows) else 'queued'
         saved.details = json.dumps(details)
-
-        # Clear published estimate while new report is processing
-        access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
-        if access:
-            access.published_price = None
-            access.published_cuft = None
-            access.published_at = None
-
         db.commit()
-
-    return result
+        return
+    result = _api_post(f"conversations/{details['id']}/sparks", payload)
+    if not result.get('id'):
+        raise HTTPException(502, 'LiveSwitch did not return a report ID.')
+    old_id = details['last_spark_id']
+    details['spark_history'] = [row for row in details.get('spark_history', []) if row.get('last_spark_id') != old_id]
+    details.update(last_spark_id=result['id'], last_spark_status=result.get('status', 'queued'))
+    details.pop('pending_spark_payload', None)
+    remember_report(details)
+    saved.details = json.dumps(details)
+    db.commit()
 
 
 def fetch_and_extract_spark_report(share_url: str, processing=None) -> tuple[float | None, float | None, list[dict[str, object]]]:
@@ -576,10 +603,18 @@ def select_spark_report(lead_id: str, report_id: str, db: Session):
     details = json.loads(saved.details or '{}') if saved else {}
     if details.get('last_spark_status') in ('queued', 'running'):
         raise HTTPException(409, 'Wait for the new report to finish before choosing an earlier report.')
+    from models import LeadJob
+    job = db.query(LeadJob).filter_by(lead_id=lead_id).order_by(LeadJob.job_order).first()
+    if job:
+        details['report_customer_packing'] = job.customer_packing
+        details['report_customer_package'] = job.customer_packing_package
     try:
         activate_report(details, report_id)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    if job:
+        job.customer_packing = details.get('report_customer_packing')
+        job.customer_packing_package = details.get('report_customer_package')
     # The selected report is pending import, even if it was imported previously.
     details.pop('spark_extracted_id', None)
     details['spark_pricing_ready'] = False
@@ -683,6 +718,13 @@ def get_lead_spark_status(
     spark_id = details.get("last_spark_id")
     if not spark_id:
         return {"spark": None}
+    # File transfer must finish before asking LiveSwitch to analyze the new conversation.
+    if details.get("pending_spark_payload"):
+        start_ready_report(lead.id, db)
+        details = json.loads(saved.details)
+        spark_id = details.get("last_spark_id")
+        if details.get("pending_spark_payload"):
+            return {"spark": {"id": spark_id, "status": details.get("last_spark_status", "queued")}}
     # Poll LiveSwitch for latest status
     try:
         remote = _api_get(f"sparks/{spark_id}")
@@ -725,9 +767,9 @@ def get_lead_spark_status(
     }
 
 
-def ensure_lead_conversation(lead: Lead, db: Session) -> dict:
+def ensure_lead_conversation(lead: Lead, db: Session, fresh: bool = False) -> dict:
     saved = db.get(LeadLiveSwitch, lead.id)
-    if saved:
+    if saved and not fresh:
         return json.loads(saved.details)
     company = lead.company
     if company is None:
@@ -760,6 +802,8 @@ def ensure_lead_conversation(lead: Lead, db: Session) -> dict:
         raise HTTPException(502, "LiveSwitch did not return a conversation ID")
     details = {key: result.get(key, "") for key in ("id", "hostJoinUrl", "participantJoinUrl", "conversationUrl", "embeddedConversationUrl")}
     details["name"] = conversation_name
+    if fresh:
+        return details
     saved = LeadLiveSwitch(lead_id=lead.id, details=json.dumps(details))
     db.add(saved)
     db.commit()

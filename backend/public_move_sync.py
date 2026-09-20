@@ -8,7 +8,7 @@ import boto3
 from botocore.config import Config
 from fastapi import HTTPException
 
-from models import LeadAttachment, PublicMoveUpload
+from models import LeadAttachment, PublicMoveUpload, PublicMoveAccess, LeadLiveSwitch
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,13 @@ def sync_status(access_id, db):
     rows = db.query(PublicMoveUpload, LeadAttachment.file_name).join(
         LeadAttachment, LeadAttachment.id == PublicMoveUpload.attachment_id,
     ).filter(PublicMoveUpload.access_id == access_id).all()
+    access = db.get(PublicMoveAccess, access_id)
+    conversation = db.get(LeadLiveSwitch, access.lead_id) if access else None
+    details = json.loads(conversation.details or '{}') if conversation else {}
+    snapshot = details.get('report_files')
+    if snapshot is not None:
+        allowed = {file['id'] for file in snapshot}
+        rows = [(row, name) for row, name in rows if row.attachment_id in allowed]
     files = [
         {'id': row.attachment_id, 'name': name,
          'status': 'synced' if row.synced_at else row.sync_status,
@@ -36,11 +43,18 @@ def queue_files(access_id, db, actor_id=None, attachment_id=None):
     queue_url = os.getenv('PUBLIC_MOVE_SYNC_QUEUE_URL', '').strip()
     if not queue_url:
         raise HTTPException(503, 'Customer file sync worker is not configured')
+    access = db.get(PublicMoveAccess, access_id)
+    conversation = db.get(LeadLiveSwitch, access.lead_id) if access else None
+    details = json.loads(conversation.details or '{}') if conversation else {}
+    if details.get('last_spark_id') and not details.get('pending_spark_payload'):
+        return sync_status(access_id, db)
     query = db.query(PublicMoveUpload).filter(
         PublicMoveUpload.access_id == access_id,
         PublicMoveUpload.synced_at.is_(None),
         PublicMoveUpload.sync_status.in_(['pending', 'failed']),
     )
+    if details.get('pending_spark_payload'):
+        query = query.filter(PublicMoveUpload.attachment_id.in_([f['id'] for f in details.get('report_files', [])]))
     if attachment_id:
         query = query.filter(PublicMoveUpload.attachment_id == attachment_id)
     rows = query.order_by(PublicMoveUpload.attachment_id).with_for_update().all()
@@ -50,6 +64,9 @@ def queue_files(access_id, db, actor_id=None, attachment_id=None):
     # A short queue call replaces all LiveSwitch/S3 transfers in the HTTP request.
     sqs = boto3.client('sqs', config=Config(connect_timeout=2, read_timeout=3, retries={'total_max_attempts': 1}))
     token = str(uuid4())
+    access = db.get(PublicMoveAccess, access_id)
+    conversation = db.get(LeadLiveSwitch, access.lead_id) if access else None
+    conversation_id = json.loads(conversation.details or '{}').get('id') if conversation else None
     for row in rows:
         row.sync_token = token
         row.sync_status = 'queued'
@@ -59,7 +76,7 @@ def queue_files(access_id, db, actor_id=None, attachment_id=None):
         # out into one-file jobs, outside the HTTP request's time limit.
         sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps({
             'access_id': access_id, 'attachment_ids': [row.attachment_id for row in rows],
-            'sync_token': token, 'actor_id': actor_id,
+            'sync_token': token, 'actor_id': actor_id, 'conversation_id': conversation_id,
         }))
     except Exception:
         logger.exception('Could not queue customer files for access %s', access_id)
