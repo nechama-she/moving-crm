@@ -148,3 +148,6 @@
 .cm-unpacking-control{display:flex;align-items:flex-start;gap:12px;cursor:pointer}
 .cm-unpacking-control input{flex:0 0 auto;width:16px;height:16px;margin:2px 0 0;accent-color:#d93430}
 .cm-unpacking-control:has(input:disabled){opacity:.65;cursor:wait}
+
+/* Keep layout stable while unavailable actions are hidden. */
+.customer-move button:disabled{visibility:hidden}
