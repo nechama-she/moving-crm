@@ -33,8 +33,8 @@ def migrate() -> None:
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS stop_types TEXT"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS customer_packing TEXT"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS customer_packing_package TEXT"))
-        from models import PublicMoveAccess, PublicMoveSession, WalkthroughRequest, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload
-        for model in (PublicMoveAccess, PublicMoveSession, WalkthroughRequest, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload):
+        from models import PublicMoveAccess, PublicMoveSession, PublicMoveRepVerification, WalkthroughRequest, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload
+        for model in (PublicMoveAccess, PublicMoveSession, PublicMoveRepVerification, WalkthroughRequest, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload):
             model.__table__.create(connection, checkfirst=True)
         connection.execute(text("ALTER TABLE lead_attachments ALTER COLUMN file_size TYPE BIGINT"))
         connection.execute(text("ALTER TABLE public_move_pending_uploads ALTER COLUMN file_size TYPE BIGINT"))

@@ -37,10 +37,11 @@ type Details = {
 type Pending = {id:string;file:File;status:string;progress:number;preview?:string;error?:string};
 export default function CustomerMovePage() {
   const {accessId}=useParams();
-  const sessionKey = `cm_session_${accessId}`;
+  const [repPage, setRepPage] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('audience') === 'rep');
+  const sessionKey = `cm_session_${accessId}${repPage ? '_rep' : ''}`;
   const [key]=useState(()=>new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
   const [session,setSession]=useState(()=>sessionStorage.getItem(sessionKey)||'');
-  const [options,setOptions]=useState<{channel:string;destination:string}[]>([]),[channel,setChannel]=useState('');
+  const [options,setOptions]=useState<{channel:string;destination:string;label?:string}[]>([]),[channel,setChannel]=useState('');
   const [code,setCode]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [data,setData]=useState<Details>(),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
   const [editingMove,setEditingMove]=useState(false);
@@ -109,7 +110,7 @@ export default function CustomerMovePage() {
     const urls=previews.current;
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
-  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setOptions(value.options);setChannel(value.options[0]?.channel||'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
+  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setOptions(value.options);setChannel(value.options[0]?.channel||'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
   useEffect(()=>{
     if(!session)return;
     let active=true;
@@ -273,17 +274,18 @@ export default function CustomerMovePage() {
           <section className="cm-verify">
             <div className="cm-eyebrow">WELCOME</div>
             <h1>Let's get your<br/>move underway.</h1>
-            <p>First, verify it's you. We'll send a code to the phone or email you provided.</p>
+            <p>{repPage ? 'Verify with the assigned rep or company phone to open this move.' : "First, verify it's you. We'll send a code to the phone or email you provided."}</p>
             {error && <div role="alert" className="cm-error">{error}</div>}
             <fieldset>
               <legend>Where should we send your code?</legend>
               {options.map(option => (
                 <label key={option.channel}>
                   <input type="radio" name="channel" value={option.channel} checked={channel===option.channel} disabled={busy} onChange={()=>{setChannel(option.channel);setSent(false);}}/>
-                  {option.channel==='sms' ? 'Text message' : 'Email'} <span>{option.destination}</span>
+                  {option.label || (option.channel==='sms' ? 'Text message' : 'Email')} <span>{option.destination}</span>
                 </label>
               ))}
             </fieldset>
+            {repPage && options.length === 0 && <p role="status">No rep or company phone is configured. Add a phone number in the CRM to verify this page.</p>}
             {!sent ? (
               <button className="slds-button cm-primary" disabled={busy||!channel||!key} onClick={()=>void send()}>{busy?'Sending...':'Send verification code'}</button>
             ) : (

@@ -9,6 +9,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Literal
+from types import SimpleNamespace
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -24,7 +25,7 @@ from config import get_config
 from company_colors import resolve_company_color
 from database import get_db
 from libs.aircall.client import find_number_id, send_sms
-from models import Lead, LeadJob, Company, User, LeadAttachment, LeadLiveSwitch, PublicMoveAccess, PublicMoveSession, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload, WalkthroughRequest
+from models import Lead, LeadJob, Company, User, LeadAttachment, LeadLiveSwitch, PublicMoveAccess, PublicMoveSession, PublicMoveRepVerification, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload, WalkthroughRequest
 from public_move_security import digest, secret_digest, link_token, contact_fingerprint, normalize_phone, file_type
 from public_move_sync import queue_files, sync_status
 from routes.leads import _get_visible_lead_or_404, _get_user_company_ids, _persist_job_route, _read_job_route, _upload_attachment_bytes_to_s3, _delete_s3_url, _safe_attachment_name
@@ -55,15 +56,59 @@ def public_access(access_id: str, request: Request, db: Session = Depends(get_db
     rate(db, 'ip:' + (request.client.host if request.client else 'unknown'), 120)
     row = db.get(PublicMoveAccess, access_id)
     supplied = request.headers.get('x-public-link', '')
-    if not row or row.revoked or row.expires_at < NOW() or not hmac.compare_digest(row.token_hash, digest(supplied)):
+    if not row or row.revoked or row.expires_at < NOW() or not (hmac.compare_digest(row.token_hash, digest(supplied)) or is_rep_request(row, request)):
         raise HTTPException(404, 'This link is unavailable or expired. Please contact your moving team.')
     return row
+
+
+def rep_link_token(access):
+    return secret_digest('rep-move-link:' + access.id + ':' + access.token_hash)
+
+
+def is_rep_request(access, request):
+    return bool(request and hmac.compare_digest(request.headers.get('x-public-link', ''), rep_link_token(access)))
+
+
+def rep_contacts(access, db):
+    lead = db.get(Lead, access.lead_id)
+    job = db.get(LeadJob, access.job_id)
+    company_id = (job.company_id if job else None) or lead.company_id
+    company = db.get(Company, company_id) if company_id else db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
+    rep = db.get(User, lead.assigned_to) if lead.assigned_to else None
+    contacts = {}
+    for channel, label, phone in [('rep_sms', 'Assigned rep', rep.phone if rep else None),
+                                  ('company_sms', 'Company phone', company.phone if company else None)]:
+        try:
+            normalized = normalize_phone(phone)
+        except ValueError:
+            continue
+        contacts[channel] = {'label': label, 'phone': normalized}
+    fingerprint = secret_digest('rep-contact:' + json.dumps([lead.assigned_to, company.id if company else None, contacts], sort_keys=True))
+    return contacts, fingerprint, company
+
+
+def verification_fingerprint(access, db, request):
+    if is_rep_request(access, request):
+        return rep_contacts(access, db)[1]
+    return contact_fingerprint(db.get(Lead, access.lead_id))
+
+
+def verification_state(access, db, request):
+    if not is_rep_request(access, request):
+        return access
+    # The caller holds the access-row lock, which serializes first creation too.
+    state = db.get(PublicMoveRepVerification, access.id)
+    if state is None:
+        state = PublicMoveRepVerification(id=access.id)
+        db.add(state)
+        db.flush()
+    return state
 
 
 def verified(access: PublicMoveAccess = Depends(public_access), request: Request = None, db: Session = Depends(get_db)):
     session = db.get(PublicMoveSession, digest(request.headers.get('x-public-session', '')))
     lead = db.get(Lead, access.lead_id)
-    if not session or session.access_id != access.id or session.expires_at < NOW() or session.contact_hash != contact_fingerprint(lead):
+    if not session or session.access_id != access.id or session.expires_at < NOW() or session.contact_hash != verification_fingerprint(access, db, request):
         raise HTTPException(401, 'Please verify your phone or email to continue.')
     return access
 
@@ -111,11 +156,11 @@ class Intake(BaseModel):
         return value
 
 
-def public_url(row):
+def public_url(row, rep=False):
     origin = setting('PUBLIC_MOVE_ORIGIN').rstrip('/')
     if not origin.startswith('https://'):
         raise HTTPException(503, 'The customer website origin is not configured')
-    return f'{origin}/move/{row.id}#key={link_token(row.id)}'
+    return f'{origin}/move/{row.id}#key={rep_link_token(row) if rep else link_token(row.id)}' + ('&audience=rep' if rep else '')
 
 
 def create_customer_page_access(db, lead, job, key_hash, request_hash):
@@ -156,10 +201,15 @@ def intake(body: Intake, request: Request, x_api_secret: str = Header(default=''
 
 
 @router.get('/api/public-moves/{access_id}/verify-options')
-def verify_options(access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db)):
+def verify_options(access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db), request: Request = None):
     lead = db.get(Lead, access.lead_id)
     active_company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
     company_color = active_company.color if active_company and active_company.color else resolve_company_color(active_company.name if active_company else None, None)
+    if is_rep_request(access, request):
+        contacts, _, company = rep_contacts(access, db)
+        return {'audience': 'rep', 'options': [{'channel': channel, 'label': value['label'], 'destination': '***' + value['phone'][-4:]} for channel, value in contacts.items()],
+                'company': {'name': company.name if company else 'Your moving team',
+                            'color': company.color if company and company.color else company_color}}
     options = []
     if lead.email:
         local, domain = lead.email.split('@', 1)
@@ -175,7 +225,7 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
 
 
 class CodeRequest(BaseModel):
-    channel: Literal['sms', 'email']
+    channel: Literal['sms', 'email', 'rep_sms', 'company_sms']
 
 
 def deliver_code(lead, channel, code, db: Session):
@@ -212,10 +262,23 @@ def deliver_code(lead, channel, code, db: Session):
 
 
 @router.post('/api/public-moves/{access_id}/send-code')
-def send_code(body: CodeRequest, access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db)):
+def send_code(body: CodeRequest, access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db), request: Request = None):
     access = db.query(PublicMoveAccess).filter_by(id=access.id).with_for_update().one()
     lead = db.get(Lead, access.lead_id)
-    if not (lead.email if body.channel == 'email' else lead.phone): raise HTTPException(400, 'This contact method is unavailable')
+    channel = body.channel
+    fingerprint = verification_fingerprint(access, db, request)
+    if is_rep_request(access, request):
+        contacts, _, company = rep_contacts(access, db)
+        contact = contacts.get(channel)
+        if not contact:
+            raise HTTPException(400, 'This rep verification method is unavailable.')
+        lead = SimpleNamespace(phone=contact['phone'], email=None, company_id=company.id if company else None)
+        channel = 'sms'
+    elif channel not in ('sms', 'email'):
+        raise HTTPException(400, 'This customer verification method is unavailable.')
+    if not (lead.email if channel == 'email' else lead.phone):
+        raise HTTPException(400, 'This contact method is unavailable')
+    access = verification_state(access, db, request)
     now = NOW()
     if access.otp_sent_at and (now-access.otp_sent_at).total_seconds() < 60: raise HTTPException(429, 'Wait a minute before requesting another code')
     if not access.otp_hour or (now-access.otp_hour).total_seconds() >= 3600:
@@ -227,9 +290,9 @@ def send_code(body: CodeRequest, access: PublicMoveAccess = Depends(public_acces
     if access.otp_sends >= hourly_limit: raise HTTPException(429, 'Too many codes requested. Please try again in an hour.')
     code = f'{secrets.randbelow(1000000):06d}'
     access.otp_hash = secret_digest(access.id+':'+code); access.otp_expires = now+timedelta(minutes=10)
-    access.otp_attempts = 0; access.otp_sent_at = now; access.otp_sends += 1; access.contact_hash = contact_fingerprint(lead)
+    access.otp_attempts = 0; access.otp_sent_at = now; access.otp_sends += 1; access.contact_hash = fingerprint
     db.commit()
-    try: deliver_code(lead, body.channel, code, db)
+    try: deliver_code(lead, channel, code, db)
     except HTTPException: raise
     except Exception as exc: raise HTTPException(502, 'Unable to deliver a code. Please try later or contact your moving team.') from exc
     return {'sent': True, 'expires_in': 600, 'resend_after': 60}
@@ -240,17 +303,18 @@ class VerifyCode(BaseModel):
 
 
 @router.post('/api/public-moves/{access_id}/verify')
-def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db)):
+def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db), request: Request = None):
     access = db.query(PublicMoveAccess).filter_by(id=access.id).with_for_update().one()
-    lead = db.get(Lead, access.lead_id)
-    if not access.otp_hash or not access.otp_expires or access.otp_expires < NOW() or access.otp_attempts >= 5 or access.contact_hash != contact_fingerprint(lead):
+    fingerprint = verification_fingerprint(access, db, request)
+    access = verification_state(access, db, request)
+    if not access.otp_hash or not access.otp_expires or access.otp_expires < NOW() or access.otp_attempts >= 5 or access.contact_hash != fingerprint:
         raise HTTPException(400, 'Code expired or unavailable. Request a new code.')
     access.otp_attempts += 1
     if not hmac.compare_digest(access.otp_hash, secret_digest(access.id+':'+body.code)):
         db.commit(); raise HTTPException(400, 'Incorrect code. Please check and try again.')
     access.otp_hash = None
     token = secrets.token_urlsafe(32)
-    db.add(PublicMoveSession(token_hash=digest(token), access_id=access.id, expires_at=NOW()+timedelta(hours=8), contact_hash=contact_fingerprint(lead)))
+    db.add(PublicMoveSession(token_hash=digest(token), access_id=access.id, expires_at=NOW()+timedelta(hours=8), contact_hash=fingerprint))
     db.commit()
     return {'session': token, 'expires_in': 28800}
 
@@ -705,7 +769,7 @@ def staff_page(lead_id: str, user: User = Depends(get_current_user), db: Session
     job = db.get(LeadJob, access.job_id)
     meetings = db.query(WalkthroughRequest).filter_by(lead_id=lead.id).order_by(WalkthroughRequest.created_at.desc()).all()
     pending = db.query(PublicMoveUpload).filter_by(access_id=access.id, synced_at=None).count()
-    return {'url': public_url(access), 'revoked': access.revoked, 'job_id': job.id, 'company_id': lead.company_id or '',
+    return {'url': public_url(access), 'rep_url': public_url(access, rep=True), 'revoked': access.revoked, 'job_id': job.id, 'company_id': lead.company_id or '',
             'price': str(job.price) if job.price is not None else '', 'cuft': str(lead.volume) if lead.volume is not None else '',
             'published': bool(access.published_at), 'pending_uploads': pending, 'requests': [{**meeting_dict(m), 'rep_name': (db.get(User, m.assigned_to).name if m.assigned_to and db.get(User, m.assigned_to) else '')} for m in meetings]}
 
@@ -777,6 +841,9 @@ def update_page(lead_id: str, body: StaffPagePatch, user: User = Depends(get_cur
         access.revoked = body.revoke
         db.query(PublicMoveSession).filter_by(access_id=access.id).delete()
         access.otp_hash = None
+        rep_verification = db.get(PublicMoveRepVerification, access.id)
+        if rep_verification:
+            rep_verification.otp_hash = None
     db.commit()
     return {'ok': True}
 

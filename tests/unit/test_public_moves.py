@@ -803,3 +803,119 @@ def test_pending_report_selection_hides_previous_estimate(portal, monkeypatch):
     result = mod.details(access, db)
     assert result['estimate'] is None
     assert result['report_history'][0]['current']
+
+
+@pytest.fixture
+def rep_portal(portal):
+    mod, db, lead, access = portal
+    company = models.Company(id='rep-company', name='Move Company', phone='+12405550111')
+    rep = models.User(id='assigned-rep', name='Assigned Rep', email='rep@example.com',
+                      phone='+12405550222', password_hash='unused')
+    db.add_all([company, rep])
+    lead.company_id = company.id
+    lead.assigned_to = rep.id
+    db.commit()
+    return mod, db, lead, access, rep, company
+
+
+def test_rep_link_options_are_only_rep_and_company(rep_portal):
+    mod, db, lead, access, rep, company = rep_portal
+    rep_request = request(mod.rep_link_token(access))
+    assert mod.public_access(access.id, rep_request, db).id == access.id
+    options = mod.verify_options(access, db, rep_request)
+    assert options['audience'] == 'rep'
+    assert options['options'] == [
+        {'channel': 'rep_sms', 'label': 'Assigned rep', 'destination': '***0222'},
+        {'channel': 'company_sms', 'label': 'Company phone', 'destination': '***0111'}]
+    assert {r['channel'] for r in mod.verify_options(access, db)['options']} == {'sms', 'email'}
+    access.revoked = True
+    db.commit()
+    with pytest.raises(HTTPException):
+        mod.public_access(access.id, rep_request, db)
+
+
+@pytest.mark.parametrize('channel,phone', [('rep_sms', '+12405550222'), ('company_sms', '+12405550111')])
+def test_rep_code_goes_to_saved_phone_and_sessions_are_separate(rep_portal, channel, phone):
+    mod, db, lead, access, rep, company = rep_portal
+    rep_request = request(mod.rep_link_token(access))
+    sent = []
+    mod.deliver_code = lambda recipient, kind, code, db: sent.append((recipient.phone, kind, code))
+    # Existing customer challenge is unaffected by rep verification.
+    access.otp_hash = secret_digest(access.id + ':654321')
+    access.otp_expires = datetime.utcnow() + timedelta(minutes=10)
+    access.contact_hash = contact_fingerprint(lead)
+    db.commit()
+    mod.send_code(mod.CodeRequest(channel=channel), access, db, rep_request)
+    assert sent[0][:2] == (phone, 'sms')
+    assert access.otp_hash == secret_digest(access.id + ':654321')
+    result = mod.verify_code(mod.VerifyCode(code=sent[0][2]), access, db, rep_request)
+    assert mod.verified(access, request(mod.rep_link_token(access), result['session']), db).id == access.id
+    with pytest.raises(HTTPException):
+        mod.verified(access, request(link_token(access.id), result['session']), db)
+    customer = mod.verify_code(mod.VerifyCode(code='654321'), access, db)
+    with pytest.raises(HTTPException):
+        mod.verified(access, request(mod.rep_link_token(access), customer['session']), db)
+    # Reassignment invalidates rep verification, even if the company phone stays the same.
+    lead.assigned_to = None
+    db.commit()
+    with pytest.raises(HTTPException):
+        mod.verified(access, request(mod.rep_link_token(access), result['session']), db)
+
+
+def test_rep_verification_rejects_customer_channels_and_missing_phones(rep_portal):
+    mod, db, lead, access, rep, company = rep_portal
+    rep_request = request(mod.rep_link_token(access))
+    mod.deliver_code = MagicMock()
+    for channel in ['sms', 'email']:
+        with pytest.raises(HTTPException):
+            mod.send_code(mod.CodeRequest(channel=channel), access, db, rep_request)
+    with pytest.raises(HTTPException):
+        mod.send_code(mod.CodeRequest(channel='rep_sms'), access, db, request(link_token(access.id)))
+    rep.phone = ''
+    company.phone = ''
+    db.commit()
+    assert mod.verify_options(access, db, rep_request)['options'] == []
+    with pytest.raises(HTTPException):
+        mod.send_code(mod.CodeRequest(channel='company_sms'), access, db, rep_request)
+    mod.deliver_code.assert_not_called()
+
+
+def test_rep_code_and_session_expire_when_contact_changes(rep_portal):
+    mod, db, lead, access, rep, company = rep_portal
+    rep_request = request(mod.rep_link_token(access))
+    sent = []
+    mod.deliver_code = lambda recipient, kind, code, db: sent.append(code)
+    mod.send_code(mod.CodeRequest(channel='rep_sms'), access, db, rep_request)
+    rep.phone = '+12405550333'
+    db.commit()
+    with pytest.raises(HTTPException):
+        mod.verify_code(mod.VerifyCode(code=sent[0]), access, db, rep_request)
+
+
+def test_rep_http_flow_injects_request_and_reuses_move_page(rep_portal):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    mod, db, lead, access, rep, company = rep_portal
+    sent = []
+    mod.deliver_code = lambda recipient, kind, code, db: sent.append((recipient.phone, code))
+    mod._read_job_route = lambda *args: ('A', [], 'B')
+    # Avoid loading pricing for this authentication-only test.
+    lead.company_id = None
+    company.is_default_company = True
+    db.commit()
+    app = FastAPI()
+    app.include_router(mod.router)
+    app.dependency_overrides[mod.get_db] = lambda: db
+    with TestClient(app) as client:
+        headers = {'x-public-link': mod.rep_link_token(access)}
+        base = f'/api/public-moves/{access.id}'
+        assert client.get(base + '/details', headers=headers).status_code == 401
+        assert client.get(base + '/verify-options', headers=headers).json()['audience'] == 'rep'
+        assert client.post(base + '/send-code', headers=headers, json={'channel': 'company_sms'}).status_code == 200
+        assert sent[0][0] == company.phone
+        verified = client.post(base + '/verify', headers=headers, json={'code': sent[0][1]})
+        assert verified.status_code == 200, verified.text
+        headers['x-public-session'] = verified.json()['session']
+        response = client.get(base + '/details', headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.json()['name'] == lead.full_name
