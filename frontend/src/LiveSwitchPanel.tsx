@@ -63,6 +63,9 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
   const resizeStart = useRef<{ pointerId: number; x: number; width: number } | null>(null);
   const [notice, setNotice] = useState("");
   const [sparkRunning, setSparkRunning] = useState(false);
+  const [calculatingPrice, setCalculatingPrice] = useState(false);
+  const [processingRevision, setProcessingRevision] = useState(0);
+  const priceRequestRunning = useRef(false);
   const [sparkNotice, setSparkNotice] = useState("");
   const [sparkError, setSparkError] = useState("");
   const [sparkData, setSparkData] = useState<{ id: string; status: string; shareUrl?: string; cuft?: number; weight?: number } | null>(null);
@@ -145,6 +148,31 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
     }, 60000);
     return () => clearInterval(interval);
   }, [loadSparkStatus, sparkData]);
+
+  async function calculateReportPrice() {
+    if (priceRequestRunning.current || sparkData?.status !== 'completed') return;
+    priceRequestRunning.current = true;
+    setCalculatingPrice(true);
+    setSparkError('');
+    setSparkNotice('');
+    try {
+      const result = await request(`${base}/apply-spark-report`, {});
+      setSparkData(current => current ? { ...current, cuft: result.cuft, weight: result.weight } : current);
+      await loadSparkInventory(true);
+      onUploaded();
+      if (result.price == null) {
+        setSparkError('Inventory imported, but no price was calculated. Check the processing steps below.');
+      } else {
+        setSparkNotice('Inventory imported and price updated.');
+      }
+    } catch (err) {
+      setSparkError(err instanceof Error ? err.message : 'Could not calculate price. Check the processing steps below.');
+    } finally {
+      setProcessingRevision(value => value + 1);
+      setCalculatingPrice(false);
+      priceRequestRunning.current = false;
+    }
+  }
 
   async function runSpark() {
     if (sparkRunning) return;
@@ -377,7 +405,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
                 </a>
               )}
             </div>
-            {sparkData.status === "completed" && <SparkProcessingLog key={sparkData.id} base={base} token={token || ""} reportId={sparkData.id} />}
+            {sparkData.status === "completed" && <SparkProcessingLog key={`${sparkData.id}:${processingRevision}`} base={base} token={token || ""} reportId={sparkData.id} />}
             <div style={{ marginTop: 10 }}>
               <button
                 type="button"
@@ -400,6 +428,11 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
                 {inventoryLoading && <p role="status" style={{ margin: 0 }}>Loading inventory...</p>}
                 {!inventoryLoading && inventoryError && <div className="ls-error" role="alert" style={{ marginTop: 0 }}>{inventoryError}</div>}
                 {!inventoryLoading && !inventoryError && inventoryRows.length === 0 && <p style={{ margin: 0 }}>No inventory saved for this job yet.</p>}
+                {inventoryLoaded && !inventoryLoading && !inventoryError && inventoryRows.length === 0 && sparkData.status === 'completed' && (
+                  <button type="button" className="slds-button ls-primary" style={{ marginTop: 10 }} disabled={calculatingPrice || sparkRunning} onClick={() => void calculateReportPrice()}>
+                    {calculatingPrice ? 'Calculating price...' : 'Calculate price'}
+                  </button>
+                )}
                 {!inventoryLoading && !inventoryError && inventoryRows.length > 0 && (
                   <div style={{ overflowX: "auto" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 4 }}>
