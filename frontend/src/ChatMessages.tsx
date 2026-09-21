@@ -196,7 +196,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
     setDownloadNotice("");
     let failed = 0;
     for (const [index, attachment] of attachments.entries()) {
-      setDownloadNotice(`Preparing attachment ${index + 1} of ${attachments.length}?`);
+      setDownloadNotice(`Preparing attachment ${index + 1} of ${attachments.length}...`);
       try {
         const response = await fetch(attachmentUrl(attachment));
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -388,7 +388,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
       {attachments.length > 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "8px 12px", border: "1px solid #e0e0e0", borderTop: "none" }}>
           <button type="button" className="slds-button slds-button_neutral" disabled={downloading} onClick={() => void downloadAllAttachments()}>
-            {downloading ? "Downloading?" : `? Download all attachments (${attachments.length})`}
+            {downloading ? "Downloading..." : `Download all attachments (${attachments.length})`}
           </button>
           {downloadNotice && <span role="status" style={{ fontSize: 12 }}>{downloadNotice}</span>}
         </div>
