@@ -57,6 +57,7 @@ export default function CustomerMovePage() {
   const [data,setData]=useState<Details>(),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
   const uploadLock = useRef(false);
   const filePicker = useRef<HTMLInputElement>(null);
+  const meetingDialog = useRef<HTMLDialogElement>(null);
   const [photosRestored, setPhotosRestored] = useState(false);
   useEffect(() => {
     let active = true;
@@ -229,7 +230,7 @@ export default function CustomerMovePage() {
     }
     }finally{uploadLock.current = false;setBusy(false);}
   }
-  async function walkthrough(){setBusy(true);setError('');try{const timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;const result=await call(rescheduling?'/reschedule':'/walkthrough',{availability,timezone});setRequested(true);setRescheduling(false);setData(prev=>prev?{...prev,walkthrough:result,participant_url:''}:prev);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+  async function walkthrough(){setBusy(true);setError('');try{const timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;const result=await call(rescheduling?'/reschedule':'/walkthrough',{availability,timezone});setRequested(true);setRescheduling(false);meetingDialog.current?.close();setData(prev=>prev?{...prev,walkthrough:result,participant_url:''}:prev);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
 
   function startEditMove(){
     if(!data)return;
@@ -430,11 +431,13 @@ export default function CustomerMovePage() {
             <div className="cm-actions-stack cm-actions-row">
               <section className="cm-card cm-upload">
                 <div className="cm-eyebrow">SHOW US WHAT'S MOVING</div>
-                <h2>Add files, a list, or both.</h2>
-                <p>Upload photos, videos, or documents, create an item list, or use both.<br/>Save and update your inventory anytime. When you&#8217;re ready, generate one report to calculate your total volume and estimate.</p>
+                <h2>Add files, a list, or request a virtual estimate.</h2>
+                <p>Upload photos, videos, or documents, create an item list, or schedule a live virtual walkthrough with our team.</p>
+                <p>Save and update your inventory anytime. When you&#8217;re ready, generate one report to calculate your total volume and estimate.</p>
                 <div className="cm-inventory-actions">
                   <button type="button" className="slds-button cm-add-list-button" onClick={() => setShowInventoryList(true)}>{data.inventory_draft ? 'Update list' : 'Add a list'}</button>
                   <button type="button" className="slds-button cm-add-list-button" disabled={busy || !photosRestored} onClick={() => filePicker.current?.click()}>Upload files</button>
+                  <button type="button" className="slds-button cm-add-list-button" onClick={() => meetingDialog.current?.showModal()}>Virtual estimate</button>
                   <input ref={filePicker} type="file" multiple hidden disabled={busy || !photosRestored} onChange={e=>{void choose(e.target.files);e.target.value='';}}/>
                   {files.some(f => f.status === 'Try again') && <button className="slds-button cm-primary cm-upload-btn" disabled={busy} onClick={()=>void upload()}>Retry upload</button>}
                 </div>
@@ -453,6 +456,14 @@ export default function CustomerMovePage() {
                   ))}
                 </div>
                 <ReportFileGallery newFileIds={(data.editable_files || data.files).filter(file => !(data.report_history?.find(report => report.current)?.files || []).some(previous => previous.id === file.id)).map(file => file.id)} files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={busy || reportState === 'running'} />
+                {data.walkthrough && <div className="cm-meeting-summary">
+                  <div><strong>Virtual estimate</strong><span>{meetingTime(data.walkthrough)}</span><small>{({requested:'Requested',scheduled:'Confirmed',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status] || data.walkthrough.status}</small></div>
+                  <div className="cm-walkthrough-actions">
+                    {data.walkthrough.status === 'scheduled' && data.participant_url && <a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join walkthrough</a>}
+                    <button type="button" className="cm-secondary-btn" onClick={() => { setAvailability(''); setRescheduling(true); meetingDialog.current?.showModal(); }}>{['requested','scheduled'].includes(data.walkthrough.status) ? 'Reschedule' : 'Schedule'}</button>
+                  </div>
+                </div>}
+
                 {((data.editable_files || data.files).length > 0 || !!data.inventory_draft?.rows.length) && (!data.spark || hasNewUploads || data.files_changed || data.list_changed) && (reportState !== 'done' || data.files_changed || data.list_changed) && (
                   <div className="cm-spark-box">
                     <button
@@ -481,11 +492,12 @@ export default function CustomerMovePage() {
                 )}
               </section>
 
-              <section className="cm-card cm-walkthrough-card">
+              <dialog ref={meetingDialog} className="cm-meeting-dialog" aria-labelledby="cm-meeting-title">
+                <button type="button" className="cm-meeting-close" aria-label="Close scheduling" onClick={() => meetingDialog.current?.close()}>&times;</button>
                 <div className="cm-walkthrough-header">
                   <div>
                     <div className="cm-eyebrow">LIVE VIDEO WALKTHROUGH</div>
-                    <h2>Let's take a live<br/>video walkthrough.</h2>
+                    <h2 id="cm-meeting-title">Virtual estimate</h2>
                     <p className="cm-walkthrough-sub">Walk us through your home from your phone. Our team will help you plan what comes next.</p>
                   </div>
                   {data.walkthrough && (
@@ -494,6 +506,7 @@ export default function CustomerMovePage() {
                     </span>
                   )}
                 </div>
+                {error && <p className="cm-error" role="alert">{error}</p>}
                 {data.walkthrough && !rescheduling ? (
                   <div className="cm-walkthrough-body">
                     <p className="cm-meeting-time">{meetingTime(data.walkthrough)}</p>
@@ -518,7 +531,7 @@ export default function CustomerMovePage() {
                     {requested && <p role="status" className="cm-walkthrough-notice">Request saved.</p>}
                   </form>
                 )}
-              </section>
+              </dialog>
             </div>
 
             <div className="cm-estimate cm-estimate-full">
