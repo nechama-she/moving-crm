@@ -17,6 +17,7 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
   const name = useId();
   const [pending, setPending] = useState('');
   const [error, setError] = useState('');
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   if (!reports.length) return null;
   const waiting = reports.some(report => report.current && ['queued', 'running'].includes(report.status));
   async function select(id: string) {
@@ -31,12 +32,16 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
     {waiting && <p role="status">Your new report is processing. You can choose an earlier report once it finishes.</p>}
     {error && <p className="report-history-error" role="alert">{error}</p>}
     {pending && <p role="status">Updating inventory and price...</p>}
-    {reports.map(report => <div key={report.id}><details className="report-history-run" key={report.id} data-current={report.current}>
-      <summary>
+    {reports.map(report => <div className="report-history-run" key={report.id} data-current={report.current}>
+      <div className="report-history-row">
+      <button type="button" className="report-history-toggle" aria-expanded={!!expanded[report.id]} aria-controls={`${name}-${report.id}`} onClick={() => setExpanded(previous => ({ ...previous, [report.id]: !previous[report.id] }))}>
+        <span aria-hidden="true">{expanded[report.id] ? '\u25be' : '\u25b8'}</span>
         <span>{report.created_at ? new Date(report.created_at * 1000).toLocaleString() : 'Earlier report'}</span>
         <span className="report-history-summary"><span className="report-history-source">{report.source === 'manual' ? 'List' : report.source === 'combined' ? 'Virtual tour + List' : 'Virtual tour'}</span>{report.cuft != null && <span>{report.cuft.toLocaleString()} cu ft</span>}<span className="report-history-status">{report.status}</span>{report.current && <b>Current</b>}</span>
-      </summary>
-      <div className="report-history-detail">
+      </button>
+      <ReportLinks report={report} />
+      </div>
+      <div id={`${name}-${report.id}`} hidden={!expanded[report.id]} className="report-history-detail">
         {report.source === 'combined' && <p>Total volume combines the virtual tour and the itemized list. The virtual tour link includes only the media report.</p>}
         <div className="report-history-actions">
           <label><input type="radio" name={name} checked={report.current} disabled={disabled || !!pending || waiting || report.status !== 'completed' || (!report.shareUrl && report.source !== 'manual')} onChange={() => void select(report.id)} />{report.current ? 'Current report for pricing' : 'Use this report for pricing'}</label>
@@ -46,6 +51,7 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
         {report.inventory.length > 0 ? <div className="report-history-table"><table><thead><tr><th>Item</th><th>Qty</th><th>Cu ft</th></tr></thead><tbody>{report.inventory.map((item, index) => <tr key={index}><td>{item.name}{item.room && <small style={{ display: 'block' }}>{item.room}</small>}</td><td>{item.amount}</td><td>{item.cuft}</td></tr>)}</tbody></table></div> : <p>Open the report to view its inventory. Saved details appear after it is imported.</p>}
         {staff && report.processing && <div className="report-history-processing"><h5>Processing steps</h5>{report.processing.steps.map(step => <div key={step.id}>{step.error ? <details><summary>{step.label} <span>Failed - view error</span></summary><pre>{step.error}</pre></details> : <p><span>{step.label}</span><span>{step.status.replace(/_/g, ' ')}</span></p>}{step.message && <small>{step.message}</small>}</div>)}</div>}
       </div>
-    </details><ReportLinks report={report} /></div>)}
+      <ReportLinks report={report} />
+    </div>)}
   </section>;
 }
