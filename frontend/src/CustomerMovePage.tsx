@@ -540,20 +540,6 @@ export default function CustomerMovePage() {
                   <span className="cm-estimate-eyebrow">{data.estimate?'Your moving estimate':'Your estimate'}</span>
                   <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'?'Your report is ready. Pricing is pending.':'We\'re working on it.'}</strong>
                   <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
-                    {data.spark?.status === 'completed' && (
-                      <button type="button" className="slds-button cm-primary cm-get-price" disabled={calculatingPrice} onClick={async () => {
-                        setCalculatingPrice(true);
-                        setCalculationError('');
-                        try {
-                          await call('/calculate-price', {});
-                          setData(await call('/details'));
-                        } catch (err) {
-                          setCalculationError((err as Error).message);
-                        } finally {
-                          setCalculatingPrice(false);
-                        }
-                      }}>{calculatingPrice ? 'Getting price...' : 'Get price'}</button>
-                    )}
                 </div>
                 {data.spark && (
                   <div className="cm-spark-card cm-spark-estimate-card">
