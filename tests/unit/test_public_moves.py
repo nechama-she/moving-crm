@@ -1364,3 +1364,26 @@ def test_environment_dry_run_prevents_customer_link_delivery(portal, monkeypatch
     assert result['dry_run']
     sms.assert_not_called()
     provider.assert_not_called()
+
+
+def test_import_chat_files_scopes_company_page(portal, monkeypatch):
+    mod, db, lead, access = portal
+    lead.facebook_user_id = 'client'
+    company = models.Company(name='Import company', facebook_page_id='page')
+    db.add(company); db.flush()
+    lead.company_id = company.id
+    db.commit()
+    monkeypatch.setattr(mod, 'staff_access', lambda *args: (lead, access))
+    source = ModuleType('db')
+    source.conversations_table = MagicMock()
+    monkeypatch.setitem(sys.modules, 'db', source)
+    import meta_attachment_archiver
+    archive = MagicMock(return_value=1)
+    monkeypatch.setattr(meta_attachment_archiver, 'archive_meta_attachments', archive)
+    source.conversations_table.query.return_value = {'Items': [{'page_id': 'other', 'platform': 'instagram', 'message_id': 'm', 'attachments': [{'type': 'image'}]}]}
+    mod.import_chat_files(lead.id, mod.ImportChatFilesRequest(), object(), db)
+    archive.assert_not_called()
+    source.conversations_table.query.return_value = {'Items': [{'page_id': 'page', 'platform': 'instagram', 'message_id': 'm', 'attachments': [{'type': 'image'}]}]}
+    result = mod.import_chat_files(lead.id, mod.ImportChatFilesRequest(), object(), db)
+    assert result['imported'] == 1
+    archive.assert_called_once()

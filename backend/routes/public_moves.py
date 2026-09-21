@@ -1046,6 +1046,57 @@ def staff_file_download(lead_id: str, attachment_id: str, user: User = Depends(g
     return preview_report_file(access, attachment_id, db, download=True, all_lead=True)
 
 
+class ImportChatFilesRequest(BaseModel):
+    conversation: int = Field(default=0, ge=0)
+    cursor: dict | None = None
+
+
+@router.post('/api/leads/{lead_id}/customer-page/import-chat-files')
+def import_chat_files(lead_id: str, body: ImportChatFilesRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from models import CommunicationAssociation
+    from db import conversations_table
+    from boto3.dynamodb.conditions import Key
+    from meta_attachment_archiver import archive_meta_attachments
+    lead, access = staff_access(lead_id, user, db)
+    conversations = {(row.channel, row.client_identifier, row.company_identifier) for row in db.query(CommunicationAssociation).filter(
+        CommunicationAssociation.lead_id == lead_id, CommunicationAssociation.channel.in_(['messenger', 'instagram'])).all()}
+    if lead.facebook_user_id and lead.company and lead.company.facebook_page_id:
+        for channel in ('messenger', 'instagram'):
+            # Explicit links to another lead take precedence over a shared Facebook ID.
+            page = lead.company.facebook_page_id
+            association = db.query(CommunicationAssociation).filter_by(channel=channel, client_identifier=lead.facebook_user_id, company_identifier=page).first()
+            if not association or association.lead_id == lead_id:
+                conversations.add((channel, lead.facebook_user_id, page))
+    conversations = sorted(conversations)
+    if body.conversation >= len(conversations):
+        return {'done': True, 'imported': 0, 'failed': 0}
+    channel, client, page = conversations[body.conversation]
+    params = {'KeyConditionExpression': Key('user_id').eq(client), 'Limit': 1}
+    if body.cursor:
+        if body.cursor.get('user_id') != client:
+            raise HTTPException(400, 'Invalid chat cursor')
+        params['ExclusiveStartKey'] = body.cursor
+    response = conversations_table.query(**params)
+    imported = failed = 0
+    for message in response.get('Items', []):
+        if str(message.get('page_id', '')) != page or message.get('platform', 'messenger') != channel:
+            continue
+        message_id = str(message.get('message_id') or '')
+        attachments = message.get('attachments') or []
+        if not message_id or not isinstance(attachments, list):
+            continue
+        existing = db.query(LeadAttachment).filter_by(lead_id=lead_id, external_source='meta_s3').all()
+        expected = sum(1 for index, item in enumerate(attachments) if isinstance(item, dict)
+                       and not any(row.source_external_id == f'{message_id}:{index}' for row in existing))
+        imported += archive_meta_attachments(db, lead_id, channel, message_id, attachments)
+        db.commit()
+        failed += max(0, expected - imported)
+    cursor = response.get('LastEvaluatedKey')
+    next_conversation = body.conversation if cursor else body.conversation + 1
+    return {'done': next_conversation >= len(conversations), 'conversation': next_conversation,
+            'cursor': cursor, 'imported': imported, 'failed': failed}
+
+
 @router.get('/api/leads/{lead_id}/customer-page/sync-status')
 def file_sync_status(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _, access = staff_access(lead_id, user, db)
