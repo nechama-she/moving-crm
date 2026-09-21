@@ -25,6 +25,12 @@ phases:
           echo "API_SECRET already exists in SSM"
         fi
 
+      - |
+        if [ "${ENVIRONMENT:-dev}" = "dev" ]; then
+          aws ssm put-parameter --name "/moving-crm/dev/PUBLIC_MOVE_LINK_DRY_RUN" --value "true" --type String --overwrite
+          echo "Customer link sending is in dry-run mode for dev"
+        fi
+
   build:
     commands:
       - echo "Updating lead-followup Lambda function code"

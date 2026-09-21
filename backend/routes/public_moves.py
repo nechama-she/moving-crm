@@ -854,9 +854,49 @@ def send_customer_link(lead_id: str, user: User = Depends(get_current_user), db:
     number = (company.aircall_number_id or '') if company else ''
     if not number and company and company.phone: number = find_number_id(company.phone)
     if not number: raise HTTPException(400, 'Configure an Aircall number for the sending company')
-    result = send_sms(to=lead.phone, text=f'View your move, upload photos, or request a walkthrough: {public_url(access)}', number_id=number, sensitive=True)
+    result = send_sms(to=lead.phone, text=f'View your move, upload files, add an item list, or request a virtual estimate: {public_url(access)}', number_id=number, sensitive=True)
     if not result.get('ok'): raise HTTPException(502, 'Could not send SMS. Please retry.')
     return {'ok': True}
+
+
+class SendCustomerLinkRequest(BaseModel):
+    dry_run: bool = True
+
+
+@router.post('/api/leads/{lead_id}/customer-page/send-link')
+def send_customer_page_link(lead_id: str, body: SendCustomerLinkRequest,
+                           user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead, access = staff_access(lead_id, user, db)
+    if access.revoked or access.expires_at < NOW():
+        raise HTTPException(400, 'Customer link is inactive')
+    message = f'View your move, upload files, add an item list, or request a virtual estimate: {public_url(access)}'
+    deliveries = []
+    for channel, recipient in [('sms', lead.phone), ('email', lead.email)]:
+        if recipient and recipient.strip():
+            deliveries.append({'channel': channel, 'recipient': recipient.strip(), 'status': 'preview'})
+    if not deliveries:
+        raise HTTPException(400, 'This customer has no phone number or email address')
+    configured_dry_run = (setting('PUBLIC_MOVE_LINK_DRY_RUN') or 'true').strip().lower() != 'false'
+    if configured_dry_run or body.dry_run:
+        return {'ok': True, 'dry_run': True, 'message': message, 'deliveries': deliveries}
+    for delivery in deliveries:
+        try:
+            if delivery['channel'] == 'sms':
+                send_customer_link(lead_id, user, db)
+            else:
+                sender = setting('PUBLIC_MOVE_EMAIL_FROM')
+                if not sender:
+                    raise HTTPException(503, 'Customer email sending is not configured')
+                boto3.client('ses', region_name=setting('AWS_REGION') or 'us-east-1').send_email(
+                    Source=sender, Destination={'ToAddresses': [delivery['recipient']]}, Message={
+                        'Subject': {'Data': 'Your moving estimate', 'Charset': 'UTF-8'},
+                        'Body': {'Text': {'Data': message, 'Charset': 'UTF-8'}}})
+            delivery['status'] = 'sent'
+        except HTTPException as exc:
+            delivery.update(status='failed', error=str(exc.detail))
+        except Exception:
+            delivery.update(status='failed', error='The message provider could not send this message.')
+    return {'ok': all(row['status'] == 'sent' for row in deliveries), 'dry_run': False, 'deliveries': deliveries}
 
 
 class StaffPagePatch(BaseModel):

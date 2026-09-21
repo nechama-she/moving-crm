@@ -1325,3 +1325,42 @@ def test_custom_inventory_volume_and_validation(manual_catalog):
         body['rooms'][0]['custom_items'][0]['cuft'] = invalid
         with pytest.raises(ValidationError):
             ManualInventoryInput.model_validate(body)
+
+
+def test_send_customer_link_dry_run_and_both_channels(portal, monkeypatch):
+    mod, db, lead, access = portal
+    lead.phone = '+12025550123'
+    lead.email = 'customer@example.test'
+    monkeypatch.setattr(mod, 'staff_access', lambda *args: (lead, access))
+    sms = MagicMock(return_value={'ok': True})
+    ses = MagicMock()
+    monkeypatch.setattr(mod, 'send_customer_link', sms)
+    monkeypatch.setattr(mod.boto3, 'client', MagicMock(return_value=ses))
+    monkeypatch.setattr(mod, 'setting', lambda key: {'PUBLIC_MOVE_LINK_DRY_RUN': 'false', 'PUBLIC_MOVE_EMAIL_FROM': 'sender@example.test', 'PUBLIC_MOVE_ORIGIN': 'https://move.example.test', 'AWS_REGION': 'us-east-1'}.get(key, ''))
+    result = mod.send_customer_page_link(lead.id, mod.SendCustomerLinkRequest(), object(), db)
+    assert result['dry_run'] and len(result['deliveries']) == 2
+    assert mod.public_url(access) in result['message']
+    sms.assert_not_called()
+    ses.send_email.assert_not_called()
+    result = mod.send_customer_page_link(lead.id, mod.SendCustomerLinkRequest(dry_run=False), object(), db)
+    assert result['ok'] and all(row['status'] == 'sent' for row in result['deliveries'])
+    sms.assert_called_once()
+    ses.send_email.assert_called_once()
+    sms.side_effect = HTTPException(502, 'SMS failed')
+    result = mod.send_customer_page_link(lead.id, mod.SendCustomerLinkRequest(dry_run=False), object(), db)
+    assert not result['ok']
+    assert [row['status'] for row in result['deliveries']] == ['failed', 'sent']
+
+
+def test_environment_dry_run_prevents_customer_link_delivery(portal, monkeypatch):
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod, 'staff_access', lambda *args: (lead, access))
+    monkeypatch.setattr(mod, 'setting', lambda key: 'https://move.example.test' if key == 'PUBLIC_MOVE_ORIGIN' else 'true')
+    sms = MagicMock()
+    monkeypatch.setattr(mod, 'send_customer_link', sms)
+    provider = MagicMock()
+    monkeypatch.setattr(mod.boto3, 'client', provider)
+    result = mod.send_customer_page_link(lead.id, mod.SendCustomerLinkRequest(dry_run=False), object(), db)
+    assert result['dry_run']
+    sms.assert_not_called()
+    provider.assert_not_called()
