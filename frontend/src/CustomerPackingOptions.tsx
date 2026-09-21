@@ -16,10 +16,10 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       {(['full', 'partial', 'none'] as const).filter(mode => mode === 'none' || config.rates[mode]).map(mode => <label key={mode} className={`cm-packing-choice ${selection.mode === mode ? 'selected' : ''}`}>
         <input type="radio" name="packing-package" disabled={disabled} checked={selection.mode === mode} onChange={() => onChange({ ...selection, mode, item_ids: [] })} />
         <span className="cm-packing-copy"><strong className="cm-packing-title"><span>{mode === 'full' ? 'Full packing' : mode === 'partial' ? 'Partial packing' : 'No packing'}</span><span className="cm-packing-inline-price">&middot; {mode === 'none' ? '$0' : <>{money(config.rates[mode]!.rate)} / cu ft &middot; {money(config.rates[mode]!.total)}</>}</span></strong>
-        <small>{mode === 'full' ? 'All belongings, including personal-item boxes. Materials included.' : mode === 'partial' ? 'We box items that require it. Materials included; personal-item boxes excluded.' : 'Pack yourself, or choose individual items below.'}</small></span>
+        <small>{mode === 'full' ? 'All belongings, including personal-item boxes. Materials included.' : mode === 'partial' ? 'We box items that require it. Materials included; personal-item boxes excluded.' : (config.items.length ? 'Pack yourself, or choose individual items below.' : 'Pack your belongings yourself.')}</small></span>
       </label>)}
     </div>
-    {selection.mode === 'none' && <section className="cm-packing-items">
+    {selection.mode === 'none' && config.items.length > 0 && <section className="cm-packing-items">
       <h4>These items must be boxed</h4>
       <p className="cm-step-sub">These inventory items need boxes before loading; blankets are not enough. Select items for us to pack, or box them yourself.</p>
       <div className="cm-checklist">
@@ -28,7 +28,6 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
           <span className="cm-packing-copy"><strong>{item.label}</strong><small>Box and materials included</small></span><strong className="cm-packing-price">{money(item.price)}</strong>
         </label>)}
       </div>
-      {!config.items.length && <p>No required-box items have been identified in your current inventory.</p>}
     </section>}
     {config.rates.unpacking && <section className="cm-unpacking-addon" aria-labelledby="cm-unpacking-heading">
       <h4 id="cm-unpacking-heading">Optional add-on</h4>
