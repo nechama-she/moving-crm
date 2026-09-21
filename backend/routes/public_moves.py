@@ -1,5 +1,5 @@
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
-from manual_inventory import ManualInventoryInput, catalog, submit_inventory
+from manual_inventory import ManualInventoryInput, catalog, submit_inventory, save_inventory_draft
 from spark_history import report_history
 from report_files import move_files, file_list, remove_report_file, preview_report_file
 import hmac
@@ -222,6 +222,7 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
         'company': {
             'name': active_company.name if active_company else 'Your moving team',
             'color': company_color,
+        'logo': active_company.logo if active_company else '',
         }
     }
 
@@ -479,6 +480,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
         'phone': active_company.phone or '' if active_company else '',
         'office_address': active_company.office_address or '' if active_company else '',
         'color': company_color,
+        'logo': active_company.logo if active_company else '',
     }
 
     packing_items = []
@@ -496,6 +498,8 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             'spark': spark_info,
             'report_history': report_history(conv_details),
             'editable_files': file_list(files),
+            'inventory_draft': conv_details.get('inventory_draft'),
+            'list_changed': conv_details.get('inventory_draft', {}).get('body') != conv_details.get('report_list_body'),
             'files_changed': {f.id for f in files} != {row['id'] for row in conv_details.get('report_files', [])},
             'new_file_count': sum(f.id not in {row['id'] for row in conv_details.get('report_files', [])} for f in files) if 'report_files' in conv_details else 0,
             'walkthrough': meeting_dict(meeting) if meeting else None,
@@ -519,7 +523,7 @@ def get_customer_inventory_catalog(access: PublicMoveAccess = Depends(verified),
 
 @router.post('/api/public-moves/{access_id}/manual-inventory')
 def submit_customer_inventory(body: ManualInventoryInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    result = submit_inventory(body, access, db)
+    result = save_inventory_draft(body, access, db)
     if not result.get('ok'):
         raise HTTPException(422, result.get('detail'))
     return result
@@ -710,7 +714,15 @@ def customer_generate_inventory_report(access: PublicMoveAccess = Depends(verifi
     # Verify that this customer actually uploaded files
     count = len(move_files(access, db))
     if count == 0:
-        raise HTTPException(400, "Please upload photos or videos of your items before generating a report.")
+        saved = db.get(LeadLiveSwitch, access.lead_id)
+        details = json.loads(saved.details or '{}') if saved else {}
+        draft = details.get('inventory_draft') or {}
+        if not draft.get('rows'):
+            raise HTTPException(400, 'Add files or items to your list before generating a report.')
+        result = submit_inventory(ManualInventoryInput.model_validate(draft['body']), access, db)
+        if not result.get('ok'):
+            raise HTTPException(422, result.get('detail'))
+        return result
 
     from routes.liveswitch import trigger_lead_spark
     try:

@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './ManualInventoryModal.css';
 type CatalogItem = { id: string; name: string; description: string; cuft: number; weight: number };
 type RoomType = { id: string; name: string };
 type Room = { id: string; room_type_id: string; name: string; items: Record<string, number> };
 type Catalog = { rooms: RoomType[]; items: CatalogItem[] };
-export default function ManualInventoryModal({ loadCatalog, submit, onClose }: {
+export default function ManualInventoryModal({ loadCatalog, submit, onClose, draftKey, initialRooms }: {
+  draftKey: string;
+  initialRooms?: { room_type_id: string; name: string; items: { item_id: string; quantity: number }[] }[];
   loadCatalog: () => Promise<Catalog>;
   submit: (body: { request_id: string; rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number }[] }[] }) => Promise<void>;
   onClose: () => void;
@@ -17,8 +19,56 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose }: {
   const [limit, setLimit] = useState(60);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const requestId = useRef(crypto.randomUUID());
-  useEffect(() => { requestId.current = crypto.randomUUID(); }, [rooms]);
+  const [draftError, setDraftError] = useState('');
+  useLayoutEffect(() => {
+    if (!catalog) return;
+    try { localStorage.setItem(draftKey, JSON.stringify(rooms)); setDraftError(''); }
+    catch { setDraftError('Could not save your draft on this device. Keep this page open until you submit.'); }
+  }, [rooms, catalog, draftKey]);
+  const [saveStatus, setSaveStatus] = useState('');
+  const latest = useRef<Room[]>([]);
+  const pending = useRef<Room[] | null>(null);
+  const saving = useRef<Promise<void> | null>(null);
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
+  function flush(): Promise<void> {
+    if (saving.current) return saving.current;
+    const operation = (async () => {
+      while (pending.current) {
+        const snapshot = pending.current;
+        pending.current = null;
+        setSaveStatus('Saving...');
+        try {
+          await submitRef.current({ request_id: crypto.randomUUID(), rooms: snapshot.map(r => ({ room_type_id: r.room_type_id, name: r.name.trim() || catalog?.rooms.find(t => t.id === r.room_type_id)?.name || 'Room', items: Object.entries(r.items).filter(([, qty]) => qty > 0).map(([item_id, quantity]) => ({ item_id, quantity })) })) });
+          if (latest.current === snapshot) {
+            try { localStorage.removeItem(draftKey); } catch { /* The database copy is saved. */ }
+          }
+        } catch (err) {
+          pending.current = pending.current || snapshot;
+          setSaveStatus('Not saved. Check your connection and retry.');
+          throw err;
+        }
+      }
+      setError('');
+      setSaveStatus('All changes saved');
+    })();
+    saving.current = operation;
+    void operation.finally(() => { saving.current = null; }).catch(() => {});
+    return operation;
+  }
+  useEffect(() => {
+    if (!catalog) return;
+    latest.current = rooms;
+    pending.current = rooms;
+    void flush().catch(err => setError(err instanceof Error ? err.message : 'Could not save your list.'));
+  }, [rooms, catalog]);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (pending.current || saving.current) { event.preventDefault(); event.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, []);
   const modal = useRef<HTMLDivElement>(null);
   const loader = useRef(loadCatalog);
   useEffect(() => {
@@ -28,7 +78,9 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose }: {
     loader.current().then(value => {
       if (!active) return;
       setCatalog(value); setRoomType(value.rooms[0]?.id || '');
-      setRooms(value.rooms.filter(r => ['bedroom', 'living-room', 'dining-room', 'kitchen'].includes(r.id)).map(r => ({ id: crypto.randomUUID(), room_type_id: r.id, name: r.name, items: {} })));
+      let saved: Room[] | undefined;
+      try { const raw = localStorage.getItem(draftKey); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed) && parsed.every(r => r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.room_type_id === 'string' && r.items && typeof r.items === 'object' && Object.values(r.items).every(q => typeof q === 'number' && Number.isInteger(q) && q >= 0 && q <= 999))) saved = parsed; } } catch { /* Start with default rooms if storage is unavailable. */ }
+      setRooms(saved || initialRooms?.map(r => ({ id: crypto.randomUUID(), room_type_id: r.room_type_id, name: r.name, items: Object.fromEntries(r.items.map(i => [i.item_id, i.quantity])) })) || value.rooms.filter(r => ['bedroom', 'living-room', 'dining-room', 'kitchen'].includes(r.id)).map(r => ({ id: crypto.randomUUID(), room_type_id: r.id, name: r.name, items: {} })));
     }).catch(err => { if (active) setError(err.message); });
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -46,13 +98,18 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose }: {
     setRooms(current => current.map(r => r.id === selected ? { ...r, items: { ...r.items, [id]: Math.min(999, Math.max(0, Math.floor(value || 0))) } } : r));
   }
   async function save() {
+    if (busy) return;
+    if (!catalog) { onClose(); return; }
+    if (rooms.some(r => !r.name.trim())) { setError('Enter a name for each room before closing.'); return; }
     setBusy(true); setError('');
     try {
-      await submit({ request_id: requestId.current, rooms: rooms.map(r => ({ room_type_id: r.room_type_id, name: r.name.trim(), items: Object.entries(r.items).filter(([, qty]) => qty > 0).map(([item_id, quantity]) => ({ item_id, quantity })) })) });
+      pending.current = rooms;
+      await flush();
+      onClose();
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save your list.'); setBusy(false); }
   }
   return <div className="cm-modal-overlay"><div className="mi-modal" ref={modal} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="mi-title" onKeyDown={event => {
-    if (event.key === 'Escape' && !busy) onClose();
+    if (event.key === 'Escape' && !busy) { event.preventDefault(); void save(); }
     if (event.key === 'Tab') {
       const nodes = modal.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)');
       if (!nodes?.length) return;
@@ -61,8 +118,9 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose }: {
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }
   }}>
-    <header><div><span className="cm-eyebrow">YOUR INVENTORY</span><h2 id="mi-title">{room ? `Items in ${room.name}` : 'Your home, room by room'}</h2></div><button type="button" className="slds-button" disabled={busy} onClick={onClose} aria-label="Close inventory">&times;</button></header>
+    <header><div><span className="cm-eyebrow">YOUR INVENTORY</span><h2 id="mi-title">{room ? `Items in ${room.name}` : 'Your home, room by room'}</h2></div><button type="button" className="slds-button" disabled={busy} onClick={() => void save()} aria-label="Save and close inventory">&times;</button></header>
     <div className="mi-totals" aria-live="polite"><span>{rooms.length} rooms</span><span>{rooms.reduce((sum, r) => sum + count(r), 0)} items</span><strong>{number(cuft)} cu ft</strong><span>{number(weight)} lb</span></div>
+    {draftError && <p className="mi-error" role="alert">{draftError}</p>}
     {error && <p className="mi-error" role="alert">{error}</p>}
     <div className="mi-body">
       {!catalog ? <p>Loading item catalog...</p> : room ? <>
@@ -82,6 +140,6 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose }: {
         <div className="mi-add-room"><select aria-label="Room type" value={roomType} disabled={busy} onChange={e => setRoomType(e.target.value)}>{catalog.rooms.map(r => <option value={r.id} key={r.id}>{r.name}</option>)}</select><button type="button" className="slds-button" disabled={busy || rooms.length >= 100 || !roomType} onClick={() => { const type = catalog.rooms.find(r => r.id === roomType)!; const id = crypto.randomUUID(); const n = rooms.filter(r => r.room_type_id === roomType).length; setRooms(current => [...current, { id, room_type_id: roomType, name: type.name + (n ? ` ${n + 1}` : ''), items: {} }]); setSelected(id); setSearch(''); setLimit(60); }}>+ Add room</button></div>
       </>}
     </div>
-    <footer><span>{busy ? 'Saving inventory and calculating your estimate...' : 'Your estimate uses the items and quantities in this list.'}</span>{room ? <button type="button" className="slds-button cm-primary" disabled={busy} onClick={() => setSelected('')}>Done with room</button> : <button type="button" className="slds-button cm-primary" disabled={busy || !catalog || cuft <= 0 || rooms.some(r => !r.name.trim())} onClick={() => void save()}>Submit &amp; get estimate</button>}</footer>
+    <footer><span>{busy ? 'Saving your list...' : saveStatus || 'Changes save automatically.'}</span>{room ? <button type="button" className="slds-button cm-primary" disabled={busy} onClick={() => setSelected('')}>Done with room</button> : <button type="button" className="slds-button cm-primary" disabled={busy || !catalog || rooms.some(r => !r.name.trim())} onClick={() => void save()}>Done</button>}</footer>
   </div></div>;
 }

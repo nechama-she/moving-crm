@@ -1218,7 +1218,7 @@ def test_manual_inventory_endpoints_require_verification(manual_catalog, monkeyp
         expires_at=datetime.utcnow() + timedelta(hours=1), contact_hash=contact_fingerprint(lead)))
     db.commit()
     save = MagicMock(return_value={'ok': True, 'price': 400})
-    monkeypatch.setattr(mod, 'submit_inventory', save)
+    monkeypatch.setattr(mod, 'save_inventory_draft', save)
     source = ast.parse((BACKEND / 'main.py').read_text(encoding='utf-8'))
     node = next(node for node in source.body if getattr(node, 'name', '') == 'enforce_authentication')
     scope = {'Request': Request, 're': re, 'HTTPException': HTTPException, 'PUBLIC_PATHS': set()}
@@ -1266,3 +1266,42 @@ def test_gallery_preview_is_scoped_and_hides_deleted_files(portal, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         mod.customer_file_preview('photo', access, db)
     assert exc.value.status_code == 404
+
+
+def test_saving_list_does_not_generate_report(manual_catalog):
+    from manual_inventory import ManualInventoryInput
+    from uuid import uuid4
+    mod, db, lead, access = manual_catalog
+    body = ManualInventoryInput(request_id=uuid4(), rooms=[{'room_type_id': 'bedroom', 'name': 'Bedroom',
+        'items': [{'item_id': 'chair', 'quantity': 2}]}])
+    assert mod.submit_customer_inventory(body, access, db)['ok']
+    details = json.loads(db.get(models.LeadLiveSwitch, lead.id).details)
+    assert details['inventory_draft']['cuft'] == 20
+    assert not details.get('last_spark_id')
+    assert db.query(models.LeadSparkInventoryItem).count() == 0
+    body.rooms = []
+    mod.submit_customer_inventory(body, access, db)
+    assert json.loads(db.get(models.LeadLiveSwitch, lead.id).details)['inventory_draft']['rows'] == []
+
+
+def test_combined_report_uses_snapshot_once_on_recalculation(portal, processing_api, monkeypatch):
+    mod, db, lead, access = portal
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+        'last_spark_id': 'combined-report', 'last_spark_status': 'completed', 'report_source': 'combined',
+        'report_list_cuft': 20, 'report_list_weight': 140,
+        'report_list_rows': [{'name': 'Chair', 'room': 'Bedroom', 'amount': 2, 'cuft': 20, 'weight': 140}],
+        'inventory_draft': {'cuft': 999}})))
+    db.commit()
+    processing_api['fetch_and_extract_spark_report'] = MagicMock(return_value=(60, 0, [{'name': 'TV', 'amount': 3, 'cuft': 60}]))
+    pricing = ModuleType('routes.pricing')
+    def calculate(lead, job, db):
+        job.price = lead.volume * 10
+        return float(job.price)
+    pricing.calculate_and_save_lead_job_price = calculate
+    monkeypatch.setitem(sys.modules, 'routes.pricing', pricing)
+    for _ in range(2):
+        result = processing_api['apply_spark_results_to_lead'](lead.id, 'https://example.com/report', db)
+        assert result['ok'], result
+        assert float(lead.volume) == 80
+        assert result['price'] == 800
+        assert db.query(models.LeadSparkInventoryItem).count() == 2

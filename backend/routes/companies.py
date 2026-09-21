@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -16,7 +16,31 @@ logger = logging.getLogger("moving-crm")
 router = APIRouter(prefix="/api/companies", tags=["Companies"])
 
 
-class CompanyCreate(BaseModel):
+class CompanyLogo(BaseModel):
+    logo: Optional[str] = Field(default=None, max_length=400000)
+
+    @field_validator('logo')
+    @classmethod
+    def validate_logo(cls, value):
+        if not value:
+            return value
+        import base64
+        import struct
+        try:
+            if not value.startswith('data:image/png;base64,'):
+                raise ValueError()
+            raw = base64.b64decode(value.split(',', 1)[1], validate=True)
+            if raw[:8] != b'\x89PNG\r\n\x1a\n' or raw[12:16] != b'IHDR':
+                raise ValueError()
+            width, height = struct.unpack('>II', raw[16:24])
+            if width != 256 or height != 256:
+                raise ValueError()
+        except Exception:
+            raise ValueError('Logo must be a cropped 256 by 256 PNG image.')
+        return value
+
+
+class CompanyCreate(CompanyLogo):
     name: str
     color: Optional[str] = None
     phone: str = ""
@@ -88,6 +112,7 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
     page_id = (body.facebook_page_id or "").strip() or None
     company = Company(
         name=company_name,
+        logo=body.logo or None,
         color=resolve_company_color(company_name, body.color),
         phone=(body.phone or "").strip(),
         office_address=body.office_address.strip(),
@@ -105,7 +130,7 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
     return company.to_dict()
 
 
-class CompanyUpdate(BaseModel):
+class CompanyUpdate(CompanyLogo):
     name: str
     color: Optional[str] = None
     phone: str = ""
@@ -136,6 +161,8 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     if duplicate:
         raise HTTPException(status_code=409, detail="Company name already exists")
 
+    if body.logo is not None:
+        company.logo = body.logo or None
     company.name = company_name
     company.color = resolve_company_color(company_name, body.color)
     company.phone = (body.phone or "").strip()

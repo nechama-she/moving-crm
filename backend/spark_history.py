@@ -5,7 +5,7 @@ REPORT_KEYS = ('last_spark_id', 'last_spark_status', 'last_spark_at', 'last_spar
                'spark_extracted_id', 'spark_extracted_cuft', 'spark_extracted_weight',
                'spark_processing', 'spark_inventory_snapshot', 'spark_pricing_ready',
                'report_conversation', 'report_files', 'pending_spark_payload',
-               'report_customer_packing', 'report_customer_package', 'report_source', 'manual_rooms')
+               'report_customer_packing', 'report_customer_package', 'report_source', 'manual_rooms', 'report_list_body', 'report_list_rows', 'report_list_cuft', 'report_list_weight')
 
 
 CONVERSATION_KEYS = ('id', 'name', 'hostJoinUrl', 'participantJoinUrl', 'conversationUrl', 'embeddedConversationUrl')

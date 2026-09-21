@@ -32,7 +32,7 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
     {reports.map(report => <details className="report-history-run" key={report.id} data-current={report.current}>
       <summary>
         <span>{report.created_at ? new Date(report.created_at * 1000).toLocaleString() : 'Earlier report'}</span>
-        <span className="report-history-summary">{report.cuft != null && <span>{report.cuft.toLocaleString()} cu ft</span>}<span className="report-history-status">{report.source === 'manual' ? 'Item list' : report.status}</span>{report.current && <b>Current</b>}</span>
+        <span className="report-history-summary"><span className="report-history-source">{report.source === 'manual' ? 'List' : report.source === 'combined' ? 'Virtual tour + List' : 'Virtual tour'}</span>{report.cuft != null && <span>{report.cuft.toLocaleString()} cu ft</span>}<span className="report-history-status">{report.status}</span>{report.current && <b>Current</b>}</span>
       </summary>
       <div className="report-history-detail">
         <div className="report-history-actions">

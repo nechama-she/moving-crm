@@ -8,3 +8,5 @@
 .report-history-error{color:#ba0517}.report-history-processing{margin-top:16px;border-top:1px solid #d8dde6}.report-history-processing h5{font-size:12px;margin:12px 0}.report-history-processing p{display:flex;justify-content:space-between;margin:8px 0 2px}.report-history-processing small{color:#64748b}.report-history-processing pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#ba0517}.report-history-processing summary{cursor:pointer;color:#ba0517}
 .report-history-crm{border-color:#d8dde6;color:#0f172a}.report-history-crm .report-history-run{border-color:#d8dde6}.report-history-crm a{color:#0176d3}
 @media(max-width:540px){.report-history-summary{float:none;display:flex;margin:8px 0 0 14px;flex-wrap:wrap}.report-history-actions{align-items:flex-start;flex-direction:column}}
+
+.report-history-source{border:1px solid currentColor;border-radius:12px;padding:2px 8px;font-size:11px;white-space:nowrap}

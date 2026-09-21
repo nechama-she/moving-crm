@@ -1,3 +1,4 @@
+import { savedPhotos, storePhoto, removePhoto } from './photoDrafts';
 import ManualInventoryModal from "./ManualInventoryModal";
 import type { EditableReportFile } from "./ReportFileList";
 import ReportFileGallery from "./ReportFileGallery";
@@ -10,6 +11,8 @@ import { API_BASE } from "./apiConfig";
 import "./CustomerMovePage.css";
 
 type Details = {
+  list_changed?: boolean;
+  inventory_draft?: { body: { rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number }[] }[] }; rooms: { name: string; items: { name: string; amount: number; cuft: number }[] }[]; rows: unknown[]; cuft: number };
   report_history?: ReportRun[];
   new_file_count?: number;
   editable_files?: EditableReportFile[];
@@ -25,6 +28,7 @@ type Details = {
   delivery: string;
   company: string;
   company_details?: {
+    logo?: string;
     name: string;
     phone: string;
     office_address: string;
@@ -50,6 +54,20 @@ export default function CustomerMovePage() {
   const [options,setOptions]=useState<{channel:string;destination:string;label?:string}[]>([]),[channel,setChannel]=useState('');
   const [code,setCode]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [data,setData]=useState<Details>(),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
+  const uploadLock = useRef(false);
+  const [photosRestored, setPhotosRestored] = useState(false);
+  useEffect(() => {
+    let active = true;
+    savedPhotos(accessId || '').then(rows => {
+      if (!active) return;
+      setFiles(rows.map(row => { const preview = row.file.type.startsWith('image/') ? URL.createObjectURL(row.file) : undefined; if (preview) previews.current.push(preview); return { ...row, preview, status: row.file.size ? 'Ready' : 'Empty file', progress: 0 }; }));
+      setPhotosRestored(true);
+    }).catch(() => { if (active) { setError('Could not restore pending photos on this device.'); setPhotosRestored(true); } });
+    return () => { active = false; };
+  }, [accessId]);
+  useEffect(() => {
+    if (photosRestored && data && session && !busy && !uploadLock.current && files.some(file => file.status === 'Ready')) void upload();
+  }, [files, photosRestored, data, session, busy]);
   const [editingMove,setEditingMove]=useState(false);
   const [moveDraft,setMoveDraft]=useState({name:'',phone:'',email:'',move_date:'',pickup:'',delivery:''});
   const [reportState,setReportState]=useState<'idle'|'running'|'done'>('idle');
@@ -70,7 +88,7 @@ export default function CustomerMovePage() {
     setCalculatingPrice(true);
     try {
       await call(`/reports/${encodeURIComponent(id)}/select`, {});
-      setFiles([]);
+      setFiles(current => current.filter(file => file.status !== 'Uploaded'));
       setHasNewUploads(false);
     } finally {
       try { setData(await call('/details')); }
@@ -169,7 +187,7 @@ export default function CustomerMovePage() {
       setBusy(false);
     }
   }
-  function choose(list:FileList|null){
+  async function choose(list:FileList|null){
     if(!list?.length)return;
     try {
       // Snapshot the browser FileList before the input is reset or React runs the updater.
@@ -178,10 +196,13 @@ export default function CustomerMovePage() {
         if(preview)previews.current.push(preview);
         return {id:crypto.randomUUID(),file,preview,progress:0,status:file.size===0?'Empty file':'Ready'};
       });
+      await Promise.all(added.map(item => storePhoto(accessId || '', item.id, item.file)));
       setFiles(prev=>[...prev,...added]);setError('');
-    } catch {setError('Could not select these files. Please choose them again.');}
+    } catch {setError('Could not save these files on this device. Check available storage and choose them again.');}
   }
   async function upload(){
+    if (uploadLock.current) return;
+    uploadLock.current = true;
     setBusy(true);setError('');
     let uploadedAny = false;
     try{for(const item of files.filter(f=>f.status==='Ready'||f.status==='Try again')){
@@ -194,6 +215,7 @@ export default function CustomerMovePage() {
           await new Promise<void>((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('POST',prepared.upload.url);xhr.timeout=0;xhr.upload.onprogress=e=>{if(e.lengthComputable)update('Uploading',Math.round(e.loaded/e.total*90));};xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(new Error('Upload interrupted. Please try again.'));xhr.onerror=xhr.ontimeout=()=>reject(new Error('Upload interrupted. Please try again.'));const form=new FormData();Object.entries(prepared.upload.fields as Record<string,string>).forEach(([k,v])=>form.append(k,v));form.append('file',item.file);xhr.send(form);});
           update('Finishing upload',95);await call('/finish-upload',{request_id:item.id});
         }
+        await removePhoto(accessId || '', item.id);
         update('Uploaded',100);
         uploadedAny = true;
       }catch(e){const message=(e as Error).message;setFiles(prev=>prev.map(f=>f.id===item.id?{...f,status:'Try again',progress:0,error:message}:f));}
@@ -203,7 +225,7 @@ export default function CustomerMovePage() {
       setReportState('idle');
       void refreshDetails();
     }
-    }finally{setBusy(false);}
+    }finally{uploadLock.current = false;setBusy(false);}
   }
   async function walkthrough(){setBusy(true);setError('');try{const timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;const result=await call(rescheduling?'/reschedule':'/walkthrough',{availability,timezone});setRequested(true);setRescheduling(false);setData(prev=>prev?{...prev,walkthrough:result,participant_url:''}:prev);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
 
@@ -321,8 +343,8 @@ export default function CustomerMovePage() {
           <>
             <header className="cm-company-header">
               <div className="cm-company-header-left">
-                <div className="cm-company-logo-placeholder" aria-hidden="true">
-                  <span>LOGO</span>
+                <div className="cm-company-logo-placeholder" style={data.company_details?.logo ? { border: 0, background: "transparent", overflow: "hidden", flexShrink: 0 } : undefined}>
+                  {data.company_details?.logo ? <img src={data.company_details.logo} alt={`${data.company_details.name} logo`} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span>LOGO</span>}
                 </div>
                 <div>
                   <span className="cm-company-welcome">Welcome to</span>
@@ -406,16 +428,16 @@ export default function CustomerMovePage() {
             <div className="cm-actions-stack cm-actions-row">
               <section className="cm-card cm-upload">
                 <div className="cm-eyebrow">SHOW US WHAT'S MOVING</div>
-                <button type="button" className="slds-button cm-add-list-button" style={{ marginTop: 12 }} onClick={() => setShowInventoryList(true)}>+ Add a list</button>
-                <h2>Add photos, documents<br/>or videos.</h2>
-                <p>A few photos of each room help us understand your move. Include any large or delicate items.</p>
+                <button type="button" className="slds-button cm-add-list-button" style={{ marginTop: 12 }} onClick={() => setShowInventoryList(true)}>{data.inventory_draft ? 'Update list' : '+ Add a list'}</button>
+                <h2>Add files, a list, or both.</h2>
+                <p>Upload photos, videos, or documents, create an item list by room, or use both for different rooms. Save and update your list as needed. When everything is ready, generate one report to calculate your total volume and estimate.</p>
                 <div className="cm-upload-row">
                   <label className="cm-drop">
                     <span className="cm-drop-icon" aria-hidden="true">📁</span>
                     <strong>Choose files or drop here</strong>
-                    <input type="file" multiple disabled={busy} onChange={e=>{choose(e.target.files);e.target.value='';}}/>
+                    <input type="file" multiple disabled={busy || !photosRestored} onChange={e=>{choose(e.target.files);e.target.value='';}}/>
                   </label>
-                  <button className="slds-button cm-primary cm-upload-btn" disabled={busy||!files.some(f=>['Ready','Try again'].includes(f.status))} onClick={()=>void upload()}>{busy?'Please wait...':'Upload files'}</button>
+                  {files.some(f => f.status === 'Try again') && <button className="slds-button cm-primary cm-upload-btn" disabled={busy} onClick={()=>void upload()}>Retry upload</button>}
                 </div>
                 {files.length>0 && <p role="status">{files.filter(f=>f.status==='Uploaded').length} of {files.length} files uploaded</p>}
                 <div className="cm-file-list">
@@ -428,18 +450,25 @@ export default function CustomerMovePage() {
                         {item.error && <small role="alert" style={{color:'#974327'}}>{item.error}</small>}
                         <progress max={100} value={item.progress} aria-label={`${item.file.name} upload progress`} />
                       </div>
-                      {item.status!=='Uploaded' && !busy && <button className="slds-button" aria-label={`Remove ${item.file.name}`} onClick={()=>setFiles(prev=>prev.filter(f=>f.id!==item.id))}>x</button>}
+                      {item.status!=='Uploaded' && !busy && <button className="slds-button" aria-label={`Remove ${item.file.name}`} onClick={()=>{ void removePhoto(accessId || '', item.id).then(()=>setFiles(prev=>prev.filter(f=>f.id!==item.id))).catch(()=>setError('Could not remove this pending file.')); }}>x</button>}
                     </article>
                   ))}
                 </div>
                 {!!data.new_file_count && <p>{data.new_file_count} new {data.new_file_count === 1 ? 'file is' : 'files are'} saved for the next report.</p>}
                 <ReportFileGallery files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={busy || reportState === 'running'} />
-                {(data.editable_files || data.files).length > 0 && (!data.spark || hasNewUploads || data.files_changed) && (reportState !== 'done' || data.files_changed) && (
+                {data.inventory_draft && <section className="cm-saved-list" style={{ marginTop: 24 }}>
+                  <h3>Your list by room</h3>
+                  {data.inventory_draft.rooms.map((room, index) => <details key={index} open style={{ borderBottom: '1px solid var(--cm-border)', padding: '12px 0' }}><summary><strong>{room.name}</strong> &middot; {room.items.reduce((sum, item) => sum + item.amount, 0)} items</summary>
+                    {room.items.length ? room.items.map((item, i) => <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '6px 0', fontSize: 13 }}><span>{item.amount} &times; {item.name}</span><span>{item.cuft.toLocaleString()} cu ft</span></div>) : <p>No items yet.</p>}
+                  </details>)}
+                  <p><strong>List total: {data.inventory_draft.cuft.toLocaleString()} cu ft</strong></p>
+                </section>}
+                {((data.editable_files || data.files).length > 0 || !!data.inventory_draft?.rows.length) && (!data.spark || hasNewUploads || data.files_changed || data.list_changed) && (reportState !== 'done' || data.files_changed || data.list_changed) && (
                   <div className="cm-spark-box">
                     <button
                       type="button"
                       className="slds-button cm-primary cm-spark-btn"
-                      disabled={busy || reportState === 'running'}
+                      disabled={busy || reportState === 'running' || files.some(file => file.status !== 'Uploaded')}
                       onClick={async () => {
                         setReportState('running');
                         setReportNotice('');
@@ -447,7 +476,7 @@ export default function CustomerMovePage() {
                           await call('/generate-inventory-report', {});
                           setReportState('done');
                           setHasNewUploads(false);
-                          setReportNotice("We're analyzing your photos and videos to calculate your total inventory volume.");
+                          setReportNotice("Your report combines your files and saved list into one inventory and estimate.");
                           void refreshDetails();
                         } catch (err) {
                           setReportState('idle');
@@ -455,7 +484,7 @@ export default function CustomerMovePage() {
                         }
                       }}
                     >
-                      {reportState === 'running' ? 'Processing inventory...' : data.spark ? "Done Uploading — Recalculate My Move" : "Done Uploading — Calculate My Move"}
+                      {reportState === 'running' ? 'Processing inventory...' : 'Generate report & get estimate'}
                     </button>
                     {reportNotice && <p role="status" className="cm-spark-notice">{reportNotice}</p>}
                   </div>
@@ -592,11 +621,11 @@ export default function CustomerMovePage() {
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || packingSaving || reportState === 'running'} />
             </div>
 
-            {showInventoryList && <ManualInventoryModal loadCatalog={() => call('/inventory-catalog')} onClose={() => setShowInventoryList(false)} submit={async body => {
-              const result = await call('/manual-inventory', body);
-              setData(await call('/details'));
-              setShowInventoryList(false);
-              setCalculationError(result.price == null ? 'Your list is saved. Your moving team needs to review pricing before an estimate is available.' : '');
+            {showInventoryList && <ManualInventoryModal initialRooms={data.inventory_draft?.body.rooms} draftKey={`cm_inventory_draft_${accessId}`} loadCatalog={() => call('/inventory-catalog')} onClose={() => { setShowInventoryList(false); void refreshDetails(); }} submit={async body => {
+              await call('/manual-inventory', body);
+              // Refresh the summary when the editor closes; edits save without closing it.
+              setHasNewUploads(true);
+              setCalculationError('');
               setReportState('idle');
             }} />}
             {showQuestions && (

@@ -33,6 +33,7 @@ class Company(Base):
     id = Column(String(36), primary_key=True, default=_uuid)
     name = Column(String(255), nullable=False, unique=True)
     color = Column(String(7))
+    logo = Column(Text, nullable=True)
     phone = Column(String(30))
     office_address = Column(Text, nullable=False, default="", server_default="")
     facebook_page_id = Column(String(100), unique=True, index=True)
@@ -53,6 +54,7 @@ class Company(Base):
             "id": self.id,
             "name": self.name,
             "color": resolve_company_color(self.name, self.color),
+            "logo": self.logo or "",
             "phone": self.phone or "",
             "office_address": self.office_address or "",
             "facebook_page_id": self.facebook_page_id or "",

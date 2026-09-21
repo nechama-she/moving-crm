@@ -385,6 +385,10 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     job.customer_packing = job.customer_packing_package = None
     for key in REPORT_KEYS:
         details.pop(key, None)
+    draft = details.get('inventory_draft') or {}
+    details.update(report_list_body=draft.get('body'), report_list_rows=draft.get('rows', []),
+                   report_list_cuft=draft.get('cuft', 0), report_list_weight=draft.get('weight', 0),
+                   manual_rooms=draft.get('rooms', []), report_source='combined' if draft.get('rows') else 'liveswitch')
     details.update(conversation)
     details.update(last_spark_id='pending-' + str(uuid4()), last_spark_status='queued',
                    last_spark_at=int(time.time()), spark_pricing_ready=False,
@@ -537,6 +541,12 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
             processing.mark('extract', 'running')
         else:
             cuft, weight, inventory_rows = fetch_and_extract_spark_report(share_url, processing=processing)
+            if details.get('report_source') == 'combined':
+                if not cuft or cuft <= 0:
+                    raise ValueError('No positive volume was found in the media report.')
+                cuft += details.get('report_list_cuft', 0)
+                weight = (weight or 0) + details.get('report_list_weight', 0)
+                inventory_rows = inventory_rows + details.get('report_list_rows', [])
         if saved:
             # A new run/selection may have arrived while downloading this report.
             db.refresh(saved, with_for_update=True)

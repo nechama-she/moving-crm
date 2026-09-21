@@ -23,7 +23,7 @@ class InventoryRoomInput(BaseModel):
 
 class ManualInventoryInput(BaseModel):
     request_id: UUID
-    rooms: list[InventoryRoomInput] = Field(min_length=1, max_length=100)
+    rooms: list[InventoryRoomInput] = Field(max_length=100)
 
 
 def catalog(db):
@@ -33,11 +33,11 @@ def catalog(db):
                       for r in db.query(InventoryCatalogItem).filter_by(active=True).order_by(InventoryCatalogItem.name, InventoryCatalogItem.cuft).all()]}
 
 
-def build_inventory(body, db):
+def build_inventory(body, db, allow_empty=False):
     room_types = {r.id for r in db.query(InventoryRoomType).all()}
     ids = {item.item_id for room in body.rooms for item in room.items}
     items = {r.id: r for r in db.query(InventoryCatalogItem).filter(InventoryCatalogItem.id.in_(ids), InventoryCatalogItem.active.is_(True)).all()}
-    if not ids or set(items) != ids:
+    if (not ids and not allow_empty) or set(items) != ids:
         raise HTTPException(400, 'Choose available items from the inventory list.')
     rows = []
     rooms = []
@@ -82,7 +82,7 @@ def submit_inventory(body, access, db):
     for key in CONVERSATION_KEYS:
         details[key] = ''
     details.update(last_spark_id=report_id, last_spark_status='completed', last_spark_at=int(time.time()),
-                   report_source='manual', manual_rooms=rooms, spark_inventory_snapshot=rows,
+                   report_list_body=body.model_dump(mode='json'), report_source='manual', manual_rooms=rooms, spark_inventory_snapshot=rows,
                    spark_extracted_cuft=cuft, spark_extracted_weight=weight, report_files=[],
                    report_conversation={}, spark_pricing_ready=False)
     remember_report(details)
@@ -94,3 +94,18 @@ def submit_inventory(body, access, db):
     access.published_price = access.published_cuft = access.published_at = None
     db.commit()
     return apply_spark_results_to_lead(access.lead_id, '', db, expected_report_id=report_id)
+
+
+def save_inventory_draft(body, access, db):
+    rooms, rows, cuft, weight = build_inventory(body, db, allow_empty=True)
+    db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
+    details = json.loads(saved.details or '{}') if saved else {}
+    details['inventory_draft'] = {'body': body.model_dump(mode='json'), 'rooms': rooms,
+                                  'rows': rows, 'cuft': cuft, 'weight': weight}
+    if not saved:
+        saved = LeadLiveSwitch(lead_id=access.lead_id)
+        db.add(saved)
+    saved.details = json.dumps(details)
+    db.commit()
+    return {'ok': True}

@@ -1,3 +1,4 @@
+import CompanyLogoEditor from './CompanyLogoEditor';
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -6,6 +7,7 @@ type Company = {
   id: string;
   name: string;
   color?: string;
+  logo?: string;
   phone?: string;
   office_address?: string;
   facebook_page_id?: string;
@@ -21,6 +23,7 @@ type Company = {
 type CompanyForm = {
   name: string;
   color: string;
+  logo: string;
   phone: string;
   office_address: string;
   facebook_page_id: string;
@@ -35,6 +38,7 @@ type CompanyForm = {
 const emptyForm: CompanyForm = {
   name: "",
   color: "",
+  logo: "",
   phone: "",
   office_address: "",
   facebook_page_id: "",
@@ -101,6 +105,7 @@ export default function CompaniesPage() {
     setForm({
       name: company.name || "",
       color: company.color || "",
+      logo: company.logo || "",
       phone: company.phone || "",
       office_address: company.office_address || "",
       facebook_page_id: company.facebook_page_id || "",
@@ -129,6 +134,7 @@ export default function CompaniesPage() {
       const payload = {
         name: form.name.trim(),
         color: form.color.trim(),
+        logo: form.logo,
         phone: form.phone.trim(),
         office_address: form.office_address.trim(),
         facebook_page_id: form.facebook_page_id.trim(),
@@ -248,6 +254,7 @@ export default function CompaniesPage() {
 
       <div style={{ border: "1px solid #dddbda", borderRadius: 4, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
         <h2 style={sectionHeader}>{editing ? "Edit Company" : "Create Company"}</h2>
+        <CompanyLogoEditor key={editingId || "new"} value={form.logo} name={form.name} color={previewColor} disabled={saving} onChange={value => updateField("logo", value)} />
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
           <label style={fieldLabel}>
             Name
