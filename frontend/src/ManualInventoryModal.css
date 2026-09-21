@@ -3,3 +3,5 @@
 .mi-room-summary{margin-top:24px;border-top:1px solid var(--cm-border-soft);padding-top:16px}.mi-room-summary h3{font-size:15px;margin:0 0 12px}.mi-room-summary details{padding:12px 0;border-bottom:1px solid var(--cm-border-soft)}.mi-room-summary summary{cursor:pointer;font-size:13px;margin-bottom:8px}.mi-summary-item{display:flex;justify-content:space-between;gap:16px;padding:6px 0;font-size:13px}.mi-summary-item>span:last-child{white-space:nowrap}
 
 .mi-custom-item{margin:16px 0;padding:18px;background:var(--cm-tint);border:1px solid var(--cm-border);border-radius:10px}.mi-custom-item h3{margin:0;font-size:15px}.mi-custom-item label{display:block;font-size:13px;margin:10px 0}.mi-custom-item input{display:block;width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--cm-border);border-radius:6px;margin-top:5px}
+
+.mi-custom-dimensions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}@media(max-width:420px){.mi-custom-dimensions{grid-template-columns:1fr}}

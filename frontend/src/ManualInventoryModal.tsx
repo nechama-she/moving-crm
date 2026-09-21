@@ -18,7 +18,9 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   const [roomType, setRoomType] = useState('');
   const [customOpen, setCustomOpen] = useState(false);
   const [customName, setCustomName] = useState('');
-  const [customCuft, setCustomCuft] = useState('');
+  const [customDimensions, setCustomDimensions] = useState({ width: '', height: '', depth: '' });
+  const validDimensions = Object.values(customDimensions).every(value => Number.isFinite(Number(value)) && Number(value) > 0);
+  const customCuft = validDimensions ? Number((Number(customDimensions.width) * Number(customDimensions.height) * Number(customDimensions.depth)).toFixed(4)) : 0;
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(60);
   const [busy, setBusy] = useState(false);
@@ -140,10 +142,14 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
             <g fill="currentColor" fontSize="12"><text x="83" y="148">Width</text><text x="4" y="88">Height</text><text x="200" y="26">Depth</text></g>
           </svg>
           <label>Item name<input maxLength={200} value={customName} onChange={e => setCustomName(e.target.value)} /></label>
-          <label>Estimated cu ft per item<input type="number" min="0.01" max="10000" step="0.01" value={customCuft} onChange={e => setCustomCuft(e.target.value)} /></label>
+          <div className="mi-custom-dimensions">
+            {(['width', 'height', 'depth'] as const).map(dimension => <label key={dimension}>{dimension[0].toUpperCase() + dimension.slice(1)} (ft)<input type="number" min="0.01" step="any" inputMode="decimal" value={customDimensions[dimension]} disabled={busy} onChange={e => setCustomDimensions(current => ({ ...current, [dimension]: e.target.value }))} /></label>)}
+          </div>
+          <p aria-live="polite"><strong>Estimated volume per item: {validDimensions && Number.isFinite(customCuft) ? `${customCuft.toLocaleString(undefined, { maximumFractionDigits: 4 })} cu ft` : 'Enter all three dimensions'}</strong></p>
+          {customCuft > 10000 && <p role="alert">Estimated volume must be 10,000 cu ft or less per item.</p>}
           <button type="button" className="slds-button cm-primary" disabled={busy || !customName.trim() || !Number.isFinite(Number(customCuft)) || Number(customCuft) <= 0 || Number(customCuft) > 10000} onClick={() => {
             setRooms(current => current.map(r => r.id === selected ? { ...r, custom_items: [...(r.custom_items || []), { id: crypto.randomUUID(), name: customName.trim(), cuft: Number(customCuft), quantity: 1 }] } : r));
-            setCustomName(''); setCustomCuft(''); setCustomOpen(false);
+            setCustomName(''); setCustomDimensions({ width: '', height: '', depth: '' }); setCustomOpen(false);
           }}>Add item</button>
         </section>}
         {(room.custom_items || []).map(item => <div className="mi-item" key={item.id}>
