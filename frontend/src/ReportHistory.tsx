@@ -37,7 +37,7 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
       <div className="report-history-detail">
         <div className="report-history-actions">
           <label><input type="radio" name={name} checked={report.current} disabled={disabled || !!pending || waiting || report.status !== 'completed' || (!report.shareUrl && report.source !== 'manual')} onChange={() => void select(report.id)} />{report.current ? 'Current report for pricing' : 'Use this report for pricing'}</label>
-          {report.shareUrl && <a href={report.shareUrl} target="_blank" rel="noopener noreferrer">View report &nearr;</a>}
+          {report.shareUrl && <a href={report.shareUrl} target="_blank" rel="noopener noreferrer">View report &#8599;</a>}
         </div>
         {report.source !== 'manual' && report.files && <details className="report-history-files"><summary>{report.files.length} files used in this run</summary>{report.files.map(file => <p key={file.id}>{file.name}</p>)}</details>}
         {report.inventory.length > 0 ? <div className="report-history-table"><table><thead><tr><th>Item</th><th>Qty</th><th>Cu ft</th></tr></thead><tbody>{report.inventory.map((item, index) => <tr key={index}><td>{item.name}{item.room && <small style={{ display: 'block' }}>{item.room}</small>}</td><td>{item.amount}</td><td>{item.cuft}</td></tr>)}</tbody></table></div> : <p>Open the report to view its inventory. Saved details appear after it is imported.</p>}

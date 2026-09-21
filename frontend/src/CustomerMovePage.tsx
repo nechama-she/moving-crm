@@ -406,7 +406,7 @@ export default function CustomerMovePage() {
             <div className="cm-actions-stack cm-actions-row">
               <section className="cm-card cm-upload">
                 <div className="cm-eyebrow">SHOW US WHAT'S MOVING</div>
-                <button type="button" className="slds-button" style={{ marginTop: 12 }} onClick={() => setShowInventoryList(true)}>+ Add a list</button>
+                <button type="button" className="slds-button cm-add-list-button" style={{ marginTop: 12 }} onClick={() => setShowInventoryList(true)}>+ Add a list</button>
                 <h2>Add photos, documents<br/>or videos.</h2>
                 <p>A few photos of each room help us understand your move. Include any large or delicate items.</p>
                 <div className="cm-upload-row">

@@ -153,3 +153,5 @@
 .customer-move button:disabled{visibility:hidden}
 
 .cm-actions-stack{display:grid;grid-template-columns:minmax(0,1fr);gap:32px}@media(max-width:700px){.cm-actions-stack{gap:22px}}
+
+.customer-move .cm-add-list-button,.customer-move .cm-add-list-button:hover,.customer-move .cm-add-list-button:focus,.customer-move .cm-add-list-button:active,.customer-move .mi-modal .slds-button:not(.cm-primary),.customer-move .mi-modal .slds-button:not(.cm-primary):hover,.customer-move .mi-modal .slds-button:not(.cm-primary):focus,.customer-move .mi-modal .slds-button:not(.cm-primary):active{color:var(--cm-primary)}
