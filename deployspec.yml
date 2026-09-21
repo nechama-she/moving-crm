@@ -27,8 +27,8 @@ phases:
 
       - |
         if [ "${ENVIRONMENT:-dev}" = "dev" ]; then
-          aws ssm put-parameter --name "/moving-crm/dev/PUBLIC_MOVE_LINK_DRY_RUN" --value "true" --type String --overwrite
-          echo "Customer link sending is in dry-run mode for dev"
+          aws ssm put-parameter --name "/moving-crm/dev/PUBLIC_MOVE_LINK_DRY_RUN" --value "false" --type String --overwrite
+          echo "Customer link sending is live for dev"
         fi
 
   build:

@@ -1337,7 +1337,7 @@ def test_send_customer_link_dry_run_and_both_channels(portal, monkeypatch):
     monkeypatch.setattr(mod, 'send_customer_link', sms)
     monkeypatch.setattr(mod.boto3, 'client', MagicMock(return_value=ses))
     monkeypatch.setattr(mod, 'setting', lambda key: {'PUBLIC_MOVE_LINK_DRY_RUN': 'false', 'PUBLIC_MOVE_EMAIL_FROM': 'sender@example.test', 'PUBLIC_MOVE_ORIGIN': 'https://move.example.test', 'AWS_REGION': 'us-east-1'}.get(key, ''))
-    result = mod.send_customer_page_link(lead.id, mod.SendCustomerLinkRequest(), object(), db)
+    result = mod.send_customer_page_link(lead.id, mod.SendCustomerLinkRequest(dry_run=True), object(), db)
     assert result['dry_run'] and len(result['deliveries']) == 2
     assert mod.public_url(access) in result['message']
     sms.assert_not_called()

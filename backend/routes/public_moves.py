@@ -860,7 +860,7 @@ def send_customer_link(lead_id: str, user: User = Depends(get_current_user), db:
 
 
 class SendCustomerLinkRequest(BaseModel):
-    dry_run: bool = True
+    dry_run: bool = False
 
 
 @router.post('/api/leads/{lead_id}/customer-page/send-link')
