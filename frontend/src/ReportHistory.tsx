@@ -27,17 +27,18 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
     finally { setPending(''); }
   }
   return <section id="inventory-history" className={`report-history ${staff ? 'report-history-crm' : ''}`} aria-label="Inventory report history">
-    <div className="report-history-heading"><h4>Report history</h4><span>{reports.length} {reports.length === 1 ? 'run' : 'runs'}</span></div>
-    <p>One report is used for pricing. Each new run becomes current automatically.</p>
+    <details className="report-history-disclosure">
+    <summary className="report-history-heading"><strong>Report history</strong><span>{reports.length} {reports.length === 1 ? 'report' : 'reports'}</span></summary>
+    <p>View previous reports or expand a row to use it for pricing. Current marks the report used for your estimate.</p>
     {waiting && <p role="status">Your new report is processing. You can choose an earlier report once it finishes.</p>}
     {error && <p className="report-history-error" role="alert">{error}</p>}
     {pending && <p role="status">Updating inventory and price...</p>}
+    <div className="report-history-column-headings" aria-hidden="true"><span>Date &amp; time</span><span>Source</span><span>Volume</span><span>Status</span><span>Reports</span></div>
     {reports.map(report => <div className="report-history-run" key={report.id} data-current={report.current}>
       <div className="report-history-row">
       <button type="button" className="report-history-toggle" aria-expanded={!!expanded[report.id]} aria-controls={`${name}-${report.id}`} onClick={() => setExpanded(previous => ({ ...previous, [report.id]: !previous[report.id] }))}>
-        <span aria-hidden="true">{expanded[report.id] ? '\u25be' : '\u25b8'}</span>
-        <span>{report.created_at ? new Date(report.created_at * 1000).toLocaleString() : 'Earlier report'}</span>
-        <span className="report-history-summary"><span className="report-history-source">{report.source === 'manual' ? 'List' : report.source === 'combined' ? 'Virtual tour + List' : 'Virtual tour'}</span>{report.cuft != null && <span>{report.cuft.toLocaleString()} cu ft</span>}<span className="report-history-status">{report.status}</span>{report.current && <b>Current</b>}</span>
+        <span className="report-history-date"><span aria-hidden="true">{expanded[report.id] ? '\u25be' : '\u25b8'}</span> {report.created_at ? new Date(report.created_at * 1000).toLocaleString() : 'Earlier report'}</span>
+        <span className="report-history-summary"><span className="report-history-source">{report.source === 'manual' ? 'List' : report.source === 'combined' ? 'Virtual tour + List' : 'Virtual tour'}</span><span className="report-history-volume">{report.cuft != null ? `${report.cuft.toLocaleString()} cu ft` : '\u2014'}</span><span className="report-history-state"><span className="report-history-status">{report.status}</span>{report.current && <b>Current</b>}</span></span>
       </button>
       <ReportLinks report={report} />
       </div>
@@ -52,5 +53,6 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
         {staff && report.processing && <div className="report-history-processing"><h5>Processing steps</h5>{report.processing.steps.map(step => <div key={step.id}>{step.error ? <details><summary>{step.label} <span>Failed - view error</span></summary><pre>{step.error}</pre></details> : <p><span>{step.label}</span><span>{step.status.replace(/_/g, ' ')}</span></p>}{step.message && <small>{step.message}</small>}</div>)}</div>}
       </div>
     </div>)}
+    </details>
   </section>;
 }
