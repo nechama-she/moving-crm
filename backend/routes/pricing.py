@@ -1042,7 +1042,12 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         if quote.get("base_price", 0) > 0:
             lines.append({
                 "name": "Transportation charge",
-                "description": f"{vol} cu ft transportation",
+                "description": (
+                    f"${float(quote['match']['rate']):,.2f} per cu ft"
+                    + (f" (minimum charge ${quote['minimum']:,.2f})" if quote.get('minimum_applied') else '')
+                    if (quote.get('match') or {}).get('rate') is not None
+                    else 'Minimum transportation charge'
+                ),
                 "subtotal": Decimal(str(quote["base_price"])),
                 "discount_amount": Decimal(0),
                 "total_cost": Decimal(str(quote["base_price"])),
