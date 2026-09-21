@@ -1,3 +1,4 @@
+import ReportLinks from './ReportLinks';
 import { savedPhotos, storePhoto, removePhoto } from './photoDrafts';
 import ManualInventoryModal from "./ManualInventoryModal";
 import type { EditableReportFile } from "./ReportFileList";
@@ -552,12 +553,8 @@ export default function CustomerMovePage() {
                       </span>
                       {data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{data.spark.cuft} cu ft</strong> : null}
                     </div>
-                    {data.spark.source === 'manual' && <button type="button" className="cm-spark-link" onClick={() => { const history = document.getElementById('inventory-history'); const current = history?.querySelector<HTMLDetailsElement>('details[data-current="true"]'); if (current) current.open = true; history?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>View itemized list</button>}
-                    {data.spark.status === 'completed' && data.spark.shareUrl && (
-                      <a href={data.spark.shareUrl} target="_blank" rel="noopener noreferrer" className="cm-spark-link">
-                        View Itemized Report ↗
-                      </a>
-                    )}
+                    {data.report_history?.find(report => report.current) && <ReportLinks report={data.report_history.find(report => report.current)!} />}
+
                   </div>
                 )}
               </div>

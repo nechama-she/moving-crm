@@ -1,8 +1,10 @@
 import { useId, useState } from 'react';
 import './ReportHistory.css';
+import ReportLinks from './ReportLinks';
 
 export type ReportRun = {
   source?: string;
+  rooms?: { name: string; items: { name: string; amount: number; cuft: number }[] }[];
   id: string; status: string; created_at?: number; current: boolean; shareUrl?: string;
   cuft?: number; weight?: number;
   files?: { id: string; name: string; size?: number }[];
@@ -29,20 +31,21 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
     {waiting && <p role="status">Your new report is processing. You can choose an earlier report once it finishes.</p>}
     {error && <p className="report-history-error" role="alert">{error}</p>}
     {pending && <p role="status">Updating inventory and price...</p>}
-    {reports.map(report => <details className="report-history-run" key={report.id} data-current={report.current}>
+    {reports.map(report => <div key={report.id}><details className="report-history-run" key={report.id} data-current={report.current}>
       <summary>
         <span>{report.created_at ? new Date(report.created_at * 1000).toLocaleString() : 'Earlier report'}</span>
         <span className="report-history-summary"><span className="report-history-source">{report.source === 'manual' ? 'List' : report.source === 'combined' ? 'Virtual tour + List' : 'Virtual tour'}</span>{report.cuft != null && <span>{report.cuft.toLocaleString()} cu ft</span>}<span className="report-history-status">{report.status}</span>{report.current && <b>Current</b>}</span>
       </summary>
       <div className="report-history-detail">
+        {report.source === 'combined' && <p>Total volume combines the virtual tour and the itemized list. The virtual tour link includes only the media report.</p>}
         <div className="report-history-actions">
           <label><input type="radio" name={name} checked={report.current} disabled={disabled || !!pending || waiting || report.status !== 'completed' || (!report.shareUrl && report.source !== 'manual')} onChange={() => void select(report.id)} />{report.current ? 'Current report for pricing' : 'Use this report for pricing'}</label>
-          {report.shareUrl && <a href={report.shareUrl} target="_blank" rel="noopener noreferrer">View report &#8599;</a>}
+
         </div>
         {report.source !== 'manual' && report.files && <details className="report-history-files"><summary>{report.files.length} files used in this run</summary>{report.files.map(file => <p key={file.id}>{file.name}</p>)}</details>}
         {report.inventory.length > 0 ? <div className="report-history-table"><table><thead><tr><th>Item</th><th>Qty</th><th>Cu ft</th></tr></thead><tbody>{report.inventory.map((item, index) => <tr key={index}><td>{item.name}{item.room && <small style={{ display: 'block' }}>{item.room}</small>}</td><td>{item.amount}</td><td>{item.cuft}</td></tr>)}</tbody></table></div> : <p>Open the report to view its inventory. Saved details appear after it is imported.</p>}
         {staff && report.processing && <div className="report-history-processing"><h5>Processing steps</h5>{report.processing.steps.map(step => <div key={step.id}>{step.error ? <details><summary>{step.label} <span>Failed - view error</span></summary><pre>{step.error}</pre></details> : <p><span>{step.label}</span><span>{step.status.replace(/_/g, ' ')}</span></p>}{step.message && <small>{step.message}</small>}</div>)}</div>}
       </div>
-    </details>)}
+    </details><ReportLinks report={report} /></div>)}
   </section>;
 }
