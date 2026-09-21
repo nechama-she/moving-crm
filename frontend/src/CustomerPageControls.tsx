@@ -1,17 +1,35 @@
-import ReportFileList from "./ReportFileList";
-import { useEffect, useState } from 'react';
+import ReportFileGallery from "./ReportFileGallery";
+import type { EditableReportFile } from "./ReportFileList";
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { API_BASE } from './apiConfig';
 import { authHeaders, useAuth } from './AuthContext';
 type Page={url:string;rep_url?:string;revoked:boolean;requests:{id:string;status:string;scheduled_at:string;rep_name:string;availability:string}[]};
 function ActionIcon({kind}:{kind:'copy'|'sms'|'revoke'|'restore'}){return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">{kind==='copy'?<><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></>:kind==='sms'?<path d="M4 3h16v13H9l-5 5V3Z M8 7h8M8 11h6"/>:kind==='restore'?<><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6"/><path d="m9 13 2 2 4-4"/></>:<><circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/></>}</svg>}
-export default function CustomerPageControls({leadId,section='meeting',onFilesBusyChange}:{leadId:string;section?:'links'|'files'|'meeting';onFilesBusyChange?:(busy:boolean)=>void}){
- const {token}=useAuth();const [data,setData]=useState<Page>(),[files,setFiles]=useState<{id:string;name:string;status:string}[]>([]),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
+export default function CustomerPageControls({leadId,section='meeting',onFilesBusyChange,onSelectionChange}:{leadId:string;section?:'links'|'files'|'meeting';onFilesBusyChange?:(busy:boolean)=>void;onSelectionChange?:(ids:string[])=>void}){
+ const {token}=useAuth();const [data,setData]=useState<Page>(),[files,setFiles]=useState<EditableReportFile[]>([]),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
+ const [selectedIds,setSelectedIds]=useState<string[]>([]);
+ const [reportFileIds,setReportFileIds]=useState<string[]>([]);
+ const initialized=useRef(false);
+ function selectFiles(ids:string[]){setSelectedIds(ids);onSelectionChange?.(ids);}
  const base=`${API_BASE}/api/leads/${leadId}/customer-page`;
- useEffect(()=>{const controller=new AbortController();async function load(){try{const r=await fetch(base+(section==='files'?'/sync-status':''),{headers:authHeaders(token),signal:controller.signal});if(!r.ok)return;const d=await r.json();if(section==='files')setFiles(d.editable_files || d.files);else setData(d);}catch{ /* Aborted or temporarily unavailable. */ }}void load();const timer=setInterval(()=>void load(),15000);return()=>{controller.abort();clearInterval(timer);};},[base,token,section]);
+ useEffect(()=>{const controller=new AbortController();async function load(){try{const r=await fetch(base+(section==='files'?'/sync-status':''),{headers:authHeaders(token),signal:controller.signal});if(!r.ok)return;const d=await r.json();if(section==='files'){const available:EditableReportFile[]=d.editable_files || d.files;setFiles(available);setReportFileIds(d.report_file_ids || []);if(!initialized.current){initialized.current=true;selectFiles((d.report_file_ids || []).filter((id:string)=>available.some(file=>file.id===id)));}}else setData(d);}catch{ /* Aborted or temporarily unavailable. */ }}void load();const timer=setInterval(()=>void load(),15000);return()=>{controller.abort();clearInterval(timer);};},[base,token,section]);
  async function act(action:'sms'|'revoke'){setBusy(true);setNotice('');try{const r=await fetch(base+(action==='sms'?'/sms':''),{method:action==='sms'?'POST':'PATCH',headers:{...authHeaders(token),'Content-Type':'application/json'},body:action==='revoke'?JSON.stringify({revoke:!data?.revoked}):undefined});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Could not complete action');if(action==='revoke')setData(prev=>prev?{...prev,revoked:!prev.revoked}:prev);setNotice(action==='sms'?'SMS sent.':'Access updated.');}catch(e){setNotice((e as Error).message);}finally{setBusy(false);}}
  async function removeFile(id:string){onFilesBusyChange?.(true);try{const r=await fetch(`${base}/files/${encodeURIComponent(id)}`,{method:'DELETE',headers:authHeaders(token)});const result=await r.json();if(!r.ok)throw new Error(result.detail||'Could not delete file');setFiles(current=>current.filter(file=>file.id!==id));}finally{onFilesBusyChange?.(false);}}
- if(section==='files')return <ReportFileList files={files} onRemove={removeFile} disabled={busy}/>;
+ async function downloadSelected(ids=selectedIds){setNotice('');try{for(const id of ids){const r=await fetch(`${base}/file-download/${encodeURIComponent(id)}`,{headers:authHeaders(token)});const d=await r.json();if(!r.ok || !d.url)throw new Error('Could not download this file.');const link=document.createElement('a');link.href=d.url;link.download=files.find(f=>f.id===id)?.name || 'file';document.body.appendChild(link);link.click();link.remove();}}catch(e){setNotice((e as Error).message);}}
+ if(section==='files') {
+   const current=files.filter(file=>reportFileIds.includes(file.id));
+   const available=files.filter(file=>!reportFileIds.includes(file.id));
+   const preview=async (id:string)=>{const response=await fetch(`${base}/file-preview/${encodeURIComponent(id)}`,{headers:authHeaders(token)});return response.ok?(await response.json()).url:null;};
+   const group=(rows:EditableReportFile[],title:string)=> <ReportFileGallery title={title} selectedIds={selectedIds.filter(id=>rows.some(file=>file.id===id))} onSelectionChange={ids=>selectFiles([...selectedIds.filter(id=>!rows.some(file=>file.id===id)),...ids])} onDownload={()=>void downloadSelected(selectedIds.filter(id=>rows.some(file=>file.id===id)))} files={rows} onRemove={removeFile} disabled={busy} loadPreview={preview}/>;
+   return <div className="crm-report-gallery">
+     <div className="crm-gallery-current"><h4>Files in the current report</h4><p>Already included. Keep selected to include them in your next report.</p>{current.length?group(current,'Current report files'):<p>No files in the current report yet.</p>}</div>
+     <div className="crm-gallery-available"><h4>Available files to add</h4><p>Not in the current report. Select the files you want to send to LiveSwitch.</p>{available.length?group(available,'Available files'):<p>No additional files available.</p>}</div>
+     <p role="status"><strong>{selectedIds.length} files selected for the next report</strong></p>
+     {notice&&<p role="alert">{notice}</p>}
+   </div>;
+ }
+
 
  if(!data)return null;
  if(section==='links')return <><div className="ls-link"><div><strong>Customer link{data.revoked?' (revoked)':''}</strong><span title={data.url}>{data.url}</span></div><button className="slds-button" title="Copy customer link" aria-label="Copy customer link" onClick={()=>void navigator.clipboard.writeText(data.url).then(()=>setNotice('Link copied.')).catch(()=>setNotice('Could not copy link.'))}><ActionIcon kind="copy"/></button><button className="slds-button" title="Send SMS" aria-label="Send customer link by SMS" disabled={busy||data.revoked} onClick={()=>void act('sms')}><ActionIcon kind="sms"/></button><button className="slds-button" title={data.revoked?'Restore access':'Revoke access'} aria-label={data.revoked?'Restore customer access':'Revoke customer access'} disabled={busy} onClick={()=>void act('revoke')}><ActionIcon kind={data.revoked?"restore":"revoke"}/></button></div>{data.rep_url && <div className="ls-link"><div><strong>Rep link{data.revoked?' (revoked)':''}</strong><span title={data.rep_url}>{data.rep_url}</span><small>Verify with the assigned rep or company phone.</small></div><button className="slds-button" title="Copy rep link" aria-label="Copy rep link" onClick={()=>void navigator.clipboard.writeText(data.rep_url!).then(()=>setNotice('Rep link copied.')).catch(()=>setNotice('Could not copy link.'))}><ActionIcon kind="copy"/></button><a className="slds-button" href={data.rep_url} target="_blank" rel="noopener noreferrer" title="Open rep page" aria-label="Open rep page in a new tab"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M14 3h7v7M21 3L10 14M10 5H4v15h15v-6"/></svg></a></div>}{notice&&<p role="status">{notice}</p>}</>;

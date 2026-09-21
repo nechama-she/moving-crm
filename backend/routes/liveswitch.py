@@ -364,7 +364,14 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     if not access:
         raise HTTPException(409, 'Generate the customer page before running an inventory report.')
     from report_files import move_files
-    files = move_files(access, db)
+    files = move_files(access, db, all_lead=bool(body is not None and 'file_ids' in body))
+    if body is not None and 'file_ids' in body:
+        selected = body['file_ids']
+        if not isinstance(selected, list) or any(not isinstance(value, str) for value in selected):
+            raise HTTPException(400, 'Select valid files for this report.')
+        if set(selected) - {file.id for file in files}:
+            raise HTTPException(400, 'Selected files are no longer available on this move.')
+        files = [file for file in files if file.id in set(selected)]
     if not files:
         raise HTTPException(400, 'Upload files to the move before running a report.')
     config = _connection_config()

@@ -62,7 +62,7 @@ def process_file(message, db, dead_letter=False):
         if not current_job(row, message):
             return
         attachment = db.get(LeadAttachment, row.attachment_id)
-        if not attachment or attachment.lead_id != access.lead_id or attachment.job_id not in (None, access.job_id):
+        if not attachment or attachment.lead_id != access.lead_id:
             raise ValueError('The customer file is no longer available on this job.')
         if not row.sync_upload_url:
             from routes.liveswitch import _api_post

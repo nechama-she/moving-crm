@@ -16,7 +16,9 @@ function Tile({ file, loadPreview, onOpen }: { file: EditableReportFile; loadPre
     <span className="cm-gallery-name">{file.name}</span>
   </button>;
 }
-export default function ReportFileGallery({ files, loadPreview, onRemove, disabled, newFileIds = [] }: {
+export default function ReportFileGallery({ files, loadPreview, onRemove, disabled, newFileIds = [], selectedIds, onSelectionChange, onDownload, title = "Media" }: {
+  title?: string;
+  selectedIds?: string[]; onSelectionChange?: (ids: string[]) => void; onDownload?: () => void;
   newFileIds?: string[];
   files: EditableReportFile[]; loadPreview: (id: string) => Promise<string | null>; onRemove: (id: string) => Promise<void>; disabled: boolean;
 }) {
@@ -37,13 +39,13 @@ export default function ReportFileGallery({ files, loadPreview, onRemove, disabl
     try { await onRemove(id); } catch (err) { setError(err instanceof Error ? err.message : 'Could not delete file.'); } finally { setRemoving(''); }
   }
   return <section className="cm-gallery" aria-label="Files for your report">
-    <div className="cm-gallery-heading"><strong>Media <span>({files.length})</span></strong></div>
+    <div className="cm-gallery-heading"><strong>{title} <span>({files.length})</span></strong>{onSelectionChange && <div className="cm-gallery-toolbar"><button type="button" disabled={disabled} onClick={() => onSelectionChange(files.map(file => file.id))}>Select all</button><button type="button" disabled={disabled} onClick={() => onSelectionChange([])}>Deselect all</button><button type="button" disabled={disabled || !selectedIds?.length} onClick={onDownload} title="Download selected files" aria-label="Download selected files">&#8595; Download</button><small>{selectedIds?.length || 0} selected</small></div>}</div>
     {error && <p role="alert">{error}</p>}{removing && <p role="status">Deleting file...</p>}
     {!files.length && <p>No files yet. Add photos, documents, or videos above.</p>}
     <div className="cm-gallery-grid">{files.map(file => <div className="cm-gallery-tile" key={file.id}>
       <Tile file={file} loadPreview={loadPreview} onOpen={url => setOpen({ url, name: file.name })} />
       {newFileIds.includes(file.id) && <span className="cm-gallery-new" title="New file for the next report">New</span>}
-      <button type="button" className="cm-gallery-delete" title={`Delete ${file.name}`} aria-label={`Delete ${file.name}`} disabled={disabled || !!removing} onClick={() => void remove(file.id)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>
+      {onSelectionChange ? <input className="cm-gallery-select" type="checkbox" aria-label={`Select ${file.name}`} checked={selectedIds?.includes(file.id) || false} disabled={disabled} onChange={event => onSelectionChange(event.target.checked ? [...(selectedIds || []), file.id] : (selectedIds || []).filter(id => id !== file.id))} /> : <button type="button" className="cm-gallery-delete" title={`Delete ${file.name}`} aria-label={`Delete ${file.name}`} disabled={disabled || !!removing} onClick={() => void remove(file.id)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>}
     </div>)}</div>
     {open && <div className="cm-gallery-lightbox" role="dialog" aria-modal="true" aria-label={open.name} onClick={() => setOpen(undefined)}><button ref={close} type="button" aria-label="Close photo preview" onClick={() => setOpen(undefined)}>&times;</button><figure onClick={event => event.stopPropagation()}><img src={open.url} alt={open.name} /><figcaption>{open.name}</figcaption></figure></div>}
   </section>;

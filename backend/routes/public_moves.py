@@ -1034,11 +1034,26 @@ def delete_staff_report_file(lead_id: str, attachment_id: str, user: User = Depe
     return remove_report_file(access, attachment_id, db)
 
 
+@router.get('/api/leads/{lead_id}/customer-page/file-preview/{attachment_id}')
+def staff_file_preview(lead_id: str, attachment_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _, access = staff_access(lead_id, user, db)
+    return preview_report_file(access, attachment_id, db, all_lead=True)
+
+
+@router.get('/api/leads/{lead_id}/customer-page/file-download/{attachment_id}')
+def staff_file_download(lead_id: str, attachment_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _, access = staff_access(lead_id, user, db)
+    return preview_report_file(access, attachment_id, db, download=True, all_lead=True)
+
+
 @router.get('/api/leads/{lead_id}/customer-page/sync-status')
 def file_sync_status(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _, access = staff_access(lead_id, user, db)
     result = sync_status(access.id, db)
-    result['editable_files'] = file_list(move_files(access, db))
+    result['editable_files'] = file_list(move_files(access, db, all_lead=True))
+    conversation = db.get(LeadLiveSwitch, lead_id)
+    details = json.loads(conversation.details or '{}') if conversation else {}
+    result['report_file_ids'] = [file['id'] for file in details.get('report_files', [])]
     return result
 
 
