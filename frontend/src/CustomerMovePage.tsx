@@ -454,13 +454,6 @@ export default function CustomerMovePage() {
                 </div>
                 {!!data.new_file_count && <p>{data.new_file_count} new {data.new_file_count === 1 ? 'file is' : 'files are'} saved for the next report.</p>}
                 <ReportFileGallery files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={busy || reportState === 'running'} />
-                {data.inventory_draft && <section className="cm-saved-list" style={{ marginTop: 24 }}>
-                  <h3>Your list by room</h3>
-                  {data.inventory_draft.rooms.map((room, index) => <details key={index} open style={{ borderBottom: '1px solid var(--cm-border)', padding: '12px 0' }}><summary><strong>{room.name}</strong> &middot; {room.items.reduce((sum, item) => sum + item.amount, 0)} items</summary>
-                    {room.items.length ? room.items.map((item, i) => <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '6px 0', fontSize: 13 }}><span>{item.amount} &times; {item.name}</span><span>{item.cuft.toLocaleString()} cu ft</span></div>) : <p>No items yet.</p>}
-                  </details>)}
-                  <p><strong>List total: {data.inventory_draft.cuft.toLocaleString()} cu ft</strong></p>
-                </section>}
                 {((data.editable_files || data.files).length > 0 || !!data.inventory_draft?.rows.length) && (!data.spark || hasNewUploads || data.files_changed || data.list_changed) && (reportState !== 'done' || data.files_changed || data.list_changed) && (
                   <div className="cm-spark-box">
                     <button

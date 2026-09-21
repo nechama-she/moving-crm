@@ -138,6 +138,17 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
         <p>Choose a room to add items. You can add multiple bedrooms or other rooms.</p>
         <div className="mi-rooms">{rooms.map(r => <article key={r.id}><button type="button" disabled={busy} onClick={() => { setSelected(r.id); setSearch(''); setLimit(60); }}><strong>{r.name}</strong><span>{count(r)} items &middot; {number(total(r, 'cuft'))} cu ft</span></button><button type="button" className="mi-remove" disabled={busy} aria-label={`Delete room ${r.name}`} onClick={() => setRooms(current => current.filter(value => value.id !== r.id))}>&times;</button></article>)}</div>
         <div className="mi-add-room"><select aria-label="Room type" value={roomType} disabled={busy} onChange={e => setRoomType(e.target.value)}>{catalog.rooms.map(r => <option value={r.id} key={r.id}>{r.name}</option>)}</select><button type="button" className="slds-button" disabled={busy || rooms.length >= 100 || !roomType} onClick={() => { const type = catalog.rooms.find(r => r.id === roomType)!; const id = crypto.randomUUID(); const n = rooms.filter(r => r.room_type_id === roomType).length; setRooms(current => [...current, { id, room_type_id: roomType, name: type.name + (n ? ` ${n + 1}` : ''), items: {} }]); setSelected(id); setSearch(''); setLimit(60); }}>+ Add room</button></div>
+        {rooms.some(r => count(r) > 0) && <section className="mi-room-summary">
+          <h3>Your list by room</h3>
+          {rooms.filter(r => count(r) > 0).map(r => <details key={r.id} open>
+            <summary><strong>{r.name}</strong> &middot; {count(r)} items</summary>
+            {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <div className="mi-summary-item" key={id}>
+              <span>{qty} &times; {items.get(id)?.name || 'Item'}</span>
+              <span>{number((items.get(id)?.cuft || 0) * qty)} cu ft</span>
+            </div>)}
+          </details>)}
+          <p><strong>List total: {number(cuft)} cu ft</strong></p>
+        </section>}
       </>}
     </div>
     <footer><span>{busy ? 'Saving your list...' : saveStatus || 'Changes save automatically.'}</span>{room ? <button type="button" className="slds-button cm-primary" disabled={busy} onClick={() => setSelected('')}>Done with room</button> : <button type="button" className="slds-button cm-primary" disabled={busy || !catalog || rooms.some(r => !r.name.trim())} onClick={() => void save()}>Done</button>}</footer>
