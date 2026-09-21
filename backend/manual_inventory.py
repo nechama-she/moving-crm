@@ -15,10 +15,19 @@ class InventoryItemInput(BaseModel):
     quantity: int = Field(ge=1, le=999, strict=True)
 
 
+class CustomInventoryItemInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    id: UUID
+    name: str = Field(min_length=1, max_length=200)
+    cuft: Decimal = Field(gt=0, le=10000, allow_inf_nan=False)
+    quantity: int = Field(ge=1, le=999, strict=True)
+
+
 class InventoryRoomInput(BaseModel):
     room_type_id: str
     name: str = Field(min_length=1, max_length=100)
     items: list[InventoryItemInput] = Field(max_length=500)
+    custom_items: list[CustomInventoryItemInput] = Field(default_factory=list, max_length=100)
 
 
 class ManualInventoryInput(BaseModel):
@@ -37,7 +46,7 @@ def build_inventory(body, db, allow_empty=False):
     room_types = {r.id for r in db.query(InventoryRoomType).all()}
     ids = {item.item_id for room in body.rooms for item in room.items}
     items = {r.id: r for r in db.query(InventoryCatalogItem).filter(InventoryCatalogItem.id.in_(ids), InventoryCatalogItem.active.is_(True)).all()}
-    if (not ids and not allow_empty) or set(items) != ids:
+    if (not ids and not any(room.custom_items for room in body.rooms) and not allow_empty) or set(items) != ids:
         raise HTTPException(400, 'Choose available items from the inventory list.')
     rows = []
     rooms = []
@@ -57,6 +66,16 @@ def build_inventory(body, db, allow_empty=False):
             row = {'item_id': item.id, 'room': room.name.strip(), 'name': item.name,
                    'amount': entry.quantity, 'cuft': float(volume), 'weight': float(mass),
                    'unit_cuft': float(item.cuft), 'unit_weight': float(item.weight)}
+            rows.append(row)
+            contents.append(row)
+        for entry in room.custom_items:
+            if not entry.name.strip():
+                raise HTTPException(400, 'Enter a name for each custom item.')
+            volume = entry.cuft * entry.quantity
+            cuft += volume
+            row = {'item_id': 'custom-' + str(entry.id), 'room': room.name.strip(), 'name': entry.name.strip(),
+                   'amount': entry.quantity, 'cuft': float(volume), 'weight': 0,
+                   'unit_cuft': float(entry.cuft), 'unit_weight': 0, 'custom': True}
             rows.append(row)
             contents.append(row)
         rooms.append({'room_type_id': room.room_type_id, 'name': room.name.strip(), 'items': contents})

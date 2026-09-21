@@ -1305,3 +1305,23 @@ def test_combined_report_uses_snapshot_once_on_recalculation(portal, processing_
         assert float(lead.volume) == 80
         assert result['price'] == 800
         assert db.query(models.LeadSparkInventoryItem).count() == 2
+
+
+def test_custom_inventory_volume_and_validation(manual_catalog):
+    from manual_inventory import ManualInventoryInput, build_inventory
+    from uuid import uuid4
+    from pydantic import ValidationError
+    mod, db, lead, access = manual_catalog
+    body = {'request_id': str(uuid4()), 'rooms': [{'room_type_id': 'bedroom', 'name': 'Bedroom', 'items': [],
+        'custom_items': [{'id': str(uuid4()), 'name': 'Custom cabinet', 'cuft': 12.5, 'quantity': 2}]}]}
+    parsed = ManualInventoryInput.model_validate(body)
+    rooms, rows, cuft, weight = build_inventory(parsed, db)
+    assert cuft == 25 and weight == 0
+    assert rows[0]['name'] == 'Custom cabinet' and rows[0]['custom']
+    assert mod.submit_customer_inventory(parsed, access, db)['ok']
+    saved = json.loads(db.get(models.LeadLiveSwitch, lead.id).details)['inventory_draft']
+    assert saved['cuft'] == 25 and saved['body']['rooms'][0]['custom_items'][0]['name'] == 'Custom cabinet'
+    for invalid in [0, -1, 'NaN', 'Infinity', 10001]:
+        body['rooms'][0]['custom_items'][0]['cuft'] = invalid
+        with pytest.raises(ValidationError):
+            ManualInventoryInput.model_validate(body)
