@@ -55,6 +55,7 @@ export default function CustomerMovePage() {
   const [code,setCode]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [data,setData]=useState<Details>(),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
   const uploadLock = useRef(false);
+  const filePicker = useRef<HTMLInputElement>(null);
   const [photosRestored, setPhotosRestored] = useState(false);
   useEffect(() => {
     let active = true;
@@ -428,15 +429,12 @@ export default function CustomerMovePage() {
             <div className="cm-actions-stack cm-actions-row">
               <section className="cm-card cm-upload">
                 <div className="cm-eyebrow">SHOW US WHAT'S MOVING</div>
-                <button type="button" className="slds-button cm-add-list-button" style={{ marginTop: 12 }} onClick={() => setShowInventoryList(true)}>{data.inventory_draft ? 'Update list' : '+ Add a list'}</button>
                 <h2>Add files, a list, or both.</h2>
-                <p>Upload photos, videos, or documents, create an item list by room, or use both for different rooms. Save and update your list as needed. When everything is ready, generate one report to calculate your total volume and estimate.</p>
-                <div className="cm-upload-row">
-                  <label className="cm-drop">
-                    <span className="cm-drop-icon" aria-hidden="true">📁</span>
-                    <strong>Choose files or drop here</strong>
-                    <input type="file" multiple disabled={busy || !photosRestored} onChange={e=>{choose(e.target.files);e.target.value='';}}/>
-                  </label>
+                <p>Upload photos, videos, or documents, create an item list, or use both.<br/>Save and update your inventory anytime. When you&#8217;re ready, generate one report to calculate your total volume and estimate.</p>
+                <div className="cm-inventory-actions">
+                  <button type="button" className="slds-button cm-add-list-button" onClick={() => setShowInventoryList(true)}>{data.inventory_draft ? 'Update list' : 'Add a list'}</button>
+                  <button type="button" className="slds-button cm-add-list-button" disabled={busy || !photosRestored} onClick={() => filePicker.current?.click()}>Upload files</button>
+                  <input ref={filePicker} type="file" multiple hidden disabled={busy || !photosRestored} onChange={e=>{void choose(e.target.files);e.target.value='';}}/>
                   {files.some(f => f.status === 'Try again') && <button className="slds-button cm-primary cm-upload-btn" disabled={busy} onClick={()=>void upload()}>Retry upload</button>}
                 </div>
                 {files.length>0 && <p role="status">{files.filter(f=>f.status==='Uploaded').length} of {files.length} files uploaded</p>}
