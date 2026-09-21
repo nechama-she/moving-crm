@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
-import MessageAttachments, { MessageAttachment } from "./MessageAttachments";
+import MessageAttachments, { MessageAttachment, attachmentUrl } from "./MessageAttachments";
 
 interface Message {
   user_id?: string;
@@ -57,6 +57,8 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
   const [activeTab, setActiveTab] = useState<string>("");
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadNotice, setDownloadNotice] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const tabPickedRef = useRef(false);
@@ -183,6 +185,41 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
     return <p style={{ padding: 16, color: "#888" }}>Loading messages…</p>;
   if (error)
     return <p style={{ padding: 16, color: "red" }}>Error: {error}</p>;
+
+  const attachments = Array.from(new Map(filtered.flatMap(message => message.attachments || [])
+    .filter(attachment => /^https?:\/\//i.test(attachmentUrl(attachment)))
+    .map(attachment => [attachmentUrl(attachment), attachment])).values());
+
+  async function downloadAllAttachments() {
+    if (downloading) return;
+    setDownloading(true);
+    setDownloadNotice("");
+    let failed = 0;
+    for (const [index, attachment] of attachments.entries()) {
+      setDownloadNotice(`Preparing attachment ${index + 1} of ${attachments.length}?`);
+      try {
+        const response = await fetch(attachmentUrl(attachment));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        const extension = ({ "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "video/mp4": "mp4", "video/quicktime": "mov", "application/pdf": "pdf" } as Record<string, string>)[blob.type.split(";")[0]];
+        const filename = new URL(attachmentUrl(attachment)).pathname.split("/").pop() || "attachment";
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = `${activeTab}-${index + 1}-${extension ? `attachment.${extension}` : filename}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+      } catch {
+        failed += 1;
+      }
+    }
+    setDownloadNotice(failed
+      ? `${failed} of ${attachments.length} attachments could not be downloaded. The source may have expired or blocked downloads.`
+      : `Downloads started for ${attachments.length} attachments. Allow multiple downloads if your browser asks.`);
+    setDownloading(false);
+  }
 
   // Count per platform for badge
   const counts: Record<string, number> = {};
@@ -345,6 +382,15 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
           <a href={inboxUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#1976d2", fontWeight: 600 }}>
             Open in Facebook Inbox →
           </a>
+        </div>
+      )}
+
+      {attachments.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "8px 12px", border: "1px solid #e0e0e0", borderTop: "none" }}>
+          <button type="button" className="slds-button slds-button_neutral" disabled={downloading} onClick={() => void downloadAllAttachments()}>
+            {downloading ? "Downloading?" : `? Download all attachments (${attachments.length})`}
+          </button>
+          {downloadNotice && <span role="status" style={{ fontSize: 12 }}>{downloadNotice}</span>}
         </div>
       )}
 

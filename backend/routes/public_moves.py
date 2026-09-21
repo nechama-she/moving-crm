@@ -176,30 +176,119 @@ def create_customer_page_access(db, lead, job, key_hash, request_hash):
 
 @router.post('/api/inventory')
 def intake(body: Intake, request: Request, x_api_secret: str = Header(default=''), idempotency_key: str = Header(min_length=8, max_length=128), db: Session = Depends(get_db)):
-    expected = setting('PUBLIC_MOVE_API_KEY')
-    if not expected or not hmac.compare_digest(expected, x_api_secret): raise HTTPException(401, 'Not authorized')
-    rate(db, 'intake:' + digest(expected), 60)
-    key = secret_digest('intake:' + idempotency_key)
-    # Database transaction lock serializes retries before creating any records.
-    from sqlalchemy import text
-    db.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': int(key[:15], 16)})
-    payload_hash = digest(json.dumps(body.model_dump(mode='json'), sort_keys=True))
-    existing = db.query(PublicMoveAccess).filter(PublicMoveAccess.key_hash == key).first()
-    if existing:
-        if existing.request_hash != payload_hash: raise HTTPException(409, 'Idempotency key was already used for different details')
-        if existing.revoked or existing.expires_at < NOW(): raise HTTPException(409, 'This request exists but its link has expired or was revoked')
-        return {'lead_id': existing.lead_id, 'job_id': existing.job_id, 'url': public_url(existing)}
-    if body.company_id and not db.get(Company, body.company_id): raise HTTPException(400, 'Unknown company')
-    lead = Lead(full_name=f'{body.first_name} {body.last_name}', company_id=body.company_id, source=body.source,
-                phone=body.phone, email=body.email, move_date=body.move_date.isoformat(), pickup_zip=body.pickup, delivery_zip=body.delivery, status='new')
-    db.add(lead); db.flush()
-    job = LeadJob(lead_id=lead.id, company_id=body.company_id, job_order=1, move_date=body.move_date.isoformat(), pickup_zip=body.pickup, delivery_zip=body.delivery,
-                  stop_types=json.dumps([s.model_dump() for s in body.stops]))
-    db.add(job); db.flush()
-    _persist_job_route(db, job.id, body.pickup, [s.address for s in body.stops], body.delivery)
-    access = create_customer_page_access(db, lead, job, key, payload_hash)
-    db.commit()
-    return {'lead_id': lead.id, 'job_id': job.id, 'url': public_url(access)}
+    # Trace only this endpoint's operations; keep credentials and SQL parameters out.
+    from fastapi.responses import JSONResponse
+    from fastapi.encoders import jsonable_encoder
+    from sqlalchemy.exc import SQLAlchemyError
+
+    definitions = [
+        ('authenticate', 'endpoint'), ('rate_limit', 'db'),
+        ('idempotency_lock', 'db'), ('find_existing_request', 'db'),
+        ('validate_existing_request', 'endpoint'), ('validate_company', 'db'),
+        ('create_lead', 'db'), ('create_job', 'db'), ('save_job_route', 'db'),
+        ('create_customer_access', 'db'), ('commit', 'db'),
+        ('build_customer_url', 'endpoint'), ('rollback', 'db'),
+    ]
+    actions = [dict(action=name, target=target, status='not_attempted', response=None, error=None)
+               for name, target in definitions]
+    by_name = {row['action']: row for row in actions}
+    current = None
+    committed = False
+    result = {}
+
+    def run(name, operation, response=lambda value: value):
+        nonlocal current
+        current = by_name[name]
+        current['status'] = 'in_progress'
+        value = operation()
+        current.update(status='succeeded', response=response(value))
+        return value
+
+    def authenticate():
+        expected = setting('PUBLIC_MOVE_API_KEY')
+        if not expected or not hmac.compare_digest(expected, x_api_secret):
+            raise HTTPException(401, 'Not authorized')
+        return expected
+
+    try:
+        expected = run('authenticate', authenticate, lambda _: {'authorized': True})
+        run('rate_limit', lambda: rate(db, 'intake:' + digest(expected), 60), lambda _: {'allowed': True})
+        key = secret_digest('intake:' + idempotency_key)
+        run('idempotency_lock', lambda: db.execute(text('SELECT pg_advisory_xact_lock(:key)'),
+            {'key': int(key[:15], 16)}), lambda _: {'acquired': True})
+        payload_hash = digest(json.dumps(body.model_dump(mode='json'), sort_keys=True))
+        existing = run('find_existing_request', lambda: db.query(PublicMoveAccess).filter(
+            PublicMoveAccess.key_hash == key).first(), lambda row: {'found': row is not None})
+        if existing:
+            def validate_existing():
+                if existing.request_hash != payload_hash:
+                    raise HTTPException(409, 'Idempotency key was already used for different details')
+                if existing.revoked or existing.expires_at < NOW():
+                    raise HTTPException(409, 'This request exists but its link has expired or was revoked')
+                return {'reused': True}
+            run('validate_existing_request', validate_existing)
+            result = {'lead_id': existing.lead_id, 'job_id': existing.job_id}
+            access = existing
+        else:
+            def validate_company():
+                if body.company_id and not db.get(Company, body.company_id):
+                    raise HTTPException(400, 'Unknown company')
+                return {'company_id': body.company_id, 'valid': True}
+            run('validate_company', validate_company)
+            def create_lead():
+                row = Lead(full_name=f'{body.first_name} {body.last_name}', company_id=body.company_id, source=body.source,
+                    phone=body.phone, email=body.email, move_date=body.move_date.isoformat(), pickup_zip=body.pickup,
+                    delivery_zip=body.delivery, status='new')
+                db.add(row)
+                db.flush()
+                return row
+            lead = run('create_lead', create_lead, lambda row: {'lead_id': row.id})
+            def create_job():
+                row = LeadJob(lead_id=lead.id, company_id=body.company_id, job_order=1,
+                    move_date=body.move_date.isoformat(), pickup_zip=body.pickup, delivery_zip=body.delivery,
+                    stop_types=json.dumps([stop.model_dump() for stop in body.stops]))
+                db.add(row)
+                db.flush()
+                return row
+            job = run('create_job', create_job, lambda row: {'job_id': row.id})
+            run('save_job_route', lambda: _persist_job_route(db, job.id, body.pickup,
+                [stop.address for stop in body.stops], body.delivery),
+                lambda _: {'job_id': job.id, 'pickup_count': 1, 'stop_count': len(body.stops), 'delivery_count': 1})
+            access = run('create_customer_access', lambda: create_customer_page_access(db, lead, job, key, payload_hash),
+                lambda row: {'access_id': row.id, 'expires_at': row.expires_at})
+            # Capture IDs before commit expires ORM attributes.
+            result = {'lead_id': lead.id, 'job_id': job.id}
+            run('commit', db.commit, lambda _: {'committed': True})
+            committed = True
+        url = run('build_customer_url', lambda: public_url(access), lambda value: {'url': value})
+        return {**result, 'url': url, 'status': 'succeeded', 'reused': existing is not None, 'actions': actions}
+    except Exception as exc:
+        code = exc.status_code if isinstance(exc, HTTPException) else 500
+        # SQLAlchemy exception strings include SQL and bound customer data.
+        if isinstance(exc, HTTPException):
+            message = exc.detail
+        elif isinstance(exc, SQLAlchemyError):
+            message = 'Database operation failed.'
+        else:
+            message = 'The operation failed unexpectedly.'
+        error = {'type': type(exc).__name__, 'message': message, 'http_status': code}
+        if isinstance(exc, SQLAlchemyError):
+            sqlstate = getattr(getattr(exc, 'orig', None), 'sqlstate', None) or getattr(getattr(exc, 'orig', None), 'pgcode', None)
+            if sqlstate: error['database_code'] = sqlstate
+        if current is not None:
+            current.update(status='failed', error=error)
+        try:
+            db.rollback()
+            by_name['rollback'].update(status='succeeded', response={'rolled_back': True})
+            if not committed:
+                for name in ('create_lead', 'create_job', 'save_job_route', 'create_customer_access'):
+                    if by_name[name]['status'] == 'succeeded': by_name[name]['status'] = 'rolled_back'
+        except Exception as rollback_error:
+            by_name['rollback'].update(status='failed', error={'type': type(rollback_error).__name__,
+                'message': 'Database rollback failed.'})
+        return JSONResponse(status_code=code, headers=exc.headers if isinstance(exc, HTTPException) else None,
+            content=jsonable_encoder({**(result if committed else {}), 'status': 'partial' if committed else 'failed',
+                'detail': message, 'error': error, 'actions': actions}))
 
 
 @router.get('/api/public-moves/{access_id}/verify-options')

@@ -1387,3 +1387,65 @@ def test_import_chat_files_scopes_company_page(portal, monkeypatch):
     result = mod.import_chat_files(lead.id, mod.ImportChatFilesRequest(), object(), db)
     assert result['imported'] == 1
     archive.assert_called_once()
+
+
+@pytest.fixture
+def traced_intake(portal, monkeypatch):
+    mod, db, lead, access = portal
+    monkeypatch.setenv('PUBLIC_MOVE_API_KEY', 'test-intake-key')
+    monkeypatch.setenv('PUBLIC_MOVE_ORIGIN', 'https://example.com')
+    execute = db.execute
+    def without_postgres_lock(statement, *args, **kwargs):
+        if 'pg_advisory_xact_lock' in str(statement): return None
+        return execute(statement, *args, **kwargs)
+    monkeypatch.setattr(db, 'execute', without_postgres_lock)
+    body = mod.Intake(first_name='Test', last_name='Customer', source='Website',
+        move_date='2026-10-01', pickup='A', delivery='B', phone='2405707987')
+    return mod, db, body
+
+
+def test_intake_trace_success_and_replay(traced_intake):
+    mod, db, body = traced_intake
+    result = mod.intake(body, request(), 'test-intake-key', 'test-request-key', db)
+    assert result['status'] == 'succeeded'
+    actions = {a['action']: a for a in result['actions']}
+    assert actions['commit']['response'] == {'committed': True}
+    assert actions['create_lead']['response']['lead_id'] == result['lead_id']
+    repeated = mod.intake(body, request(), 'test-intake-key', 'test-request-key', db)
+    assert repeated['reused'] is True
+    assert repeated['lead_id'] == result['lead_id']
+    assert next(a for a in repeated['actions'] if a['action'] == 'create_lead')['status'] == 'not_attempted'
+
+
+def test_intake_trace_rollback(traced_intake, monkeypatch):
+    mod, db, body = traced_intake
+    before = db.query(models.Lead).count()
+    def fail(*args): raise HTTPException(503, 'Route storage unavailable')
+    monkeypatch.setattr(mod, '_persist_job_route', fail)
+    response = mod.intake(body, request(), 'test-intake-key', 'test-request-key', db)
+    assert response.status_code == 503
+    result = json.loads(response.body)
+    actions = {a['action']: a for a in result['actions']}
+    assert actions['create_lead']['status'] == 'rolled_back'
+    assert actions['save_job_route']['error']['message'] == 'Route storage unavailable'
+    assert actions['commit']['status'] == 'not_attempted'
+    assert db.query(models.Lead).count() == before
+
+
+def test_intake_trace_post_commit_error_keeps_ids(traced_intake, monkeypatch):
+    mod, db, body = traced_intake
+    monkeypatch.setenv('PUBLIC_MOVE_ORIGIN', '')
+    response = mod.intake(body, request(), 'test-intake-key', 'test-request-key', db)
+    result = json.loads(response.body)
+    assert result['status'] == 'partial'
+    assert db.get(models.Lead, result['lead_id']) is not None
+    assert next(a for a in result['actions'] if a['action'] == 'commit')['status'] == 'succeeded'
+
+
+def test_intake_trace_auth_failure(traced_intake):
+    mod, db, body = traced_intake
+    response = mod.intake(body, request(), 'wrong', 'test-request-key', db)
+    assert response.status_code == 401
+    result = json.loads(response.body)
+    assert result['actions'][0]['error']['message'] == 'Not authorized'
+    assert next(a for a in result['actions'] if a['action'] == 'create_lead')['status'] == 'not_attempted'
