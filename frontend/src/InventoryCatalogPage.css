@@ -1,0 +1,22 @@
+.ic-page { padding: 20px clamp(12px, 3vw, 24px); overflow: auto; flex: 1; min-height: 0; color: #032d60; }
+.ic-card { margin-top: 16px; background: #fff; border: 1px solid #dddbda; border-radius: 8px; padding: 20px; }
+.ic-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.ic-toolbar h1, .ic-toolbar h2 { font-size: 20px; margin: 0; }
+.ic-toolbar p, .ic-dialog p { color: #5c6b82; }
+.ic-search { display: block; max-width: 520px; margin: 20px 0; }
+.ic-search input, .ic-dialog input:not([type=checkbox]), .ic-dialog textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #c9d3df; border-radius: 6px; font: inherit; margin-top: 6px; }
+.ic-table-wrap { overflow-x: auto; }
+.ic-table-wrap table { border-collapse: collapse; width: 100%; text-align: left; font-size: 13px; }
+.ic-table-wrap th, .ic-table-wrap td { padding: 12px; border-bottom: 1px solid #e5e9ef; }
+.ic-table-wrap th { background: #f5f7fa; white-space: nowrap; }
+.ic-table-wrap td small { display: block; margin-top: 4px; color: #5c6b82; overflow-wrap: anywhere; }
+.ic-dialog { inset: 0; margin: auto; width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); box-sizing: border-box; overflow: auto; border: 1px solid #c9d3df; border-radius: 12px; padding: 24px; color: #032d60; background: #fff; box-shadow: 0 16px 48px #032d6033; }
+.ic-dialog::backdrop { background: #032d6066; }
+.ic-dialog fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.ic-dialog label { display: block; margin: 14px 0; }
+.ic-dialog textarea { min-height: 80px; resize: vertical; }
+.ic-measurements { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.ic-dialog .ic-checkbox { display: flex; align-items: center; gap: 8px; }
+.ic-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.ic-error { color: #ba0517; }.ic-notice { padding: 10px; border-radius: 6px; background: #eef6ff; }
+@media (max-width: 480px) { .ic-card, .ic-dialog { padding: 16px; }.ic-measurements { grid-template-columns: 1fr; gap: 0; }.ic-table-wrap th, .ic-table-wrap td { padding: 8px; } }

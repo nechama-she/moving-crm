@@ -1,3 +1,4 @@
+import CatalogItemDialog from "./CatalogItemDialog";
 import { useEffect, useState } from "react";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -16,6 +17,7 @@ export default function CustomerQuestionManager() {
  const [revision, setRevision] = useState("");
  const [selected, setSelected] = useState("");
  const [search, setSearch] = useState("");
+ const [addingCatalogItem, setAddingCatalogItem] = useState(false);
  const [testName, setTestName] = useState("");
  const [dirty, setDirty] = useState(false);
  const [busy, setBusy] = useState(false);
@@ -39,6 +41,7 @@ export default function CustomerQuestionManager() {
     <label>Internal title<input value={current.title} maxLength={200} onChange={e => patch({ title: e.target.value })} placeholder="Live plants" /></label>
     <label>Customer question<textarea value={current.question} maxLength={500} onChange={e => patch({ question: e.target.value })} placeholder="Is this a live plant?" /></label>
     <div className="cq-block"><h3>Which items?</h3><p>Pick catalog items. Reports with the same item name also match.</p><input aria-label="Search inventory catalog" type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search catalog, e.g. plant" />
+    <button type="button" className="slds-button cq-add-catalog" onClick={() => setAddingCatalogItem(true)}>+ Add catalog item</button>
     <div className="cq-chips">{catalog.filter(item => current.item_ids.includes(item.id)).map(item => <button className="slds-button" key={item.id} onClick={() => patch({ item_ids: current.item_ids.filter(id => id !== item.id) })}>{item.name} - Remove</button>)}</div>
     <div className="cq-catalog">{catalog.filter(item => normalize(item.name).includes(normalize(search))).map(item => <label key={item.id}><input type="checkbox" checked={current.item_ids.includes(item.id)} onChange={e => patch({ item_ids: e.target.checked ? [...current.item_ids, item.id] : current.item_ids.filter(id => id !== item.id) })} />{item.name}<small>{item.cuft} cu ft</small></label>)}</div>
     <label>Optional matching words, separated by commas<input value={current.words.join(",")} onChange={e => patch({ words: e.target.value.split(",") })} placeholder="plant, potted tree" /></label><p>Matches whole words or phrases in custom items and report names.</p>
@@ -47,7 +50,13 @@ export default function CustomerQuestionManager() {
     <label><input type="checkbox" checked={current.photo} onChange={e => patch({ photo: e.target.checked })} /> Show the item's report photo when available</label>
     <h3>Answers and next steps</h3>{current.answers.map((answer, index) => { const update = (value: Partial<Answer>) => patch({ answers: current.answers.map((a, i) => i === index ? { ...a, ...value } : a) }); return <div className="cq-block" key={answer.id}><label>Answer<input value={answer.label} maxLength={100} onChange={e => update({ label: e.target.value })} /></label><label>What happens?<select value={answer.action} onChange={e => update({ action: e.target.value })}>{Object.entries(actions).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>{answer.action !== "none" && <label>Explanation shown to the customer<textarea value={answer.notice} maxLength={2000} onChange={e => update({ notice: e.target.value })} placeholder="Explain your company policy and what the customer needs to do." /></label>}<label><input type="checkbox" checked={answer.acknowledge} onChange={e => update({ acknowledge: e.target.checked })} /> Customer must acknowledge the instructions</label>{current.answers.length > 2 && <button className="slds-button" onClick={() => patch({ answers: current.answers.filter(a => a.id !== answer.id) })}>Remove answer</button>}</div>; })}
     {current.answers.length < 8 && <button className="slds-button slds-button_neutral" onClick={() => patch({ answers: [...current.answers, { id: crypto.randomUUID(), label: "New answer", action: "none", notice: "", acknowledge: false }] })}>+ Add answer choice</button>}
-    <details className="cq-preview"><summary>Customer preview</summary><p><strong>{catalog.find(item => current.item_ids.includes(item.id))?.name || testName || "Matching item"}</strong> - Living Room</p><h3>{current.question || "Your question appears here"}</h3>{current.answers.map(answer => <details key={answer.id}><summary>{answer.label}</summary><p>{answer.notice || "Item remains included."}</p><small>{actions[answer.action as keyof typeof actions]}{answer.acknowledge ? " - Acknowledgment required" : ""}</small></details>)}</details>
+    <details className="cq-preview"><summary>Customer preview</summary><p><strong>{catalog.find(item => current.item_ids.includes(item.id))?.name || testName || "Matching item"}</strong> - Living Room</p><h3>{current.question || "Your question appears here"}</h3>{current.answers.map(answer => <details key={answer.id}><summary>{answer.label}</summary>{answer.notice && <p>{answer.notice}</p>}{answer.acknowledge && <small>I understand these instructions.</small>}</details>)}</details>
   </fieldset> : <p className="cq-empty">Add a question or select one to edit. New questions start disabled.</p>}</div>
+ {addingCatalogItem && <CatalogItemDialog initialName={search} onClose={() => setAddingCatalogItem(false)} onSaved={item => {
+   setCatalog(rows => [...rows.filter(row => row.id !== item.id), item]);
+   if (current) patch({ item_ids: [...current.item_ids, item.id] });
+   setSearch(item.name); setAddingCatalogItem(false);
+   setNotice(`${item.name} added to the catalog and selected. Save moving terms to keep this question's selection.`);
+ }} />}
  </section>;
 }

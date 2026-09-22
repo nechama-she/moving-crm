@@ -21,6 +21,6 @@ function Question({ question, endpoint, linkKey, session, onSave }: Props & { qu
   {option?.acknowledge && <label className="cm-check-item"><input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />I understand these instructions.</label>}
   {error && <p role="alert">{error}</p>}
   <button type="button" className="slds-button cm-primary" disabled={!option || (option.acknowledge && !ack) || saved} onClick={() => void save()}>{busy ? "Saving..." : saved ? "Saved" : "Save answer"}</button>
-  {saved && option && <p role="status">{({ exclude: "Excluded from shipment and estimated volume.", prepare: "Preparation required before moving.", review: "Flagged for the moving team to review.", notice: "Instructions acknowledged.", none: "Item remains included." } as Record<string, string>)[option.action]}</p>}
+  {saved && option && option.action !== "none" && <p role="status">{({ exclude: "Excluded from shipment and estimated volume.", prepare: "Preparation required before moving.", review: "Flagged for the moving team to review.", notice: "Instructions acknowledged." } as Record<string, string>)[option.action]}</p>}
  </fieldset>;
 }

@@ -154,3 +154,9 @@ fields @timestamp, @message
 ```
 
 Add an `access_id` or `attempt_id` filter to follow one customer/request. Cognito's native error schema is controlled by AWS and may omit recipient/request identifiers; correlate its available details with the pool and timestamps. Native notification logs are best effort, ERROR-only, and start after deployment. They do not backfill old email sends or provide delivered/opened receipts. The current COGNITO_DEFAULT sender and Lite pool remain in place.
+
+## Inventory catalog management
+
+Admins can open Settings > Inventory catalog to search, add, and edit shared catalog items. Each item has a name, volume per item (cu ft), weight per item (lb), and optional description. Volume must be positive; weight can be zero. Existing items can be made inactive instead of deleted, preserving their IDs and saved references. The catalog is shared across companies. Seed migrations only insert missing seed IDs and do not overwrite edits.
+
+In Moving terms, the Add catalog item link beneath Search catalog opens the same item editor in a popup. Saving creates the item immediately, adds it to the visible catalog, and selects it for the current question. The question draft remains open and unchanged otherwise; click Save moving terms to persist the new association. Canceling the popup preserves the question draft. New catalog items become available to customer inventory editors when the catalog is next loaded.
