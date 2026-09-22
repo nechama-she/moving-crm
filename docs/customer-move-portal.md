@@ -92,25 +92,21 @@ This implements selected OWASP token/session/upload protections. It is not a for
 Tests use an isolated SQLite database and mocked message delivery. They cover public authorization, wrong/expired/revoked links, OTP reuse/expiry/attempt limits, contact changes, cross-job session rejection, contact validation, typed stops, duplicate meeting prevention, and published-estimate isolation. Existing LiveSwitch and model-mapping tests also run. Live SES/SNS delivery, external iframe domains, production PostgreSQL migrations, and production upload sizing require a configured deployment test.
 
 
-## Customer email verification with Cognito
+## Customer email delivery with Cognito
 
-Customer email codes use Cognito USER_AUTH / EMAIL_OTP in a separate Essentials
-user pool. The screen and existing eight-hour CRM session remain unchanged;
-SMS and rep verification continue using the existing sender. Users are created
-without passwords or invitation messages. Cognito challenge sessions stay in
-the database and are never returned to the browser. Contact changes, local
-expiration, resend cooldown, and five-attempt limits still apply.
+A dedicated LITE user pool sends the customer page's six-digit codes using
+AdminCreateUser invitation emails and RESEND for existing users. It uses
+COGNITO_DEFAULT (no custom SES identity required). The email template places
+the code in Cognito's temporary-password placeholder. The CRM, not Cognito
+sign-in, validates its stored hash, ten-minute expiry, five-attempt limit,
+single use, and contact fingerprint. No Cognito app client is provisioned.
+The pool must remain separate from staff authentication and must not be given
+an app client. SMS and rep codes remain on the existing flow.
 
-Configure CloudFormation parameters `CustomerPortalEmailIdentityArn` (an SES
-verified identity ARN) and `CustomerPortalEmailFrom` (an address on that identity).
-Both are required before the pipeline creates the pool and app client. Empty
-parameters deliberately leave Cognito unconfigured instead of deploying an
-invalid email OTP pool. Cognito email OTP requires SES DEVELOPER sending; the
-Cognito default email sender cannot be used for this flow. SES sandbox accounts
-can send only to verified recipients until production access is granted.
-The pipeline preserves these parameters on subsequent deployments.
+The CRM pipeline provisions the pool, email template, IAM permission and
+PUBLIC_MOVE_COGNITO_POOL_ID environment variable. Cognito default-sender email
+quotas apply. A successful send response means Cognito accepted the request,
+not confirmed inbox delivery. Test real delivery after deployment; unit tests
+mock AWS and do not send email.
 
-Deploy the database migration and infrastructure before testing. Check sending,
-resending, incorrect/expired codes, and a successful customer login with a real
-recipient after deployment; unit tests mock Cognito and do not send emails.
-AWS reference: https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-email.html
+AWS reference: https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminCreateUser.html
