@@ -1490,3 +1490,26 @@ def test_intake_sms_respects_dry_run(traced_intake, monkeypatch):
     result = mod.intake(body, request(), 'test-intake-key', 'sms-request-key', db)
     sender.assert_not_called()
     assert next(a for a in result['actions'] if a['action'] == 'send_customer_sms')['response']['dry_run'] is True
+
+
+@pytest.mark.parametrize('accepted', [True, False])
+def test_customer_link_sms_notice_only_after_success(portal, monkeypatch, accepted):
+    mod, db, lead, access = portal
+    monkeypatch.setenv('PUBLIC_MOVE_ORIGIN', 'https://example.com')
+    company = models.Company(id='sms-company', name='Test Movers', aircall_number_id='123')
+    db.add(company)
+    lead.company = company
+    db.commit()
+    monkeypatch.setattr(mod, 'send_sms', lambda **kwargs: {'ok': accepted})
+    assert mod.customer_link_sms_notice(access) is None
+    if accepted:
+        mod.deliver_customer_link_sms(lead, access, db)
+        db.expire_all()
+        notice = mod.customer_link_sms_notice(db.get(models.PublicMoveAccess, access.id))
+        assert notice['phone_last4'] == '7987'
+        assert notice['sent_at']
+        assert mod.verify_options(access, db)['link_sms'] == notice
+    else:
+        with pytest.raises(HTTPException): mod.deliver_customer_link_sms(lead, access, db)
+        db.expire_all()
+        assert mod.customer_link_sms_notice(access) is None

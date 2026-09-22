@@ -317,6 +317,7 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
     if lead.phone: options.append({'channel': 'sms', 'destination': '***'+lead.phone[-4:]})
     return {
         'options': options,
+        'link_sms': customer_link_sms_notice(access),
         'company': {
             'name': active_company.name if active_company else 'Your moving team',
             'color': company_color,
@@ -592,6 +593,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': company_data['name'],
             'company_details': company_data,
+            'link_sms': customer_link_sms_notice(access),
             'estimate': estimate,
             'spark': spark_info,
             'report_history': report_history(conv_details),
@@ -949,6 +951,13 @@ def send_customer_link(lead_id: str, user: User = Depends(get_current_user), db:
     return deliver_customer_link_sms(lead, access, db)
 
 
+def customer_link_sms_notice(access):
+    if not access.link_sms_sent_at:
+        return None
+    return {'sent_at': access.link_sms_sent_at.isoformat() + 'Z',
+            'phone_last4': access.link_sms_phone_last4 or ''}
+
+
 def deliver_customer_link_sms(lead, access, db):
     if access.revoked or access.expires_at < NOW(): raise HTTPException(400, 'Customer link is inactive')
     if not lead.phone: raise HTTPException(400, 'This lead has no phone number')
@@ -958,6 +967,9 @@ def deliver_customer_link_sms(lead, access, db):
     if not number: raise HTTPException(400, 'Configure an Aircall number for the sending company')
     result = send_sms(to=lead.phone, text=f'View your move, upload files, add an item list, or request a virtual estimate: {public_url(access)}', number_id=number, sensitive=True)
     if not result.get('ok'): raise HTTPException(502, 'Could not send SMS. Please retry.')
+    access.link_sms_sent_at = NOW()
+    access.link_sms_phone_last4 = re.sub(r'\D', '', lead.phone)[-4:]
+    db.commit()
     return {'ok': True}
 
 

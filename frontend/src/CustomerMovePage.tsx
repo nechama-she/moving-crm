@@ -11,7 +11,9 @@ import { useParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import "./CustomerMovePage.css";
 
+type LinkSms = { sent_at: string; phone_last4: string };
 type Details = {
+  link_sms?: LinkSms | null;
   list_changed?: boolean;
   inventory_draft?: { body: { rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number }[] }[] }; rooms: { name: string; items: { name: string; amount: number; cuft: number }[] }[]; rows: unknown[]; cuft: number };
   report_history?: ReportRun[];
@@ -48,6 +50,7 @@ type Details = {
 type Pending = {id:string;file:File;status:string;progress:number;preview?:string;error?:string};
 export default function CustomerMovePage() {
   const {accessId}=useParams();
+  const [linkSms, setLinkSms] = useState<LinkSms | null>(null);
   const [repPage, setRepPage] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('audience') === 'rep');
   const sessionKey = `cm_session_${accessId}${repPage ? '_rep' : ''}`;
   const [key]=useState(()=>new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
@@ -149,7 +152,7 @@ export default function CustomerMovePage() {
     const urls=previews.current;
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
-  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setOptions(value.options);setChannel(value.options[0]?.channel||'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
+  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setOptions(value.options);setLinkSms(value.link_sms || null);setChannel(value.options[0]?.channel||'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
   useEffect(()=>{
     if(!session)return;
     let active=true;
@@ -313,6 +316,11 @@ export default function CustomerMovePage() {
   return (
     <div className="customer-move" style={paletteStyle}>
       <div className="cm-wrap">
+        {!repPage && (data?.link_sms || linkSms) && (
+          <p role="status" className="cm-link-sms-notice">
+            We sent a text message to your phone{(data?.link_sms || linkSms)?.phone_last4 ? ` ending in ${(data?.link_sms || linkSms)?.phone_last4}` : ''} with a link to this page. You can use it to return anytime.
+          </p>
+        )}
         {!session ? (
           <section className="cm-verify">
             <div className="cm-eyebrow">WELCOME</div>

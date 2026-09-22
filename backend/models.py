@@ -1008,6 +1008,8 @@ class PublicMoveAccess(Base):
     published_price = Column(Numeric(12, 2))
     published_cuft = Column(Numeric(12, 2))
     published_at = Column(DateTime)
+    link_sms_sent_at = Column(DateTime)
+    link_sms_phone_last4 = Column(String(4))
     created_at = Column(DateTime, default=_now)
 
 
