@@ -187,7 +187,7 @@ def intake(body: Intake, request: Request, x_api_secret: str = Header(default=''
         ('validate_existing_request', 'endpoint'), ('validate_company', 'db'),
         ('create_lead', 'db'), ('create_job', 'db'), ('save_job_route', 'db'),
         ('create_customer_access', 'db'), ('commit', 'db'),
-        ('build_customer_url', 'endpoint'), ('rollback', 'db'),
+        ('build_customer_url', 'endpoint'), ('send_customer_sms', 'aircall'), ('rollback', 'db'),
     ]
     actions = [dict(action=name, target=target, status='not_attempted', response=None, error=None)
                for name, target in definitions]
@@ -261,7 +261,16 @@ def intake(body: Intake, request: Request, x_api_secret: str = Header(default=''
             run('commit', db.commit, lambda _: {'committed': True})
             committed = True
         url = run('build_customer_url', lambda: public_url(access), lambda value: {'url': value})
-        return {**result, 'url': url, 'status': 'succeeded', 'reused': existing is not None, 'actions': actions}
+        result['url'] = url
+        if existing is None:
+            if (setting('PUBLIC_MOVE_LINK_DRY_RUN') or 'true').strip().lower() != 'false':
+                by_name['send_customer_sms'].update(status='not_attempted',
+                    response={'dry_run': True, 'message': 'Customer-link SMS is disabled by PUBLIC_MOVE_LINK_DRY_RUN.'})
+            else:
+                run('send_customer_sms', lambda: deliver_customer_link_sms(lead, access, db))
+        else:
+            by_name['send_customer_sms']['response'] = {'message': 'Existing submission; SMS is not resent.'}
+        return {**result, 'status': 'succeeded', 'reused': existing is not None, 'actions': actions}
     except Exception as exc:
         code = exc.status_code if isinstance(exc, HTTPException) else 500
         # SQLAlchemy exception strings include SQL and bound customer data.
@@ -937,6 +946,10 @@ def generate_customer_page(lead_id: str, user: User = Depends(get_current_user),
 @router.post('/api/leads/{lead_id}/customer-page/sms')
 def send_customer_link(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lead, access = staff_access(lead_id, user, db)
+    return deliver_customer_link_sms(lead, access, db)
+
+
+def deliver_customer_link_sms(lead, access, db):
     if access.revoked or access.expires_at < NOW(): raise HTTPException(400, 'Customer link is inactive')
     if not lead.phone: raise HTTPException(400, 'This lead has no phone number')
     company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()

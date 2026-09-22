@@ -1449,3 +1449,44 @@ def test_intake_trace_auth_failure(traced_intake):
     result = json.loads(response.body)
     assert result['actions'][0]['error']['message'] == 'Not authorized'
     assert next(a for a in result['actions'] if a['action'] == 'create_lead')['status'] == 'not_attempted'
+
+
+
+def test_intake_sends_link_once_after_commit(traced_intake, monkeypatch):
+    mod, db, body = traced_intake
+    monkeypatch.setenv('PUBLIC_MOVE_LINK_DRY_RUN', 'false')
+    sent = []
+    def deliver(lead, access, session):
+        assert session.get(models.PublicMoveAccess, access.id) is not None
+        sent.append(lead.id)
+        return {'ok': True}
+    monkeypatch.setattr(mod, 'deliver_customer_link_sms', deliver)
+    result = mod.intake(body, request(), 'test-intake-key', 'sms-request-key', db)
+    assert next(a for a in result['actions'] if a['action'] == 'send_customer_sms')['status'] == 'succeeded'
+    mod.intake(body, request(), 'test-intake-key', 'sms-request-key', db)
+    assert sent == [result['lead_id']]
+
+
+def test_intake_sms_failure_keeps_lead_and_link(traced_intake, monkeypatch):
+    mod, db, body = traced_intake
+    monkeypatch.setenv('PUBLIC_MOVE_LINK_DRY_RUN', 'false')
+    def fail(*args): raise HTTPException(502, 'SMS provider failed')
+    monkeypatch.setattr(mod, 'deliver_customer_link_sms', fail)
+    response = mod.intake(body, request(), 'test-intake-key', 'sms-request-key', db)
+    result = json.loads(response.body)
+    assert result['status'] == 'partial'
+    assert result['url'].startswith('https://example.com/move/')
+    assert db.get(models.Lead, result['lead_id']) is not None
+    action = next(a for a in result['actions'] if a['action'] == 'send_customer_sms')
+    assert action['status'] == 'failed'
+    assert action['error']['message'] == 'SMS provider failed'
+
+
+def test_intake_sms_respects_dry_run(traced_intake, monkeypatch):
+    mod, db, body = traced_intake
+    monkeypatch.setenv('PUBLIC_MOVE_LINK_DRY_RUN', 'true')
+    sender = MagicMock()
+    monkeypatch.setattr(mod, 'deliver_customer_link_sms', sender)
+    result = mod.intake(body, request(), 'test-intake-key', 'sms-request-key', db)
+    sender.assert_not_called()
+    assert next(a for a in result['actions'] if a['action'] == 'send_customer_sms')['response']['dry_run'] is True
