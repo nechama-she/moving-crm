@@ -1,3 +1,4 @@
+import QuestionReferenceImages from "./QuestionReferenceImages";
 import ReportLinks from './ReportLinks';
 import { savedPhotos, storePhoto, removePhoto } from './photoDrafts';
 import ManualInventoryModal from "./ManualInventoryModal";
@@ -21,7 +22,7 @@ type Details = {
   editable_files?: EditableReportFile[];
   files_changed?: boolean;
   packing_package: PackingPackage | null;
-  packing_items: { id: string; label: string; price: number; selected: boolean; selected_service: string | null; services: { kind: string; price: number }[] }[];
+  packing_items: { id: string; name: string; label: string; price: number; selected: boolean; selected_service: string | null; services: { kind: string; price: number }[] }[];
   packing_saved: boolean;
   name: string;
   phone: string;
@@ -650,6 +651,7 @@ export default function CustomerMovePage() {
                             }} />
                             <span>{item.label}{item.services.length === 1 && <> &mdash; {item.services[0].kind === 'packing' ? 'Packing' : 'Crating'}: {money(item.services[0].price)}</>}</span>
                           </label>
+                          <QuestionReferenceImages name={item.name} endpoint={`${base}/question-images`} linkKey={key} session={session} />
                           {item.id in packingSelection && item.services.length > 1 && (
                             <fieldset disabled={packingSaving}>
                               <legend>Choose a service for {item.label}</legend>

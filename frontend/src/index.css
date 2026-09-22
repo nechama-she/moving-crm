@@ -1541,3 +1541,18 @@ button:focus-visible {
 .ld-box-table .ld-box-icon:hover { background: #eef4ff; border-color: #0176d3; }
 .ld-box-table .ld-box-empty { padding: 12px 10px; color: #706e6b; }
 @media (max-width: 600px) { .ld-box-table .ld-box-price { width: 130px; } }
+
+/* Keep section controls together instead of squeezing them into a vertical stack. */
+.pricing-section-heading { flex-wrap: wrap; padding: 10px 14px; background: #fafaf9; gap: 8px 12px; }
+.pricing-section-heading .pricing-section-title { flex: 1 1 160px; width: auto; min-width: 0; margin: 0; padding: 4px 0; text-align: left; }
+.pricing-section-heading .pricing-section-title span { flex-wrap: wrap; }
+.pricing-section-heading .pricing-section-actions { flex: 0 0 auto; display: flex; flex-wrap: nowrap; gap: 8px; margin-left: auto; max-width: 100%; }
+.pricing-section-actions .slds-button { margin: 0; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-width: 34px; height: 34px; padding: 0 8px; border-radius: 6px; cursor: pointer; }
+.pricing-section-actions .pricing-section-text-action { padding: 0 12px; }
+.pricing-section-actions .slds-button:hover:not(:disabled) { background: #eef6ff; border-color: #0176d3; }
+.pricing-section-actions .slds-button:focus-visible { outline: 2px solid #0176d3; outline-offset: 2px; }
+@media (max-width: 640px) {
+  .pricing-section-heading { padding: 10px 12px; }
+  .pricing-section-heading .pricing-section-actions { flex-wrap: wrap; }
+  .pricing-section-actions .slds-button { min-height: 40px; min-width: 40px; }
+}

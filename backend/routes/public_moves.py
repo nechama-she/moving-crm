@@ -1341,3 +1341,26 @@ def finish_upload(body: FinishUpload, background_tasks: BackgroundTasks, access:
     except Exception: pass  # Bucket lifecycle removes abandoned staging objects.
     queue_uploaded_file(access,row.id,db)
     return {'id':row.id}
+
+
+class QuestionImagesRequest(BaseModel):
+    names: list[str] = Field(max_length=20)
+
+
+@router.post('/api/public-moves/{access_id}/question-images')
+def customer_question_images(body: QuestionImagesRequest, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from report_question_images import question_images
+    conversation = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
+    if not conversation:
+        return {'images': {}}
+    details = json.loads(conversation.details or '{}')
+    if details.get('last_spark_status') != 'completed':
+        return {'images': {}}
+    try:
+        images = question_images(details, body.names)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(502, 'Reference photos are temporarily unavailable. You can still answer the question.') from exc
+    conversation.details = json.dumps(details)
+    db.commit()
+    return {'images': images}
