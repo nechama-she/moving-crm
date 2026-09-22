@@ -1543,3 +1543,58 @@ def test_cognito_send_failure_invalidates_code(portal, monkeypatch):
     with pytest.raises(HTTPException): mod.send_code(mod.CodeRequest(channel='email'), access, db)
     assert access.otp_hash is None
     assert db.query(models.PublicMoveSession).count() == 0
+
+def test_item_answers_validate_report_choice_and_acknowledgment(portal, monkeypatch):
+    mod, db, lead, access = portal
+    from inventory_questions import questions
+    company=models.Company(id='questions-company',name='Questions Co',customer_questions=json.dumps([{
+        'id':'plant','title':'Plant','enabled':True,'question':'Is it live?','item_ids':[],'words':['plant'],'photo':False,
+        'answers':[{'id':'yes','label':'Yes','action':'exclude','notice':'Not accepted','acknowledge':True},
+                   {'id':'no','label':'No','action':'none','notice':'','acknowledge':False}]}]))
+    db.add(company); lead.company=company
+    state={'last_spark_id':'report','last_spark_status':'completed','spark_inventory_snapshot':[{'name':'Plant','cuft':10,'amount':1}]}
+    conversation=models.LeadLiveSwitch(lead_id=lead.id,details=json.dumps(state)); db.add(conversation); db.commit()
+    question=questions(company,state,db)[0]
+    apply=MagicMock(return_value={'ok':True})
+    monkeypatch.setitem(sys.modules,'routes.liveswitch',SimpleNamespace(apply_spark_results_to_lead=apply))
+    monkeypatch.setattr(mod,'details',lambda access,db: {'updated':True})
+    body=dict(report_id='report',question_id=question['id'],answer_id='yes')
+    for changes,status in [({'report_id':'old'},409),({'question_id':'bad'},409),({'answer_id':'bad'},400),({},400)]:
+        with pytest.raises(HTTPException) as exc:
+            mod.save_item_answer(mod.ItemAnswerInput(**{**body,**changes}),access,db)
+        assert exc.value.status_code==status
+    assert not apply.called
+    assert mod.save_item_answer(mod.ItemAnswerInput(**body,acknowledged=True),access,db)=={'updated':True}
+    stored=json.loads(conversation.details)['report_question_answers'][question['id']]
+    assert stored['action']=='exclude' and stored['acknowledged']
+    assert stored['name']=='Plant'
+    assert apply.call_args.kwargs=={'expected_report_id':'report','use_snapshot':True}
+
+def test_question_manager_company_scope_and_revision(portal, monkeypatch):
+    mod, db, lead, access = portal
+    company=models.Company(id='rule-company', name='Rules')
+    other=models.Company(id='other-company', name='Other')
+    db.add_all([company,other]); db.commit()
+    mocks={name:MagicMock() for name in ['auth','database','routes.leads']}
+    mocks['auth'].require_admin=lambda:None
+    mocks['database'].get_db=lambda:None
+    mocks['routes.leads']._get_user_company_ids=lambda user,db:[company.id]
+    spec=importlib.util.spec_from_file_location('test_question_routes',BACKEND/'routes/inventory_questions.py')
+    api=importlib.util.module_from_spec(spec)
+    with patch.dict(sys.modules,mocks): spec.loader.exec_module(api)
+    user=SimpleNamespace(id='admin',role='admin')
+    with pytest.raises(HTTPException) as exc: api.get_rules(other.id,user,db)
+    assert exc.value.status_code==403
+    initial=api.get_rules(company.id,user,db)
+    rule={'id':'rule','title':'Plants','question':'Live plant?','words':['plant'],'answers':[
+        {'id':'yes','label':'Yes','action':'notice','notice':'Please contact us'}, {'id':'no','label':'No'}]}
+    body=api.RulesInput(revision=initial['revision'],rules=[rule])
+    result=api.save_rules(company.id,body,user,db)
+    assert result['rules'][0]['question']=='Live plant?'
+    with pytest.raises(HTTPException) as exc: api.save_rules(company.id,body,user,db)
+    assert exc.value.status_code==409
+    rule['item_ids']=['missing']
+    with pytest.raises(HTTPException) as exc:
+        api.save_rules(company.id,api.RulesInput(revision=result['revision'],rules=[rule]),user,db)
+    assert exc.value.status_code==400
+    assert other.customer_questions is None

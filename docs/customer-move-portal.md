@@ -110,3 +110,15 @@ not confirmed inbox delivery. Test real delivery after deployment; unit tests
 mock AWS and do not send email.
 
 AWS reference: https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminCreateUser.html
+
+## Managed item questions
+
+Admins manage company-specific rules under Settings > Moving terms. Select catalog items, optionally enter comma-separated whole words or phrases for custom/report names, and preview matches before enabling the rule. Catalog selections also match report items with the same normalized name. No plant classifications or transport policies are assumed automatically.
+
+Set the question and answer choices, then choose each answer's action: keep included, show instructions, exclude from shipment/volume, require preparation, or flag for staff review. Add the company's explanation and optional required acknowledgment. New rules start disabled. Save questions after editing; duplicate and reorder controls are available.
+
+Customer questions appear after existing packing/service choices. Only matching inventory rows are shown, with room/quantity and available report photos. Exclusions recalculate from the original report and can be reversed by changing the answer. Answers belong to the report; new reports do not inherit them. Changing a rule requires a fresh answer. The CRM LiveSwitch panel displays saved answers and instructions when opened/refreshed. A staff-review flag does not send a notification or assign a task.
+
+Example: select the relevant plant catalog entries, add any additional report-name matching words, ask whether the plant is live, and configure Yes to exclude with the company's policy explanation. For specialist packing, select the affected items, ask whether they are already prepared, and configure No as Preparation required with the exact instructions.
+
+Deployment runs the existing migration to add nullable `companies.customer_questions`; existing companies have no rules until configured. This does not modify the external website repository.

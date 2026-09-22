@@ -58,6 +58,14 @@ export default function SettingsPage() {
           </div>
         </section> : null}
 
+        {isAdmin ? <section style={card}>
+          <h2 style={sectionHeader}>Moving terms</h2>
+          <p style={desc}>Manage item restrictions, preparation requirements, and customer acknowledgments by company.</p>
+          <div style={actionsRow}>
+            <Link to="/settings/moving-terms" style={primaryLink}>Manage Moving Terms</Link>
+          </div>
+        </section> : null}
+
         {canViewPricing ? <section style={card}>
           <h2 style={sectionHeader}>Pricing Books</h2>
           <p style={desc}>Review company rates, pricing exceptions, and additional services in one place.</p>

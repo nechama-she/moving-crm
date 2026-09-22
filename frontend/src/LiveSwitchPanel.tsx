@@ -8,6 +8,7 @@ import { authHeaders, useAuth } from "./AuthContext";
 import "./LiveSwitchPanel.css";
 
 type Conversation = {
+  report_question_answers?: Record<string, { name: string; room: string; question: string; answer: string; action: string; notice: string; acknowledged: boolean }>;
   id: string;
   hostJoinUrl: string;
   participantJoinUrl: string;
@@ -480,7 +481,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
         )}
         <ReportHistory reports={reportHistory} onSelect={selectReport} disabled={busy || sparkRunning || calculatingPrice} staff />
         </section>
-        <CustomerPageControls leadId={leadId}/><section className="ls-card"><button className="slds-button ls-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "\u25be" : "\u25b8"} Conversation viewer</button>{expanded ? <>{conversation.conversationUrl ? <a href={conversation.conversationUrl} target="_blank" rel="noopener noreferrer">Open conversation in a new tab</a> : null}{conversation.embeddedConversationUrl ? <iframe title="LiveSwitch conversation" src={conversation.embeddedConversationUrl} style={{ pointerEvents: resizing ? "none" : undefined }} allow="camera; microphone; fullscreen; display-capture"/> : !conversation.conversationUrl ? <p>Conversation viewer unavailable.</p> : null}</> : null}</section>
+        {Object.keys(conversation.report_question_answers || {}).length > 0 && <section className="ls-card"><h3>Customer item answers</h3>{Object.entries(conversation.report_question_answers || {}).map(([id, answer]) => <div key={id} style={{ borderBottom: "1px solid #d8e0eb", padding: "12px 0" }}><strong>{answer.name}{answer.room ? ` ? ${answer.room}` : ""}</strong><p>{answer.question} <strong>{answer.answer}</strong></p><p>{({ exclude: "Excluded from shipment", prepare: "Preparation required", review: "Staff review required", notice: "Instructions shown", none: "Included" } as Record<string, string>)[answer.action]}</p>{answer.notice && <p>{answer.notice}</p>}{answer.acknowledged && <small>Customer acknowledged</small>}</div>)}</section>}<CustomerPageControls leadId={leadId}/><section className="ls-card"><button className="slds-button ls-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "\u25be" : "\u25b8"} Conversation viewer</button>{expanded ? <>{conversation.conversationUrl ? <a href={conversation.conversationUrl} target="_blank" rel="noopener noreferrer">Open conversation in a new tab</a> : null}{conversation.embeddedConversationUrl ? <iframe title="LiveSwitch conversation" src={conversation.embeddedConversationUrl} style={{ pointerEvents: resizing ? "none" : undefined }} allow="camera; microphone; fullscreen; display-capture"/> : !conversation.conversationUrl ? <p>Conversation viewer unavailable.</p> : null}</> : null}</section>
       </> : null}<p className="ls-notice" role="status">{notice}</p></main>
     </div>
   </div>, document.body);

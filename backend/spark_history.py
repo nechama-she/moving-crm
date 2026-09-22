@@ -1,7 +1,7 @@
 """Report snapshots stored with the lead's existing LiveSwitch conversation."""
 from copy import deepcopy
 
-REPORT_KEYS = ('last_spark_id', 'last_spark_status', 'last_spark_at', 'last_spark_share_url',
+REPORT_KEYS = ('report_question_answers', 'question_original_rows', 'question_original_cuft', 'question_original_weight', 'question_excluded_items', 'last_spark_id', 'last_spark_status', 'last_spark_at', 'last_spark_share_url',
                'spark_extracted_id', 'spark_extracted_cuft', 'spark_extracted_weight',
                'spark_processing', 'spark_inventory_snapshot', 'spark_pricing_ready',
                'report_conversation', 'report_files', 'pending_spark_payload',

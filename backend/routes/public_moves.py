@@ -600,7 +600,9 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
         packing_package = customer_packing_package(lead, job, db)
         packing_items = customer_packing_options(lead, job, db)
 
-    return {'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    from inventory_questions import questions
+    item_questions = questions(active_company, conv_details, db) if spark_info and spark_info.get('status') == 'completed' else []
+    return {'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': company_data['name'],
             'company_details': company_data,
@@ -1364,3 +1366,42 @@ def customer_question_images(body: QuestionImagesRequest, access: PublicMoveAcce
     conversation.details = json.dumps(details)
     db.commit()
     return {'images': images}
+
+
+class ItemAnswerInput(BaseModel):
+    report_id: str
+    question_id: str
+    answer_id: str
+    acknowledged: bool = False
+
+
+@router.post('/api/public-moves/{access_id}/item-answer')
+def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from inventory_questions import questions
+    from spark_history import remember_report
+    from routes.liveswitch import apply_spark_results_to_lead
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
+    state = json.loads(saved.details or '{}') if saved else {}
+    if state.get('last_spark_id') != body.report_id or state.get('last_spark_status') != 'completed':
+        raise HTTPException(409, 'Your inventory report changed. Refresh before answering.')
+    lead = db.get(Lead, access.lead_id)
+    company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
+    current_questions = questions(company, state, db)
+    question = next((q for q in current_questions if q['id'] == body.question_id), None)
+    if not question: raise HTTPException(409, 'This question changed. Refresh before answering.')
+    option = next((a for a in question['answers'] if a['id'] == body.answer_id), None)
+    if not option: raise HTTPException(400, 'Choose an available answer')
+    if option.get('acknowledge') and not body.acknowledged: raise HTTPException(400, 'Please acknowledge the item instructions')
+    valid_ids = {q['id'] for q in current_questions}
+    state['report_question_answers'] = {k: v for k, v in state.get('report_question_answers', {}).items() if k in valid_ids}
+    state['report_question_answers'][question['id']] = {'answer_id': option['id'],
+        'name': question['name'], 'room': question['room'], 'question': question['question'], 'answer': option['label'],
+        'acknowledged': body.acknowledged, 'action': option['action'], 'notice': option['notice'],
+        'answered_at': NOW().isoformat() + 'Z'}
+    remember_report(state)
+    saved.details = json.dumps(state)
+    db.commit()
+    result = apply_spark_results_to_lead(lead.id, state.get('last_spark_share_url', ''), db,
+        expected_report_id=body.report_id, use_snapshot=True)
+    if not result.get('ok'): raise HTTPException(502, result.get('detail', 'Could not update the estimate'))
+    return details(access, db)

@@ -19,7 +19,7 @@ from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update
 from models import AccessAuditLog, Lead, User
 from access_errors import capture_response_error, exception_message
 from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
-from routes import public_moves, local_pricing
+from routes import public_moves, local_pricing, inventory_questions
 from routes.meta import messenger, instagram
 
 logger = logging.getLogger("moving-crm.access")
@@ -427,6 +427,7 @@ app.include_router(duplication_rules.router)
 app.include_router(referral_assignment_rules.router)
 app.include_router(liveswitch.router)
 app.include_router(public_moves.router)
+app.include_router(inventory_questions.router)
 # Triggers backend Lambda processing - admin only.
 app.include_router(smartmoving.router, dependencies=[Depends(require_admin)])
 app.include_router(followups.router)

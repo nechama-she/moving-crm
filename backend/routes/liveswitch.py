@@ -506,6 +506,8 @@ def fetch_and_extract_spark_report(share_url: str, processing=None) -> tuple[flo
                         if name or qty > 0 or row_cuft > 0:
                             inventory_rows.append({
                                 "name": name or "Item",
+                                "room": str(row.get("room") or ""),
+                                "weight": round(qty * u_wt, 2),
                                 "cuft": row_cuft if row_cuft > 0 else 0.0,
                                 "amount": round(qty, 2) if qty > 0 else 0.0,
                             })
@@ -528,7 +530,7 @@ def fetch_and_extract_spark_report(share_url: str, processing=None) -> tuple[flo
     return cuft, weight, inventory_rows
 
 
-def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expected_report_id: str | None = None) -> dict:
+def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expected_report_id: str | None = None, use_snapshot: bool = False) -> dict:
     lead = db.get(Lead, lead_id)
     if not lead:
         raise HTTPException(404, "Lead not found")
@@ -541,7 +543,7 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
     processing.mark('download', 'running')
     processing.persist(db, lead_id)
     try:
-        if details.get('report_source') == 'manual':
+        if use_snapshot or details.get('report_source') == 'manual':
             cuft, weight = details.get('spark_extracted_cuft'), details.get('spark_extracted_weight')
             inventory_rows = details.get('spark_inventory_snapshot', [])
             processing.mark('download', 'success', 'Using saved room inventory; no LiveSwitch request')
@@ -562,9 +564,13 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
                 db.rollback()
                 return {'ok': False, 'detail': 'A different report is now current. Refresh to see its results.'}
             details = current_details
-        if not cuft or cuft <= 0:
+        if (not cuft or cuft <= 0) and not details.get('question_original_rows'):
             raise ValueError('No positive volume could be extracted from structuredResult item-list rows or the report total')
 
+        from inventory_questions import adjusted_inventory
+        from models import Company
+        question_company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
+        inventory_rows, cuft, weight = adjusted_inventory(question_company, details, inventory_rows, cuft, weight, db)
         processing.mark('extract', 'success', f'{len(inventory_rows)} inventory rows; {cuft:g} cu ft')
         processing.mark('inventory', 'running')
         lead.volume = Decimal(str(cuft))
@@ -596,7 +602,8 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
             processing.mark('inventory', 'success', f'{len(inventory_rows)} rows prepared for job {job.job_order}')
             processing.mark('pricing', 'running')
             from routes.pricing import calculate_and_save_lead_job_price
-            price = calculate_and_save_lead_job_price(lead, job, db)
+            price = calculate_and_save_lead_job_price(lead, job, db) if cuft > 0 else None
+            if cuft <= 0: job.price = None
             if price is None:
                 processing.mark('pricing', 'error', 'No price returned - click to view details',
                                 'The pricing calculator returned no price. Check move volume, company, active pricing book, pickup/delivery matching, and configured rates.')
@@ -608,6 +615,7 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
         access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
         if access:
             access.published_cuft = lead.volume
+            if cuft <= 0: access.published_price = None
             if price is not None:
                 access.published_price = job.price
                 access.published_at = datetime.utcnow()

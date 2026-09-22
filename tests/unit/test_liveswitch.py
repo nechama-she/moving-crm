@@ -18,7 +18,7 @@ def api():
     for node in functions:
         node.decorator_list = []
         node.returns = None
-        node.args.defaults = node.args.defaults[-1:] if node.name == 'apply_spark_results_to_lead' else []
+        node.args.defaults = node.args.defaults[-2:] if node.name == 'apply_spark_results_to_lead' else []
         for arg in node.args.args:
             arg.annotation = None
     lead = SimpleNamespace(id='lead-1', smartmoving_id='sm-1', quote_number=None, phone=' 1112223333 ', assignee=None, company=SimpleNamespace(phone=' 2405707987 ', aircall_number_id='company-number'))
@@ -266,7 +266,7 @@ def reports():
     for node in functions:
         node.decorator_list = []
         node.returns = None
-        node.args.defaults = node.args.defaults[-1:] if node.name == 'apply_spark_results_to_lead' else []
+        node.args.defaults = node.args.defaults[-2:] if node.name == 'apply_spark_results_to_lead' else []
         for arg in node.args.args: arg.annotation = None
     import sys
     sys.path.insert(0, str(source.parents[1]))
@@ -300,7 +300,7 @@ def test_latest_completed_report_replaces_old_cuft_in_same_status_response(repor
 def test_apply_latest_report_reads_volume_again_and_reprices(reports):
     import sys
     from unittest.mock import patch
-    lead = SimpleNamespace(id='lead', volume=86.3, weight=604)
+    lead = SimpleNamespace(id='lead', volume=86.3, weight=604, company=SimpleNamespace(customer_questions=None))
     saved = SimpleNamespace(details=json.dumps({'last_spark_id': 'new-report', 'spark_extracted_cuft': 86.3}))
     job = SimpleNamespace(id='job', job_order=1, price=699)
     access = SimpleNamespace()

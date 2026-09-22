@@ -34,6 +34,7 @@ class Company(Base):
     name = Column(String(255), nullable=False, unique=True)
     color = Column(String(7))
     logo = Column(Text, nullable=True)
+    customer_questions = Column(Text, nullable=True)
     phone = Column(String(30))
     office_address = Column(Text, nullable=False, default="", server_default="")
     facebook_page_id = Column(String(100), unique=True, index=True)
