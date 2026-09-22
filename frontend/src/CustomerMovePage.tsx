@@ -1,3 +1,5 @@
+import CustomerAddressInput from "./CustomerAddressInput";
+import type { SelectedAddress } from "./googlePlaces";
 import CustomerItemQuestions, { type ItemQuestion } from "./CustomerItemQuestions";
 import QuestionReferenceImages from "./QuestionReferenceImages";
 import ReportLinks from './ReportLinks';
@@ -15,6 +17,7 @@ import "./CustomerMovePage.css";
 
 type LinkSms = { sent_at: string; phone_last4: string };
 type Details = {
+  google_maps_browser_key?: string;
   item_questions?: ItemQuestion[];
   link_sms?: LinkSms | null;
   list_changed?: boolean;
@@ -78,6 +81,7 @@ export default function CustomerMovePage() {
     if (photosRestored && data && session && !busy && !uploadLock.current && files.some(file => file.status === 'Ready')) void upload();
   }, [files, photosRestored, data, session, busy]);
   const [editingMove,setEditingMove]=useState(false);
+  const [addressSelections, setAddressSelections] = useState<{ pickup: SelectedAddress | null; delivery: SelectedAddress | null }>({ pickup: null, delivery: null });
   const [moveDraft,setMoveDraft]=useState({name:'',phone:'',email:'',move_date:'',pickup:'',delivery:''});
   const [reportState,setReportState]=useState<'idle'|'running'|'done'>('idle');
   const [reportNotice,setReportNotice]=useState('');
@@ -151,7 +155,7 @@ export default function CustomerMovePage() {
   }
   useEffect(()=>{
     document.title='Your move';
-    const referrer=document.createElement('meta');referrer.name='referrer';referrer.content='no-referrer';document.head.appendChild(referrer);
+    const referrer=document.createElement('meta');referrer.name='referrer';referrer.content='strict-origin';document.head.appendChild(referrer);
     const urls=previews.current;
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
@@ -248,6 +252,7 @@ export default function CustomerMovePage() {
       pickup:data.pickup||'',
       delivery:data.delivery||'',
     });
+    setAddressSelections({ pickup: null, delivery: null });
     setEditingMove(true);
   }
 
@@ -256,7 +261,12 @@ export default function CustomerMovePage() {
     setBusy(true);
     setError('');
     try{
-      const result=await call('/details',moveDraft);
+      for (const field of ['pickup', 'delivery'] as const) {
+        if (moveDraft[field] !== data?.[field] && (!addressSelections[field] || addressSelections[field]?.formatted_address !== moveDraft[field])) {
+          throw new Error(`Select a ${field} suggestion with at least a city and state.`);
+        }
+      }
+      const result=await call('/details', { ...moveDraft, pickup_place: addressSelections.pickup, delivery_place: addressSelections.delivery });
       setData(result);
       setEditingMove(false);
     }catch(err){
@@ -410,14 +420,10 @@ export default function CustomerMovePage() {
                       Move Date
                       <input type="date" value={moveDraft.move_date} onChange={e=>setMoveDraft(prev=>({...prev,move_date:e.target.value}))} />
                     </label>
-                    <label>
-                      Pickup Address / Zip
-                      <input type="text" placeholder="123 Main St, City, ST 12345" value={moveDraft.pickup} onChange={e=>setMoveDraft(prev=>({...prev,pickup:e.target.value}))} />
-                    </label>
-                    <label>
-                      Delivery Address / Zip
-                      <input type="text" placeholder="456 Elm St, City, ST 67890" value={moveDraft.delivery} onChange={e=>setMoveDraft(prev=>({...prev,delivery:e.target.value}))} />
-                    </label>
+                    <CustomerAddressInput label="Pickup address" apiKey={data.google_maps_browser_key || ''} initialValue={data.pickup || ''} disabled={busy}
+                      onChange={(text, place) => { setMoveDraft(prev => ({ ...prev, pickup: text })); setAddressSelections(prev => ({ ...prev, pickup: place })); }} />
+                    <CustomerAddressInput label="Delivery address" apiKey={data.google_maps_browser_key || ''} initialValue={data.delivery || ''} disabled={busy}
+                      onChange={(text, place) => { setMoveDraft(prev => ({ ...prev, delivery: text })); setAddressSelections(prev => ({ ...prev, delivery: place })); }} />
                     <label>
                       Full Name
                       <input type="text" value={moveDraft.name} onChange={e=>setMoveDraft(prev=>({...prev,name:e.target.value}))} />

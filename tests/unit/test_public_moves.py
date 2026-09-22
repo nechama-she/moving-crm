@@ -1598,3 +1598,41 @@ def test_question_manager_company_scope_and_revision(portal, monkeypatch):
         api.save_rules(company.id,api.RulesInput(revision=result['revision'],rules=[rule]),user,db)
     assert exc.value.status_code==400
     assert other.customer_questions is None
+
+@pytest.mark.parametrize('text', ['', 'nonsense', '90210', 'Los Angeles'])
+def test_customer_route_edits_require_selected_place(portal, text):
+    mod, db, lead, access = portal
+    with pytest.raises(HTTPException) as exc:
+        mod.selected_customer_address(text, 'Old address', None, 'Pickup')
+    assert exc.value.status_code == 400
+
+
+def test_customer_route_city_and_state_selection(portal):
+    mod, db, lead, access = portal
+    place=mod.CustomerAddressSelection(place_id='google-place-id',formatted_address='Miami, FL, USA',city='Miami',state='FL',country='US')
+    assert mod.selected_customer_address('Miami, FL, USA','Old address',place,'Pickup')=='Miami, FL, USA'
+    with pytest.raises(HTTPException):
+        mod.selected_customer_address('Different text','Old address',place,'Pickup')
+    assert mod.selected_customer_address('Old address','Old address',None,'Pickup')=='Old address'
+    assert mod.selected_customer_address(None,'Old address',None,'Delivery')=='Old address'
+    for field in ['city','state','place_id']:
+        with pytest.raises(ValueError):
+            mod.CustomerAddressSelection(**{**place.model_dump(),field:' '})
+
+
+def test_invalid_address_does_not_mutate_customer_details(portal, monkeypatch):
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod,'_read_job_route',lambda db,job:('Old pickup',[], 'Old delivery'))
+    with pytest.raises(HTTPException):
+        mod.update_customer_details(mod.CustomerDetailsPatch(name='Changed',pickup='Made up address'),access,db)
+    assert lead.full_name == 'Jane Smith'
+
+
+def test_selected_customer_route_preserves_stops(portal, monkeypatch):
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod,'_read_job_route',lambda db,job:('Old pickup',['Storage'], 'Old delivery'))
+    persist=MagicMock(); monkeypatch.setattr(mod,'_persist_job_route',persist)
+    monkeypatch.setattr(mod,'details',lambda access,db:{'saved':True})
+    body=mod.CustomerDetailsPatch(pickup='Miami, FL, USA',pickup_place=dict(place_id='google-place-id',formatted_address='Miami, FL, USA',city='Miami',state='FL',country='US'))
+    assert mod.update_customer_details(body,access,db)=={'saved':True}
+    persist.assert_called_once_with(db,access.job_id,'Miami, FL, USA',['Storage'],'Old delivery')

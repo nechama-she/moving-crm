@@ -1,0 +1,6 @@
+.cm-address-input { min-width: 0; }
+.cm-address-input > label { display: block; margin-bottom: 6px; }
+.cm-address-input gmp-place-autocomplete { width: 100%; box-sizing: border-box; color-scheme: light; font: inherit; border: 1px solid #dbc7c2; border-radius: 6px; }
+.cm-address-input small { display: block; margin-top: 5px; }
+.cm-address-error { color: #a12622; font-size: 13px; margin-top: 6px; }
+.cm-address-error button { display: block; margin-top: 4px; }

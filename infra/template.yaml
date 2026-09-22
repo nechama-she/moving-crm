@@ -905,6 +905,8 @@ Resources:
                   - cognito-idp:UpdateUserPool
                   - cognito-idp:DeleteUserPool
                   - cognito-idp:DescribeUserPool
+                  - cognito-idp:SetLogDeliveryConfiguration
+                  - cognito-idp:GetLogDeliveryConfiguration
                   - cognito-idp:TagResource
                   - cognito-idp:UntagResource
                   - cognito-idp:ListTagsForResource
@@ -1031,6 +1033,19 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
                   - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/vendedlogs/cognito/moving-crm-*"
+              # Cognito's vended-log delivery setup requires account-level APIs.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
               # CodeStar Connections (for pipeline source action)
               - Effect: Allow
                 Action:
@@ -1289,6 +1304,27 @@ Resources:
           AttributeDataType: String
           Required: true
           Mutable: false
+
+  CustomerPortalEmailLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: CloudFormationExecutionRole
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/vendedlogs/cognito/moving-crm-customer-email-${Environment}
+      RetentionInDays: 30
+
+  CustomerPortalEmailLogDelivery:
+    Type: AWS::Cognito::LogDeliveryConfiguration
+    DependsOn: CloudFormationExecutionRole
+    Properties:
+      UserPoolId: !Ref CustomerPortalUserPool
+      LogConfigurations:
+        - EventSource: userNotification
+          LogLevel: ERROR
+          CloudWatchLogsConfiguration:
+            # Cognito expects the group ARN without the :* suffix from GetAtt Arn.
+            LogGroupArn: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${CustomerPortalEmailLogGroup}
 
   ApiLambdaRole:
     Type: AWS::IAM::Role
@@ -2325,6 +2361,14 @@ Resources:
       TreatMissingData: notBreaching
 
 Outputs:
+  CustomerEmailErrorsLogGroup:
+    Description: Cognito notification errors (30-day retention; not delivery receipts).
+    Value: !Ref CustomerPortalEmailLogGroup
+
+  CustomerEmailSendAttemptsLogGroup:
+    Description: Search for customer_email_send to trace each CRM email attempt and Cognito request ID.
+    Value: !Sub /aws/lambda/moving-crm-api-${Environment}
+
   FrontendURL:
     Description: Frontend URL (CloudFront)
     Value: !Sub "https://${CloudFrontDistribution.DomainName}"

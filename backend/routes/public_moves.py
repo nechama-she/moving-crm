@@ -602,7 +602,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
 
     from inventory_questions import questions
     item_questions = questions(active_company, conv_details, db) if spark_info and spark_info.get('status') == 'completed' else []
-    return {'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    return {'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': company_data['name'],
             'company_details': company_data,
@@ -746,7 +746,32 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     return details(access, db)
 
 
+class CustomerAddressSelection(BaseModel):
+    place_id: str = Field(min_length=1, max_length=300)
+    formatted_address: str = Field(min_length=1, max_length=500)
+    city: str = Field(min_length=1, max_length=200)
+    state: str = Field(min_length=1, max_length=100)
+    country: str = Field(min_length=2, max_length=3)
+
+    @field_validator('place_id', 'formatted_address', 'city', 'state', 'country')
+    @classmethod
+    def nonblank(cls, value):
+        if not value.strip():
+            raise ValueError('Select a Google address with a city and state')
+        return value.strip()
+
+
+def selected_customer_address(value, current, selection, label):
+    if value is None or value.strip() == current:
+        return current
+    if selection is None or selection.formatted_address != value.strip():
+        raise HTTPException(400, f'Select a {label.lower()} suggestion with at least a city and state.')
+    return selection.formatted_address
+
+
 class CustomerDetailsPatch(BaseModel):
+    pickup_place: CustomerAddressSelection | None = None
+    delivery_place: CustomerAddressSelection | None = None
     name: str | None = Field(default=None, max_length=200)
     phone: str | None = Field(default=None, max_length=50)
     email: str | None = Field(default=None, max_length=200)
@@ -772,6 +797,11 @@ class CustomerDetailsPatch(BaseModel):
 def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     lead = db.query(Lead).filter_by(id=access.lead_id).with_for_update().one()
     job = db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
+
+    current_pickup, current_stops, current_delivery = _read_job_route(db, job)
+    # Validate route changes before mutating contact or scheduling details.
+    new_pickup = selected_customer_address(body.pickup, current_pickup, body.pickup_place, 'Pickup')
+    new_delivery = selected_customer_address(body.delivery, current_delivery, body.delivery_place, 'Delivery')
 
     if body.name is not None:
         trimmed_name = body.name.strip()
@@ -800,9 +830,6 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
             except ValueError as e:
                 raise HTTPException(400, 'Invalid move date format (expected YYYY-MM-DD)') from e
 
-    current_pickup, current_stops, current_delivery = _read_job_route(db, job)
-    new_pickup = body.pickup.strip() if body.pickup is not None else current_pickup
-    new_delivery = body.delivery.strip() if body.delivery is not None else current_delivery
     if body.pickup is not None or body.delivery is not None:
         job.pickup_zip = new_pickup
         job.delivery_zip = new_delivery

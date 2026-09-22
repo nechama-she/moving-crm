@@ -122,3 +122,35 @@ Customer questions appear after existing packing/service choices. Only matching 
 Example: select the relevant plant catalog entries, add any additional report-name matching words, ask whether the plant is live, and configure Yes to exclude with the company's policy explanation. For specialist packing, select the affected items, ask whether they are already prepared, and configure No as Preparation required with the exact instructions.
 
 Deployment runs the existing migration to add nullable `companies.customer_questions`; existing companies have no rules until configured. This does not modify the external website repository.
+
+## Google address autocomplete
+
+The customer page pickup and delivery editors use Google's Place Autocomplete (New) widget. Customers must select a suggestion containing a city and state; a full street address is optional. Editing the text clears the selection. Existing saved routes can remain unchanged when the customer edits contact details. Address search errors are shown inline; there is no free-text fallback for new addresses.
+
+Configure the website-restricted **browser** key in AWS Systems Manager Parameter Store as a String named `/moving-crm/dev/GOOGLE_MAPS_BROWSER_KEY` (replace `dev` for other environments). The existing API SSM-prefix configuration reads it; the verified customer-details response exposes only this browser key. For local development, set `GOOGLE_MAPS_BROWSER_KEY` in the backend environment. Do not use an unrestricted server key. Refresh/redeploy the API after changing the parameter because configuration is cached by the running process. The pipeline does not overwrite this externally managed parameter.
+
+Enable Maps JavaScript API and Places API (New), and permit both in the key's API restrictions. Website restrictions must permit the CRM/customer-page origin, including `https://d10a8a9ru9t44a.cloudfront.net/*` for the current dev distribution. The customer page uses an origin-only referrer policy so Google receives the allowed origin without the move URL or access token. The browser key is intentionally visible to the browser and must retain website/API restrictions.
+
+The browser fetches Google's address components; the API requires matching selection metadata on changed addresses before saving the route. This is suggestion-based customer input validation, not postal deliverability verification or an independent server-to-Google address lookup. Existing intake endpoints are unchanged.
+
+## Cognito email logs (configured by the pipeline)
+
+CloudFormation provisions `/aws/vendedlogs/cognito/moving-crm-customer-email-${Environment}` with 30-day retention and an `AWS::Cognito::LogDeliveryConfiguration` for `userNotification` / `ERROR`. The execution role receives Cognito and CloudWatch log-delivery setup permissions before the configuration is created. No console log-stream setup or Cognito Plus upgrade is required. Retained log groups survive stack deletion/replacement.
+
+For every customer email request, the API writes JSON events named `customer_email_send` to its existing `/aws/lambda/moving-crm-api-${Environment}` log group. Fields include `attempt_id`, `access_id`, `cognito_username`, masked recipient, `action` (CREATE/RESEND), `status`, AWS request ID, HTTP status, and redacted error details. Codes and full recipient addresses are omitted. CREATE and RESEND records from one customer request share an attempt ID.
+
+- `attempting`: the CRM is making a Cognito request.
+- `accepted`: Cognito accepted the API request. This is not proof of delivery or inbox placement.
+- `failed`: Cognito rejected the request or the pool was not configured.
+- `unknown`: an SDK/transport failure prevented confirmation of acceptance; the request may have reached AWS.
+
+The stack outputs `CustomerEmailErrorsLogGroup` and `CustomerEmailSendAttemptsLogGroup` identify where to look. In the API log group, a CloudWatch Logs Insights query can show the send history:
+
+```text
+fields @timestamp, @message
+| filter @message like /customer_email_send/
+| sort @timestamp desc
+| limit 200
+```
+
+Add an `access_id` or `attempt_id` filter to follow one customer/request. Cognito's native error schema is controlled by AWS and may omit recipient/request identifiers; correlate its available details with the pool and timestamps. Native notification logs are best effort, ERROR-only, and start after deployment. They do not backfill old email sends or provide delivered/opened receipts. The current COGNITO_DEFAULT sender and Lite pool remain in place.
