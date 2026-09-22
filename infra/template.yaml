@@ -2,6 +2,16 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Moving CRM — Full stack (VPC, RDS, S3, CodePipeline, CodeBuild)
 
 Parameters:
+  # Compatibility with deployed pipelines that still pass the former SES settings.
+  # Keep these accepted while the Infrastructure action updates itself.
+  CustomerPortalEmailIdentityArn:
+    Type: String
+    Default: ""
+    Description: Legacy compatibility parameter; unused by Cognito default email sending.
+  CustomerPortalEmailFrom:
+    Type: String
+    Default: ""
+    Description: Legacy compatibility parameter; unused by Cognito default email sending.
   PublicMoveEmbedOrigins:
     Type: String
     Default: "http://127.0.0.1:4321 http://localhost:4321"
