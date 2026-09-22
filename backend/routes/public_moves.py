@@ -393,10 +393,24 @@ def send_code(body: CodeRequest, access: PublicMoveAccess = Depends(public_acces
     code = f'{secrets.randbelow(1000000):06d}'
     access.otp_hash = secret_digest(access.id+':'+code); access.otp_expires = now+timedelta(minutes=10)
     access.otp_attempts = 0; access.otp_sent_at = now; access.otp_sends += 1; access.contact_hash = fingerprint
-    db.commit()
-    try: deliver_code(lead, channel, code, db)
-    except HTTPException: raise
-    except Exception as exc: raise HTTPException(502, 'Unable to deliver a code. Please try later or contact your moving team.') from exc
+    if isinstance(access, PublicMoveAccess):
+        access.cognito_email_challenge = None
+    if channel == 'email':
+        # Keep the access row locked until Cognito returns the challenge so a
+        # simultaneous resend cannot overwrite it with an older response.
+        from customer_email_auth import send_email_code
+        try:
+            access.cognito_email_challenge = json.dumps(send_email_code(lead.email))
+        except Exception:
+            access.otp_hash = None
+            db.commit()
+            raise
+        db.commit()
+    else:
+        db.commit()
+        try: deliver_code(lead, channel, code, db)
+        except HTTPException: raise
+        except Exception as exc: raise HTTPException(502, 'Unable to deliver a code. Please try later or contact your moving team.') from exc
     return {'sent': True, 'expires_in': 600, 'resend_after': 60}
 
 
@@ -412,7 +426,16 @@ def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_acce
     if not access.otp_hash or not access.otp_expires or access.otp_expires < NOW() or access.otp_attempts >= 5 or access.contact_hash != fingerprint:
         raise HTTPException(400, 'Code expired or unavailable. Request a new code.')
     access.otp_attempts += 1
-    if not hmac.compare_digest(access.otp_hash, secret_digest(access.id+':'+body.code)):
+    challenge = getattr(access, 'cognito_email_challenge', None)
+    if challenge:
+        from customer_email_auth import verify_email_code
+        try:
+            verify_email_code(json.loads(challenge), body.code)
+        except Exception:
+            db.commit()
+            raise
+        access.cognito_email_challenge = None
+    elif not hmac.compare_digest(access.otp_hash, secret_digest(access.id+':'+body.code)):
         db.commit(); raise HTTPException(400, 'Incorrect code. Please check and try again.')
     access.otp_hash = None
     token = secrets.token_urlsafe(32)

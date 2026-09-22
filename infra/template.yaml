@@ -2,6 +2,14 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Moving CRM — Full stack (VPC, RDS, S3, CodePipeline, CodeBuild)
 
 Parameters:
+  CustomerPortalEmailIdentityArn:
+    Type: String
+    Default: ""
+    Description: Verified SES identity ARN for Cognito customer email OTP; leave empty to keep it unconfigured.
+  CustomerPortalEmailFrom:
+    Type: String
+    Default: ""
+    Description: Sender email address belonging to the verified SES identity.
   PublicMoveEmbedOrigins:
     Type: String
     Default: "http://127.0.0.1:4321 http://localhost:4321"
@@ -76,6 +84,9 @@ Parameters:
     Description: Set to false for initial bootstrap (Lambda zip not yet in S3)
 
 Conditions:
+  HasCustomerPortalEmail: !And
+    - !Not [!Equals [!Ref CustomerPortalEmailIdentityArn, ""]]
+    - !Not [!Equals [!Ref CustomerPortalEmailFrom, ""]]
   ShouldDeployLambda: !Equals [!Ref DeployLambda, "true"]
   IsProd: !Equals [!Ref Environment, "prod"]
   IsDevEnvironment: !Equals [!Ref Environment, "dev"]
@@ -889,6 +900,26 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:CreateUserPool
+                  - cognito-idp:UpdateUserPool
+                  - cognito-idp:DeleteUserPool
+                  - cognito-idp:DescribeUserPool
+                  - cognito-idp:CreateUserPoolClient
+                  - cognito-idp:UpdateUserPoolClient
+                  - cognito-idp:DeleteUserPoolClient
+                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:TagResource
+                  - cognito-idp:UntagResource
+                  - cognito-idp:ListTagsForResource
+                Resource: "*"
+              - Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/email.cognito-idp.amazonaws.com/*"
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName: email.cognito-idp.amazonaws.com
               # Networking (VPC, subnets, security groups, route tables)
               - Effect: Allow
                 Action:
@@ -1152,6 +1183,8 @@ Resources:
                     {
                       "Environment": "${Environment}",
                       "PublicMoveEmbedOrigins": "${PipelineEmbedOrigins}",
+                      "CustomerPortalEmailIdentityArn": "${CustomerPortalEmailIdentityArn}",
+                      "CustomerPortalEmailFrom": "${CustomerPortalEmailFrom}",
                       "GitHubConnectionArn": "${GitHubConnectionArn}",
                       "GitHubRepo": "${GitHubRepo}",
                       "GitHubBranch": "${GitHubBranch}",
@@ -1240,6 +1273,43 @@ Resources:
   # ===========================================================================
   # API BACKEND LAMBDA + API GATEWAY
   # ===========================================================================
+  CustomerPortalUserPool:
+    Condition: HasCustomerPortalEmail
+    Type: AWS::Cognito::UserPool
+    DependsOn: CloudFormationExecutionRole
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: !Sub moving-crm-customers-${Environment}
+      UserPoolTier: ESSENTIALS
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      MfaConfiguration: "OFF"
+      Policies:
+        SignInPolicy:
+          AllowedFirstAuthFactors: [PASSWORD, EMAIL_OTP]
+      EmailConfiguration:
+        EmailSendingAccount: DEVELOPER
+        SourceArn: !Ref CustomerPortalEmailIdentityArn
+        From: !Ref CustomerPortalEmailFrom
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: false
+
+  CustomerPortalUserPoolClient:
+    Condition: HasCustomerPortalEmail
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: customer-page-server
+      UserPoolId: !Ref CustomerPortalUserPool
+      GenerateSecret: true
+      ExplicitAuthFlows: [ALLOW_USER_AUTH]
+      AuthSessionValidity: 10
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+
   ApiLambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -1259,6 +1329,13 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminInitiateAuth
+                  - cognito-idp:AdminRespondToAuthChallenge
+                  - cognito-idp:DescribeUserPoolClient
+                Resource: !If [HasCustomerPortalEmail, !GetAtt CustomerPortalUserPool.Arn, !Sub "arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/unconfigured"]
               - Effect: Allow
                 Action: ses:SendEmail
                 Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
@@ -1392,6 +1469,8 @@ Resources:
           AUTO_ASSIGN_DRY_RUN_ONLY: !If [IsProd, "false", "true"]
           NEW_LEAD_SMS_DRY_RUN: !If [IsProd, "false", "true"]
           REP_ASSIGNMENT_SMS_DRY_RUN: !If [IsProd, "false", "true"]
+          PUBLIC_MOVE_COGNITO_POOL_ID: !If [HasCustomerPortalEmail, !Ref CustomerPortalUserPool, ""]
+          PUBLIC_MOVE_COGNITO_CLIENT_ID: !If [HasCustomerPortalEmail, !Ref CustomerPortalUserPoolClient, ""]
           PUBLIC_MOVE_ORIGIN: !If
             - IsProd
             - !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${CloudFrontDistribution.DomainName}"]

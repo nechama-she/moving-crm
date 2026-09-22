@@ -999,6 +999,7 @@ class PublicMoveAccess(Base):
     expires_at = Column(DateTime, nullable=False)
     revoked = Column(Boolean, nullable=False, default=False)
     otp_hash = Column(String(64))
+    cognito_email_challenge = Column(Text)
     otp_expires = Column(DateTime)
     otp_attempts = Column(Integer, nullable=False, default=0)
     otp_sent_at = Column(DateTime)

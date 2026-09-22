@@ -90,12 +90,17 @@ def test_wrong_code_attempts_lock_challenge(portal):
     assert db.query(models.PublicMoveSession).count()==0
 
 
-def test_resend_limits_and_destination_cannot_be_supplied(portal):
+def test_resend_limits_and_destination_cannot_be_supplied(portal, monkeypatch):
     mod,db,lead,access=portal
-    sent=[]; mod.deliver_code=lambda l,c,code,db: sent.append((l.email,c,code))
+    import customer_email_auth
+    sent=[]
+    def send_email(email):
+        sent.append(email)
+        return {'username': 'customer', 'session': 'challenge'}
+    monkeypatch.setattr(customer_email_auth, 'send_email_code', send_email)
     mod.send_code(mod.CodeRequest(channel='email'),access,db)
-    assert sent[0][0]=='jane@example.com'
-    assert sent[0][2] not in access.otp_hash
+    assert sent == ['jane@example.com']
+    assert json.loads(access.cognito_email_challenge)['session'] == 'challenge'
     with pytest.raises(HTTPException) as exc: mod.send_code(mod.CodeRequest(channel='email'),access,db)
     assert exc.value.status_code==429
 
@@ -1513,3 +1518,36 @@ def test_customer_link_sms_notice_only_after_success(portal, monkeypatch, accept
         with pytest.raises(HTTPException): mod.deliver_customer_link_sms(lead, access, db)
         db.expire_all()
         assert mod.customer_link_sms_notice(access) is None
+
+
+
+def test_cognito_email_verification_is_single_use_and_scoped(portal, monkeypatch):
+    import customer_email_auth
+    mod, db, lead, access = portal
+    monkeypatch.setattr(customer_email_auth, 'send_email_code', lambda email: {'username': 'customer', 'session': 'secret-challenge'})
+    verified = []
+    monkeypatch.setattr(customer_email_auth, 'verify_email_code', lambda challenge, code: verified.append((challenge, code)))
+    result = mod.send_code(mod.CodeRequest(channel='email'), access, db)
+    assert 'secret-challenge' not in json.dumps(result)
+    result = mod.verify_code(mod.VerifyCode(code='123456'), access, db)
+    assert verified[0][0]['session'] == 'secret-challenge'
+    assert db.get(models.PublicMoveSession, digest(result['session']))
+    assert access.cognito_email_challenge is None
+    with pytest.raises(HTTPException): mod.verify_code(mod.VerifyCode(code='123456'), access, db)
+
+
+def test_cognito_email_failure_and_changed_contact_deny_session(portal, monkeypatch):
+    import customer_email_auth
+    mod, db, lead, access = portal
+    monkeypatch.setattr(customer_email_auth, 'send_email_code', lambda email: {'username': 'customer', 'session': 'challenge'})
+    def reject(*args): raise HTTPException(400, 'Incorrect code')
+    monkeypatch.setattr(customer_email_auth, 'verify_email_code', reject)
+    mod.send_code(mod.CodeRequest(channel='email'), access, db)
+    for _ in range(5):
+        with pytest.raises(HTTPException): mod.verify_code(mod.VerifyCode(code='123456'), access, db)
+    assert db.query(models.PublicMoveSession).count() == 0
+    access.otp_attempts = 0
+    lead.email = 'changed@example.com'
+    db.commit()
+    with pytest.raises(HTTPException): mod.verify_code(mod.VerifyCode(code='123456'), access, db)
+    assert db.query(models.PublicMoveSession).count() == 0
