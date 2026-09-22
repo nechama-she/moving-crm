@@ -78,6 +78,7 @@ Parameters:
 Conditions:
   ShouldDeployLambda: !Equals [!Ref DeployLambda, "true"]
   IsProd: !Equals [!Ref Environment, "prod"]
+  IsDevEnvironment: !Equals [!Ref Environment, "dev"]
   IsDev: !Not [!Equals [!Ref Environment, "prod"]]
   HasDomain: !Not [!Equals [!Ref DomainName, ""]]
   HasSmartMovingKey: !Not [!Equals [!Ref SmartMovingApiKey, ""]]
@@ -1146,19 +1147,25 @@ Resources:
                 TemplatePath: SourceCode::infra/template.yaml
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationExecutionRole.Arn
-                ParameterOverrides: !Sub |
-                  {
-                    "Environment": "${Environment}",
-                    "GitHubConnectionArn": "${GitHubConnectionArn}",
-                    "GitHubRepo": "${GitHubRepo}",
-                    "GitHubBranch": "${GitHubBranch}",
-                    "AllowedCIDR": "${AllowedCIDR}",
-                    "SmartMovingApiKey": "${SmartMovingApiKey}",
-                    "DomainName": "${DomainName}",
-                    "HostedZoneId": "${HostedZoneId}",
-                    "AcmCertificateArn": "${AcmCertificateArn}",
-                    "DeployLambda": "true"
-                  }
+                ParameterOverrides: !Sub
+                  - |
+                    {
+                      "Environment": "${Environment}",
+                      "PublicMoveEmbedOrigins": "${PipelineEmbedOrigins}",
+                      "GitHubConnectionArn": "${GitHubConnectionArn}",
+                      "GitHubRepo": "${GitHubRepo}",
+                      "GitHubBranch": "${GitHubBranch}",
+                      "AllowedCIDR": "${AllowedCIDR}",
+                      "SmartMovingApiKey": "${SmartMovingApiKey}",
+                      "DomainName": "${DomainName}",
+                      "HostedZoneId": "${HostedZoneId}",
+                      "AcmCertificateArn": "${AcmCertificateArn}",
+                      "DeployLambda": "true"
+                    }
+                  - PipelineEmbedOrigins: !If
+                      - IsDevEnvironment
+                      - "http://127.0.0.1:4321 http://localhost:4321 https://d106rx0ot8ijyc.cloudfront.net"
+                      - !Ref PublicMoveEmbedOrigins
               InputArtifacts:
                 - Name: SourceCode
 
