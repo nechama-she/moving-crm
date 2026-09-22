@@ -55,3 +55,16 @@ def test_rule_changes_invalidate_old_answers():
 
 def test_company_without_rules_has_no_questions():
     assert questions(SimpleNamespace(customer_questions=None), {'spark_inventory_snapshot':[{'name':'Plant'}]},MagicMock())==[]
+
+
+def test_pending_acknowledgment_does_not_exclude_and_can_restore_item():
+    company=SimpleNamespace(customer_questions=json.dumps([rule()]))
+    state={}; db=MagicMock(); rows=[dict(name='Plant',amount=1,cuft=12,weight=4)]
+    adjusted_inventory(company,state,rows,12,4,db)
+    key=questions(company,state,db)[0]['id']
+    state['report_question_answers']={key:{'answer_id':'yes','acknowledged':False,'pending':True}}
+    assert adjusted_inventory(company,state,rows,12,4,db)==(rows,12,4)
+    state['report_question_answers'][key].update(acknowledged=True,pending=False)
+    assert adjusted_inventory(company,state,rows,12,4,db)==([],0,0)
+    state['report_question_answers'][key].update(acknowledged=False,pending=True)
+    assert adjusted_inventory(company,state,[],0,0,db)==(rows,12,4)

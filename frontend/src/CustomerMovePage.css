@@ -163,3 +163,11 @@
 .customer-move dialog.cm-meeting-dialog{position:fixed;inset:0;margin:auto;transform:none;width:min(560px,calc(100vw - 32px));max-width:calc(100vw - 32px);height:fit-content;max-height:calc(100dvh - 32px);overflow:auto}.customer-move .cm-meeting-close{float:none;position:absolute;top:16px;right:16px;width:32px;height:32px;padding:0;display:grid;place-items:center;border-radius:6px;line-height:1}.cm-meeting-dialog .cm-walkthrough-header{padding-top:8px;padding-right:30px;clear:none}
 
 .customer-move .cm-link-sms-notice { padding: 12px 16px; margin: 0 0 20px; border: 1px solid var(--cm-border); border-radius: 10px; background: var(--cm-tint); color: var(--cm-text); font-size: 14px; line-height: 1.5; }
+
+.cm-item-question{border:1px solid var(--cm-border-soft);border-radius:10px;padding:12px 16px 16px;margin:0;min-width:0}
+.cm-item-question legend{padding:0 4px;font-size:13px;max-width:100%;overflow-wrap:anywhere}
+.cm-item-question legend span::before{content:"\00b7";margin:0 6px;color:var(--cm-text-muted)}
+.cm-item-question p{margin:10px 0;line-height:1.5}
+.cm-item-answers{display:flex;flex-wrap:wrap;gap:10px}
+.cm-item-question>.cm-primary{margin-top:12px}
+.cm-item-question>.cm-check-item{margin-top:12px}

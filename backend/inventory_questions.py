@@ -83,7 +83,8 @@ def adjusted_inventory(company, details, rows, cuft, weight, db):
     for question in questions(company, details, db):
         saved = question['saved'] or {}
         option = next((a for a in question['answers'] if a['id'] == saved.get('answer_id')), None)
-        if option and option['action'] == 'exclude': excluded.add(question['item_index'])
+        if option and option['action'] == 'exclude' and not saved.get('pending') and (not option.get('acknowledge') or saved.get('acknowledged')):
+            excluded.add(question['item_index'])
     original = details['question_original_rows']
     kept = [deepcopy(row) for index, row in enumerate(original) if index not in excluded]
     volume = max(0, float(details['question_original_cuft'] or 0) - sum(float(row.get('cuft') or 0) for i, row in enumerate(original) if i in excluded))

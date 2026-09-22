@@ -1569,6 +1569,13 @@ def test_item_answers_validate_report_choice_and_acknowledgment(portal, monkeypa
     assert stored['action']=='exclude' and stored['acknowledged']
     assert stored['name']=='Plant'
     assert apply.call_args.kwargs=={'expected_report_id':'report','use_snapshot':True}
+    # Autosave retains an unacknowledged choice without applying its action.
+    mod.save_item_answer(mod.ItemAnswerInput(**body, acknowledged=False, pending=True), access, db)
+    stored=json.loads(conversation.details)['report_question_answers'][question['id']]
+    assert stored['pending'] and stored['action']=='pending' and not stored['acknowledged']
+    mod.save_item_answer(mod.ItemAnswerInput(**body, acknowledged=True, pending=False), access, db)
+    stored=json.loads(conversation.details)['report_question_answers'][question['id']]
+    assert not stored['pending'] and stored['action']=='exclude'
 
 def test_question_manager_company_scope_and_revision(portal, monkeypatch):
     mod, db, lead, access = portal
@@ -1636,3 +1643,42 @@ def test_selected_customer_route_preserves_stops(portal, monkeypatch):
     body=mod.CustomerDetailsPatch(pickup='Miami, FL, USA',pickup_place=dict(place_id='google-place-id',formatted_address='Miami, FL, USA',city='Miami',state='FL',country='US'))
     assert mod.update_customer_details(body,access,db)=={'saved':True}
     persist.assert_called_once_with(db,access.job_id,'Miami, FL, USA',['Storage'],'Old delivery')
+
+@pytest.mark.parametrize('suffix,payload,expected', [
+    ('item-answer', {'report_id':'missing','question_id':'q','answer_id':'yes'}, 409),
+    ('question-images', {'names':['Plant']}, 200),
+])
+def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monkeypatch, suffix, payload, expected):
+    import ast
+    import re
+    from fastapi import FastAPI, Depends
+    from fastapi.testclient import TestClient
+    mod, db, lead, access = portal
+    # Exercise the actual global guard, without initializing AWS on app import.
+    tree=ast.parse((BACKEND/'main.py').read_text(encoding='utf-8'))
+    guard=next(node for node in tree.body if isinstance(node,ast.AsyncFunctionDef) and node.name=='enforce_authentication')
+    scope={'Request':Request,'HTTPException':HTTPException,'re':re,'PUBLIC_PATHS':set()}
+    exec(compile(ast.Module(body=[guard],type_ignores=[]),'main-auth-guard','exec'),scope)
+    access.id='11111111-1111-1111-1111-111111111111'
+    access.token_hash=digest(link_token(access.id))
+    db.add(models.PublicMoveSession(token_hash=digest('valid-session'),access_id=access.id,expires_at=datetime.utcnow()+timedelta(hours=1),contact_hash=contact_fingerprint(lead)))
+    db.commit()
+    # The endpoint imports this helper after auth. No real report processing is needed here.
+    monkeypatch.setitem(sys.modules,'routes.liveswitch',SimpleNamespace(apply_spark_results_to_lead=MagicMock()))
+    app=FastAPI(dependencies=[Depends(scope['enforce_authentication'])])
+    app.include_router(mod.router)
+    app.dependency_overrides[mod.get_db]=lambda:db
+    @app.post('/api/public-moves/{access_id}/not-an-approved-route')
+    def unrelated(): return {'unexpected': True}
+    with TestClient(app) as client:
+        path=f'/api/public-moves/{access.id}/{suffix}'
+        headers={'x-public-link':link_token(access.id),'x-public-session':'valid-session'}
+        response=client.post(path,json=payload,headers=headers)
+        assert response.status_code==expected, response.text
+        # A link alone must never bypass customer verification.
+        response=client.post(path,json=payload,headers={'x-public-link':link_token(access.id)})
+        assert response.status_code==401
+        assert 'verify your phone or email' in response.json()['detail']
+        assert client.post(path,json=payload).status_code==404
+        assert client.post(f'/api/public-moves/{access.id}/not-an-approved-route',json={}).status_code==401
+

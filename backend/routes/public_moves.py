@@ -1400,6 +1400,7 @@ class ItemAnswerInput(BaseModel):
     question_id: str
     answer_id: str
     acknowledged: bool = False
+    pending: bool = False
 
 
 @router.post('/api/public-moves/{access_id}/item-answer')
@@ -1418,12 +1419,13 @@ def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(v
     if not question: raise HTTPException(409, 'This question changed. Refresh before answering.')
     option = next((a for a in question['answers'] if a['id'] == body.answer_id), None)
     if not option: raise HTTPException(400, 'Choose an available answer')
-    if option.get('acknowledge') and not body.acknowledged: raise HTTPException(400, 'Please acknowledge the item instructions')
+    if option.get('acknowledge') and not body.acknowledged and not body.pending: raise HTTPException(400, 'Please acknowledge the item instructions')
+    pending = bool(option.get('acknowledge') and not body.acknowledged)
     valid_ids = {q['id'] for q in current_questions}
     state['report_question_answers'] = {k: v for k, v in state.get('report_question_answers', {}).items() if k in valid_ids}
     state['report_question_answers'][question['id']] = {'answer_id': option['id'],
         'name': question['name'], 'room': question['room'], 'question': question['question'], 'answer': option['label'],
-        'acknowledged': body.acknowledged, 'action': option['action'], 'notice': option['notice'],
+        'acknowledged': body.acknowledged, 'pending': pending, 'action': 'pending' if pending else option['action'], 'notice': option['notice'],
         'answered_at': NOW().isoformat() + 'Z'}
     remember_report(state)
     saved.details = json.dumps(state)
