@@ -1258,6 +1258,7 @@ export default function LeadDetail() {
   }
 
   function renderRow(key: string) {
+    if (key === "meta_platform") return null;
     const isQuoteNumber = key === "quote_number";
     const val = lead![key];
     if (key === "leadgen_id" && lead?.smartmoving_id) return null;
@@ -1268,7 +1269,7 @@ export default function LeadDetail() {
     if (isInbox && !String(val).trim().startsWith("http")) return null;
     return (
       <tr key={key}>
-        <td style={cellLabel}>{isQuoteNumber ? "SmartMoving Quote Number" : formatLabel(key)}</td>
+        <td style={cellLabel}>{key === "user_id" ? (lead?.meta_platform === "instagram" ? "Instagram ID" : lead?.meta_platform === "facebook" ? "Facebook ID" : "Meta ID") : isQuoteNumber ? "SmartMoving Quote Number" : formatLabel(key)}</td>
         <td style={cellValue}>
           {isInbox ? (
             <a href={String(val)} target="_blank" rel="noopener noreferrer">

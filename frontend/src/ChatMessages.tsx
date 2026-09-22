@@ -1,3 +1,4 @@
+import ConnectChatModal from "./ConnectChatModal";
 import { useEffect, useState, useRef } from "react";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
@@ -44,7 +45,12 @@ const TABS = [
 ] as const;
 
 export default function ChatMessages({ leadId, userId, userName, phoneNumber, inboxUrl, aircallNumberId, repAircallNumberId, companyPhone, repPhone, companyName }: Props) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const [connectChannel, setConnectChannel] = useState<"messenger" | "instagram" | null>(null);
+  const [connectedUserId, setConnectedUserId] = useState("");
+  const [chatLinks, setChatLinks] = useState<{ channel: string; client_identifier: string; company_identifier: string }[]>([]);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [companySmsMessages, setCompanySmsMessages] = useState<Message[]>([]);
   const [repSmsMessages, setRepSmsMessages] = useState<Message[]>([]);
@@ -130,6 +136,35 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [leadId, userId, phoneNumber, companyName, companyPhone, repPhone, aircallNumberId, repAircallNumberId, token]);
+
+  useEffect(() => {
+    if (user?.role !== "admin") return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const linksResponse = await fetch(`${API_BASE}/api/communication-associations/lead-meta-links?lead_id=${encodeURIComponent(leadId)}`, { headers: authHeaders(token), signal: controller.signal });
+        if (!linksResponse.ok) throw new Error("Could not load connected chats");
+        const links = await linksResponse.json();
+        if (!controller.signal.aborted) setChatLinks(links.items || []);
+        for (const link of links.items || []) {
+          let cursor = "";
+          const history: Message[] = [];
+          do {
+            const params = new URLSearchParams({ lead_id: leadId, channel: link.channel, client_identifier: link.client_identifier, cursor });
+            const response = await fetch(`${API_BASE}/api/communication-associations/meta-preview?${params}`, { headers: authHeaders(token), signal: controller.signal });
+            if (!response.ok) throw new Error("Could not load connected conversation");
+            const body = await response.json();
+            history.push(...(body.messages || []));
+            cursor = body.next_cursor || "";
+          } while (cursor && !controller.signal.aborted);
+          if (controller.signal.aborted) return;
+          setMessages(previous => [...new Map([...previous, ...history].map(message => [message.message_id, message])).values()]);
+          if (link.channel === "messenger") setConnectedUserId(link.client_identifier);
+        }
+      } catch (reason) { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Could not load connected chats"); }
+    })();
+    return () => controller.abort();
+  }, [leadId, token, user?.role]);
 
   // Combine conversation messages + SMS (tagged with platform)
   const allMessages: Message[] = [
@@ -221,6 +256,22 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
     setDownloading(false);
   }
 
+  async function disconnectChat(link: typeof chatLinks[number]) {
+    setDisconnecting(true); setConnectionError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/communication-associations`, {
+        method: "DELETE", headers: { ...authHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify({ ...link, lead_id: leadId }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail || "Could not disconnect chat");
+      setChatLinks(previous => previous.filter(item => !(item.channel === link.channel && item.client_identifier === link.client_identifier && item.company_identifier === link.company_identifier)));
+      setMessages(previous => previous.filter(message => !(message.platform === link.channel && (!message.user_id || message.user_id === link.client_identifier) && (!message.page_id || message.page_id === link.company_identifier))));
+      if (link.channel === "messenger" && connectedUserId === link.client_identifier) setConnectedUserId("");
+    } catch (reason) { setConnectionError(reason instanceof Error ? reason.message : "Could not disconnect chat"); }
+    finally { setDisconnecting(false); }
+  }
+
   // Count per platform for badge
   const counts: Record<string, number> = {};
   for (const m of allMessages) {
@@ -230,11 +281,11 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
 
   // Determine if reply is possible on the active tab
   const canReply =
-    (activeTab === "messenger" && !!userId) ||
+    (activeTab === "messenger" && !!(connectedUserId || userId)) ||
     (activeTab === "messages" && !!phoneNumber && !!(smsNumberTab === "company" ? aircallNumberId : repAircallNumberId));
 
   // Extract page_id from the first messenger message (needed for Messenger replies)
-  const messengerPageId = messages.find((m) => m.page_id)?.page_id || "";
+  const messengerPageId = messages.find((m) => m.platform === "messenger" && m.page_id)?.page_id || "";
 
   const handleSendReply = async () => {
     if (!replyText.trim() || sending) return;
@@ -248,7 +299,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
       }
       const endpoint = activeTab === "messages"
         ? `${API_BASE}/api/sms/${encodeURIComponent(phoneNumber)}`
-        : `${API_BASE}/api/meta/messenger/${encodeURIComponent(userId)}`;
+        : `${API_BASE}/api/meta/messenger/${encodeURIComponent(connectedUserId || userId)}`;
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { ...authHeaders(token), "Content-Type": "application/json" },
@@ -295,8 +346,22 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
 
   return (
     <div>
+      {connectChannel && <ConnectChatModal leadId={leadId} channel={connectChannel} token={token} onClose={() => setConnectChannel(null)} onConnected={(client, history, company) => {
+        setChatLinks(previous => [...previous, { channel: connectChannel, client_identifier: client, company_identifier: company }]);
+        setMessages(previous => [...previous.filter(message => message.platform !== connectChannel), ...history.map(message => ({ ...message, text: message.text || "", message_id: message.message_id || `${message.timestamp}`, platform: connectChannel }))]);
+        if (connectChannel === "messenger") setConnectedUserId(client);
+        setConnectChannel(null);
+      }} />}
+      {user?.role === "admin" && (activeTab === "messenger" || activeTab === "instagram") && <div className="crm-chat-connections">
+        {chatLinks.filter(link => link.channel === activeTab).map(link => <div className="crm-chat-connection" key={`${link.channel}:${link.client_identifier}:${link.company_identifier}`}>
+          <span className="crm-chat-connection-label" title={link.client_identifier}>Connected chat {chatLinks.filter(item => item.channel === activeTab).length > 1 ? `...${link.client_identifier.slice(-4)}` : ''}</span>
+          <button type="button" className="slds-button" aria-label={`Disconnect ${activeTab} chat ${link.client_identifier}`} disabled={disconnecting} onClick={() => void disconnectChat(link)}>{disconnecting ? "Disconnecting..." : "Disconnect"}</button>
+        </div>)}
+        <button type="button" className="slds-button slds-button_neutral" disabled={disconnecting} onClick={() => setConnectChannel(activeTab as "messenger" | "instagram")}>Connect {activeTab === "messenger" ? "Messenger" : "Instagram"}</button>
+      </div>}
+      {connectionError && <p role="alert">{connectionError}</p>}
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 0, borderBottom: "2px solid #e0e0e0", marginBottom: 0 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 0, borderBottom: "2px solid #e0e0e0", marginBottom: 0 }}>
         {TABS.map((tab) => {
           const count = counts[tab.key] || 0;
           const isActive = activeTab === tab.key;

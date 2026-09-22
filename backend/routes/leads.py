@@ -1654,7 +1654,18 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
             db.commit()
             logger.info("Matched sender_id %s for lead %s", sender_id, lead.id)
 
-    return lead.to_dict()
+    result = lead.to_dict()
+    channels = {row[0] for row in db.query(CommunicationAssociation.channel).filter(
+        CommunicationAssociation.lead_id == lead.id,
+        CommunicationAssociation.client_identifier == lead.facebook_user_id,
+        CommunicationAssociation.channel.in_(['messenger', 'instagram']),
+    ).all()} if lead.facebook_user_id else set()
+    if len(channels) == 1:
+        result['meta_platform'] = 'instagram' if 'instagram' in channels else 'facebook'
+    else:
+        source = (lead.source or '').strip().lower()
+        result['meta_platform'] = 'instagram' if source == 'instagram' else 'facebook' if source in ('facebook', 'messenger') else ''
+    return result
 
 
 class CopyLeadRequest(BaseModel):
