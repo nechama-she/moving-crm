@@ -254,6 +254,8 @@ export default function CustomerMovePage() {
     setEditingMove(true);
   }
 
+  const latestMoveDraft = useRef(moveDraft);
+  latestMoveDraft.current = moveDraft;
   async function saveMoveDetails(e:React.FormEvent){
     e.preventDefault();
     setBusy(true);
@@ -266,7 +268,7 @@ export default function CustomerMovePage() {
       }
       const result=await call('/details', { ...moveDraft, pickup_place: addressSelections.pickup, delivery_place: addressSelections.delivery });
       setData(result);
-      setEditingMove(false);
+      if (latestMoveDraft.current === moveDraft) setEditingMove(false);
     }catch(err){
       setError((err as Error).message);
     }finally{

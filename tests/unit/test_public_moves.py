@@ -1629,6 +1629,16 @@ def test_customer_route_city_and_state_selection(portal):
             mod.CustomerAddressSelection(**{**place.model_dump(),field:' '})
 
 
+def test_manual_address_saves_without_google(portal):
+    mod, db, lead, access = portal
+    place = mod.CustomerAddressSelection(place_id='manual', formatted_address='123 Main St, Miami, FL',
+        city='Miami', state='FL', country='US')
+    assert mod.selected_customer_address(place.formatted_address, 'Old', place, 'Pickup', access.id) == place.formatted_address
+    place.state = 'XX'
+    with pytest.raises(HTTPException):
+        mod.selected_customer_address(place.formatted_address, 'Old', place, 'Pickup', access.id)
+
+
 def test_invalid_address_does_not_mutate_customer_details(portal, monkeypatch):
     mod, db, lead, access = portal
     monkeypatch.setattr(mod,'_read_job_route',lambda db,job:('Old pickup',[], 'Old delivery'))

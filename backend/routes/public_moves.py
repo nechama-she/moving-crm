@@ -782,6 +782,11 @@ def selected_customer_address(value, current, selection, label, access_id):
         return current
     if selection is None or selection.formatted_address != value.strip():
         raise HTTPException(400, f'Select a {label.lower()} suggestion with at least a city and state.')
+    if selection.place_id == 'manual' and not selection.proof:
+        from zip_state import STATE_CODES
+        if selection.country != 'US' or selection.state not in STATE_CODES or not selection.formatted_address.endswith(f'{selection.city}, {selection.state}'):
+            raise HTTPException(400, 'Enter a city and select a valid state for the manual address.')
+        return selection.formatted_address
     from customer_addresses import validate_selection
     validate_selection(selection, access_id)
     return selection.formatted_address

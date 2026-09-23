@@ -125,7 +125,7 @@ Deployment runs the existing migration to add nullable `companies.customer_quest
 
 ## Google address autocomplete
 
-The customer browser calls only the CRM API. It never loads the Google Maps JavaScript SDK or receives a Google API key. Address inputs remain editable while search is unavailable; changed addresses must still be confirmed by selecting a result before saving. Unchanged saved routes can be retained when editing other details.
+The customer browser calls only the CRM API. It never loads the Google Maps JavaScript SDK or receives a Google API key. Address inputs always remain editable. Customers can choose Enter address manually and save a city and valid US state without Google. Manual entries are explicitly identified and do not claim Google validation; Google selections still require a signed proof. Unchanged saved routes can be retained when editing other details.
 
 - `POST /api/public-moves/{access_id}/address-search`: debounced autocomplete after at least three characters, with a session token.
 - `POST /api/public-moves/{access_id}/address-resolve`: obtains the selected address's city/state from Google and issues a signed selection proof scoped to this move.

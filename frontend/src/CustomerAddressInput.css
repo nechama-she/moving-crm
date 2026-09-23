@@ -9,3 +9,5 @@
 .cm-address-input small { display: block; margin-top: 5px; }
 .cm-address-error { color: #a12622; font-size: 13px; margin-top: 6px; }
 .cm-address-error button { display: block; margin-top: 4px; }
+.cm-address-manual { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; margin-top: 8px; }
+.cm-address-manual select { width: 100%; padding: 12px; box-sizing: border-box; }
