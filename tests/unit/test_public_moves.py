@@ -1731,6 +1731,8 @@ def test_customer_package_uses_stored_transport_volume_floor(portal, packing_pri
         SimpleNamespace(destination='FL', cubic_feet_min=900)])
     package = packing_pricing.customer_packing_package(lead, job, db, plan, 'Long Distance')
     assert package['cubic_feet'] == expected
+    assert package['inventory_cubic_feet'] == volume
+    assert package['minimum_cubic_feet'] == floor
     assert {kind: value['total'] for kind, value in package['rates'].items()} == {
         'full': expected * 2, 'partial': expected, 'unpacking': expected * .5}
     lines = packing_pricing.customer_package_lines(package, {'mode': 'partial', 'unpacking': False})

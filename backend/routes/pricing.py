@@ -872,7 +872,9 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None):
         return None
     delivery_state, delivery_zip = delivery_location(job.delivery_zip or '')
     destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', delivery_state or '', delivery_zip or '')
-    volume = _service_billable_volume(plan, destination, volume)
+    inventory_volume = volume
+    minimum_volume = _service_billable_volume(plan, destination, 0)
+    volume = max(volume, minimum_volume)
     rates = {}
     for kind in ('full', 'partial', 'unpacking'):
         rate = getattr(card, kind)
@@ -887,7 +889,7 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None):
             items.append({'id': f'{item.id}:{index + 1}',
                           'label': f'{item.name} ({index + 1} of {count})' if count > 1 else item.name,
                           'price': float(item.price)})
-    return {'cubic_feet': volume, 'rates': rates, 'items': items,
+    return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': items,
             'selection': json.loads(job.customer_packing_package or '{"mode":"none","unpacking":false,"item_ids":[]}')}
 
 
