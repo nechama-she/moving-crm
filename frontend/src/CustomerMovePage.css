@@ -178,3 +178,7 @@
 .cm-answer-autosave-note{display:block;flex-shrink:0;padding:0 28px 16px;text-align:center;font-size:12px;color:var(--cm-text-muted)}
 
 .cm-save-check{color:#237a3b;font-weight:700}
+
+.customer-move .cm-item-question-invalid{border-color:#ba0517}
+.customer-move .cm-check-item.cm-ack-invalid{border-color:#ba0517;background:#fff1f0}
+.customer-move .cm-item-question .cm-field-error{color:#ba0517}

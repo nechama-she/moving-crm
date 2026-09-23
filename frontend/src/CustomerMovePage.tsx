@@ -91,6 +91,7 @@ export default function CustomerMovePage() {
   const [resendAt,setResendAt]=useState(0),[clock,setClock]=useState(Date.now());
   const [showQuestions, setShowQuestions] = useState(false);
   const [termsError, setTermsError] = useState('');
+  const [termsValidationAttempt, setTermsValidationAttempt] = useState(0);
   const answerQueue = useRef<Promise<void>>(Promise.resolve());
   const answerPending = useRef(0);
   const answerRevision = useRef(0);
@@ -665,6 +666,7 @@ export default function CustomerMovePage() {
                       setPackingStep(data.packing_items.length ? 'bulky' : data.packing_package ? 'package' : 'items');
                       setPackageSelection(data.packing_package?.selection || { mode: 'none', unpacking: false, item_ids: [] });
                       setPackingError('');
+                      setTermsValidationAttempt(0);
                       setShowQuestions(true);
                     }}
                   >
@@ -697,7 +699,7 @@ export default function CustomerMovePage() {
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
                   <div className="cm-modal-body">
-                    {packingStep === 'items' ? <CustomerItemQuestions questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={answer => {
+                    {packingStep === 'items' ? <CustomerItemQuestions validationAttempt={termsValidationAttempt} questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={answer => {
                       const reportId = data.spark?.id;
                       answerPending.current += 1;
                       answerRevision.current += 1;
@@ -752,7 +754,7 @@ export default function CustomerMovePage() {
                   {packingStep === 'items' && termsError && <p role="alert" className="cm-field-error">{termsError}</p>}
                   <div className="cm-modal-footer">
                     {(packingStep !== 'items' || data.packing_package || data.packing_items.length > 0) && <button type="button" className="cm-secondary-btn" onClick={() => packingStep === 'items' ? (data.packing_package ? setPackingStep('package') : data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)) : packingStep === 'package' && data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)}>{packingStep === 'items' || (packingStep === 'package' && data.packing_items.length) ? 'Back' : 'Close'}</button>}
-                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" aria-busy={answersSaving} onClick={() => { if (answerPending.current) { setTermsError('Please wait for your answers to finish saving.'); return; } if (failedAnswers.current.size || (data.item_questions || []).some(q => !q.saved || q.saved.pending || (q.answers.find(a => a.id === q.saved?.answer_id)?.acknowledge && !q.saved.acknowledged))) { setTermsError('Please answer each item and acknowledge the required instructions.'); return; } setShowQuestions(false); }}>Done</button> : <button type="button" className="slds-button cm-primary" onClick={nextPricingStep}>{packingStep === 'bulky' && data.packing_package ? 'Next: packing services' : data.item_questions?.length ? 'Next: moving terms' : 'Done'}</button>}
+                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" aria-busy={answersSaving} onClick={() => { if (answerPending.current) { setTermsError('Please wait for your answers to finish saving.'); return; } if (failedAnswers.current.size || (data.item_questions || []).some(q => !q.saved || q.saved.pending || (q.answers.find(a => a.id === q.saved?.answer_id)?.acknowledge && !q.saved.acknowledged))) { setTermsError(''); setTermsValidationAttempt(value => value + 1); return; } setShowQuestions(false); }}>Done</button> : <button type="button" className="slds-button cm-primary" onClick={nextPricingStep}>{packingStep === 'bulky' && data.packing_package ? 'Next: packing services' : data.item_questions?.length ? 'Next: moving terms' : 'Done'}</button>}
 
                   </div>
                   {<small className="cm-answer-autosave-note" role="status" aria-live="polite">{answersSaving ? 'Saving...' : failedAnswers.current.size ? 'Could not save all answers. Please retry.' : answerSaveStarted ? <><span className="cm-save-check" aria-hidden="true">&#10003;</span> Saved</> : 'Your answers save automatically.'}</small>}
