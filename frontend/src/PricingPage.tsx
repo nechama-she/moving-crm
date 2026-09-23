@@ -1,3 +1,4 @@
+import BulkyCatalogPicker from './BulkyCatalogPicker';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import LocalPricing from "./LocalPricing";
@@ -136,6 +137,7 @@ function destinationFromAddress(address: string | null | undefined, options: str
 
 export default function PricingPage() {
   const { token, user } = useAuth();
+  const [bulkyCatalogIndex, setBulkyCatalogIndex] = useState<number | null>(null);
   const [searchParams] = useSearchParams();
   const leadId = searchParams.get("lead_id") || "";
   const jobId = searchParams.get("job_id") || "";
@@ -590,6 +592,7 @@ export default function PricingPage() {
 
   return (
     <div className="pricing-page">
+      {bulkyCatalogIndex !== null && <BulkyCatalogPicker initialName={active?.services?.[bulkyCatalogIndex]?.name || ''} onClose={() => setBulkyCatalogIndex(null)} onSelect={item => { patchService(bulkyCatalogIndex, { name: item.name }); setBulkyCatalogIndex(null); }} />}
       <header className="pricing-heading">
         <div>
           <h1>Pricing</h1>
@@ -868,7 +871,7 @@ export default function PricingPage() {
                       <article key={item.id || `bulky-${index}`}>
                         {editing ? (
                           <>
-                            <input value={item.name} placeholder="Bulky item" onChange={(e) => patchService(index, { name: e.target.value })} />
+                            <button type="button" className="slds-button" onClick={() => setBulkyCatalogIndex(index)} aria-label={`Choose catalog item for ${item.name || 'new bulky item'}`}>{item.name || 'Choose catalog item'}</button>
                             <input type="text" inputMode="decimal" value={prices.handling} placeholder="Handling" onChange={(e) => patchBulkyItemPrice(index, "handling", e.target.value)} />
                             <input type="text" inputMode="decimal" value={prices.packing} placeholder="Packing" onChange={(e) => patchBulkyItemPrice(index, "packing", e.target.value)} />
                             <input type="text" inputMode="decimal" value={prices.crating} placeholder="Crating" onChange={(e) => patchBulkyItemPrice(index, "crating", e.target.value)} />

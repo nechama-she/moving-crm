@@ -1,0 +1,10 @@
+.bulky-catalog-dialog{width:min(560px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:20px;border:1px solid #dddbda;border-radius:10px;margin:auto;overflow:auto;background:white;color:#181818}
+.bulky-catalog-dialog::backdrop{background:#0006}
+.bulky-catalog-dialog header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.bulky-catalog-dialog h2{font-size:20px}
+.bulky-catalog-dialog label{display:block;margin-bottom:12px}
+.bulky-catalog-dialog input{display:block;width:100%;padding:10px;border:1px solid #c9c7c5;border-radius:4px;margin-top:5px}
+.bulky-catalog-results{max-height:45vh;overflow:auto;margin-top:12px}
+.bulky-catalog-results>button{display:flex;justify-content:space-between;gap:16px;width:100%;padding:12px;text-align:left;border:0;border-bottom:1px solid #dddbda;background:white;cursor:pointer;font:inherit}
+.bulky-catalog-results>button:hover,.bulky-catalog-results>button:focus-visible{background:#eef4ff}
+.bulky-catalog-results small{white-space:nowrap;color:#536579}
