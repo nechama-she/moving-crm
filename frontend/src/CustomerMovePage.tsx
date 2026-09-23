@@ -82,7 +82,7 @@ export default function CustomerMovePage() {
     if (photosRestored && data && session && !busy && !uploadLock.current && files.some(file => file.status === 'Ready')) void upload();
   }, [files, photosRestored, data, session, busy]);
   const [editingMove,setEditingMove]=useState(false);
-  const [addressSelections, setAddressSelections] = useState<{ pickup: SelectedAddress | null; delivery: SelectedAddress | null }>({ pickup: null, delivery: null });
+  const addressDraft = useRef<{ pickup: string; delivery: string; pickup_place: SelectedAddress | null; delivery_place: SelectedAddress | null }>({ pickup: '', delivery: '', pickup_place: null, delivery_place: null });
   const [moveDraft,setMoveDraft]=useState({name:'',phone:'',email:'',move_date:'',pickup:'',delivery:''});
   const [reportState,setReportState]=useState<'idle'|'running'|'done'>('idle');
   const [reportNotice,setReportNotice]=useState('');
@@ -250,7 +250,7 @@ export default function CustomerMovePage() {
       pickup:data.pickup||'',
       delivery:data.delivery||'',
     });
-    setAddressSelections({ pickup: null, delivery: null });
+    addressDraft.current = { pickup: data.pickup || '', delivery: data.delivery || '', pickup_place: null, delivery_place: null };
     setEditingMove(true);
   }
 
@@ -258,17 +258,13 @@ export default function CustomerMovePage() {
   latestMoveDraft.current = moveDraft;
   async function saveMoveDetails(e:React.FormEvent){
     e.preventDefault();
+    const submittedAddresses = addressDraft.current;
     setBusy(true);
     setError('');
     try{
-      for (const field of ['pickup', 'delivery'] as const) {
-        if (moveDraft[field] !== data?.[field] && (!addressSelections[field] || addressSelections[field]?.formatted_address !== moveDraft[field])) {
-          throw new Error(`Select a ${field} suggestion with at least a city and state.`);
-        }
-      }
-      const result=await call('/details', { ...moveDraft, pickup_place: addressSelections.pickup, delivery_place: addressSelections.delivery });
+      const result=await call('/details', { ...moveDraft, ...submittedAddresses });
       setData(result);
-      if (latestMoveDraft.current === moveDraft) setEditingMove(false);
+      if (latestMoveDraft.current === moveDraft && addressDraft.current === submittedAddresses) setEditingMove(false);
     }catch(err){
       setError((err as Error).message);
     }finally{
@@ -422,9 +418,9 @@ export default function CustomerMovePage() {
                       <input type="date" value={moveDraft.move_date} onChange={e=>setMoveDraft(prev=>({...prev,move_date:e.target.value}))} />
                     </label>
                     <CustomerAddressInput label="Pickup address" base={base} linkKey={key} session={session} initialValue={data.pickup || ''} disabled={busy}
-                      onChange={(text, place) => { setMoveDraft(prev => ({ ...prev, pickup: text })); setAddressSelections(prev => ({ ...prev, pickup: place })); }} />
+                      onChange={(text, place) => { addressDraft.current = { ...addressDraft.current, pickup: text, pickup_place: place }; }} />
                     <CustomerAddressInput label="Delivery address" base={base} linkKey={key} session={session} initialValue={data.delivery || ''} disabled={busy}
-                      onChange={(text, place) => { setMoveDraft(prev => ({ ...prev, delivery: text })); setAddressSelections(prev => ({ ...prev, delivery: place })); }} />
+                      onChange={(text, place) => { addressDraft.current = { ...addressDraft.current, delivery: text, delivery_place: place }; }} />
                     <label>
                       Full Name
                       <input type="text" value={moveDraft.name} onChange={e=>setMoveDraft(prev=>({...prev,name:e.target.value}))} />

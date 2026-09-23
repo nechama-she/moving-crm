@@ -780,7 +780,12 @@ class CustomerAddressSelection(BaseModel):
 def selected_customer_address(value, current, selection, label, access_id):
     if value is None or value.strip() == current:
         return current
-    if selection is None or selection.formatted_address != value.strip():
+    if not value.strip():
+        raise HTTPException(400, f'Enter a {label.lower()} address.')
+    if selection is None:
+        # Suggestions enhance this input; provider availability must not block edits.
+        return value.strip()
+    if selection.formatted_address != value.strip():
         raise HTTPException(400, f'Select a {label.lower()} suggestion with at least a city and state.')
     if selection.place_id == 'manual' and not selection.proof:
         from zip_state import STATE_CODES

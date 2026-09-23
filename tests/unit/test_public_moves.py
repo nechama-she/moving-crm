@@ -1606,7 +1606,7 @@ def test_question_manager_company_scope_and_revision(portal, monkeypatch):
     assert exc.value.status_code==400
     assert other.customer_questions is None
 
-@pytest.mark.parametrize('text', ['', 'nonsense', '90210', 'Los Angeles'])
+@pytest.mark.parametrize('text', ['', '   '])
 def test_customer_route_edits_require_selected_place(portal, text):
     mod, db, lead, access = portal
     with pytest.raises(HTTPException) as exc:
@@ -1643,7 +1643,7 @@ def test_invalid_address_does_not_mutate_customer_details(portal, monkeypatch):
     mod, db, lead, access = portal
     monkeypatch.setattr(mod,'_read_job_route',lambda db,job:('Old pickup',[], 'Old delivery'))
     with pytest.raises(HTTPException):
-        mod.update_customer_details(mod.CustomerDetailsPatch(name='Changed',pickup='Made up address'),access,db)
+        mod.update_customer_details(mod.CustomerDetailsPatch(name='Changed',pickup=' '),access,db)
     assert lead.full_name == 'Jane Smith'
 
 
@@ -1709,3 +1709,8 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
         assert client.post(path,json=payload).status_code==404
         assert client.post(f'/api/public-moves/{access.id}/not-an-approved-route',json={}).status_code==401
 
+
+
+def test_plain_address_saves_without_selection_or_google(portal):
+    mod, db, lead, access = portal
+    assert mod.selected_customer_address('  1182 Main St  ', 'Old', None, 'Pickup', access.id) == '1182 Main St'
