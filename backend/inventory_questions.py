@@ -24,6 +24,7 @@ class QuestionRule(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     question: str = Field(min_length=1, max_length=500)
     enabled: bool = True
+    all_items: bool = False
     item_ids: list[str] = Field(default_factory=list, max_length=500)
     words: list[str] = Field(default_factory=list, max_length=50)
     photo: bool = True
@@ -32,7 +33,7 @@ class QuestionRule(BaseModel):
     @model_validator(mode='after')
     def valid(self):
         if not self.title.strip() or not self.question.strip(): raise ValueError('Enter a title and question')
-        if not self.item_ids and not any(normalized(word) for word in self.words): raise ValueError('Select items or enter matching words')
+        if not self.all_items and not self.item_ids and not any(normalized(word) for word in self.words): raise ValueError('Select items or enter matching words')
         if len({a.id for a in self.answers}) != len(self.answers): raise ValueError('Answer IDs must be unique')
         if any(not a.label.strip() or (a.action != 'none' and not a.notice.strip()) for a in self.answers):
             raise ValueError('Enter an answer label and an explanation for each action')
@@ -45,6 +46,18 @@ def rules_for(company):
 
 def revision(rules):
     return hashlib.sha256(json.dumps(rules, sort_keys=True).encode()).hexdigest()
+
+
+def rule_revision(rule):
+    # Adding the new default must not invalidate existing per-item answers.
+    return revision({k: v for k, v in rule.items() if k != 'all_items' or v})
+
+
+def selectable_items(rows):
+    return [{'id': f'{index}:{unit}', 'item_index': index, 'unit_index': unit,
+             'name': row.get('name', 'Item'), 'room': row.get('room', ''),
+             'label': f"{row.get('name', 'Item')} ({unit + 1} of {max(1, int(row.get('amount') or 1))})"}
+            for index, row in enumerate(rows) for unit in range(max(1, int(row.get('amount') or 1)))]
 
 
 def matches(rule, row, catalog_names):
@@ -63,9 +76,16 @@ def questions(company, details, db):
     result = []
     for rule in rules:
         if not rule.get('enabled'): continue
+        if rule.get('all_items'):
+            key = 'all:' + rule_revision(rule)
+            result.append({'id': key, 'rule_id': rule['id'], 'all_items': True,
+                           'name': rule['title'], 'label': 'Your move', 'room': '', 'quantity': 0,
+                           'question': rule['question'], 'photo': False, 'answers': rule['answers'],
+                           'items': selectable_items(rows), 'saved': answers.get(key)})
+            continue
         for index, row in enumerate(rows):
             if not matches(rule, row, names): continue
-            key = hashlib.sha256((revision(rule) + ':' + str(index) + ':' + revision(row)).encode()).hexdigest()
+            key = hashlib.sha256((rule_revision(rule) + ':' + str(index) + ':' + revision(row)).encode()).hexdigest()
             count = max(1, int(row.get('amount') or 1))
             for unit in range(count):
                 unit_key = key if count == 1 else f'{key}:{unit}'
@@ -88,7 +108,11 @@ def adjusted_inventory(company, details, rows, cuft, weight, db):
         saved = question['saved'] or {}
         option = next((a for a in question['answers'] if a['id'] == saved.get('answer_id')), None)
         if option and option['action'] == 'exclude' and not saved.get('pending') and (not option.get('acknowledge') or saved.get('acknowledged')):
-            excluded.add((question['item_index'], question['unit_index']))
+            if question.get('all_items'):
+                selected = set(saved.get('selected_items', []))
+                excluded.update((item['item_index'], item['unit_index']) for item in question['items'] if item['id'] in selected)
+            else:
+                excluded.add((question['item_index'], question['unit_index']))
     original = details['question_original_rows']
     kept, removed = [], []
     removed_volume = removed_mass = 0

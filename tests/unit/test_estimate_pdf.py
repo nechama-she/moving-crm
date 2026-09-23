@@ -38,6 +38,22 @@ def test_pending_exclusion_keeps_volume():
     assert all(e['weight'] is None for e in entries)
 
 
+def test_general_instructions_attach_only_to_selected_inventory_unit():
+    rows = [{'name': 'Mower', 'amount': 2, 'cuft': 20}]
+    question = {'all_items': True, 'question': 'Any gas-powered items?',
+                'items': [{'id': '0:0', 'item_index': 0, 'unit_index': 0},
+                          {'id': '0:1', 'item_index': 0, 'unit_index': 1}],
+                'saved': {'answer': 'Yes', 'action': 'prepare', 'selected_items': ['0:1'],
+                          'notice': 'Empty the gas tank.', 'acknowledged': True}}
+    entries = list(inventory_entries(rows, [question]))
+    assert entries[0]['questions'] == []
+    assert entries[1]['questions'][0]['saved']['notice'] == 'Empty the gas tank.'
+    assert sum(entry['cuft'] for entry in entries) == 20
+    data = sample()
+    data['item_questions'] = [question]
+    assert build_estimate_pdf(data, rows).startswith(b'%PDF-')
+
+
 def test_pdf_with_long_instructions_and_many_rooms():
     data = sample()
     data['item_questions'][1]['saved']['notice'] = 'Empty the safe before moving. ' * 150

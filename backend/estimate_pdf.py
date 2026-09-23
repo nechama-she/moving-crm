@@ -15,7 +15,13 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 def inventory_entries(rows, questions):
     by_item = defaultdict(list)
     for question in questions:
-        by_item[question['item_index']].append(question)
+        if question.get('all_items'):
+            selected = set((question.get('saved') or {}).get('selected_items', []))
+            for item in question.get('items', []):
+                if item['id'] in selected:
+                    by_item[item['item_index']].append({**question, 'unit_index': item['unit_index']})
+        else:
+            by_item[question['item_index']].append(question)
     for index, row in enumerate(rows):
         count = max(1, int(row.get('amount') or 1))
         related = by_item[index]
@@ -128,6 +134,18 @@ def build_estimate_pdf(data, rows):
         story += [room_table, Spacer(1, 14)]
     story.append(p('Inventory totals', 'SectionEstimate'))
     story.append(p(totals(entries_all)))
+    general = [q for q in data.get('item_questions', []) if q.get('all_items')
+               and not (q.get('saved') or {}).get('selected_items')]
+    if general:
+        story.append(p('Moving terms', 'SectionEstimate'))
+        for question in general:
+            saved = question.get('saved') or {}
+            story.append(p(question['question']))
+            story.append(p('Answer: ' + (saved.get('answer') or 'Not answered'), 'NoteEstimate'))
+            if saved.get('notice'):
+                story.append(p(saved['notice'], 'NoteEstimate'))
+            if saved.get('pending'):
+                story.append(p('Answer incomplete - item selection or acknowledgment required.', 'NoteEstimate'))
     def footer(canvas, doc):
         canvas.saveState()
         canvas.setStrokeColor(colors.HexColor('#dce4e8'))

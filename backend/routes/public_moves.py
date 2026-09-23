@@ -1555,6 +1555,7 @@ class ItemAnswerInput(BaseModel):
     answer_id: str
     acknowledged: bool = False
     pending: bool = False
+    selected_items: list[str] = Field(default_factory=list, max_length=10000)
 
 
 @router.post('/api/public-moves/{access_id}/item-answer')
@@ -1573,8 +1574,17 @@ def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(v
     if not question: raise HTTPException(409, 'This question changed. Refresh before answering.')
     option = next((a for a in question['answers'] if a['id'] == body.answer_id), None)
     if not option: raise HTTPException(400, 'Choose an available answer')
+    selected_items = []
+    if question.get('all_items') and option['action'] != 'none':
+        available = {item['id'] for item in question['items']}
+        selected_items = list(dict.fromkeys(body.selected_items))
+        if not set(selected_items).issubset(available):
+            raise HTTPException(400, 'Select items from your current inventory')
+        if not selected_items and not body.pending:
+            raise HTTPException(400, 'Select the items this answer applies to')
     if option.get('acknowledge') and not body.acknowledged and not body.pending: raise HTTPException(400, 'Please acknowledge the item instructions')
-    pending = bool(option.get('acknowledge') and not body.acknowledged)
+    pending = bool((option.get('acknowledge') and not body.acknowledged)
+                   or (question.get('all_items') and option['action'] != 'none' and not selected_items))
     # Expand legacy group answers before saving an individual unit.
     state['report_question_answers'] = {q['id']: q['saved'] for q in current_questions if q.get('saved')}
     valid_ids = {q['id'] for q in current_questions}
@@ -1583,6 +1593,11 @@ def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(v
         'name': question['name'], 'room': question['room'], 'question': question['question'], 'answer': option['label'],
         'acknowledged': body.acknowledged, 'pending': pending, 'action': 'pending' if pending else option['action'], 'notice': option['notice'],
         'answered_at': NOW().isoformat() + 'Z'}
+    if question.get('all_items'):
+        state['report_question_answers'][question['id']]['selected_items'] = selected_items
+        state['report_question_answers'][question['id']]['selected_item_labels'] = [
+            f"{item['label']} - {item['room']}" if item['room'] else item['label']
+            for item in question['items'] if item['id'] in selected_items]
     # Only rebuild inventory and recalculate pricing if shipping actually changes.
     # Pending acknowledgments and informational answers still save immediately.
     from copy import deepcopy

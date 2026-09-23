@@ -1691,6 +1691,7 @@ def test_selected_customer_route_preserves_stops(portal, monkeypatch):
 @pytest.mark.parametrize('suffix,payload,expected', [
     ('item-answer', {'report_id':'missing','question_id':'q','answer_id':'yes'}, 409),
     ('question-images', {'names':['Plant']}, 200),
+    ('estimate.pdf', None, 200),
     ('realtime-token', {}, 200),
     ('address-search', {'text':'Miami','session_token':'1234567890abcdef'}, 200),
     ('address-resolve', {'place_id':'place1','session_token':'1234567890abcdef'}, 200),
@@ -1702,6 +1703,13 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
     from fastapi.testclient import TestClient
     mod, db, lead, access = portal
     # Exercise the actual global guard, without initializing AWS on app import.
+    if suffix == 'estimate.pdf':
+        monkeypatch.setattr(mod, '_move_details', lambda *args, **kwargs: {
+            'name': lead.full_name, 'estimate': {'price': '100', 'cuft': '5'},
+            'spark': {'status': 'completed'}})
+        db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+            'spark_inventory_snapshot': [{'name': 'Chair', 'amount': 1, 'cuft': 5}]})))
+        db.commit()
     tree=ast.parse((BACKEND/'main.py').read_text(encoding='utf-8'))
     guard=next(node for node in tree.body if isinstance(node,ast.AsyncFunctionDef) and node.name=='enforce_authentication')
     scope={'Request':Request,'HTTPException':HTTPException,'re':re,'PUBLIC_PATHS':set()}
@@ -1723,8 +1731,12 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
     with TestClient(app) as client:
         path=f'/api/public-moves/{access.id}/{suffix}'
         headers={'x-public-link':link_token(access.id),'x-public-session':'valid-session'}
-        response=client.post(path,json=payload,headers=headers)
+        send = (lambda **kwargs: client.get(path, **kwargs)) if suffix == 'estimate.pdf' else (lambda **kwargs: client.post(path, json=payload, **kwargs))
+        response=send(headers=headers)
         assert response.status_code==expected, response.text
+        if suffix == 'estimate.pdf':
+            assert response.content.startswith(b'%PDF-')
+            assert response.headers['content-type'] == 'application/pdf'
         if suffix == 'realtime-token':
             import jwt
             claims = jwt.decode(response.json()['token'], os.environ['JWT_SECRET'], algorithms=['HS256'], issuer='moving-crm')
@@ -1733,10 +1745,10 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
             assert claims['role'] == claims['purpose'] == 'customer_updates'
             assert claims['exp'] <= (datetime.utcnow()+timedelta(hours=1)).timestamp()
         # A link alone must never bypass customer verification.
-        response=client.post(path,json=payload,headers={'x-public-link':link_token(access.id)})
+        response=send(headers={'x-public-link':link_token(access.id)})
         assert response.status_code==401
         assert 'verify your phone or email' in response.json()['detail']
-        assert client.post(path,json=payload).status_code==404
+        assert send().status_code==404
         assert client.post(f'/api/public-moves/{access.id}/not-an-approved-route',json={}).status_code==401
 
 
@@ -1794,6 +1806,46 @@ def test_item_answer_skips_repricing_when_shipping_is_unchanged(portal, monkeypa
         assert not apply.called
     mod.save_item_answer(mod.ItemAnswerInput(**body, answer_id='yes', acknowledged=True), access, db)
     apply.assert_called_once()
+
+
+def test_all_items_answer_requires_selection_and_acknowledgment(portal, monkeypatch):
+    mod, db, lead, access = portal
+    from inventory_questions import questions
+    company = models.Company(id='general-terms', name='General Terms', customer_questions=json.dumps([{
+        'id': 'gas', 'title': 'Gas items', 'enabled': True, 'all_items': True,
+        'question': 'Any gas-powered items?', 'item_ids': [], 'words': [],
+        'answers': [{'id': 'yes', 'label': 'Yes', 'action': 'prepare', 'notice': 'Empty the tank.', 'acknowledge': True},
+                    {'id': 'no', 'label': 'No', 'action': 'none', 'notice': '', 'acknowledge': False}]}]))
+    db.add(company)
+    lead.company = company
+    state = {'last_spark_id': 'report', 'last_spark_status': 'completed', 'spark_extracted_cuft': 20,
+             'spark_extracted_weight': 100, 'spark_inventory_snapshot': [
+                 {'name': 'Mower', 'room': 'Garage', 'cuft': 20, 'weight': 100, 'amount': 2}]}
+    conversation = models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps(state))
+    db.add(conversation)
+    db.commit()
+    question, = questions(company, state, db)
+    apply = MagicMock(return_value={'ok': True})
+    monkeypatch.setitem(sys.modules, 'routes.liveswitch', SimpleNamespace(apply_spark_results_to_lead=apply))
+    monkeypatch.setitem(sys.modules, 'realtime', SimpleNamespace(publish_customer_update=MagicMock()))
+    monkeypatch.setattr(mod, 'details', lambda *args: {'updated': True})
+    def save(**values):
+        return mod.save_item_answer(mod.ItemAnswerInput(report_id='report', question_id=question['id'], **values), access, db)
+    for values in [dict(answer_id='yes', acknowledged=True),
+                   dict(answer_id='yes', selected_items=['9:0'], acknowledged=True),
+                   dict(answer_id='yes', selected_items=['0:1'])]:
+        with pytest.raises(HTTPException) as error:
+            save(**values)
+        assert error.value.status_code == 400
+    save(answer_id='yes', selected_items=['0:1'], pending=True)
+    assert json.loads(conversation.details)['report_question_answers'][question['id']]['pending']
+    save(answer_id='yes', selected_items=['0:1'], acknowledged=True)
+    saved = json.loads(conversation.details)['report_question_answers'][question['id']]
+    assert saved['selected_items'] == ['0:1'] and saved['acknowledged'] and not saved['pending']
+    assert saved['selected_item_labels'] == ['Mower (2 of 2) - Garage']
+    save(answer_id='no')
+    assert json.loads(conversation.details)['report_question_answers'][question['id']]['selected_items'] == []
+    apply.assert_not_called()
 
 
 def test_pricing_autosave_changes_only_selected_charge(portal, packing_pricing, monkeypatch):

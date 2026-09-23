@@ -58,6 +58,37 @@ def test_company_without_rules_has_no_questions():
     assert questions(SimpleNamespace(customer_questions=None), {'spark_inventory_snapshot':[{'name':'Plant'}]},MagicMock())==[]
 
 
+def test_all_items_question_is_asked_once_and_targets_selected_units():
+    r = rule()
+    r.update(all_items=True, words=[], item_ids=[])
+    QuestionRule.model_validate(r)
+    company = SimpleNamespace(customer_questions=json.dumps([r]))
+    rows = [dict(name='Mower', room='Garage', amount=2, cuft=20, weight=100),
+            dict(name='Chair', room='Bedroom', amount=1, cuft=5, weight=20)]
+    state = {'spark_inventory_snapshot': rows}
+    db = MagicMock()
+    question, = questions(company, state, db)
+    assert question['all_items'] and len(question['items']) == 3
+    assert [item['id'] for item in question['items']] == ['0:0', '0:1', '1:0']
+    state['report_question_answers'] = {question['id']: {
+        'answer_id': 'yes', 'acknowledged': True, 'selected_items': ['0:1']}}
+    kept, volume, weight = adjusted_inventory(company, state, rows, 25, 120, db)
+    assert volume == 15 and weight == 70
+    assert kept[0]['amount'] == 1 and kept[1]['name'] == 'Chair'
+    state['report_question_answers'][question['id']]['pending'] = True
+    assert adjusted_inventory(company, state, kept, volume, weight, db)[1:] == (25, 120)
+
+
+def test_default_all_items_flag_preserves_existing_question_ids():
+    r = rule()
+    company = SimpleNamespace(customer_questions=json.dumps([r]))
+    state = {'spark_inventory_snapshot': [dict(name='Plant', amount=1, cuft=5)]}
+    original = questions(company, state, MagicMock())[0]['id']
+    r['all_items'] = False
+    company.customer_questions = json.dumps([r])
+    assert questions(company, state, MagicMock())[0]['id'] == original
+
+
 def test_pending_acknowledgment_does_not_exclude_and_can_restore_item():
     company=SimpleNamespace(customer_questions=json.dumps([rule()]))
     state={}; db=MagicMock(); rows=[dict(name='Plant',amount=1,cuft=12,weight=4)]

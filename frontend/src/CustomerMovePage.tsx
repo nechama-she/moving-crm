@@ -728,8 +728,8 @@ export default function CustomerMovePage() {
                 </div>
               )}
               {data.estimate && data.spark?.status === 'completed' && <div className="cm-estimate-extra-actions">
-                <button type="button" className="slds-button" disabled={pdfBusy || answersSaving || calculatingPrice || busy} onClick={() => void downloadEstimate()}>{pdfBusy ? 'Preparing PDF...' : 'Download estimate PDF'}</button>
-                {pdfError && <p role="alert">{pdfError}</p>}
+                <button type="button" className="cm-secondary-btn" disabled={pdfBusy || answersSaving || calculatingPrice || busy} onClick={() => void downloadEstimate()}>{pdfBusy ? 'Preparing PDF...' : 'Download estimate PDF'}</button>
+                {pdfError && <p className="cm-field-error" role="alert" style={{ flexBasis: '100%', marginTop: 0 }}>{pdfError}</p>}
               </div>}
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
             </div>
@@ -747,7 +747,7 @@ export default function CustomerMovePage() {
                   <div className="cm-modal-header">
                     <div>
                       <span className="cm-eyebrow">{packingStep === 'items' ? 'MOVING TERMS' : 'EXTRA SERVICES'}</span>
-                      <h3 id="packing-title">{packingStep === 'items' ? 'A few details about your items' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : 'Packing services'}</h3>
+                      <h3 id="packing-title">{packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : 'Packing services'}</h3>
                       <p>{packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : 'Choose packing and optional unpacking for your move.'}</p>
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
