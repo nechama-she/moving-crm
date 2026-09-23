@@ -162,3 +162,31 @@ Admins can open Settings > Inventory catalog to search, add, and edit shared cat
 In Moving terms, the Add catalog item link beneath Search catalog opens the same item editor in a popup. Saving creates the item immediately, adds it to the visible catalog, and selects it for the current question. The question draft remains open and unchanged otherwise; click Save moving terms to persist the new association. Canceling the popup preserves the question draft. New catalog items become available to customer inventory editors when the catalog is next loaded.
 
 Customer moving-term answers autosave on each choice and acknowledgment change. Choices requiring acknowledgment are saved as pending until checked; pending answers do not apply exclusion or preparation actions. Unchecking returns the answer to pending and recalculates any affected inventory. The customer sees saving/error status and can retry failed saves; closing the popup is disabled during a save.
+# Customer live report updates
+
+The customer page uses the existing API Gateway WebSocket URL (`window.__WS_URL__`).
+It does not poll `/details` or `/availability`. Availability is requested when the
+time picker opens or its date range changes.
+
+`POST /api/public-moves/{access_id}/realtime-token` requires the existing link and
+verified portal session. It issues a signed, move-scoped notification token, valid
+no longer than the session/link or two hours. Customer connections receive only
+`customer_move_updated` invalidations for their lead, never staff messages or other
+customers' events. Reading data still requires the portal session on `/details`.
+The page refreshes once after connecting (to cover missed events), after an update,
+or after a user action. Broken connections get three bounded reconnect attempts;
+there is no data polling fallback. A connection failure is shown on the page and
+the existing manual refresh remains available.
+
+LiveSwitch completion checks run on the existing SQS worker, every 60 seconds only
+for unfinished reports, bounded to 120 checks. Completed reports are imported and
+priced in the worker; after commit, the server notifies the customer socket. Failed
+or cancelled reports also notify the page. Exhausted checks/dead letters surface
+an update error. Newer reports supersede old queued checks. A monitor lease prevents
+normal reconnects from starting duplicate monitor chains. Existing unfinished reports
+are enrolled when a verified customer connects.
+
+Deploy the infrastructure, API, realtime Lambda, sync worker and frontend together
+through the existing pipeline. Infrastructure grants the worker permission to invoke
+the realtime Lambda and configures its function name. No notification permission
+prompt is needed: these are updates to an open page, not operating-system Web Push.

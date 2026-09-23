@@ -115,6 +115,20 @@ def verified(access: PublicMoveAccess = Depends(public_access), request: Request
     return access
 
 
+@router.post('/api/public-moves/{access_id}/realtime-token')
+def customer_realtime_token(access: PublicMoveAccess = Depends(verified), request: Request = None, db: Session = Depends(get_db)):
+    import jwt
+    session = db.get(PublicMoveSession, digest(request.headers.get('x-public-session', '')))
+    expires = min(access.expires_at, session.expires_at, NOW() + timedelta(hours=2))
+    token = jwt.encode({'sub': access.id, 'role': 'customer_updates', 'purpose': 'customer_updates',
+                        'lead_id': access.lead_id, 'iss': os.getenv('JWT_ISSUER', 'moving-crm'),
+                        'exp': int(expires.replace(tzinfo=timezone.utc).timestamp())},
+                       os.environ['JWT_SECRET'], algorithm='HS256')
+    from customer_report_updates import queue_report_check
+    queue_report_check(access.lead_id, db)
+    return {'token': token}
+
+
 class Stop(BaseModel):
     address: str = Field(min_length=1, max_length=1000)
     type: Literal['pickup', 'delivery'] | None = None
@@ -539,6 +553,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
                     "status": conv_details.get("last_spark_status", "queued"),
                     "shareUrl": conv_details.get("last_spark_share_url"),
                     "cuft": conv_details.get("spark_extracted_cuft"),
+                    "update_error": conv_details.get("notification_error"),
                 }
         except Exception:
             pass

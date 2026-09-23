@@ -429,6 +429,9 @@ def start_ready_report(lead_id: str, db: Session):
     details = json.loads(saved.details or '{}') if saved else {}
     payload = details.get('pending_spark_payload')
     if not payload:
+        # A retry can arrive after the report was created but queueing its monitor failed.
+        from customer_report_updates import queue_report_check
+        queue_report_check(lead_id, db)
         return
     file_ids = [row['id'] for row in details.get('report_files', [])]
     rows = db.query(PublicMoveUpload).filter(PublicMoveUpload.attachment_id.in_(file_ids)).all()
@@ -464,6 +467,8 @@ def start_ready_report(lead_id: str, db: Session):
     remember_report(details)
     saved.details = json.dumps(details)
     db.commit()
+    from customer_report_updates import queue_report_check
+    queue_report_check(lead_id, db)
 
 
 def fetch_and_extract_spark_report(share_url: str, processing=None) -> tuple[float | None, float | None, list[dict[str, object]]]:
@@ -624,11 +629,14 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
         processing.mark('publish', 'success' if price is not None else 'skipped',
                         'Estimate saved' if price is not None else 'Inventory saved; no new estimate to publish')
         details["spark_pricing_ready"] = price is not None
+        details.pop('notification_error', None)
         processing.finish()
         if saved:
             processing.attach(details)
             saved.details = json.dumps(details)
         db.commit()
+        from realtime import publish_customer_update
+        publish_customer_update(lead_id)
         return {
             "ok": True,
             "cuft": cuft,

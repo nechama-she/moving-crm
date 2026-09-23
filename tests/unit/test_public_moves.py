@@ -1647,6 +1647,7 @@ def test_selected_customer_route_preserves_stops(portal, monkeypatch):
 @pytest.mark.parametrize('suffix,payload,expected', [
     ('item-answer', {'report_id':'missing','question_id':'q','answer_id':'yes'}, 409),
     ('question-images', {'names':['Plant']}, 200),
+    ('realtime-token', {}, 200),
 ])
 def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monkeypatch, suffix, payload, expected):
     import ast
@@ -1675,6 +1676,13 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
         headers={'x-public-link':link_token(access.id),'x-public-session':'valid-session'}
         response=client.post(path,json=payload,headers=headers)
         assert response.status_code==expected, response.text
+        if suffix == 'realtime-token':
+            import jwt
+            claims = jwt.decode(response.json()['token'], os.environ['JWT_SECRET'], algorithms=['HS256'], issuer='moving-crm')
+            assert claims['sub'] == access.id
+            assert claims['lead_id'] == lead.id
+            assert claims['role'] == claims['purpose'] == 'customer_updates'
+            assert claims['exp'] <= (datetime.utcnow()+timedelta(hours=1)).timestamp()
         # A link alone must never bypass customer verification.
         response=client.post(path,json=payload,headers={'x-public-link':link_token(access.id)})
         assert response.status_code==401

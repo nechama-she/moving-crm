@@ -1546,6 +1546,9 @@ Resources:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt RealtimeFunction.Arn
+              - Effect: Allow
                 Action: sqs:SendMessage
                 Resource: !GetAtt PublicMoveSyncQueue.Arn
               - Effect: Allow
@@ -1603,6 +1606,7 @@ Resources:
           ATTACHMENTS_BUCKET: !Ref AttachmentBucket
           PUBLIC_MOVE_SYNC_DLQ_ARN: !GetAtt PublicMoveSyncDeadLetterQueue.Arn
           PUBLIC_MOVE_SYNC_QUEUE_URL: !Ref PublicMoveSyncQueue
+          REALTIME_FUNCTION_NAME: !Ref RealtimeFunction
 
   PublicMoveSyncEventSourceMapping:
     Type: AWS::Lambda::EventSourceMapping

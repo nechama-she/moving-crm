@@ -18,7 +18,9 @@ export default function MeetingTimePicker({ onChange, availabilityUrl, linkKey, 
   const [first,setFirst] = useState(today);
   const [slots,setSlots]=useState<Record<string,boolean>>({});
   const [slotError,setSlotError]=useState('');
+  const [open,setOpen]=useState(false);
   useEffect(()=>{
+    if(!open)return;
     const controller=new AbortController();
     const entries=Array.from({length:5},(_,i)=>{const d=day(first);d.setDate(d.getDate()+i);return windows.map((w,slot)=>{const start=new Date(d);start.setHours(w.start,0,0,0);return {id:`${key(d)}-${slot}`,start:start.toISOString()};});}).flat();
     async function refresh(){try{
@@ -26,9 +28,9 @@ export default function MeetingTimePicker({ onChange, availabilityUrl, linkKey, 
       if(!r.ok)throw new Error('Could not load available times. Please reopen the picker.');
       const result=await r.json();setSlots(Object.fromEntries(entries.map((e,i)=>[e.id,!!result.available[i]])));setSlotError('');
     }catch(e){if(!controller.signal.aborted){setSlots({});setSlotError((e as Error).message);}}}
-    setSlots({});void refresh();const timer=setInterval(()=>void refresh(),15000);
-    return ()=>{controller.abort();clearInterval(timer);};
-  },[first,availabilityUrl,linkKey,session]);
+    setSlots({});setSlotError('');void refresh();
+    return ()=>{controller.abort();};
+  },[open,first,availabilityUrl,linkKey,session]);
 
   const [calendar,setCalendar] = useState(false);
   const [month,setMonth] = useState(()=>day(today));
@@ -43,7 +45,7 @@ export default function MeetingTimePicker({ onChange, availabilityUrl, linkKey, 
     return !isAfterMoveDate && d.getTime()>Date.now() && slots[`${value.date}-${value.slot}`]===true;
   };
   const describe = (value:Selection) => `${day(value.date).toLocaleDateString('en-US',{month:'short',day:'numeric'})}, ${windows[value.slot].label}`;
-  function close(){setCalendar(false);dialog.current?.close();trigger.current?.focus();}
+  function close(){setOpen(false);setCalendar(false);dialog.current?.close();trigger.current?.focus();}
   function apply(){
     if(!draft||!future(draft))return;
     const start=day(draft.date),end=day(draft.date);
@@ -53,9 +55,9 @@ export default function MeetingTimePicker({ onChange, availabilityUrl, linkKey, 
   }
   return <div className="cm-slot-picker">
     <label htmlFor="cm-choose-time">When works best for you?</label>
-    <button id="cm-choose-time" ref={trigger} type="button" className="slds-button cm-slot-trigger" aria-haspopup="dialog" onClick={()=>{setDraft(selected);setFirst(selected?.date && selected.date>=today?selected.date:today);dialog.current?.showModal();}}><span>{selected?describe(selected):'Choose a date & time'}</span><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4M17 3v4M3 11h18"/></svg></button>
+    <button id="cm-choose-time" ref={trigger} type="button" className="slds-button cm-slot-trigger" aria-haspopup="dialog" onClick={()=>{setDraft(selected);setFirst(selected?.date && selected.date>=today?selected.date:today);setOpen(true);dialog.current?.showModal();}}><span>{selected?describe(selected):'Choose a date & time'}</span><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4M17 3v4M3 11h18"/></svg></button>
     <small>{zoneName}. Our team will confirm your appointment.</small>
-    <dialog ref={dialog} className="cm-slot-dialog" aria-labelledby="cm-slot-title" onClick={e=>{if(e.target===dialog.current)close();}}>
+    <dialog ref={dialog} className="cm-slot-dialog" aria-labelledby="cm-slot-title" onClose={()=>{setOpen(false);setCalendar(false);}} onCancel={close} onClick={e=>{if(e.target===dialog.current)close();}}>
       <div className="cm-slot-content">
         <header><div><h3 id="cm-slot-title">Choose your preferred time</h3><p>{zoneName}</p></div><button className="slds-button" type="button" aria-label="Close time picker" onClick={close}>&times;</button></header>
         <div className="cm-slot-navigation"><div className="cm-jump"><button type="button" className="slds-button cm-jump-trigger" aria-expanded={calendar} onClick={()=>{setMonth(day(first));setCalendar(!calendar);}}>{day(first).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}<span aria-hidden="true">&#9662;</span></button>

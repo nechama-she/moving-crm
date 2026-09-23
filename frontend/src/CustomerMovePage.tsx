@@ -10,6 +10,7 @@ import ReportFileGallery from "./ReportFileGallery";
 import ReportHistory, { type ReportRun } from "./ReportHistory";
 import CustomerPackingOptions, { type PackingPackage, type PackingSelection } from "./CustomerPackingOptions";
 import MeetingTimePicker from "./MeetingTimePicker";
+import { useCustomerUpdates } from './useCustomerUpdates';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
@@ -48,7 +49,7 @@ type Details = {
     cuft: string;
     charges?: { name: string; description: string; total: number }[];
   } | null;
-  spark?: { id: string; status: string; source?: string; shareUrl?: string; cuft?: number } | null;
+  spark?: { id: string; status: string; source?: string; shareUrl?: string; cuft?: number; update_error?: string } | null;
   walkthrough: { status: string; availability: string; scheduled_at: string | null; timezone: string } | null;
   participant_url: string;
   files: { id: string; name: string; size: number }[];
@@ -180,11 +181,8 @@ export default function CustomerMovePage() {
       }
     }).catch(e=>{if(active)setError(e.message);});
     void load();
-    // Poll every minute (60s) if spark is queued or running, otherwise standard 15s
-    const isSparkPending = data?.spark && (data.spark.status === 'queued' || data.spark.status === 'running');
-    const interval=setInterval(()=>void load(), isSparkPending ? 60000 : 15000);
-    return ()=>{active=false;clearInterval(interval);};
-  },[base,key,session,sessionKey,data?.spark?.status]);
+    return ()=>{active=false;};
+  },[base,key,session,sessionKey]);
   useEffect(()=>{if(!sent)return;const t=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(t);},[sent]);
   async function send(){setBusy(true);setError('');try{await call('/send-code',{channel});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   async function verify(){
@@ -290,6 +288,7 @@ export default function CustomerMovePage() {
     }
   }
 
+  const updatesUnavailable = useCustomerUpdates(base, key, session, refreshDetails);
   const wait=Math.max(0,Math.ceil((resendAt-clock)/1000));
 
   const paletteStyle = useMemo(() => {
@@ -445,6 +444,8 @@ export default function CustomerMovePage() {
               </section>
             </section>
             {error&&<div className="cm-error" role="alert">{error}</div>}
+            {updatesUnavailable && <p role="status">Live updates are disconnected. Use Refresh move details to check for changes.</p>}
+            {data.spark?.update_error && <p role="alert">{data.spark.update_error}</p>}
             <div className="cm-actions-stack cm-actions-row">
               <section className="cm-card cm-upload">
                 <div className="cm-eyebrow">SHOW US WHAT'S MOVING</div>

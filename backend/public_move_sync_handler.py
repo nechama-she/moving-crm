@@ -166,7 +166,10 @@ def handler(event, context):
             message = json.loads(record['body'])
             dead_letter = bool(os.getenv('PUBLIC_MOVE_SYNC_DLQ_ARN')) and record.get('eventSourceARN') == os.getenv('PUBLIC_MOVE_SYNC_DLQ_ARN')
             with SessionLocal() as db:
-                if 'start_report' in message:
+                if 'check_report' in message:
+                    from customer_report_updates import check_report
+                    check_report(message, db, dead_letter)
+                elif 'start_report' in message:
                     saved = db.get(LeadLiveSwitch, message['lead_id'])
                     details = json.loads(saved.details or '{}') if saved else {}
                     if not dead_letter and details.get('last_spark_id') == message['start_report']:

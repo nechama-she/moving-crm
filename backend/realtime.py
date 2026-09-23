@@ -10,6 +10,11 @@ from botocore.exceptions import BotoCoreError, ClientError
 logger = logging.getLogger("moving-crm")
 
 
+def publish_customer_update(lead_id: str) -> None:
+    # Invalidation only. Customer details still require a valid portal session.
+    publish_realtime_event({'type': 'customer_move_updated', 'customer_lead_id': lead_id})
+
+
 def _json_default(value):
     if isinstance(value, Decimal):
         return int(value) if value == value.to_integral_value() else float(value)
