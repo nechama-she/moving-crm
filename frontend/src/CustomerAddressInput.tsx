@@ -35,6 +35,7 @@ export default function CustomerAddressInput({label, apiKey, initialValue, disab
   const expanded = focused && items.length > 0;
   return <div className="cm-address-input">
     <label htmlFor={id}>{label}</label>
+    <div className="cm-address-control">
     <input id={id} role="combobox" aria-invalid={!!error} aria-describedby={error ? `${id}-error` : undefined} aria-autocomplete="list" aria-expanded={expanded} aria-controls={`${id}-options`}
       aria-activedescendant={expanded && active >= 0 ? `${id}-${active}` : undefined}
       value={text} maxLength={200} autoComplete="off" placeholder="Street address or city, state"
@@ -53,6 +54,7 @@ export default function CustomerAddressInput({label, apiKey, initialValue, disab
       </ul>
       <div className="cm-address-attribution" translate="no">Google Maps</div>
     </div>}
+    </div>
     {error && <small id={`${id}-error`} className="cm-field-error" role="alert">{error}</small>}
   </div>;
 }
