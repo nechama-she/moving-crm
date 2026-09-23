@@ -125,18 +125,13 @@ Deployment runs the existing migration to add nullable `companies.customer_quest
 
 ## Google address autocomplete
 
-The customer browser calls only the CRM API. It never loads the Google Maps JavaScript SDK or receives a Google API key. Each address uses one editable text input, with optional suggestions. There are no manual-mode controls, extra city/state fields, or search-status instructions. Typed nonblank addresses can be saved without Google; selected Google addresses retain their signed proof. Plain typed entries are not claimed to be Google-validated. Unchanged saved routes can be retained when editing other details.
+The customer page uses the existing website-restricted Google Maps browser key with Maps JavaScript API and Places API (legacy AutocompleteService), matching the company's existing Google project. No Places API (New) or server key is required for this UI.
 
-- `POST /api/public-moves/{access_id}/address-search`: debounced autocomplete after at least three characters, with a session token.
-- `POST /api/public-moves/{access_id}/address-resolve`: obtains the selected address's city/state from Google and issues a signed selection proof scoped to this move.
+Set `/moving-crm/dev/GOOGLE_MAPS_BROWSER_KEY` in Parameter Store to the existing browser key (replace dev for another environment). The verified `/details` response returns this browser key only; `GOOGLE_MAPS_SERVER_KEY` is never exposed. Retain the key's website restrictions including `https://d10a8a9ru9t44a.cloudfront.net/*`. Redeploy the API after changing the parameter because configuration is cached.
 
-Both endpoints require the existing verified customer session and link, rate-limit per move, and return no-store responses. Backend save validation rejects forged, edited, expired, or cross-move selection proofs. Suggestions use background requests, cancellation and stale-result protection; no page navigation or recurring polling is used.
+Each address remains one editable input. After a 350ms typing pause, Google suggestions appear below it. Selecting one fills the same input. Missing configuration, provider failure or no matches leave normal text entry available without extra controls or explanatory text. Typed nonblank addresses save without Google validation. There is no page reload or interval polling. Stale predictions are ignored, Enter selects a suggestion without submitting the form, and validation errors appear under the affected field.
 
-Create a **server** key with **Places API (New)** enabled and billing active. Store it in AWS Systems Manager Parameter Store as a **SecureString** named `/moving-crm/dev/GOOGLE_MAPS_SERVER_KEY` (replace `dev` for another environment). Local development uses the `GOOGLE_MAPS_SERVER_KEY` backend environment variable. The pipeline does not overwrite this parameter. Redeploy the API after configuration changes because SSM values are cached.
-
-Use API restrictions permitting only Places API (New). A website/referrer-restricted browser key will not work for server requests: use a separate server key and restrict it to the backend's static outbound IP addresses where available. Do not use a frontend build variable. The old `GOOGLE_MAPS_BROWSER_KEY` setting is unused and is never returned by `/details`. Provider errors are sanitized; customer messages never include Google's raw response or key.
-
-Google validates the selected place's city/state components; this is not postal deliverability verification. Existing intake endpoints are unchanged.
+The older authenticated server lookup endpoints are no longer used by this UI. No existing server key is automatically reused or exposed as a browser key.
 
 ## Cognito email logs (configured by the pipeline)
 

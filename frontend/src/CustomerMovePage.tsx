@@ -18,6 +18,7 @@ import "./CustomerMovePage.css";
 
 type LinkSms = { sent_at: string; phone_last4: string };
 type Details = {
+  google_maps_browser_key?: string;
 
   item_questions?: ItemQuestion[];
   link_sms?: LinkSms | null;
@@ -433,9 +434,9 @@ export default function CustomerMovePage() {
                       <input type="date" value={moveDraft.move_date} aria-invalid={!!moveErrors.move_date} aria-describedby={moveErrors.move_date ? 'move-move_date-error' : undefined} onChange={e=>{clearMoveError('move_date');setMoveDraft(prev=>({...prev,move_date:e.target.value}));}} />
                       {moveErrors.move_date && <small id="move-move_date-error" className="cm-field-error" role="alert">{moveErrors.move_date}</small>}
                     </label>
-                    <CustomerAddressInput label="Pickup address" error={moveErrors.pickup} base={base} linkKey={key} session={session} initialValue={data.pickup || ''} disabled={busy}
+                    <CustomerAddressInput label="Pickup address" error={moveErrors.pickup} apiKey={data.google_maps_browser_key || ''} initialValue={data.pickup || ''} disabled={busy}
                       onChange={(text, place) => { clearMoveError('pickup'); addressDraft.current = { ...addressDraft.current, pickup: text, pickup_place: place }; }} />
-                    <CustomerAddressInput label="Delivery address" error={moveErrors.delivery} base={base} linkKey={key} session={session} initialValue={data.delivery || ''} disabled={busy}
+                    <CustomerAddressInput label="Delivery address" error={moveErrors.delivery} apiKey={data.google_maps_browser_key || ''} initialValue={data.delivery || ''} disabled={busy}
                       onChange={(text, place) => { clearMoveError('delivery'); addressDraft.current = { ...addressDraft.current, delivery: text, delivery_place: place }; }} />
                     <label>
                       Full Name

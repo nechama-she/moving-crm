@@ -1,9 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { addressRequest, type AddressSuggestion, type SelectedAddress } from './googlePlaces';
+import { browserSuggestions, type AddressSuggestion, type SelectedAddress } from './googlePlaces';
 import './CustomerAddressInput.css';
 
-export default function CustomerAddressInput({label, base, linkKey, session, initialValue, disabled, error, onChange}: {
-  label: string; base: string; linkKey: string; session: string; initialValue: string; disabled: boolean;
+export default function CustomerAddressInput({label, apiKey, initialValue, disabled, error, onChange}: {
+  label: string; apiKey: string; initialValue: string; disabled: boolean;
   error?: string;
   onChange: (text: string, place: SelectedAddress | null) => void;
 }) {
@@ -14,36 +14,23 @@ export default function CustomerAddressInput({label, base, linkKey, session, ini
   const [items,setItems] = useState<AddressSuggestion[]>([]);
   const [active,setActive] = useState(-1);
   const version = useRef(0);
-  const selection = useRef<AbortController>();
-  const token = useRef(crypto.randomUUID());
-  useEffect(() => () => { version.current++; selection.current?.abort(); }, []);
+  useEffect(() => () => { version.current++;  }, []);
   useEffect(() => {
     if (!focused || disabled || query.trim().length < 3) { setItems([]); return; }
     const controller = new AbortController();
     const current = version.current;
     const timer = setTimeout(async () => {
       try {
-        const result = await addressRequest<{suggestions: AddressSuggestion[]}>(base,linkKey,session,'address-search',
-          {text:query.trim(),session_token:token.current},controller.signal);
-        if (!controller.signal.aborted && current === version.current) { setItems(result.suggestions); setActive(-1); }
+        const suggestions = await browserSuggestions(apiKey,query.trim(),controller.signal);
+        if (!controller.signal.aborted && current === version.current) { setItems(suggestions); setActive(-1); }
       } catch { if (!controller.signal.aborted && current === version.current) setItems([]); }
     }, 350);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [base,linkKey,session,query,focused,disabled]);
-  async function choose(item: AddressSuggestion) {
-    const current = ++version.current;
-    selection.current?.abort();
-    const controller = new AbortController(); selection.current = controller;
+  }, [apiKey,query,focused,disabled]);
+  function choose(item: AddressSuggestion) {
+    version.current++;
     setQuery(''); setItems([]);
     setText(item.text); onChange(item.text,null);
-    const sessionToken = token.current;
-    token.current = crypto.randomUUID();
-    try {
-      const place = await addressRequest<SelectedAddress>(base,linkKey,session,'address-resolve',
-        {place_id:item.place_id,session_token:sessionToken},controller.signal);
-      if (current !== version.current || controller.signal.aborted) return;
-      setText(place.formatted_address); onChange(place.formatted_address,place);
-    } catch { /* Keep the typed address usable if lookup is unavailable. */ }
   }
   const expanded = focused && items.length > 0;
   return <div className="cm-address-input">
@@ -52,7 +39,7 @@ export default function CustomerAddressInput({label, base, linkKey, session, ini
       aria-activedescendant={expanded && active >= 0 ? `${id}-${active}` : undefined}
       value={text} maxLength={200} autoComplete="off" placeholder="Street address or city, state"
       onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)}
-      onChange={e=>{version.current++;selection.current?.abort();setText(e.target.value);setQuery(e.target.value);setItems([]);onChange(e.target.value,null);}}
+      onChange={e=>{version.current++;setText(e.target.value);setQuery(e.target.value);setItems([]);onChange(e.target.value,null);}}
       onKeyDown={e=>{
         if(e.key==='ArrowDown' && items.length){e.preventDefault();setActive(i=>Math.min(i+1,items.length-1));}
         if(e.key==='ArrowUp' && items.length){e.preventDefault();setActive(i=>Math.max(i-1,0));}

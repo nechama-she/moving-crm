@@ -1,10 +1,47 @@
 export type SelectedAddress = { place_id: string; formatted_address: string; city: string; state: string; country: string; proof: string };
 export type AddressSuggestion = { place_id: string; text: string };
 
-export async function addressRequest<T>(base: string, key: string, session: string, action: 'address-search' | 'address-resolve', body: object, signal: AbortSignal): Promise<T> {
-  const response = await fetch(`${base}/${action}`, {method:'POST', signal, cache:'no-store',
-    headers:{'Content-Type':'application/json','x-public-link':key,'x-public-session':session}, body:JSON.stringify(body)});
-  const result = await response.json();
-  if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : 'Address search is unavailable. Please try again.');
-  return result;
+type Prediction = { place_id: string; description: string };
+type PlacesLibrary = {
+  AutocompleteService: new () => {getPlacePredictions(request: {input:string;componentRestrictions:{country:string};types:string[]}, callback:(results:Prediction[] | null,status:string)=>void):void};
+};
+type MapsBrowser = Window & {google?:{maps:{places?:PlacesLibrary}}; __crmAddressReady?:()=>void};
+let loading: Promise<PlacesLibrary> | undefined;
+
+function loadPlaces(key: string): Promise<PlacesLibrary> {
+  const browser=window as MapsBrowser;
+  if(browser.google?.maps.places) return Promise.resolve(browser.google.maps.places);
+  if(!key) return Promise.reject(new Error('Address suggestions unavailable'));
+  if(loading) return loading;
+  loading=new Promise((resolve,reject)=>{
+    const script=document.createElement('script');
+    const timeout=setTimeout(fail,15000);
+    function fail(){clearTimeout(timeout);script.remove();loading=undefined;reject(new Error('Address suggestions unavailable'));}
+    browser.__crmAddressReady=()=>{
+      const places=browser.google?.maps.places;
+      if(!places){fail();return;}
+      clearTimeout(timeout);resolve(places);
+    };
+    script.async=true;script.referrerPolicy='strict-origin';
+    script.src='https://maps.googleapis.com/maps/api/js?'+new URLSearchParams({key,libraries:'places',loading:'async',callback:'__crmAddressReady'});
+    script.onerror=fail;document.head.appendChild(script);
+  });
+  return loading;
+}
+
+export async function browserSuggestions(key:string,input:string,signal:AbortSignal):Promise<AddressSuggestion[]> {
+  if(signal.aborted)return [];
+  const places=await loadPlaces(key);
+  if(signal.aborted)return [];
+  return new Promise(resolve=>{
+    let timer: ReturnType<typeof setTimeout>;
+    const finish=(rows:AddressSuggestion[])=>{clearTimeout(timer);signal.removeEventListener('abort',abort);resolve(rows);};
+    const abort=()=>finish([]);
+    signal.addEventListener('abort',abort,{once:true});
+    timer=setTimeout(()=>finish([]),10000);
+    new places.AutocompleteService().getPlacePredictions({input,componentRestrictions:{country:'us'},types:['geocode']},(results,status)=>{
+      clearTimeout(timer);
+      finish(!signal.aborted && status==='OK' ? (results || []).map(row=>({place_id:row.place_id,text:row.description})) : []);
+    });
+  });
 }
