@@ -271,12 +271,14 @@ def packing_pricing(monkeypatch):
     import re
     from decimal import Decimal
     source = (BACKEND / 'routes/pricing.py').read_text(encoding='utf-8')
-    names = {'_normalize_item_name', '_is_bulky_service', '_bulky_item_prices', '_bulky_item_charges',
+    names = {'_service_billable_volume', '_plan_destination_for_delivery', '_normalize_item_name', '_is_bulky_service', '_bulky_item_prices', '_bulky_item_charges',
              '_material_item_names', 'customer_packing_options', 'customer_packing_charge_id', 'add_customer_packing_charges', 'customer_packing_package', 'customer_package_lines', 'add_customer_package_charges', '_packing_service_charges', '_charge_amount'}
     nodes = [n for n in ast.parse(source).body if getattr(n, 'name', '') in names]
+    from zip_state import delivery_location
+    from local_pricing import match_region_from_address
     from long_distance_packing import packing_card
     import math
-    scope = {'PACKING_CARD_PREFIX': '__ld_packing__:', 'packing_card': packing_card, '_rounded_cubic_feet': lambda value: math.ceil(float(value or 0)), 'json': json, 're': re, 'Decimal': Decimal, 'PricingService': object, 'LeadJobCharge': models.LeadJobCharge,
+    scope = {'PricingPlan': object, 'delivery_location': delivery_location, 'match_region_from_address': match_region_from_address, 'PACKING_CARD_PREFIX': '__ld_packing__:', 'packing_card': packing_card, '_rounded_cubic_feet': lambda value: math.ceil(float(value or 0)), 'json': json, 're': re, 'Decimal': Decimal, 'PricingService': object, 'LeadJobCharge': models.LeadJobCharge,
              'BULKY_ITEM_MARKER': '__bulky_item__', 'BULKY_ITEM_PREFIX': '__bulky_item__:',
              '_number': lambda value: Decimal(value) if value else None,
              '_job_spark_inventory_items': lambda *args: []}
@@ -384,7 +386,7 @@ def test_long_distance_package_inventory_volume_and_materials(portal, packing_pr
     service = SimpleNamespace(comments='__ld_packing__:' + json.dumps({
         'full': '2', 'partial': '1', 'unpacking': '.50',
         'items': [{'id': 'mirror', 'name': 'Mirror', 'price': '30'}, {'id': 'tv', 'name': 'TV', 'price': '50'}]}))
-    plan = SimpleNamespace(services=[service])
+    plan = SimpleNamespace(services=[service], rates=[])
     package = packing_pricing.customer_packing_package(lead, job, db, plan, 'Long Distance')
     assert package['cubic_feet'] == 501
     assert package['rates']['full']['total'] == 1002
@@ -1714,3 +1716,24 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
 def test_plain_address_saves_without_selection_or_google(portal):
     mod, db, lead, access = portal
     assert mod.selected_customer_address('  1182 Main St  ', 'Old', None, 'Pickup', access.id) == '1182 Main St'
+
+
+@pytest.mark.parametrize("floor,volume,expected", [(286, 24, 286), (286, 286, 286), (350, 24, 350), (286, 400, 400)])
+def test_customer_package_uses_stored_transport_volume_floor(portal, packing_pricing, floor, volume, expected):
+    _, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    job.delivery_zip = 'New York, NY'
+    lead.volume = volume
+    service = SimpleNamespace(comments='__ld_packing__:' + json.dumps({
+        'full': '2', 'partial': '1', 'unpacking': '.50', 'items': []}))
+    plan = SimpleNamespace(services=[service], rates=[
+        SimpleNamespace(destination='NY', cubic_feet_min=floor),
+        SimpleNamespace(destination='FL', cubic_feet_min=900)])
+    package = packing_pricing.customer_packing_package(lead, job, db, plan, 'Long Distance')
+    assert package['cubic_feet'] == expected
+    assert {kind: value['total'] for kind, value in package['rates'].items()} == {
+        'full': expected * 2, 'partial': expected, 'unpacking': expected * .5}
+    lines = packing_pricing.customer_package_lines(package, {'mode': 'partial', 'unpacking': False})
+    assert lines[0]['amount'] == expected
+    assert lines[0]['description'].startswith(f'{expected} cu ft')
+    assert lead.volume == volume

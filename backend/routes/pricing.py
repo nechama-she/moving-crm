@@ -718,9 +718,18 @@ def _transportation_price(plan, destination, cubic_feet):
     return matched, transport, minimum, base
 
 
+def _service_billable_volume(plan, destination, cubic_feet):
+    """Use the destination's first stored transportation band as the volume floor."""
+    rates = [row for row in plan.rates
+             if row.destination.strip().lower() == destination.strip().lower()]
+    minimum = min((row.cubic_feet_min or 0 for row in rates), default=0)
+    return max(cubic_feet, minimum)
+
+
 def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
     cubic_feet = _rounded_cubic_feet(body.cubic_feet)
     matched, transport, minimum, base = _transportation_price(plan, body.destination, cubic_feet)
+    service_volume = _service_billable_volume(plan, body.destination, cubic_feet)
 
     charges: list[dict] = []
     if plan.fuel_percent is not None:
@@ -738,7 +747,7 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
     seasonal = _seasonal_charge(plan, _parsed_move_date(body.move_date))
     if seasonal:
         charges.append(seasonal)
-    charges.extend(_packing_service_charges(list(plan.services), cubic_feet, body.quantities))
+    charges.extend(_packing_service_charges(list(plan.services), service_volume, body.quantities))
     charges.extend(_bulky_item_charges(list(plan.services), body.bulky_items))
     charges.extend(charge for rule in plan.rules for charge in _rule_charges(rule))
 
@@ -771,7 +780,7 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
         else:
             amount = _charge_amount(
                 charge,
-                cubic_feet,
+                service_volume,
                 quantity,
                 body.manual_amounts.get(charge["id"], 0),
             )
@@ -861,6 +870,9 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None):
     volume = _rounded_cubic_feet(lead.volume)
     if volume <= 0:
         return None
+    delivery_state, delivery_zip = delivery_location(job.delivery_zip or '')
+    destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', delivery_state or '', delivery_zip or '')
+    volume = _service_billable_volume(plan, destination, volume)
     rates = {}
     for kind in ('full', 'partial', 'unpacking'):
         rate = getattr(card, kind)

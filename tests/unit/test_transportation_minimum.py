@@ -11,7 +11,7 @@ import pytest
 @pytest.fixture
 def pricing():
     source = Path(__file__).resolve().parents[2] / "backend/routes/pricing.py"
-    names = {"_transportation_price", "_rounded_cubic_feet", "compute_plan_calculation", "lookup_pricing"}
+    names = {"_service_billable_volume", "_charge_amount", "_transportation_price", "_rounded_cubic_feet", "compute_plan_calculation", "lookup_pricing"}
     nodes = [node for node in ast.parse(source.read_text(encoding="utf-8")).body
              if isinstance(node, ast.FunctionDef) and node.name in names]
     for node in nodes:
@@ -59,3 +59,23 @@ def test_no_fallback_for_other_destinations_or_gaps(pricing, destination, volume
 def test_below_band_requires_configured_minimum(pricing):
     plan = SimpleNamespace(rates=[rate(286, 800, minimum=None)])
     assert pricing["_transportation_price"](plan, "NY", 5)[3] is None
+
+
+@pytest.mark.parametrize("floor,volume,expected", [(286, 24, 286), (286, 286, 286), (350, 24, 350), (286, 400, 400)])
+def test_extra_services_use_destination_band_minimum(pricing, floor, volume, expected):
+    other = rate(900, None)
+    other.destination = "FL"
+    plan = SimpleNamespace(rates=[other, rate(floor, 800)], fuel_percent=None, services=[], rules=[])
+    charges = [
+        {"id": kind, "name": kind, "description": "", "calculation_type": kind,
+         "rate": 2, "default_selected": True, "applies": True, "automatic": False}
+        for kind in ("per_cf", "per_cf_month", "fixed", "per_unit")
+    ]
+    pricing["_packing_service_charges"] = lambda *args: charges
+    body = SimpleNamespace(destination="NY", cubic_feet=volume, move_date=None,
+                           quantities={"per_cf_month": 2, "per_unit": 3}, bulky_items=[],
+                           selected_charges={}, manual_amounts={})
+    result = pricing["compute_plan_calculation"](plan, body)
+    amounts = {charge["id"]: charge["amount"] for charge in result["charges"]}
+    assert amounts == {"per_cf": expected * 2, "per_cf_month": expected * 4, "fixed": 2, "per_unit": 6}
+    assert body.cubic_feet == volume
