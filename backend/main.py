@@ -103,7 +103,7 @@ async def enforce_authentication(request: Request) -> None:
         return  # CORS preflight - handled by CORSMiddleware
     if request.url.path == "/api/inventory" and request.method == "POST":
         return  # Middleware validates the inventory key before body parsing.
-    if re.fullmatch(r"/api/public-moves/[0-9a-f-]{36}/(verify-options|send-code|verify|details|generate-inventory-report|walkthrough|reschedule|availability|files|prepare-upload|finish-upload|packing|item-answer|question-images|realtime-token|file-preview/[^/]+|inventory-catalog|manual-inventory|files/[^/]+|calculate-price|reports/[^/]+/select)", request.url.path):
+    if re.fullmatch(r"/api/public-moves/[0-9a-f-]{36}/(verify-options|send-code|verify|details|generate-inventory-report|walkthrough|reschedule|availability|files|prepare-upload|finish-upload|packing|item-answer|question-images|realtime-token|address-search|address-resolve|file-preview/[^/]+|inventory-catalog|manual-inventory|files/[^/]+|calculate-price|reports/[^/]+/select)", request.url.path):
         return  # Each endpoint requires a scoped link and, where needed, verified session.
     if request.url.path in PUBLIC_PATHS:
         return

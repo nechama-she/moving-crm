@@ -1610,18 +1610,20 @@ def test_question_manager_company_scope_and_revision(portal, monkeypatch):
 def test_customer_route_edits_require_selected_place(portal, text):
     mod, db, lead, access = portal
     with pytest.raises(HTTPException) as exc:
-        mod.selected_customer_address(text, 'Old address', None, 'Pickup')
+        mod.selected_customer_address(text, 'Old address', None, 'Pickup', access.id)
     assert exc.value.status_code == 400
 
 
 def test_customer_route_city_and_state_selection(portal):
     mod, db, lead, access = portal
     place=mod.CustomerAddressSelection(place_id='google-place-id',formatted_address='Miami, FL, USA',city='Miami',state='FL',country='US')
-    assert mod.selected_customer_address('Miami, FL, USA','Old address',place,'Pickup')=='Miami, FL, USA'
+    import jwt
+    place.proof=jwt.encode({'sub':access.id,'aud':'customer-address','exp':int(__import__('time').time())+3600,'address':place.model_dump(exclude={'proof'})},os.environ['JWT_SECRET'],algorithm='HS256')
+    assert mod.selected_customer_address('Miami, FL, USA','Old address',place,'Pickup',access.id)=='Miami, FL, USA'
     with pytest.raises(HTTPException):
-        mod.selected_customer_address('Different text','Old address',place,'Pickup')
-    assert mod.selected_customer_address('Old address','Old address',None,'Pickup')=='Old address'
-    assert mod.selected_customer_address(None,'Old address',None,'Delivery')=='Old address'
+        mod.selected_customer_address('Different text','Old address',place,'Pickup',access.id)
+    assert mod.selected_customer_address('Old address','Old address',None,'Pickup',access.id)=='Old address'
+    assert mod.selected_customer_address(None,'Old address',None,'Delivery',access.id)=='Old address'
     for field in ['city','state','place_id']:
         with pytest.raises(ValueError):
             mod.CustomerAddressSelection(**{**place.model_dump(),field:' '})
@@ -1641,6 +1643,8 @@ def test_selected_customer_route_preserves_stops(portal, monkeypatch):
     persist=MagicMock(); monkeypatch.setattr(mod,'_persist_job_route',persist)
     monkeypatch.setattr(mod,'details',lambda access,db:{'saved':True})
     body=mod.CustomerDetailsPatch(pickup='Miami, FL, USA',pickup_place=dict(place_id='google-place-id',formatted_address='Miami, FL, USA',city='Miami',state='FL',country='US'))
+    import jwt
+    body.pickup_place.proof=jwt.encode({'sub':access.id,'aud':'customer-address','exp':int(__import__('time').time())+3600,'address':body.pickup_place.model_dump(exclude={'proof'})},os.environ['JWT_SECRET'],algorithm='HS256')
     assert mod.update_customer_details(body,access,db)=={'saved':True}
     persist.assert_called_once_with(db,access.job_id,'Miami, FL, USA',['Storage'],'Old delivery')
 
@@ -1648,6 +1652,8 @@ def test_selected_customer_route_preserves_stops(portal, monkeypatch):
     ('item-answer', {'report_id':'missing','question_id':'q','answer_id':'yes'}, 409),
     ('question-images', {'names':['Plant']}, 200),
     ('realtime-token', {}, 200),
+    ('address-search', {'text':'Miami','session_token':'1234567890abcdef'}, 200),
+    ('address-resolve', {'place_id':'place1','session_token':'1234567890abcdef'}, 200),
 ])
 def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monkeypatch, suffix, payload, expected):
     import ast
@@ -1666,6 +1672,9 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
     db.commit()
     # The endpoint imports this helper after auth. No real report processing is needed here.
     monkeypatch.setitem(sys.modules,'routes.liveswitch',SimpleNamespace(apply_spark_results_to_lead=MagicMock()))
+    import customer_addresses
+    monkeypatch.setattr(customer_addresses,'suggestions',lambda *a:[])
+    monkeypatch.setattr(customer_addresses,'resolve_address',lambda *a:{'city':'Miami'})
     app=FastAPI(dependencies=[Depends(scope['enforce_authentication'])])
     app.include_router(mod.router)
     app.dependency_overrides[mod.get_db]=lambda:db

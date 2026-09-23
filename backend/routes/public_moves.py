@@ -617,7 +617,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
 
     from inventory_questions import questions
     item_questions = questions(active_company, conv_details, db) if spark_info and spark_info.get('status') == 'completed' else []
-    return {'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    return {'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': company_data['name'],
             'company_details': company_data,
@@ -762,6 +762,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
 
 
 class CustomerAddressSelection(BaseModel):
+    proof: str | None = Field(default=None, max_length=4000)
     place_id: str = Field(min_length=1, max_length=300)
     formatted_address: str = Field(min_length=1, max_length=500)
     city: str = Field(min_length=1, max_length=200)
@@ -776,12 +777,40 @@ class CustomerAddressSelection(BaseModel):
         return value.strip()
 
 
-def selected_customer_address(value, current, selection, label):
+def selected_customer_address(value, current, selection, label, access_id):
     if value is None or value.strip() == current:
         return current
     if selection is None or selection.formatted_address != value.strip():
         raise HTTPException(400, f'Select a {label.lower()} suggestion with at least a city and state.')
+    from customer_addresses import validate_selection
+    validate_selection(selection, access_id)
     return selection.formatted_address
+
+
+class AddressSearch(BaseModel):
+    text: str = Field(min_length=3, max_length=200)
+    session_token: str = Field(min_length=16, max_length=36, pattern=r'^[A-Za-z0-9_-]+$')
+
+
+class AddressResolve(BaseModel):
+    place_id: str = Field(min_length=1, max_length=300, pattern=r'^[A-Za-z0-9_-]+$')
+    session_token: str = Field(min_length=16, max_length=36, pattern=r'^[A-Za-z0-9_-]+$')
+
+
+@router.post('/api/public-moves/{access_id}/address-search')
+def search_customer_address(body: AddressSearch, response: Response, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    rate(db, 'address-search:' + access.id, limit=60)
+    response.headers['Cache-Control'] = 'no-store'
+    from customer_addresses import suggestions
+    return {'suggestions': suggestions(body.text.strip(), body.session_token)}
+
+
+@router.post('/api/public-moves/{access_id}/address-resolve')
+def resolve_customer_address(body: AddressResolve, response: Response, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    rate(db, 'address-resolve:' + access.id, limit=20)
+    response.headers['Cache-Control'] = 'no-store'
+    from customer_addresses import resolve_address
+    return resolve_address(body.place_id, body.session_token, access.id)
 
 
 class CustomerDetailsPatch(BaseModel):
@@ -815,8 +844,8 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
 
     current_pickup, current_stops, current_delivery = _read_job_route(db, job)
     # Validate route changes before mutating contact or scheduling details.
-    new_pickup = selected_customer_address(body.pickup, current_pickup, body.pickup_place, 'Pickup')
-    new_delivery = selected_customer_address(body.delivery, current_delivery, body.delivery_place, 'Delivery')
+    new_pickup = selected_customer_address(body.pickup, current_pickup, body.pickup_place, 'Pickup', access.id)
+    new_delivery = selected_customer_address(body.delivery, current_delivery, body.delivery_place, 'Delivery', access.id)
 
     if body.name is not None:
         trimmed_name = body.name.strip()

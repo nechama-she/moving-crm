@@ -18,7 +18,7 @@ import "./CustomerMovePage.css";
 
 type LinkSms = { sent_at: string; phone_last4: string };
 type Details = {
-  google_maps_browser_key?: string;
+
   item_questions?: ItemQuestion[];
   link_sms?: LinkSms | null;
   list_changed?: boolean;
@@ -419,9 +419,9 @@ export default function CustomerMovePage() {
                       Move Date
                       <input type="date" value={moveDraft.move_date} onChange={e=>setMoveDraft(prev=>({...prev,move_date:e.target.value}))} />
                     </label>
-                    <CustomerAddressInput label="Pickup address" apiKey={data.google_maps_browser_key || ''} initialValue={data.pickup || ''} disabled={busy}
+                    <CustomerAddressInput label="Pickup address" base={base} linkKey={key} session={session} initialValue={data.pickup || ''} disabled={busy}
                       onChange={(text, place) => { setMoveDraft(prev => ({ ...prev, pickup: text })); setAddressSelections(prev => ({ ...prev, pickup: place })); }} />
-                    <CustomerAddressInput label="Delivery address" apiKey={data.google_maps_browser_key || ''} initialValue={data.delivery || ''} disabled={busy}
+                    <CustomerAddressInput label="Delivery address" base={base} linkKey={key} session={session} initialValue={data.delivery || ''} disabled={busy}
                       onChange={(text, place) => { setMoveDraft(prev => ({ ...prev, delivery: text })); setAddressSelections(prev => ({ ...prev, delivery: place })); }} />
                     <label>
                       Full Name

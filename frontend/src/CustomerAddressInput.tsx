@@ -1,70 +1,79 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { loadPlaces, selectedAddress, type AutocompleteElement, type GooglePlace, type SelectedAddress } from "./googlePlaces";
-import "./CustomerAddressInput.css";
+import { useEffect, useId, useRef, useState } from 'react';
+import { addressRequest, type AddressSuggestion, type SelectedAddress } from './googlePlaces';
+import './CustomerAddressInput.css';
 
-export default function CustomerAddressInput({ label, apiKey, initialValue, disabled, onChange }: {
-  label: string; apiKey: string; initialValue: string; disabled: boolean;
+export default function CustomerAddressInput({label, base, linkKey, session, initialValue, disabled, onChange}: {
+  label: string; base: string; linkKey: string; session: string; initialValue: string; disabled: boolean;
   onChange: (text: string, place: SelectedAddress | null) => void;
 }) {
-  const host = useRef<HTMLDivElement>(null);
-  const widget = useRef<AutocompleteElement>();
-  const change = useRef(onChange); change.current = onChange;
-  const initial = useRef(initialValue);
-  const disabledRef = useRef(disabled); disabledRef.current = disabled;
   const id = useId();
-  const [error, setError] = useState("");
-  const [ready, setReady] = useState(false);
-  const [checking, setChecking] = useState(false);
-  const [retry, setRetry] = useState(0);
+  const [text,setText] = useState(initialValue);
+  const [query,setQuery] = useState('');
+  const [focused,setFocused] = useState(false);
+  const [items,setItems] = useState<AddressSuggestion[]>([]);
+  const [active,setActive] = useState(-1);
+  const [loading,setLoading] = useState(false);
+  const [checking,setChecking] = useState(false);
+  const [error,setError] = useState('');
+  const [retry,setRetry] = useState(0);
+  const [searched,setSearched] = useState(false);
+  const version = useRef(0);
+  const selection = useRef<AbortController>();
+  const token = useRef(crypto.randomUUID());
+  useEffect(() => () => { version.current++; selection.current?.abort(); }, []);
   useEffect(() => {
-    if (!apiKey) { setError("Address search is not configured. Please contact your moving team to change this address."); return; }
-    let active = true, version = 0;
-    setError(""); setReady(false);
-    const authError = () => { if (active) setError("Address search is unavailable. Please contact your moving team."); };
-    window.addEventListener("crm-maps-error", authError);
-    loadPlaces(apiKey).then(({ PlaceAutocompleteElement }) => {
-      if (!active || !host.current) return;
-      const input = new PlaceAutocompleteElement({ requestedRegion: "us", placeholder: "Street address or city, state" });
-      widget.current = input;
-      input.value = initial.current;
-      input.disabled = disabledRef.current;
-      input.setAttribute("aria-label", label);
-      input.setAttribute("description", "Select a suggestion with at least a city and state.");
-      input.addEventListener("input", () => {
-        version++; setChecking(false); setError("");
-        change.current(input.value, null);
-      });
-      input.addEventListener("gmp-error", authError);
-      input.addEventListener("gmp-select", async event => {
-        const current = ++version;
-        change.current(input.value, null); setChecking(true); setError("");
-        try {
-          const place = (event as Event & { placePrediction: { toPlace(): GooglePlace } }).placePrediction.toPlace();
-          await place.fetchFields({ fields: ["formattedAddress", "addressComponents"] });
-          if (!active || current !== version) return;
-          const address = selectedAddress(place);
-          if (!address) { setError("Choose an address or city that includes both a city and state."); return; }
-          input.value = address.formatted_address;
-          initial.current = input.value;
-          change.current(input.value, address);
-        } catch {
-          if (active && current === version) setError("We could not confirm this address. Please select a suggestion again.");
-        } finally {
-          if (active && current === version) setChecking(false);
-        }
-      });
-      // Selecting a suggestion with Enter must not submit the whole move form.
-      input.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); } });
-      host.current.replaceChildren(input); setReady(true);
-    }).catch(e => { if (active) setError((e as Error).message); });
-    return () => { active = false; version++; window.removeEventListener("crm-maps-error", authError); widget.current?.remove(); widget.current = undefined; };
-  }, [apiKey, label, retry]);
-  useEffect(() => { if (widget.current) widget.current.disabled = disabled; }, [disabled]);
+    if (!focused || disabled || query.trim().length < 3) { setItems([]); setLoading(false); return; }
+    const controller = new AbortController();
+    setLoading(true); setError(''); setSearched(false);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await addressRequest<{suggestions: AddressSuggestion[]}>(base,linkKey,session,'address-search',
+          {text:query.trim(),session_token:token.current},controller.signal);
+        if (!controller.signal.aborted) { setItems(result.suggestions); setActive(-1); setSearched(true); }
+      } catch (e) { if (!controller.signal.aborted) setError((e as Error).message); }
+      finally { if (!controller.signal.aborted) setLoading(false); }
+    }, 350);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [base,linkKey,session,query,focused,disabled,retry]);
+  async function choose(item: AddressSuggestion) {
+    const current = ++version.current;
+    selection.current?.abort();
+    const controller = new AbortController(); selection.current = controller;
+    setQuery(''); setItems([]); setSearched(false); setError(''); setChecking(true);
+    setText(item.text); onChange(item.text,null);
+    const sessionToken = token.current;
+    token.current = crypto.randomUUID();
+    try {
+      const place = await addressRequest<SelectedAddress>(base,linkKey,session,'address-resolve',
+        {place_id:item.place_id,session_token:sessionToken},controller.signal);
+      if (current !== version.current || controller.signal.aborted) return;
+      setText(place.formatted_address); onChange(place.formatted_address,place);
+    } catch (e) {
+      if (current === version.current && !controller.signal.aborted) setError((e as Error).message);
+    } finally { if (current === version.current) setChecking(false); }
+  }
+  const expanded = focused && items.length > 0;
   return <div className="cm-address-input">
-    <label id={id}>{label}</label>
-    <div ref={host} aria-labelledby={id} />
-    {!ready && <input aria-label={label} value={initialValue} readOnly disabled />}
-    <small role="status">{checking ? "Checking address..." : !ready && !error ? "Loading address search..." : "Select a suggestion with at least a city and state."}</small>
-    {error && <div role="alert" className="cm-address-error">{error}{apiKey && <button type="button" className="slds-button" disabled={disabled} onClick={() => setRetry(value => value + 1)}>Try again</button>}</div>}
+    <label htmlFor={id}>{label}</label>
+    <input id={id} role="combobox" aria-autocomplete="list" aria-expanded={expanded} aria-controls={`${id}-options`}
+      aria-activedescendant={expanded && active >= 0 ? `${id}-${active}` : undefined} aria-describedby={`${id}-help`}
+      value={text} disabled={disabled} maxLength={200} autoComplete="off" placeholder="Street address or city, state"
+      onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)}
+      onChange={e=>{version.current++;selection.current?.abort();setChecking(false);setText(e.target.value);setQuery(e.target.value);setItems([]);setError('');setSearched(false);onChange(e.target.value,null);}}
+      onKeyDown={e=>{
+        if(e.key==='ArrowDown' && items.length){e.preventDefault();setActive(i=>Math.min(i+1,items.length-1));}
+        if(e.key==='ArrowUp' && items.length){e.preventDefault();setActive(i=>Math.max(i-1,0));}
+        if(e.key==='Escape'){e.preventDefault();setFocused(false);}
+        if(e.key==='Enter'){e.preventDefault();if(expanded && active>=0)void choose(items[active]);}
+      }} />
+    {expanded && <div className="cm-address-results">
+      <ul id={`${id}-options`} role="listbox" aria-label={`${label} suggestions`}>
+        {items.map((item,i)=><li id={`${id}-${i}`} key={item.place_id} role="option" aria-selected={i===active}
+          onMouseDown={e=>e.preventDefault()} onClick={()=>void choose(item)} onMouseEnter={()=>setActive(i)}>{item.text}</li>)}
+      </ul>
+      <div className="cm-address-attribution" translate="no">Google Maps</div>
+    </div>}
+    <small id={`${id}-help`} role="status">{checking ? 'Checking address...' : loading ? 'Searching addresses...' : searched && !items.length && focused ? 'No matches. Try a street address or city and state.' : 'Select a suggestion with at least a city and state.'}</small>
+    {error && <div role="alert" className="cm-address-error">{error}<button type="button" className="slds-button" disabled={disabled || text.trim().length<3} onClick={()=>{setFocused(true);setQuery(text);setRetry(n=>n+1);}}>Try again</button></div>}
   </div>;
 }

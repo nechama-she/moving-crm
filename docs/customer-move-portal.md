@@ -125,13 +125,18 @@ Deployment runs the existing migration to add nullable `companies.customer_quest
 
 ## Google address autocomplete
 
-The customer page pickup and delivery editors use Google's Place Autocomplete (New) widget. Customers must select a suggestion containing a city and state; a full street address is optional. Editing the text clears the selection. Existing saved routes can remain unchanged when the customer edits contact details. Address search errors are shown inline; there is no free-text fallback for new addresses.
+The customer browser calls only the CRM API. It never loads the Google Maps JavaScript SDK or receives a Google API key. Address inputs remain editable while search is unavailable; changed addresses must still be confirmed by selecting a result before saving. Unchanged saved routes can be retained when editing other details.
 
-Configure the website-restricted **browser** key in AWS Systems Manager Parameter Store as a String named `/moving-crm/dev/GOOGLE_MAPS_BROWSER_KEY` (replace `dev` for other environments). The existing API SSM-prefix configuration reads it; the verified customer-details response exposes only this browser key. For local development, set `GOOGLE_MAPS_BROWSER_KEY` in the backend environment. Do not use an unrestricted server key. Refresh/redeploy the API after changing the parameter because configuration is cached by the running process. The pipeline does not overwrite this externally managed parameter.
+- `POST /api/public-moves/{access_id}/address-search`: debounced autocomplete after at least three characters, with a session token.
+- `POST /api/public-moves/{access_id}/address-resolve`: obtains the selected address's city/state from Google and issues a signed selection proof scoped to this move.
 
-Enable Maps JavaScript API and Places API (New), and permit both in the key's API restrictions. Website restrictions must permit the CRM/customer-page origin, including `https://d10a8a9ru9t44a.cloudfront.net/*` for the current dev distribution. The customer page uses an origin-only referrer policy so Google receives the allowed origin without the move URL or access token. The browser key is intentionally visible to the browser and must retain website/API restrictions.
+Both endpoints require the existing verified customer session and link, rate-limit per move, and return no-store responses. Backend save validation rejects forged, edited, expired, or cross-move selection proofs. Suggestions use background requests, cancellation and stale-result protection; no page navigation or recurring polling is used.
 
-The browser fetches Google's address components; the API requires matching selection metadata on changed addresses before saving the route. This is suggestion-based customer input validation, not postal deliverability verification or an independent server-to-Google address lookup. Existing intake endpoints are unchanged.
+Create a **server** key with **Places API (New)** enabled and billing active. Store it in AWS Systems Manager Parameter Store as a **SecureString** named `/moving-crm/dev/GOOGLE_MAPS_SERVER_KEY` (replace `dev` for another environment). Local development uses the `GOOGLE_MAPS_SERVER_KEY` backend environment variable. The pipeline does not overwrite this parameter. Redeploy the API after configuration changes because SSM values are cached.
+
+Use API restrictions permitting only Places API (New). A website/referrer-restricted browser key will not work for server requests: use a separate server key and restrict it to the backend's static outbound IP addresses where available. Do not use a frontend build variable. The old `GOOGLE_MAPS_BROWSER_KEY` setting is unused and is never returned by `/details`. Provider errors are sanitized; customer messages never include Google's raw response or key.
+
+Google validates the selected place's city/state components; this is not postal deliverability verification. Existing intake endpoints are unchanged.
 
 ## Cognito email logs (configured by the pipeline)
 
