@@ -29,6 +29,18 @@ def remember_report(details):
         reports[index] = snapshot
 
 
+def _shipping_rows(rows, excluded):
+    # Consume matching occurrences so identical items are not all marked by one exclusion.
+    remaining = deepcopy(excluded)
+    result = [deepcopy(row) for row in rows]
+    for item in result:
+        if item in remaining:
+            remaining.remove(item)
+            item['not_shipping'] = True
+            item['cuft'] = 0
+    return result
+
+
 def report_history(details, staff=False):
     # Merge the live snapshot without requiring writes during read-only requests.
     details = deepcopy(details)
@@ -43,6 +55,12 @@ def report_history(details, staff=False):
                 'current': row['last_spark_id'] == details.get('last_spark_id'),
                 'source': row.get('report_source', 'liveswitch'), 'rooms': row.get('manual_rooms', []),
                 'inventory': row.get('spark_inventory_snapshot', []), 'files': row.get('report_files', [])}
+        excluded = row.get('question_excluded_items', [])
+        item['inventory'] = _shipping_rows(row.get('question_original_rows', item['inventory']), excluded)
+        room_items = [entry for room in item['rooms'] for entry in room.get('items', [])]
+        displayed = iter(_shipping_rows(room_items, excluded))
+        for room in item['rooms']:
+            room['items'] = [next(displayed) for _ in room.get('items', [])]
         if staff:
             item['processing'] = row.get('spark_processing')
         result.append(item)

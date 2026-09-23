@@ -32,3 +32,34 @@ def test_incomplete_or_foreign_reports_cannot_be_selected():
         with pytest.raises(ValueError):
             activate_report(details, report_id)
     assert details['last_spark_id'] == 'pending'
+
+
+def test_excluded_items_remain_visible_with_zero_shipping_volume():
+    from copy import deepcopy
+    pool = {'item_id': 'pool', 'room': 'Bedroom', 'name': 'Pool Table', 'amount': 1, 'cuft': 100}
+    chair = {'item_id': 'chair', 'room': 'Bedroom', 'name': 'Chair', 'amount': 1, 'cuft': 24}
+    details = {'last_spark_id': 'one', 'last_spark_status': 'completed', 'report_source': 'manual',
+               'spark_extracted_cuft': 24, 'spark_inventory_snapshot': [chair],
+               'question_original_rows': [pool, chair], 'question_excluded_items': [pool],
+               'manual_rooms': [{'name': 'Bedroom', 'items': [pool, chair]}]}
+    original = deepcopy(details)
+    report = report_history(details)[0]
+    for rows in (report['inventory'], report['rooms'][0]['items']):
+        assert rows[0]['not_shipping'] is True
+        assert rows[0]['cuft'] == 0
+        assert rows[0]['amount'] == 1
+        assert sum(item['cuft'] for item in rows) == report['cuft'] == 24
+    assert details == original
+    details['question_excluded_items'] = []
+    restored = report_history(details)[0]
+    assert restored['rooms'][0]['items'][0]['cuft'] == 100
+    assert 'not_shipping' not in restored['inventory'][0]
+
+
+def test_exclusion_marks_only_one_matching_occurrence():
+    row = {'name': 'Chair', 'room': 'Bedroom', 'amount': 1, 'cuft': 10}
+    details = {'last_spark_id': 'one', 'question_original_rows': [row, row],
+               'question_excluded_items': [row], 'manual_rooms': [{'name': 'Bedroom', 'items': [row, row]}]}
+    report = report_history(details)[0]
+    for rows in (report['inventory'], report['rooms'][0]['items']):
+        assert [item['cuft'] for item in rows] == [0, 10]

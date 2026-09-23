@@ -4,11 +4,11 @@ import ReportLinks from './ReportLinks';
 
 export type ReportRun = {
   source?: string;
-  rooms?: { name: string; items: { name: string; amount: number; cuft: number }[] }[];
+  rooms?: { name: string; items: { name: string; amount: number; cuft: number; not_shipping?: boolean }[] }[];
   id: string; status: string; created_at?: number; current: boolean; shareUrl?: string;
   cuft?: number; weight?: number;
   files?: { id: string; name: string; size?: number }[];
-  inventory: { room?: string; name: string; amount: number; cuft: number }[];
+  inventory: { room?: string; name: string; amount: number; cuft: number; not_shipping?: boolean }[];
   processing?: { started_at: string; steps: { id: string; label: string; status: string; message?: string; error?: string }[] };
 };
 export default function ReportHistory({ reports, onSelect, disabled = false, staff = false }: {
@@ -49,7 +49,7 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
 
         </div>
         {report.source !== 'manual' && report.files && <details className="report-history-files"><summary>{report.files.length} files used in this run</summary>{report.files.map(file => <p key={file.id}>{file.name}</p>)}</details>}
-        {report.inventory.length > 0 ? <div className="report-history-table"><table><thead><tr><th>Item</th><th>Qty</th><th>Cu ft</th></tr></thead><tbody>{report.inventory.map((item, index) => <tr key={index}><td>{item.name}{item.room && <small style={{ display: 'block' }}>{item.room}</small>}</td><td>{item.amount}</td><td>{item.cuft}</td></tr>)}</tbody></table></div> : <p>Open the report to view its inventory. Saved details appear after it is imported.</p>}
+        {report.inventory.length > 0 ? <div className="report-history-table"><table><thead><tr><th>Item</th><th>Qty</th><th>Cu ft</th></tr></thead><tbody>{report.inventory.map((item, index) => <tr key={index}><td>{item.name}{item.not_shipping && <small style={{ display: 'block' }}>Not shipping</small>}{item.room && <small style={{ display: 'block' }}>{item.room}</small>}</td><td>{item.amount}</td><td>{item.cuft}</td></tr>)}</tbody></table></div> : <p>Open the report to view its inventory. Saved details appear after it is imported.</p>}
         {staff && report.processing && <div className="report-history-processing"><h5>Processing steps</h5>{report.processing.steps.map(step => <div key={step.id}>{step.error ? <details><summary>{step.label} <span>Failed - view error</span></summary><pre>{step.error}</pre></details> : <p><span>{step.label}</span><span>{step.status.replace(/_/g, ' ')}</span></p>}{step.message && <small>{step.message}</small>}</div>)}</div>}
       </div>
     </div>)}

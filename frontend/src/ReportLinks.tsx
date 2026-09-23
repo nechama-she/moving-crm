@@ -9,7 +9,7 @@ export default function ReportLinks({ report }: { report: ReportRun }) {
     <dialog aria-label="Saved itemized list" ref={dialog} className="report-list-dialog" onClick={event => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
       <header><div><h3>Itemized list</h3><small>{report.created_at ? new Date(report.created_at * 1000).toLocaleString() : 'Saved report'}</small></div><button type="button" aria-label="Close itemized list" onClick={() => dialog.current?.close()} autoFocus>&times;</button></header>
       <p>Items entered in the list for this report. Photos and videos are shown in the virtual tour report.</p>
-      {rooms.map((room, index) => <section key={index}><h4>{room.name}</h4><table><thead><tr><th>Item</th><th>Qty</th><th>Cu ft</th></tr></thead><tbody>{room.items.map((item, i) => <tr key={i}><td>{item.name}</td><td>{item.amount}</td><td>{item.cuft.toLocaleString()}</td></tr>)}</tbody></table></section>)}
+      {rooms.map((room, index) => <section key={index}><h4>{room.name}</h4><table><thead><tr><th>Item</th><th>Qty</th><th>Cu ft</th></tr></thead><tbody>{room.items.map((item, i) => <tr key={i}><td>{item.name}{item.not_shipping && <small style={{ display: 'block' }}>Not shipping</small>}</td><td>{item.amount}</td><td>{item.cuft.toLocaleString()}</td></tr>)}</tbody></table></section>)}
       <p><strong>List total: {rooms.reduce((sum, room) => sum + room.items.reduce((n, item) => n + item.cuft, 0), 0).toLocaleString()} cu ft</strong></p>
     </dialog>
   </div>;
