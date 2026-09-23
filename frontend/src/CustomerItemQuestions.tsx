@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import QuestionReferenceImages from "./QuestionReferenceImages";
 export type ItemQuestion = { id: string; rule_id?: string; name: string; label?: string; room: string; quantity: number; question: string; photo: boolean; answers: { id: string; label: string; action: string; notice: string; acknowledge: boolean }[]; saved?: { answer_id: string; acknowledged: boolean; pending?: boolean } };
-type Props = { visibleIds?: Set<string>; validationAttempt?: number; disabled?: boolean; questions: ItemQuestion[]; endpoint: string; linkKey: string; session: string; onSave: (answer: { question_id: string; answer_id: string; acknowledged: boolean; pending: boolean }) => Promise<void> };
+type Props = { active?: boolean; visibleIds?: Set<string>; validationAttempt?: number; disabled?: boolean; questions: ItemQuestion[]; endpoint: string; linkKey: string; session: string; onSave: (answer: { question_id: string; answer_id: string; acknowledged: boolean; pending: boolean }) => Promise<void> };
 export default function CustomerItemQuestions(props: Props) {
  const list = useRef<HTMLDivElement>(null);
  useEffect(() => {
@@ -10,9 +10,9 @@ export default function CustomerItemQuestions(props: Props) {
   invalid?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   (invalid?.matches('input') ? invalid : invalid?.querySelector<HTMLElement>('input'))?.focus({ preventScroll: true });
  }, [props.validationAttempt]);
- return <div ref={list} className="cm-checklist">{props.questions.map(question => <div key={question.id} hidden={props.visibleIds ? !props.visibleIds.has(question.id) : false}><Question question={question} {...props} /></div>)}</div>;
+ return <div ref={list} className="cm-checklist">{props.questions.map(question => <div key={question.id} hidden={props.visibleIds ? !props.visibleIds.has(question.id) : false}><Question question={question} {...props} active={!props.visibleIds || props.visibleIds.has(question.id)} /></div>)}</div>;
 }
-function Question({ question, endpoint, linkKey, session, onSave, disabled, validationAttempt = 0 }: Props & { question: ItemQuestion }) {
+function Question({ question, endpoint, linkKey, session, onSave, disabled, validationAttempt = 0, active = true }: Props & { question: ItemQuestion }) {
  const [choice, setChoice] = useState(question.saved?.answer_id || "");
  const [ack, setAck] = useState(question.saved?.acknowledged || false);
  const [busy, setBusy] = useState(false), [error, setError] = useState("");
@@ -33,7 +33,7 @@ function Question({ question, endpoint, linkKey, session, onSave, disabled, vali
  }
  return <fieldset disabled={disabled} className={`cm-item-question${missingChoice || missingAck ? ' cm-item-question-invalid' : ''}`}>
   <legend><strong>{question.label || question.name}</strong>{question.room && <span>{question.room}</span>}<span>Qty {question.quantity}</span></legend>
-  {question.photo && <QuestionReferenceImages name={question.name} room={question.room} endpoint={`${endpoint}/question-images`} linkKey={linkKey} session={session} />}
+  {question.photo && <QuestionReferenceImages active={active} name={question.name} room={question.room} endpoint={`${endpoint}/question-images`} linkKey={linkKey} session={session} />}
   <p><strong>{question.question}</strong></p>
   <div className="cm-item-answers" role="group" aria-invalid={missingChoice || undefined} aria-describedby={missingChoice ? errorId : undefined}>{question.answers.map(answer => <label className="cm-check-item" key={answer.id}><input type="radio" name={question.id} checked={choice === answer.id} onChange={() => { setChoice(answer.id); setAck(false); void save(answer.id, false); }} />{answer.label}</label>)}</div>
   {missingChoice && <small id={errorId} className="cm-field-error" role="alert">Choose an answer for this item.</small>}

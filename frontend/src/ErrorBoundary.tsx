@@ -1,5 +1,4 @@
 import { Component, ReactNode } from "react";
-import { Link } from "react-router-dom";
 
 interface Props {
   children: ReactNode;
@@ -28,7 +27,7 @@ export default class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error("ErrorBoundary caught an error:", error, errorInfo);
     if (isDynamicImportError(error)) {
-      const reloadKey = `dynamic-import-reload:${window.location.pathname}${window.location.search}`;
+      const reloadKey = `dynamic-import-reload:${import.meta.url}`;
       if (sessionStorage.getItem(reloadKey) !== "true") {
         sessionStorage.setItem(reloadKey, "true");
         window.location.reload();
@@ -43,29 +42,24 @@ export default class ErrorBoundary extends Component<Props, State> {
       }
       return (
         <div style={{ padding: 32, maxWidth: 640, margin: "40px auto", background: "#fff", borderRadius: 8, border: "1px solid #cbd5e1", boxShadow: "0 4px 12px rgba(0,0,0,0.08)" }}>
-          <h2 style={{ color: "#032d60", marginTop: 0 }}>Something went wrong</h2>
+          <h2 style={{ color: "#032d60", marginTop: 0 }}>{this.state.error && isDynamicImportError(this.state.error) ? "This page needs to be reopened" : "We couldn't open this page"}</h2>
           <p style={{ color: "#475569", fontSize: 14 }}>
-            An unexpected error occurred while rendering this page.
+            Please reopen the page to continue.
           </p>
-          {this.state.error?.message && (
-            <pre style={{ background: "#fef2f2", color: "#991b1b", padding: 12, borderRadius: 6, fontSize: 12, overflowX: "auto" }}>
-              {this.state.error.message}
-            </pre>
-          )}
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
             <button className="slds-button"
               type="button"
               onClick={() => window.location.reload()}
               style={{ background: "#0176d3", color: "#fff", border: 0, borderRadius: 4, padding: "8px 16px", fontWeight: 600, cursor: "pointer" }}
             >
-              Reload page
+              Reopen page
             </button>
-            <Link
-              to="/"
+            <a
+              href="/login"
               style={{ display: "inline-flex", alignItems: "center", textDecoration: "none", color: "#0176d3", padding: "8px 16px", fontWeight: 600 }}
             >
-              Return to Leads
-            </Link>
+              Go to login
+            </a>
           </div>
         </div>
       );

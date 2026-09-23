@@ -701,6 +701,20 @@ def select_report_endpoint(lead_id: str, report_id: str, user: User = Depends(ge
     return result
 
 
+@router.post('/leads/{lead_id}/report-events-token')
+def report_events_token(lead_id: str, request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    import jwt
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    from auth import decode_access_token
+    claims = decode_access_token(request.headers.get('authorization', '').split(' ', 1)[-1])
+    from customer_report_updates import queue_report_check
+    queue_report_check(lead.id, db)
+    token = jwt.encode({'sub': f'report-updates:{user.id}', 'role': 'report_updates', 'purpose': 'report_updates',
+                        'lead_id': lead.id, 'iss': os.getenv('JWT_ISSUER', 'moving-crm'),
+                        'exp': min(int(claims['exp']), int(time.time()) + 7200)}, os.environ['JWT_SECRET'], algorithm='HS256')
+    return {'token': token}
+
+
 @router.get('/leads/{lead_id}/spark-processing')
 def get_spark_processing(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lead = _get_visible_lead_or_404(lead_id, user, db)
@@ -762,6 +776,7 @@ def apply_spark_report_endpoint(
 @router.get("/leads/{lead_id}/spark-status")
 def get_lead_spark_status(
     lead_id: str,
+    cached_only: bool = False,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -776,6 +791,10 @@ def get_lead_spark_status(
         return {"spark": None}
     if details.get('report_source') == 'manual':
         return {'spark': {'id': spark_id, 'status': 'completed', 'source': 'manual'},
+                'cuft': details.get('spark_extracted_cuft'), 'weight': details.get('spark_extracted_weight')}
+    if cached_only:
+        return {'spark': {'id': spark_id, 'status': details.get('last_spark_status', 'queued'),
+                          'shareUrl': details.get('last_spark_share_url')},
                 'cuft': details.get('spark_extracted_cuft'), 'weight': details.get('spark_extracted_weight')}
     # File transfer must finish before asking LiveSwitch to analyze the new conversation.
     if details.get("pending_spark_payload"):

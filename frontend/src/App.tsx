@@ -7,7 +7,7 @@ import ErrorBoundary from "./ErrorBoundary";
 const CustomerMovePage = lazy(() => import("./CustomerMovePage"));
 const LiveSwitchCallbackPage = lazy(() => import("./LiveSwitchCallbackPage"));
 const WalkthroughRequestsPage = lazy(() => import("./WalkthroughRequestsPage"));
-const LoginPage = lazy(() => import("./LoginPage"));
+import LoginPage from "./LoginPage";
 const ChangePasswordPage = lazy(() => import("./ChangePasswordPage"));
 const LeadsList = lazy(() => import("./LeadsList"));
 const LeadDetail = lazy(() => import("./LeadDetail"));

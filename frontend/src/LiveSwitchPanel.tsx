@@ -1,3 +1,4 @@
+import { useReportUpdates } from './useReportUpdates';
 import ReportHistory, { type ReportRun } from "./ReportHistory";
 import SparkProcessingLog from "./SparkProcessingLog";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -119,7 +120,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
 
   const loadSparkStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${base}/spark-status`, { headers: authHeaders(token) });
+      const res = await fetch(`${base}/spark-status?cached_only=true`, { headers: authHeaders(token) });
       if (!res.ok) return;
       const json = await res.json();
       if (json && json.spark) {
@@ -141,17 +142,10 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
     } catch { /* ignore */ }
   }, [base, token, onUploaded, inventoryExpanded, inventoryLoaded, loadSparkInventory]);
 
-  useEffect(() => {
-    // Do not call spark status on panel open.
-    // Poll only while a known report is still pending.
-    const isPending = sparkData && (sparkData.status === "queued" || sparkData.status === "running");
-    if (!isPending) return;
-
-    const interval = setInterval(() => {
-      void loadSparkStatus();
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [loadSparkStatus, sparkData]);
+  const reportUpdatesUnavailable = useReportUpdates(base, token, async () => {
+    await loadSparkStatus();
+    setProcessingRevision(value => value + 1);
+  });
 
   const loadReportHistory = useCallback(async () => {
     const response = await fetch(`${base}/report-history`, { headers: authHeaders(token), cache: 'no-store' });
@@ -223,7 +217,7 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
       setInventoryLoaded(false);
       setInventoryError("");
       setInventoryRows([]);
-      setTimeout(() => void loadSparkStatus(), 3000);
+      void loadSparkStatus();
     } catch (err) {
       setSparkError(err instanceof Error ? err.message : "Could not run inventory report.");
     } finally {
@@ -425,7 +419,8 @@ export default function LiveSwitchPanel({ leadId, onClose, onUploaded }: { leadI
                 </a>
               )}
             </div>
-            {sparkData.status === "completed" && <SparkProcessingLog key={`${sparkData.id}:${processingRevision}`} base={base} token={token || ""} reportId={sparkData.id} />}
+            {reportUpdatesUnavailable && <p role="status">Live report updates are unavailable. Reopen this panel to reconnect.</p>}
+            <SparkProcessingLog key={sparkData.id} revision={processingRevision} base={base} token={token || ""} reportId={sparkData.id} />
             <div style={{ marginTop: 10 }}>
               <button
                 type="button"

@@ -1,3 +1,4 @@
+import { SESSION_EXPIRED, tokenExpiry } from './sessionFetch';
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { API_BASE } from "./apiConfig";
 
@@ -50,23 +51,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    if (!token) return;
-    fetch(`${API_BASE}/api/auth/me`, { headers: authHeaders(token) })
+    if (!token) { setLoading(false); return; }
+    const controller = new AbortController();
+    fetch(`${API_BASE}/api/auth/me`, { headers: authHeaders(token), signal: controller.signal })
       .then((res) => {
         if (!res.ok) throw new Error("expired");
         return res.json();
       })
       .then((u) => {
+        if (controller.signal.aborted) return;
         setUser(u);
         localStorage.setItem("user", JSON.stringify(u));
       })
       .catch(() => {
+        if (controller.signal.aborted) return;
         setToken(null);
         setUser(null);
         localStorage.removeItem("token");
         localStorage.removeItem("user");
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
   }, [token]);
 
   const login = async (email: string, password: string) => {
@@ -96,6 +101,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setImpersonationStack([]);
   };
+
+  useEffect(() => {
+    const checkExpiry = () => {
+      if (token && tokenExpiry(token) !== null && tokenExpiry(token)! <= Date.now()) logout();
+    };
+    const expired = (event: Event) => { if ((event as CustomEvent).detail === token) logout(); };
+    const changed = (event: StorageEvent) => {
+      if (event.key === 'token' || event.key === null) {
+        const next = localStorage.getItem('token');
+        setLoading(!!next); setToken(next);
+        if (!next) setUser(null);
+      }
+    };
+    window.addEventListener(SESSION_EXPIRED, expired);
+    window.addEventListener('storage', changed);
+    window.addEventListener('focus', checkExpiry);
+    document.addEventListener('visibilitychange', checkExpiry);
+    const expiry = token ? tokenExpiry(token) : null;
+    const timer = expiry !== null ? window.setTimeout(checkExpiry, Math.min(2147483647, Math.max(0, expiry - Date.now()))) : undefined;
+    return () => {
+      window.removeEventListener(SESSION_EXPIRED, expired);
+      window.removeEventListener('storage', changed);
+      window.removeEventListener('focus', checkExpiry);
+      document.removeEventListener('visibilitychange', checkExpiry);
+      clearTimeout(timer);
+    };
+  }, [token]);
 
   const updateUser = (updatedUser: User) => {
     localStorage.setItem("user", JSON.stringify(updatedUser));

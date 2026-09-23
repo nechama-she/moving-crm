@@ -108,3 +108,49 @@ def test_running_report_requeues_on_server_only(monitor):
     assert sqs.send_message.call_args.kwargs['DelaySeconds'] == 60
     assert json.loads(sqs.send_message.call_args.kwargs['MessageBody'])['attempt'] == 1
     apply.assert_not_called()
+
+
+def test_report_socket_is_scoped_to_authorized_lead(sockets):
+    table, _ = sockets
+    claims = {'sub': 'report-updates:staff', 'role': 'report_updates', 'purpose': 'report_updates',
+              'lead_id': 'lead-1', 'iss': 'moving-crm', 'exp': int(time.time()) + 60}
+    token = jwt.encode(claims, 'testing-secret-at-least-thirty-two-characters', algorithm='HS256')
+    event = {'requestContext': {'routeKey': '$connect', 'connectionId': 'report'}, 'queryStringParameters': {'token': token}}
+    assert realtime_handler.handler(event, None)['statusCode'] == 200
+    assert table.put_item.call_args.kwargs['Item']['report_lead_id'] == 'lead-1'
+    del claims['purpose']
+    event['queryStringParameters']['token'] = jwt.encode(claims, 'testing-secret-at-least-thirty-two-characters', algorithm='HS256')
+    assert realtime_handler.handler(event, None)['statusCode'] == 403
+
+
+@pytest.mark.parametrize('payload,expected', [
+    ({'type':'report_updated','report_lead_id':'lead-1'}, ['report-1']),
+    ({'type':'customer_move_updated','customer_lead_id':'lead-1'}, ['customer']),
+    ({'type':'staff_event'}, ['admin'])])
+def test_report_events_do_not_cross_subscriptions(sockets, payload, expected):
+    table, client = sockets
+    expiry = int(time.time()) + 60
+    table.scan.return_value = {'Items': [
+        {'connection_id':'report-1', 'report_lead_id':'lead-1', 'expires_at':expiry},
+        {'connection_id':'report-2', 'report_lead_id':'lead-2', 'expires_at':expiry},
+        {'connection_id':'expired', 'report_lead_id':'lead-1', 'expires_at':0},
+        {'connection_id':'customer', 'customer_lead_id':'lead-1', 'expires_at':expiry},
+        {'connection_id':'admin', 'expires_at':expiry}]}
+    realtime_handler.handler({'action':'broadcast','payload':payload}, None)
+    assert [call.kwargs['ConnectionId'] for call in client.post_to_connection.call_args_list] == expected
+
+
+def test_processing_notification_follows_commit(monkeypatch):
+    import realtime
+    from spark_processing import SparkProcessingLog
+    saved = SimpleNamespace(details=json.dumps({'last_spark_id':'report'}))
+    db = MagicMock()
+    db.get.return_value = saved
+    def notified(lead):
+        db.commit.assert_called_once()
+        assert json.loads(saved.details)['spark_processing']['status'] == 'running'
+        assert lead == 'lead'
+    publish = MagicMock(side_effect=notified)
+    monkeypatch.setattr(realtime, 'publish_report_update', publish)
+    SparkProcessingLog('report').persist(db, 'lead')
+    publish.assert_called_once()

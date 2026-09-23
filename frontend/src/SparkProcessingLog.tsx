@@ -4,7 +4,7 @@ import { authHeaders } from './AuthContext';
 type Step = { id: string; label: string; status: 'pending' | 'running' | 'success' | 'error' | 'skipped' | 'rolled_back'; message?: string; error?: string; at?: string };
 type Processing = { report_id: string; started_at: string; finished_at?: string; status: string; steps: Step[] };
 const labels: Record<Step['status'], string> = { pending: 'Waiting', running: 'Running', success: 'Done', error: 'Failed', skipped: 'Not run', rolled_back: 'Rolled back' };
-export default function SparkProcessingLog({ base, token, reportId }: { base: string; token: string; reportId: string }) {
+export default function SparkProcessingLog({ base, token, reportId, revision = 0 }: { base: string; token: string; reportId: string; revision?: number }) {
   const [processing, setProcessing] = useState<Processing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -23,13 +23,7 @@ export default function SparkProcessingLog({ base, token, reportId }: { base: st
     const controller = new AbortController();
     void refresh(controller.signal);
     return () => controller.abort();
-  }, [refresh]);
-  useEffect(() => {
-    if (processing?.status !== 'running') return;
-    const controller = new AbortController();
-    const timer = setInterval(() => void refresh(controller.signal), 3000);
-    return () => { clearInterval(timer); controller.abort(); };
-  }, [processing?.status, refresh]);
+  }, [refresh, revision]);
   return <div className="ls-processing" aria-label="Report processing steps">
     <div className="ls-processing-heading"><strong>Processing steps</strong><button type="button" title="Refresh processing log" aria-label="Refresh processing log" disabled={loading} onClick={() => void refresh()}>&#8635;</button></div>
     {error && <small role="alert" className="ls-processing-load-error">{error}</small>}

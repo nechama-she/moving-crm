@@ -6,7 +6,7 @@ import time
 import boto3
 
 from models import LeadLiveSwitch
-from realtime import publish_customer_update
+from realtime import publish_customer_update, publish_report_update
 
 
 def report_check_failed(lead_id, saved, state, db):
@@ -35,6 +35,7 @@ def queue_report_check(lead_id, db):
     state.pop('notification_error', None)
     saved.details = json.dumps(state)
     db.commit()
+    publish_report_update(lead_id)
 
 
 def check_report(message, db, dead_letter=False):

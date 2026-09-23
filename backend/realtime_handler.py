@@ -19,6 +19,12 @@ def handler(event, context):
             for row in response.get("Items", []):
                 # Customer sockets must never receive staff broadcasts or another move's events.
                 target = event.get('payload', {}).get('customer_lead_id')
+                report_target = event.get('payload', {}).get('report_lead_id')
+                if report_target:
+                    if row.get('report_lead_id') != report_target:
+                        continue
+                elif row.get('report_lead_id'):
+                    continue
                 if target:
                     if row.get('customer_lead_id') != target:
                         continue
@@ -51,8 +57,10 @@ def handler(event, context):
                 issuer=os.getenv("JWT_ISSUER", "moving-crm"),
                 options={"require": ["exp", "sub"]},
             )
-            if payload.get("role") not in ("admin", "customer_updates"):
+            if payload.get("role") not in ("admin", "customer_updates", "report_updates"):
                 return {"statusCode": 403}
+            if payload.get('role') == 'report_updates' and (payload.get('purpose') != 'report_updates' or not payload.get('lead_id')):
+                return {'statusCode': 403}
             if payload.get('role') == 'customer_updates' and (payload.get('purpose') != 'customer_updates' or not payload.get('lead_id')):
                 return {"statusCode": 403}
         except jwt.PyJWTError:
@@ -64,6 +72,8 @@ def handler(event, context):
         }
         if payload.get('role') == 'customer_updates':
             item['customer_lead_id'] = payload['lead_id']
+        if payload.get('role') == 'report_updates':
+            item['report_lead_id'] = payload['lead_id']
         table.put_item(Item=item)
     elif route == "$disconnect":
         table.delete_item(Key={"connection_id": connection_id})

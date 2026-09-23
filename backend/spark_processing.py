@@ -63,3 +63,5 @@ class SparkProcessingLog:
             self.attach(details)
             saved.details = json.dumps(details)
             db.commit()
+            from realtime import publish_report_update
+            publish_report_update(lead_id)

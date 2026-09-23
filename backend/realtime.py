@@ -13,6 +13,11 @@ logger = logging.getLogger("moving-crm")
 def publish_customer_update(lead_id: str) -> None:
     # Invalidation only. Customer details still require a valid portal session.
     publish_realtime_event({'type': 'customer_move_updated', 'customer_lead_id': lead_id})
+    publish_report_update(lead_id)
+
+
+def publish_report_update(lead_id: str) -> None:
+    publish_realtime_event({'type': 'report_updated', 'report_lead_id': lead_id})
 
 
 def _json_default(value):
