@@ -1739,3 +1739,70 @@ def test_customer_package_uses_stored_transport_volume_floor(portal, packing_pri
     assert lines[0]['amount'] == expected
     assert lines[0]['description'].startswith(f'{expected} cu ft')
     assert lead.volume == volume
+
+
+def test_item_answer_skips_repricing_when_shipping_is_unchanged(portal, monkeypatch):
+    mod, db, lead, access = portal
+    from inventory_questions import questions
+    company = models.Company(id='fast-answers', name='Fast Answers', customer_questions=json.dumps([{
+        'id': 'plant', 'title': 'Plant', 'enabled': True, 'question': 'Is it live?', 'words': ['plant'],
+        'answers': [{'id': 'yes', 'label': 'Yes', 'action': 'exclude', 'notice': 'Not accepted', 'acknowledge': True},
+                    {'id': 'no', 'label': 'No', 'action': 'none', 'notice': '', 'acknowledge': False}]}]))
+    db.add(company)
+    lead.company = company
+    state = {'last_spark_id': 'report', 'last_spark_status': 'completed', 'spark_extracted_cuft': 10,
+             'spark_extracted_weight': 5, 'spark_inventory_snapshot': [{'name': 'Plant', 'cuft': 10, 'weight': 5, 'amount': 1}]}
+    conversation = models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps(state))
+    db.add(conversation)
+    db.commit()
+    question = questions(company, state, db)[0]
+    apply = MagicMock(return_value={'ok': True})
+    monkeypatch.setitem(sys.modules, 'routes.liveswitch', SimpleNamespace(apply_spark_results_to_lead=apply))
+    monkeypatch.setitem(sys.modules, 'realtime', SimpleNamespace(publish_customer_update=MagicMock()))
+    monkeypatch.setattr(mod, 'details', lambda *args: {'updated': True})
+    body = dict(report_id='report', question_id=question['id'])
+    for answer in [dict(answer_id='no'), dict(answer_id='yes', pending=True)]:
+        assert mod.save_item_answer(mod.ItemAnswerInput(**body, **answer), access, db) == {'updated': True}
+        assert not apply.called
+    mod.save_item_answer(mod.ItemAnswerInput(**body, answer_id='yes', acknowledged=True), access, db)
+    apply.assert_called_once()
+
+
+def test_pricing_autosave_changes_only_selected_charge(portal, packing_pricing, monkeypatch):
+    from decimal import Decimal
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    job.price = access.published_price = Decimal('1000')
+    package = {'cubic_feet': 286, 'rates': {'full': {'rate': 2, 'total': 572}, 'partial': {'rate': 1, 'total': 286},
+               'unpacking': {'rate': .5, 'total': 143}}, 'items': [{'id': 'mirror:1', 'label': 'Mirror', 'price': 30}]}
+    options = [{'id': 'piano:1', 'name': 'Piano', 'label': 'Piano', 'services': [{'kind': 'packing', 'price': 80}, {'kind': 'crating', 'price': 100}]}]
+    monkeypatch.setattr(packing_pricing, 'customer_packing_options', lambda *args: options)
+    monkeypatch.setattr(packing_pricing, 'customer_packing_package', lambda *args: package)
+    monkeypatch.setitem(sys.modules, 'routes.leads', SimpleNamespace(_refresh_lead_estimated_total=lambda *args: None))
+    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    db.add(models.LeadJobCharge(id='transport', job_id=job.id, name='Transportation', subtotal=1000, total_cost=1000))
+    db.commit()
+    def save(**change):
+        mod.save_customer_packing(mod.CustomerPackingPatch(change=change), access, db)
+    save(kind='bulky', item_id='piano:1', service='packing')
+    save(kind='mode', mode='full')
+    assert job.price == 1652
+    full_id = packing_pricing.customer_packing_charge_id(job.id, 'package:full')
+    full = db.get(models.LeadJobCharge, full_id)
+    full.description = 'unchanged full packing line'
+    db.commit()
+    save(kind='unpacking', enabled=True)
+    assert job.price == 1795
+    assert db.get(models.LeadJobCharge, full_id).description == 'unchanged full packing line'
+    assert json.loads(job.customer_packing) == {'piano:1': 'packing'}
+    save(kind='unpacking', enabled=True)
+    assert job.price == 1795
+    save(kind='mode', mode='none')
+    save(kind='box', item_id='mirror:1', enabled=True)
+    assert job.price == 1253
+    save(kind='mode', mode='partial')
+    assert job.price == 1509
+    assert json.loads(job.customer_packing_package)['item_ids'] == []
+    save(kind='bulky', item_id='piano:1', service=None)
+    assert job.price == access.published_price == 1429
+    assert db.get(models.LeadJobCharge, 'transport').total_cost == 1000

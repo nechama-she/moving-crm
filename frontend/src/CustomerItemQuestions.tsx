@@ -9,19 +9,19 @@ function Question({ question, endpoint, linkKey, session, onSave, disabled }: Pr
  const [choice, setChoice] = useState(question.saved?.answer_id || "");
  const [ack, setAck] = useState(question.saved?.acknowledged || false);
  const [busy, setBusy] = useState(false), [error, setError] = useState("");
- const saving = useRef(false);
+ const saveVersion = useRef(0);
  const option = question.answers.find(a => a.id === choice);
  const saved = question.saved?.answer_id === choice && question.saved?.acknowledged === ack;
  async function save(answerId: string, acknowledged: boolean) {
-   if (saving.current) return;
+   const version = ++saveVersion.current;
    const answer = question.answers.find(a => a.id === answerId);
    if (!answer) return;
-   saving.current = true; setBusy(true); setError("");
+   setBusy(true); setError("");
    try { await onSave({ question_id: question.id, answer_id: answerId, acknowledged, pending: answer.acknowledge && !acknowledged }); }
-   catch (e) { setError((e as Error).message); }
-   finally { saving.current = false; setBusy(false); }
+   catch (e) { if (version === saveVersion.current) setError((e as Error).message); }
+   finally { if (version === saveVersion.current) setBusy(false); }
  }
- return <fieldset disabled={busy || disabled} className="cm-item-question">
+ return <fieldset disabled={disabled} className="cm-item-question">
   <legend><strong>{question.label || question.name}</strong>{question.room && <span>{question.room}</span>}<span>Qty {question.quantity}</span></legend>
   {question.photo && <QuestionReferenceImages name={question.name} room={question.room} endpoint={`${endpoint}/question-images`} linkKey={linkKey} session={session} />}
   <p><strong>{question.question}</strong></p>
@@ -29,7 +29,7 @@ function Question({ question, endpoint, linkKey, session, onSave, disabled }: Pr
   {option?.notice && <p role="status">{option.notice}</p>}
   {option?.acknowledge && <label className="cm-check-item"><input type="checkbox" checked={ack} onChange={e => { setAck(e.target.checked); void save(choice, e.target.checked); }} />I understand these instructions.</label>}
   {error && <p role="alert">Could not save: {error} <button type="button" className="slds-button" onClick={() => void save(choice, ack)}>Try again</button></p>}
-  {busy ? <small role="status">Saving...</small> : saved && !error && <small role="status">{option?.acknowledge && !ack ? 'Please acknowledge the instructions to complete this answer.' : 'Saved'}</small>}
+  {option?.acknowledge && !ack && <small>Please acknowledge the instructions to complete this answer.</small>}
   {saved && !error && !busy && option && (!option.acknowledge || ack) && option.action !== "none" && <p role="status">{({ exclude: "Excluded from shipment and estimated volume.", prepare: "Preparation required before moving.", review: "Flagged for the moving team to review.", notice: "Instructions acknowledged." } as Record<string, string>)[option.action]}</p>}
  </fieldset>;
 }

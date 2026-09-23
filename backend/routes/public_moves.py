@@ -678,7 +678,16 @@ class CustomerPackageSelection(BaseModel):
     item_ids: list[str] = Field(default_factory=list, max_length=1000)
 
 
+class CustomerPackingChange(BaseModel):
+    kind: Literal['mode', 'unpacking', 'box', 'bulky']
+    item_id: str = ''
+    mode: Literal['full', 'partial', 'none'] = 'none'
+    enabled: bool = False
+    service: Literal['packing', 'crating'] | None = None
+
+
 class CustomerPackingPatch(BaseModel):
+    change: CustomerPackingChange | None = None
     package: CustomerPackageSelection | None = None
     selected_ids: list[str] = Field(default_factory=list, max_length=1000)
     selections: dict[str, Literal['packing', 'crating']] = Field(default_factory=dict, max_length=1000)
@@ -692,7 +701,41 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
     lead = db.get(Lead, access.lead_id)
     options = customer_packing_options(lead, job, db)
-    choices = dict(body.selections)
+    change = body.change
+    touched = None
+    if change:
+        stored = json.loads(job.customer_packing or '{}')
+        choices = {item_id: 'packing' for item_id in stored} if isinstance(stored, list) else stored
+        touched = set()
+        if change.kind == 'bulky':
+            if change.item_id not in {item['id'] for item in options}:
+                raise HTTPException(409, 'This item is no longer available.')
+            touched.add(change.item_id)
+            if change.service is None:
+                choices.pop(change.item_id, None)
+            else:
+                choices[change.item_id] = change.service
+        else:
+            selection = json.loads(job.customer_packing_package or '{}')
+            if change.kind == 'mode':
+                touched.update(['package:full', 'package:partial'])
+                touched.update(f'box:{item_id}' for item_id in selection.get('item_ids', []))
+                selection['mode'] = change.mode
+                if change.mode != 'none': selection['item_ids'] = []
+            elif change.kind == 'unpacking':
+                touched.add('package:unpacking')
+                selection['unpacking'] = change.enabled
+            elif change.kind == 'box':
+                if selection.get('mode', 'none') != 'none':
+                    raise HTTPException(409, 'Individual boxing is available with no packing selected.')
+                touched.add(f'box:{change.item_id}')
+                ids = set(selection.get('item_ids', []))
+                if change.enabled: ids.add(change.item_id)
+                else: ids.discard(change.item_id)
+                selection['item_ids'] = sorted(ids)
+            body.package = CustomerPackageSelection(**selection)
+    else:
+        choices = dict(body.selections)
     for item_id in body.selected_ids:
         choices.setdefault(item_id, 'packing')
     selected = set(choices)
@@ -729,6 +772,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     previous = set(json.loads(job.customer_packing or '[]'))
     ids = [customer_packing_charge_id(job.id, item_id) for item_id in previous | selected]
     ids.extend(customer_packing_charge_id(job.id, item_id) for item_id in package_old_ids)
+    if touched is not None:
+        ids = [customer_packing_charge_id(job.id, item_id) for item_id in touched]
     old_rows = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id, LeadJobCharge.id.in_(ids)).all()
     old_total = sum((row.total_cost for row in old_rows), Decimal(0))
     for row in old_rows:
@@ -736,7 +781,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     db.flush()
     new_total = Decimal(0)
     for index, item in enumerate(options):
-        if item['id'] in selected:
+        if item['id'] in selected and (touched is None or item['id'] in touched):
             service = next(service for service in item['services'] if service['kind'] == choices[item['id']])
             amount = Decimal(str(service['price']))
             db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, item['id']), job_id=job.id,
@@ -745,6 +790,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             new_total += amount
     if package_lines is not None:
         for index, line in enumerate(package_lines):
+            if touched is not None and line['id'] not in touched: continue
             db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, line['id']), job_id=job.id,
                                 name=line['name'], description=line['description'], sort_order=2000 + index,
                                 subtotal=line['amount'], discount_amount=0, total_cost=line['amount']))
@@ -1488,9 +1534,23 @@ def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(v
         'name': question['name'], 'room': question['room'], 'question': question['question'], 'answer': option['label'],
         'acknowledged': body.acknowledged, 'pending': pending, 'action': 'pending' if pending else option['action'], 'notice': option['notice'],
         'answered_at': NOW().isoformat() + 'Z'}
+    # Only rebuild inventory and recalculate pricing if shipping actually changes.
+    # Pending acknowledgments and informational answers still save immediately.
+    from copy import deepcopy
+    from inventory_questions import adjusted_inventory
+    inventory = state.get('spark_inventory_snapshot', [])
+    volume, weight = state.get('spark_extracted_cuft'), state.get('spark_extracted_weight')
+    adjusted_rows, adjusted_volume, adjusted_weight = adjusted_inventory(
+        company, deepcopy(state), inventory, volume, weight, db)
+    inventory_changed = (adjusted_rows != inventory or adjusted_volume != float(volume or 0)
+                         or adjusted_weight != float(weight or 0))
     remember_report(state)
     saved.details = json.dumps(state)
     db.commit()
+    if not inventory_changed:
+        from realtime import publish_customer_update
+        publish_customer_update(lead.id)
+        return details(access, db)
     result = apply_spark_results_to_lead(lead.id, state.get('last_spark_share_url', ''), db,
         expected_report_id=body.report_id, use_snapshot=True)
     if not result.get('ok'): raise HTTPException(502, result.get('detail', 'Could not update the estimate'))

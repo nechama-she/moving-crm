@@ -1,4 +1,4 @@
-import CustomerAddressInput from "./CustomerAddressInput";
+﻿import CustomerAddressInput from "./CustomerAddressInput";
 import type { SelectedAddress } from "./googlePlaces";
 import CustomerItemQuestions, { type ItemQuestion } from "./CustomerItemQuestions";
 import QuestionReferenceImages from "./QuestionReferenceImages";
@@ -29,7 +29,7 @@ type Details = {
   editable_files?: EditableReportFile[];
   files_changed?: boolean;
   packing_package: PackingPackage | null;
-  packing_items: { id: string; name: string; label: string; price: number; selected: boolean; selected_service: string | null; services: { kind: string; price: number }[] }[];
+  packing_items: { id: string; name: string; label: string; price: number; selected: boolean; selected_service: string | null; services: { kind: 'packing' | 'crating'; price: number }[] }[];
   packing_saved: boolean;
   name: string;
   phone: string;
@@ -91,13 +91,18 @@ export default function CustomerMovePage() {
   const [resendAt,setResendAt]=useState(0),[clock,setClock]=useState(Date.now());
   const [showQuestions, setShowQuestions] = useState(false);
   const [termsError, setTermsError] = useState('');
+  const answerQueue = useRef<Promise<void>>(Promise.resolve());
+  const answerPending = useRef(0);
+  const answerRevision = useRef(0);
+  const failedAnswers = useRef(new Set<string>());
+  const [answersSaving, setAnswersSaving] = useState(false);
+  const [answerSaveStarted, setAnswerSaveStarted] = useState(false);
   const [showInventoryList, setShowInventoryList] = useState(false);
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
   const [packingStep, setPackingStep] = useState<'bulky' | 'package' | 'items'>('bulky');
   const [packageSelection, setPackageSelection] = useState<PackingSelection>({ mode: 'none', unpacking: false, item_ids: [] });
   const [calculatingPrice, setCalculatingPrice] = useState(false);
   const [calculationError, setCalculationError] = useState('');
-  const [packingSaving, setPackingSaving] = useState(false);
   const [packingError, setPackingError] = useState('');
   const money = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
   async function selectReport(id: string) {
@@ -120,21 +125,48 @@ export default function CustomerMovePage() {
       setHasNewUploads(true);
     } finally { setBusy(false); }
   }
-  async function savePacking() {
-    if (Object.values(packingSelection).some(value => !value)) {
-      setPackingError('Choose packing or crating for each checked item.');
-      return;
+  type PricingChange = { kind: 'mode' | 'unpacking' | 'box' | 'bulky'; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
+  const failedPricing = useRef(new Map<string, PricingChange>());
+  function savePricingChange(change: PricingChange) {
+    const id = `pricing:${change.kind}:${change.item_id || ''}`;
+    answerPending.current += 1;
+    answerRevision.current += 1;
+    setAnswersSaving(true);
+    setAnswerSaveStarted(true);
+    const task = answerQueue.current.then(async () => {
+      try {
+        setData(await call('/packing', { change }));
+        failedPricing.current.delete(id);
+        failedAnswers.current.delete(id);
+        setPackingError(failedPricing.current.size ? 'Some choices could not be saved. Please retry.' : '');
+      } catch (error) {
+        failedPricing.current.set(id, change);
+        failedAnswers.current.add(id);
+        setPackingError((error as Error).message);
+      } finally {
+        answerPending.current -= 1;
+        if (!answerPending.current) setAnswersSaving(false);
+      }
+    });
+    answerQueue.current = task.catch(() => {});
+  }
+  function changePackage(next: PackingSelection) {
+    const previous = packageSelection;
+    setPackageSelection(next);
+    if (next.mode !== previous.mode) savePricingChange({ kind: 'mode', mode: next.mode });
+    else if (next.unpacking !== previous.unpacking) savePricingChange({ kind: 'unpacking', enabled: next.unpacking });
+    else {
+      const id = [...next.item_ids, ...previous.item_ids].find(id => next.item_ids.includes(id) !== previous.item_ids.includes(id));
+      if (id) savePricingChange({ kind: 'box', item_id: id, enabled: next.item_ids.includes(id) });
     }
-    setPackingSaving(true);
+  }
+  function nextPricingStep() {
+    if (Object.values(packingSelection).some(value => !value)) { setPackingError('Choose packing or crating for each checked item.'); return; }
+    if (answerPending.current || failedPricing.current.size) { setPackingError(answerPending.current ? 'Please wait for your choices to finish saving.' : 'Please retry the choices that could not be saved.'); return; }
     setPackingError('');
-    try {
-      setData(await call('/packing', { selections: packingSelection, ...(data?.packing_package ? { package: packageSelection } : {}) }));
-      if (data?.item_questions?.length) setPackingStep('items'); else setShowQuestions(false);
-    } catch (err) {
-      setPackingError((err as Error).message);
-    } finally {
-      setPackingSaving(false);
-    }
+    if (packingStep === 'bulky' && data?.packing_package) setPackingStep('package');
+    else if (data?.item_questions?.length) setPackingStep('items');
+    else setShowQuestions(false);
   }
   const [themeColor, setThemeColor] = useState<string>('#214c3e');
   const previews=useRef<string[]>([]);
@@ -289,21 +321,23 @@ export default function CustomerMovePage() {
     }
   }
 
-  async function refreshDetails(){
+  async function refreshDetails(background = false){
     if(!session)return;
-    setBusy(true);
+    if (background && answerPending.current) return;
+    const revision = answerRevision.current;
+    if (!background) setBusy(true);
     setError('');
     try{
       const next=await call('/details');
-      setData(next);
+      if (!answerPending.current && revision === answerRevision.current) setData(next);
     }catch(err){
       setError((err as Error).message);
     }finally{
-      setBusy(false);
+      if (!background) setBusy(false);
     }
   }
 
-  const updatesUnavailable = useCustomerUpdates(base, key, session, refreshDetails);
+  const updatesUnavailable = useCustomerUpdates(base, key, session, () => refreshDetails(true));
   const wait=Math.max(0,Math.ceil((resendAt-clock)/1000));
 
   const paletteStyle = useMemo(() => {
@@ -641,7 +675,7 @@ export default function CustomerMovePage() {
                   )}
                 </div>
               )}
-              <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || packingSaving || reportState === 'running'} />
+              <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
             </div>
 
             {showInventoryList && <ManualInventoryModal initialRooms={data.inventory_draft?.body.rooms} draftKey={`cm_inventory_draft_${accessId}`} loadCatalog={() => call('/inventory-catalog')} onClose={() => { setShowInventoryList(false); void refreshDetails(); }} submit={async body => {
@@ -660,20 +694,35 @@ export default function CustomerMovePage() {
                       <h3 id="packing-title">{packingStep === 'items' ? 'A few details about your items' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : 'Packing services'}</h3>
                       <p>{packingStep === 'items' ? 'Review the instructions for these items before your move.' : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : 'Choose packing and optional unpacking for your move.'}</p>
                     </div>
-                    <button type="button" className="cm-modal-close" aria-label="Close" disabled={packingSaving} onClick={() => setShowQuestions(false)}>&times;</button>
+                    <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
                   <div className="cm-modal-body">
-                    {packingStep === 'items' ? <CustomerItemQuestions disabled={packingSaving} questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={async answer => { setPackingSaving(true); try { setData(await call('/item-answer', { ...answer, report_id: data.spark?.id })); setTermsError(''); } catch (error) { setTermsError('Please save your answer before continuing.'); throw error; } finally { setPackingSaving(false); } }} /> : packingStep === 'bulky' ? <>
+                    {packingStep === 'items' ? <CustomerItemQuestions questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={answer => {
+                      const reportId = data.spark?.id;
+                      answerPending.current += 1;
+                      answerRevision.current += 1;
+                      setAnswersSaving(true);
+                      setAnswerSaveStarted(true);
+                      const task = answerQueue.current.then(async () => {
+                        try { const next = await call('/item-answer', { ...answer, report_id: reportId }); setData(next); failedAnswers.current.delete(answer.question_id); setTermsError(''); }
+                        catch (error) { failedAnswers.current.add(answer.question_id); setTermsError('Please retry the answer that could not be saved.'); throw error; }
+                        finally { answerPending.current -= 1; if (!answerPending.current) setAnswersSaving(false); }
+                      });
+                      answerQueue.current = task.catch(() => {});
+                      return task;
+                    }} /> : packingStep === 'bulky' ? <>
                     <p className="cm-step-sub">Unchecked items will be packed by owner. When both services are available, choose one.</p>
                     <div className="cm-checklist">
                       {data.packing_items.map(item => (
                         <div key={item.id}>
                           <label className="cm-check-item">
-                            <input type="checkbox" disabled={packingSaving} checked={item.id in packingSelection} onChange={e => {
+                            <input type="checkbox" checked={item.id in packingSelection} onChange={e => {
                               const checked = e.target.checked;
+                              const service = checked ? item.services[0].kind : null;
+                              savePricingChange({ kind: 'bulky', item_id: item.id, service });
                               setPackingSelection(prev => {
                                 const next = { ...prev };
-                                if (checked) next[item.id] = item.services.length === 1 ? item.services[0].kind : '';
+                                if (checked) next[item.id] = item.services[0].kind;
                                 else delete next[item.id];
                                 return next;
                               });
@@ -682,11 +731,11 @@ export default function CustomerMovePage() {
                           </label>
                           <QuestionReferenceImages name={item.name} endpoint={`${base}/question-images`} linkKey={key} session={session} />
                           {item.id in packingSelection && item.services.length > 1 && (
-                            <fieldset disabled={packingSaving}>
+                            <fieldset>
                               <legend>Choose a service for {item.label}</legend>
                               {item.services.map(service => (
                                 <label key={service.kind} className="cm-check-item">
-                                  <input type="radio" name={`service-${item.id}`} checked={packingSelection[item.id] === service.kind} onChange={() => setPackingSelection(prev => ({ ...prev, [item.id]: service.kind }))} />
+                                  <input type="radio" name={`service-${item.id}`} checked={packingSelection[item.id] === service.kind} onChange={() => { setPackingSelection(prev => ({ ...prev, [item.id]: service.kind })); savePricingChange({ kind: 'bulky', item_id: item.id, service: service.kind }); }} />
                                   <span>{service.kind === 'packing' ? 'Packing' : 'Crating'} &mdash; {money(service.price)}</span>
                                 </label>
                               ))}
@@ -696,18 +745,17 @@ export default function CustomerMovePage() {
                       ))}
                     </div>
                     <p><strong>Selected services total: {money(data.packing_items.reduce((sum, item) => sum + (item.services.find(service => service.kind === packingSelection[item.id])?.price || 0), 0))}</strong></p>
-                    </> : data.packing_package && <CustomerPackingOptions config={data.packing_package} selection={packageSelection} onChange={setPackageSelection} disabled={packingSaving} />}
+                    </> : data.packing_package && <CustomerPackingOptions config={data.packing_package} selection={packageSelection} onChange={changePackage} disabled={false} />}
                     {!data.estimate && <p>Your choices will be saved and included when your estimate is ready.</p>}
-                    {packingError && <p role="alert">{packingError}</p>}
+                    {packingError && <p role="alert">{packingError}{failedPricing.current.size > 0 && <button type="button" onClick={() => { for (const change of failedPricing.current.values()) savePricingChange(change); }}>Try again</button>}</p>}
                   </div>
                   {packingStep === 'items' && termsError && <p role="alert" className="cm-field-error">{termsError}</p>}
                   <div className="cm-modal-footer">
-                    {(packingStep !== 'items' || data.packing_package || data.packing_items.length > 0) && <button type="button" className="cm-secondary-btn" disabled={packingSaving} onClick={() => packingStep === 'items' ? (data.packing_package ? setPackingStep('package') : data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)) : packingStep === 'package' && data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)}>{packingStep === 'items' || (packingStep === 'package' && data.packing_items.length) ? 'Back' : 'Cancel'}</button>}
-                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" disabled={packingSaving} onClick={() => { if (termsError || (data.item_questions || []).some(q => !q.saved || q.saved.pending || (q.answers.find(a => a.id === q.saved?.answer_id)?.acknowledge && !q.saved.acknowledged))) { setTermsError('Please answer each item and acknowledge the required instructions.'); return; } setShowQuestions(false); }}>Done</button> : packingStep === 'bulky' && data.packing_package ? <button type="button" className="slds-button cm-primary" onClick={() => {
-                      if (Object.values(packingSelection).some(value => !value)) { setPackingError('Choose packing or crating for each checked item.'); return; }
-                      setPackingError(''); setPackingStep('package');
-                    }}>Next: packing services</button> : <button type="button" className="slds-button cm-primary" disabled={packingSaving} onClick={() => void savePacking()}>{packingSaving ? 'Saving...' : data.estimate ? 'Save & update price' : 'Save selections'}</button>}
+                    {(packingStep !== 'items' || data.packing_package || data.packing_items.length > 0) && <button type="button" className="cm-secondary-btn" onClick={() => packingStep === 'items' ? (data.packing_package ? setPackingStep('package') : data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)) : packingStep === 'package' && data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)}>{packingStep === 'items' || (packingStep === 'package' && data.packing_items.length) ? 'Back' : 'Close'}</button>}
+                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" aria-busy={answersSaving} onClick={() => { if (answerPending.current) { setTermsError('Please wait for your answers to finish saving.'); return; } if (failedAnswers.current.size || (data.item_questions || []).some(q => !q.saved || q.saved.pending || (q.answers.find(a => a.id === q.saved?.answer_id)?.acknowledge && !q.saved.acknowledged))) { setTermsError('Please answer each item and acknowledge the required instructions.'); return; } setShowQuestions(false); }}>Done</button> : <button type="button" className="slds-button cm-primary" onClick={nextPricingStep}>{packingStep === 'bulky' && data.packing_package ? 'Next: packing services' : data.item_questions?.length ? 'Next: moving terms' : 'Done'}</button>}
+
                   </div>
+                  {<small className="cm-answer-autosave-note" role="status" aria-live="polite">{answersSaving ? 'Saving...' : failedAnswers.current.size ? 'Could not save all answers. Please retry.' : answerSaveStarted ? <><span className="cm-save-check" aria-hidden="true">&#10003;</span> Saved</> : 'Your answers save automatically.'}</small>}
                 </div>
               </div>
             )}
