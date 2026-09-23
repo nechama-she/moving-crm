@@ -1,0 +1,48 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
+from estimate_pdf import build_estimate_pdf, inventory_entries
+
+
+def sample():
+    return dict(name='Sample Customer', phone='202-555-0100', email='customer@example.com',
+                move_date='2026-09-29', pickup='Rockville, MD', delivery='Phoenix, AZ',
+                company_details={'name': 'Sample Moving Company', 'phone': '202-555-0199'},
+                estimate={'price': '1910', 'cuft': '100', 'charges': [
+                    {'name': 'Transportation', 'description': 'Minimum transportation charge', 'total': 1500},
+                    {'name': 'Packing', 'description': '286 cu ft at $1 per cu ft', 'total': 286},
+                    {'name': 'Additional service', 'description': 'Selected service', 'total': 124}]},
+                packing_package={'minimum_cubic_feet': 286}, item_questions=[
+                    {'item_index': 0, 'unit_index': 0, 'question': 'Will it be empty before the movers arrive?',
+                     'saved': {'answer': 'Yes', 'action': 'none'}},
+                    {'item_index': 0, 'unit_index': 1, 'question': 'Will it be empty before the movers arrive?',
+                     'saved': {'answer': 'No', 'action': 'exclude', 'notice': 'Remove everything inside.', 'acknowledged': True}}])
+
+
+def test_individual_answers_and_volume_are_not_combined():
+    rows = [{'name': 'Gun Safe', 'room': 'Bedroom', 'amount': 2, 'cuft': 200, 'weight': 1400}]
+    entries = list(inventory_entries(rows, sample()['item_questions']))
+    assert [e['cuft'] for e in entries] == [100, 0]
+    assert [e['weight'] for e in entries] == [700, 0]
+    assert [e['excluded'] for e in entries] == [False, True]
+    assert [e['label'] for e in entries] == ['Gun Safe (1 of 2)', 'Gun Safe (2 of 2)']
+    assert rows[0]['cuft'] == 200
+
+
+def test_pending_exclusion_keeps_volume():
+    data = sample()
+    data['item_questions'][1]['saved']['pending'] = True
+    entries = list(inventory_entries([{'name': 'Safe', 'amount': 2, 'cuft': 200}], data['item_questions']))
+    assert sum(e['cuft'] for e in entries) == 200
+    assert all(e['weight'] is None for e in entries)
+
+
+def test_pdf_with_long_instructions_and_many_rooms():
+    data = sample()
+    data['item_questions'][1]['saved']['notice'] = 'Empty the safe before moving. ' * 150
+    rows = [{'name': 'Gun Safe', 'room': 'Bedroom', 'amount': 2, 'cuft': 200}]
+    rows += [{'name': f'Chair <special> & item {i}', 'room': f'Room {i // 20}', 'amount': 1, 'cuft': 5} for i in range(100)]
+    pdf = build_estimate_pdf(data, rows)
+    assert pdf.startswith(b'%PDF-')
+    assert len(pdf) > 5000

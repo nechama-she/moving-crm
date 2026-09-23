@@ -520,6 +520,10 @@ def _customer_charge_description(name: str, desc: str) -> str:
 
 @router.get('/api/public-moves/{access_id}/details')
 def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    return _move_details(access, db)
+
+
+def _move_details(access, db, *, refresh_report=True):
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
     pickup, stops, delivery = _read_job_route(db, job)
     typed = json.loads(job.stop_types or '[]')
@@ -533,13 +537,13 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
     if conversation and conversation.details:
         try:
             conv_details = json.loads(conversation.details)
-            if conv_details.get('pending_spark_payload'):
+            if refresh_report and conv_details.get('pending_spark_payload'):
                 from routes.liveswitch import start_ready_report
                 start_ready_report(lead.id, db)
                 conv_details = json.loads(conversation.details)
             spark_id = conv_details.get("last_spark_id")
             if spark_id:
-                if conv_details.get("report_source") != "manual" and not conv_details.get("pending_spark_payload") and (conv_details.get("last_spark_status") not in ("completed", "failed", "cancelled") or conv_details.get("spark_extracted_id") != spark_id):
+                if refresh_report and conv_details.get("report_source") != "manual" and not conv_details.get("pending_spark_payload") and (conv_details.get("last_spark_status") not in ("completed", "failed", "cancelled") or conv_details.get("spark_extracted_id") != spark_id):
                     from routes.liveswitch import _api_get, apply_spark_results_to_lead
                     try:
                         remote = _api_get(f"sparks/{spark_id}")
@@ -651,6 +655,22 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
             'walkthrough': meeting_dict(meeting) if meeting else None,
             'participant_url': json.loads(conversation.details).get('participantJoinUrl', '') if conversation and meeting and meeting.status == 'scheduled' else '',
             'files': conv_details.get('report_files', [{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files])}
+
+
+@router.get('/api/public-moves/{access_id}/estimate.pdf')
+def download_estimate(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from estimate_pdf import build_estimate_pdf
+    data = _move_details(access, db, refresh_report=False)
+    if not data.get('estimate') or not data.get('spark') or data['spark']['status'] != 'completed':
+        raise HTTPException(409, 'Your inventory and estimate must be ready before downloading.')
+    conversation = db.get(LeadLiveSwitch, access.lead_id)
+    state = json.loads(conversation.details) if conversation else {}
+    rows = state.get('question_original_rows', state.get('spark_inventory_snapshot', []))
+    if not rows:
+        raise HTTPException(409, 'There is no inventory to include in this estimate.')
+    return Response(build_estimate_pdf(data, rows), media_type='application/pdf', headers={
+        'Content-Disposition': 'attachment; filename="moving-estimate.pdf"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
 @router.post('/api/public-moves/{access_id}/reports/{report_id}/select')

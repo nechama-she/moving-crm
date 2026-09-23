@@ -54,6 +54,34 @@ def request(link='',session=''):
     return Request({'type':'http','method':'GET','path':'/','headers':[(b'x-public-link',link.encode()),(b'x-public-session',session.encode())], 'client':('127.0.0.1',1234)})
 
 
+def test_estimate_pdf_uses_verified_access_and_saved_report_only(portal, monkeypatch):
+    module, db, lead, access = portal
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+        'spark_inventory_snapshot': [{'name': 'Chair', 'amount': 1, 'cuft': 5}]})))
+    db.commit()
+    calls = []
+    def snapshot(actual_access, actual_db, *, refresh_report):
+        calls.append((actual_access.id, refresh_report))
+        return {'name': lead.full_name, 'estimate': {'price': '100', 'cuft': '5'},
+                'spark': {'status': 'completed'}}
+    monkeypatch.setattr(module, '_move_details', snapshot)
+    response = module.download_estimate(access, db)
+    assert response.body.startswith(b'%PDF-')
+    assert response.media_type == 'application/pdf'
+    assert response.headers['cache-control'] == 'private, no-store'
+    assert calls == [(access.id, False)]
+    route = next(r for r in module.router.routes if r.path.endswith('/estimate.pdf'))
+    assert any(d.call is module.verified for d in route.dependant.dependencies)
+
+
+def test_estimate_pdf_rejects_pending_estimate(portal, monkeypatch):
+    module, db, lead, access = portal
+    monkeypatch.setattr(module, '_move_details', lambda *args, **kwargs: {'estimate': None})
+    with pytest.raises(HTTPException) as error:
+        module.download_estimate(access, db)
+    assert error.value.status_code == 409
+
+
 def test_link_does_not_grant_verified_access(portal):
     mod,db,lead,access=portal
     assert mod.public_access(access.id,request(link_token(access.id)),db).id==access.id

@@ -204,6 +204,25 @@ export default function CustomerMovePage() {
   const base=`${API_BASE}/api/public-moves/${accessId}`;
   const headers={'x-public-link':key,'x-public-session':session};
 
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState('');
+  async function downloadEstimate() {
+    setPdfBusy(true); setPdfError('');
+    try {
+      const response = await fetch(base + '/estimate.pdf', { headers, cache: 'no-store' });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.detail || 'Could not download the estimate. Please try again.');
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url; link.download = 'moving-estimate.pdf';
+      document.body.appendChild(link); link.click(); link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) { setPdfError((error as Error).message); }
+    finally { setPdfBusy(false); }
+  }
+
   async function call(path:string, body?:unknown, method?:string) {
     const httpMethod = method || (body===undefined ? 'GET' : 'POST');
     const response=await fetch(base+path,{method:httpMethod,headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
@@ -708,6 +727,10 @@ export default function CustomerMovePage() {
                   )}
                 </div>
               )}
+              {data.estimate && data.spark?.status === 'completed' && <div className="cm-estimate-extra-actions">
+                <button type="button" className="slds-button" disabled={pdfBusy || answersSaving || calculatingPrice || busy} onClick={() => void downloadEstimate()}>{pdfBusy ? 'Preparing PDF...' : 'Download estimate PDF'}</button>
+                {pdfError && <p role="alert">{pdfError}</p>}
+              </div>}
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
             </div>
 
