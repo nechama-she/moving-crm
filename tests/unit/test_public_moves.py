@@ -1806,3 +1806,50 @@ def test_pricing_autosave_changes_only_selected_charge(portal, packing_pricing, 
     save(kind='bulky', item_id='piano:1', service=None)
     assert job.price == access.published_price == 1429
     assert db.get(models.LeadJobCharge, 'transport').total_cost == 1000
+
+
+@pytest.mark.parametrize('sms_fails', [False, True])
+def test_intake_also_emails_link_once(traced_intake, monkeypatch, sms_fails):
+    mod, db, body = traced_intake
+    body = body.model_copy(update={'email': 'customer@example.com'})
+    monkeypatch.setenv('PUBLIC_MOVE_LINK_DRY_RUN', 'false')
+    sms = MagicMock(return_value={'ok': True})
+    if sms_fails: sms.side_effect = HTTPException(502, 'SMS provider failed')
+    email = MagicMock(return_value={'ok': True})
+    monkeypatch.setattr(mod, 'deliver_customer_link_sms', sms)
+    monkeypatch.setattr(mod, 'deliver_customer_link_email', email)
+    result = mod.intake(body, request(), 'test-intake-key', 'email-create', db)
+    result = json.loads(result.body) if sms_fails else result
+    assert next(a for a in result['actions'] if a['action'] == 'send_customer_email')['status'] == 'succeeded'
+    assert email.call_args.args[0].email == body.email
+    assert email.call_args.args[1].lead_id == result['lead_id']
+    mod.intake(body, request(), 'test-intake-key', 'email-create', db)
+    assert sms.call_count == email.call_count == 1
+
+
+def test_link_email_uses_configured_sender_and_same_customer_url(portal, monkeypatch):
+    mod, db, lead, access = portal
+    monkeypatch.setenv('PUBLIC_MOVE_EMAIL_FROM', 'moves@example.com')
+    monkeypatch.setenv('PUBLIC_MOVE_ORIGIN', 'https://example.com')
+    client = MagicMock()
+    monkeypatch.setattr(mod.boto3, 'client', lambda *args, **kwargs: client)
+    assert mod.deliver_customer_link_email(lead, access, db) == {'ok': True}
+    payload = client.send_email.call_args.kwargs
+    assert payload['Source'] == 'moves@example.com'
+    assert payload['Destination']['ToAddresses'] == [lead.email]
+    assert mod.public_url(access) in payload['Message']['Body']['Text']['Data']
+    lead.email = None
+    client.reset_mock()
+    assert mod.deliver_customer_link_email(lead, access, db)['skipped']
+    client.send_email.assert_not_called()
+
+
+def test_intake_email_dry_run(traced_intake, monkeypatch):
+    mod, db, body = traced_intake
+    body = body.model_copy(update={'email': 'customer@example.com'})
+    monkeypatch.setenv('PUBLIC_MOVE_LINK_DRY_RUN', 'true')
+    email = MagicMock()
+    monkeypatch.setattr(mod, 'deliver_customer_link_email', email)
+    result = mod.intake(body, request(), 'test-intake-key', 'email-dry-run', db)
+    email.assert_not_called()
+    assert next(a for a in result['actions'] if a['action'] == 'send_customer_email')['response']['dry_run']

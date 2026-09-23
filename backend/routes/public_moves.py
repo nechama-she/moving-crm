@@ -201,7 +201,7 @@ def intake(body: Intake, request: Request, x_api_secret: str = Header(default=''
         ('validate_existing_request', 'endpoint'), ('validate_company', 'db'),
         ('create_lead', 'db'), ('create_job', 'db'), ('save_job_route', 'db'),
         ('create_customer_access', 'db'), ('commit', 'db'),
-        ('build_customer_url', 'endpoint'), ('send_customer_sms', 'aircall'), ('rollback', 'db'),
+        ('build_customer_url', 'endpoint'), ('send_customer_sms', 'aircall'), ('send_customer_email', 'ses'), ('rollback', 'db'),
     ]
     actions = [dict(action=name, target=target, status='not_attempted', response=None, error=None)
                for name, target in definitions]
@@ -276,14 +276,32 @@ def intake(body: Intake, request: Request, x_api_secret: str = Header(default=''
             committed = True
         url = run('build_customer_url', lambda: public_url(access), lambda value: {'url': value})
         result['url'] = url
-        if existing is None:
-            if (setting('PUBLIC_MOVE_LINK_DRY_RUN') or 'true').strip().lower() != 'false':
-                by_name['send_customer_sms'].update(status='not_attempted',
-                    response={'dry_run': True, 'message': 'Customer-link SMS is disabled by PUBLIC_MOVE_LINK_DRY_RUN.'})
+        failures = []
+        dry_run = (setting('PUBLIC_MOVE_LINK_DRY_RUN') or 'true').strip().lower() != 'false'
+        for name, recipient, deliver in [
+            ('send_customer_sms', lead.phone if existing is None else None, deliver_customer_link_sms),
+            ('send_customer_email', lead.email if existing is None else None, deliver_customer_link_email),
+        ]:
+            if existing is not None:
+                by_name[name]['response'] = {'message': 'Existing submission; customer link is not resent.'}
+            elif not recipient or not recipient.strip():
+                by_name[name]['response'] = {'message': 'No recipient provided.'}
+            elif dry_run:
+                by_name[name]['response'] = {'dry_run': True, 'message': 'Customer-link delivery is disabled by PUBLIC_MOVE_LINK_DRY_RUN.'}
             else:
-                run('send_customer_sms', lambda: deliver_customer_link_sms(lead, access, db))
-        else:
-            by_name['send_customer_sms']['response'] = {'message': 'Existing submission; SMS is not resent.'}
+                try:
+                    run(name, lambda: deliver(lead, access, db))
+                except Exception as delivery_error:
+                    by_name[name].update(status='failed', error={
+                        'type': type(delivery_error).__name__,
+                        'message': delivery_error.detail if isinstance(delivery_error, HTTPException) else 'The message provider could not send this message.',
+                        'http_status': delivery_error.status_code if isinstance(delivery_error, HTTPException) else 502})
+                    failures.append((name, delivery_error))
+        if failures:
+            name, delivery_error = failures[0]
+            current = by_name[name]
+            if isinstance(delivery_error, HTTPException): raise delivery_error
+            raise HTTPException(502, 'The message provider could not send this message.')
         return {**result, 'status': 'succeeded', 'reused': existing is not None, 'actions': actions}
     except Exception as exc:
         code = exc.status_code if isinstance(exc, HTTPException) else 500
@@ -1118,6 +1136,23 @@ def deliver_customer_link_sms(lead, access, db):
     return {'ok': True}
 
 
+def deliver_customer_link_email(lead, access, db):
+    if not lead.email or not lead.email.strip():
+        return {'ok': True, 'skipped': True}
+    sender = setting('PUBLIC_MOVE_EMAIL_FROM')
+    if not sender:
+        raise HTTPException(503, 'Customer email sending is not configured')
+    message = f'View your move, upload files, add an item list, or request a virtual estimate: {public_url(access)}'
+    try:
+        boto3.client('ses', region_name=setting('AWS_REGION') or 'us-east-1').send_email(
+            Source=sender, Destination={'ToAddresses': [lead.email.strip()]}, Message={
+                'Subject': {'Data': 'Your moving estimate', 'Charset': 'UTF-8'},
+                'Body': {'Text': {'Data': message, 'Charset': 'UTF-8'}}})
+    except Exception:
+        raise HTTPException(502, 'Could not send email. Please retry.')
+    return {'ok': True}
+
+
 class SendCustomerLinkRequest(BaseModel):
     dry_run: bool = False
 
@@ -1143,13 +1178,7 @@ def send_customer_page_link(lead_id: str, body: SendCustomerLinkRequest,
             if delivery['channel'] == 'sms':
                 send_customer_link(lead_id, user, db)
             else:
-                sender = setting('PUBLIC_MOVE_EMAIL_FROM')
-                if not sender:
-                    raise HTTPException(503, 'Customer email sending is not configured')
-                boto3.client('ses', region_name=setting('AWS_REGION') or 'us-east-1').send_email(
-                    Source=sender, Destination={'ToAddresses': [delivery['recipient']]}, Message={
-                        'Subject': {'Data': 'Your moving estimate', 'Charset': 'UTF-8'},
-                        'Body': {'Text': {'Data': message, 'Charset': 'UTF-8'}}})
+                deliver_customer_link_email(lead, access, db)
             delivery['status'] = 'sent'
         except HTTPException as exc:
             delivery.update(status='failed', error=str(exc.detail))
