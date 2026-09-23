@@ -92,6 +92,36 @@ export default function CustomerMovePage() {
   const [showQuestions, setShowQuestions] = useState(false);
   const [termsError, setTermsError] = useState('');
   const [termsValidationAttempt, setTermsValidationAttempt] = useState(0);
+  const [termsStep, setTermsStep] = useState(0);
+  const termsGroups = useMemo(() => {
+    const groups = new Map<string, ItemQuestion[]>();
+    for (const question of data?.item_questions || []) {
+      const id = question.rule_id || question.question;
+      const group = groups.get(id) || [];
+      group.push(question);
+      groups.set(id, group);
+    }
+    return [...groups.values()];
+  }, [data?.item_questions]);
+  const currentTermsStep = Math.min(termsStep, Math.max(0, termsGroups.length - 1));
+  const currentTerms = termsGroups[currentTermsStep] || [];
+  const visibleTermsIds = new Set(currentTerms.map(question => question.id));
+  const termsBody = useRef<HTMLDivElement>(null);
+  function changeTermsStep(step: number) {
+    setTermsStep(step);
+    setTermsValidationAttempt(0);
+    setTermsError('');
+    termsBody.current?.scrollTo({ top: 0 });
+  }
+  function nextTermsStep() {
+    if (answerPending.current) { setTermsError('Please wait for your answers to finish saving.'); return; }
+    if (currentTerms.some(q => failedAnswers.current.has(q.id) || !q.saved || q.saved.pending ||
+      (q.answers.find(a => a.id === q.saved?.answer_id)?.acknowledge && !q.saved.acknowledged))) {
+      setTermsError(''); setTermsValidationAttempt(value => value + 1); return;
+    }
+    if (currentTermsStep < termsGroups.length - 1) changeTermsStep(currentTermsStep + 1);
+    else setShowQuestions(false);
+  }
   const answerQueue = useRef<Promise<void>>(Promise.resolve());
   const answerPending = useRef(0);
   const answerRevision = useRef(0);
@@ -666,6 +696,7 @@ export default function CustomerMovePage() {
                       setPackingStep(data.packing_items.length ? 'bulky' : data.packing_package ? 'package' : 'items');
                       setPackageSelection(data.packing_package?.selection || { mode: 'none', unpacking: false, item_ids: [] });
                       setPackingError('');
+                      setTermsStep(0);
                       setTermsValidationAttempt(0);
                       setShowQuestions(true);
                     }}
@@ -694,12 +725,12 @@ export default function CustomerMovePage() {
                     <div>
                       <span className="cm-eyebrow">{packingStep === 'items' ? 'MOVING TERMS' : 'EXTRA SERVICES'}</span>
                       <h3 id="packing-title">{packingStep === 'items' ? 'A few details about your items' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : 'Packing services'}</h3>
-                      <p>{packingStep === 'items' ? 'Review the instructions for these items before your move.' : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : 'Choose packing and optional unpacking for your move.'}</p>
+                      <p>{packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : 'Choose packing and optional unpacking for your move.'}</p>
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
-                  <div className="cm-modal-body">
-                    {packingStep === 'items' ? <CustomerItemQuestions validationAttempt={termsValidationAttempt} questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={answer => {
+                  <div className="cm-modal-body" ref={termsBody}>
+                    {packingStep === 'items' ? <CustomerItemQuestions visibleIds={visibleTermsIds} validationAttempt={termsValidationAttempt} questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={answer => {
                       const reportId = data.spark?.id;
                       answerPending.current += 1;
                       answerRevision.current += 1;
@@ -753,8 +784,8 @@ export default function CustomerMovePage() {
                   </div>
                   {packingStep === 'items' && termsError && <p role="alert" className="cm-field-error">{termsError}</p>}
                   <div className="cm-modal-footer">
-                    {(packingStep !== 'items' || data.packing_package || data.packing_items.length > 0) && <button type="button" className="cm-secondary-btn" onClick={() => packingStep === 'items' ? (data.packing_package ? setPackingStep('package') : data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)) : packingStep === 'package' && data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)}>{packingStep === 'items' || (packingStep === 'package' && data.packing_items.length) ? 'Back' : 'Close'}</button>}
-                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" aria-busy={answersSaving} onClick={() => { if (answerPending.current) { setTermsError('Please wait for your answers to finish saving.'); return; } if (failedAnswers.current.size || (data.item_questions || []).some(q => !q.saved || q.saved.pending || (q.answers.find(a => a.id === q.saved?.answer_id)?.acknowledge && !q.saved.acknowledged))) { setTermsError(''); setTermsValidationAttempt(value => value + 1); return; } setShowQuestions(false); }}>Done</button> : <button type="button" className="slds-button cm-primary" onClick={nextPricingStep}>{packingStep === 'bulky' && data.packing_package ? 'Next: packing services' : data.item_questions?.length ? 'Next: moving terms' : 'Done'}</button>}
+                    {(packingStep !== 'items' || currentTermsStep > 0 || data.packing_package || data.packing_items.length > 0) && <button type="button" className="cm-secondary-btn" onClick={() => packingStep === 'items' ? (currentTermsStep > 0 ? changeTermsStep(currentTermsStep - 1) : data.packing_package ? setPackingStep('package') : data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)) : packingStep === 'package' && data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)}>{packingStep === 'items' || (packingStep === 'package' && data.packing_items.length) ? 'Back' : 'Close'}</button>}
+                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" aria-busy={answersSaving} onClick={nextTermsStep}>{currentTermsStep < termsGroups.length - 1 ? 'Next' : 'Done'}</button> : <button type="button" className="slds-button cm-primary" onClick={nextPricingStep}>{packingStep === 'bulky' && data.packing_package ? 'Next: packing services' : data.item_questions?.length ? 'Next: moving terms' : 'Done'}</button>}
 
                   </div>
                   {<small className="cm-answer-autosave-note" role="status" aria-live="polite">{answersSaving ? 'Saving...' : failedAnswers.current.size ? 'Could not save all answers. Please retry.' : answerSaveStarted ? <><span className="cm-save-check" aria-hidden="true">&#10003;</span> Saved</> : 'Your answers save automatically.'}</small>}

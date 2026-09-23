@@ -1,16 +1,16 @@
 import { useEffect, useId, useRef, useState } from "react";
 import QuestionReferenceImages from "./QuestionReferenceImages";
-export type ItemQuestion = { id: string; name: string; label?: string; room: string; quantity: number; question: string; photo: boolean; answers: { id: string; label: string; action: string; notice: string; acknowledge: boolean }[]; saved?: { answer_id: string; acknowledged: boolean; pending?: boolean } };
-type Props = { validationAttempt?: number; disabled?: boolean; questions: ItemQuestion[]; endpoint: string; linkKey: string; session: string; onSave: (answer: { question_id: string; answer_id: string; acknowledged: boolean; pending: boolean }) => Promise<void> };
+export type ItemQuestion = { id: string; rule_id?: string; name: string; label?: string; room: string; quantity: number; question: string; photo: boolean; answers: { id: string; label: string; action: string; notice: string; acknowledge: boolean }[]; saved?: { answer_id: string; acknowledged: boolean; pending?: boolean } };
+type Props = { visibleIds?: Set<string>; validationAttempt?: number; disabled?: boolean; questions: ItemQuestion[]; endpoint: string; linkKey: string; session: string; onSave: (answer: { question_id: string; answer_id: string; acknowledged: boolean; pending: boolean }) => Promise<void> };
 export default function CustomerItemQuestions(props: Props) {
  const list = useRef<HTMLDivElement>(null);
  useEffect(() => {
   if (!props.validationAttempt) return;
-  const invalid = list.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+  const invalid = list.current?.querySelector<HTMLElement>(':scope > div:not([hidden]) [aria-invalid="true"]');
   invalid?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   (invalid?.matches('input') ? invalid : invalid?.querySelector<HTMLElement>('input'))?.focus({ preventScroll: true });
  }, [props.validationAttempt]);
- return <div ref={list} className="cm-checklist">{props.questions.map(question => <Question key={question.id} question={question} {...props} />)}</div>;
+ return <div ref={list} className="cm-checklist">{props.questions.map(question => <div key={question.id} hidden={props.visibleIds ? !props.visibleIds.has(question.id) : false}><Question question={question} {...props} /></div>)}</div>;
 }
 function Question({ question, endpoint, linkKey, session, onSave, disabled, validationAttempt = 0 }: Props & { question: ItemQuestion }) {
  const [choice, setChoice] = useState(question.saved?.answer_id || "");
