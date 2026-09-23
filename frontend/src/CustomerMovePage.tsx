@@ -90,6 +90,7 @@ export default function CustomerMovePage() {
   const [hasNewUploads, setHasNewUploads] = useState(false);
   const [resendAt,setResendAt]=useState(0),[clock,setClock]=useState(Date.now());
   const [showQuestions, setShowQuestions] = useState(false);
+  const [termsError, setTermsError] = useState('');
   const [showInventoryList, setShowInventoryList] = useState(false);
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
   const [packingStep, setPackingStep] = useState<'bulky' | 'package' | 'items'>('bulky');
@@ -662,7 +663,7 @@ export default function CustomerMovePage() {
                     <button type="button" className="cm-modal-close" aria-label="Close" disabled={packingSaving} onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
                   <div className="cm-modal-body">
-                    {packingStep === 'items' ? <CustomerItemQuestions disabled={packingSaving} questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={async answer => { setPackingSaving(true); try { setData(await call('/item-answer', { ...answer, report_id: data.spark?.id })); } finally { setPackingSaving(false); } }} /> : packingStep === 'bulky' ? <>
+                    {packingStep === 'items' ? <CustomerItemQuestions disabled={packingSaving} questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={async answer => { setPackingSaving(true); try { setData(await call('/item-answer', { ...answer, report_id: data.spark?.id })); setTermsError(''); } catch (error) { setTermsError('Please save your answer before continuing.'); throw error; } finally { setPackingSaving(false); } }} /> : packingStep === 'bulky' ? <>
                     <p className="cm-step-sub">Unchecked items will be packed by owner. When both services are available, choose one.</p>
                     <div className="cm-checklist">
                       {data.packing_items.map(item => (
@@ -699,9 +700,10 @@ export default function CustomerMovePage() {
                     {!data.estimate && <p>Your choices will be saved and included when your estimate is ready.</p>}
                     {packingError && <p role="alert">{packingError}</p>}
                   </div>
+                  {packingStep === 'items' && termsError && <p role="alert" className="cm-field-error">{termsError}</p>}
                   <div className="cm-modal-footer">
-                    <button type="button" className="cm-secondary-btn" disabled={packingSaving} onClick={() => packingStep === 'package' && data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)}>{packingStep === 'package' && data.packing_items.length ? 'Back' : packingStep === 'items' ? 'Close' : 'Cancel'}</button>
-                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" disabled={packingSaving} onClick={() => setShowQuestions(false)}>Done</button> : packingStep === 'bulky' && data.packing_package ? <button type="button" className="slds-button cm-primary" onClick={() => {
+                    {(packingStep !== 'items' || data.packing_package || data.packing_items.length > 0) && <button type="button" className="cm-secondary-btn" disabled={packingSaving} onClick={() => packingStep === 'items' ? (data.packing_package ? setPackingStep('package') : data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)) : packingStep === 'package' && data.packing_items.length ? setPackingStep('bulky') : setShowQuestions(false)}>{packingStep === 'items' || (packingStep === 'package' && data.packing_items.length) ? 'Back' : 'Cancel'}</button>}
+                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" disabled={packingSaving} onClick={() => { if (termsError || (data.item_questions || []).some(q => !q.saved || q.saved.pending || (q.answers.find(a => a.id === q.saved?.answer_id)?.acknowledge && !q.saved.acknowledged))) { setTermsError('Please answer each item and acknowledge the required instructions.'); return; } setShowQuestions(false); }}>Done</button> : packingStep === 'bulky' && data.packing_package ? <button type="button" className="slds-button cm-primary" onClick={() => {
                       if (Object.values(packingSelection).some(value => !value)) { setPackingError('Choose packing or crating for each checked item.'); return; }
                       setPackingError(''); setPackingStep('package');
                     }}>Next: packing services</button> : <button type="button" className="slds-button cm-primary" disabled={packingSaving} onClick={() => void savePacking()}>{packingSaving ? 'Saving...' : data.estimate ? 'Save & update price' : 'Save selections'}</button>}

@@ -37,8 +37,9 @@ def test_exclusion_is_idempotent_and_reversible():
     state['report_question_answers']={question['id']:{'answer_id':'yes','acknowledged':True}}
     for _ in range(3):
         kept,volume,weight=adjusted_inventory(company,state,kept,volume,weight,db)
-        assert (volume,weight)==(20,10)
-        assert [r['name'] for r in kept]==['Chair']
+        assert (volume,weight)==(26,12)
+        assert [r['name'] for r in kept]==['Plant', 'Chair']
+        assert kept[0]['amount'] == 1
     state['report_question_answers'][question['id']]['answer_id']='no'
     kept,volume,weight=adjusted_inventory(company,state,kept,volume,weight,db)
     assert (kept,volume,weight)==(rows,32,14)
@@ -68,3 +69,23 @@ def test_pending_acknowledgment_does_not_exclude_and_can_restore_item():
     assert adjusted_inventory(company,state,rows,12,4,db)==([],0,0)
     state['report_question_answers'][key].update(acknowledged=False,pending=True)
     assert adjusted_inventory(company,state,[],0,0,db)==(rows,12,4)
+
+
+def test_each_unit_has_independent_acknowledgment_and_legacy_answers():
+    company = SimpleNamespace(customer_questions=json.dumps([rule()]))
+    db = MagicMock()
+    rows = [dict(name='Plant', amount=2, cuft=12, weight=4)]
+    state = {}
+    adjusted_inventory(company, state, rows, 12, 4, db)
+    first, second = questions(company, state, db)
+    assert first['label'] == 'Plant (1 of 2)'
+    assert second['label'] == 'Plant (2 of 2)'
+    assert first['id'] != second['id']
+    state['report_question_answers'] = {first['id']: {'answer_id': 'yes', 'acknowledged': False, 'pending': True}}
+    assert adjusted_inventory(company, state, rows, 12, 4, db)[1] == 12
+    state['report_question_answers'][first['id']].update(acknowledged=True, pending=False)
+    assert adjusted_inventory(company, state, rows, 12, 4, db)[1] == 6
+    assert questions(company, state, db)[1]['saved'] is None
+    legacy_key = first['id'].rsplit(':', 1)[0]
+    state['report_question_answers'] = {legacy_key: {'answer_id': 'yes', 'acknowledged': True}}
+    assert adjusted_inventory(company, state, rows, 12, 4, db)[1] == 0

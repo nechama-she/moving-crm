@@ -1480,6 +1480,8 @@ def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(v
     if not option: raise HTTPException(400, 'Choose an available answer')
     if option.get('acknowledge') and not body.acknowledged and not body.pending: raise HTTPException(400, 'Please acknowledge the item instructions')
     pending = bool(option.get('acknowledge') and not body.acknowledged)
+    # Expand legacy group answers before saving an individual unit.
+    state['report_question_answers'] = {q['id']: q['saved'] for q in current_questions if q.get('saved')}
     valid_ids = {q['id'] for q in current_questions}
     state['report_question_answers'] = {k: v for k, v in state.get('report_question_answers', {}).items() if k in valid_ids}
     state['report_question_answers'][question['id']] = {'answer_id': option['id'],

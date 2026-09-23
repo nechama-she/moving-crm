@@ -63,3 +63,15 @@ def test_exclusion_marks_only_one_matching_occurrence():
     report = report_history(details)[0]
     for rows in (report['inventory'], report['rooms'][0]['items']):
         assert [item['cuft'] for item in rows] == [0, 10]
+
+
+def test_partially_excluded_quantity_splits_shipping_and_not_shipping():
+    row = {'name': 'Pool Table', 'amount': 2, 'cuft': 200}
+    details = {'last_spark_id': 'one', 'question_original_rows': [row],
+               'question_excluded_items': [{**row, 'excluded_quantity': 1}],
+               'manual_rooms': [{'name': 'Room', 'items': [row]}]}
+    report = report_history(details)[0]
+    for rows in (report['inventory'], report['rooms'][0]['items']):
+        assert [item['amount'] for item in rows] == [1, 1]
+        assert [item['cuft'] for item in rows] == [100, 0]
+        assert rows[1]['not_shipping']

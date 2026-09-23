@@ -66,10 +66,14 @@ def questions(company, details, db):
         for index, row in enumerate(rows):
             if not matches(rule, row, names): continue
             key = hashlib.sha256((revision(rule) + ':' + str(index) + ':' + revision(row)).encode()).hexdigest()
-            saved = answers.get(key)
-            result.append({'id': key, 'rule_id': rule['id'], 'item_index': index, 'name': row.get('name', 'Item'),
-                'room': row.get('room', ''), 'quantity': row.get('amount', 1), 'question': rule['question'],
-                'photo': rule.get('photo', True) and not row.get('item_id'), 'answers': rule['answers'], 'saved': saved})
+            count = max(1, int(row.get('amount') or 1))
+            for unit in range(count):
+                unit_key = key if count == 1 else f'{key}:{unit}'
+                saved = answers.get(unit_key, answers.get(key))
+                result.append({'id': unit_key, 'rule_id': rule['id'], 'item_index': index, 'unit_index': unit,
+                    'name': row.get('name', 'Item'), 'label': f"{row.get('name', 'Item')} ({unit + 1} of {count})" if count > 1 else row.get('name', 'Item'),
+                    'room': row.get('room', ''), 'quantity': 1, 'question': rule['question'],
+                    'photo': rule.get('photo', True) and not row.get('item_id'), 'answers': rule['answers'], 'saved': saved})
     return result
 
 
@@ -84,10 +88,28 @@ def adjusted_inventory(company, details, rows, cuft, weight, db):
         saved = question['saved'] or {}
         option = next((a for a in question['answers'] if a['id'] == saved.get('answer_id')), None)
         if option and option['action'] == 'exclude' and not saved.get('pending') and (not option.get('acknowledge') or saved.get('acknowledged')):
-            excluded.add(question['item_index'])
+            excluded.add((question['item_index'], question['unit_index']))
     original = details['question_original_rows']
-    kept = [deepcopy(row) for index, row in enumerate(original) if index not in excluded]
-    volume = max(0, float(details['question_original_cuft'] or 0) - sum(float(row.get('cuft') or 0) for i, row in enumerate(original) if i in excluded))
-    mass = max(0, float(details['question_original_weight'] or 0) - sum(float(row.get('weight') or 0) for i, row in enumerate(original) if i in excluded))
-    details['question_excluded_items'] = [deepcopy(row) for i, row in enumerate(original) if i in excluded]
+    kept, removed = [], []
+    removed_volume = removed_mass = 0
+    for index, row in enumerate(original):
+        count = max(1, int(row.get('amount') or 1))
+        excluded_count = sum((index, unit) in excluded for unit in range(count))
+        if excluded_count:
+            marked = deepcopy(row)
+            if excluded_count < count:
+                marked['excluded_quantity'] = excluded_count
+            removed.append(marked)
+        fraction = excluded_count / count
+        removed_volume += float(row.get('cuft') or 0) * fraction
+        removed_mass += float(row.get('weight') or 0) * fraction
+        if excluded_count < count:
+            shipping = deepcopy(row)
+            shipping['amount'] = count - excluded_count
+            shipping['cuft'] = float(row.get('cuft') or 0) * (1 - fraction)
+            shipping['weight'] = float(row.get('weight') or 0) * (1 - fraction)
+            kept.append(shipping)
+    volume = max(0, float(details['question_original_cuft'] or 0) - removed_volume)
+    mass = max(0, float(details['question_original_weight'] or 0) - removed_mass)
+    details['question_excluded_items'] = removed
     return kept, volume, mass

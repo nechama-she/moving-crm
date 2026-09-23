@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import QuestionReferenceImages from "./QuestionReferenceImages";
-export type ItemQuestion = { id: string; name: string; room: string; quantity: number; question: string; photo: boolean; answers: { id: string; label: string; action: string; notice: string; acknowledge: boolean }[]; saved?: { answer_id: string; acknowledged: boolean; pending?: boolean } };
+export type ItemQuestion = { id: string; name: string; label?: string; room: string; quantity: number; question: string; photo: boolean; answers: { id: string; label: string; action: string; notice: string; acknowledge: boolean }[]; saved?: { answer_id: string; acknowledged: boolean; pending?: boolean } };
 type Props = { disabled?: boolean; questions: ItemQuestion[]; endpoint: string; linkKey: string; session: string; onSave: (answer: { question_id: string; answer_id: string; acknowledged: boolean; pending: boolean }) => Promise<void> };
 export default function CustomerItemQuestions(props: Props) {
  return <div className="cm-checklist">{props.questions.map(question => <Question key={question.id} question={question} {...props} />)}</div>;
@@ -22,7 +22,7 @@ function Question({ question, endpoint, linkKey, session, onSave, disabled }: Pr
    finally { saving.current = false; setBusy(false); }
  }
  return <fieldset disabled={busy || disabled} className="cm-item-question">
-  <legend><strong>{question.name}</strong>{question.room && <span>{question.room}</span>}<span>Qty {question.quantity}</span></legend>
+  <legend><strong>{question.label || question.name}</strong>{question.room && <span>{question.room}</span>}<span>Qty {question.quantity}</span></legend>
   {question.photo && <QuestionReferenceImages name={question.name} room={question.room} endpoint={`${endpoint}/question-images`} linkKey={linkKey} session={session} />}
   <p><strong>{question.question}</strong></p>
   <div className="cm-item-answers">{question.answers.map(answer => <label className="cm-check-item" key={answer.id}><input type="radio" name={question.id} checked={choice === answer.id} onChange={() => { setChoice(answer.id); setAck(false); void save(answer.id, false); }} />{answer.label}</label>)}</div>
