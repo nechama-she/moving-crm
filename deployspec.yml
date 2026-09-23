@@ -53,12 +53,16 @@ phases:
       - aws lambda update-function-code --function-name moving-crm-message-stream-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key message-stream/package.zip
 
       - echo "Deploying frontend to S3"
-      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --delete --exclude "lead-followup/*" --exclude "api-backend/*" --exclude "lead-duplicate/*" --exclude "message-stream/*"
+      # Keep versioned assets used by cached pages and already-open browser tabs.
+      # Publish scripts/styles first; publish index.html only after all uploads succeed.
+      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/assets/ s3://${FRONTEND_BUCKET}/assets/ --cache-control "public,max-age=31536000,immutable"
+      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --exclude "assets/*" --exclude "index.html" --exclude "api-config.js" --cache-control "no-cache,max-age=0,must-revalidate"
 
       - echo "Frontend calls the API same-origin via CloudFront (/api/*), so no absolute URL is injected"
       - REALTIME_URL=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='RealtimeURL'].OutputValue" --output text)
       - echo "window.__API_URL__ = ''; window.__WS_URL__ = '${REALTIME_URL}';" > /tmp/api-config.js
-      - aws s3 cp /tmp/api-config.js s3://${FRONTEND_BUCKET}/api-config.js
+      - aws s3 cp /tmp/api-config.js s3://${FRONTEND_BUCKET}/api-config.js --cache-control "no-cache,max-age=0,must-revalidate"
+      - aws s3 cp $CODEBUILD_SRC_DIR/frontend/dist/index.html s3://${FRONTEND_BUCKET}/index.html --cache-control "no-cache,max-age=0,must-revalidate"
 
       - echo "Invalidating CloudFront cache (frontend)"
       - DIST_ID=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)
