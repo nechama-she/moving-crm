@@ -150,7 +150,7 @@ export default function CustomerMovePage() {
         setData(undefined);
         setSent(false);
       }
-      throw new Error(typeof result.detail==='string'?result.detail:'Please check your details and try again.');
+      throw Object.assign(new Error(typeof result.detail==='string'?result.detail:result.detail?.message || 'Please check your details and try again.'), {detail:result.detail});
     }
     return result;
   }
@@ -251,9 +251,14 @@ export default function CustomerMovePage() {
       delivery:data.delivery||'',
     });
     addressDraft.current = { pickup: data.pickup || '', delivery: data.delivery || '', pickup_place: null, delivery_place: null };
+    setMoveErrors({});
     setEditingMove(true);
   }
 
+  const [moveErrors,setMoveErrors] = useState<Record<string,string>>({});
+  function clearMoveError(field: string) {
+    if (moveErrors[field]) setMoveErrors(previous => { const next={...previous}; delete next[field]; return next; });
+  }
   const latestMoveDraft = useRef(moveDraft);
   latestMoveDraft.current = moveDraft;
   async function saveMoveDetails(e:React.FormEvent){
@@ -261,12 +266,22 @@ export default function CustomerMovePage() {
     const submittedAddresses = addressDraft.current;
     setBusy(true);
     setError('');
+    setMoveErrors({});
     try{
       const result=await call('/details', { ...moveDraft, ...submittedAddresses });
       setData(result);
       if (latestMoveDraft.current === moveDraft && addressDraft.current === submittedAddresses) setEditingMove(false);
     }catch(err){
-      setError((err as Error).message);
+      const failure=err as Error & {detail?: {field?:string;message?:string} | {loc?:string[];msg?:string}[]};
+      const fields: Record<string,string>={};
+      if(Array.isArray(failure.detail)) {
+        for(const item of failure.detail) {
+          const field=item.loc?.[1]?.replace(/_place$/, '');
+          if(field && ['name','phone','email','move_date','pickup','delivery'].includes(field)) fields[field]=(item.msg || 'Check this field.').replace(/^Value error, /,'');
+        }
+      } else if(failure.detail?.field) fields[failure.detail.field]=failure.detail.message || failure.message;
+      if(!Object.keys(fields).length) fields.form=failure.message;
+      setMoveErrors(fields);
     }finally{
       setBusy(false);
     }
@@ -412,28 +427,33 @@ export default function CustomerMovePage() {
                     <div className="cm-contact"><strong>{data.name}</strong><span>{data.phone}</span><span>{data.email}</span></div>
                   </>
                 ) : (
-                  <form className="cm-route-edit" onSubmit={saveMoveDetails}>
+                  <form className="cm-route-edit" noValidate onSubmit={saveMoveDetails}>
                     <label>
                       Move Date
-                      <input type="date" value={moveDraft.move_date} onChange={e=>setMoveDraft(prev=>({...prev,move_date:e.target.value}))} />
+                      <input type="date" value={moveDraft.move_date} aria-invalid={!!moveErrors.move_date} aria-describedby={moveErrors.move_date ? 'move-move_date-error' : undefined} onChange={e=>{clearMoveError('move_date');setMoveDraft(prev=>({...prev,move_date:e.target.value}));}} />
+                      {moveErrors.move_date && <small id="move-move_date-error" className="cm-field-error" role="alert">{moveErrors.move_date}</small>}
                     </label>
-                    <CustomerAddressInput label="Pickup address" base={base} linkKey={key} session={session} initialValue={data.pickup || ''} disabled={busy}
-                      onChange={(text, place) => { addressDraft.current = { ...addressDraft.current, pickup: text, pickup_place: place }; }} />
-                    <CustomerAddressInput label="Delivery address" base={base} linkKey={key} session={session} initialValue={data.delivery || ''} disabled={busy}
-                      onChange={(text, place) => { addressDraft.current = { ...addressDraft.current, delivery: text, delivery_place: place }; }} />
+                    <CustomerAddressInput label="Pickup address" error={moveErrors.pickup} base={base} linkKey={key} session={session} initialValue={data.pickup || ''} disabled={busy}
+                      onChange={(text, place) => { clearMoveError('pickup'); addressDraft.current = { ...addressDraft.current, pickup: text, pickup_place: place }; }} />
+                    <CustomerAddressInput label="Delivery address" error={moveErrors.delivery} base={base} linkKey={key} session={session} initialValue={data.delivery || ''} disabled={busy}
+                      onChange={(text, place) => { clearMoveError('delivery'); addressDraft.current = { ...addressDraft.current, delivery: text, delivery_place: place }; }} />
                     <label>
                       Full Name
-                      <input type="text" value={moveDraft.name} onChange={e=>setMoveDraft(prev=>({...prev,name:e.target.value}))} />
+                      <input type="text" value={moveDraft.name} aria-invalid={!!moveErrors.name} aria-describedby={moveErrors.name ? 'move-name-error' : undefined} onChange={e=>{clearMoveError('name');setMoveDraft(prev=>({...prev,name:e.target.value}));}} />
+                      {moveErrors.name && <small id="move-name-error" className="cm-field-error" role="alert">{moveErrors.name}</small>}
                     </label>
                     <label>
                       Phone Number (required)
-                      <input type="tel" required value={moveDraft.phone} onChange={e=>setMoveDraft(prev=>({...prev,phone:e.target.value}))} />
+                      <input type="tel" required value={moveDraft.phone} aria-invalid={!!moveErrors.phone} aria-describedby={moveErrors.phone ? 'move-phone-error' : undefined} onChange={e=>{clearMoveError('phone');setMoveDraft(prev=>({...prev,phone:e.target.value}));}} />
+                      {moveErrors.phone && <small id="move-phone-error" className="cm-field-error" role="alert">{moveErrors.phone}</small>}
                     </label>
                     <label>
                       Email Address (optional)
-                      <input type="email" value={moveDraft.email} onChange={e=>setMoveDraft(prev=>({...prev,email:e.target.value}))} />
+                      <input type="email" value={moveDraft.email} aria-invalid={!!moveErrors.email} aria-describedby={moveErrors.email ? 'move-email-error' : undefined} onChange={e=>{clearMoveError('email');setMoveDraft(prev=>({...prev,email:e.target.value}));}} />
+                      {moveErrors.email && <small id="move-email-error" className="cm-field-error" role="alert">{moveErrors.email}</small>}
                     </label>
                     <div className="cm-route-actions">
+                      {moveErrors.form && <p className="cm-field-error" role="alert">{moveErrors.form}</p>}
                       <button type="submit" className="slds-button cm-save-btn" disabled={busy}>Save changes</button>
                       <button type="button" className="slds-button cm-cancel-btn" disabled={busy} onClick={()=>setEditingMove(false)}>Cancel</button>
                     </div>

@@ -854,8 +854,13 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
 
     current_pickup, current_stops, current_delivery = _read_job_route(db, job)
     # Validate route changes before mutating contact or scheduling details.
-    new_pickup = selected_customer_address(body.pickup, current_pickup, body.pickup_place, 'Pickup', access.id)
-    new_delivery = selected_customer_address(body.delivery, current_delivery, body.delivery_place, 'Delivery', access.id)
+    addresses = {}
+    for field, current in [('pickup', current_pickup), ('delivery', current_delivery)]:
+        try:
+            addresses[field] = selected_customer_address(getattr(body, field), current, getattr(body, field + '_place'), field.capitalize(), access.id)
+        except HTTPException as exc:
+            raise HTTPException(exc.status_code, {'field': field, 'message': exc.detail}) from exc
+    new_pickup, new_delivery = addresses['pickup'], addresses['delivery']
 
     if body.name is not None:
         trimmed_name = body.name.strip()
@@ -882,7 +887,7 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
                     if req.scheduled_at:
                         _assert_meeting_before_move_date(job, [req.scheduled_at], label='Existing appointment')
             except ValueError as e:
-                raise HTTPException(400, 'Invalid move date format (expected YYYY-MM-DD)') from e
+                raise HTTPException(400, {'field': 'move_date', 'message': 'Enter a valid move date.'}) from e
 
     if body.pickup is not None or body.delivery is not None:
         job.pickup_zip = new_pickup

@@ -6,3 +6,5 @@
 .cm-address-results li { padding: 12px; cursor: pointer; border-bottom: 1px solid #eee; overflow-wrap: anywhere; }
 .cm-address-results li[aria-selected="true"] { background: #f7efed; }
 .cm-address-attribution { padding: 8px 12px; font: normal 400 12px/1.5 Arial, sans-serif; color: #5e5e5e; white-space: nowrap; }
+
+.cm-field-error { display: block; color: #a12622; font-size: 13px; margin-top: 5px; }

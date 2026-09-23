@@ -2,8 +2,9 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { addressRequest, type AddressSuggestion, type SelectedAddress } from './googlePlaces';
 import './CustomerAddressInput.css';
 
-export default function CustomerAddressInput({label, base, linkKey, session, initialValue, disabled, onChange}: {
+export default function CustomerAddressInput({label, base, linkKey, session, initialValue, disabled, error, onChange}: {
   label: string; base: string; linkKey: string; session: string; initialValue: string; disabled: boolean;
+  error?: string;
   onChange: (text: string, place: SelectedAddress | null) => void;
 }) {
   const id = useId();
@@ -47,7 +48,7 @@ export default function CustomerAddressInput({label, base, linkKey, session, ini
   const expanded = focused && items.length > 0;
   return <div className="cm-address-input">
     <label htmlFor={id}>{label}</label>
-    <input id={id} role="combobox" aria-autocomplete="list" aria-expanded={expanded} aria-controls={`${id}-options`}
+    <input id={id} role="combobox" aria-invalid={!!error} aria-describedby={error ? `${id}-error` : undefined} aria-autocomplete="list" aria-expanded={expanded} aria-controls={`${id}-options`}
       aria-activedescendant={expanded && active >= 0 ? `${id}-${active}` : undefined}
       value={text} maxLength={200} autoComplete="off" placeholder="Street address or city, state"
       onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)}
@@ -65,5 +66,6 @@ export default function CustomerAddressInput({label, base, linkKey, session, ini
       </ul>
       <div className="cm-address-attribution" translate="no">Google Maps</div>
     </div>}
+    {error && <small id={`${id}-error`} className="cm-field-error" role="alert">{error}</small>}
   </div>;
 }
