@@ -315,14 +315,15 @@ def packing_pricing(monkeypatch):
     import re
     from decimal import Decimal
     source = (BACKEND / 'routes/pricing.py').read_text(encoding='utf-8')
-    names = {'_service_billable_volume', '_plan_destination_for_delivery', '_normalize_item_name', '_is_bulky_service', '_bulky_item_prices', '_bulky_item_charges',
+    names = {'sync_customer_shuttle_charge', 'customer_shuttle', 'add_customer_shuttle_charge', '_service_billable_volume', '_plan_destination_for_delivery', '_normalize_item_name', '_is_bulky_service', '_bulky_item_prices', '_bulky_item_charges',
              '_material_item_names', 'customer_packing_options', 'customer_packing_charge_id', 'add_customer_packing_charges', 'customer_packing_package', 'customer_package_lines', 'add_customer_package_charges', '_packing_service_charges', '_charge_amount'}
     nodes = [n for n in ast.parse(source).body if getattr(n, 'name', '') in names]
     from zip_state import delivery_location
     from local_pricing import match_region_from_address
     from long_distance_packing import packing_card
     import math
-    scope = {'PricingPlan': object, 'delivery_location': delivery_location, 'match_region_from_address': match_region_from_address, 'PACKING_CARD_PREFIX': '__ld_packing__:', 'packing_card': packing_card, '_rounded_cubic_feet': lambda value: math.ceil(float(value or 0)), 'json': json, 're': re, 'Decimal': Decimal, 'PricingService': object, 'LeadJobCharge': models.LeadJobCharge,
+    from shuttle import SHUTTLE_PREFIX, shuttle_card, shuttle_option
+    scope = {'infer_job_move_type': lambda *args: (None, None), 'PublicMoveAccess': models.PublicMoveAccess, 'SHUTTLE_PREFIX': SHUTTLE_PREFIX, 'shuttle_card': shuttle_card, 'shuttle_option': shuttle_option, 'PricingPlan': object, 'delivery_location': delivery_location, 'match_region_from_address': match_region_from_address, 'PACKING_CARD_PREFIX': '__ld_packing__:', 'packing_card': packing_card, '_rounded_cubic_feet': lambda value: math.ceil(float(value or 0)), 'json': json, 're': re, 'Decimal': Decimal, 'PricingService': object, 'LeadJobCharge': models.LeadJobCharge,
              'BULKY_ITEM_MARKER': '__bulky_item__', 'BULKY_ITEM_PREFIX': '__bulky_item__:',
              '_number': lambda value: Decimal(value) if value else None,
              '_job_spark_inventory_items': lambda *args: []}
@@ -346,6 +347,47 @@ def test_packing_options_per_item_and_local_rates(packing_pricing):
     assert [i['selected'] for i in items] == [False, True]
     assert items[1]['label'] == 'Piano (2 of 2)'
     assert pricing.customer_packing_options(None, job, None, plan, 'Long Distance')[0]['price'] == 120
+
+
+def test_shuttle_autosave_preserves_other_charges_and_rejects_stale_answer(portal, packing_pricing, monkeypatch):
+    from decimal import Decimal
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    job.delivery_zip = '13544'
+    lead.volume = 24
+    job.price = access.published_price = Decimal('1000')
+    job.customer_packing_package = json.dumps({'mode':'full','unpacking':True,'item_ids':[]})
+    db.add(models.LeadJobCharge(id='transport',job_id=job.id,name='Transportation',subtotal=1000,total_cost=1000))
+    plan = SimpleNamespace(services=[SimpleNamespace(comments='__delivery_shuttle__:' + json.dumps({
+        'enabled':True,'rate':'1.50','access_distance_ft':500,'minimum_cubic_feet':286,'areas':[]}))], rates=[])
+    packing_pricing.customer_shuttle.__globals__['infer_job_move_type'] = lambda *args: ('Long Distance',plan)
+    monkeypatch.setitem(sys.modules, 'routes.leads', MagicMock())
+    monkeypatch.setattr(mod, '_move_details', lambda *args, **kwargs: {'ok':True})
+    db.commit()
+    revision = packing_pricing.customer_shuttle(lead,job,db)['revision']
+    def save(answer, rev=revision):
+        return mod.save_customer_packing(mod.CustomerPackingPatch(change=mod.CustomerPackingChange(
+            kind='shuttle',enabled=answer,revision=rev)),access,db)
+    save(False)
+    assert job.price == access.published_price == Decimal('1429')
+    save(False)
+    assert job.price == Decimal('1429')
+    assert db.query(models.LeadJobCharge).count() == 2
+    assert json.loads(job.customer_packing_package)['mode'] == 'full'
+    save(True)
+    assert job.price == access.published_price == Decimal('1000')
+    assert db.get(models.LeadJobCharge,'transport').total_cost == 1000
+    job.delivery_zip = '10001'
+    with pytest.raises(HTTPException) as error:
+        save(False)
+    assert error.value.status_code == 409
+    assert job.price == 1000
+    plan.services[0].comments = '__delivery_shuttle__:' + json.dumps({
+        'enabled':True,'rate':'2','access_distance_ft':300,'minimum_cubic_feet':286,'areas':[{'state':'NY'}]})
+    packing_pricing.sync_customer_shuttle_charge(lead,job,db)
+    assert job.price == access.published_price == Decimal('1572')
+    db.commit()
+    assert db.query(models.LeadJobCharge).count() == 2
 
 
 def test_packing_save_repeat_remove_and_reject_unknown(portal, packing_pricing, monkeypatch):

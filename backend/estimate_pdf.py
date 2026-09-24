@@ -85,6 +85,15 @@ def build_estimate_pdf(data, rows):
     story.append(table([[p('TOTAL ESTIMATED PRICE'), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
     if data.get('list_changed') or data.get('files_changed'):
         story.append(p('This estimate reflects the current generated report. New inventory edits or files are not included until a new report is generated.', 'NoteEstimate'))
+    if data.get('shuttle'):
+        shuttle = data['shuttle']
+        story.append(p('Delivery truck access', 'SectionEstimate'))
+        if shuttle['automatic']:
+            story.append(p('Delivery shuttle required for this delivery area.', 'NoteEstimate'))
+        else:
+            story.append(p(shuttle['question']))
+            answer = shuttle.get('answer')
+            story.append(p('Answer: ' + ('Yes' if answer is True else 'No - shuttle required' if answer is False else 'Not answered - shuttle charges may apply'), 'NoteEstimate'))
     story.append(PageBreak())
     story.append(p('Declared inventory', 'SectionEstimate'))
     story.append(p('Volume and weight reflect items going. Item answers and instructions appear directly below the relevant item. A dash means the weight was not recorded.', 'NoteEstimate'))

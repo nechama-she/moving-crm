@@ -450,6 +450,7 @@ class VerifyCode(BaseModel):
 @router.post('/api/public-moves/{access_id}/verify')
 def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db), request: Request = None):
     access = db.query(PublicMoveAccess).filter_by(id=access.id).with_for_update().one()
+    link_expires_at = access.expires_at
     fingerprint = verification_fingerprint(access, db, request)
     access = verification_state(access, db, request)
     if not access.otp_hash or not access.otp_expires or access.otp_expires < NOW() or access.otp_attempts >= 5 or access.contact_hash != fingerprint:
@@ -459,7 +460,7 @@ def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_acce
         db.commit(); raise HTTPException(400, 'Incorrect code. Please check and try again.')
     access.otp_hash = None
     token = secrets.token_urlsafe(32)
-    expires_at = min(access.expires_at, NOW()+timedelta(hours=8))
+    expires_at = min(link_expires_at, NOW()+timedelta(hours=8))
     db.add(PublicMoveSession(token_hash=digest(token), access_id=access.id, expires_at=expires_at, contact_hash=fingerprint))
     db.commit()
     return {'session': token, 'expires_in': max(0, int((expires_at - NOW()).total_seconds())),
@@ -634,14 +635,17 @@ def _move_details(access, db, *, refresh_report=True):
 
     packing_items = []
     packing_package = None
+    shuttle = None
     if not is_spark_pending and not report_import_pending and (job.company_id or lead.company_id):
         from routes.pricing import customer_packing_options, customer_packing_package
         packing_package = customer_packing_package(lead, job, db)
         packing_items = customer_packing_options(lead, job, db)
 
+        from routes.pricing import customer_shuttle
+        shuttle = customer_shuttle(lead, job, db)
     from inventory_questions import questions
     item_questions = questions(active_company, conv_details, db) if spark_info and spark_info.get('status') == 'completed' else []
-    return {'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    return {'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': company_data['name'],
             'company_details': company_data,
@@ -719,7 +723,8 @@ class CustomerPackageSelection(BaseModel):
 
 
 class CustomerPackingChange(BaseModel):
-    kind: Literal['mode', 'unpacking', 'box', 'bulky']
+    kind: Literal['mode', 'unpacking', 'box', 'bulky', 'shuttle']
+    revision: str = ''
     item_id: str = ''
     mode: Literal['full', 'partial', 'none'] = 'none'
     enabled: bool = False
@@ -740,6 +745,19 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     from routes.leads import _refresh_lead_estimated_total
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
     lead = db.get(Lead, access.lead_id)
+    if body.change and body.change.kind == 'shuttle':
+        from routes.pricing import customer_shuttle, sync_customer_shuttle_charge
+        if 'enabled' not in body.change.model_fields_set:
+            raise HTTPException(400, 'Choose an answer for delivery truck access.')
+        option = customer_shuttle(lead, job, db)
+        if not option or option['automatic'] or body.change.revision != option['revision']:
+            raise HTTPException(409, 'Delivery access requirements changed. Refresh your estimate.')
+        selection = json.loads(job.customer_packing_package or '{}')
+        selection['shuttle'] = {'answer': body.change.enabled, 'revision': option['revision']}
+        job.customer_packing_package = json.dumps(selection)
+        sync_customer_shuttle_charge(lead, job, db)
+        db.commit()
+        return _move_details(access, db, refresh_report=False)
     options = customer_packing_options(lead, job, db)
     change = body.change
     touched = None
@@ -799,6 +817,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         if selection['mode'] != 'none':
             selection['item_ids'] = []
         previous_package = json.loads(job.customer_packing_package or '{}')
+        if 'shuttle' in previous_package:
+            selection['shuttle'] = previous_package['shuttle']
         package_old_ids = ['package:full', 'package:partial', 'package:unpacking'] + [f'box:{item_id}' for item_id in previous_package.get('item_ids', [])]
         package_lines = customer_package_lines(package, selection)
     if job.price is None:
@@ -979,6 +999,9 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
         job.pickup_zip = new_pickup
         job.delivery_zip = new_delivery
         _persist_job_route(db, job.id, new_pickup, current_stops, new_delivery)
+        if (new_pickup != current_pickup or new_delivery != current_delivery) and (job.company_id or lead.company_id):
+            from routes.pricing import sync_customer_shuttle_charge
+            sync_customer_shuttle_charge(lead, job, db)
 
     db.commit()
     return details(access, db)

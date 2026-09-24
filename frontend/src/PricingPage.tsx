@@ -1,3 +1,4 @@
+import ShuttleCard, { isShuttleCard } from './ShuttleCard';
 import PickupAreasCard, { type PickupArea } from './PickupAreasCard';
 import BulkyCatalogPicker from './BulkyCatalogPicker';
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -52,6 +53,7 @@ type JobContext = {
   lead: { id: string; full_name: string; volume: number | null; weight: number | null };
   job: { id: string; job_order: number; company_name: string; pickup_zip: string; delivery_zip: string; pickup_state: string; pickup_zip_code: string; delivery_state: string; delivery_zip_code: string; move_date: string; booked_move_date: string; estimated_materials?: JobMaterial[] };
   plans: PlanSummary[];
+  shuttle?: { answer: boolean | null } | null;
   recommended_plan_id: string;
   move_type: string;
   serviceability: "supported" | "unknown_pickup" | "unsupported_pickup";
@@ -166,7 +168,7 @@ export default function PricingPage() {
   const [manualAmounts, setManualAmounts] = useState<Record<string, number>>({});
   const [customCharges, setCustomCharges] = useState<CustomCharge[]>([]);
   const [customDiscounts, setCustomDiscounts] = useState<CustomDiscount[]>([]);
-  const [openSections, setOpenSections] = useState({ pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
+  const [openSections, setOpenSections] = useState({ shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
   const [pendingRateGroups, setPendingRateGroups] = useState<string[][]>([]);
 
   useEffect(() => {
@@ -238,7 +240,7 @@ export default function PricingPage() {
     setLoading(true);
     setError("");
     setEditing(false);
-    setOpenSections({ pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
+    setOpenSections({ shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
     calculationId.current++;
     setCalculating(false);
     setQuote(null);
@@ -386,7 +388,7 @@ export default function PricingPage() {
   const originalService = (service: Service) => editing
     ? plan?.services.find(original => !!service.id && original.id === service.id) || service : service;
   const bulkyItems = (active?.services || []).filter(service => isBulkyItem(originalService(service)));
-  const pricingServices = (active?.services || []).filter(service => !isBulkyItem(originalService(service)) && !isPackingCard(originalService(service)));
+  const pricingServices = (active?.services || []).filter(service => !isBulkyItem(originalService(service)) && !isPackingCard(originalService(service)) && !isShuttleCard(originalService(service)));
   const customChargeTotal = useMemo(
     () => customCharges.reduce((sum, charge) => sum + Math.max(0, Number(charge.amount) || 0), 0),
     [customCharges],
@@ -413,7 +415,7 @@ export default function PricingPage() {
   const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
   const detailedTotal = Math.max(0, discountBase - discountTotal);
 
-  function startServiceEdit(section: 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
+  function startServiceEdit(section: 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin' || saving) return;
     setOpenSections(current => ({ ...current, [section]: true }));
     setEditing(true);
@@ -424,12 +426,12 @@ export default function PricingPage() {
     setEditing(false);
     setError('');
   }
-  function serviceEditActions(section: 'pickup' | 'packing' | 'bulkyItems') {
+  function serviceEditActions(section: 'shuttle' | 'pickup' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin') return null;
     return editing ? <>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={cancelServiceEdit}>Cancel changes</button>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save changes'}</button>
-    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
+    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
   }
 
   function patchDraft(patch: Partial<Plan>) {
@@ -584,6 +586,8 @@ export default function PricingPage() {
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
       body: JSON.stringify({
         destination,
+        delivery_address: jobContext?.job.delivery_zip || "",
+        shuttle_access: jobContext?.shuttle?.answer ?? null,
         cubic_feet: cubicFeetValue(cubicFeet),
         move_date: jobContext?.job.move_date || "",
         bulky_items: jobContext?.job.estimated_materials?.flatMap((item) => Array.from({ length: Math.max(1, Math.floor(Number(item.quantity) || 1)) }, () => item.name)).filter(Boolean) || [],
@@ -885,6 +889,10 @@ export default function PricingPage() {
                     </tbody>
                   </table>
                 </div>
+              </PricingSection>
+
+              <PricingSection title="Delivery shuttle" count={active.services.filter(isShuttleCard).length} open={openSections.shuttle} toggle={() => setOpenSections(s => ({ ...s, shuttle: !s.shuttle }))} onDoubleClick={() => startServiceEdit('shuttle')} actions={serviceEditActions('shuttle')}>
+                <ShuttleCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
               <PricingSection title="Packing rates" count={4} open={openSections.packing} toggle={() => setOpenSections(s => ({ ...s, packing: !s.packing }))} onDoubleClick={() => startServiceEdit('packing')} actions={serviceEditActions('packing')}>

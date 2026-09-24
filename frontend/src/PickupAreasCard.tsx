@@ -1,7 +1,7 @@
 import './PickupAreasCard.css';
 
 export type PickupArea = { state: string; zip_codes: string[] };
-const states = 'AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'.split(' ');
+export const states = 'AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'.split(' ');
 
 export default function PickupAreasCard({ areas, editing, onChange }: {
   areas: PickupArea[]; editing: boolean; onChange: (areas: PickupArea[]) => void;
