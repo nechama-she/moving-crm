@@ -459,9 +459,11 @@ def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_acce
         db.commit(); raise HTTPException(400, 'Incorrect code. Please check and try again.')
     access.otp_hash = None
     token = secrets.token_urlsafe(32)
-    db.add(PublicMoveSession(token_hash=digest(token), access_id=access.id, expires_at=NOW()+timedelta(hours=8), contact_hash=fingerprint))
+    expires_at = min(access.expires_at, NOW()+timedelta(hours=8))
+    db.add(PublicMoveSession(token_hash=digest(token), access_id=access.id, expires_at=expires_at, contact_hash=fingerprint))
     db.commit()
-    return {'session': token, 'expires_in': 28800}
+    return {'session': token, 'expires_in': max(0, int((expires_at - NOW()).total_seconds())),
+            'expires_at': expires_at.isoformat() + 'Z'}
 
 
 def _parse_availability_stamps(value: str) -> list[datetime]:

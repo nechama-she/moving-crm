@@ -1,3 +1,4 @@
+import { CUSTOMER_SESSION_EXPIRED, customerSessionActive, expireCustomerSession, loadCustomerSession, registerCustomerSession } from './customerSession';
 ﻿import CustomerAddressInput from "./CustomerAddressInput";
 import type { SelectedAddress } from "./googlePlaces";
 import CustomerItemQuestions, { type ItemQuestion } from "./CustomerItemQuestions";
@@ -62,7 +63,31 @@ export default function CustomerMovePage() {
   const [repPage, setRepPage] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('audience') === 'rep');
   const sessionKey = `cm_session_${accessId}${repPage ? '_rep' : ''}`;
   const [key]=useState(()=>new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
-  const [session,setSession]=useState(()=>sessionStorage.getItem(sessionKey)||'');
+  const [session,setSession]=useState(()=>loadCustomerSession(sessionKey));
+  useEffect(() => {
+    if (!session) return;
+    const expire = () => {
+      if (sessionStorage.getItem(sessionKey) === session) {
+        sessionStorage.removeItem(sessionKey); sessionStorage.removeItem(sessionKey + ':expiresAt');
+      }
+      setSession(current => current === session ? '' : current);
+      setData(undefined); setSent(false); setCode(''); setShowQuestions(false);
+      setShowInventoryList(false); setEditingMove(false);
+      setError('Please verify your phone or email to continue.');
+    };
+    const listener = (event: Event) => { if ((event as CustomEvent).detail === session) expire(); };
+    const check = () => { customerSessionActive(session); };
+    window.addEventListener(CUSTOMER_SESSION_EXPIRED, listener);
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', check);
+    const expiresAt = Number(sessionStorage.getItem(sessionKey + ':expiresAt'));
+    const timer = window.setTimeout(() => expireCustomerSession(session), Math.max(0, expiresAt - Date.now()));
+    check();
+    return () => {
+      clearTimeout(timer); window.removeEventListener(CUSTOMER_SESSION_EXPIRED, listener);
+      window.removeEventListener('focus', check); document.removeEventListener('visibilitychange', check);
+    };
+  }, [session, sessionKey]);
   const [options,setOptions]=useState<{channel:string;destination:string;label?:string}[]>([]),[channel,setChannel]=useState('');
   const [code,setCode]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [data,setData]=useState<Details>(),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
@@ -227,6 +252,7 @@ export default function CustomerMovePage() {
     const httpMethod = method || (body===undefined ? 'GET' : 'POST');
     const response=await fetch(base+path,{method:httpMethod,headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
     const result=await response.json();
+    if (session && !customerSessionActive(session)) throw new Error('Please verify your phone or email to continue.');
     if(!response.ok){
       if((response.status===401||response.status===404)){
         sessionStorage.removeItem(sessionKey);
@@ -245,34 +271,15 @@ export default function CustomerMovePage() {
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
   useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setOptions(value.options);setLinkSms(value.link_sms || null);setChannel(value.options[0]?.channel||'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
-  useEffect(()=>{
-    if(!session)return;
-    let active=true;
-    const load=()=>fetch(base+'/details',{headers:{'x-public-link':key,'x-public-session':session},cache:'no-store'}).then(async r=>{
-      if((r.status===401||r.status===404)){
-        if(active){
-          sessionStorage.removeItem(sessionKey);
-          setSession('');
-          setData(undefined);
-        }
-        return;
-      }
-      if(!r.ok)throw new Error('Your move could not be refreshed.');
-      const next=await r.json();
-      if(active){
-        setData(next);
-        if(next.company_details?.color)setThemeColor(next.company_details.color);
-      }
-    }).catch(e=>{if(active)setError(e.message);});
-    void load();
-    return ()=>{active=false;};
-  },[base,key,session,sessionKey]);
   useEffect(()=>{if(!sent)return;const t=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(t);},[sent]);
   async function send(){setBusy(true);setError('');try{await call('/send-code',{channel});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   async function verify(){
     setBusy(true);setError('');
     try{
       const value=await call('/verify',{code});
+      const expiresAt = value.expires_at ? Date.parse(value.expires_at) : Date.now() + Number(value.expires_in) * 1000;
+      registerCustomerSession(value.session, expiresAt);
+      sessionStorage.setItem(sessionKey + ':expiresAt', String(expiresAt));
       sessionStorage.setItem(sessionKey, value.session);
       setSession(value.session);
       setCode('');
@@ -372,14 +379,16 @@ export default function CustomerMovePage() {
   }
 
   async function refreshDetails(background = false){
-    if(!session)return;
+    if(!session || !customerSessionActive(session))return;
     if (background && answerPending.current) return;
     const revision = answerRevision.current;
     if (!background) setBusy(true);
     setError('');
     try{
       const next=await call('/details');
-      if (!answerPending.current && revision === answerRevision.current) setData(next);
+      if (customerSessionActive(session) && !answerPending.current && revision === answerRevision.current) {
+        setData(next); if (next.company_details?.color) setThemeColor(next.company_details.color);
+      }
     }catch(err){
       setError((err as Error).message);
     }finally{

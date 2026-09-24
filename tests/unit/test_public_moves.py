@@ -102,11 +102,27 @@ def test_otp_single_use_and_scoped_session(portal):
     mod,db,lead,access=portal
     access.otp_hash=secret_digest(access.id+':123456'); access.otp_expires=datetime.utcnow()+timedelta(minutes=10); access.contact_hash=contact_fingerprint(lead); db.commit()
     result=mod.verify_code(mod.VerifyCode(code='123456'),access,db)
-    assert db.get(models.PublicMoveSession,digest(result['session']))
+    saved = db.get(models.PublicMoveSession,digest(result['session']))
+    assert saved
+    assert result['expires_at'] == saved.expires_at.isoformat() + 'Z'
+    assert 0 < result['expires_in'] <= 8 * 60 * 60
     assert mod.verified(access,request(session=result['session']),db).id==access.id
     with pytest.raises(HTTPException): mod.verify_code(mod.VerifyCode(code='123456'),access,db)
     lead.email='changed@example.com'; db.commit()
     with pytest.raises(HTTPException): mod.verified(access,request(session=result['session']),db)
+
+
+def test_verification_session_cannot_outlive_customer_link(portal):
+    mod,db,lead,access=portal
+    access.expires_at=datetime.utcnow()+timedelta(minutes=30)
+    access.otp_hash=secret_digest(access.id+':123456')
+    access.otp_expires=datetime.utcnow()+timedelta(minutes=10)
+    access.contact_hash=contact_fingerprint(lead)
+    db.commit()
+    result=mod.verify_code(mod.VerifyCode(code='123456'),access,db)
+    saved=db.get(models.PublicMoveSession,digest(result['session']))
+    assert saved.expires_at == access.expires_at
+    assert result['expires_at'] == access.expires_at.isoformat() + 'Z'
 
 
 def test_wrong_code_attempts_lock_challenge(portal):
