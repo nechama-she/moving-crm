@@ -19,6 +19,7 @@ from auth import get_current_user, require_admin
 from database import get_db
 from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, packing_card
 from shuttle import SHUTTLE_PREFIX, ShuttleCard, shuttle_card, shuttle_option
+from delivery_fees import DELIVERY_FEE_PREFIX, DeliveryFeeCard, delivery_fee, delivery_fee_card
 from models import (
     LocalPricingRoute,
     PricingPlan,
@@ -206,6 +207,8 @@ class ServiceInput(BaseModel):
             PackingCard.model_validate_json(value[len(PACKING_CARD_PREFIX):])
         if value.startswith(SHUTTLE_PREFIX):
             ShuttleCard.model_validate_json(value[len(SHUTTLE_PREFIX):])
+        if value.startswith(DELIVERY_FEE_PREFIX):
+            DeliveryFeeCard.model_validate_json(value[len(DELIVERY_FEE_PREFIX):])
         return value
 
 
@@ -367,7 +370,7 @@ def _packing_service_charges(
     remaining: list[PricingService] = []
     card = packing_card(services)
     for service in services:
-        if service.comments.startswith((PACKING_CARD_PREFIX, SHUTTLE_PREFIX)):
+        if service.comments.startswith((PACKING_CARD_PREFIX, SHUTTLE_PREFIX, DELIVERY_FEE_PREFIX)):
             continue
         if card:
             category = re.match(r"\s*(full\s+packing|partial\s+packing|unpacking)\b", service.name, re.IGNORECASE)
@@ -820,6 +823,14 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
         })
 
     if body.delivery_address:
+        fee = delivery_fee(plan.services, body.delivery_address)
+        if fee:
+            calculated.append({'id': 'delivery-mileage', 'name': 'Destination fees',
+                               'description': fee['description'], 'calculation_type': 'fixed',
+                               'rate': float(fee['amount']), 'default_selected': True, 'automatic': True,
+                               'applies': True, 'required': True, 'quantity_label': '', 'selected': True,
+                               'amount': float(fee['amount'])})
+            total += fee['amount']
         state, zip_code = delivery_location(body.delivery_address)
         card = shuttle_card(plan.services)
         option = shuttle_option(card, body.delivery_address, state, zip_code, cubic_feet,
@@ -991,6 +1002,45 @@ def sync_customer_shuttle_charge(lead, job, db):
     _refresh_lead_estimated_total(lead.id, db)
 
 
+def job_delivery_fee(job, plan):
+    selection = json.loads(job.customer_packing_package or '{}')
+    fee = delivery_fee(plan.services, job.delivery_zip or '', selection.get('delivery_route')) if plan else None
+    if fee:
+        selection['delivery_route'] = {key: fee[key] for key in ('revision', 'meters')}
+    else:
+        selection.pop('delivery_route', None)
+    job.customer_packing_package = json.dumps(selection)
+    return fee
+
+
+def add_delivery_fee_charge(job, db, fee):
+    if not fee:
+        return Decimal(0)
+    db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'delivery-mileage'), job_id=job.id,
+                        name='Destination fees', description=fee['description'], sort_order=2600,
+                        subtotal=fee['amount'], discount_amount=0, total_cost=fee['amount']))
+    return fee['amount']
+
+
+def sync_delivery_fee(lead, job, db):
+    if job.price is None:
+        return
+    move_type, plan = infer_job_move_type(lead, job, db)
+    fee = job_delivery_fee(job, plan if (move_type or '').lower() != 'local' else None)
+    old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'delivery-mileage'))
+    old_total = old.total_cost if old else Decimal(0)
+    if old:
+        db.delete(old)
+        db.flush()
+    delta = add_delivery_fee_charge(job, db, fee) - old_total
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    from routes.leads import _refresh_lead_estimated_total
+    _refresh_lead_estimated_total(lead.id, db)
+
+
 def add_customer_packing_charges(lead, job, db, plan, move_type):
     total = Decimal(0)
     for index, item in enumerate(customer_packing_options(lead, job, db, plan, move_type)):
@@ -1110,6 +1160,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             move_date=job.move_date or "",
             bulky_items=all_materials,
         )
+        fee = job_delivery_fee(job, matched_plan)
         quote = compute_plan_calculation(matched_plan, calc_body)
         total = quote.get("total", 0.0)
         if total <= 0:
@@ -1155,6 +1206,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
                 total_cost=line["total_cost"],
             ))
         job.price = sum(l["total_cost"] for l in lines)
+        job.price += add_delivery_fee_charge(job, db, fee)
         job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
         job.price += add_customer_package_charges(lead, job, db, matched_plan, move_type)
         job.price += add_customer_shuttle_charge(lead, job, db, matched_plan, move_type)
@@ -1176,6 +1228,9 @@ def calculate_pricing(
     db: Session = Depends(get_db),
 ):
     plan = _plan_or_404(db, user, plan_id)
+    card = delivery_fee_card(plan.services)
+    if not body.delivery_address and card and card.enabled and card.rules:
+        raise HTTPException(422, 'Enter the delivery address or ZIP to calculate destination fees.')
     return compute_plan_calculation(plan, body)
 
 

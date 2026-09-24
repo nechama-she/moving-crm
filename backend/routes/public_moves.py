@@ -819,6 +819,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         previous_package = json.loads(job.customer_packing_package or '{}')
         if 'shuttle' in previous_package:
             selection['shuttle'] = previous_package['shuttle']
+        if 'delivery_route' in previous_package:
+            selection['delivery_route'] = previous_package['delivery_route']
         package_old_ids = ['package:full', 'package:partial', 'package:unpacking'] + [f'box:{item_id}' for item_id in previous_package.get('item_ids', [])]
         package_lines = customer_package_lines(package, selection)
     if job.price is None:
@@ -1000,7 +1002,8 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
         job.delivery_zip = new_delivery
         _persist_job_route(db, job.id, new_pickup, current_stops, new_delivery)
         if (new_pickup != current_pickup or new_delivery != current_delivery) and (job.company_id or lead.company_id):
-            from routes.pricing import sync_customer_shuttle_charge
+            from routes.pricing import sync_customer_shuttle_charge, sync_delivery_fee
+            sync_delivery_fee(lead, job, db)
             sync_customer_shuttle_charge(lead, job, db)
 
     db.commit()

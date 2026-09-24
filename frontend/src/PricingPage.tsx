@@ -1,3 +1,4 @@
+import DeliveryFeesCard, { isDeliveryFeesCard } from './DeliveryFeesCard';
 import ShuttleCard, { isShuttleCard } from './ShuttleCard';
 import PickupAreasCard, { type PickupArea } from './PickupAreasCard';
 import BulkyCatalogPicker from './BulkyCatalogPicker';
@@ -168,7 +169,8 @@ export default function PricingPage() {
   const [manualAmounts, setManualAmounts] = useState<Record<string, number>>({});
   const [customCharges, setCustomCharges] = useState<CustomCharge[]>([]);
   const [customDiscounts, setCustomDiscounts] = useState<CustomDiscount[]>([]);
-  const [openSections, setOpenSections] = useState({ shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [openSections, setOpenSections] = useState({ deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
   const [pendingRateGroups, setPendingRateGroups] = useState<string[][]>([]);
 
   useEffect(() => {
@@ -240,7 +242,7 @@ export default function PricingPage() {
     setLoading(true);
     setError("");
     setEditing(false);
-    setOpenSections({ shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
+    setOpenSections({ deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
     calculationId.current++;
     setCalculating(false);
     setQuote(null);
@@ -388,7 +390,7 @@ export default function PricingPage() {
   const originalService = (service: Service) => editing
     ? plan?.services.find(original => !!service.id && original.id === service.id) || service : service;
   const bulkyItems = (active?.services || []).filter(service => isBulkyItem(originalService(service)));
-  const pricingServices = (active?.services || []).filter(service => !isBulkyItem(originalService(service)) && !isPackingCard(originalService(service)) && !isShuttleCard(originalService(service)));
+  const pricingServices = (active?.services || []).filter(service => !isBulkyItem(originalService(service)) && !isPackingCard(originalService(service)) && !isShuttleCard(originalService(service)) && !isDeliveryFeesCard(originalService(service)));
   const customChargeTotal = useMemo(
     () => customCharges.reduce((sum, charge) => sum + Math.max(0, Number(charge.amount) || 0), 0),
     [customCharges],
@@ -415,7 +417,7 @@ export default function PricingPage() {
   const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
   const detailedTotal = Math.max(0, discountBase - discountTotal);
 
-  function startServiceEdit(section: 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
+  function startServiceEdit(section: 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin' || saving) return;
     setOpenSections(current => ({ ...current, [section]: true }));
     setEditing(true);
@@ -426,12 +428,12 @@ export default function PricingPage() {
     setEditing(false);
     setError('');
   }
-  function serviceEditActions(section: 'shuttle' | 'pickup' | 'packing' | 'bulkyItems') {
+  function serviceEditActions(section: 'deliveryFees' | 'shuttle' | 'pickup' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin') return null;
     return editing ? <>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={cancelServiceEdit}>Cancel changes</button>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save changes'}</button>
-    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
+    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'deliveryFees' ? 'Edit destination fees' : section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
   }
 
   function patchDraft(patch: Partial<Plan>) {
@@ -586,7 +588,7 @@ export default function PricingPage() {
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
       body: JSON.stringify({
         destination,
-        delivery_address: jobContext?.job.delivery_zip || "",
+        delivery_address: jobContext?.job.delivery_zip || deliveryAddress,
         shuttle_access: jobContext?.shuttle?.answer ?? null,
         cubic_feet: cubicFeetValue(cubicFeet),
         move_date: jobContext?.job.move_date || "",
@@ -722,6 +724,7 @@ export default function PricingPage() {
                 ) : null}
                 <div className="pricing-calc-fields">
                   <label>Destination<select value={destination} onChange={(e) => { setDestination(e.target.value); calculationId.current++; setCalculating(false); setQuote(null); }}><option value="">Select a supported destination</option>{destinations.map((name) => <option key={name}>{name}</option>)}</select></label>
+                  {!jobContext && active.services.some(isDeliveryFeesCard) && <label>Delivery address or ZIP<input value={deliveryAddress} placeholder="Full address preferred" onChange={e => { setDeliveryAddress(e.target.value); calculationId.current++; setCalculating(false); setQuote(null); }} /></label>}
                   <label>Cubic feet<input type="number" min="0" step="1" value={cubicFeet} onChange={(e) => { setCubicFeet(roundedCubicFeet(e.target.value)); calculationId.current++; setCalculating(false); setQuote(null); }} placeholder="e.g. 650" /></label>
                   <button className="slds-button primary" disabled={!destination || calculating} onClick={() => void calculate()}>{calculating ? "Calculating..." : "Calculate"}</button>
                 </div>
@@ -889,6 +892,10 @@ export default function PricingPage() {
                     </tbody>
                   </table>
                 </div>
+              </PricingSection>
+
+              <PricingSection title="Destination fees" count={active.services.filter(isDeliveryFeesCard).length} open={openSections.deliveryFees} toggle={() => setOpenSections(s => ({ ...s, deliveryFees: !s.deliveryFees }))} onDoubleClick={() => startServiceEdit('deliveryFees')} actions={serviceEditActions('deliveryFees')}>
+                <DeliveryFeesCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
               <PricingSection title="Delivery shuttle" count={active.services.filter(isShuttleCard).length} open={openSections.shuttle} toggle={() => setOpenSections(s => ({ ...s, shuttle: !s.shuttle }))} onDoubleClick={() => startServiceEdit('shuttle')} actions={serviceEditActions('shuttle')}>
