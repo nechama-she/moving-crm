@@ -2156,7 +2156,7 @@ class LeadJobChargePayload(BaseModel):
     subtotal: float = 0
     discount_amount: float = Field(default=0, alias="discountAmount")
     total_cost: float = Field(default=0, alias="totalCost")
-    pricing_key: str | None = Field(default=None, alias="pricingKey", pattern=r'^stairs:(pickup|delivery)$')
+    pricing_key: str | None = Field(default=None, alias="pricingKey", pattern=r'^(stairs|long_carry):(pickup|delivery)$')
 
 
 class ExternalLeadUpdateLogRequest(BaseModel):

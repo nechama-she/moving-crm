@@ -88,6 +88,13 @@ def build_estimate_pdf(data, rows):
     story.append(table([[p('TOTAL ESTIMATED PRICE'), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
     if data.get('list_changed') or data.get('files_changed'):
         story.append(p('This estimate reflects the current generated report. New inventory edits or files are not included until a new report is generated.', 'NoteEstimate'))
+    if data.get('long_carry'):
+        carry = data['long_carry']
+        story.append(p('Long carry', 'SectionEstimate'))
+        story.append(p(f"First {carry['included_feet']} feet included at each address. Each additional {carry['increment_feet']} feet or part thereof costs ${carry['rate_per_cuft']:.2f} per cu ft. Distance follows the walking route between the parked truck and the entrance.", 'NoteEstimate'))
+        for row in carry['locations']:
+            answer = f"{row['distance_feet']} feet; charge {money(row['total'])}" if row['distance_feet'] is not None else 'Not answered - long carry charges may apply'
+            story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
     if data.get('stairs'):
         stairs = data['stairs']
         story.append(p('Outdoor and building stairs', 'SectionEstimate'))

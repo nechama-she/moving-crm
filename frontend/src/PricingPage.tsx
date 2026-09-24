@@ -1,3 +1,4 @@
+import LongCarryPricingCard, { isLongCarryCard } from './LongCarryPricingCard';
 import StairsPricingCard, { isStairsCard } from './StairsPricingCard';
 import JobDatePicker from './JobDatePicker';
 import StoragePricingCard, { isStorageCard } from './StoragePricingCard';
@@ -57,6 +58,7 @@ type JobContext = {
   lead: { id: string; full_name: string; volume: number | null; weight: number | null };
   job: { id: string; job_order: number; company_name: string; pickup_zip: string; delivery_zip: string; pickup_state: string; pickup_zip_code: string; delivery_state: string; delivery_zip_code: string; move_date: string; booked_move_date: string; estimated_materials?: JobMaterial[] };
   plans: PlanSummary[];
+  long_carry?: { locations: { location: 'pickup' | 'delivery'; distance_feet: number | null }[] } | null;
   stairs?: { locations: { location: 'pickup' | 'delivery'; flights: number | null }[] } | null;
   storage?: { available_date: string } | null;
   shuttle?: { answer: boolean | null } | null;
@@ -175,10 +177,11 @@ export default function PricingPage() {
   const [customCharges, setCustomCharges] = useState<CustomCharge[]>([]);
   const [customDiscounts, setCustomDiscounts] = useState<CustomDiscount[]>([]);
   const [storagePickupDate, setStoragePickupDate] = useState('');
+  const [carryFeet, setCarryFeet] = useState<Partial<Record<'pickup' | 'delivery', string>>>({});
   const [stairsFlights, setStairsFlights] = useState<Partial<Record<'pickup' | 'delivery', string>>>({});
   const [availableDate, setAvailableDate] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
-  const [openSections, setOpenSections] = useState({ stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
+  const [openSections, setOpenSections] = useState({ longCarry: false, stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
   const [pendingRateGroups, setPendingRateGroups] = useState<string[][]>([]);
 
   useEffect(() => {
@@ -252,8 +255,9 @@ export default function PricingPage() {
     setEditing(false);
     setAvailableDate('');
     setStoragePickupDate('');
+    setCarryFeet({});
     setStairsFlights({});
-    setOpenSections({ stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
+    setOpenSections({ longCarry: false, stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
     calculationId.current++;
     setCalculating(false);
     setQuote(null);
@@ -401,7 +405,7 @@ export default function PricingPage() {
   const originalService = (service: Service) => editing
     ? plan?.services.find(original => !!service.id && original.id === service.id) || service : service;
   const bulkyItems = (active?.services || []).filter(service => isBulkyItem(originalService(service)));
-  const pricingServices = (active?.services || []).filter(service => !isBulkyItem(originalService(service)) && !isPackingCard(originalService(service)) && !isShuttleCard(originalService(service)) && !isDeliveryFeesCard(originalService(service)) && !isStorageCard(originalService(service)) && !isStairsCard(originalService(service)) && !(active?.services.some(isStairsCard) && /\bstairs?\b|\bstaircases?\b/i.test(service.name)) && !(active?.services.some(isStorageCard) && /^\s*(?:long\s+term\s+)?storage\b/i.test(service.name)));
+  const pricingServices = (active?.services || []).filter(service => !isBulkyItem(originalService(service)) && !isPackingCard(originalService(service)) && !isShuttleCard(originalService(service)) && !isDeliveryFeesCard(originalService(service)) && !isStorageCard(originalService(service)) && !isLongCarryCard(originalService(service)) && !(active?.services.some(isLongCarryCard) && /\blong[ -]+carry\b/i.test(service.name)) && !isStairsCard(originalService(service)) && !(active?.services.some(isStairsCard) && /\bstairs?\b|\bstaircases?\b/i.test(service.name)) && !(active?.services.some(isStorageCard) && /^\s*(?:long\s+term\s+)?storage\b/i.test(service.name)));
   const customChargeTotal = useMemo(
     () => customCharges.reduce((sum, charge) => sum + Math.max(0, Number(charge.amount) || 0), 0),
     [customCharges],
@@ -428,7 +432,7 @@ export default function PricingPage() {
   const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
   const detailedTotal = Math.max(0, discountBase - discountTotal);
 
-  function startServiceEdit(section: 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
+  function startServiceEdit(section: 'longCarry' | 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin' || saving) return;
     setOpenSections(current => ({ ...current, [section]: true }));
     setEditing(true);
@@ -439,12 +443,12 @@ export default function PricingPage() {
     setEditing(false);
     setError('');
   }
-  function serviceEditActions(section: 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'packing' | 'bulkyItems') {
+  function serviceEditActions(section: 'longCarry' | 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin') return null;
     return editing ? <>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={cancelServiceEdit}>Cancel changes</button>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save changes'}</button>
-    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'stairs' ? 'Edit stairs pricing' : section === 'storage' ? 'Edit storage pricing' : section === 'deliveryFees' ? 'Edit destination fees' : section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
+    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'longCarry' ? 'Edit long carry pricing' : section === 'stairs' ? 'Edit stairs pricing' : section === 'storage' ? 'Edit storage pricing' : section === 'deliveryFees' ? 'Edit destination fees' : section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
   }
 
   function patchDraft(patch: Partial<Plan>) {
@@ -529,7 +533,7 @@ export default function PricingPage() {
     const cents = (amount: number) => Math.round(amount * 100);
     const lines = [
       { id: "transportation", name: "Transportation charge", description: `${cubicFeetValue(cubicFeet)} cf ? ${quote.match?.band_label || "Transportation"}`, amount: quote.base_price || 0 },
-      ...quote.charges.filter(charge => charge.selected).map(charge => ({ id: `charge:${charge.id}`, name: charge.name, description: charge.description, amount: charge.amount, subtotal: charge.subtotal, defaultDiscount: charge.discount_amount, pricingKey: charge.id.startsWith('stairs:') ? charge.id : undefined })),
+      ...quote.charges.filter(charge => charge.selected).map(charge => ({ id: `charge:${charge.id}`, name: charge.name, description: charge.description, amount: charge.amount, subtotal: charge.subtotal, defaultDiscount: charge.discount_amount, pricingKey: (charge.id.startsWith('stairs:') || charge.id.startsWith('long_carry:')) ? charge.id : undefined })),
       ...customCharges.map(charge => ({ id: `custom:${charge.id}`, name: charge.title.trim() || "Custom charge", description: "Custom charge", amount: Math.max(0, Number(charge.amount) || 0) })),
     ];
     const estimatedCharges = lines.map(line => {
@@ -607,6 +611,8 @@ export default function PricingPage() {
         destination,
         delivery_address: jobContext?.job.delivery_zip || deliveryAddress,
         shuttle_access: jobContext?.shuttle?.answer ?? null,
+        pickup_carry_feet: carryFeet.pickup === undefined ? jobContext?.long_carry?.locations.find(r => r.location === 'pickup')?.distance_feet ?? null : carryFeet.pickup === '' ? null : Number(carryFeet.pickup),
+        delivery_carry_feet: carryFeet.delivery === undefined ? jobContext?.long_carry?.locations.find(r => r.location === 'delivery')?.distance_feet ?? null : carryFeet.delivery === '' ? null : Number(carryFeet.delivery),
         pickup_flights: stairCount('pickup'),
         delivery_flights: stairCount('delivery'),
         available_date: availableDate || jobContext?.storage?.available_date || '',
@@ -747,6 +753,7 @@ export default function PricingPage() {
                   {!jobContext && active.services.some(isDeliveryFeesCard) && <label>Delivery address or ZIP<input value={deliveryAddress} placeholder="Full address preferred" onChange={e => { setDeliveryAddress(e.target.value); calculationId.current++; setCalculating(false); setQuote(null); }} /></label>}
                   {!jobContext?.job.move_date && active.services.some(isStorageCard) && <label>Pickup date<JobDatePicker value={storagePickupDate} onChange={value => { setStoragePickupDate(value); calculationId.current++; setCalculating(false); setQuote(null); }} /></label>}
                   {active.services.some(isStorageCard) && <label>Earliest delivery date<JobDatePicker value={availableDate || jobContext?.storage?.available_date || ''} onChange={value => { setAvailableDate(value); calculationId.current++; setCalculating(false); setQuote(null); }} /></label>}
+                  {active.services.some(s => isLongCarryCard(s) && JSON.parse(s.comments.slice('__long_carry_pricing__:'.length)).enabled) && (['pickup', 'delivery'] as const).map(place => <label key={place}>{place === 'pickup' ? 'Pickup' : 'Delivery'} carrying distance (feet)<input type="number" min="0" max="100000" step="1" value={carryFeet[place] ?? jobContext?.long_carry?.locations.find(row => row.location === place)?.distance_feet ?? ''} onChange={e => { setCarryFeet(old => ({ ...old, [place]: e.target.value })); calculationId.current++; setCalculating(false); setQuote(null); }} /></label>)}
                   {active.services.some(s => isStairsCard(s) && JSON.parse(s.comments.slice('__stairs_pricing__:'.length)).enabled) && (['pickup', 'delivery'] as const).map(place => <label key={place}>{place === 'pickup' ? 'Pickup' : 'Delivery'} outdoor/building flights<input type="number" min="0" max="1000" step="1" value={stairsFlights[place] ?? jobContext?.stairs?.locations.find(row => row.location === place)?.flights ?? ''} onChange={e => { setStairsFlights(old => ({ ...old, [place]: e.target.value })); calculationId.current++; setCalculating(false); setQuote(null); }} /></label>)}
                   <label>Cubic feet<input type="number" min="0" step="1" value={cubicFeet} onChange={(e) => { setCubicFeet(roundedCubicFeet(e.target.value)); calculationId.current++; setCalculating(false); setQuote(null); }} placeholder="e.g. 650" /></label>
                   <button className="slds-button primary" disabled={!destination || calculating} onClick={() => void calculate()}>{calculating ? "Calculating..." : "Calculate"}</button>
@@ -916,6 +923,10 @@ export default function PricingPage() {
                     </tbody>
                   </table>
                 </div>
+              </PricingSection>
+
+              <PricingSection title="Long carry pricing" count={active.services.filter(isLongCarryCard).length} open={openSections.longCarry} toggle={() => setOpenSections(s => ({ ...s, longCarry: !s.longCarry }))} onDoubleClick={() => startServiceEdit('longCarry')} actions={serviceEditActions('longCarry')}>
+                <LongCarryPricingCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
               <PricingSection title="Stairs pricing" count={active.services.filter(isStairsCard).length} open={openSections.stairs} toggle={() => setOpenSections(s => ({ ...s, stairs: !s.stairs }))} onDoubleClick={() => startServiceEdit('stairs')} actions={serviceEditActions('stairs')}>
