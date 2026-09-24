@@ -166,7 +166,7 @@ export default function PricingPage() {
   const [manualAmounts, setManualAmounts] = useState<Record<string, number>>({});
   const [customCharges, setCustomCharges] = useState<CustomCharge[]>([]);
   const [customDiscounts, setCustomDiscounts] = useState<CustomDiscount[]>([]);
-  const [openSections, setOpenSections] = useState({ pickup: true, rates: true, packing: true, bulkyItems: true, services: true });
+  const [openSections, setOpenSections] = useState({ pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
   const [pendingRateGroups, setPendingRateGroups] = useState<string[][]>([]);
 
   useEffect(() => {
@@ -238,6 +238,7 @@ export default function PricingPage() {
     setLoading(true);
     setError("");
     setEditing(false);
+    setOpenSections({ pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
     calculationId.current++;
     setCalculating(false);
     setQuote(null);
@@ -299,6 +300,8 @@ export default function PricingPage() {
   const rateRows = useMemo(() => {
     const query = search.trim().toLowerCase();
     const rows = active?.rates || [];
+    const originalById = new Map((plan?.rates || []).map(row => [row.id, row]));
+    const originalRow = (row: Rate) => editing || hasPendingRateGroups ? originalById.get(row.id) || row : row;
     const pendingIdSets = pendingRateGroups.map((ids) => new Set(ids));
     const usedIds = new Set<string>();
     const groups: RateGroup[] = [];
@@ -322,7 +325,9 @@ export default function PricingPage() {
     const grouped = new Map<string, Rate[]>();
     rows.forEach((row) => {
       if (row.id && usedIds.has(row.id)) return;
-      const key = row.destination.trim() || `blank:${row.id || row.band_label}`;
+      // Editing a label must not regroup/remount the inputs, including when it
+      // temporarily matches another destination or becomes blank.
+      const key = originalRow(row).destination.trim() || `blank:${row.id || row.band_label}`;
       const existing = grouped.get(key);
       if (existing) existing.push(row);
       else grouped.set(key, [row]);
@@ -331,7 +336,7 @@ export default function PricingPage() {
     grouped.forEach((groupRates, key) => {
       const seed = groupRates[0];
       groups.push({
-        key,
+        key: seed.id || key,
         rowIds: groupRates.map((row) => row.id).filter((id): id is string => Boolean(id)),
         destination: seed.destination || "",
         destinationGroup: seed.destination_group || "",
@@ -341,29 +346,47 @@ export default function PricingPage() {
       });
     });
 
-    return groups.filter((group) => {
+    return groups.sort((a, b) => {
+      const pendingA = pendingRateGroups.findIndex(ids => ids.includes(a.rowIds[0]));
+      const pendingB = pendingRateGroups.findIndex(ids => ids.includes(b.rowIds[0]));
+      if (pendingA >= 0 || pendingB >= 0) return pendingA < 0 ? -1 : pendingB < 0 ? 1 : pendingA - pendingB;
+      const referenceA = originalRow(a.rates[0]);
+      const referenceB = originalRow(b.rates[0]);
+      const areaA = referenceA.destination_group.trim();
+      const areaB = referenceB.destination_group.trim();
+      // Keep destinations without an area after the named areas.
+      if (!areaA !== !areaB) return areaA ? -1 : 1;
+      return areaA.localeCompare(areaB, 'en', { sensitivity: 'base', numeric: true })
+        || referenceA.destination.trim().localeCompare(referenceB.destination.trim(), 'en', { sensitivity: 'base', numeric: true });
+    }).filter((group) => {
       if (!query) return true;
-      return group.destination.toLowerCase().includes(query) || group.destinationGroup.toLowerCase().includes(query);
+      const reference = originalRow(group.rates[0]);
+      return reference.destination.toLowerCase().includes(query) || reference.destination_group.toLowerCase().includes(query);
     });
-  }, [active, pendingRateGroups, search]);
+  }, [active, plan, editing, hasPendingRateGroups, pendingRateGroups, search]);
   const pendingRateGroupKeys = useMemo(
     () => new Set(pendingRateGroups.map((ids) => ids.join("|"))),
     [pendingRateGroups],
   );
   const catalogRules = useMemo(() => {
     if (!active || !active.rules) return [];
-    const serviceNames = (active.services || []).map((service) => (service.name || "").toLowerCase());
+    const serviceNames = ((editing ? plan : active)?.services || []).map((service) => (service.name || "").toLowerCase());
     return (active.rules || []).filter((rule) => {
-      const text = (rule.description || "").toLowerCase();
+      const reference = editing ? plan?.rules.find(original => !!rule.id && original.id === rule.id) : rule;
+      // Keep an edited rule visible until Save, even if its text changes category.
+      if (!reference) return true;
+      const text = (reference.description || "").toLowerCase();
       if (text.includes("destination & origin") && serviceNames.some((name) => name.includes("destination & origin"))) return false;
       if (text.includes("company & fuel") && !text.includes("$")) return false;
       if ((text.includes("pick up from") || text.includes("rates period") || text.includes("to area")) && !/(add|take off|reduce|ask|fee|not included)/i.test(text)) return false;
-      if (/^(rates period|exceptions?)$/i.test((rule.description || "").trim())) return false;
+      if (/^(rates period|exceptions?)$/i.test((reference.description || "").trim())) return false;
       return true;
     });
-  }, [active]);
-  const bulkyItems = useMemo(() => (active?.services || []).filter(isBulkyItem), [active]);
-  const pricingServices = useMemo(() => (active?.services || []).filter((service) => !isBulkyItem(service) && !isPackingCard(service)), [active]);
+  }, [active, plan, editing]);
+  const originalService = (service: Service) => editing
+    ? plan?.services.find(original => !!service.id && original.id === service.id) || service : service;
+  const bulkyItems = (active?.services || []).filter(service => isBulkyItem(originalService(service)));
+  const pricingServices = (active?.services || []).filter(service => !isBulkyItem(originalService(service)) && !isPackingCard(originalService(service)));
   const customChargeTotal = useMemo(
     () => customCharges.reduce((sum, charge) => sum + Math.max(0, Number(charge.amount) || 0), 0),
     [customCharges],
@@ -390,7 +413,7 @@ export default function PricingPage() {
   const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
   const detailedTotal = Math.max(0, discountBase - discountTotal);
 
-  function startServiceEdit(section: 'pickup' | 'packing' | 'bulkyItems') {
+  function startServiceEdit(section: 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin' || saving) return;
     setOpenSections(current => ({ ...current, [section]: true }));
     setEditing(true);
@@ -452,6 +475,7 @@ export default function PricingPage() {
     } : current);
   }
   function addDestination() {
+    setOpenSections(current => ({ ...current, rates: true }));
     if (!draft && plan) {
       setDraft(structuredClone(plan));
     }
@@ -836,7 +860,7 @@ export default function PricingPage() {
                 ) : null}
               </section>
 
-              <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))} onDoubleClick={() => setEditing(true)} actions={user?.role === "admin" && pricingMode === "long-distance" ? <>{!editing ? <button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={addDestination}>+ Add destination</button> : null}{editing ? <><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={addDestination}>+ Add destination</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? "Saving rates" : "Save rates"}</button></> : hasPendingRateGroups ? <><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={discardPendingRateGroups}>Discard new rows</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? "Saving new rows" : "Save new rows"}</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => setEditing(true)}>Edit rates</button></> : <button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => setEditing(true)}>Edit rates</button>}</> : null}>
+              <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))} onDoubleClick={() => startServiceEdit('rates')} actions={user?.role === "admin" && pricingMode === "long-distance" ? <>{!editing ? <button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={addDestination}>+ Add destination</button> : null}{editing ? <><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={addDestination}>+ Add destination</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? "Saving rates" : "Save rates"}</button></> : hasPendingRateGroups ? <><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={discardPendingRateGroups}>Discard new rows</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? "Saving new rows" : "Save new rows"}</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => startServiceEdit('rates')}>Edit rates</button></> : <button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => startServiceEdit('rates')}>Edit rates</button>}</> : null}>
                 <div className="pricing-table-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search destination or ZIP area" /><span>{bands.length} cubic-foot bands</span></div>
                 <div className="pricing-rate-table-wrap">
                   <table className="pricing-rate-table">
