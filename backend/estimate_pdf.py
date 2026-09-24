@@ -88,6 +88,13 @@ def build_estimate_pdf(data, rows):
     story.append(table([[p('TOTAL ESTIMATED PRICE'), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
     if data.get('list_changed') or data.get('files_changed'):
         story.append(p('This estimate reflects the current generated report. New inventory edits or files are not included until a new report is generated.', 'NoteEstimate'))
+    if data.get('elevator'):
+        elevator = data['elevator']
+        story.append(p('Elevator use', 'SectionEstimate'))
+        story.append(p(f"${elevator['lower_fee']:.2f} through {elevator['threshold_cuft']} cu ft; ${elevator['upper_fee']:.2f} above {elevator['threshold_cuft']} cu ft. Fee applies at each address where an elevator is used.", 'NoteEstimate'))
+        for row in elevator['locations']:
+            answer = ('Yes' if row['uses_elevator'] else 'No') + f"; charge {money(row['total'])}" if row['uses_elevator'] is not None else 'Not answered - elevator charges may apply'
+            story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
     if data.get('long_carry'):
         carry = data['long_carry']
         story.append(p('Long carry', 'SectionEstimate'))

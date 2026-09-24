@@ -640,6 +640,7 @@ def _move_details(access, db, *, refresh_report=True):
     packing_package = None
     shuttle = None
     storage = None
+    elevator = None
     long_carry = None
     stairs = None
     if not is_spark_pending and not report_import_pending and (job.company_id or lead.company_id):
@@ -651,13 +652,15 @@ def _move_details(access, db, *, refresh_report=True):
         shuttle = customer_shuttle(lead, job, db)
         from routes.pricing import customer_storage
         storage = customer_storage(lead, job, db)
+        from routes.pricing import customer_elevator
+        elevator = customer_elevator(lead, job, db)
         from routes.pricing import customer_long_carry
         long_carry = customer_long_carry(lead, job, db)
         from routes.pricing import customer_stairs
         stairs = customer_stairs(lead, job, db)
     from inventory_questions import questions
     item_questions = questions(active_company, conv_details, db) if spark_info and spark_info.get('status') == 'completed' else []
-    return {'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    return {'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': company_data['name'],
             'company_details': company_data,
@@ -735,8 +738,9 @@ class CustomerPackageSelection(BaseModel):
 
 
 class CustomerPackingChange(BaseModel):
-    kind: Literal['mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs', 'long_carry']
+    kind: Literal['mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs', 'long_carry', 'elevator']
     location: Literal['pickup', 'delivery'] | None = None
+    elevator: bool | None = Field(default=None, strict=True)
     carry_feet: int | None = Field(default=None, ge=0, le=100000, strict=True)
     flights: int | None = Field(default=None, ge=0, le=1000, strict=True)
     available_date: str = Field(default='', max_length=10)
@@ -761,6 +765,21 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     from routes.leads import _refresh_lead_estimated_total
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
     lead = db.get(Lead, access.lead_id)
+    if body.change and body.change.kind == 'elevator':
+        from routes.pricing import customer_elevator, sync_elevator_charges
+        change = body.change
+        if change.location is None or change.elevator is None:
+            raise HTTPException(400, 'Choose Yes or No for elevator use at this address.')
+        option = customer_elevator(lead, job, db)
+        question = next((row for row in option['locations'] if row['location'] == change.location), None) if option else None
+        if not question or question['revision'] != change.revision:
+            raise HTTPException(409, 'The address or elevator settings changed. Refresh and answer again.')
+        selection = json.loads(job.customer_packing_package or '{}')
+        selection.setdefault('elevator', {})[change.location] = {'revision': question['revision'], 'uses_elevator': change.elevator}
+        job.customer_packing_package = json.dumps(selection)
+        sync_elevator_charges(lead, job, db, change.location)
+        db.commit()
+        return _move_details(access, db, refresh_report=False)
     if body.change and body.change.kind == 'long_carry':
         from routes.pricing import customer_long_carry, sync_long_carry_charges
         change = body.change
@@ -887,6 +906,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             selection['delivery_route'] = previous_package['delivery_route']
         if 'storage_date' in previous_package:
             selection['storage_date'] = previous_package['storage_date']
+        if 'elevator' in previous_package:
+            selection['elevator'] = previous_package['elevator']
         if 'long_carry' in previous_package:
             selection['long_carry'] = previous_package['long_carry']
         if 'stairs' in previous_package:
@@ -1079,6 +1100,8 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
             sync_stairs_charges(lead, job, db)
             from routes.pricing import sync_long_carry_charges
             sync_long_carry_charges(lead, job, db)
+            from routes.pricing import sync_elevator_charges
+            sync_elevator_charges(lead, job, db)
 
     if (body.move_date is not None or body.pickup is not None or body.delivery is not None) and (job.company_id or lead.company_id):
         from routes.pricing import sync_storage_charge

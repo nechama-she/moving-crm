@@ -1,3 +1,4 @@
+import CustomerElevatorQuestion, { type ElevatorOption } from './CustomerElevatorQuestion';
 import CustomerLongCarryQuestion, { type CarryOption } from './CustomerLongCarryQuestion';
 import CustomerStairsQuestion, { type StairsOption } from './CustomerStairsQuestion';
 import CustomerStorageQuestion, { type StorageOption } from './CustomerStorageQuestion';
@@ -23,6 +24,7 @@ import "./CustomerMovePage.css";
 type LinkSms = { sent_at: string; phone_last4: string };
 type Shuttle = { automatic: boolean; answer: boolean | null; revision: string; required: boolean; question: string; rate: number; total: number; cubic_feet: number; inventory_cubic_feet: number; minimum_cubic_feet: number };
 type Details = {
+  elevator?: ElevatorOption | null;
   long_carry?: CarryOption | null;
   stairs?: StairsOption | null;
   storage?: StorageOption | null;
@@ -163,10 +165,12 @@ export default function CustomerMovePage() {
   const [answerSaveStarted, setAnswerSaveStarted] = useState(false);
   const [showInventoryList, setShowInventoryList] = useState(false);
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
-  const [packingStep, setPackingStep] = useState<'carry_pickup' | 'carry_delivery' | 'stairs_pickup' | 'stairs_delivery' | 'storage' | 'shuttle' | 'bulky' | 'package' | 'items'>('bulky');
+  const [packingStep, setPackingStep] = useState<'elevator_pickup' | 'elevator_delivery' | 'carry_pickup' | 'carry_delivery' | 'stairs_pickup' | 'stairs_delivery' | 'storage' | 'shuttle' | 'bulky' | 'package' | 'items'>('bulky');
   const [packageSelection, setPackageSelection] = useState<PackingSelection>({ mode: 'none', unpacking: false, item_ids: [] });
   const [calculatingPrice, setCalculatingPrice] = useState(false);
   const [calculationError, setCalculationError] = useState('');
+  const [elevatorAnswers, setElevatorAnswers] = useState<Record<string, boolean | null>>({});
+  const [elevatorMissing, setElevatorMissing] = useState(false);
   const [carryAnswers, setCarryAnswers] = useState<Record<string, number | null>>({});
   const [carryMissing, setCarryMissing] = useState(false);
   const [stairsAnswers, setStairsAnswers] = useState<Record<string, number | null>>({});
@@ -201,7 +205,7 @@ export default function CustomerMovePage() {
       setHasNewUploads(true);
     } finally { setBusy(false); }
   }
-  type PricingChange = { kind: 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
+  type PricingChange = { kind: 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; elevator?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
   const failedPricing = useRef(new Map<string, PricingChange>());
   function savePricingChange(change: PricingChange) {
     const id = `pricing:${change.kind}:${change.location || change.item_id || ''}`;
@@ -238,6 +242,7 @@ export default function CustomerMovePage() {
   }
   type PricingStep = typeof packingStep;
   const pricingSteps: PricingStep[] = [
+    ...(data?.elevator ? ['elevator_pickup', 'elevator_delivery'] as PricingStep[] : []),
     ...(data?.long_carry ? ['carry_pickup', 'carry_delivery'] as PricingStep[] : []),
     ...(data?.stairs ? ['stairs_pickup', 'stairs_delivery'] as PricingStep[] : []),
     ...(data?.storage ? ['storage'] as PricingStep[] : []),
@@ -247,7 +252,9 @@ export default function CustomerMovePage() {
     ...(data?.item_questions?.length ? ['items'] as PricingStep[] : []),
   ];
   const nextPricing = pricingSteps[pricingSteps.indexOf(packingStep)+1];
-  const nextPricingLabels: Record<PricingStep,string> = { carry_pickup:'pickup carrying distance', carry_delivery:'delivery carrying distance', stairs_pickup:'pickup stairs', stairs_delivery:'delivery stairs', storage:'delivery date', shuttle:'delivery access', bulky:'bulky items', package:'packing services', items:'moving terms' };
+  const nextPricingLabels: Record<PricingStep,string> = { elevator_pickup:'pickup elevator', elevator_delivery:'delivery elevator', carry_pickup:'pickup carrying distance', carry_delivery:'delivery carrying distance', stairs_pickup:'pickup stairs', stairs_delivery:'delivery stairs', storage:'delivery date', shuttle:'delivery access', bulky:'bulky items', package:'packing services', items:'moving terms' };
+  const currentElevator = data?.elevator?.locations.find(row => packingStep === `elevator_${row.location}`);
+  useEffect(() => { setElevatorAnswers(Object.fromEntries((data?.elevator?.locations || []).map(row => [row.location,row.uses_elevator]))); setElevatorMissing(false); }, [data?.elevator?.locations.map(row => row.revision).join(':')]);
   const currentCarry = data?.long_carry?.locations.find(row => packingStep === `carry_${row.location}`);
   useEffect(() => { setCarryAnswers(Object.fromEntries((data?.long_carry?.locations || []).map(row => [row.location,row.distance_feet]))); setCarryMissing(false); }, [data?.long_carry?.locations.map(row => row.revision).join(':')]);
   const currentStairs = data?.stairs?.locations.find(row => packingStep === `stairs_${row.location}`);
@@ -258,6 +265,7 @@ export default function CustomerMovePage() {
     if (previous) setPackingStep(previous); else setShowQuestions(false);
   }
   function nextPricingStep() {
+    if (currentElevator && elevatorAnswers[currentElevator.location] == null) { setElevatorMissing(true); return; }
     if (currentCarry && carryAnswers[currentCarry.location] == null) { setCarryMissing(true); return; }
     if (currentStairs && stairsAnswers[currentStairs.location] == null) { setStairsMissing(true); return; }
     if (packingStep === 'storage' && (!storageDate || !data?.storage?.pickup_date || storageDate < data.storage.pickup_date)) { setStorageMissing(true); return; }
@@ -758,7 +766,7 @@ export default function CustomerMovePage() {
                 </div>
               )}
 
-              {(data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) && (
+              {(data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) && (
                 <div className="cm-estimate-extra-actions">
                   <button
                     type="button"
@@ -767,6 +775,7 @@ export default function CustomerMovePage() {
                       setPackingSelection(Object.fromEntries(data.packing_items.filter(item => item.selected).map(item => [item.id, item.selected_service || ''])));
                       setShuttleAnswer(data.shuttle?.answer ?? null); setShuttleMissing(false);
                       setStorageDate(data.storage?.available_date || ''); setStorageMissing(false);
+                      setElevatorAnswers(Object.fromEntries((data.elevator?.locations || []).map(row => [row.location,row.uses_elevator]))); setElevatorMissing(false);
                       setCarryAnswers(Object.fromEntries((data.long_carry?.locations || []).map(row => [row.location,row.distance_feet]))); setCarryMissing(false);
                       setStairsAnswers(Object.fromEntries((data.stairs?.locations || []).map(row => [row.location, row.flights]))); setStairsMissing(false);
                       setPackingStep(pricingSteps[0] || 'items');
@@ -804,13 +813,13 @@ export default function CustomerMovePage() {
                   <div className="cm-modal-header">
                     <div>
                       <span className="cm-eyebrow">{packingStep === 'items' ? 'MOVING TERMS' : 'EXTRA SERVICES'}</span>
-                      <h3 id="packing-title">{currentCarry ? `Long carry at ${currentCarry.location}` : currentStairs ? (currentStairs.location === 'pickup' ? 'Stairs at pickup' : 'Stairs at delivery') : packingStep === 'storage' ? 'Delivery availability & storage' : packingStep === 'shuttle' ? 'Delivery truck access' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : 'Packing services'}</h3>
-                      <p>{currentCarry ? "Distance between the parked truck and your entrance." : currentStairs ? 'Outdoor and shared-building stairs only.' : packingStep === 'storage' ? 'Choose when you can begin receiving your shipment.' : packingStep === 'shuttle' ? 'Help us plan the right vehicle for your delivery.' : packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : 'Choose packing and optional unpacking for your move.'}</p>
+                      <h3 id="packing-title">{currentElevator ? `Elevator at ${currentElevator.location}` : currentCarry ? `Long carry at ${currentCarry.location}` : currentStairs ? (currentStairs.location === 'pickup' ? 'Stairs at pickup' : 'Stairs at delivery') : packingStep === 'storage' ? 'Delivery availability & storage' : packingStep === 'shuttle' ? 'Delivery truck access' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : 'Packing services'}</h3>
+                      <p>{currentElevator ? "Tell us whether the movers will use an elevator." : currentCarry ? "Distance between the parked truck and your entrance." : currentStairs ? 'Outdoor and shared-building stairs only.' : packingStep === 'storage' ? 'Choose when you can begin receiving your shipment.' : packingStep === 'shuttle' ? 'Help us plan the right vehicle for your delivery.' : packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : 'Choose packing and optional unpacking for your move.'}</p>
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
                   <div className="cm-modal-body" ref={termsBody}>
-                    {currentCarry && data.long_carry ? <CustomerLongCarryQuestion config={data.long_carry} location={currentCarry} value={carryAnswers[currentCarry.location] ?? null} missing={carryMissing} onChange={carry_feet => { setCarryAnswers(prev => ({ ...prev, [currentCarry.location]: carry_feet })); setCarryMissing(false); if(carry_feet !== null) savePricingChange({ kind:'long_carry', location:currentCarry.location, revision:currentCarry.revision, carry_feet }); }} /> : currentStairs && data.stairs ? <CustomerStairsQuestion config={data.stairs} location={currentStairs} value={stairsAnswers[currentStairs.location] ?? null} missing={stairsMissing} onChange={flights => { setStairsAnswers(prev => ({ ...prev, [currentStairs.location]: flights })); setStairsMissing(false); if (flights !== null) savePricingChange({ kind: 'stairs', location: currentStairs.location, revision: currentStairs.revision, flights }); }} /> : packingStep === 'storage' && data.storage ? <CustomerStorageQuestion config={data.storage} value={storageDate} missing={storageMissing} onChange={date => { setStorageDate(date); setStorageMissing(false); savePricingChange({ kind: 'storage', available_date: date }); }} /> : packingStep === 'shuttle' && data.shuttle ? <fieldset style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
+                    {currentElevator && data.elevator ? <CustomerElevatorQuestion config={data.elevator} location={currentElevator} value={elevatorAnswers[currentElevator.location] ?? null} missing={elevatorMissing} onChange={elevator => { setElevatorAnswers(prev => ({ ...prev, [currentElevator.location]: elevator })); setElevatorMissing(false); savePricingChange({kind:'elevator',location:currentElevator.location,revision:currentElevator.revision,elevator}); }} /> : currentCarry && data.long_carry ? <CustomerLongCarryQuestion config={data.long_carry} location={currentCarry} value={carryAnswers[currentCarry.location] ?? null} missing={carryMissing} onChange={carry_feet => { setCarryAnswers(prev => ({ ...prev, [currentCarry.location]: carry_feet })); setCarryMissing(false); if(carry_feet !== null) savePricingChange({ kind:'long_carry', location:currentCarry.location, revision:currentCarry.revision, carry_feet }); }} /> : currentStairs && data.stairs ? <CustomerStairsQuestion config={data.stairs} location={currentStairs} value={stairsAnswers[currentStairs.location] ?? null} missing={stairsMissing} onChange={flights => { setStairsAnswers(prev => ({ ...prev, [currentStairs.location]: flights })); setStairsMissing(false); if (flights !== null) savePricingChange({ kind: 'stairs', location: currentStairs.location, revision: currentStairs.revision, flights }); }} /> : packingStep === 'storage' && data.storage ? <CustomerStorageQuestion config={data.storage} value={storageDate} missing={storageMissing} onChange={date => { setStorageDate(date); setStorageMissing(false); savePricingChange({ kind: 'storage', available_date: date }); }} /> : packingStep === 'shuttle' && data.shuttle ? <fieldset style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
                       <legend>Delivery shuttle</legend>
                       {data.shuttle.automatic ? <p>A smaller shuttle vehicle is required for your delivery area and is included in your estimate.</p> : <>
                         <p><strong>{data.shuttle.question}</strong></p>

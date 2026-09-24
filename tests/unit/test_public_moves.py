@@ -315,7 +315,7 @@ def packing_pricing(monkeypatch):
     import re
     from decimal import Decimal
     source = (BACKEND / 'routes/pricing.py').read_text(encoding='utf-8')
-    names = {'customer_long_carry', 'sync_long_carry_charges', 'add_long_carry_charges', 'customer_stairs', 'sync_stairs_charges', 'add_stairs_charges', 'customer_storage', 'sync_storage_charge', 'add_storage_charge', '_parsed_move_date', 'sync_customer_shuttle_charge', 'customer_shuttle', 'add_customer_shuttle_charge', '_service_billable_volume', '_plan_destination_for_delivery', '_normalize_item_name', '_is_bulky_service', '_bulky_item_prices', '_bulky_item_charges',
+    names = {'customer_elevator', 'sync_elevator_charges', 'add_elevator_charges', 'customer_long_carry', 'sync_long_carry_charges', 'add_long_carry_charges', 'customer_stairs', 'sync_stairs_charges', 'add_stairs_charges', 'customer_storage', 'sync_storage_charge', 'add_storage_charge', '_parsed_move_date', 'sync_customer_shuttle_charge', 'customer_shuttle', 'add_customer_shuttle_charge', '_service_billable_volume', '_plan_destination_for_delivery', '_normalize_item_name', '_is_bulky_service', '_bulky_item_prices', '_bulky_item_charges',
              '_material_item_names', 'customer_packing_options', 'customer_packing_charge_id', 'add_customer_packing_charges', 'customer_packing_package', 'customer_package_lines', 'add_customer_package_charges', '_packing_service_charges', '_charge_amount'}
     nodes = [n for n in ast.parse(source).body if getattr(n, 'name', '') in names]
     from zip_state import delivery_location
@@ -323,11 +323,12 @@ def packing_pricing(monkeypatch):
     from long_distance_packing import packing_card
     import math
     from shuttle import SHUTTLE_PREFIX, shuttle_card, shuttle_option
+    from elevator_pricing import ELEVATOR_PREFIX, elevator_card, elevator_quote
     from long_carry_pricing import LONG_CARRY_PREFIX, long_carry_card, long_carry_quote
     from stairs_pricing import STAIRS_PREFIX, stairs_card, stairs_quote
     from storage_pricing import STORAGE_PREFIX, storage_card, storage_quote
     from datetime import date
-    scope = {'LONG_CARRY_PREFIX': LONG_CARRY_PREFIX, 'long_carry_card': long_carry_card, 'long_carry_quote': long_carry_quote, 'STAIRS_PREFIX': STAIRS_PREFIX, 'stairs_card': stairs_card, 'stairs_quote': stairs_quote, 'date': date, 'STORAGE_PREFIX': STORAGE_PREFIX, 'storage_card': storage_card, 'storage_quote': storage_quote, 'DELIVERY_FEE_PREFIX': '__delivery_mileage__:', 'infer_job_move_type': lambda *args: (None, None), 'PublicMoveAccess': models.PublicMoveAccess, 'SHUTTLE_PREFIX': SHUTTLE_PREFIX, 'shuttle_card': shuttle_card, 'shuttle_option': shuttle_option, 'PricingPlan': object, 'delivery_location': delivery_location, 'match_region_from_address': match_region_from_address, 'PACKING_CARD_PREFIX': '__ld_packing__:', 'packing_card': packing_card, '_rounded_cubic_feet': lambda value: math.ceil(float(value or 0)), 'json': json, 're': re, 'Decimal': Decimal, 'PricingService': object, 'LeadJobCharge': models.LeadJobCharge,
+    scope = {'ELEVATOR_PREFIX': ELEVATOR_PREFIX, 'elevator_card': elevator_card, 'elevator_quote': elevator_quote, 'LONG_CARRY_PREFIX': LONG_CARRY_PREFIX, 'long_carry_card': long_carry_card, 'long_carry_quote': long_carry_quote, 'STAIRS_PREFIX': STAIRS_PREFIX, 'stairs_card': stairs_card, 'stairs_quote': stairs_quote, 'date': date, 'STORAGE_PREFIX': STORAGE_PREFIX, 'storage_card': storage_card, 'storage_quote': storage_quote, 'DELIVERY_FEE_PREFIX': '__delivery_mileage__:', 'infer_job_move_type': lambda *args: (None, None), 'PublicMoveAccess': models.PublicMoveAccess, 'SHUTTLE_PREFIX': SHUTTLE_PREFIX, 'shuttle_card': shuttle_card, 'shuttle_option': shuttle_option, 'PricingPlan': object, 'delivery_location': delivery_location, 'match_region_from_address': match_region_from_address, 'PACKING_CARD_PREFIX': '__ld_packing__:', 'packing_card': packing_card, '_rounded_cubic_feet': lambda value: math.ceil(float(value or 0)), 'json': json, 're': re, 'Decimal': Decimal, 'PricingService': object, 'LeadJobCharge': models.LeadJobCharge,
              'BULKY_ITEM_MARKER': '__bulky_item__', 'BULKY_ITEM_PREFIX': '__bulky_item__:',
              '_number': lambda value: Decimal(value) if value else None,
              '_job_spark_inventory_items': lambda *args: []}
@@ -2103,4 +2104,37 @@ def test_long_carry_autosave_keeps_waived_line_and_only_updates_current_address(
     assert db.get(models.LeadJobCharge,pickup.id).discount_amount==Decimal('57.20')
     assert json.loads(job.customer_packing_package)['mode']=='full'
     with pytest.raises(HTTPException) as exc: save('pickup',3,'stale')
+    assert exc.value.status_code==409
+
+
+def test_elevator_autosave_keeps_waived_line_and_only_updates_current_address(portal, packing_pricing, monkeypatch):
+    from decimal import Decimal
+    mod,db,lead,access=portal
+    job=db.get(models.LeadJob,access.job_id)
+    lead.volume=24
+    job.price=access.published_price=Decimal('1000')
+    job.customer_packing_package=json.dumps({'mode':'full'})
+    db.add(models.LeadJobCharge(id='unchanged',job_id=job.id,name='Transportation',subtotal=1000,total_cost=1000))
+    plan=SimpleNamespace(services=[SimpleNamespace(comments='__elevator_pricing__:'+json.dumps({
+        'enabled':True,'threshold_cuft':500,'lower_fee':150,'upper_fee':250,'pickup_discount_percent':100}))],rates=[])
+    packing_pricing.customer_elevator.__globals__['infer_job_move_type']=lambda *args:('Long Distance',plan)
+    monkeypatch.setitem(sys.modules,'routes.leads',MagicMock())
+    monkeypatch.setattr(mod,'_move_details',lambda *args,**kwargs:{'ok':True})
+    db.commit()
+    def save(location,elevator,revision=None):
+        question=next(r for r in packing_pricing.customer_elevator(lead,job,db)['locations'] if r['location']==location)
+        mod.save_customer_packing(mod.CustomerPackingPatch(change=mod.CustomerPackingChange(kind='elevator',location=location,elevator=elevator,revision=revision or question['revision'])),access,db)
+    save('pickup',True)
+    pickup=db.query(models.LeadJobCharge).filter_by(name='Pickup elevator').one()
+    assert (pickup.subtotal,pickup.discount_amount,pickup.total_cost)==(Decimal('150.00'),Decimal('150.00'),0)
+    save('delivery',True)
+    assert job.price==access.published_price==Decimal('1150.00')
+    save('delivery',True)
+    assert db.query(models.LeadJobCharge).count()==3
+    assert job.price==Decimal('1150.00')
+    save('delivery',False)
+    assert job.price==access.published_price==1000
+    assert db.get(models.LeadJobCharge,pickup.id).discount_amount==Decimal('150.00')
+    assert json.loads(job.customer_packing_package)['mode']=='full'
+    with pytest.raises(HTTPException) as exc: save('pickup',True,'stale')
     assert exc.value.status_code==409
