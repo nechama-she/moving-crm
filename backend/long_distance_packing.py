@@ -7,7 +7,16 @@ PACKING_CARD_PREFIX = '__ld_packing__:'
 class RequiredBoxItem(BaseModel):
     id: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=200)
-    price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
+    price: Decimal = Field(default=0, ge=0, max_digits=10, decimal_places=2)
+    labor_price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
+    material_price: Decimal = Field(default=0, ge=0, max_digits=10, decimal_places=2)
+
+    @model_validator(mode='after')
+    def split_price(self):
+        if self.labor_price is None:
+            self.labor_price = self.price
+        self.price = self.labor_price + self.material_price
+        return self
 
     @field_validator('name')
     @classmethod

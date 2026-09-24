@@ -735,6 +735,7 @@ class CustomerPackageSelection(BaseModel):
     mode: Literal['full', 'partial', 'none'] = 'none'
     unpacking: bool = False
     item_ids: list[str] = Field(default_factory=list, max_length=1000)
+    material_item_ids: list[str] | None = Field(default=None, max_length=1000)
 
 
 class CustomerPackingChange(BaseModel):
@@ -748,6 +749,7 @@ class CustomerPackingChange(BaseModel):
     item_id: str = ''
     mode: Literal['full', 'partial', 'none'] = 'none'
     enabled: bool = False
+    materials: bool | None = None
     service: Literal['packing', 'crating'] | None = None
 
 
@@ -862,7 +864,9 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                 touched.update(['package:full', 'package:partial'])
                 touched.update(f'box:{item_id}' for item_id in selection.get('item_ids', []))
                 selection['mode'] = change.mode
-                if change.mode != 'none': selection['item_ids'] = []
+                if change.mode != 'none':
+                    selection['item_ids'] = []
+                    selection['material_item_ids'] = []
             elif change.kind == 'unpacking':
                 touched.add('package:unpacking')
                 selection['unpacking'] = change.enabled
@@ -871,9 +875,13 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                     raise HTTPException(409, 'Individual boxing is available with no packing selected.')
                 touched.add(f'box:{change.item_id}')
                 ids = set(selection.get('item_ids', []))
+                materials = set(selection.get('material_item_ids', selection.get('item_ids', [])))
                 if change.enabled: ids.add(change.item_id)
                 else: ids.discard(change.item_id)
+                if change.enabled and change.materials is not False: materials.add(change.item_id)
+                else: materials.discard(change.item_id)
                 selection['item_ids'] = sorted(ids)
+                selection['material_item_ids'] = sorted(materials)
             body.package = CustomerPackageSelection(**selection)
     else:
         choices = dict(body.selections)
@@ -893,12 +901,16 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         if package is None:
             raise HTTPException(409, 'Long-distance packing is not available. Refresh your estimate.')
         selection = body.package.model_dump()
+        if selection['material_item_ids'] is None:
+            selection['material_item_ids'] = list(selection['item_ids'])
+        selection['item_ids'] = sorted(set(selection['item_ids']) | set(selection['material_item_ids']))
         if (selection['mode'] != 'none' and selection['mode'] not in package['rates']) or (selection['unpacking'] and 'unpacking' not in package['rates']):
             raise HTTPException(409, 'That packing service is not priced. Refresh your estimate.')
         if not set(selection['item_ids']).issubset({item['id'] for item in package['items']}):
             raise HTTPException(409, 'Your required-box items changed. Refresh your estimate.')
         if selection['mode'] != 'none':
             selection['item_ids'] = []
+            selection['material_item_ids'] = []
         previous_package = json.loads(job.customer_packing_package or '{}')
         if 'shuttle' in previous_package:
             selection['shuttle'] = previous_package['shuttle']

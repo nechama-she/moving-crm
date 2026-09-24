@@ -1004,7 +1004,7 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None):
         for index in range(count):
             items.append({'id': f'{item.id}:{index + 1}',
                           'label': f'{item.name} ({index + 1} of {count})' if count > 1 else item.name,
-                          'price': float(item.price)})
+                          'price': float(item.price), 'labor_price': float(item.labor_price), 'material_price': float(item.material_price)})
     return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': items,
             'selection': {'mode': 'none', 'unpacking': False, 'item_ids': [], **json.loads(job.customer_packing_package or '{}')}}
 
@@ -1025,7 +1025,8 @@ def customer_package_lines(package, selection):
         for item in package['items']:
             if item['id'] in selection.get('item_ids', []):
                 lines.append({'id': f"box:{item['id']}", 'name': f"{item['label']} Boxing",
-                              'description': 'Required box and packing materials included', 'amount': Decimal(str(item['price']))})
+                              'description': 'Packing labor and materials' if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else 'Packing labor only; customer supplies box and materials',
+                              'amount': Decimal(str(item.get('labor_price', item['price']))) + (Decimal(str(item.get('material_price', 0))) if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else Decimal(0))})
     return lines
 
 

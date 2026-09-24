@@ -2138,3 +2138,44 @@ def test_elevator_autosave_keeps_waived_line_and_only_updates_current_address(po
     assert json.loads(job.customer_packing_package)['mode']=='full'
     with pytest.raises(HTTPException) as exc: save('pickup',True,'stale')
     assert exc.value.status_code==409
+
+
+def test_box_materials_include_labor_and_autosave_only_current_item(portal,packing_pricing,monkeypatch):
+    from decimal import Decimal
+    mod,db,lead,access=portal
+    job=db.get(models.LeadJob,access.job_id)
+    job.price=access.published_price=Decimal('1000')
+    package={'cubic_feet':500,'rates':{},'items':[{'id':'tv:1','label':'TV','price':80,'labor_price':30,'material_price':50}]}
+    monkeypatch.setattr(packing_pricing,'customer_packing_options',lambda *args:[])
+    monkeypatch.setattr(packing_pricing,'customer_packing_package',lambda *args:package)
+    monkeypatch.setitem(sys.modules,'routes.leads',MagicMock())
+    monkeypatch.setattr(mod,'details',lambda *args:{})
+    db.commit()
+    def save(enabled,materials):
+        mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'box','item_id':'tv:1','enabled':enabled,'materials':materials}),access,db)
+    save(True,False)
+    assert job.price==1030
+    assert 'labor only' in db.query(models.LeadJobCharge).one().description
+    save(True,True)
+    save(True,True)
+    assert job.price==access.published_price==1080
+    assert db.query(models.LeadJobCharge).count()==1
+    save(True,False)
+    assert job.price==1030
+    save(False,False)
+    assert job.price==1000
+    assert json.loads(job.customer_packing_package)['material_item_ids']==[]
+    mod.save_customer_packing(mod.CustomerPackingPatch(package={'mode':'none','item_ids':[],'material_item_ids':['tv:1']}),access,db)
+    assert job.price==1080
+    assert json.loads(job.customer_packing_package)['item_ids']==['tv:1']
+
+
+def test_box_split_prices_keep_legacy_totals():
+    from long_distance_packing import RequiredBoxItem
+    from pydantic import ValidationError
+    old=RequiredBoxItem(id='tv',name='TV',price=80)
+    assert old.labor_price==80 and old.material_price==0 and old.price==80
+    new=RequiredBoxItem(id='tv',name='TV',labor_price=30,material_price=50)
+    assert new.price==80
+    with pytest.raises(ValidationError):
+        RequiredBoxItem(id='tv',name='TV',labor_price=-1,material_price=50)

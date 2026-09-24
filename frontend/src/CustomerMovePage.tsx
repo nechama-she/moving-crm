@@ -205,7 +205,7 @@ export default function CustomerMovePage() {
       setHasNewUploads(true);
     } finally { setBusy(false); }
   }
-  type PricingChange = { kind: 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; elevator?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
+  type PricingChange = { kind: 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
   const failedPricing = useRef(new Map<string, PricingChange>());
   function savePricingChange(change: PricingChange) {
     const id = `pricing:${change.kind}:${change.location || change.item_id || ''}`;
@@ -236,8 +236,10 @@ export default function CustomerMovePage() {
     if (next.mode !== previous.mode) savePricingChange({ kind: 'mode', mode: next.mode });
     else if (next.unpacking !== previous.unpacking) savePricingChange({ kind: 'unpacking', enabled: next.unpacking });
     else {
-      const id = [...next.item_ids, ...previous.item_ids].find(id => next.item_ids.includes(id) !== previous.item_ids.includes(id));
-      if (id) savePricingChange({ kind: 'box', item_id: id, enabled: next.item_ids.includes(id) });
+      const nextMaterials = next.material_item_ids ?? next.item_ids;
+      const previousMaterials = previous.material_item_ids ?? previous.item_ids;
+      const id = [...new Set([...next.item_ids, ...previous.item_ids, ...nextMaterials, ...previousMaterials])].find(id => next.item_ids.includes(id) !== previous.item_ids.includes(id) || nextMaterials.includes(id) !== previousMaterials.includes(id));
+      if (id) savePricingChange({ kind: 'box', item_id: id, enabled: next.item_ids.includes(id), materials: nextMaterials.includes(id) });
     }
   }
   type PricingStep = typeof packingStep;
