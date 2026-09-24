@@ -85,6 +85,16 @@ def build_estimate_pdf(data, rows):
     story.append(table([[p('TOTAL ESTIMATED PRICE'), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
     if data.get('list_changed') or data.get('files_changed'):
         story.append(p('This estimate reflects the current generated report. New inventory edits or files are not included until a new report is generated.', 'NoteEstimate'))
+    if data.get('storage'):
+        storage = data['storage']
+        story.append(p('Delivery availability and storage', 'SectionEstimate'))
+        story.append(p(storage['question']))
+        story.append(p('Earliest available date: ' + (storage.get('available_date') or 'Not answered'), 'NoteEstimate'))
+        story.append(p(f"First {storage['free_days']} days after pickup free; ${storage['rate_per_cuft']:.2f} per cu ft for each additional {storage['period_days']} days or part thereof.", 'NoteEstimate'))
+        if storage['valid']:
+            story.append(p(f"{storage['paid_periods']} paid period(s). Storage charge: {money(storage['total'])}.", 'NoteEstimate'))
+        else:
+            story.append(p('A valid earliest delivery date is needed to determine storage charges.', 'NoteEstimate'))
     if data.get('shuttle'):
         shuttle = data['shuttle']
         story.append(p('Delivery truck access', 'SectionEstimate'))

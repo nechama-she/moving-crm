@@ -1,0 +1,19 @@
+.delivery-calendar { border:1px solid #e5d8d5; border-radius:16px; padding:20px; background:#fff; max-width:440px; margin:18px auto; }
+.delivery-calendar-selection { display:flex; flex-direction:column; gap:7px; padding:0 0 18px; border-bottom:1px solid #eee7e4; }
+.delivery-calendar-selection small { font-size:10px; letter-spacing:.13em; color:#80625b; }
+.delivery-calendar-selection strong { font-size:18px; line-height:1.4; }
+.delivery-calendar-nav { display:flex; align-items:center; justify-content:space-between; margin:16px 0; }
+.delivery-calendar-nav button { background:#faf6f4; border:1px solid #e5d8d5; border-radius:9px; width:38px; height:38px; font-size:24px; cursor:pointer; color:inherit; }
+.delivery-calendar-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:5px; text-align:center; }
+.delivery-calendar-weekday { font-size:11px; padding:6px 0; color:#80625b; }
+.delivery-calendar-grid button { aspect-ratio:1; border:1px solid transparent; border-radius:10px; background:white; color:inherit; font:inherit; cursor:pointer; min-height:34px; padding:0; }
+.delivery-calendar-grid button.free { background:#edf5ee; color:#31573b; }
+.delivery-calendar-grid button.selected { background:var(--cm-primary,#cf3430); color:white; font-weight:700; box-shadow:0 2px 6px #0002; }
+.delivery-calendar-grid button[aria-current=date] { border-color:currentColor; }
+.delivery-calendar button:hover:not(:disabled) { box-shadow:inset 0 0 0 2px #9c7770; }
+.delivery-calendar button:focus-visible { outline:3px solid #315eaf; outline-offset:2px; }
+.delivery-calendar button:disabled { opacity:.3; cursor:default; }
+.delivery-calendar-legend { display:flex; align-items:center; gap:7px; font-size:12px; margin:16px 0 8px; }
+.delivery-calendar-legend span { width:11px; height:11px; border-radius:3px; background:#edf5ee; border:1px solid #b5d1bb; }
+.delivery-calendar > small { color:#80625b; font-size:12px; }
+@media(max-width:380px) { .delivery-calendar { padding:12px; } .delivery-calendar-grid { gap:2px; } }

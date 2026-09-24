@@ -636,6 +636,7 @@ def _move_details(access, db, *, refresh_report=True):
     packing_items = []
     packing_package = None
     shuttle = None
+    storage = None
     if not is_spark_pending and not report_import_pending and (job.company_id or lead.company_id):
         from routes.pricing import customer_packing_options, customer_packing_package
         packing_package = customer_packing_package(lead, job, db)
@@ -643,9 +644,11 @@ def _move_details(access, db, *, refresh_report=True):
 
         from routes.pricing import customer_shuttle
         shuttle = customer_shuttle(lead, job, db)
+        from routes.pricing import customer_storage
+        storage = customer_storage(lead, job, db)
     from inventory_questions import questions
     item_questions = questions(active_company, conv_details, db) if spark_info and spark_info.get('status') == 'completed' else []
-    return {'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    return {'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': company_data['name'],
             'company_details': company_data,
@@ -723,7 +726,8 @@ class CustomerPackageSelection(BaseModel):
 
 
 class CustomerPackingChange(BaseModel):
-    kind: Literal['mode', 'unpacking', 'box', 'bulky', 'shuttle']
+    kind: Literal['mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage']
+    available_date: str = Field(default='', max_length=10)
     revision: str = ''
     item_id: str = ''
     mode: Literal['full', 'partial', 'none'] = 'none'
@@ -745,6 +749,24 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     from routes.leads import _refresh_lead_estimated_total
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
     lead = db.get(Lead, access.lead_id)
+    if body.change and body.change.kind == 'storage':
+        from routes.pricing import customer_storage, sync_storage_charge
+        from datetime import date
+        option = customer_storage(lead, job, db)
+        if not option or not option['pickup_date']:
+            raise HTTPException(409, 'Confirm the pickup date and storage pricing before choosing a delivery date.')
+        try:
+            available = date.fromisoformat(body.change.available_date)
+        except ValueError:
+            raise HTTPException(400, 'Choose a valid earliest delivery date.') from None
+        if available.isoformat() < option['pickup_date']:
+            raise HTTPException(400, 'Choose a date on or after pickup.')
+        selection = json.loads(job.customer_packing_package or '{}')
+        selection['storage_date'] = available.isoformat()
+        job.customer_packing_package = json.dumps(selection)
+        sync_storage_charge(lead, job, db)
+        db.commit()
+        return _move_details(access, db, refresh_report=False)
     if body.change and body.change.kind == 'shuttle':
         from routes.pricing import customer_shuttle, sync_customer_shuttle_charge
         if 'enabled' not in body.change.model_fields_set:
@@ -821,6 +843,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             selection['shuttle'] = previous_package['shuttle']
         if 'delivery_route' in previous_package:
             selection['delivery_route'] = previous_package['delivery_route']
+        if 'storage_date' in previous_package:
+            selection['storage_date'] = previous_package['storage_date']
         package_old_ids = ['package:full', 'package:partial', 'package:unpacking'] + [f'box:{item_id}' for item_id in previous_package.get('item_ids', [])]
         package_lines = customer_package_lines(package, selection)
     if job.price is None:
@@ -1006,6 +1030,9 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
             sync_delivery_fee(lead, job, db)
             sync_customer_shuttle_charge(lead, job, db)
 
+    if (body.move_date is not None or body.pickup is not None or body.delivery is not None) and (job.company_id or lead.company_id):
+        from routes.pricing import sync_storage_charge
+        sync_storage_charge(lead, job, db)
     db.commit()
     return details(access, db)
 

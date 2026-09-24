@@ -20,6 +20,7 @@ from database import get_db
 from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, packing_card
 from shuttle import SHUTTLE_PREFIX, ShuttleCard, shuttle_card, shuttle_option
 from delivery_fees import DELIVERY_FEE_PREFIX, DeliveryFeeCard, delivery_fee, delivery_fee_card
+from storage_pricing import STORAGE_PREFIX, StorageCard, storage_card, storage_quote
 from models import (
     LocalPricingRoute,
     PricingPlan,
@@ -209,6 +210,8 @@ class ServiceInput(BaseModel):
             ShuttleCard.model_validate_json(value[len(SHUTTLE_PREFIX):])
         if value.startswith(DELIVERY_FEE_PREFIX):
             DeliveryFeeCard.model_validate_json(value[len(DELIVERY_FEE_PREFIX):])
+        if value.startswith(STORAGE_PREFIX):
+            StorageCard.model_validate_json(value[len(STORAGE_PREFIX):])
         return value
 
 
@@ -227,6 +230,7 @@ class CalculationInput(BaseModel):
     destination: str
     delivery_address: str = ''
     shuttle_access: bool | None = None
+    available_date: str = ''
     cubic_feet: int = Field(ge=0)
     move_date: str = ""
     bulky_items: list[str] = Field(default_factory=list)
@@ -369,8 +373,11 @@ def _packing_service_charges(
     packing_groups: dict[str, list[PricingService]] = {"full": [], "partial": []}
     remaining: list[PricingService] = []
     card = packing_card(services)
+    storage_config = storage_card(services)
     for service in services:
-        if service.comments.startswith((PACKING_CARD_PREFIX, SHUTTLE_PREFIX, DELIVERY_FEE_PREFIX)):
+        if service.comments.startswith((PACKING_CARD_PREFIX, SHUTTLE_PREFIX, DELIVERY_FEE_PREFIX, STORAGE_PREFIX)):
+            continue
+        if storage_config and re.match(r'\s*(?:long\s+term\s+)?storage\b', service.name, re.IGNORECASE):
             continue
         if card:
             category = re.match(r"\s*(full\s+packing|partial\s+packing|unpacking)\b", service.name, re.IGNORECASE)
@@ -699,6 +706,7 @@ def get_job_pricing_context(
         },
         "plans": _plan_summary_rows(all_plans, db),
         "shuttle": customer_shuttle(lead, job, db, recommended, inferred_move_type) if recommended else None,
+        "storage": customer_storage(lead, job, db, recommended, inferred_move_type) if recommended else None,
         "recommended_plan_id": selected_plan.id if selected_plan else "",
         "serviceability": serviceability,
         "move_type": inferred_move_type,
@@ -822,6 +830,14 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
             "amount": float(amount),
         })
 
+    storage = storage_quote(storage_card(plan.services), _parsed_move_date(body.move_date), body.available_date,
+                            cubic_feet, _service_billable_volume(plan, body.destination, 0))
+    if storage and storage['valid']:
+        calculated.append({'id': 'storage-periods', 'name': 'Storage', 'description': storage['description'],
+                           'calculation_type': 'fixed', 'rate': storage['total'], 'default_selected': True,
+                           'automatic': True, 'applies': True, 'required': True, 'quantity_label': '',
+                           'selected': True, 'amount': storage['total']})
+        total += Decimal(str(storage['total']))
     if body.delivery_address:
         fee = delivery_fee(plan.services, body.delivery_address)
         if fee:
@@ -970,6 +986,46 @@ def customer_shuttle(lead, job, db, plan=None, move_type=None):
     saved = json.loads(job.customer_packing_package or '{}').get('shuttle', {})
     return shuttle_option(shuttle_card(plan.services), job.delivery_zip or '', state, zip_code,
                           _rounded_cubic_feet(lead.volume), _service_billable_volume(plan, destination, 0), saved)
+
+
+def customer_storage(lead, job, db, plan=None, move_type=None):
+    if plan is None:
+        move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or (move_type or '').lower() == 'local':
+        return None
+    state, zip_code = delivery_location(job.delivery_zip or '')
+    destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', state, zip_code)
+    available = json.loads(job.customer_packing_package or '{}').get('storage_date', '')
+    return storage_quote(storage_card(plan.services), _parsed_move_date(job.move_date or ''), available,
+                         _rounded_cubic_feet(lead.volume), _service_billable_volume(plan, destination, 0))
+
+
+def add_storage_charge(lead, job, db, plan=None, move_type=None):
+    option = customer_storage(lead, job, db, plan, move_type)
+    if not option or not option['valid'] or not option['paid_periods']:
+        return Decimal(0)
+    amount = Decimal(str(option['total']))
+    db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'storage-periods'), job_id=job.id,
+                        name='Storage', description=option['description'], sort_order=2700,
+                        subtotal=amount, discount_amount=0, total_cost=amount))
+    return amount
+
+
+def sync_storage_charge(lead, job, db):
+    if job.price is None:
+        return
+    old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'storage-periods'))
+    old_total = old.total_cost if old else Decimal(0)
+    if old:
+        db.delete(old)
+        db.flush()
+    delta = add_storage_charge(lead, job, db) - old_total
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    from routes.leads import _refresh_lead_estimated_total
+    _refresh_lead_estimated_total(lead.id, db)
 
 
 def add_customer_shuttle_charge(lead, job, db, plan=None, move_type=None):
@@ -1136,6 +1192,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
         job.price += add_customer_package_charges(lead, job, db, matched_plan, move_type)
         job.price += add_customer_shuttle_charge(lead, job, db, matched_plan, move_type)
+        job.price += add_storage_charge(lead, job, db, matched_plan, move_type)
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
         access = db.query(PublicMoveAccess).filter_by(job_id=job.id).first()
@@ -1210,6 +1267,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
         job.price += add_customer_package_charges(lead, job, db, matched_plan, move_type)
         job.price += add_customer_shuttle_charge(lead, job, db, matched_plan, move_type)
+        job.price += add_storage_charge(lead, job, db, matched_plan, move_type)
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
         access = db.query(PublicMoveAccess).filter_by(job_id=job.id).first()
@@ -1231,6 +1289,9 @@ def calculate_pricing(
     card = delivery_fee_card(plan.services)
     if not body.delivery_address and card and card.enabled and card.rules:
         raise HTTPException(422, 'Enter the delivery address or ZIP to calculate destination fees.')
+    storage = storage_quote(storage_card(plan.services), _parsed_move_date(body.move_date), body.available_date, body.cubic_feet, 0)
+    if storage and not storage['valid']:
+        raise HTTPException(422, 'Choose a pickup date and an earliest delivery date on or after pickup to calculate storage.')
     return compute_plan_calculation(plan, body)
 
 

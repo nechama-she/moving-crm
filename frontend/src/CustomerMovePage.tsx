@@ -1,3 +1,4 @@
+import CustomerStorageQuestion, { type StorageOption } from './CustomerStorageQuestion';
 import { CUSTOMER_SESSION_EXPIRED, customerSessionActive, expireCustomerSession, loadCustomerSession, registerCustomerSession } from './customerSession';
 ﻿import CustomerAddressInput from "./CustomerAddressInput";
 import type { SelectedAddress } from "./googlePlaces";
@@ -20,6 +21,7 @@ import "./CustomerMovePage.css";
 type LinkSms = { sent_at: string; phone_last4: string };
 type Shuttle = { automatic: boolean; answer: boolean | null; revision: string; required: boolean; question: string; rate: number; total: number; cubic_feet: number; inventory_cubic_feet: number; minimum_cubic_feet: number };
 type Details = {
+  storage?: StorageOption | null;
   shuttle?: Shuttle | null;
   google_maps_browser_key?: string;
 
@@ -157,10 +159,12 @@ export default function CustomerMovePage() {
   const [answerSaveStarted, setAnswerSaveStarted] = useState(false);
   const [showInventoryList, setShowInventoryList] = useState(false);
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
-  const [packingStep, setPackingStep] = useState<'shuttle' | 'bulky' | 'package' | 'items'>('bulky');
+  const [packingStep, setPackingStep] = useState<'storage' | 'shuttle' | 'bulky' | 'package' | 'items'>('bulky');
   const [packageSelection, setPackageSelection] = useState<PackingSelection>({ mode: 'none', unpacking: false, item_ids: [] });
   const [calculatingPrice, setCalculatingPrice] = useState(false);
   const [calculationError, setCalculationError] = useState('');
+  const [storageDate, setStorageDate] = useState('');
+  const [storageMissing, setStorageMissing] = useState(false);
   const [shuttleAnswer, setShuttleAnswer] = useState<boolean | null>(null);
   const [shuttleMissing, setShuttleMissing] = useState(false);
   useEffect(() => {
@@ -189,7 +193,7 @@ export default function CustomerMovePage() {
       setHasNewUploads(true);
     } finally { setBusy(false); }
   }
-  type PricingChange = { kind: 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; revision?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
+  type PricingChange = { kind: 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; revision?: string; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
   const failedPricing = useRef(new Map<string, PricingChange>());
   function savePricingChange(change: PricingChange) {
     const id = `pricing:${change.kind}:${change.item_id || ''}`;
@@ -228,16 +232,19 @@ export default function CustomerMovePage() {
     if (packingStep === 'items' && currentTermsStep > 0) { changeTermsStep(currentTermsStep - 1); return; }
     if (packingStep === 'items' && data?.packing_package) setPackingStep('package');
     else if ((packingStep === 'items' || packingStep === 'package') && data?.packing_items.length) setPackingStep('bulky');
-    else if (packingStep !== 'shuttle' && data?.shuttle) setPackingStep('shuttle');
+    else if (packingStep !== 'storage' && packingStep !== 'shuttle' && data?.shuttle) setPackingStep('shuttle');
+    else if (packingStep !== 'storage' && data?.storage) setPackingStep('storage');
     else setShowQuestions(false);
   }
   function nextPricingStep() {
+    if (packingStep === 'storage' && (!storageDate || !data?.storage?.pickup_date || storageDate < data.storage.pickup_date)) { setStorageMissing(true); return; }
     if (packingStep === 'shuttle' && !data?.shuttle?.automatic && shuttleAnswer === null) { setShuttleMissing(true); return; }
     if (Object.values(packingSelection).some(value => !value)) { setPackingError('Choose packing or crating for each checked item.'); return; }
     if (answerPending.current || failedPricing.current.size) { setPackingError(answerPending.current ? 'Please wait for your choices to finish saving.' : 'Please retry the choices that could not be saved.'); return; }
     setPackingError('');
-    if (packingStep === 'shuttle' && data?.packing_items.length) setPackingStep('bulky');
-    else if ((packingStep === 'bulky' || packingStep === 'shuttle') && data?.packing_package) setPackingStep('package');
+    if (packingStep === 'storage' && data?.shuttle) setPackingStep('shuttle');
+    else if ((packingStep === 'storage' || packingStep === 'shuttle') && data?.packing_items.length) setPackingStep('bulky');
+    else if ((packingStep === 'storage' || packingStep === 'bulky' || packingStep === 'shuttle') && data?.packing_package) setPackingStep('package');
     else if (data?.item_questions?.length) setPackingStep('items');
     else setShowQuestions(false);
   }
@@ -731,7 +738,7 @@ export default function CustomerMovePage() {
                 </div>
               )}
 
-              {(data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) && (
+              {(data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) && (
                 <div className="cm-estimate-extra-actions">
                   <button
                     type="button"
@@ -739,7 +746,8 @@ export default function CustomerMovePage() {
                     onClick={() => {
                       setPackingSelection(Object.fromEntries(data.packing_items.filter(item => item.selected).map(item => [item.id, item.selected_service || ''])));
                       setShuttleAnswer(data.shuttle?.answer ?? null); setShuttleMissing(false);
-                      setPackingStep(data.shuttle ? 'shuttle' : data.packing_items.length ? 'bulky' : data.packing_package ? 'package' : 'items');
+                      setStorageDate(data.storage?.available_date || ''); setStorageMissing(false);
+                      setPackingStep(data.storage ? 'storage' : data.shuttle ? 'shuttle' : data.packing_items.length ? 'bulky' : data.packing_package ? 'package' : 'items');
                       setPackageSelection(data.packing_package?.selection || { mode: 'none', unpacking: false, item_ids: [] });
                       setPackingError('');
                       setTermsStep(0);
@@ -774,13 +782,13 @@ export default function CustomerMovePage() {
                   <div className="cm-modal-header">
                     <div>
                       <span className="cm-eyebrow">{packingStep === 'items' ? 'MOVING TERMS' : 'EXTRA SERVICES'}</span>
-                      <h3 id="packing-title">{packingStep === 'shuttle' ? 'Delivery truck access' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : 'Packing services'}</h3>
-                      <p>{packingStep === 'shuttle' ? 'Help us plan the right vehicle for your delivery.' : packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : 'Choose packing and optional unpacking for your move.'}</p>
+                      <h3 id="packing-title">{packingStep === 'storage' ? 'Delivery availability & storage' : packingStep === 'shuttle' ? 'Delivery truck access' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : 'Packing services'}</h3>
+                      <p>{packingStep === 'storage' ? 'Choose when you can begin receiving your shipment.' : packingStep === 'shuttle' ? 'Help us plan the right vehicle for your delivery.' : packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : 'Choose packing and optional unpacking for your move.'}</p>
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
                   <div className="cm-modal-body" ref={termsBody}>
-                    {packingStep === 'shuttle' && data.shuttle ? <fieldset style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
+                    {packingStep === 'storage' && data.storage ? <CustomerStorageQuestion config={data.storage} value={storageDate} missing={storageMissing} onChange={date => { setStorageDate(date); setStorageMissing(false); savePricingChange({ kind: 'storage', available_date: date }); }} /> : packingStep === 'shuttle' && data.shuttle ? <fieldset style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
                       <legend>Delivery shuttle</legend>
                       {data.shuttle.automatic ? <p>A smaller shuttle vehicle is required for your delivery area and is included in your estimate.</p> : <>
                         <p><strong>{data.shuttle.question}</strong></p>
@@ -848,8 +856,8 @@ export default function CustomerMovePage() {
                   </div>
                   {packingStep === 'items' && termsError && <p role="alert" className="cm-field-error">{termsError}</p>}
                   <div className="cm-modal-footer">
-                    <button type="button" className="cm-secondary-btn" onClick={previousPricingStep}>{packingStep === 'shuttle' || (packingStep === 'bulky' && !data.shuttle) || (packingStep === 'package' && !data.shuttle && !data.packing_items.length) ? 'Close' : 'Back'}</button>
-                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" aria-busy={answersSaving} onClick={nextTermsStep}>{currentTermsStep < termsGroups.length - 1 ? 'Next' : 'Done'}</button> : <button type="button" className="slds-button cm-primary" onClick={nextPricingStep}>{packingStep === 'shuttle' && data.packing_items.length ? 'Next: bulky items' : (packingStep === 'bulky' || packingStep === 'shuttle') && data.packing_package ? 'Next: packing services' : data.item_questions?.length ? 'Next: moving terms' : 'Done'}</button>}
+                    <button type="button" className="cm-secondary-btn" onClick={previousPricingStep}>{packingStep === 'storage' || (!data.storage && (packingStep === 'shuttle' || (packingStep === 'bulky' && !data.shuttle) || (packingStep === 'package' && !data.shuttle && !data.packing_items.length))) ? 'Close' : 'Back'}</button>
+                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" aria-busy={answersSaving} onClick={nextTermsStep}>{currentTermsStep < termsGroups.length - 1 ? 'Next' : 'Done'}</button> : <button type="button" className="slds-button cm-primary" onClick={nextPricingStep}>{packingStep === 'storage' && data.shuttle ? 'Next: delivery access' : (packingStep === 'storage' || packingStep === 'shuttle') && data.packing_items.length ? 'Next: bulky items' : (packingStep === 'storage' || packingStep === 'bulky' || packingStep === 'shuttle') && data.packing_package ? 'Next: packing services' : data.item_questions?.length ? 'Next: moving terms' : 'Done'}</button>}
 
                   </div>
                   {<small className="cm-answer-autosave-note" role="status" aria-live="polite">{answersSaving ? 'Saving...' : failedAnswers.current.size ? 'Could not save all answers. Please retry.' : answerSaveStarted ? <><span className="cm-save-check" aria-hidden="true">&#10003;</span> Saved</> : 'Your answers save automatically.'}</small>}
