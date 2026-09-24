@@ -35,11 +35,11 @@ export default function DeliveryDateCalendar({ value, minDate, freeDays, onChang
       {Array.from({length:count},(_,i)=>{
         const iso=dateKey(new Date(year,monthIndex,i+1,12)), disabled=iso<minDate, free=iso<=cutoff && !disabled;
         return <button type="button" key={iso} data-date={iso} disabled={disabled} aria-label={`${label(iso)}${free ? ', within free storage period' : ''}`} aria-pressed={iso===value} aria-current={iso===today ? 'date' : undefined}
-          className={`${iso===value ? 'selected' : ''} ${free ? 'free' : ''}`} onClick={()=>onChange(iso)}
+          className={iso===value ? 'selected' : ''} onClick={()=>onChange(iso)}
           onKeyDown={e=>{const delta=({ArrowLeft:-1,ArrowRight:1,ArrowUp:-7,ArrowDown:7} as Record<string,number>)[e.key];if(delta){e.preventDefault();const next=day(iso);next.setDate(next.getDate()+delta);const key=dateKey(next);if(key>=minDate){setMonth(new Date(next.getFullYear(),next.getMonth(),1,12));setFocusDate(key);}}}}>{i+1}</button>;
       })}
     </div>
-    <p className="delivery-calendar-legend"><span /> Free storage through {freeEnd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</p>
+    <p className="delivery-calendar-legend">Free storage through {freeEnd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</p>
     <small>This is your earliest available date, not a confirmed delivery appointment.</small>
   </div>;
 }
