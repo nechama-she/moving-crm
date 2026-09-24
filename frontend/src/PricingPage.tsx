@@ -1,3 +1,4 @@
+import PickupAreasCard, { type PickupArea } from './PickupAreasCard';
 import BulkyCatalogPicker from './BulkyCatalogPicker';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -7,7 +8,7 @@ import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
 type PlanSummary = {
-  id: string; company_name: string; name: string; pickup_regions: string;
+  id: string; company_name: string; name: string; pickup_regions: string; pickup_areas?: PickupArea[];
   fuel_percent: number | null; rate_count: number; rule_count: number;
   service_count: number; updated_at: string;
 };
@@ -165,7 +166,7 @@ export default function PricingPage() {
   const [manualAmounts, setManualAmounts] = useState<Record<string, number>>({});
   const [customCharges, setCustomCharges] = useState<CustomCharge[]>([]);
   const [customDiscounts, setCustomDiscounts] = useState<CustomDiscount[]>([]);
-  const [openSections, setOpenSections] = useState({ rates: true, packing: true, bulkyItems: true, services: true });
+  const [openSections, setOpenSections] = useState({ pickup: true, rates: true, packing: true, bulkyItems: true, services: true });
   const [pendingRateGroups, setPendingRateGroups] = useState<string[][]>([]);
 
   useEffect(() => {
@@ -389,7 +390,7 @@ export default function PricingPage() {
   const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
   const detailedTotal = Math.max(0, discountBase - discountTotal);
 
-  function startServiceEdit(section: 'packing' | 'bulkyItems') {
+  function startServiceEdit(section: 'pickup' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin' || saving) return;
     setOpenSections(current => ({ ...current, [section]: true }));
     setEditing(true);
@@ -400,12 +401,12 @@ export default function PricingPage() {
     setEditing(false);
     setError('');
   }
-  function serviceEditActions(section: 'packing' | 'bulkyItems') {
+  function serviceEditActions(section: 'pickup' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin') return null;
     return editing ? <>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={cancelServiceEdit}>Cancel changes</button>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save changes'}</button>
-    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
+    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
   }
 
   function patchDraft(patch: Partial<Plan>) {
@@ -527,6 +528,7 @@ export default function PricingPage() {
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
         body: JSON.stringify({
           name: draft.name, pickup_regions: draft.pickup_regions,
+          pickup_areas: draft.pickup_areas?.map(area => ({ ...area, zip_codes: area.zip_codes.map(zip => zip.trim()).filter(Boolean) })),
           fuel_percent: draft.fuel_percent, active: draft.active,
           rules: draft.rules, rates: draft.rates, services: draft.services,
         }),
@@ -677,6 +679,10 @@ export default function PricingPage() {
                   <div><span>Services</span><strong>{active.services.length}</strong></div>
                 </div>
               </section>
+
+              <PricingSection title="Pickup areas" count={active.pickup_areas?.length || 0} open={openSections.pickup} toggle={() => setOpenSections(s => ({ ...s, pickup: !s.pickup }))} onDoubleClick={() => startServiceEdit('pickup')} actions={serviceEditActions('pickup')}>
+                <PickupAreasCard areas={active.pickup_areas || []} editing={editing} onChange={pickup_areas => patchDraft({ pickup_areas })} />
+              </PricingSection>
 
               <section className="pricing-card pricing-calculator">
                 <div><span className="eyebrow">Job pricing</span><h2>Calculate price</h2></div>

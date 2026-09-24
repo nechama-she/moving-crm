@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pickup_areas import PickupArea, pickup_areas, pickup_summary, pickup_match_score, select_pickup_plan
+
 from datetime import date, datetime
 from decimal import Decimal
 import json
@@ -80,7 +82,8 @@ def _plan_summary_rows(plans: list[PricingPlan], db: Session) -> list[dict]:
             "name": plan.name,
             "source_file": plan.source_file,
             "source_sheet": plan.source_sheet,
-            "pickup_regions": plan.pickup_regions,
+            "pickup_regions": pickup_summary(plan.pickup_regions),
+            "pickup_areas": pickup_areas(plan.pickup_regions),
             "fuel_percent": float(plan.fuel_percent) if plan.fuel_percent is not None else None,
             "active": bool(plan.active),
             "rate_count": 0,
@@ -91,11 +94,8 @@ def _plan_summary_rows(plans: list[PricingPlan], db: Session) -> list[dict]:
     return rows
 
 
-def _plan_matches_pickup(plan: PricingPlan, pickup_state: str) -> bool:
-    if not pickup_state:
-        return False
-    coverage = f"{plan.pickup_regions} {plan.name}".upper()
-    return re.search(rf"\b{re.escape(pickup_state)}\b", coverage) is not None
+def _plan_matches_pickup(plan: PricingPlan, pickup_state: str, pickup_zip: str = "") -> bool:
+    return bool(pickup_match_score(plan.pickup_regions or plan.name, pickup_state, pickup_zip))
 
 
 def _plan_destination_for_delivery(
@@ -123,7 +123,7 @@ def infer_job_move_type(
 ) -> tuple[str | None, PricingPlan | None]:
     pickup_address = (job.pickup_zip or "").strip()
     delivery_address = (job.delivery_zip or "").strip()
-    pickup_state, _ = delivery_location(pickup_address)
+    pickup_state, pickup_zip = delivery_location(pickup_address)
     delivery_state, _ = delivery_location(delivery_address)
     company_id = job.company_id or lead.company_id
     if not company_id:
@@ -137,7 +137,8 @@ def infer_job_move_type(
             .all()
         )
     plans = [plan for plan in (plans or []) if plan.company_id == company_id]
-    matched_plan = next((plan for plan in plans if _plan_matches_pickup(plan, pickup_state)), None) or (plans[0] if plans else None)
+    # Prefer exact ZIP coverage over statewide coverage; retain book order for ties.
+    matched_plan = select_pickup_plan(plans, pickup_state, pickup_zip)
 
     routes = (
         db.query(LocalPricingRoute)
@@ -208,6 +209,7 @@ class ServiceInput(BaseModel):
 class PlanUpdate(BaseModel):
     name: str
     pickup_regions: str = ""
+    pickup_areas: list[PickupArea] | None = Field(default=None, max_length=51)
     fuel_percent: float | None = Field(default=None, ge=0, le=100)
     active: bool = True
     rules: list[RuleInput]
@@ -667,11 +669,11 @@ def get_job_pricing_context(
     else:
         serviceability = "supported"
 
-        job_dict = job.to_dict()
-        spark_items = _job_spark_inventory_items(job.id, db)
-        if spark_items:
-            existing_mat = job_dict.get("estimated_materials") or []
-            job_dict["estimated_materials"] = existing_mat + spark_items
+    job_dict = job.to_dict()
+    spark_items = _job_spark_inventory_items(job.id, db)
+    if spark_items:
+        existing_mat = job_dict.get("estimated_materials") or []
+        job_dict["estimated_materials"] = existing_mat + spark_items
 
     return {
         "lead": {
@@ -1169,7 +1171,13 @@ def update_pricing_plan(
         raise HTTPException(status_code=400, detail="At least one pricing rate is required")
 
     plan.name = body.name.strip()
-    plan.pickup_regions = body.pickup_regions.strip()
+    if body.pickup_areas is not None:
+        states = [area.state for area in body.pickup_areas]
+        if len(states) != len(set(states)):
+            raise HTTPException(400, 'Add each state once and enter its ZIP codes in the same row')
+        plan.pickup_regions = json.dumps([area.model_dump() for area in body.pickup_areas])
+    else:
+        plan.pickup_regions = body.pickup_regions.strip()
     plan.fuel_percent = body.fuel_percent
     plan.active = body.active
     plan.rules.clear()

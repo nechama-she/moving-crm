@@ -841,6 +841,7 @@ class PricingPlan(Base):
     )
 
     def summary_dict(self):
+        from pickup_areas import pickup_areas, pickup_summary
         return {
             "id": self.id,
             "company_id": self.company_id or "",
@@ -848,7 +849,8 @@ class PricingPlan(Base):
             "name": self.name,
             "source_file": self.source_file,
             "source_sheet": self.source_sheet,
-            "pickup_regions": self.pickup_regions,
+            "pickup_regions": pickup_summary(self.pickup_regions),
+            "pickup_areas": pickup_areas(self.pickup_regions),
             "fuel_percent": float(self.fuel_percent) if self.fuel_percent is not None else None,
             "active": bool(self.active),
             "rate_count": len(self.rates),
