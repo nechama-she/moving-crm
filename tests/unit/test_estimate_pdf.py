@@ -62,3 +62,14 @@ def test_pdf_with_long_instructions_and_many_rooms():
     pdf = build_estimate_pdf(data, rows)
     assert pdf.startswith(b'%PDF-')
     assert len(pdf) > 5000
+
+
+def test_fully_discounted_stairs_remains_in_pdf():
+    import pymupdf
+    data=sample()
+    data['estimate']['charges'].append({'name':'Pickup stairs','description':'One additional flight',
+        'subtotal':57.2,'discount_amount':57.2,'discount_percent':100,'total':0})
+    doc=pymupdf.open(stream=build_estimate_pdf(data,[]),filetype='pdf')
+    text=''.join(page.get_text() for page in doc)
+    assert 'Pickup stairs' in text and 'Before discount: $57.20' in text
+    assert 'Discount (100%): -$57.20' in text and '$0.00' in text

@@ -76,7 +76,10 @@ def build_estimate_pdf(data, rows):
         story.append(p(f"Minimum billable volume for applicable services: {float(minimum):g} cu ft. This is a billing minimum, not your inventory volume.", 'NoteEstimate'))
     charges = [[p('ITEM'), p('RATE / BASIS'), p('COST', 'RightEstimate')]]
     for charge in estimate.get('charges') or []:
-        charges.append([p(charge['name']), p(charge.get('description') or 'Not specified', 'NoteEstimate'), p(money(charge['total']), 'RightEstimate')])
+        basis = charge.get('description') or 'Not specified'
+        if charge.get('discount_amount', 0) > 0:
+            basis += f"\nBefore discount: {money(charge['subtotal'])}\nDiscount ({charge['discount_percent']:g}%): -{money(charge['discount_amount'])}"
+        charges.append([p(charge['name']), p(basis, 'NoteEstimate'), p(money(charge['total']), 'RightEstimate')])
     if len(charges) == 1:
         charges.append([p('Moving estimate'), p('Not specified', 'NoteEstimate'), p(money(estimate['price']), 'RightEstimate')])
     charge_table = table(charges, [180, 247, 95], header=True)
@@ -85,6 +88,13 @@ def build_estimate_pdf(data, rows):
     story.append(table([[p('TOTAL ESTIMATED PRICE'), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
     if data.get('list_changed') or data.get('files_changed'):
         story.append(p('This estimate reflects the current generated report. New inventory edits or files are not included until a new report is generated.', 'NoteEstimate'))
+    if data.get('stairs'):
+        stairs = data['stairs']
+        story.append(p('Outdoor and building stairs', 'SectionEstimate'))
+        story.append(p(f"Up to {stairs['steps_per_flight']} steps counts as one flight. {stairs['free_flights']} free flight(s) at each address; ${stairs['rate_per_cuft']:.2f} per cu ft per additional flight. Stairs inside the house or apartment are excluded.", 'NoteEstimate'))
+        for row in stairs['locations']:
+            answer = f"{row['flights']} flight(s); charge {money(row['total'])}" if row['flights'] is not None else 'Not answered - stair charges may apply'
+            story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
     if data.get('storage'):
         storage = data['storage']
         story.append(p('Delivery availability and storage', 'SectionEstimate'))

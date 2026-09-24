@@ -592,9 +592,12 @@ def _move_details(access, db, *, refresh_report=True):
             'name': c.name,
             'description': _customer_charge_description(c.name, c.description or ''),
             'total': float(c.total_cost or 0),
+            'subtotal': float(c.subtotal or 0),
+            'discount_amount': float(c.discount_amount or 0),
+            'discount_percent': round(float(c.discount_amount or 0) / float(c.subtotal) * 100, 2) if c.subtotal and c.subtotal > 0 else 0,
         }
         for c in (job.charges or [])
-        if c.total_cost and float(c.total_cost) > 0
+        if (c.total_cost and float(c.total_cost) > 0) or (c.discount_amount and float(c.discount_amount) > 0)
     ]
     report_import_pending = bool(spark_info and conv_details.get('spark_extracted_id') != spark_info['id'])
     if not is_spark_pending and not report_import_pending and conv_details.get('spark_pricing_ready') is not False:
@@ -637,6 +640,7 @@ def _move_details(access, db, *, refresh_report=True):
     packing_package = None
     shuttle = None
     storage = None
+    stairs = None
     if not is_spark_pending and not report_import_pending and (job.company_id or lead.company_id):
         from routes.pricing import customer_packing_options, customer_packing_package
         packing_package = customer_packing_package(lead, job, db)
@@ -646,9 +650,11 @@ def _move_details(access, db, *, refresh_report=True):
         shuttle = customer_shuttle(lead, job, db)
         from routes.pricing import customer_storage
         storage = customer_storage(lead, job, db)
+        from routes.pricing import customer_stairs
+        stairs = customer_stairs(lead, job, db)
     from inventory_questions import questions
     item_questions = questions(active_company, conv_details, db) if spark_info and spark_info.get('status') == 'completed' else []
-    return {'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    return {'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': company_data['name'],
             'company_details': company_data,
@@ -726,7 +732,9 @@ class CustomerPackageSelection(BaseModel):
 
 
 class CustomerPackingChange(BaseModel):
-    kind: Literal['mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage']
+    kind: Literal['mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs']
+    location: Literal['pickup', 'delivery'] | None = None
+    flights: int | None = Field(default=None, ge=0, le=1000, strict=True)
     available_date: str = Field(default='', max_length=10)
     revision: str = ''
     item_id: str = ''
@@ -749,6 +757,21 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     from routes.leads import _refresh_lead_estimated_total
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
     lead = db.get(Lead, access.lead_id)
+    if body.change and body.change.kind == 'stairs':
+        from routes.pricing import customer_stairs, sync_stairs_charges
+        change = body.change
+        if change.location is None or change.flights is None:
+            raise HTTPException(400, 'Choose the number of flights for this address, including zero if there are no stairs.')
+        option = customer_stairs(lead, job, db)
+        question = next((row for row in option['locations'] if row['location'] == change.location), None) if option else None
+        if not question or question['revision'] != change.revision:
+            raise HTTPException(409, 'The address or stairs settings changed. Refresh and answer again.')
+        selection = json.loads(job.customer_packing_package or '{}')
+        selection.setdefault('stairs', {})[change.location] = {'revision': question['revision'], 'flights': change.flights}
+        job.customer_packing_package = json.dumps(selection)
+        sync_stairs_charges(lead, job, db, change.location)
+        db.commit()
+        return _move_details(access, db, refresh_report=False)
     if body.change and body.change.kind == 'storage':
         from routes.pricing import customer_storage, sync_storage_charge
         from datetime import date
@@ -845,6 +868,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             selection['delivery_route'] = previous_package['delivery_route']
         if 'storage_date' in previous_package:
             selection['storage_date'] = previous_package['storage_date']
+        if 'stairs' in previous_package:
+            selection['stairs'] = previous_package['stairs']
         package_old_ids = ['package:full', 'package:partial', 'package:unpacking'] + [f'box:{item_id}' for item_id in previous_package.get('item_ids', [])]
         package_lines = customer_package_lines(package, selection)
     if job.price is None:
@@ -1029,6 +1054,8 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
             from routes.pricing import sync_customer_shuttle_charge, sync_delivery_fee
             sync_delivery_fee(lead, job, db)
             sync_customer_shuttle_charge(lead, job, db)
+            from routes.pricing import sync_stairs_charges
+            sync_stairs_charges(lead, job, db)
 
     if (body.move_date is not None or body.pickup is not None or body.delivery is not None) and (job.company_id or lead.company_id):
         from routes.pricing import sync_storage_charge

@@ -17,7 +17,7 @@ def pricing():
     nodes = [node for node in ast.parse(source.read_text()).body if getattr(node, 'name', '') in names]
     scope = dict(BaseModel=BaseModel, ConfigDict=ConfigDict, Field=Field, Decimal=Decimal,
                  InvalidOperation=InvalidOperation, HTTPException=HTTPException,
-                 ExternalLeadUpdateLog=dict)
+                 ExternalLeadUpdateLog=dict, PublicMoveAccess=object, datetime=__import__('datetime').datetime)
     for node in nodes:
         if isinstance(node, ast.FunctionDef):
             node.decorator_list = []
@@ -108,3 +108,14 @@ def test_lead_summary_includes_all_jobs_and_discounts(existing_tax):
     assert total['taxableAmount'] == (250 if existing_tax else 0)
     db.flush.assert_called_once()
     assert db.expire.call_count == 3
+
+
+def test_fully_discounted_stairs_line_is_retained(pricing):
+    api,row,db=pricing
+    body=api['SaveJobPriceBody'](price=100,estimatedCharges=[
+        {'name':'Transport','subtotal':100,'totalCost':100},
+        {'name':'Pickup stairs','pricingKey':'stairs:pickup','subtotal':57.2,'discountAmount':57.2,'totalCost':0}])
+    api['save_lead_job_price']('lead-1','job-2',body,object(),db)
+    saved=api['_replace_job_charges'].call_args.args[1]
+    assert len(saved)==2 and saved[1].pricing_key=='stairs:pickup'
+    assert saved[1].discount_amount==57.2 and saved[1].total_cost==0

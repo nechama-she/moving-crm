@@ -2156,6 +2156,7 @@ class LeadJobChargePayload(BaseModel):
     subtotal: float = 0
     discount_amount: float = Field(default=0, alias="discountAmount")
     total_cost: float = Field(default=0, alias="totalCost")
+    pricing_key: str | None = Field(default=None, alias="pricingKey", pattern=r'^stairs:(pickup|delivery)$')
 
 
 class ExternalLeadUpdateLogRequest(BaseModel):
@@ -2317,7 +2318,12 @@ def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload | dict
         display_name = (charge.editable_description or "").strip() or (charge.name or "").strip()
         if not display_name:
             continue
+        charge_id = None
+        if charge.pricing_key:
+            from uuid import uuid5, NAMESPACE_URL
+            charge_id = str(uuid5(NAMESPACE_URL, f'customer-packing:{job.id}:{charge.pricing_key}'))
         db.add(LeadJobCharge(
+            id=charge_id,
             job_id=job.id,
             name=display_name,
             description=(charge.description or "").strip(),
@@ -2643,7 +2649,7 @@ def save_lead_job_price(
             raise HTTPException(400, 'Charges must contain finite amounts')
         if amounts[0] - amounts[1] != amounts[2]:
             raise HTTPException(400, 'Charge total must equal subtotal minus discount')
-        if amounts[2] == 0:
+        if amounts[2] == 0 and not (amounts[0] > 0 and amounts[1] > 0):
             continue
         if not (charge.editable_description or charge.name).strip():
             raise HTTPException(400, 'Each charge needs a name')
