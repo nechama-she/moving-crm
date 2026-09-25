@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api/liveswitch", tags=["LiveSwitch"])
 AUTHORIZE_URL = "https://id.liveswitch.com/authorize"
 TOKEN_URL = "https://id.liveswitch.com/oauth/token"
 AUDIENCE = "https://public-api.production.liveswitch.com/"
-SCOPES = "openid profile email offline_access conversations conversations.write contacts webhooks webhooks.write spark-templates sparks sparks.write"
+SCOPES = "openid profile email offline_access conversations conversations.write contacts webhooks webhooks.write spark-templates sparks sparks.write recordings"
 STATE_TTL_SECONDS = 300
 
 
