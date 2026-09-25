@@ -4,7 +4,7 @@ export type PackingPackage = {
   inventory_cubic_feet?: number;
   minimum_cubic_feet?: number;
   rates: Partial<Record<'full' | 'partial' | 'unpacking', { rate: number; total: number }>>;
-  items: { id: string; label: string; price: number; labor_price?: number; material_price?: number }[];
+  items: { id: string; label: string; room?: string; price: number; labor_price?: number; material_price?: number }[];
   selection: PackingSelection;
 };
 const money = (amount: number) => amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -29,7 +29,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       <p className="cm-step-sub">Choose a service, or leave unchecked to pack it yourself.</p>
       <div className="cm-checklist">
         {config.items.map(item => <section key={item.id} style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:10,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
-          <strong>{item.label}</strong>
+          <div><strong>{item.label}</strong>{item.room && <small style={{display:'block',marginTop:3,color:'var(--cm-text-muted)'}}>{item.room}</small>}</div>
           <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px',width:'100%'}}>
             {([false, true] as const).map(withMaterials => <label key={String(withMaterials)} style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
               <input type="checkbox" disabled={disabled} checked={selection.item_ids.includes(item.id) && materials.includes(item.id) === withMaterials} onChange={e => onChange({

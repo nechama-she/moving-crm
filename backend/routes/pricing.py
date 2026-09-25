@@ -565,7 +565,7 @@ def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
             qty = max(1, int(float(item.amount or 1)))
         except (TypeError, ValueError):
             qty = 1
-        res.append({"name": item.name or "", "quantity": qty})
+        res.append({"name": item.name or "", "quantity": qty, "room": item.room or ""})
     return res
 
 
@@ -1003,13 +1003,16 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None):
         rate = getattr(card, kind)
         if rate is not None:
             rates[kind] = {'rate': float(rate), 'total': float((rate * volume).quantize(Decimal('0.01')))}
-    names = (_material_item_names(job._estimated_materials_data())
-             + _material_item_names(_job_spark_inventory_items(job.id, db)))
+    inventory = job._estimated_materials_data() + _job_spark_inventory_items(job.id, db)
+    occurrences = [(name, str(row.get('room') or '')) for row in inventory if isinstance(row, dict)
+                   for name in _material_item_names([row])]
     items = []
     for item in card.items:
-        count = sum(_normalize_item_name(name) == _normalize_item_name(item.name) for name in names)
-        for index in range(count):
+        rooms = [room for name, room in occurrences if _normalize_item_name(name) == _normalize_item_name(item.name)]
+        count = len(rooms)
+        for index, room in enumerate(rooms):
             items.append({'id': f'{item.id}:{index + 1}',
+                          'room': room,
                           'label': f'{item.name} ({index + 1} of {count})' if count > 1 else item.name,
                           'price': float(item.price), 'labor_price': float(item.labor_price), 'material_price': float(item.material_price)})
     return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': items,
