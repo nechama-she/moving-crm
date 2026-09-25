@@ -124,8 +124,9 @@ export default function CustomerMovePage() {
   const addressDraft = useRef<{ pickup: string; delivery: string; pickup_place: SelectedAddress | null; delivery_place: SelectedAddress | null }>({ pickup: '', delivery: '', pickup_place: null, delivery_place: null });
   const [moveDraft,setMoveDraft]=useState({name:'',phone:'',email:'',move_date:'',pickup:'',delivery:''});
   const [reportState,setReportState]=useState<'idle'|'running'|'done'>('idle');
+  const [startingReport, setStartingReport] = useState(false);
+  const reportStartPending = useRef(false);
   const [reportNotice,setReportNotice]=useState('');
-  const [hasNewUploads, setHasNewUploads] = useState(false);
   const [resendAt,setResendAt]=useState(0),[clock,setClock]=useState(Date.now());
   const [showQuestions, setShowQuestions] = useState(false);
   const [termsError, setTermsError] = useState('');
@@ -195,7 +196,6 @@ export default function CustomerMovePage() {
     try {
       await call(`/reports/${encodeURIComponent(id)}/select`, {});
       setFiles(current => current.filter(file => file.status !== 'Uploaded'));
-      setHasNewUploads(false);
     } finally {
       try { setData(await call('/details')); }
       finally { setCalculatingPrice(false); }
@@ -207,7 +207,6 @@ export default function CustomerMovePage() {
       await call(`/files/${encodeURIComponent(id)}`, undefined, 'DELETE');
       setData(await call('/details'));
       setReportState('idle');
-      setHasNewUploads(true);
     } finally { setBusy(false); }
   }
   type PricingChange = { kind: 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
@@ -252,8 +251,8 @@ export default function CustomerMovePage() {
     ...(data?.extra_stops ? ['stops_pickup','stops_delivery'] as PricingStep[] : []),
     ...(data?.elevator ? ['elevator_pickup', 'elevator_delivery'] as PricingStep[] : []),
     ...(data?.long_carry ? ['carry_pickup'] as PricingStep[] : []),
-    ...(data?.shuttle && (!data.shuttle.automatic || !data.long_carry) ? ['shuttle'] as PricingStep[] : []),
-    ...(data?.long_carry && (!data.shuttle || data.shuttle.automatic || shuttleAnswer === false) ? ['carry_delivery'] as PricingStep[] : []),
+    ...(data?.shuttle ? ['shuttle'] as PricingStep[] : []),
+    ...(data?.long_carry && !data.shuttle ? ['carry_delivery'] as PricingStep[] : []),
     ...(data?.stairs ? ['stairs_pickup', 'stairs_delivery'] as PricingStep[] : []),
     ...(data?.storage ? ['storage'] as PricingStep[] : []),
     ...(data?.packing_items?.length ? ['bulky'] as PricingStep[] : []),
@@ -265,6 +264,8 @@ export default function CustomerMovePage() {
   const currentStops=data?.extra_stops?.locations.find(row=>packingStep===`stops_${row.location}`);
   const currentElevator = data?.elevator?.locations.find(row => packingStep === `elevator_${row.location}`);
   useEffect(() => { setElevatorAnswers(Object.fromEntries((data?.elevator?.locations || []).map(row => [row.location,row.uses_elevator]))); setElevatorMissing(false); }, [data?.elevator?.locations.map(row => row.revision).join(':')]);
+  const deliveryCarry = data?.long_carry?.locations.find(row => row.location === 'delivery');
+  const showDeliveryCarry = packingStep === 'shuttle' && !!deliveryCarry && (data?.shuttle?.automatic || shuttleAnswer === false);
   const currentCarry = data?.long_carry?.locations.find(row => packingStep === `carry_${row.location}`);
   useEffect(() => { setCarryAnswers(Object.fromEntries((data?.long_carry?.locations || []).map(row => [row.location,row.unknown && row.acknowledged ? 'unknown' : row.distance_feet]))); setCarryMissing(false); }, [data?.long_carry?.locations.map(row => row.revision).join(':')]);
   const currentStairs = data?.stairs?.locations.find(row => packingStep === `stairs_${row.location}`);
@@ -277,6 +278,7 @@ export default function CustomerMovePage() {
   function nextPricingStep() {
     if(currentStops && (stopsIncomplete[currentStops.location] || currentStops.answer==null || (currentStops.answer && !currentStops.stops.length))){setStopsMissing(true);return;}
     if (currentElevator && elevatorAnswers[currentElevator.location] == null) { setElevatorMissing(true); return; }
+    if (showDeliveryCarry && carryAnswers.delivery == null) { setCarryMissing(true); return; }
     if (currentCarry && carryAnswers[currentCarry.location] == null) { setCarryMissing(true); return; }
     if (currentStairs && stairsAnswers[currentStairs.location] == null) { setStairsMissing(true); return; }
     if (packingStep === 'storage' && (!storageDate || !data?.storage?.pickup_date || storageDate < data.storage.pickup_date)) { setStorageMissing(true); return; }
@@ -385,7 +387,6 @@ export default function CustomerMovePage() {
       }catch(e){const message=(e as Error).message;setFiles(prev=>prev.map(f=>f.id===item.id?{...f,status:'Try again',progress:0,error:message}:f));}
     }
     if(uploadedAny){
-      setHasNewUploads(true);
       setReportState('idle');
       void refreshDetails();
     }
@@ -662,28 +663,33 @@ export default function CustomerMovePage() {
                   </div>
                 </div>}
 
-                {((data.editable_files || data.files).length > 0 || !!data.inventory_draft?.rows.length) && (!data.spark || hasNewUploads || data.files_changed || data.list_changed) && (reportState !== 'done' || data.files_changed || data.list_changed) && (
+                {((data.editable_files || data.files).length > 0 || !!data.inventory_draft?.rows.length) && (
                   <div className="cm-spark-box">
                     <button
                       type="button"
                       className="slds-button cm-primary cm-spark-btn"
-                      disabled={busy || reportState === 'running' || files.some(file => file.status !== 'Uploaded')}
+                      disabled={busy || startingReport || data.spark?.status === 'queued' || data.spark?.status === 'running' || files.some(file => file.status !== 'Uploaded')}
                       onClick={async () => {
+                        if (reportStartPending.current || data.spark?.status === 'queued' || data.spark?.status === 'running') return;
+                        reportStartPending.current = true;
+                        setStartingReport(true);
                         setReportState('running');
                         setReportNotice('');
                         try {
                           await call('/generate-inventory-report', {});
                           setReportState('done');
-                          setHasNewUploads(false);
                           setReportNotice("Your report combines your files and saved list into one inventory and estimate.");
                           void refreshDetails();
                         } catch (err) {
                           setReportState('idle');
                           setError((err as Error).message);
+                        } finally {
+                          reportStartPending.current = false;
+                          setStartingReport(false);
                         }
                       }}
                     >
-                      {reportState === 'running' ? 'Processing inventory...' : 'Generate report & get estimate'}
+                      {startingReport ? 'Starting report...' : data.spark?.status === 'queued' || data.spark?.status === 'running' ? 'Report running...' : data.spark ? 'Rerun report & estimate' : 'Generate report & get estimate'}
                     </button>
                     {reportNotice && <p role="status" className="cm-spark-notice">{reportNotice}</p>}
                   </div>
@@ -820,7 +826,6 @@ export default function CustomerMovePage() {
             {showInventoryList && <ManualInventoryModal initialRooms={data.inventory_draft?.body.rooms} draftKey={`cm_inventory_draft_${accessId}`} loadCatalog={() => call('/inventory-catalog')} onClose={() => { setShowInventoryList(false); void refreshDetails(); }} submit={async body => {
               await call('/manual-inventory', body);
               // Refresh the summary when the editor closes; edits save without closing it.
-              setHasNewUploads(true);
               setCalculationError('');
               setReportState('idle');
             }} />}
@@ -840,7 +845,7 @@ export default function CustomerMovePage() {
                       <legend>Delivery shuttle</legend>
                       {data.shuttle.automatic ? <p>A smaller shuttle vehicle is required for your delivery area and is included in your estimate.</p> : <>
                         <p><strong>{data.shuttle.question}</strong></p>
-                        <p>If not, a smaller truck will bring your belongings to your address. We will then ask how close it can park to your entrance.</p>
+                        <p>If not, a smaller truck will bring your belongings to your address. Tell us below how close it can park to your entrance.</p>
                         <div className="cm-checklist">{[true, false].map(answer => <label className="cm-check-item" key={String(answer)}>
                           <input type="radio" name="shuttle-access" checked={shuttleAnswer === answer} onChange={() => { setShuttleAnswer(answer); setCarryAnswers(prev => ({...prev, delivery:null})); setShuttleMissing(false); savePricingChange({ kind: 'shuttle', enabled: answer, revision: data.shuttle!.revision }); }} />
                           <span>{answer ? 'Yes, a semi-trailer can access the delivery address' : 'No, a shuttle is needed'}</span>
@@ -850,6 +855,12 @@ export default function CustomerMovePage() {
                       <p>Shuttle rate: {money(data.shuttle.rate)} / cu ft for {data.shuttle.cubic_feet} billable cu ft</p>
                       {data.shuttle.minimum_cubic_feet > data.shuttle.inventory_cubic_feet && <p>Minimum billable: {data.shuttle.minimum_cubic_feet} cu ft</p>}
                       <p><strong>{data.shuttle.automatic || shuttleAnswer === false ? 'Shuttle charge' : 'Shuttle charge if needed'}: {money(shuttleAnswer === true && !data.shuttle.automatic ? 0 : data.shuttle.total)}</strong></p>
+                      {showDeliveryCarry && deliveryCarry && data.long_carry && <div style={{borderTop:'1px solid #e5d8d5', marginTop:20, paddingTop:20}}>
+                        <CustomerLongCarryQuestion key={`delivery:${deliveryCarry.revision}`} config={data.long_carry} shuttleCharge={data.shuttle.total} location={deliveryCarry} value={carryAnswers.delivery ?? null} missing={carryMissing} onChange={carry_feet => {
+                          setCarryAnswers(prev => ({...prev, delivery:carry_feet})); setCarryMissing(false);
+                          if (carry_feet !== null) savePricingChange({kind:'long_carry',location:'delivery',revision:deliveryCarry.revision,...(carry_feet === 'unknown' ? {carry_unknown:true,carry_acknowledged:true} : {carry_feet})});
+                        }} />
+                      </div>}
                     </fieldset> : packingStep === 'items' ? <CustomerItemQuestions visibleIds={visibleTermsIds} validationAttempt={termsValidationAttempt} questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={answer => {
                       const reportId = data.spark?.id;
                       answerPending.current += 1;
