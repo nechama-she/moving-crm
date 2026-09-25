@@ -14,6 +14,12 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
   const inventoryVolume = config.inventory_cubic_feet ?? config.cubic_feet;
   const minimumApplies = inventoryVolume < (config.minimum_cubic_feet ?? 0);
   const materials = selection.material_item_ids ?? selection.item_ids;
+  const rooms = new Map<string, PackingPackage['items']>();
+  for (const item of config.items) {
+    const room = item.room?.trim() || 'Other items';
+    if (!rooms.has(room)) rooms.set(room, []);
+    rooms.get(room)!.push(item);
+  }
   const total = (selection.mode !== 'none' ? config.rates[selection.mode]?.total || 0 : config.items.filter(item => selection.item_ids.includes(item.id)).reduce((sum, item) => sum + (item.labor_price ?? item.price) + (materials.includes(item.id) ? item.material_price || 0 : 0), 0)) + (selection.unpacking ? config.rates.unpacking?.total || 0 : 0);
   return <div className="cm-packing-options">
     <div className="cm-packing-heading"><h4>Choose your packing service</h4><div className="cm-packing-volume"><span>{inventoryVolume.toLocaleString()} cu ft</span>{minimumApplies && <small>Minimum billable: {config.minimum_cubic_feet!.toLocaleString()} cu ft</small>}</div></div>
@@ -28,8 +34,10 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       <h4>These items must be boxed</h4>
       <p className="cm-step-sub">Choose a service, or leave unchecked to pack it yourself.</p>
       <div className="cm-checklist">
-        {config.items.map(item => <section key={item.id} style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:10,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
-          <div><strong>{item.label}</strong>{item.room && <small style={{display:'block',marginTop:3,color:'var(--cm-text-muted)'}}>{item.room}</small>}</div>
+        {[...rooms].map(([room, items]) => <section key={room} aria-label={room}>
+          <h4 style={{margin:'16px 0 4px',fontSize:12,fontWeight:400,color:'var(--cm-text-muted)'}}>{room}</h4>
+          {items.map(item => <section key={item.id} style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:10,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
+          <strong>{item.label}</strong>
           <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px',width:'100%'}}>
             {([false, true] as const).map(withMaterials => <label key={String(withMaterials)} style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
               <input type="checkbox" disabled={disabled} checked={selection.item_ids.includes(item.id) && materials.includes(item.id) === withMaterials} onChange={e => onChange({
@@ -40,6 +48,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
               <span>{withMaterials ? 'Packing and material' : 'Packing only'} <strong>{money((item.labor_price ?? item.price) + (withMaterials ? item.material_price || 0 : 0))}</strong></span>
             </label>)}
           </div>
+          </section>)}
         </section>)}
       </div>
     </section>}
