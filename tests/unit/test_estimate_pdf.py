@@ -3,6 +3,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
 from estimate_pdf import build_estimate_pdf, inventory_entries
+from estimate_pdf import compact_inventory_entries
+
+
+def test_compact_inventory_groups_only_matching_items_and_answers():
+    rows = [{'name': 'Gun Safe', 'room': 'Bedroom', 'amount': 2, 'cuft': 200, 'weight': 1400}]
+    rows += [{'name': 'Box', 'room': 'Bedroom', 'amount': 1, 'cuft': 3, 'weight': 21} for _ in range(20)]
+    entries = compact_inventory_entries(inventory_entries(rows, sample()['item_questions']))
+    assert len(entries) == 3
+    assert [entry['excluded'] for entry in entries[:2]] == [False, True]
+    assert entries[-1]['quantity'] == 20
+    assert entries[-1]['cuft'] == 60
+    assert entries[-1]['weight'] == 420
 
 
 def sample():

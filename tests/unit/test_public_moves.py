@@ -2312,3 +2312,16 @@ def test_extra_stops_save_route_cache_and_remove_only_own_fees(portal,packing_pr
     assert job.price==1000 and not route
     save('pickup',[f'Extra {i}' for i in range(10)])
     assert job.price==1750 and len(route)==10
+
+
+def test_inventory_room_uses_report_snapshot_not_missing_model_field(portal):
+    import ast
+    mod, db, lead, access = portal
+    source = ast.parse((Path(__file__).resolve().parents[2] / 'backend/routes/pricing.py').read_text(encoding='utf-8'))
+    function = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == '_job_spark_inventory_items')
+    scope = {'Session': object, 'LeadSparkInventoryItem': models.LeadSparkInventoryItem, 'json': json}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), '<room-helper>', 'exec'), scope)
+    db.add(models.LeadSparkInventoryItem(job_id=access.job_id, name='TV', amount=1, sort_order=0))
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'spark_inventory_snapshot': [{'name':'TV', 'room':'Living Room'}]})))
+    db.commit()
+    assert scope['_job_spark_inventory_items'](access.job_id, db) == [{'name':'TV','quantity':1,'room':'Living Room'}]

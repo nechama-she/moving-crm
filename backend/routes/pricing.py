@@ -556,16 +556,23 @@ def _material_item_names(materials: list[dict]) -> list[str]:
 
 
 def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
+    from models import LeadJob, LeadLiveSwitch
     if not job_id:
         return []
     items = db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job_id).all()
+    job = db.get(LeadJob, job_id)
+    report = db.get(LeadLiveSwitch, job.lead_id) if job else None
+    snapshot = json.loads(report.details or '{}').get('spark_inventory_snapshot', []) if report else []
     res = []
     for item in items:
         try:
             qty = max(1, int(float(item.amount or 1)))
         except (TypeError, ValueError):
             qty = 1
-        res.append({"name": item.name or "", "quantity": qty, "room": item.room or ""})
+        index = item.sort_order or 0
+        source = snapshot[index] if 0 <= index < len(snapshot) else {}
+        room = source.get('room') or '' if source.get('name') == item.name else ''
+        res.append({"name": item.name or "", "quantity": qty, "room": room})
     return res
 
 

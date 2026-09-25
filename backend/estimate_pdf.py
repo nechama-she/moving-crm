@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from io import BytesIO
 from math import ceil
+import json
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -37,14 +38,36 @@ def inventory_entries(rows, questions):
                        weight=0 if excluded else (float(row['weight']) / (count if related else 1) if row.get('weight') is not None else None))
 
 
+def compact_inventory_entries(entries):
+    grouped = {}
+    for entry in entries:
+        notes = []
+        for question in entry['questions']:
+            saved = question.get('saved') or {}
+            notes.append((saved.get('question') or question['question'], saved.get('answer'),
+                          saved.get('notice'), saved.get('action'), saved.get('pending'), saved.get('acknowledged')))
+        key = (entry['room'], entry['name'], entry['excluded'], json.dumps(notes),
+               entry['cuft'] / entry['quantity'],
+               entry['weight'] / entry['quantity'] if entry['weight'] is not None else None)
+        if key not in grouped:
+            grouped[key] = {**entry, 'label': entry['name']}
+        else:
+            group = grouped[key]
+            group['quantity'] += entry['quantity']
+            group['cuft'] += entry['cuft']
+            if group['weight'] is not None:
+                group['weight'] += entry['weight']
+    return list(grouped.values())
+
+
 def build_estimate_pdf(data, rows):
     output = BytesIO()
     navy = colors.HexColor('#15354b')
     muted = colors.HexColor('#526473')
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name='BodyEstimate', fontName='Helvetica', fontSize=9, leading=13, textColor=navy, spaceAfter=5))
-    styles.add(ParagraphStyle(name='NoteEstimate', parent=styles['BodyEstimate'], fontSize=8, leading=11, textColor=muted))
-    styles.add(ParagraphStyle(name='SectionEstimate', parent=styles['BodyEstimate'], fontSize=13, leading=17, spaceBefore=16, spaceAfter=9, fontName='Helvetica-Bold', keepWithNext=True))
+    styles.add(ParagraphStyle(name='BodyEstimate', fontName='Helvetica', fontSize=10, leading=12, textColor=navy, spaceAfter=2))
+    styles.add(ParagraphStyle(name='NoteEstimate', parent=styles['BodyEstimate'], fontSize=10, leading=12, textColor=muted))
+    styles.add(ParagraphStyle(name='SectionEstimate', parent=styles['BodyEstimate'], fontSize=12, leading=14, spaceBefore=10, spaceAfter=5, fontName='Helvetica-Bold', keepWithNext=True))
     styles.add(ParagraphStyle(name='RightEstimate', parent=styles['BodyEstimate'], alignment=TA_RIGHT))
     def p(value, style='BodyEstimate'):
         return Paragraph(escape(str(value or '')).replace('\n', '<br/>'), styles[style])
@@ -53,8 +76,8 @@ def build_estimate_pdf(data, rows):
     def table(body, widths, header=False):
         result = Table(body, colWidths=widths, repeatRows=1 if header else 0, hAlign='LEFT')
         commands = [('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 9),
-                    ('RIGHTPADDING', (0, 0), (-1, -1), 9), ('TOPPADDING', (0, 0), (-1, -1), 8),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 8), ('LINEBELOW', (0, 0), (-1, -1), .4, colors.HexColor('#dce4e8'))]
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 7), ('TOPPADDING', (0, 0), (-1, -1), 4),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 4), ('LINEBELOW', (0, 0), (-1, -1), .4, colors.HexColor('#dce4e8'))]
         if header:
             commands.append(('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#edf2f5')))
         result.setStyle(TableStyle(commands))
@@ -92,7 +115,7 @@ def build_estimate_pdf(data, rows):
     story.append(p('Declared inventory', 'SectionEstimate'))
     story.append(p('Volume and weight reflect items going. Item answers and instructions appear directly below the relevant item. A dash means the weight was not recorded.', 'NoteEstimate'))
     rooms = defaultdict(list)
-    entries_all = list(inventory_entries(rows, data.get('item_questions') or []))
+    entries_all = compact_inventory_entries(inventory_entries(rows, data.get('item_questions') or []))
     for entry in entries_all:
         rooms[entry['room']].append(entry)
     def totals(entries):
@@ -103,7 +126,7 @@ def build_estimate_pdf(data, rows):
         return f"Going: {going}   |   Not going: {not_going}   |   Volume: {volume:,.2f} cu ft   |   Weight: {weight}"
     for room, entries in rooms.items():
         body = [[p(room + '\n' + totals(entries)), '', '', '', ''],
-                [p(label, 'NoteEstimate') for label in ['ITEM DESCRIPTION', 'GOING', 'NOT GOING', 'VOL (cu ft)', 'WT (lbs)']]]
+                [p(label, 'NoteEstimate') for label in ['ITEM', 'GOING', 'NOT GOING', 'CU FT', 'LB']]]
         commands = [('SPAN', (0, 0), (-1, 0)), ('BACKGROUND', (0, 0), (-1, 1), colors.HexColor('#edf2f5'))]
         for entry in entries:
             item_row = len(body)
@@ -132,9 +155,9 @@ def build_estimate_pdf(data, rows):
             ('GRID', (0, 0), (-1, -1), .4, colors.HexColor('#bdc9d0')),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('LEFTPADDING', (0, 0), (-1, -1), 7), ('RIGHTPADDING', (0, 0), (-1, -1), 7),
-            ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 3), ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
         ] + commands))
-        story += [room_table, Spacer(1, 14)]
+        story += [room_table, Spacer(1, 7)]
     story.append(p('Inventory totals', 'SectionEstimate'))
     story.append(p(totals(entries_all)))
     if data.get('extra_stops'):

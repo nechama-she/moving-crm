@@ -295,20 +295,25 @@ export default function CustomerMovePage() {
 
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState('');
-  async function downloadEstimate() {
-    setPdfBusy(true); setPdfError('');
+  async function openEstimate() {
+    setPdfError('');
+    const viewer = window.open('about:blank', '_blank');
+    if (!viewer) { setPdfError('Allow pop-ups to open your estimate.'); return; }
+    viewer.opener = null;
+    viewer.document.title = 'Preparing estimate';
+    viewer.document.body.textContent = 'Preparing your estimate...';
+    setPdfBusy(true);
     try {
       const response = await fetch(base + '/estimate.pdf', { headers, cache: 'no-store' });
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
-        throw new Error(result.detail || 'Could not download the estimate. Please try again.');
+        throw new Error(result.detail || 'Could not open the estimate. Please try again.');
       }
-      const url = URL.createObjectURL(await response.blob());
-      const link = document.createElement('a');
-      link.href = url; link.download = 'moving-estimate.pdf';
-      document.body.appendChild(link); link.click(); link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } catch (error) { setPdfError((error as Error).message); }
+      const url = URL.createObjectURL(new Blob([await response.blob()], {type:'application/pdf'}));
+      if (viewer.closed) { URL.revokeObjectURL(url); return; }
+      previews.current.push(url);
+      viewer.location.replace(url);
+    } catch (error) { viewer.close(); setPdfError((error as Error).message); }
     finally { setPdfBusy(false); }
   }
 
@@ -817,7 +822,7 @@ export default function CustomerMovePage() {
                 </div>
               )}
               {data.estimate && data.spark?.status === 'completed' && <div className="cm-estimate-extra-actions">
-                <button type="button" className="cm-secondary-btn" disabled={pdfBusy || answersSaving || calculatingPrice || busy} onClick={() => void downloadEstimate()}>{pdfBusy ? 'Preparing PDF...' : 'Download estimate PDF'}</button>
+                <button type="button" className="cm-secondary-btn" disabled={pdfBusy || answersSaving || calculatingPrice || busy} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : 'View estimate PDF'}</button>
                 {pdfError && <p className="cm-field-error" role="alert" style={{ flexBasis: '100%', marginTop: 0 }}>{pdfError}</p>}
               </div>}
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
