@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import BulkyCatalogPicker from './BulkyCatalogPicker';
 type Service = { id?: string; name: string; rate_text: string; comments: string };
 type BoxItem = { id: string; name: string; price?: string; labor_price?: string; material_price?: string };
 type Config = { full: string; partial: string; unpacking: string; items: BoxItem[] };
@@ -6,6 +8,7 @@ export const isPackingCard = (service: Service) => service.comments.startsWith(P
 export default function LongDistancePackingCard({ services, editing, onChange }: {
   services: Service[]; editing: boolean; onChange: (services: Service[]) => void;
 }) {
+  const [catalogTarget, setCatalogTarget] = useState<string | null>(null);
   const existing = services.find(isPackingCard);
   const config: Config = existing ? JSON.parse(existing.comments.slice(PACKING_CARD_PREFIX.length)) : { full: "", partial: "", unpacking: "", items: [] };
   function update(patch: Partial<Config>) {
@@ -15,6 +18,14 @@ export default function LongDistancePackingCard({ services, editing, onChange }:
   }
   const money = (value: string) => value === "" ? "Not configured" : Number(value).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
   return <div className="ld-packing-card">
+    {editing && catalogTarget !== null && <BulkyCatalogPicker
+      initialName={config.items.find(item => item.id === catalogTarget)?.name || ''}
+      onClose={() => setCatalogTarget(null)}
+      onSelect={item => {
+        update({ items: catalogTarget === 'new' ? [...config.items, { id: crypto.randomUUID(), name: item.name, labor_price: '', material_price: '' }] : config.items.map(row => row.id === catalogTarget ? { ...row, name: item.name } : row) });
+        setCatalogTarget(null);
+      }}
+    />}
     <p>Set packing and unpacking rates per cubic foot of the move.</p>
     <div className="pricing-services pricing-packing-rates">
       {([
@@ -35,11 +46,11 @@ export default function LongDistancePackingCard({ services, editing, onChange }:
           <th scope="col">Item</th>
           <th scope="col" className="ld-box-price">Labor / item</th>
           <th scope="col" className="ld-box-price">Materials / item</th>
-          {editing && <th scope="col" className="ld-box-action"><button type="button" className="slds-button ld-box-icon" aria-label="Add required-box item" title="Add item" onClick={() => update({ items: [...config.items, { id: crypto.randomUUID(), name: '', labor_price: '', material_price: '' }] })}>+</button></th>}
+          {editing && <th scope="col" className="ld-box-action"><button type="button" className="slds-button ld-box-icon" aria-label="Add required-box item" title="Add item" onClick={() => setCatalogTarget('new')}>+</button></th>}
         </tr></thead>
         <tbody>
           {config.items.map((item, index) => <tr key={item.id}>
-            <td>{editing ? <input className="slds-input" aria-label={`Item ${index + 1} name`} value={item.name} placeholder="Item name" onChange={e => update({ items: config.items.map(row => row.id === item.id ? { ...row, name: e.target.value } : row) })} /> : item.name}</td>
+            <td>{editing ? <button type="button" className="slds-button" style={{width:'100%',justifyContent:'flex-start',textAlign:'left'}} aria-label={`Choose catalog item for ${item.name || `item ${index + 1}`}`} onClick={() => setCatalogTarget(item.id)}>{item.name || 'Choose catalog item'}</button> : item.name}</td>
             {(['labor_price','material_price'] as const).map(field => <td key={field} className="ld-box-price">{editing ? <input className="slds-input" aria-label={`Item ${index + 1} ${field === 'labor_price' ? 'labor' : 'materials'} price`} type="number" min="0" step="0.01" value={item[field] ?? (field === 'labor_price' ? item.price ?? '' : '0')} placeholder="0.00" onChange={e => update({ items: config.items.map(row => row.id === item.id ? { ...row, labor_price: row.labor_price ?? row.price ?? '0', material_price: row.material_price ?? '0', [field]: e.target.value } : row) })} /> : money(item[field] ?? (field === 'labor_price' ? item.price ?? '0' : '0'))}</td>)}
             {editing && <td className="ld-box-action"><button type="button" className="slds-button ld-box-icon" aria-label={`Remove ${item.name || `item ${index + 1}`}`} title="Remove item" onClick={() => update({ items: config.items.filter(row => row.id !== item.id) })}>&times;</button></td>}
           </tr>)}
