@@ -32,3 +32,25 @@ def test_editable_parameters_and_validation():
     assert elevator_quote(updated,{},saved,500)['total']==175
     with pytest.raises(ValidationError):
         ElevatorCard(threshold_cuft=500,lower_fee=-1,upper_fee=250)
+
+
+@pytest.mark.parametrize('volume,fee',[(500,150),(501,250),(1500,250),(1501,400),(3000,400)])
+def test_multiple_tiers(volume,fee):
+    card=ElevatorCard(enabled=True,tiers=[{'up_to_cuft':500,'fee':150},{'up_to_cuft':1500,'fee':250},{'fee':400}])
+    assert elevator_quote(card,{}, {},volume)['fee']==fee
+
+@pytest.mark.parametrize('tiers',[
+    [{'up_to_cuft':500,'fee':150}],
+    [{'up_to_cuft':500,'fee':150},{'up_to_cuft':500,'fee':250},{'fee':300}],
+    [{'up_to_cuft':1500,'fee':150},{'up_to_cuft':500,'fee':250},{'fee':300}],
+    [{'fee':150},{'fee':250}],
+    [{'up_to_cuft':0,'fee':150},{'fee':250}],
+])
+def test_invalid_tier_ranges(tiers):
+    with pytest.raises(ValidationError): ElevatorCard(tiers=tiers)
+
+def test_legacy_settings_keep_fees_and_discounts():
+    card=ElevatorCard(enabled=True,threshold_cuft=500,lower_fee=150,upper_fee=250,pickup_discount_percent=100)
+    assert [t.fee for t in card.tiers]==[150,250]
+    assert card.pickup_discount_percent==100
+    assert ElevatorCard.model_validate_json(card.model_dump_json())==card

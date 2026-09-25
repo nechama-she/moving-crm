@@ -91,7 +91,7 @@ def build_estimate_pdf(data, rows):
     if data.get('elevator'):
         elevator = data['elevator']
         story.append(p('Elevator use', 'SectionEstimate'))
-        story.append(p(f"${elevator['lower_fee']:.2f} through {elevator['threshold_cuft']} cu ft; ${elevator['upper_fee']:.2f} above {elevator['threshold_cuft']} cu ft. Fee applies at each address where an elevator is used.", 'NoteEstimate'))
+        story.append(p(elevator['terms'] + '. Fee applies at each address where an elevator is used.', 'NoteEstimate'))
         for row in elevator['locations']:
             answer = ('Yes' if row['uses_elevator'] else 'No') + f"; charge {money(row['total'])}" if row['uses_elevator'] is not None else 'Not answered - elevator charges may apply'
             story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
