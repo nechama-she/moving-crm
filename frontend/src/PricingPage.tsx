@@ -1,3 +1,4 @@
+import ExtraStopsPricingCard, { isExtraStopsCard } from './ExtraStopsPricingCard';
 import ElevatorPricingCard, { isElevatorCard } from './ElevatorPricingCard';
 import LongCarryPricingCard, { isLongCarryCard } from './LongCarryPricingCard';
 import StairsPricingCard, { isStairsCard } from './StairsPricingCard';
@@ -184,7 +185,7 @@ export default function PricingPage() {
   const [stairsFlights, setStairsFlights] = useState<Partial<Record<'pickup' | 'delivery', string>>>({});
   const [availableDate, setAvailableDate] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
-  const [openSections, setOpenSections] = useState({ elevator: false, longCarry: false, stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
+  const [openSections, setOpenSections] = useState({ extraStops: false, elevator: false, longCarry: false, stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
   const [pendingRateGroups, setPendingRateGroups] = useState<string[][]>([]);
 
   useEffect(() => {
@@ -261,7 +262,7 @@ export default function PricingPage() {
     setElevatorAnswers({});
     setCarryFeet({});
     setStairsFlights({});
-    setOpenSections({ elevator: false, longCarry: false, stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
+    setOpenSections({ extraStops: false, elevator: false, longCarry: false, stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
     calculationId.current++;
     setCalculating(false);
     setQuote(null);
@@ -409,7 +410,7 @@ export default function PricingPage() {
   const originalService = (service: Service) => editing
     ? plan?.services.find(original => !!service.id && original.id === service.id) || service : service;
   const bulkyItems = (active?.services || []).filter(service => isBulkyItem(originalService(service)));
-  const pricingServices = (active?.services || []).filter(service => !isBulkyItem(originalService(service)) && !isPackingCard(originalService(service)) && !isShuttleCard(originalService(service)) && !isDeliveryFeesCard(originalService(service)) && !isStorageCard(originalService(service)) && !isElevatorCard(originalService(service)) && !(active?.services.some(isElevatorCard) && /\belevators?\b/i.test(service.name)) && !isLongCarryCard(originalService(service)) && !(active?.services.some(isLongCarryCard) && /\blong[ -]+carry\b/i.test(service.name)) && !isStairsCard(originalService(service)) && !(active?.services.some(isStairsCard) && /\bstairs?\b|\bstaircases?\b/i.test(service.name)) && !(active?.services.some(isStorageCard) && /^\s*(?:long\s+term\s+)?storage\b/i.test(service.name)));
+  const pricingServices = (active?.services || []).filter(service => !isBulkyItem(originalService(service)) && !isPackingCard(originalService(service)) && !isShuttleCard(originalService(service)) && !isDeliveryFeesCard(originalService(service)) && !isStorageCard(originalService(service)) && !isExtraStopsCard(originalService(service)) && !(active?.services.some(isExtraStopsCard) && /\b(extra|additional)\b.*\bstops?\b/i.test(service.name)) && !isElevatorCard(originalService(service)) && !(active?.services.some(isElevatorCard) && /\belevators?\b/i.test(service.name)) && !isLongCarryCard(originalService(service)) && !(active?.services.some(isLongCarryCard) && /\blong[ -]+carry\b/i.test(service.name)) && !isStairsCard(originalService(service)) && !(active?.services.some(isStairsCard) && /\bstairs?\b|\bstaircases?\b/i.test(service.name)) && !(active?.services.some(isStorageCard) && /^\s*(?:long\s+term\s+)?storage\b/i.test(service.name)));
   const customChargeTotal = useMemo(
     () => customCharges.reduce((sum, charge) => sum + Math.max(0, Number(charge.amount) || 0), 0),
     [customCharges],
@@ -436,7 +437,7 @@ export default function PricingPage() {
   const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
   const detailedTotal = Math.max(0, discountBase - discountTotal);
 
-  function startServiceEdit(section: 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
+  function startServiceEdit(section: 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin' || saving) return;
     setOpenSections(current => ({ ...current, [section]: true }));
     setEditing(true);
@@ -447,12 +448,12 @@ export default function PricingPage() {
     setEditing(false);
     setError('');
   }
-  function serviceEditActions(section: 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'packing' | 'bulkyItems') {
+  function serviceEditActions(section: 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin') return null;
     return editing ? <>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={cancelServiceEdit}>Cancel changes</button>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save changes'}</button>
-    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'elevator' ? 'Edit elevator pricing' : section === 'longCarry' ? 'Edit long carry pricing' : section === 'stairs' ? 'Edit stairs pricing' : section === 'storage' ? 'Edit storage pricing' : section === 'deliveryFees' ? 'Edit destination fees' : section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
+    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'extraStops' ? 'Edit extra stop pricing' : section === 'elevator' ? 'Edit elevator pricing' : section === 'longCarry' ? 'Edit long carry pricing' : section === 'stairs' ? 'Edit stairs pricing' : section === 'storage' ? 'Edit storage pricing' : section === 'deliveryFees' ? 'Edit destination fees' : section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
   }
 
   function patchDraft(patch: Partial<Plan>) {
@@ -537,7 +538,7 @@ export default function PricingPage() {
     const cents = (amount: number) => Math.round(amount * 100);
     const lines = [
       { id: "transportation", name: "Transportation charge", description: `${cubicFeetValue(cubicFeet)} cf ? ${quote.match?.band_label || "Transportation"}`, amount: quote.base_price || 0 },
-      ...quote.charges.filter(charge => charge.selected).map(charge => ({ id: `charge:${charge.id}`, name: charge.name, description: charge.description, amount: charge.amount, subtotal: charge.subtotal, defaultDiscount: charge.discount_amount, pricingKey: (charge.id.startsWith('stairs:') || charge.id.startsWith('long_carry:') || charge.id.startsWith('elevator:')) ? charge.id : undefined })),
+      ...quote.charges.filter(charge => charge.selected).map(charge => ({ id: `charge:${charge.id}`, name: charge.name, description: charge.description, amount: charge.amount, subtotal: charge.subtotal, defaultDiscount: charge.discount_amount, pricingKey: (charge.id.startsWith('stairs:') || charge.id.startsWith('long_carry:') || charge.id.startsWith('elevator:') || charge.id.startsWith('extra-stop:')) ? charge.id : undefined })),
       ...customCharges.map(charge => ({ id: `custom:${charge.id}`, name: charge.title.trim() || "Custom charge", description: "Custom charge", amount: Math.max(0, Number(charge.amount) || 0) })),
     ];
     const estimatedCharges = lines.map(line => {
@@ -616,6 +617,7 @@ export default function PricingPage() {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
       body: JSON.stringify({
+        source_job_id: jobContext?.job.id,
         destination,
         delivery_address: jobContext?.job.delivery_zip || deliveryAddress,
         shuttle_access: jobContext?.shuttle?.answer ?? null,
@@ -934,6 +936,10 @@ export default function PricingPage() {
                     </tbody>
                   </table>
                 </div>
+              </PricingSection>
+
+              <PricingSection title="Extra stop pricing" count={active.services.filter(isExtraStopsCard).length} open={openSections.extraStops} toggle={() => setOpenSections(s => ({ ...s, extraStops: !s.extraStops }))} onDoubleClick={() => startServiceEdit('extraStops')} actions={serviceEditActions('extraStops')}>
+                <ExtraStopsPricingCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
               <PricingSection title="Elevator pricing" count={active.services.filter(isElevatorCard).length} open={openSections.elevator} toggle={() => setOpenSections(s => ({ ...s, elevator: !s.elevator }))} onDoubleClick={() => startServiceEdit('elevator')} actions={serviceEditActions('elevator')}>

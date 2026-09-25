@@ -323,12 +323,13 @@ def packing_pricing(monkeypatch):
     from long_distance_packing import packing_card
     import math
     from shuttle import SHUTTLE_PREFIX, shuttle_card, shuttle_option
+    from extra_stops import EXTRA_STOPS_PREFIX, stops_card
     from elevator_pricing import ELEVATOR_PREFIX, elevator_card, elevator_quote
     from long_carry_pricing import LONG_CARRY_PREFIX, long_carry_card, long_carry_quote
     from stairs_pricing import STAIRS_PREFIX, stairs_card, stairs_quote
     from storage_pricing import STORAGE_PREFIX, storage_card, storage_quote
     from datetime import date
-    scope = {'ELEVATOR_PREFIX': ELEVATOR_PREFIX, 'elevator_card': elevator_card, 'elevator_quote': elevator_quote, 'LONG_CARRY_PREFIX': LONG_CARRY_PREFIX, 'long_carry_card': long_carry_card, 'long_carry_quote': long_carry_quote, 'STAIRS_PREFIX': STAIRS_PREFIX, 'stairs_card': stairs_card, 'stairs_quote': stairs_quote, 'date': date, 'STORAGE_PREFIX': STORAGE_PREFIX, 'storage_card': storage_card, 'storage_quote': storage_quote, 'DELIVERY_FEE_PREFIX': '__delivery_mileage__:', 'infer_job_move_type': lambda *args: (None, None), 'PublicMoveAccess': models.PublicMoveAccess, 'SHUTTLE_PREFIX': SHUTTLE_PREFIX, 'shuttle_card': shuttle_card, 'shuttle_option': shuttle_option, 'PricingPlan': object, 'delivery_location': delivery_location, 'match_region_from_address': match_region_from_address, 'PACKING_CARD_PREFIX': '__ld_packing__:', 'packing_card': packing_card, '_rounded_cubic_feet': lambda value: math.ceil(float(value or 0)), 'json': json, 're': re, 'Decimal': Decimal, 'PricingService': object, 'LeadJobCharge': models.LeadJobCharge,
+    scope = {'EXTRA_STOPS_PREFIX':EXTRA_STOPS_PREFIX,'stops_card':stops_card,'ELEVATOR_PREFIX': ELEVATOR_PREFIX, 'elevator_card': elevator_card, 'elevator_quote': elevator_quote, 'LONG_CARRY_PREFIX': LONG_CARRY_PREFIX, 'long_carry_card': long_carry_card, 'long_carry_quote': long_carry_quote, 'STAIRS_PREFIX': STAIRS_PREFIX, 'stairs_card': stairs_card, 'stairs_quote': stairs_quote, 'date': date, 'STORAGE_PREFIX': STORAGE_PREFIX, 'storage_card': storage_card, 'storage_quote': storage_quote, 'DELIVERY_FEE_PREFIX': '__delivery_mileage__:', 'infer_job_move_type': lambda *args: (None, None), 'PublicMoveAccess': models.PublicMoveAccess, 'SHUTTLE_PREFIX': SHUTTLE_PREFIX, 'shuttle_card': shuttle_card, 'shuttle_option': shuttle_option, 'PricingPlan': object, 'delivery_location': delivery_location, 'match_region_from_address': match_region_from_address, 'PACKING_CARD_PREFIX': '__ld_packing__:', 'packing_card': packing_card, '_rounded_cubic_feet': lambda value: math.ceil(float(value or 0)), 'json': json, 're': re, 'Decimal': Decimal, 'PricingService': object, 'LeadJobCharge': models.LeadJobCharge,
              'BULKY_ITEM_MARKER': '__bulky_item__', 'BULKY_ITEM_PREFIX': '__bulky_item__:',
              '_number': lambda value: Decimal(value) if value else None,
              '_job_spark_inventory_items': lambda *args: []}
@@ -2219,3 +2220,43 @@ def test_crm_rep_session_endpoint_requires_login(portal):
     app.dependency_overrides[mod.get_current_user]=unauthenticated
     with TestClient(app) as client:
         assert client.post(f'/api/leads/{lead.id}/customer-page/rep-session').status_code==401
+
+
+def test_extra_stops_save_route_cache_and_remove_only_own_fees(portal,packing_pricing,monkeypatch):
+    from decimal import Decimal
+    import extra_stops
+    mod,db,lead,access=portal
+    job=db.get(models.LeadJob,access.job_id)
+    job.pickup_zip='Main pickup';job.delivery_zip='Main delivery'
+    job.price=access.published_price=Decimal('1000')
+    db.add(models.LeadJobCharge(id='other',job_id=job.id,name='Other',subtotal=1000,total_cost=1000))
+    plan=SimpleNamespace(services=[SimpleNamespace(comments=extra_stops.EXTRA_STOPS_PREFIX+json.dumps({'enabled':True,'pickup':{'free_miles':10,'stop_fee':50,'per_mile':5},'delivery':{'free_miles':0,'stop_fee':50,'per_mile':5}}))])
+    monkeypatch.setattr(packing_pricing,'infer_job_move_type',lambda *args:('Long Distance',plan))
+    route=[]
+    def persist(db,job_id,pickup,stops,delivery):route[:]=stops
+    def read(db,job):return job.pickup_zip,list(route),job.delivery_zip
+    leads=ModuleType('routes.leads');leads._read_job_route=read;leads._refresh_lead_estimated_total=lambda *args:None
+    monkeypatch.setitem(sys.modules,'routes.leads',leads)
+    monkeypatch.setattr(mod,'_read_job_route',read);monkeypatch.setattr(mod,'_persist_job_route',persist)
+    monkeypatch.setattr(mod,'_move_details',lambda *args,**kwargs:{})
+    distance=MagicMock(return_value=24140)
+    monkeypatch.setattr(extra_stops,'driving_meters',distance)
+    db.commit()
+    def save(location,addresses,answer=True):
+        return mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'extra_stops','location':location,'has_stops':answer,'stops':addresses}),access,db)
+    save('pickup',['Pickup B'])
+    assert job.price==access.published_price==1075
+    save('pickup',['Pickup B'])
+    assert distance.call_count==1 and job.price==1075
+    save('delivery',['Delivery B'])
+    assert job.price==1200 and route==['Pickup B','Delivery B']
+    extra_stops.option(lead,job,db)
+    assert distance.call_count==2
+    save('pickup',[],False)
+    assert job.price==1125 and route==['Delivery B']
+    assert db.get(models.LeadJobCharge,'other').total_cost==1000
+    assert json.loads(job.customer_packing_package)['extra_stops']['delivery']['answer'] is True
+    save('delivery',[],False)
+    assert job.price==1000 and not route
+    save('pickup',[f'Extra {i}' for i in range(10)])
+    assert job.price==1750 and len(route)==10

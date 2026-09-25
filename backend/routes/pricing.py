@@ -21,6 +21,7 @@ from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, packing_card
 from shuttle import SHUTTLE_PREFIX, ShuttleCard, shuttle_card, shuttle_option
 from delivery_fees import DELIVERY_FEE_PREFIX, DeliveryFeeCard, delivery_fee, delivery_fee_card
 from storage_pricing import STORAGE_PREFIX, StorageCard, storage_card, storage_quote
+from extra_stops import EXTRA_STOPS_PREFIX, ExtraStopsCard, stops_card
 from elevator_pricing import ELEVATOR_PREFIX, ElevatorCard, elevator_card, elevator_quote
 from long_carry_pricing import LONG_CARRY_PREFIX, LongCarryCard, long_carry_card, long_carry_quote
 from stairs_pricing import STAIRS_PREFIX, StairsCard, stairs_card, stairs_quote
@@ -215,6 +216,8 @@ class ServiceInput(BaseModel):
             DeliveryFeeCard.model_validate_json(value[len(DELIVERY_FEE_PREFIX):])
         if value.startswith(STORAGE_PREFIX):
             StorageCard.model_validate_json(value[len(STORAGE_PREFIX):])
+        if value.startswith(EXTRA_STOPS_PREFIX):
+            ExtraStopsCard.model_validate_json(value[len(EXTRA_STOPS_PREFIX):])
         if value.startswith(ELEVATOR_PREFIX):
             ElevatorCard.model_validate_json(value[len(ELEVATOR_PREFIX):])
         if value.startswith(LONG_CARRY_PREFIX):
@@ -236,6 +239,7 @@ class PlanUpdate(BaseModel):
 
 
 class CalculationInput(BaseModel):
+    source_job_id: str | None = Field(default=None, max_length=100)
     destination: str
     delivery_address: str = ''
     shuttle_access: bool | None = None
@@ -389,11 +393,14 @@ def _packing_service_charges(
     remaining: list[PricingService] = []
     card = packing_card(services)
     storage_config = storage_card(services)
+    extra_stops_config = stops_card(services)
     elevator_config = elevator_card(services)
     carry_config = long_carry_card(services)
     stairs_config = stairs_card(services)
     for service in services:
-        if service.comments.startswith((PACKING_CARD_PREFIX, SHUTTLE_PREFIX, DELIVERY_FEE_PREFIX, STORAGE_PREFIX, STAIRS_PREFIX, LONG_CARRY_PREFIX, ELEVATOR_PREFIX)):
+        if service.comments.startswith((PACKING_CARD_PREFIX, SHUTTLE_PREFIX, DELIVERY_FEE_PREFIX, STORAGE_PREFIX, STAIRS_PREFIX, LONG_CARRY_PREFIX, ELEVATOR_PREFIX, EXTRA_STOPS_PREFIX)):
+            continue
+        if extra_stops_config and re.search(r'\b(extra|additional)\b.*\bstops?\b', service.name, re.IGNORECASE):
             continue
         if elevator_config and re.search(r'\belevators?\b', service.name, re.IGNORECASE):
             continue
@@ -1401,6 +1408,8 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         job.price += add_stairs_charges(lead, job, db, matched_plan, move_type)
         job.price += add_long_carry_charges(lead, job, db, matched_plan, move_type)
         job.price += add_elevator_charges(lead, job, db, matched_plan, move_type)
+        from extra_stops import add_charges as add_extra_stop_charges
+        job.price += add_extra_stop_charges(lead,job,db,matched_plan)
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
         access = db.query(PublicMoveAccess).filter_by(job_id=job.id).first()
@@ -1479,6 +1488,8 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         job.price += add_stairs_charges(lead, job, db, matched_plan, move_type)
         job.price += add_long_carry_charges(lead, job, db, matched_plan, move_type)
         job.price += add_elevator_charges(lead, job, db, matched_plan, move_type)
+        from extra_stops import add_charges as add_extra_stop_charges
+        job.price += add_extra_stop_charges(lead,job,db,matched_plan)
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
         access = db.query(PublicMoveAccess).filter_by(job_id=job.id).first()
@@ -1512,7 +1523,24 @@ def calculate_pricing(
     elevator = elevator_card(plan.services)
     if elevator and elevator.enabled and (body.pickup_elevator is None or body.delivery_elevator is None):
         raise HTTPException(422, 'Answer whether an elevator is needed at pickup and delivery.')
-    return compute_plan_calculation(plan, body)
+    result = compute_plan_calculation(plan, body)
+    if body.source_job_id:
+        from routes.leads import _get_job_or_404
+        from extra_stops import option as extra_stops_option
+        job = db.get(LeadJob, body.source_job_id)
+        if job is None: raise HTTPException(404, 'Job not found')
+        job = _get_job_or_404(job.lead_id, job.id, user, db)
+        lead = db.get(Lead,job.lead_id)
+        extra = extra_stops_option(lead,job,db,plan,refresh=True)
+        for group in extra['locations'] if extra else []:
+            for i,row in enumerate(group['stops']):
+                result['charges'].append({'id':'extra-stop:'+row['id'], 'name':f"Extra {group['location']} stop {i+1}",
+                    'description':f"{row['address']}; {row['miles']} driving miles from {group['origin']}; {group['free_miles']} free miles, ${group['stop_fee']:.2f} per chargeable stop plus ${group['per_mile']:.2f} per mile beyond the allowance.",
+                    'calculation_type':'fixed','rate':row['total'],'amount':row['total'],'selected':True,
+                    'default_selected':True,'automatic':True,'applies':True,'required':True,'quantity_label':''})
+                result['total']=float(Decimal(str(result['total']))+Decimal(str(row['total'])))
+        db.commit()
+    return result
 
 
 @router.get("/{plan_id}")

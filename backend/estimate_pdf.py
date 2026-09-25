@@ -9,7 +9,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
 
 
 def inventory_entries(rows, questions):
@@ -88,6 +88,18 @@ def build_estimate_pdf(data, rows):
     story.append(table([[p('TOTAL ESTIMATED PRICE'), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
     if data.get('list_changed') or data.get('files_changed'):
         story.append(p('This estimate reflects the current generated report. New inventory edits or files are not included until a new report is generated.', 'NoteEstimate'))
+    if data.get('extra_stops'):
+        story.append(p('Additional stops', 'SectionEstimate'))
+        for group in data['extra_stops']['locations']:
+            group_content = []
+            group_content.append(p('Extra ' + group['location'] + ' stops', 'SectionEstimate'))
+            group_content.append(p(f"Mileage from {group['origin']}. {group['free_miles']:g} miles free; ${group['stop_fee']:.2f} per chargeable stop plus ${group['per_mile']:.2f} per mile beyond the allowance.", 'NoteEstimate'))
+            if not group['stops']:
+                group_content.append(p('None' if group['answer'] is False else 'Not answered', 'NoteEstimate'))
+            for row in group['stops']:
+                detail = f"{row['miles']} driving miles; {money(row['total'])}" if row['total'] is not None else 'Mileage and fee pending'
+                group_content.append(p(row['address'] + ' - ' + detail, 'NoteEstimate'))
+            story.append(KeepTogether(group_content))
     if data.get('elevator'):
         elevator = data['elevator']
         story.append(p('Elevator use', 'SectionEstimate'))

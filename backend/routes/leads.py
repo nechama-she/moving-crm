@@ -2156,7 +2156,7 @@ class LeadJobChargePayload(BaseModel):
     subtotal: float = 0
     discount_amount: float = Field(default=0, alias="discountAmount")
     total_cost: float = Field(default=0, alias="totalCost")
-    pricing_key: str | None = Field(default=None, alias="pricingKey", pattern=r'^(stairs|long_carry|elevator):(pickup|delivery)$')
+    pricing_key: str | None = Field(default=None, alias="pricingKey", pattern=r'^((stairs|long_carry|elevator):(pickup|delivery)|extra-stop:[0-9a-f-]{36})$')
 
 
 class ExternalLeadUpdateLogRequest(BaseModel):
@@ -2321,7 +2321,7 @@ def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload | dict
         charge_id = None
         if charge.pricing_key:
             from uuid import uuid5, NAMESPACE_URL
-            charge_id = str(uuid5(NAMESPACE_URL, f'customer-packing:{job.id}:{charge.pricing_key}'))
+            charge_id = charge.pricing_key if charge.pricing_key.startswith('extra-stop:') else str(uuid5(NAMESPACE_URL, f'customer-packing:{job.id}:{charge.pricing_key}'))
         db.add(LeadJobCharge(
             id=charge_id,
             job_id=job.id,

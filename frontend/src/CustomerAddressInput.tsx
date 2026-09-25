@@ -2,9 +2,10 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { browserSuggestions, type AddressSuggestion, type SelectedAddress } from './googlePlaces';
 import './CustomerAddressInput.css';
 
-export default function CustomerAddressInput({label, apiKey, initialValue, disabled, error, onChange}: {
+export default function CustomerAddressInput({label, apiKey, initialValue, disabled, error, onChange, onSelect}: {
   label: string; apiKey: string; initialValue: string; disabled: boolean;
   error?: string;
+  onSelect?: (address:string)=>void;
   onChange: (text: string, place: SelectedAddress | null) => void;
 }) {
   const id = useId();
@@ -30,7 +31,7 @@ export default function CustomerAddressInput({label, apiKey, initialValue, disab
   function choose(item: AddressSuggestion) {
     version.current++;
     setQuery(''); setItems([]);
-    setText(item.text); onChange(item.text,null);
+    setText(item.text); onChange(item.text,null); onSelect?.(item.text);
   }
   const expanded = focused && items.length > 0;
   return <div className="cm-address-input">

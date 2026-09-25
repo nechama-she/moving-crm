@@ -640,6 +640,7 @@ def _move_details(access, db, *, refresh_report=True):
     packing_package = None
     shuttle = None
     storage = None
+    extra_stops = None
     elevator = None
     long_carry = None
     stairs = None
@@ -652,6 +653,8 @@ def _move_details(access, db, *, refresh_report=True):
         shuttle = customer_shuttle(lead, job, db)
         from routes.pricing import customer_storage
         storage = customer_storage(lead, job, db)
+        from extra_stops import option as extra_stops_option
+        extra_stops = extra_stops_option(lead,job,db)
         from routes.pricing import customer_elevator
         elevator = customer_elevator(lead, job, db)
         from routes.pricing import customer_long_carry
@@ -660,7 +663,7 @@ def _move_details(access, db, *, refresh_report=True):
         stairs = customer_stairs(lead, job, db)
     from inventory_questions import questions
     item_questions = questions(active_company, conv_details, db) if spark_info and spark_info.get('status') == 'completed' else []
-    return {'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    return {'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': company_data['name'],
             'company_details': company_data,
@@ -739,8 +742,10 @@ class CustomerPackageSelection(BaseModel):
 
 
 class CustomerPackingChange(BaseModel):
-    kind: Literal['mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs', 'long_carry', 'elevator']
+    kind: Literal['mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs', 'long_carry', 'elevator', 'extra_stops']
     location: Literal['pickup', 'delivery'] | None = None
+    stops: list[str] = Field(default_factory=list, max_length=100)
+    has_stops: bool | None = None
     elevator: bool | None = Field(default=None, strict=True)
     carry_feet: int | None = Field(default=None, ge=0, le=100000, strict=True)
     flights: int | None = Field(default=None, ge=0, le=1000, strict=True)
@@ -767,6 +772,34 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     from routes.leads import _refresh_lead_estimated_total
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
     lead = db.get(Lead, access.lead_id)
+    if body.change and body.change.kind == 'extra_stops':
+        from extra_stops import option as stops_option, sync_charges
+        change=body.change
+        if change.location is None or change.has_stops is None:
+            raise HTTPException(422,'Choose pickup or delivery and answer Yes or No.')
+        if stops_option(lead,job,db) is None:
+            raise HTTPException(409,'Extra stop pricing is not available.')
+        addresses=[address.strip() for address in change.stops] if change.has_stops else []
+        if any(not address or len(address)>500 for address in addresses) or len(set(a.lower() for a in addresses)) != len(addresses):
+            raise HTTPException(422,'Enter a different complete address for each stop.')
+        origin=getattr(job,change.location+'_zip') or ''
+        if origin.strip().lower() in {a.lower() for a in addresses}:
+            raise HTTPException(422,'An extra stop must differ from the main address.')
+        pickup,old,delivery=_read_job_route(db,job)
+        typed=json.loads(job.stop_types or '[]')
+        retained=[{'address':address,'type':typed[i].get('type') if i<len(typed) and typed[i].get('address')==address else None} for i,address in enumerate(old)]
+        retained=[row for row in retained if row['type']!=change.location]
+        rows=retained+[{'address':address,'type':change.location} for address in addresses]
+        rows.sort(key=lambda row: {'pickup':0,None:1,'delivery':2}[row['type']])
+        _persist_job_route(db,job.id,pickup,[row['address'] for row in rows],delivery)
+        job.stop_types=json.dumps(rows)
+        selection=json.loads(job.customer_packing_package or '{}')
+        group=selection.setdefault('extra_stops',{}).setdefault(change.location,{})
+        group['answer']=change.has_stops
+        job.customer_packing_package=json.dumps(selection)
+        sync_charges(lead,job,db)
+        db.commit()
+        return _move_details(access,db,refresh_report=False)
     if body.change and body.change.kind == 'elevator':
         from routes.pricing import customer_elevator, sync_elevator_charges
         change = body.change
@@ -918,6 +951,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             selection['delivery_route'] = previous_package['delivery_route']
         if 'storage_date' in previous_package:
             selection['storage_date'] = previous_package['storage_date']
+        if 'extra_stops' in previous_package:
+            selection['extra_stops'] = previous_package['extra_stops']
         if 'elevator' in previous_package:
             selection['elevator'] = previous_package['elevator']
         if 'long_carry' in previous_package:
@@ -1114,6 +1149,8 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
             sync_long_carry_charges(lead, job, db)
             from routes.pricing import sync_elevator_charges
             sync_elevator_charges(lead, job, db)
+            from extra_stops import sync_charges as sync_extra_stops
+            sync_extra_stops(lead,job,db)
 
     if (body.move_date is not None or body.pickup is not None or body.delivery is not None) and (job.company_id or lead.company_id):
         from routes.pricing import sync_storage_charge
@@ -1612,7 +1649,10 @@ def save_stop_types(lead_id: str, job_id: str, body: StopTypesBody, user: User =
     job = _get_job_or_404(lead_id, job_id, user, db)
     _, stops, _ = _read_job_route(db, job)
     if [stop.address for stop in body.stops] != stops: raise HTTPException(409, 'Save the job addresses first, then reload the stop types.')
-    job.stop_types = json.dumps([stop.model_dump() for stop in body.stops]); db.commit()
+    job.stop_types = json.dumps([stop.model_dump() for stop in body.stops])
+    from extra_stops import sync_charges as sync_extra_stops
+    sync_extra_stops(db.get(Lead,lead_id),job,db)
+    db.commit()
     return {'ok': True}
 
 class PrepareUpload(BaseModel):
