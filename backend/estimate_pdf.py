@@ -10,7 +10,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
 
 
 def inventory_entries(rows, questions):
@@ -89,6 +89,54 @@ def build_estimate_pdf(data, rows):
     story.append(table([[p('TOTAL ESTIMATED PRICE'), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
     if data.get('list_changed') or data.get('files_changed'):
         story.append(p('This estimate reflects the current generated report. New inventory edits or files are not included until a new report is generated.', 'NoteEstimate'))
+    story.append(p('Declared inventory', 'SectionEstimate'))
+    story.append(p('Volume and weight reflect items going. Item answers and instructions appear directly below the relevant item. A dash means the weight was not recorded.', 'NoteEstimate'))
+    rooms = defaultdict(list)
+    entries_all = list(inventory_entries(rows, data.get('item_questions') or []))
+    for entry in entries_all:
+        rooms[entry['room']].append(entry)
+    def totals(entries):
+        going = sum(e['quantity'] for e in entries if not e['excluded'])
+        not_going = sum(e['quantity'] for e in entries if e['excluded'])
+        volume = sum(e['cuft'] for e in entries)
+        weight = f"{sum(e['weight'] or 0 for e in entries):,.2f} lbs" if all(e['weight'] is not None for e in entries) else 'Not fully recorded'
+        return f"Going: {going}   |   Not going: {not_going}   |   Volume: {volume:,.2f} cu ft   |   Weight: {weight}"
+    for room, entries in rooms.items():
+        body = [[p(room + '\n' + totals(entries)), '', '', '', ''],
+                [p(label, 'NoteEstimate') for label in ['ITEM DESCRIPTION', 'GOING', 'NOT GOING', 'VOL (cu ft)', 'WT (lbs)']]]
+        commands = [('SPAN', (0, 0), (-1, 0)), ('BACKGROUND', (0, 0), (-1, 1), colors.HexColor('#edf2f5'))]
+        for entry in entries:
+            item_row = len(body)
+            body.append([p(entry['label']), p(str(0 if entry['excluded'] else entry['quantity']), 'RightEstimate'),
+                         p(str(entry['quantity'] if entry['excluded'] else 0), 'RightEstimate'),
+                         p(f"{entry['cuft']:,.2f}", 'RightEstimate'),
+                         p(f"{entry['weight']:,.2f}" if entry['weight'] is not None else '-', 'RightEstimate')])
+            for question in entry['questions']:
+                saved = question.get('saved') or {}
+                notes = [str(saved.get('question') or question['question']) + '\nAnswer: ' + (saved.get('answer') or 'Not answered')]
+                if saved.get('notice'):
+                    notes.append('Instructions: ' + saved['notice'])
+                if saved.get('pending'):
+                    notes.append('Acknowledgment required - not yet completed.')
+                elif saved.get('acknowledged'):
+                    notes.append('Customer acknowledged these instructions.')
+                for note in notes:
+                    row_index = len(body)
+                    body.append([p(note, 'NoteEstimate'), '', '', '', ''])
+                    commands += [('SPAN', (0, row_index), (-1, row_index)),
+                                 ('BACKGROUND', (0, row_index), (-1, row_index), colors.HexColor('#f8fafb'))]
+            if entry['questions']:
+                commands.append(('NOSPLIT', (0, item_row), (-1, item_row + 1)))
+        room_table = Table(body, colWidths=[272, 50, 58, 71, 71], repeatRows=2, splitInRow=1, hAlign='LEFT')
+        room_table.setStyle(TableStyle([
+            ('GRID', (0, 0), (-1, -1), .4, colors.HexColor('#bdc9d0')),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 7), ('RIGHTPADDING', (0, 0), (-1, -1), 7),
+            ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ] + commands))
+        story += [room_table, Spacer(1, 14)]
+    story.append(p('Inventory totals', 'SectionEstimate'))
+    story.append(p(totals(entries_all)))
     if data.get('extra_stops'):
         story.append(p('Additional stops', 'SectionEstimate'))
         for group in data['extra_stops']['locations']:
@@ -143,55 +191,6 @@ def build_estimate_pdf(data, rows):
             story.append(p(shuttle['question']))
             answer = shuttle.get('answer')
             story.append(p('Answer: ' + ('Yes' if answer is True else 'No - shuttle required' if answer is False else 'Not answered - shuttle charges may apply'), 'NoteEstimate'))
-    story.append(PageBreak())
-    story.append(p('Declared inventory', 'SectionEstimate'))
-    story.append(p('Volume and weight reflect items going. Item answers and instructions appear directly below the relevant item. A dash means the weight was not recorded.', 'NoteEstimate'))
-    rooms = defaultdict(list)
-    entries_all = list(inventory_entries(rows, data.get('item_questions') or []))
-    for entry in entries_all:
-        rooms[entry['room']].append(entry)
-    def totals(entries):
-        going = sum(e['quantity'] for e in entries if not e['excluded'])
-        not_going = sum(e['quantity'] for e in entries if e['excluded'])
-        volume = sum(e['cuft'] for e in entries)
-        weight = f"{sum(e['weight'] or 0 for e in entries):,.2f} lbs" if all(e['weight'] is not None for e in entries) else 'Not fully recorded'
-        return f"Going: {going}   |   Not going: {not_going}   |   Volume: {volume:,.2f} cu ft   |   Weight: {weight}"
-    for room, entries in rooms.items():
-        body = [[p(room + '\n' + totals(entries)), '', '', '', ''],
-                [p(label, 'NoteEstimate') for label in ['ITEM DESCRIPTION', 'GOING', 'NOT GOING', 'VOL (cu ft)', 'WT (lbs)']]]
-        commands = [('SPAN', (0, 0), (-1, 0)), ('BACKGROUND', (0, 0), (-1, 1), colors.HexColor('#edf2f5'))]
-        for entry in entries:
-            item_row = len(body)
-            body.append([p(entry['label']), p(str(0 if entry['excluded'] else entry['quantity']), 'RightEstimate'),
-                         p(str(entry['quantity'] if entry['excluded'] else 0), 'RightEstimate'),
-                         p(f"{entry['cuft']:,.2f}", 'RightEstimate'),
-                         p(f"{entry['weight']:,.2f}" if entry['weight'] is not None else '-', 'RightEstimate')])
-            for question in entry['questions']:
-                saved = question.get('saved') or {}
-                notes = [str(saved.get('question') or question['question']) + '\nAnswer: ' + (saved.get('answer') or 'Not answered')]
-                if saved.get('notice'):
-                    notes.append('Instructions: ' + saved['notice'])
-                if saved.get('pending'):
-                    notes.append('Acknowledgment required - not yet completed.')
-                elif saved.get('acknowledged'):
-                    notes.append('Customer acknowledged these instructions.')
-                for note in notes:
-                    row_index = len(body)
-                    body.append([p(note, 'NoteEstimate'), '', '', '', ''])
-                    commands += [('SPAN', (0, row_index), (-1, row_index)),
-                                 ('BACKGROUND', (0, row_index), (-1, row_index), colors.HexColor('#f8fafb'))]
-            if entry['questions']:
-                commands.append(('NOSPLIT', (0, item_row), (-1, item_row + 1)))
-        room_table = Table(body, colWidths=[272, 50, 58, 71, 71], repeatRows=2, splitInRow=1, hAlign='LEFT')
-        room_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), .4, colors.HexColor('#bdc9d0')),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 7), ('RIGHTPADDING', (0, 0), (-1, -1), 7),
-            ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-        ] + commands))
-        story += [room_table, Spacer(1, 14)]
-    story.append(p('Inventory totals', 'SectionEstimate'))
-    story.append(p(totals(entries_all)))
     general = [q for q in data.get('item_questions', []) if q.get('all_items')
                and not (q.get('saved') or {}).get('selected_items')]
     if general:
