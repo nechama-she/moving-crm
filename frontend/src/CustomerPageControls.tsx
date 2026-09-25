@@ -4,6 +4,16 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { API_BASE } from './apiConfig';
 import { authHeaders, useAuth } from './AuthContext';
+// Share simultaneous reads across links/meeting sections; never retain old data.
+const pendingPageReads = new Map<string, Promise<unknown>>();
+function readPage(url:string, token:string | null) {
+ const key=JSON.stringify([url,token]);
+ const existing=pendingPageReads.get(key);
+ if(existing)return existing;
+ const task=fetch(url,{headers:authHeaders(token)}).then(async response=>response.ok?response.json():null).finally(()=>pendingPageReads.delete(key));
+ pendingPageReads.set(key,task);
+ return task;
+}
 type Page={url:string;rep_url?:string;revoked:boolean;requests:{id:string;status:string;scheduled_at:string;rep_name:string;availability:string}[]};
 function ActionIcon({kind}:{kind:'copy'|'sms'|'revoke'|'restore'}){return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">{kind==='copy'?<><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></>:kind==='sms'?<path d="M4 3h16v13H9l-5 5V3Z M8 7h8M8 11h6"/>:kind==='restore'?<><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6"/><path d="m9 13 2 2 4-4"/></>:<><circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/></>}</svg>}
 export default function CustomerPageControls({leadId,section='meeting',onFilesBusyChange,onSelectionChange}:{leadId:string;section?:'links'|'files'|'meeting';onFilesBusyChange?:(busy:boolean)=>void;onSelectionChange?:(ids:string[])=>void}){
@@ -13,7 +23,7 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
  const initialized=useRef(false);
  function selectFiles(ids:string[]){setSelectedIds(ids);onSelectionChange?.(ids);}
  const base=`${API_BASE}/api/leads/${leadId}/customer-page`;
- useEffect(()=>{if(!token)return;const controller=new AbortController();async function load(){try{const r=await fetch(base+(section==='files'?'/sync-status':''),{headers:authHeaders(token),signal:controller.signal});if(!r.ok)return;const d=await r.json();if(section==='files'){const available:EditableReportFile[]=d.editable_files || d.files;setFiles(available);setReportFileIds(d.report_file_ids || []);if(!initialized.current){initialized.current=true;selectFiles((d.report_file_ids || []).filter((id:string)=>available.some(file=>file.id===id)));}}else setData(d);}catch{ /* Aborted or temporarily unavailable. */ }}void load();const refresh=()=>{if(document.visibilityState==='visible')void load();};window.addEventListener('focus',refresh);return()=>{controller.abort();window.removeEventListener('focus',refresh);};},[base,token,section]);
+ useEffect(()=>{if(!token)return;let disposed=false;async function load(){try{const d=await readPage(base+(section==='files'?'/sync-status':''),token) as Page & {editable_files?:EditableReportFile[];files:EditableReportFile[];report_file_ids?:string[]} | null;if(disposed||!d)return;if(section==='files'){const available=d.editable_files || d.files;setFiles(available);setReportFileIds(d.report_file_ids || []);if(!initialized.current){initialized.current=true;selectFiles((d.report_file_ids || []).filter(id=>available.some(file=>file.id===id)));}}else setData(d);}catch{ /* A later explicit opening can retry. */ }}void load();return()=>{disposed=true;};},[base,token,section]);
  async function openRepPage(){
    if(busy || data?.revoked)return;
    const tab=window.open('about:blank','_blank');

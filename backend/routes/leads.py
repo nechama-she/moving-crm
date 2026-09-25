@@ -1655,6 +1655,7 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
             logger.info("Matched sender_id %s for lead %s", sender_id, lead.id)
 
     result = lead.to_dict()
+    result['has_customer_page'] = db.query(PublicMoveAccess.id).filter(PublicMoveAccess.lead_id == lead.id).first() is not None
     channels = {row[0] for row in db.query(CommunicationAssociation.channel).filter(
         CommunicationAssociation.lead_id == lead.id,
         CommunicationAssociation.client_identifier == lead.facebook_user_id,
