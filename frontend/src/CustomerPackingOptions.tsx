@@ -28,9 +28,9 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       <h4>These items must be boxed</h4>
       <p className="cm-step-sub">Choose a service, or leave unchecked to pack it yourself.</p>
       <div className="cm-checklist">
-        {config.items.map(item => <section key={item.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
+        {config.items.map(item => <section key={item.id} style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:10,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
           <strong>{item.label}</strong>
-          <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px',flexShrink:0}}>
+          <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px',width:'100%'}}>
             {([false, true] as const).map(withMaterials => <label key={String(withMaterials)} style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
               <input type="checkbox" disabled={disabled} checked={selection.item_ids.includes(item.id) && materials.includes(item.id) === withMaterials} onChange={e => onChange({
                 ...selection,
