@@ -130,3 +130,20 @@ def test_each_unit_has_independent_acknowledgment_and_legacy_answers():
     legacy_key = first['id'].rsplit(':', 1)[0]
     state['report_question_answers'] = {legacy_key: {'answer_id': 'yes', 'acknowledged': True}}
     assert adjusted_inventory(company, state, rows, 12, 4, db)[1] == 0
+
+
+def test_rerun_preserves_answers_for_reordered_unchanged_items():
+    company = SimpleNamespace(customer_questions=json.dumps([rule()]))
+    db = MagicMock()
+    rows = [dict(name='Plant', amount=1, cuft=12), dict(name='Chair', amount=1, cuft=20)]
+    old = {'question_original_rows': rows}
+    question = questions(company, old, db)[0]
+    old['report_question_answers'] = {question['id']: {'answer_id': 'yes', 'acknowledged': True}}
+    fresh = {'carried_question_state': old}
+    kept, volume, _ = adjusted_inventory(company, fresh, list(reversed(rows)), 32, 0, db)
+    assert volume == 20
+    assert questions(company, fresh, db)[0]['saved']['acknowledged'] is True
+    assert 'carried_question_state' not in fresh
+    changed = {'carried_question_state': old}
+    adjusted_inventory(company, changed, [dict(name='Plant', amount=2, cuft=24)], 24, 0, db)
+    assert all(q['saved'] is None for q in questions(company, changed, db))

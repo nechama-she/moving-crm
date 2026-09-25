@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import './CustomerStorageQuestion.css';
+import './CustomerLongCarryQuestion.css';
 export type CarryLocation = { location: 'pickup' | 'delivery'; address: string; revision: string; distance_feet: number | null; unknown?: boolean; acknowledged?: boolean; discount_percent: number; question: string };
 export type CarryOption = { included_feet: number; increment_feet: number; rate_per_cuft: number; cubic_feet: number; inventory_cubic_feet: number; minimum_cubic_feet: number; locations: CarryLocation[] };
 const money = (value: number) => value.toLocaleString('en-US', { style:'currency', currency:'USD' });
 export default function CustomerLongCarryQuestion({ config, location, value, missing, onChange, shuttleCharge }: { config: CarryOption; shuttleCharge?: number; location: CarryLocation; value: number | 'unknown' | null; missing: boolean; onChange: (value: number | 'unknown' | null) => void }) {
   const [answer, setAnswer] = useState<boolean | 'unknown' | null>(value === 'unknown' ? 'unknown' : value === null ? null : value > config.included_feet);
   const [overLimit, setOverLimit] = useState(typeof value === 'number' && value > 500 && value > config.included_feet);
+  const [longRangeCount, setLongRangeCount] = useState(12);
   const ranges: { start: number; end: number }[] = [];
   for (let start = config.included_feet + 1; start <= (overLimit ? 100000 : 500);) {
     const bandEnd = config.included_feet + Math.ceil((start - config.included_feet) / config.increment_feet) * config.increment_feet;
@@ -20,6 +22,15 @@ export default function CustomerLongCarryQuestion({ config, location, value, mis
   const increments = Math.ceil(extra / config.increment_feet);
   const subtotal = Math.round(increments * config.cubic_feet * config.rate_per_cuft * 100) / 100;
   const discount = Math.round(subtotal * location.discount_percent) / 100;
+  function rangeTile(range: { start: number; end: number }) {
+    const count = Math.ceil((range.end - config.included_feet) / config.increment_feet);
+    const gross = Math.round(count * config.cubic_feet * config.rate_per_cuft * 100) / 100;
+    const reduction = Math.round(gross * location.discount_percent) / 100;
+    return <button type="button" key={range.end} className={`cm-carry-range${selected?.end === range.end ? ' is-selected' : ''}`} aria-pressed={selected?.end === range.end} onClick={() => { setOverLimit(range.start > 500); onChange(range.end); }}>
+      <strong>{label(range)}</strong><span>{money(gross - reduction)} long carry</span>
+      {reduction > 0 && <small><s>{money(gross)}</s> &middot; {location.discount_percent}% off</small>}
+    </button>;
+  }
   return <section aria-label="Long carry" style={{ border: missing ? '1px solid #d32f2f' : undefined, borderRadius:12, padding:missing ? 12 : undefined }}>
     <p>{location.address}</p>{shuttleCharge !== undefined && <p>A smaller truck is needed for delivery. Shuttle charge: <strong>{money(shuttleCharge)}</strong>.</p>}<h4>Can the {shuttleCharge !== undefined ? 'smaller moving truck' : 'moving truck'} reach and park next to your {location.location} address, within {config.included_feet} feet of the entrance?</h4>
     <p>Follow the walking route from where the truck can park to your entrance. The first {config.included_feet} feet are included at this address.</p>
@@ -37,20 +48,16 @@ export default function CustomerLongCarryQuestion({ config, location, value, mis
       <label><input type="checkbox" checked={value === 'unknown'} onChange={event => onChange(event.target.checked ? 'unknown' : null)} /> I understand that a long-carry charge will apply if the distance exceeds {config.included_feet} feet, at the rates shown above.</label>
     </div>}
     {answer === true && <div style={{ marginTop:16 }}>
-      <label htmlFor={`carry-${location.location}`}>Choose the distance range</label>
-      <select id={`carry-${location.location}`} value={overLimit ? 'over' : selected?.end ?? ''} aria-invalid={missing} style={{ display:'block', width:'100%', marginTop:8 }} onChange={event => {
-        if (event.target.value === 'over') { setOverLimit(true); onChange(null); }
-        else { setOverLimit(false); onChange(event.target.value ? Number(event.target.value) : null); }
-      }}>
-        <option value="">Select a range</option>
-        {ranges.filter(range => range.end <= 500).map(range => <option key={range.end} value={range.end}>{label(range)}</option>)}
-        <option value="over">Over {Math.max(500, config.included_feet)} feet</option>
-      </select>
-      {overLimit && <><label htmlFor={`carry-more-${location.location}`} style={{ display:'block', marginTop:12 }}>Choose the longer distance range</label>
-        <select id={`carry-more-${location.location}`} value={selected?.end ?? ''} style={{ width:'100%', marginTop:8 }} onChange={event => onChange(event.target.value ? Number(event.target.value) : null)}>
-          <option value="">Select a range</option>
-          {ranges.filter(range => range.start > 500).map(range => <option key={range.end} value={range.end}>{label(range)}</option>)}
-        </select></>}
+      <div role="group" aria-label="Choose the distance range" aria-invalid={missing}>
+        <p className="cm-carry-range-label">Choose the distance range</p>
+        <div className="cm-carry-ranges">{ranges.filter(range => range.end <= 500).map(range => rangeTile(range))}</div>
+        <button type="button" className={`cm-carry-over${overLimit ? ' is-selected' : ''}`} aria-expanded={overLimit} onClick={() => { setOverLimit(!overLimit); onChange(null); }}>Over {Math.max(500, config.included_feet)} feet <span aria-hidden="true">{overLimit ? '\u2212' : '+'}</span></button>
+        {overLimit && <div className="cm-carry-longer">
+          <p className="cm-carry-range-label">Choose the longer distance range</p>
+          <div className="cm-carry-ranges">{ranges.filter(range => range.start > 500).slice(0, Math.max(longRangeCount, ranges.filter(range => range.start > 500).findIndex(range => range.end === selected?.end) + 1)).map(range => rangeTile(range))}</div>
+          {longRangeCount < ranges.filter(range => range.start > 500).length && <button type="button" className="cm-carry-over" onClick={() => setLongRangeCount(count => count + 12)}>Show longer distances</button>}
+        </div>}
+      </div>
     </div>}
     {missing && <p className="cm-field-error" role="alert">Choose an answer, select a range if No, or acknowledge the charge if you don't know.</p>}
     <p>Each additional {config.increment_feet} feet, or part thereof, costs {money(config.rate_per_cuft)} per cu ft.</p>

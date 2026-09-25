@@ -7,19 +7,31 @@ function Tile({ file, loadPreview, onOpen }: { file: EditableReportFile; loadPre
   const [openError, setOpenError] = useState(false);
   const [failed, setFailed] = useState(false);
   const loader = useRef(loadPreview);
+  const tile = useRef<HTMLButtonElement>(null);
+  const video = file.content_type?.startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(file.name);
   useEffect(() => {
     let active = true;
-    if (file.content_type?.startsWith('image/')) loader.current(file.id).then(value => { if (active) setUrl(value); }).catch(() => { if (active) setFailed(true); });
-    return () => { active = false; };
-  }, [file.id, file.content_type]);
+    setUrl(null); setFailed(false);
+    if (!file.content_type?.startsWith('image/') && !video) return;
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return;
+      observer.disconnect();
+      loader.current(file.id).then(value => { if (active) setUrl(value); }).catch(() => { if (active) setFailed(true); });
+    });
+    if (tile.current) observer.observe(tile.current);
+    return () => { active = false; observer.disconnect(); };
+  }, [file.id, file.content_type, video]);
   const image = url && !failed;
-  return <button type="button" className="cm-gallery-preview" title={file.name} aria-label={`Open ${file.name}`} aria-busy={loading} disabled={loading} onClick={async () => {
+  return <button ref={tile} type="button" className={`cm-gallery-preview${video ? ' cm-gallery-video' : ''}`} title={file.name} aria-label={`Open ${file.name}`} aria-busy={loading} disabled={loading} onClick={async () => {
     setLoading(true); setOpenError(false);
     try { const fresh = await loadPreview(file.id); if (!fresh) throw new Error('Unavailable'); onOpen(fresh); }
     catch { setOpenError(true); }
     finally { setLoading(false); }
   }}>
-    {image ? <img src={url} alt={file.name} loading="lazy" onError={() => setFailed(true)} /> : <span className="cm-gallery-fallback">{file.content_type?.startsWith('image/') ? 'Photo' : file.content_type?.startsWith('video/') ? 'Video' : file.name.split('.').pop()?.toUpperCase() || 'File'}</span>}
+    {image ? video ? <video src={url} muted playsInline preload="metadata" aria-hidden="true" onLoadedMetadata={event => { const player = event.currentTarget; if (Number.isFinite(player.duration) && player.duration > 0) player.currentTime = Math.min(0.1, player.duration / 2); }} onError={() => setFailed(true)} /> : <img src={url} alt={file.name} loading="lazy" onError={() => setFailed(true)} /> : <span className="cm-gallery-fallback">
+      {!video && <svg width="30" height="34" viewBox="0 0 24 28" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M4 1h10l6 6v20H4zM14 1v7h6M8 14h8M8 19h8" /></svg>}
+      {file.content_type?.startsWith('image/') ? 'Photo' : video ? 'Video' : file.name.split('.').pop()?.toUpperCase() || 'File'}</span>}
+    {video && <span className="cm-gallery-play" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 4v16l13-8z" /></svg></span>}
     <span className="cm-gallery-name">{loading ? 'Opening...' : openError ? 'Could not open. Click to retry.' : file.name}</span>
   </button>;
 }

@@ -96,8 +96,12 @@ def submit_inventory(body, access, db):
     details['report_customer_packing'] = job.customer_packing
     details['report_customer_package'] = job.customer_packing_package
     remember_report(details)
+    details['carried_question_state'] = details.get('carried_question_state') or {key: details[key] for key in ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot') if key in details}
     for key in REPORT_KEYS:
-        details.pop(key, None)
+        if key != 'carried_question_state':
+            details.pop(key, None)
+    details['report_customer_packing'] = job.customer_packing
+    details['report_customer_package'] = job.customer_packing_package
     for key in CONVERSATION_KEYS:
         details[key] = ''
     details.update(last_spark_id=report_id, last_spark_status='completed', last_spark_at=int(time.time()),
@@ -109,7 +113,6 @@ def submit_inventory(body, access, db):
         saved = LeadLiveSwitch(lead_id=access.lead_id)
         db.add(saved)
     saved.details = json.dumps(details)
-    job.customer_packing = job.customer_packing_package = None
     access.published_price = access.published_cuft = access.published_at = None
     db.commit()
     return apply_spark_results_to_lead(access.lead_id, '', db, expected_report_id=report_id)

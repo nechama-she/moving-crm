@@ -389,9 +389,12 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     details['report_customer_packing'] = job.customer_packing
     details['report_customer_package'] = job.customer_packing_package
     remember_report(details)
-    job.customer_packing = job.customer_packing_package = None
+    details['carried_question_state'] = details.get('carried_question_state') or {key: details[key] for key in ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot') if key in details}
     for key in REPORT_KEYS:
-        details.pop(key, None)
+        if key != 'carried_question_state':
+            details.pop(key, None)
+    details['report_customer_packing'] = job.customer_packing
+    details['report_customer_package'] = job.customer_packing_package
     draft = details.get('inventory_draft') or {}
     details.update(report_list_body=draft.get('body'), report_list_rows=draft.get('rows', []),
                    report_list_cuft=draft.get('cuft', 0), report_list_weight=draft.get('weight', 0),

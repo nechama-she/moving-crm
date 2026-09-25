@@ -1,0 +1,11 @@
+.cm-carry-ranges{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.customer-move .cm-carry-range{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:5px;min-height:76px;padding:12px 14px;border:1px solid #e1d1cd;border-radius:10px;background:#fff;color:inherit;text-align:left;cursor:pointer}
+.customer-move .cm-carry-range strong{font-size:14px}
+.customer-move .cm-carry-range span,.customer-move .cm-carry-range small{font-size:12px;line-height:1.4}
+.customer-move .cm-carry-range:hover{background:#faf4f3;border-color:#cb9993}
+.customer-move .cm-carry-range.is-selected{border:2px solid #d3332d;padding:11px 13px;background:#fff1ef}
+.customer-move .cm-carry-over{display:flex;justify-content:space-between;width:100%;margin-top:10px;padding:11px 14px;border:1px solid #e1d1cd;border-radius:9px;background:#fff;color:inherit;text-align:left;cursor:pointer}
+.customer-move .cm-carry-over.is-selected{border-color:#d3332d;background:#fff1ef}
+.cm-carry-range-label{margin:0 0 10px;font-weight:600;font-size:14px}
+.cm-carry-longer{margin-top:16px;max-height:340px;overflow:auto;padding:3px}
+.customer-move .cm-carry-range:focus-visible,.customer-move .cm-carry-over:focus-visible{outline:2px solid #d3332d;outline-offset:3px}

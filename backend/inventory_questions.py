@@ -100,6 +100,25 @@ def questions(company, details, db):
 def adjusted_inventory(company, details, rows, cuft, weight, db):
     from copy import deepcopy
     from math import ceil
+    previous = details.pop('carried_question_state', None)
+    if previous and 'question_original_rows' not in details:
+        old_rows = previous.get('question_original_rows', previous.get('spark_inventory_snapshot', []))
+        old_questions = questions(company, previous, db)
+        fresh_questions = questions(company, {'spark_inventory_snapshot': rows}, db)
+        transferred = {}
+        for new in fresh_questions:
+            if new.get('all_items'):
+                # Selected item IDs use row positions; only reuse when unchanged.
+                if old_rows == rows and previous.get('report_question_answers', {}).get(new['id']):
+                    transferred[new['id']] = deepcopy(previous['report_question_answers'][new['id']])
+                continue
+            candidates = [old for old in old_questions if not old.get('all_items')
+                          and old['rule_id'] == new['rule_id'] and old['unit_index'] == new['unit_index']
+                          and old_rows[old['item_index']] == rows[new['item_index']]]
+            # Do not guess which identical item an answer belonged to.
+            if len(candidates) == 1 and candidates[0].get('saved'):
+                transferred[new['id']] = deepcopy(candidates[0]['saved'])
+        details['report_question_answers'] = transferred
     # Always calculate against the original report so repeated saves never subtract twice.
     details.setdefault('question_original_rows', deepcopy(rows))
     details.setdefault('question_original_cuft', cuft)
