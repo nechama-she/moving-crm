@@ -7,3 +7,5 @@
 .cm-gallery-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.cm-gallery-toolbar button{border:1px solid #d8dde6;border-radius:16px;background:#fff;padding:5px 10px;color:#0176d3;cursor:pointer;font-size:12px}.cm-gallery-select{position:absolute;top:5px;right:5px;width:23px;height:23px;accent-color:#0176d3;cursor:pointer}
 
 .crm-gallery-current,.crm-gallery-available{padding:16px;border:1px solid #d8dde6;border-radius:8px;margin:14px 0}.crm-gallery-current{background:#f4f8fc}.crm-report-gallery h4{margin:0;font-size:14px;color:#032d60}.crm-report-gallery .cm-gallery{margin-top:12px}.crm-report-gallery .cm-gallery-heading{gap:8px}
+
+.cm-gallery-lightbox video{display:block;max-width:90vw;max-height:75vh}.cm-gallery-lightbox iframe{width:85vw;height:75vh;border:0;background:white}.cm-gallery-preview[aria-busy="true"] .cm-gallery-name{opacity:1}

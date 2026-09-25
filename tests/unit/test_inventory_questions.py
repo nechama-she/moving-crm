@@ -12,6 +12,16 @@ def rule():
         answers=[dict(id='yes', label='Yes', action='exclude', notice='We cannot transport live plants.', acknowledge=True),
                  dict(id='no', label='No', action='none', notice='', acknowledge=False)])
 
+
+@pytest.mark.parametrize('raw, expected', [(721.1, 722), (764.5, 765), (721.01, 722), (721, 721), (0, 0)])
+def test_shipment_volume_rounds_up_without_compounding(raw, expected):
+    company = SimpleNamespace(customer_questions='[]')
+    state = {}
+    rows = [{'name': 'Item', 'amount': 1, 'cuft': raw, 'weight': 0}]
+    kept, volume, weight = adjusted_inventory(company, state, rows, raw, 0, MagicMock())
+    assert volume == expected
+    assert adjusted_inventory(company, state, kept, volume, weight, MagicMock())[1] == expected
+
 def test_matching_is_explicit_and_whole_word():
     r=rule()
     assert matches(r, {'name':'Large potted plant'}, {})

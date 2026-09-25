@@ -36,6 +36,6 @@ export default function ShuttleCard({ services, editing, onChange }: {
     </div>)}
     {!config.areas.length && <p>No automatic areas configured. Customers will be asked about delivery access when shuttle is enabled.</p>}
     {editing && <button type="button" className="slds-button" onClick={() => update({ areas: [...config.areas, { state: '', zip_codes: [] }] })}>+ Add state</button>}
-    <p><strong>Customer question:</strong> Can a semi-trailer truck reach and park in front of your delivery address, or within {config.access_distance_ft || '…'} feet of it?</p>
+    <p><strong>Customer question:</strong> Can a semi-trailer reach and park directly in front of your delivery address?</p>
   </div>;
 }

@@ -1130,8 +1130,17 @@ def customer_long_carry(lead, job, db, plan=None, move_type=None):
     state, zip_code = delivery_location(job.delivery_zip or '')
     destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', state, zip_code)
     saved = json.loads(job.customer_packing_package or '{}').get('long_carry', {})
-    return long_carry_quote(long_carry_card(plan.services), {'pickup': job.pickup_zip or '', 'delivery': job.delivery_zip or ''},
-                        saved, _rounded_cubic_feet(lead.volume), _service_billable_volume(plan, destination, 0))
+    card = long_carry_card(plan.services)
+    addresses = {'pickup': job.pickup_zip or '', 'delivery': job.delivery_zip or ''}
+    volume = _rounded_cubic_feet(lead.volume)
+    minimum = _service_billable_volume(plan, destination, 0)
+    option = long_carry_quote(card, addresses, saved, volume, minimum)
+    shuttle = customer_shuttle(lead, job, db, plan, move_type)
+    if option and shuttle and not shuttle['automatic'] and shuttle['answer'] is True:
+        delivery = next(row for row in option['locations'] if row['location'] == 'delivery')
+        saved = {**saved, 'delivery': {'revision': delivery['revision'], 'distance_feet': 0}}
+        option = long_carry_quote(card, addresses, saved, volume, minimum)
+    return option
 
 
 def add_long_carry_charges(lead, job, db, plan=None, move_type=None, location=None):

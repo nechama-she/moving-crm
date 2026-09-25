@@ -40,13 +40,14 @@ def preview_report_file(access, attachment_id, db, download=False, all_lead=Fals
     ).first()
     if not row:
         raise HTTPException(404, 'File not found on this move.')
-    if not download and row.content_type not in ('image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'):
-        return {'url': None}
+    inline_types = ('image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif',
+                    'video/mp4', 'video/webm', 'video/quicktime', 'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/ogg', 'application/pdf')
+    download = download or row.content_type not in inline_types
     location = urlparse(row.external_url or '')
     if location.scheme == 's3':
         url = boto3.client('s3').generate_presigned_url('get_object', Params={
             'Bucket': location.netloc, 'Key': location.path.lstrip('/'),
-            'ResponseContentType': row.content_type, 'ResponseContentDisposition': 'attachment' if download else 'inline'}, ExpiresIn=3600)
+            'ResponseContentType': 'application/octet-stream' if download else row.content_type, 'ResponseContentDisposition': 'attachment' if download else 'inline'}, ExpiresIn=3600)
         return {'url': url}
     if row.file_blob:
         return {'url': 'data:' + row.content_type + ';base64,' + base64.b64encode(row.file_blob).decode('ascii')}

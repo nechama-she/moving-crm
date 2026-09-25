@@ -99,6 +99,7 @@ def questions(company, details, db):
 
 def adjusted_inventory(company, details, rows, cuft, weight, db):
     from copy import deepcopy
+    from math import ceil
     # Always calculate against the original report so repeated saves never subtract twice.
     details.setdefault('question_original_rows', deepcopy(rows))
     details.setdefault('question_original_cuft', cuft)
@@ -136,4 +137,4 @@ def adjusted_inventory(company, details, rows, cuft, weight, db):
     volume = max(0, float(details['question_original_cuft'] or 0) - removed_volume)
     mass = max(0, float(details['question_original_weight'] or 0) - removed_mass)
     details['question_excluded_items'] = removed
-    return kept, volume, mass
+    return kept, ceil(volume), mass

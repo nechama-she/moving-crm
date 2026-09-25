@@ -32,3 +32,15 @@ def test_parameters_reprice_saved_distance():
 def test_zero_increment_rejected():
     with pytest.raises(ValidationError):
         LongCarryCard(included_feet=75,increment_feet=0,rate_per_cuft='.20')
+
+
+def test_unknown_requires_acknowledgment_and_preserves_pending_distance():
+    card, saved, _ = quote(150)
+    saved['pickup'].update(distance_feet=None, unknown=True, acknowledged=True)
+    row = long_carry_quote(card, {}, saved, 300, 0)['locations'][0]
+    assert row['unknown'] and row['acknowledged']
+    assert row['distance_feet'] is None
+    assert row['paid_increments'] == 0
+    assert not long_carry_quote(card, {'pickup': 'New address'}, saved, 300, 0)['locations'][0]['unknown']
+    saved['pickup']['acknowledged'] = False
+    assert not long_carry_quote(card, {}, saved, 300, 0)['locations'][0]['unknown']

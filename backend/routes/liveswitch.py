@@ -527,7 +527,7 @@ def fetch_and_extract_spark_report(share_url: str, processing=None) -> tuple[flo
                                 "amount": round(qty, 2) if qty > 0 else 0.0,
                             })
                 if total_vol > 0:
-                    cuft = round(total_vol, 1)
+                    cuft = total_vol
                     weight = round(total_wt, 1)
 
     # Method 2: regex fallback on markdown

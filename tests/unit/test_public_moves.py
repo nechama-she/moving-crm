@@ -423,20 +423,32 @@ def test_shuttle_autosave_preserves_other_charges_and_rejects_stale_answer(porta
     assert job.price == Decimal('1429')
     assert db.query(models.LeadJobCharge).count() == 2
     assert json.loads(job.customer_packing_package)['mode'] == 'full'
+    # Changing semi access clears the previous delivery carry fee, not pickup.
+    plan.services.append(SimpleNamespace(comments='__long_carry_pricing__:' + json.dumps({
+        'enabled': True, 'included_feet': 75, 'increment_feet': 75, 'rate_per_cuft': '.20'})))
+    carry = packing_pricing.customer_long_carry(lead, job, db)
+    selection = json.loads(job.customer_packing_package)
+    selection['long_carry'] = {row['location']: {'revision': row['revision'], 'distance_feet': 150} for row in carry['locations']}
+    job.customer_packing_package = json.dumps(selection)
+    packing_pricing.sync_long_carry_charges(lead, job, db)
+    assert job.price == Decimal('1438.60')
     save(True)
-    assert job.price == access.published_price == Decimal('1000')
+    assert job.price == access.published_price == Decimal('1004.80')
+    carry = packing_pricing.customer_long_carry(lead, job, db)
+    assert carry['locations'][1]['paid_increments'] == 0
+    assert carry['locations'][0]['paid_increments'] == 1
     assert db.get(models.LeadJobCharge,'transport').total_cost == 1000
     job.delivery_zip = '10001'
     with pytest.raises(HTTPException) as error:
         save(False)
     assert error.value.status_code == 409
-    assert job.price == 1000
+    assert job.price == Decimal('1004.80')
     plan.services[0].comments = '__delivery_shuttle__:' + json.dumps({
         'enabled':True,'rate':'2','access_distance_ft':300,'minimum_cubic_feet':286,'areas':[{'state':'NY'}]})
     packing_pricing.sync_customer_shuttle_charge(lead,job,db)
-    assert job.price == access.published_price == Decimal('1572')
+    assert job.price == access.published_price == Decimal('1576.80')
     db.commit()
-    assert db.query(models.LeadJobCharge).count() == 2
+    assert db.query(models.LeadJobCharge).count() == 3
 
 
 def test_packing_save_repeat_remove_and_reject_unknown(portal, packing_pricing, monkeypatch):
@@ -1427,7 +1439,7 @@ def test_gallery_preview_is_scoped_and_hides_deleted_files(portal, monkeypatch):
     monkeypatch.setattr(boto3, 'client', lambda service: client)
     db.add(models.LeadJob(id='gallery-other-job', lead_id=lead.id, job_order=2))
     db.flush()
-    for item_id, job, mime in [('photo', access.job_id, 'image/jpeg'), ('other', 'gallery-other-job', 'image/jpeg'), ('document', access.job_id, 'application/pdf')]:
+    for item_id, job, mime in [('photo', access.job_id, 'image/jpeg'), ('other', 'gallery-other-job', 'image/jpeg'), ('document', access.job_id, 'application/pdf'), ('video', access.job_id, 'video/mp4'), ('html', access.job_id, 'text/html')]:
         db.add(models.LeadAttachment(id=item_id, lead_id=lead.id, job_id=job,
             file_name=item_id, file_size=5, file_blob=b'', content_type=mime, external_url='s3://bucket/photos/image.jpg'))
     db.commit()
@@ -1435,7 +1447,11 @@ def test_gallery_preview_is_scoped_and_hides_deleted_files(portal, monkeypatch):
     client.generate_presigned_url.assert_called_once_with('get_object', Params={
         'Bucket': 'bucket', 'Key': 'photos/image.jpg', 'ResponseContentType': 'image/jpeg',
         'ResponseContentDisposition': 'inline'}, ExpiresIn=3600)
-    assert mod.customer_file_preview('document', access, db) == {'url': None}
+    for item_id, mime in [('document', 'application/pdf'), ('video', 'video/mp4'), ('html', 'application/octet-stream')]:
+        assert mod.customer_file_preview(item_id, access, db)['url'] == 'https://signed.example/photo'
+        params = client.generate_presigned_url.call_args.kwargs['Params']
+        assert params['ResponseContentType'] == mime
+        assert params['ResponseContentDisposition'] == ('attachment' if item_id == 'html' else 'inline')
     with pytest.raises(HTTPException) as exc:
         mod.customer_file_preview('other', access, db)
     assert exc.value.status_code == 404

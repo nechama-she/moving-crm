@@ -75,7 +75,7 @@ def shuttle_option(card, address, state, zip_code, volume, move_minimum, stored)
     if not card or not card.enabled:
         return None
     # A different address or access distance requires a fresh customer answer.
-    revision = hashlib.sha256(json.dumps([address.strip().lower(), card.access_distance_ft]).encode()).hexdigest()
+    revision = hashlib.sha256(json.dumps([address.strip().lower(), card.access_distance_ft, 'direct-front-access']).encode()).hexdigest()
     answer = stored.get('answer') if stored.get('revision') == revision else None
     automatic = area_matches(card.areas, state, zip_code)
     minimum = move_minimum if card.minimum_cubic_feet is None else card.minimum_cubic_feet
@@ -84,4 +84,4 @@ def shuttle_option(card, address, state, zip_code, volume, move_minimum, stored)
             'required': automatic or answer is False, 'rate': float(card.rate),
             'inventory_cubic_feet': volume, 'minimum_cubic_feet': minimum, 'cubic_feet': billable,
             'total': float((card.rate * billable).quantize(Decimal('0.01'))),
-            'question': f'Can a semi-trailer truck reach and park in front of your delivery address, or within {card.access_distance_ft:,} feet of it?'}
+            'question': 'Can a semi-trailer reach and park directly in front of your delivery address?'}

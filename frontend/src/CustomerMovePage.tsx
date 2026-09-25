@@ -176,7 +176,7 @@ export default function CustomerMovePage() {
   const [stopsMissing,setStopsMissing]=useState(false);
   const [elevatorAnswers, setElevatorAnswers] = useState<Record<string, boolean | null>>({});
   const [elevatorMissing, setElevatorMissing] = useState(false);
-  const [carryAnswers, setCarryAnswers] = useState<Record<string, number | null>>({});
+  const [carryAnswers, setCarryAnswers] = useState<Record<string, number | 'unknown' | null>>({});
   const [carryMissing, setCarryMissing] = useState(false);
   const [stairsAnswers, setStairsAnswers] = useState<Record<string, number | null>>({});
   const [stairsMissing, setStairsMissing] = useState(false);
@@ -210,7 +210,7 @@ export default function CustomerMovePage() {
       setHasNewUploads(true);
     } finally { setBusy(false); }
   }
-  type PricingChange = { kind: 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
+  type PricingChange = { kind: 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
   const failedPricing = useRef(new Map<string, PricingChange>());
   function savePricingChange(change: PricingChange) {
     const id = `pricing:${change.kind}:${change.location || change.item_id || ''}`;
@@ -251,21 +251,22 @@ export default function CustomerMovePage() {
   const pricingSteps: PricingStep[] = [
     ...(data?.extra_stops ? ['stops_pickup','stops_delivery'] as PricingStep[] : []),
     ...(data?.elevator ? ['elevator_pickup', 'elevator_delivery'] as PricingStep[] : []),
-    ...(data?.long_carry ? ['carry_pickup', 'carry_delivery'] as PricingStep[] : []),
+    ...(data?.long_carry ? ['carry_pickup'] as PricingStep[] : []),
+    ...(data?.shuttle && (!data.shuttle.automatic || !data.long_carry) ? ['shuttle'] as PricingStep[] : []),
+    ...(data?.long_carry && (!data.shuttle || data.shuttle.automatic || shuttleAnswer === false) ? ['carry_delivery'] as PricingStep[] : []),
     ...(data?.stairs ? ['stairs_pickup', 'stairs_delivery'] as PricingStep[] : []),
     ...(data?.storage ? ['storage'] as PricingStep[] : []),
-    ...(data?.shuttle ? ['shuttle'] as PricingStep[] : []),
     ...(data?.packing_items?.length ? ['bulky'] as PricingStep[] : []),
     ...(data?.packing_package ? ['package'] as PricingStep[] : []),
     ...(data?.item_questions?.length ? ['items'] as PricingStep[] : []),
   ];
   const nextPricing = pricingSteps[pricingSteps.indexOf(packingStep)+1];
-  const nextPricingLabels: Record<PricingStep,string> = { stops_pickup:'extra pickup stops',stops_delivery:'extra delivery stops', elevator_pickup:'pickup elevator', elevator_delivery:'delivery elevator', carry_pickup:'pickup carrying distance', carry_delivery:'delivery carrying distance', stairs_pickup:'pickup stairs', stairs_delivery:'delivery stairs', storage:'delivery date', shuttle:'delivery access', bulky:'bulky items', package:'packing services', items:'moving terms' };
+  const nextPricingLabels: Record<PricingStep,string> = { stops_pickup:'extra pickup stops',stops_delivery:'extra delivery stops', elevator_pickup:'pickup elevator', elevator_delivery:'delivery elevator', carry_pickup:'pickup truck access', carry_delivery:'delivery truck access', stairs_pickup:'pickup stairs', stairs_delivery:'delivery stairs', storage:'delivery date', shuttle:'delivery access', bulky:'bulky items', package:'packing services', items:'moving terms' };
   const currentStops=data?.extra_stops?.locations.find(row=>packingStep===`stops_${row.location}`);
   const currentElevator = data?.elevator?.locations.find(row => packingStep === `elevator_${row.location}`);
   useEffect(() => { setElevatorAnswers(Object.fromEntries((data?.elevator?.locations || []).map(row => [row.location,row.uses_elevator]))); setElevatorMissing(false); }, [data?.elevator?.locations.map(row => row.revision).join(':')]);
   const currentCarry = data?.long_carry?.locations.find(row => packingStep === `carry_${row.location}`);
-  useEffect(() => { setCarryAnswers(Object.fromEntries((data?.long_carry?.locations || []).map(row => [row.location,row.distance_feet]))); setCarryMissing(false); }, [data?.long_carry?.locations.map(row => row.revision).join(':')]);
+  useEffect(() => { setCarryAnswers(Object.fromEntries((data?.long_carry?.locations || []).map(row => [row.location,row.unknown && row.acknowledged ? 'unknown' : row.distance_feet]))); setCarryMissing(false); }, [data?.long_carry?.locations.map(row => row.revision).join(':')]);
   const currentStairs = data?.stairs?.locations.find(row => packingStep === `stairs_${row.location}`);
   useEffect(() => { setStairsAnswers(Object.fromEntries((data?.stairs?.locations || []).map(row => [row.location,row.flights]))); setStairsMissing(false); }, [data?.stairs?.locations.map(row => row.revision).join(':')]);
   function previousPricingStep() {
@@ -736,7 +737,7 @@ export default function CustomerMovePage() {
                 <div className="cm-estimate-main-info">
                   <span className="cm-estimate-eyebrow">{data.estimate?'Your moving estimate':'Your estimate'}</span>
                   <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'?'Your report is ready. Pricing is pending.':'We\'re working on it.'}</strong>
-                  <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Number(data.estimate.cuft).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+                  <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Math.ceil(Number(data.estimate.cuft)).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
                 </div>
                 {data.spark && (
                   <div className="cm-spark-card cm-spark-estimate-card">
@@ -745,7 +746,7 @@ export default function CustomerMovePage() {
                         <span className={`cm-spark-dot ${data.spark.status === 'completed' ? 'dot-complete' : data.spark.status === 'failed' ? 'dot-failed' : 'dot-pulse'}`} />
                         {data.spark.status === 'completed' ? (data.spark.source === 'manual' ? 'Inventory list ready' : 'Report ready') : data.spark.status === 'running' ? 'Analyzing media...' : data.spark.status === 'failed' ? 'Report failed' : 'Queued'}
                       </span>
-                      {data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{data.spark.cuft} cu ft</strong> : null}
+                      {data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{Math.ceil(data.spark.cuft)} cu ft</strong> : null}
                     </div>
                     {data.report_history?.find(report => report.current) && <ReportLinks report={data.report_history.find(report => report.current)!} />}
 
@@ -757,7 +758,7 @@ export default function CustomerMovePage() {
                 <div className="cm-estimate-details">
                   <div className="cm-estimate-detail-item">
                     <span>Volume</span>
-                    <strong>{Number(data.estimate.cuft).toLocaleString()} cu ft</strong>
+                    <strong>{Math.ceil(Number(data.estimate.cuft)).toLocaleString()} cu ft</strong>
                   </div>
                 </div>
               )}
@@ -792,7 +793,7 @@ export default function CustomerMovePage() {
                       setStorageDate(data.storage?.available_date || ''); setStorageMissing(false);
                       setStopsIncomplete({});setStopsMissing(false);
                       setElevatorAnswers(Object.fromEntries((data.elevator?.locations || []).map(row => [row.location,row.uses_elevator]))); setElevatorMissing(false);
-                      setCarryAnswers(Object.fromEntries((data.long_carry?.locations || []).map(row => [row.location,row.distance_feet]))); setCarryMissing(false);
+                      setCarryAnswers(Object.fromEntries((data.long_carry?.locations || []).map(row => [row.location,row.unknown && row.acknowledged ? 'unknown' : row.distance_feet]))); setCarryMissing(false);
                       setStairsAnswers(Object.fromEntries((data.stairs?.locations || []).map(row => [row.location, row.flights]))); setStairsMissing(false);
                       setPackingStep(pricingSteps[0] || 'items');
                       setPackageSelection(data.packing_package?.selection || { mode: 'none', unpacking: false, item_ids: [] });
@@ -829,26 +830,26 @@ export default function CustomerMovePage() {
                   <div className="cm-modal-header">
                     <div>
                       <span className="cm-eyebrow">{packingStep === 'items' ? 'MOVING TERMS' : 'EXTRA SERVICES'}</span>
-                      <h3 id="packing-title">{currentStops ? `Extra ${currentStops.location} stops` : currentElevator ? `Elevator at ${currentElevator.location}` : currentCarry ? `Long carry at ${currentCarry.location}` : currentStairs ? (currentStairs.location === 'pickup' ? 'Stairs at pickup' : 'Stairs at delivery') : packingStep === 'storage' ? 'Delivery availability & storage' : packingStep === 'shuttle' ? 'Delivery truck access' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : 'Packing services'}</h3>
+                      <h3 id="packing-title">{currentStops ? `Extra ${currentStops.location} stops` : currentElevator ? `Elevator at ${currentElevator.location}` : currentCarry ? `Truck access at ${currentCarry.location}` : currentStairs ? (currentStairs.location === 'pickup' ? 'Stairs at pickup' : 'Stairs at delivery') : packingStep === 'storage' ? 'Delivery availability & storage' : packingStep === 'shuttle' ? 'Delivery truck access' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : 'Packing services'}</h3>
                       <p>{currentStops ? "Add any other addresses the movers need to visit." : currentElevator ? "Tell us whether the movers will use an elevator." : currentCarry ? "Distance between the parked truck and your entrance." : currentStairs ? 'Outdoor and shared-building stairs only.' : packingStep === 'storage' ? 'Choose when you can begin receiving your shipment.' : packingStep === 'shuttle' ? 'Help us plan the right vehicle for your delivery.' : packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : 'Choose packing and optional unpacking for your move.'}</p>
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
                   <div className="cm-modal-body" ref={termsBody}>
-                    {currentStops ? <CustomerExtraStopsQuestion key={currentStops.location} group={currentStops} apiKey={data.google_maps_browser_key || ''} missing={stopsMissing} onIncomplete={value=>{setStopsIncomplete(old=>({...old,[currentStops.location]:value}));setStopsMissing(false);}} onChange={(has_stops,stops)=>savePricingChange({kind:'extra_stops',location:currentStops.location,has_stops,stops})}/> : currentElevator && data.elevator ? <CustomerElevatorQuestion config={data.elevator} location={currentElevator} value={elevatorAnswers[currentElevator.location] ?? null} missing={elevatorMissing} onChange={elevator => { setElevatorAnswers(prev => ({ ...prev, [currentElevator.location]: elevator })); setElevatorMissing(false); savePricingChange({kind:'elevator',location:currentElevator.location,revision:currentElevator.revision,elevator}); }} /> : currentCarry && data.long_carry ? <CustomerLongCarryQuestion config={data.long_carry} location={currentCarry} value={carryAnswers[currentCarry.location] ?? null} missing={carryMissing} onChange={carry_feet => { setCarryAnswers(prev => ({ ...prev, [currentCarry.location]: carry_feet })); setCarryMissing(false); if(carry_feet !== null) savePricingChange({ kind:'long_carry', location:currentCarry.location, revision:currentCarry.revision, carry_feet }); }} /> : currentStairs && data.stairs ? <CustomerStairsQuestion config={data.stairs} location={currentStairs} value={stairsAnswers[currentStairs.location] ?? null} missing={stairsMissing} onChange={flights => { setStairsAnswers(prev => ({ ...prev, [currentStairs.location]: flights })); setStairsMissing(false); if (flights !== null) savePricingChange({ kind: 'stairs', location: currentStairs.location, revision: currentStairs.revision, flights }); }} /> : packingStep === 'storage' && data.storage ? <CustomerStorageQuestion config={data.storage} value={storageDate} missing={storageMissing} onChange={date => { setStorageDate(date); setStorageMissing(false); savePricingChange({ kind: 'storage', available_date: date }); }} /> : packingStep === 'shuttle' && data.shuttle ? <fieldset style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
+                    {currentStops ? <CustomerExtraStopsQuestion key={currentStops.location} group={currentStops} apiKey={data.google_maps_browser_key || ''} missing={stopsMissing} onIncomplete={value=>{setStopsIncomplete(old=>({...old,[currentStops.location]:value}));setStopsMissing(false);}} onChange={(has_stops,stops)=>savePricingChange({kind:'extra_stops',location:currentStops.location,has_stops,stops})}/> : currentElevator && data.elevator ? <CustomerElevatorQuestion config={data.elevator} location={currentElevator} value={elevatorAnswers[currentElevator.location] ?? null} missing={elevatorMissing} onChange={elevator => { setElevatorAnswers(prev => ({ ...prev, [currentElevator.location]: elevator })); setElevatorMissing(false); savePricingChange({kind:'elevator',location:currentElevator.location,revision:currentElevator.revision,elevator}); }} /> : currentCarry && data.long_carry ? <CustomerLongCarryQuestion key={`${currentCarry.location}:${currentCarry.revision}`} config={data.long_carry} shuttleCharge={currentCarry.location === 'delivery' && data.shuttle?.required ? data.shuttle.total : undefined} location={currentCarry} value={carryAnswers[currentCarry.location] ?? null} missing={carryMissing} onChange={carry_feet => { setCarryAnswers(prev => ({ ...prev, [currentCarry.location]: carry_feet })); setCarryMissing(false); if(carry_feet !== null) savePricingChange({ kind:'long_carry', location:currentCarry.location, revision:currentCarry.revision, ...(carry_feet === 'unknown' ? {carry_unknown:true, carry_acknowledged:true} : {carry_feet}) }); }} /> : currentStairs && data.stairs ? <CustomerStairsQuestion config={data.stairs} location={currentStairs} value={stairsAnswers[currentStairs.location] ?? null} missing={stairsMissing} onChange={flights => { setStairsAnswers(prev => ({ ...prev, [currentStairs.location]: flights })); setStairsMissing(false); if (flights !== null) savePricingChange({ kind: 'stairs', location: currentStairs.location, revision: currentStairs.revision, flights }); }} /> : packingStep === 'storage' && data.storage ? <CustomerStorageQuestion config={data.storage} value={storageDate} missing={storageMissing} onChange={date => { setStorageDate(date); setStorageMissing(false); savePricingChange({ kind: 'storage', available_date: date }); }} /> : packingStep === 'shuttle' && data.shuttle ? <fieldset style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
                       <legend>Delivery shuttle</legend>
                       {data.shuttle.automatic ? <p>A smaller shuttle vehicle is required for your delivery area and is included in your estimate.</p> : <>
                         <p><strong>{data.shuttle.question}</strong></p>
-                        <p>Consider road width, turns, parking restrictions, and access to your building. If a semi-trailer cannot reach a suitable unloading spot, we will use a smaller shuttle vehicle.</p>
+                        <p>If not, a smaller truck will bring your belongings to your address. We will then ask how close it can park to your entrance.</p>
                         <div className="cm-checklist">{[true, false].map(answer => <label className="cm-check-item" key={String(answer)}>
-                          <input type="radio" name="shuttle-access" checked={shuttleAnswer === answer} onChange={() => { setShuttleAnswer(answer); setShuttleMissing(false); savePricingChange({ kind: 'shuttle', enabled: answer, revision: data.shuttle!.revision }); }} />
+                          <input type="radio" name="shuttle-access" checked={shuttleAnswer === answer} onChange={() => { setShuttleAnswer(answer); setCarryAnswers(prev => ({...prev, delivery:null})); setShuttleMissing(false); savePricingChange({ kind: 'shuttle', enabled: answer, revision: data.shuttle!.revision }); }} />
                           <span>{answer ? 'Yes, a semi-trailer can access the delivery address' : 'No, a shuttle is needed'}</span>
                         </label>)}</div>
                         {shuttleMissing && <p className="cm-field-error" role="alert">Please choose an answer.</p>}
                       </>}
-                      <p>Shuttle rate: {money(data.shuttle.rate)} / cu ft ? {data.shuttle.inventory_cubic_feet} cu ft inventory</p>
+                      <p>Shuttle rate: {money(data.shuttle.rate)} / cu ft for {data.shuttle.cubic_feet} billable cu ft</p>
                       {data.shuttle.minimum_cubic_feet > data.shuttle.inventory_cubic_feet && <p>Minimum billable: {data.shuttle.minimum_cubic_feet} cu ft</p>}
-                      <p><strong>{data.shuttle.automatic || shuttleAnswer === false ? 'Shuttle charge' : 'Shuttle charge if needed'}: {money(data.shuttle.total)}</strong>{shuttleAnswer === true && !data.shuttle.automatic && ' ? No shuttle charge added.'}</p>
+                      <p><strong>{data.shuttle.automatic || shuttleAnswer === false ? 'Shuttle charge' : 'Shuttle charge if needed'}: {money(shuttleAnswer === true && !data.shuttle.automatic ? 0 : data.shuttle.total)}</strong></p>
                     </fieldset> : packingStep === 'items' ? <CustomerItemQuestions visibleIds={visibleTermsIds} validationAttempt={termsValidationAttempt} questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={answer => {
                       const reportId = data.spark?.id;
                       answerPending.current += 1;

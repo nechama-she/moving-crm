@@ -527,6 +527,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
 
 
 def _move_details(access, db, *, refresh_report=True):
+    from math import ceil
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
     pickup, stops, delivery = _read_job_route(db, job)
     typed = json.loads(job.stop_types or '[]')
@@ -604,13 +605,13 @@ def _move_details(access, db, *, refresh_report=True):
         if access.published_at and access.published_price is not None:
             estimate = {
                 'price': str(access.published_price),
-                'cuft': str(access.published_cuft or lead.volume or 0),
+                'cuft': str(ceil(access.published_cuft or lead.volume or 0)),
                 'charges': charges_list,
             }
         elif job.price is not None and float(job.price) > 0:
             estimate = {
                 'price': str(job.price),
-                'cuft': str(lead.volume or 0),
+                'cuft': str(ceil(lead.volume or 0)),
                 'charges': charges_list,
             }
         elif lead.estimated_total:
@@ -620,7 +621,7 @@ def _move_details(access, db, *, refresh_report=True):
                 if final_total > 0:
                     estimate = {
                         'price': str(final_total),
-                        'cuft': str(lead.volume or 0),
+                        'cuft': str(ceil(lead.volume or 0)),
                         'charges': charges_list,
                     }
             except Exception:
@@ -749,6 +750,8 @@ class CustomerPackingChange(BaseModel):
     has_stops: bool | None = None
     elevator: bool | None = Field(default=None, strict=True)
     carry_feet: int | None = Field(default=None, ge=0, le=100000, strict=True)
+    carry_unknown: bool = Field(default=False, strict=True)
+    carry_acknowledged: bool = Field(default=False, strict=True)
     flights: int | None = Field(default=None, ge=0, le=1000, strict=True)
     available_date: str = Field(default='', max_length=10)
     revision: str = ''
@@ -819,14 +822,15 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     if body.change and body.change.kind == 'long_carry':
         from routes.pricing import customer_long_carry, sync_long_carry_charges
         change = body.change
-        if change.location is None or change.carry_feet is None:
+        if change.location is None or (change.carry_unknown and (not change.carry_acknowledged or change.carry_feet is not None)) or (not change.carry_unknown and change.carry_feet is None):
             raise HTTPException(400, 'Enter the carrying distance in feet for this address.')
         option = customer_long_carry(lead, job, db)
         question = next((row for row in option['locations'] if row['location'] == change.location), None) if option else None
         if not question or question['revision'] != change.revision:
             raise HTTPException(409, 'The address or long carry settings changed. Refresh and answer again.')
         selection = json.loads(job.customer_packing_package or '{}')
-        selection.setdefault('long_carry', {})[change.location] = {'revision': question['revision'], 'distance_feet': change.carry_feet}
+        selection.setdefault('long_carry', {})[change.location] = {'revision': question['revision'], 'distance_feet': change.carry_feet,
+            'unknown': change.carry_unknown, 'acknowledged': change.carry_unknown and change.carry_acknowledged}
         job.customer_packing_package = json.dumps(selection)
         sync_long_carry_charges(lead, job, db, change.location)
         db.commit()
@@ -872,9 +876,14 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         if not option or option['automatic'] or body.change.revision != option['revision']:
             raise HTTPException(409, 'Delivery access requirements changed. Refresh your estimate.')
         selection = json.loads(job.customer_packing_package or '{}')
+        previous_shuttle = selection.get('shuttle', {})
         selection['shuttle'] = {'answer': body.change.enabled, 'revision': option['revision']}
+        if previous_shuttle != selection['shuttle']:
+            selection.get('long_carry', {}).pop('delivery', None)
         job.customer_packing_package = json.dumps(selection)
         sync_customer_shuttle_charge(lead, job, db)
+        from routes.pricing import sync_long_carry_charges
+        sync_long_carry_charges(lead, job, db, 'delivery')
         db.commit()
         return _move_details(access, db, refresh_report=False)
     options = customer_packing_options(lead, job, db)
@@ -1409,6 +1418,7 @@ class StaffPagePatch(BaseModel):
 
 @router.patch('/api/leads/{lead_id}/customer-page')
 def update_page(lead_id: str, body: StaffPagePatch, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from math import ceil
     lead, access = staff_access(lead_id, user, db)
     job = db.get(LeadJob, access.job_id)
     if body.company_id is not None:
@@ -1416,7 +1426,7 @@ def update_page(lead_id: str, body: StaffPagePatch, user: User = Depends(get_cur
         if body.company_id not in _get_user_company_ids(user, db): raise HTTPException(403, 'Company not available')
         lead.company_id = body.company_id; job.company_id = body.company_id
     if body.price is not None: job.price = body.price
-    if body.cuft is not None: lead.volume = body.cuft
+    if body.cuft is not None: lead.volume = Decimal(ceil(body.cuft))
     if body.publish:
         if job.price is None or lead.volume is None or lead.volume <= 0: raise HTTPException(400, 'Enter price and cubic feet before publishing')
         access.published_price = job.price; access.published_cuft = lead.volume; access.published_at = NOW()

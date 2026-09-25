@@ -3,6 +3,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
 from io import BytesIO
+from math import ceil
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -69,7 +70,7 @@ def build_estimate_pdf(data, rows):
                         [p('PICKUP\n' + data.get('pickup', '')), p('DELIVERY\n' + data.get('delivery', ''))]], [261, 261]))
     for stop in data.get('stops', []):
         story.append(p(f"Additional stop ({stop.get('type') or 'unspecified'}): {stop.get('address', '')}"))
-    story += [p('Price breakdown', 'SectionEstimate'), p(f"Estimated shipment volume: {float(estimate.get('cuft') or 0):g} cu ft")]
+    story += [p('Price breakdown', 'SectionEstimate'), p(f"Estimated shipment volume: {ceil(float(estimate.get('cuft') or 0))} cu ft")]
     package = data.get('packing_package') or {}
     minimum = package.get('minimum_cubic_feet')
     if minimum and float(minimum) > float(estimate.get('cuft') or 0):
@@ -113,6 +114,8 @@ def build_estimate_pdf(data, rows):
         story.append(p(f"First {carry['included_feet']} feet included at each address. Each additional {carry['increment_feet']} feet or part thereof costs ${carry['rate_per_cuft']:.2f} per cu ft. Distance follows the walking route between the parked truck and the entrance.", 'NoteEstimate'))
         for row in carry['locations']:
             answer = f"{row['distance_feet']} feet; charge {money(row['total'])}" if row['distance_feet'] is not None else 'Not answered - long carry charges may apply'
+            if row.get('unknown') and row.get('acknowledged'):
+                answer = 'Truck access unknown. Customer acknowledged long carry charges if the included distance is exceeded. Final charge pending distance confirmation.'
             story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
     if data.get('stairs'):
         stairs = data['stairs']
