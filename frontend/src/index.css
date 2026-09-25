@@ -55,6 +55,40 @@ input, select, textarea, button {
   max-width: 100%;
 }
 
+/* Default fields across the app; component styles can override these defaults.
+   Keep native toggles, uploads, sliders, and action inputs out of this rule. */
+:where(input:not([type]), input[type="text"], input[type="number"],
+  input[type="email"], input[type="password"], input[type="search"],
+  input[type="tel"], input[type="url"], input[type="date"],
+  input[type="datetime-local"], input[type="time"], input[type="month"],
+  input[type="week"], select, textarea) {
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #dddbda);
+  border-radius: var(--radius, 4px);
+  background: var(--card-bg, #fff);
+  color: inherit;
+  font: inherit;
+  line-height: 1.4;
+}
+
+:where(textarea) { resize: vertical; }
+
+:where(input, textarea)::placeholder { color: var(--text-muted, #706e6b); opacity: 1; }
+
+:where(input:not([type="hidden"]), select, textarea):focus-visible {
+  outline: 2px solid var(--cm-primary, var(--brand, #0176d3));
+  outline-offset: 2px;
+}
+
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):disabled,
+  select:disabled, textarea:disabled) {
+  background: var(--page-bg, #f3f2f2);
+  color: var(--text-muted, #706e6b);
+  cursor: not-allowed;
+}
+
 .crm-main,
 .crm-main > * {
   min-width: 0;
