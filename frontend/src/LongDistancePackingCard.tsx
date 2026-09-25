@@ -21,6 +21,10 @@ export default function LongDistancePackingCard({ services, editing, onChange }:
     {editing && catalogTarget !== null && <BulkyCatalogPicker
       initialName={config.items.find(item => item.id === catalogTarget)?.name || ''}
       onClose={() => setCatalogTarget(null)}
+      onSelectMany={catalogTarget === 'new' ? items => {
+        update({items:[...config.items,...items.filter(item => !config.items.some(row => row.name.trim().toLowerCase() === item.name.trim().toLowerCase())).map(item => ({id:crypto.randomUUID(),name:item.name,labor_price:'',material_price:''}))]});
+        setCatalogTarget(null);
+      } : undefined}
       onSelect={item => {
         update({ items: catalogTarget === 'new' ? [...config.items, { id: crypto.randomUUID(), name: item.name, labor_price: '', material_price: '' }] : config.items.map(row => row.id === catalogTarget ? { ...row, name: item.name } : row) });
         setCatalogTarget(null);

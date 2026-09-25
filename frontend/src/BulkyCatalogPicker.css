@@ -8,3 +8,10 @@
 .bulky-catalog-results>button{display:flex;justify-content:space-between;gap:16px;width:100%;padding:12px;text-align:left;border:0;border-bottom:1px solid #dddbda;background:white;cursor:pointer;font:inherit}
 .bulky-catalog-results>button:hover,.bulky-catalog-results>button:focus-visible{background:#eef4ff}
 .bulky-catalog-results small{white-space:nowrap;color:#536579}
+
+.bulky-catalog-dialog .bulky-catalog-option { display:flex; align-items:center; gap:12px; margin:0; padding:12px; border-bottom:1px solid #dddbda; cursor:pointer; }
+.bulky-catalog-option:hover { background:#eef4ff; }
+.bulky-catalog-dialog .bulky-catalog-option input { width:16px; height:16px; padding:0; margin:0; flex-shrink:0; }
+.bulky-catalog-option span { flex:1; }
+.bulky-catalog-footer { display:flex; align-items:center; justify-content:flex-end; gap:12px; padding-top:16px; border-top:1px solid #dddbda; margin-top:12px; flex-wrap:wrap; }
+.bulky-catalog-footer > span { margin-right:auto; }
