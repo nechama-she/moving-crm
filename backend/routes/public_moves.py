@@ -671,6 +671,7 @@ def _move_details(access, db, *, refresh_report=True):
             'estimate': estimate,
             'spark': spark_info,
             'report_history': report_history(conv_details),
+            'media_readiness_check': conv_details.get('media_readiness_check'),
             'editable_files': file_list(files),
             'inventory_draft': conv_details.get('inventory_draft'),
             'list_changed': conv_details.get('inventory_draft', {}).get('body') != conv_details.get('report_list_body'),

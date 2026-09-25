@@ -38,6 +38,7 @@ type Details = {
   list_changed?: boolean;
   inventory_draft?: { body: { rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number }[] }[] }; rooms: { name: string; items: { name: string; amount: number; cuft: number }[] }[]; rows: unknown[]; cuft: number };
   report_history?: ReportRun[];
+  media_readiness_check?: {status: string; conversation_id: string; checked_at?: string; http_status?: number; response?: unknown; error?: string; expected_files?: {id: string; name: string}[]};
   new_file_count?: number;
   editable_files?: EditableReportFile[];
   files_changed?: boolean;
@@ -647,6 +648,11 @@ export default function CustomerMovePage() {
                   ))}
                 </div>
                 <ReportFileGallery newFileIds={(data.editable_files || data.files).filter(file => !(data.report_history?.find(report => report.current)?.files || []).some(previous => previous.id === file.id)).map(file => file.id)} files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={busy || reportState === 'running'} />
+                {data.media_readiness_check && <details className="cm-media-diagnostic">
+                  <summary>LiveSwitch media check · {data.media_readiness_check.status}{data.media_readiness_check.http_status !== undefined ? ` · HTTP ${data.media_readiness_check.http_status}` : ''}</summary>
+                  <p>One check, one minute after all report files upload to LiveSwitch. This result does not confirm all media is ready. Media links are hidden.</p>
+                  <pre style={{whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 320, overflow: 'auto'}}>{JSON.stringify(data.media_readiness_check, null, 2)}</pre>
+                </details>}
                 {data.walkthrough && <div className="cm-meeting-summary">
                   <div><strong>Virtual estimate</strong><span>{meetingTime(data.walkthrough)}</span><small>{({requested:'Requested',scheduled:'Confirmed',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status] || data.walkthrough.status}</small></div>
                   <div className="cm-walkthrough-actions">

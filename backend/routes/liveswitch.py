@@ -397,6 +397,7 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
                    report_list_cuft=draft.get('cuft', 0), report_list_weight=draft.get('weight', 0),
                    manual_rooms=draft.get('rooms', []), report_source='combined' if draft.get('rows') else 'liveswitch')
     details.update(conversation)
+    details.pop('media_readiness_check', None)
     details.update(last_spark_id='pending-' + str(uuid4()), last_spark_status='queued',
                    last_spark_at=int(time.time()), spark_pricing_ready=False,
                    report_conversation=conversation, pending_spark_payload=payload,
@@ -444,6 +445,15 @@ def start_ready_report(lead_id: str, db: Session):
     if rows:
         import math
         import boto3
+        if details.get('media_readiness_check', {}).get('conversation_id') != details['id']:
+            delay = 60 - (datetime.utcnow() - max(row.synced_at for row in rows)).total_seconds()
+            boto3.client('sqs').send_message(
+                QueueUrl=os.environ['PUBLIC_MOVE_SYNC_QUEUE_URL'],
+                DelaySeconds=max(0, min(60, math.ceil(delay))),
+                MessageBody=json.dumps({'check_media': details['id'], 'lead_id': lead_id}),
+            )
+            details['media_readiness_check'] = {'conversation_id': details['id'], 'status': 'scheduled',
+                'expected_files': details.get('report_files', [])}
         remaining = 300 - (datetime.utcnow() - max(row.synced_at for row in rows)).total_seconds()
         if remaining > 0:
             if details.get('spark_start_queued_for') != details.get('last_spark_id'):

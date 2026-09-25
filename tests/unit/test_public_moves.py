@@ -1062,6 +1062,39 @@ def test_rep_http_flow_injects_request_and_reuses_move_page(rep_portal):
         assert response.json()['name'] == lead.full_name
 
 
+@pytest.mark.parametrize('status', [200, 403])
+def test_media_readiness_check_is_once_and_redacts_links(portal, monkeypatch, status):
+    import media_readiness_check as diagnostic
+    mod, db, lead, access = portal
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+        'id': 'test-conversation', 'media_readiness_check': {
+            'conversation_id': 'test-conversation', 'status': 'scheduled'}})))
+    db.commit()
+    remote = ModuleType('routes.liveswitch')
+    remote._access_token = lambda: 'test-token'
+    remote.AUDIENCE = 'https://example.invalid/'
+    monkeypatch.setitem(sys.modules, 'routes.liveswitch', remote)
+    response = MagicMock(status_code=status)
+    response.json.return_value = [{'id': 'video', 'recordingStatus': 'Processing',
+        'publicUrl': 'https://example.invalid/private-video'}] if status == 200 else {'message': 'Forbidden'}
+    request = MagicMock(return_value=response)
+    monkeypatch.setattr(diagnostic.httpx, 'get', request)
+    realtime = ModuleType('realtime')
+    realtime.publish_customer_update = MagicMock()
+    monkeypatch.setitem(sys.modules, 'realtime', realtime)
+    message = {'lead_id': lead.id, 'check_media': 'test-conversation'}
+    diagnostic.check_media(message, db)
+    diagnostic.check_media(message, db)
+    request.assert_called_once()
+    result = json.loads(db.get(models.LeadLiveSwitch, lead.id).details)['media_readiness_check']
+    assert result['http_status'] == status
+    assert result['status'] == 'complete'
+    assert 'private-video' not in json.dumps(result)
+    if status == 200:
+        assert result['response'][0]['recordingStatus'] == 'Processing'
+    realtime.publish_customer_update.assert_called_once_with(lead.id)
+
+
 def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_api, monkeypatch):
     from spark_history import activate_report
     mod, db, lead, access = portal
@@ -1106,8 +1139,11 @@ def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_a
     api['start_ready_report'](lead.id, db)
     api['_api_post'].assert_not_called()
     assert queue.send_message.call_args.kwargs['DelaySeconds'] == 300
+    diagnostic = queue.send_message.call_args_list[0].kwargs
+    assert diagnostic['DelaySeconds'] == 60
+    assert json.loads(diagnostic['MessageBody']) == {'check_media': 'conversation-new', 'lead_id': lead.id}
     api['start_ready_report'](lead.id, db)
-    assert queue.send_message.call_count == 1
+    assert queue.send_message.call_count == 2
     rows[0].synced_at = datetime.utcnow() - timedelta(seconds=360)
     rows[1].synced_at = datetime.utcnow() - timedelta(seconds=299)
     db.commit()
