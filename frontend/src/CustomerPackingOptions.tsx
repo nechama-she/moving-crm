@@ -26,18 +26,20 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
     </div>
     {selection.mode === 'none' && config.items.length > 0 && <section className="cm-packing-items">
       <h4>These items must be boxed</h4>
-      <p className="cm-step-sub">These inventory items need boxes before loading; blankets are not enough. Select items for us to pack, or box them yourself.</p>
+      <p className="cm-step-sub">Choose a service, or leave unchecked to pack it yourself.</p>
       <div className="cm-checklist">
-        {config.items.map(item => <section key={item.id} style={{border:'1px solid #e5d8d5',borderRadius:10,padding:14}}>
+        {config.items.map(item => <section key={item.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
           <strong>{item.label}</strong>
-          <label className="cm-packing-choice" style={{marginTop:10}}>
-            <input type="checkbox" disabled={disabled} checked={selection.item_ids.includes(item.id)} onChange={e => onChange({ ...selection, item_ids: e.target.checked ? [...selection.item_ids,item.id] : selection.item_ids.filter(id => id !== item.id), material_item_ids: e.target.checked ? materials : materials.filter(id => id !== item.id) })} />
-            <span className="cm-packing-copy"><strong>Packing labor</strong><small>We pack this item. You can supply the box and materials.</small></span><strong>{money(item.labor_price ?? item.price)}</strong>
-          </label>
-          <label className="cm-packing-choice">
-            <input type="checkbox" disabled={disabled} checked={materials.includes(item.id)} onChange={e => onChange({ ...selection, item_ids: e.target.checked ? [...new Set([...selection.item_ids,item.id])] : selection.item_ids, material_item_ids: e.target.checked ? [...new Set([...materials,item.id])] : materials.filter(id => id !== item.id) })} />
-            <span className="cm-packing-copy"><strong>Box &amp; materials</strong><small>Selecting materials also selects packing labor.</small></span><strong>{money(item.material_price || 0)}</strong>
-          </label>
+          <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px',flexShrink:0}}>
+            {([false, true] as const).map(withMaterials => <label key={String(withMaterials)} style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
+              <input type="checkbox" disabled={disabled} checked={selection.item_ids.includes(item.id) && materials.includes(item.id) === withMaterials} onChange={e => onChange({
+                ...selection,
+                item_ids: e.target.checked ? [...new Set([...selection.item_ids,item.id])] : selection.item_ids.filter(id => id !== item.id),
+                material_item_ids: e.target.checked && withMaterials ? [...new Set([...materials,item.id])] : materials.filter(id => id !== item.id),
+              })} />
+              <span>{withMaterials ? 'Packing and material' : 'Packing only'} <strong>{money((item.labor_price ?? item.price) + (withMaterials ? item.material_price || 0 : 0))}</strong></span>
+            </label>)}
+          </div>
         </section>)}
       </div>
     </section>}
