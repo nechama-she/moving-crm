@@ -1229,6 +1229,20 @@ def staff_access(lead_id, user, db):
     return lead, access
 
 
+@router.post('/api/leads/{lead_id}/customer-page/rep-session')
+def open_rep_session(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _, access = staff_access(lead_id, user, db)
+    if access.revoked or access.expires_at <= NOW():
+        raise HTTPException(403, 'This move link is revoked or expired.')
+    token = secrets.token_urlsafe(32)
+    expires_at = min(access.expires_at, NOW() + timedelta(hours=8))
+    db.add(PublicMoveSession(token_hash=digest(token), access_id=access.id,
+                            expires_at=expires_at, contact_hash=rep_contacts(access, db)[1]))
+    db.commit()
+    return {'url': public_url(access, rep=True), 'access_id': access.id,
+            'session': token, 'expires_at': expires_at.isoformat() + 'Z'}
+
+
 @router.get('/api/leads/{lead_id}/customer-page')
 def staff_page(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lead, access = staff_access(lead_id, user, db)

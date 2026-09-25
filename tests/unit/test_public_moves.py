@@ -2179,3 +2179,43 @@ def test_box_split_prices_keep_legacy_totals():
     assert new.price==80
     with pytest.raises(ValidationError):
         RequiredBoxItem(id='tv',name='TV',labor_price=-1,material_price=50)
+
+
+def test_crm_rep_session_is_scoped_and_not_in_copied_url(portal,monkeypatch):
+    mod,db,lead,access=portal
+    monkeypatch.setenv('PUBLIC_MOVE_ORIGIN','https://crm.example.com')
+    monkeypatch.setattr(mod,'staff_access',lambda *args:(lead,access))
+    result=mod.open_rep_session(lead.id,SimpleNamespace(role='admin'),db)
+    session=db.get(models.PublicMoveSession,digest(result['session']))
+    assert session.access_id==access.id
+    assert session.contact_hash==mod.rep_contacts(access,db)[1]
+    assert session.expires_at<=access.expires_at
+    assert result['session'] not in result['url']
+    assert 'audience=rep' in result['url']
+    access.revoked=True
+    with pytest.raises(HTTPException) as exc:mod.open_rep_session(lead.id,SimpleNamespace(role='admin'),db)
+    assert exc.value.status_code==403
+    access.revoked=False
+    access.expires_at=datetime.utcnow()-timedelta(seconds=1)
+    with pytest.raises(HTTPException):mod.open_rep_session(lead.id,SimpleNamespace(role='admin'),db)
+
+
+def test_crm_rep_session_requires_lead_permission(portal,monkeypatch):
+    mod,db,lead,access=portal
+    def denied(*args):raise HTTPException(403,'Only the assigned rep can manage this move')
+    monkeypatch.setattr(mod,'staff_access',denied)
+    before=db.query(models.PublicMoveSession).count()
+    with pytest.raises(HTTPException):mod.open_rep_session(lead.id,SimpleNamespace(role='sales_rep'),db)
+    assert db.query(models.PublicMoveSession).count()==before
+
+
+def test_crm_rep_session_endpoint_requires_login(portal):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    mod,db,lead,access=portal
+    app=FastAPI();app.include_router(mod.router)
+    app.dependency_overrides[mod.get_db]=lambda:db
+    def unauthenticated():raise HTTPException(401,'Not authenticated')
+    app.dependency_overrides[mod.get_current_user]=unauthenticated
+    with TestClient(app) as client:
+        assert client.post(f'/api/leads/{lead.id}/customer-page/rep-session').status_code==401
