@@ -192,3 +192,11 @@
 .customer-move .cm-question-tabs button[aria-current="step"]{background:var(--cm-primary,#d3332d);border-color:var(--cm-primary,#d3332d);color:#fff}
 .customer-move .cm-question-tabs button:focus-visible{outline:2px solid var(--cm-primary,#d3332d);outline-offset:2px}
 @media(max-width:420px){.cm-question-tabs{margin-left:16px;margin-right:16px}}
+
+/* Keep question navigation and actions stationary as content changes. */
+.cm-modal-card{height:min(820px,calc(100dvh - 32px));max-height:calc(100dvh - 32px)}
+.cm-modal-card .cm-modal-header{flex:0 0 132px;box-sizing:border-box;overflow-y:auto}
+.cm-modal-card .cm-question-tabs{height:112px;min-height:112px;max-height:112px;box-sizing:border-box;align-content:flex-start;margin-top:12px}
+.cm-modal-card .cm-modal-body{flex:1 1 0;min-height:0;max-height:none;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.cm-modal-card .cm-modal-footer,.cm-modal-card .cm-answer-autosave-note{flex-shrink:0}
+@media(max-height:650px){.cm-modal-card .cm-modal-header{flex-basis:104px;padding-top:14px;padding-bottom:10px}.cm-modal-card .cm-question-tabs{height:76px;min-height:76px;max-height:76px;margin-top:6px;margin-bottom:6px}.cm-modal-card .cm-modal-footer{padding-top:10px;padding-bottom:10px}}
