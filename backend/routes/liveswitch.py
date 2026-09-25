@@ -440,11 +440,11 @@ def start_ready_report(lead_id: str, db: Session):
         saved.details = json.dumps(details)
         db.commit()
         return
-    # LiveSwitch needs time to ingest the last uploaded file before analysis.
+    # Allow five minutes to ingest the last uploaded file before analysis.
     if rows:
         import math
         import boto3
-        remaining = 60 - (datetime.utcnow() - max(row.synced_at for row in rows)).total_seconds()
+        remaining = 300 - (datetime.utcnow() - max(row.synced_at for row in rows)).total_seconds()
         if remaining > 0:
             if details.get('spark_start_queued_for') != details.get('last_spark_id'):
                 boto3.client('sqs').send_message(

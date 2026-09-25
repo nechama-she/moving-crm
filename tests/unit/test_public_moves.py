@@ -1105,15 +1105,15 @@ def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_a
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: queue)
     api['start_ready_report'](lead.id, db)
     api['_api_post'].assert_not_called()
-    assert queue.send_message.call_args.kwargs['DelaySeconds'] == 60
+    assert queue.send_message.call_args.kwargs['DelaySeconds'] == 300
     api['start_ready_report'](lead.id, db)
     assert queue.send_message.call_count == 1
-    rows[0].synced_at = datetime.utcnow() - timedelta(seconds=120)
-    rows[1].synced_at = datetime.utcnow() - timedelta(seconds=59)
+    rows[0].synced_at = datetime.utcnow() - timedelta(seconds=360)
+    rows[1].synced_at = datetime.utcnow() - timedelta(seconds=299)
     db.commit()
     api['start_ready_report'](lead.id, db)
     api['_api_post'].assert_not_called()
-    rows[1].synced_at = datetime.utcnow() - timedelta(seconds=61)
+    rows[1].synced_at = datetime.utcnow() - timedelta(seconds=301)
     db.commit()
     api['start_ready_report'](lead.id, db)
     api['_api_post'].assert_called_once_with('conversations/conversation-new/sparks', {'sparkTemplateId': 'template', 'shareWith': ['anyone']})
