@@ -20,8 +20,9 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   const [customOpen, setCustomOpen] = useState(false);
   const [customName, setCustomName] = useState('');
   const [customDimensions, setCustomDimensions] = useState({ width: '', height: '', depth: '' });
+  const [manualCuft, setManualCuft] = useState<string | null>(null);
   const validDimensions = Object.values(customDimensions).every(value => dimensionFeet(value) !== null);
-  const customCuft = validDimensions ? Number((dimensionFeet(customDimensions.width)! * dimensionFeet(customDimensions.height)! * dimensionFeet(customDimensions.depth)!).toFixed(4)) : 0;
+  const customCuft = manualCuft !== null ? Number(manualCuft) : validDimensions ? Number((dimensionFeet(customDimensions.width)! * dimensionFeet(customDimensions.height)! * dimensionFeet(customDimensions.depth)!).toFixed(4)) : 0;
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(60);
   const [busy, setBusy] = useState(false);
@@ -137,7 +138,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
         <button type="button" className="slds-button" style={{ marginTop: 12 }} onClick={() => setCustomOpen(!customOpen)}>+ Add custom item</button>
         {customOpen && <section className="mi-custom-item">
           <h3>Add an item not in the catalog</h3>
-          <p className="mi-dimension-help">Width &times; height &times; depth = cubic feet. Enter 2', 24&quot;, or 2' 6&quot;. Plain numbers mean feet.</p>
+          <p className="mi-dimension-help">Enter cubic feet directly, or calculate it from width &times; height &times; depth. For dimensions, enter 2', 24&quot;, or 2' 6&quot;. Plain numbers mean feet.</p>
           <div className="mi-custom-entry-row">
           <svg viewBox="0 0 260 150" width="120" height="80" role="img" aria-label="Box showing width, height and depth" style={{ maxWidth: '100%', color: 'var(--cm-primary)' }}>
             <g fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M55 50h100v70H55z M55 50l40-28h100v70l-40 28 M155 50l40-28"/><path d="M55 132h100 M40 50v70 M166 43l35-25"/></g>
@@ -145,13 +146,13 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
           </svg>
           <label className="mi-custom-name">Item name<input maxLength={200} value={customName} onChange={e => setCustomName(e.target.value)} /></label>
           <div className="mi-custom-dimensions">
-            {(['width', 'height', 'depth'] as const).map(dimension => <label key={dimension}>{dimension[0].toUpperCase() + dimension.slice(1)}<input type="text" placeholder={`2' 6"`} aria-invalid={!!customDimensions[dimension] && dimensionFeet(customDimensions[dimension]) === null} value={customDimensions[dimension]} disabled={busy} onChange={e => setCustomDimensions(current => ({ ...current, [dimension]: e.target.value }))} /></label>)}
+            {(['width', 'height', 'depth'] as const).map(dimension => <label key={dimension}>{dimension[0].toUpperCase() + dimension.slice(1)}<input type="text" placeholder={`2' 6"`} aria-invalid={!!customDimensions[dimension] && dimensionFeet(customDimensions[dimension]) === null} value={customDimensions[dimension]} disabled={busy} onChange={e => { setManualCuft(null); setCustomDimensions(current => ({ ...current, [dimension]: e.target.value })); }} /></label>)}
           </div>
-          <p className="mi-custom-volume" aria-live="polite"><strong>Volume: {validDimensions && Number.isFinite(customCuft) ? `${customCuft.toLocaleString(undefined, { maximumFractionDigits: 4 })} cu ft` : '\u2014'}</strong></p>
+          <label className="mi-custom-volume">Volume (cu ft)<input type="number" min="0.0001" max="10000" step="any" aria-label="Volume per item in cubic feet" value={manualCuft ?? (validDimensions && Number.isFinite(customCuft) ? String(customCuft) : '')} disabled={busy} onChange={e => { setManualCuft(e.target.value); setCustomDimensions({ width: '', height: '', depth: '' }); }} /></label>
 
           <button type="button" className="slds-button cm-primary" disabled={busy || !customName.trim() || !Number.isFinite(Number(customCuft)) || Number(customCuft) <= 0 || Number(customCuft) > 10000} onClick={() => {
             setRooms(current => current.map(r => r.id === selected ? { ...r, custom_items: [...(r.custom_items || []), { id: crypto.randomUUID(), name: customName.trim(), cuft: Number(customCuft), quantity: 1 }] } : r));
-            setCustomName(''); setCustomDimensions({ width: '', height: '', depth: '' }); setCustomOpen(false);
+            setCustomName(''); setManualCuft(null); setCustomDimensions({ width: '', height: '', depth: '' }); setCustomOpen(false);
           }}>Add item</button>
           </div>
           {Object.values(customDimensions).some(value => value.trim() && dimensionFeet(value) === null) && <p role="status">Use feet (2'), inches (24&quot;), or both (2' 6&quot;).</p>}
