@@ -1,8 +1,9 @@
 """Extra-stop pricing. Saved route distances avoid network requests on page reads."""
 import hashlib
+import base64
 import json
 from decimal import Decimal, ROUND_HALF_UP
-from uuid import uuid5, NAMESPACE_URL
+from uuid import UUID, uuid5, NAMESPACE_URL
 from pydantic import BaseModel, Field
 from fastapi import HTTPException
 from delivery_fees import driving_meters
@@ -91,7 +92,8 @@ def add_charges(lead,job,db,plan=None):
             amount=Decimal(str(row['total']))
             name='Extra '+group['location']+' stop '+str(i+1)
             description=f"{row['address']}; {row['miles']} driving miles from {group['origin']}. {group['free_miles']:g} miles free; ${group['stop_fee']:.2f} per chargeable stop + ${group['per_mile']:.2f} per mile beyond the allowance."
-            db.add(LeadJobCharge(id='extra-stop:'+row['id'],job_id=job.id,name=name,description=description,subtotal=amount,discount_amount=0,total_cost=amount,sort_order=2900+i))
+            charge_id = 'extra-stop:' + base64.urlsafe_b64encode(UUID(row['id']).bytes).decode().rstrip('=')
+            db.add(LeadJobCharge(id=charge_id,job_id=job.id,name=name,description=description,subtotal=amount,discount_amount=0,total_cost=amount,sort_order=2900+i))
             total+=amount
     return total
 

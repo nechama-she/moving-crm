@@ -60,8 +60,14 @@ def estimate_travel(office, pickup, delivery):
     addresses = [(value or '').strip() for value in (office, pickup, delivery)]
     if any(not value for value in addresses):
         raise HTTPException(400, 'Enter the company office, pickup, and delivery addresses before estimating travel.')
+    from pricing_addresses import saved_location
+    # Read request-scoped browser locations before entering worker threads.
+    known = [saved_location(address) for address in addresses]
     with ThreadPoolExecutor(max_workers=3) as pool:
-        office_location, pickup_location, delivery_location = list(pool.map(locate, addresses))
+        pending = {i: pool.submit(locate, address) for i, address in enumerate(addresses) if not known[i]}
+        office_location, pickup_location, delivery_location = [
+            (*valid_coordinates(row['latitude'], row['longitude']), 'google_browser', address)
+            if row else pending[i].result() for i, (address, row) in enumerate(zip(addresses, known))]
     # Apply the mileage allowance once, before displaying or pricing either leg.
     outbound = (straight_line_miles(office_location, pickup_location) * Decimal('1.39')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     inbound = (straight_line_miles(delivery_location, office_location) * Decimal('1.39')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
@@ -69,6 +75,6 @@ def estimate_travel(office, pickup, delivery):
     return {'office_address': addresses[0], 'pickup_address': addresses[1], 'delivery_address': addresses[2],
             'office_to_pickup_miles': outbound, 'delivery_to_office_miles': inbound,
             'total_miles': total, 'total_minutes': total, 'travel_hours': total / 60,
-            'source': 'US Census / Zippopotam.us', 'method': 'straight_line_plus_39_percent',
+            'source': 'Google Maps / US Census / Zippopotam.us' if any(known) else 'US Census / Zippopotam.us', 'method': 'straight_line_plus_39_percent',
             'uses_zip_centers': any(location[2] == 'zip' for location in (office_location, pickup_location, delivery_location)),
             'matched_locations': {'office': office_location[3], 'pickup': pickup_location[3], 'delivery': delivery_location[3]}}

@@ -41,6 +41,7 @@ from models import (
 )
 from uuid import uuid4
 from pricing_addresses import pricing_location as delivery_location
+from pricing_addresses import with_job_locations, job_location
 from local_pricing import local_route_matches, match_region_from_address
 
 router = APIRouter(prefix="/api/pricing", tags=["Pricing"])
@@ -118,6 +119,7 @@ def _plan_destination_for_delivery(
     return destination
 
 
+@with_job_locations
 def infer_job_move_type(
     lead: Lead,
     job: LeadJob,
@@ -127,7 +129,7 @@ def infer_job_move_type(
     pickup_address = (job.pickup_zip or "").strip()
     delivery_address = (job.delivery_zip or "").strip()
     pickup_state, pickup_zip = delivery_location(pickup_address)
-    delivery_state, _ = delivery_location(delivery_address)
+    delivery_state, delivery_zip = delivery_location(delivery_address)
     company_id = job.company_id or lead.company_id
     if not company_id:
         return None, None
@@ -154,6 +156,8 @@ def infer_job_move_type(
             return "Local", matched_plan
 
     if pickup_state and delivery_state:
+        supported = [plan for plan in plans if _plan_destination_for_delivery(plan, delivery_address, delivery_state, delivery_zip)]
+        matched_plan = select_pickup_plan(supported, pickup_state, pickup_zip) or matched_plan
         return "Long Distance", matched_plan
     return (getattr(lead, "move_type", None) or "").strip() or None, matched_plan
 
@@ -706,8 +710,8 @@ def get_job_pricing_context(
         .all()
     )
     company_plans = [plan for plan in all_plans if plan.company_id == job.company_id]
-    pickup_state, pickup_zip_code = delivery_location(job.pickup_zip)
-    delivery_state, delivery_zip_code = delivery_location(job.delivery_zip)
+    pickup_state, pickup_zip_code = job_location(lead, job, db, job.pickup_zip)
+    delivery_state, delivery_zip_code = job_location(lead, job, db, job.delivery_zip)
 
     inferred_move_type, recommended = infer_job_move_type(lead, job, db, company_plans)
     selected_plan = recommended or (company_plans[0] if company_plans else (all_plans[0] if all_plans else None))
@@ -745,6 +749,7 @@ def get_job_pricing_context(
         "long_carry": customer_long_carry(lead, job, db, recommended, inferred_move_type) if recommended else None,
         "stairs": customer_stairs(lead, job, db, recommended, inferred_move_type) if recommended else None,
         "recommended_plan_id": selected_plan.id if selected_plan else "",
+        "destination_by_plan": {plan.id: _plan_destination_for_delivery(plan, job.delivery_zip or '', delivery_state, delivery_zip_code) for plan in all_plans},
         "serviceability": serviceability,
         "move_type": inferred_move_type,
     }
@@ -1336,6 +1341,7 @@ def add_customer_packing_charges(lead, job, db, plan, move_type):
     return total
 
 
+@with_job_locations
 def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> float | None:
     if not lead or not job:
         return None
@@ -1432,6 +1438,9 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             access.published_price = job.price
             access.published_cuft = lead.volume
             access.published_at = datetime.utcnow()
+        selection = json.loads(job.customer_packing_package or '{}')
+        selection.pop('pricing_pending', None)
+        job.customer_packing_package = json.dumps(selection)
         return float(job.price)
 
     else:
@@ -1512,6 +1521,9 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             access.published_price = job.price
             access.published_cuft = lead.volume
             access.published_at = datetime.utcnow()
+        selection = json.loads(job.customer_packing_package or '{}')
+        selection.pop('pricing_pending', None)
+        job.customer_packing_package = json.dumps(selection)
         return float(job.price)
 
 

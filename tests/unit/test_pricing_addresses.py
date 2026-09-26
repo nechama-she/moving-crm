@@ -13,6 +13,8 @@ if str(BACKEND) not in sys.path:
 
 from local_pricing import match_region_from_address
 from pricing_addresses import _google_location, pricing_location
+from pricing_addresses import with_job_locations
+import json
 
 
 def place(state='GA', zip_code='', country='US'):
@@ -82,6 +84,47 @@ def test_explicit_states_work_when_google_is_unavailable(google, address, expect
     google.side_effect = HTTPException(503, 'No server key')
     assert pricing_location(address) == expected
     google.assert_not_called()
+
+
+def test_browser_city_coordinates_are_used_for_travel_without_server_lookup(google, monkeypatch):
+    import travel_routes
+    addresses = ['Rockville, MD, USA', 'Washington, DC 20002, USA', 'Maryland']
+    locations = [dict(address=address, state=state, zip_code=zip_code, latitude=39-i/10, longitude=-77)
+                 for i, (address, state, zip_code) in enumerate(zip(addresses, ['MD', 'DC', 'MD'], ['', '20002', '']))]
+    job = SimpleNamespace(customer_packing_package=json.dumps({'pricing_locations': locations}))
+    lookup = MagicMock(side_effect=AssertionError('Server geocoding must not run'))
+    monkeypatch.setattr(travel_routes, 'locate', lookup)
+    @with_job_locations
+    def calculate(lead, job, db):
+        assert pricing_location(addresses[0]) == ('MD', '')
+        return travel_routes.estimate_travel(addresses[2], addresses[0], addresses[1])
+    result = calculate(None, job, None)
+    assert result['total_miles'] > 0
+    assert 'Google Maps' in result['source']
+    lookup.assert_not_called()
+    google.assert_not_called()
+
+
+def test_oregon_long_distance_selects_book_with_destination_coverage():
+    from pickup_areas import select_pickup_plan
+    from zip_state import delivery_location
+    source = BACKEND / 'routes/pricing.py'
+    nodes = [n for n in ast.parse(source.read_text(encoding='utf-8')).body if getattr(n, 'name', '') in ('infer_job_move_type', '_plan_destination_for_delivery')]
+    for node in nodes:
+        node.decorator_list = []
+        node.returns = None
+        for arg in node.args.args:
+            arg.annotation = None
+    scope = dict(delivery_location=delivery_location, select_pickup_plan=select_pickup_plan,
+                 match_region_from_address=match_region_from_address, local_route_matches=lambda *args:False,
+                 LocalPricingRoute=MagicMock())
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
+    east = SimpleNamespace(company_id='co', pickup_regions='MD', name='East', rates=[SimpleNamespace(destination='GA')])
+    west = SimpleNamespace(company_id='co', pickup_regions='MD', name='West', rates=[SimpleNamespace(destination='Oregon (970-979)')])
+    job = SimpleNamespace(company_id='co', pickup_zip='Rockville, MD, USA', delivery_zip='Eugene, Oregon 97405')
+    db = MagicMock()
+    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
+    assert scope['infer_job_move_type'](SimpleNamespace(company_id='co'), job, db, [east,west]) == ('Long Distance', west)
 
 
 @pytest.mark.parametrize('options,state,zip_code', [

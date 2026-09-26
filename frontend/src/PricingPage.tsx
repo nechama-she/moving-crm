@@ -66,6 +66,7 @@ type JobContext = {
   storage?: { available_date: string } | null;
   shuttle?: { answer: boolean | null } | null;
   recommended_plan_id: string;
+  destination_by_plan?: Record<string,string>;
   move_type: string;
   serviceability: "supported" | "unknown_pickup" | "unsupported_pickup";
 };
@@ -280,7 +281,7 @@ export default function PricingPage() {
         setDraft(structuredClone(row));
         setPendingRateGroups([]);
         const options = Array.from(new Set((row.rates || []).map((rate) => rate.destination).filter(Boolean)));
-        const inferredDestination = destinationFromAddress(
+        const inferredDestination = jobContext?.destination_by_plan?.[row.id] ?? destinationFromAddress(
           jobContext?.job?.delivery_zip || "",
           options,
           jobContext?.job?.delivery_state || "",
@@ -313,7 +314,7 @@ export default function PricingPage() {
   useEffect(() => {
     if (!plan || !jobContext) return;
     const options = Array.from(new Set((plan.rates || []).map((rate) => rate.destination).filter(Boolean)));
-    const inferred = destinationFromAddress(
+    const inferred = jobContext.destination_by_plan?.[plan.id] ?? destinationFromAddress(
       jobContext.job?.delivery_zip || "",
       options,
       jobContext.job?.delivery_state || "",

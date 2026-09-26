@@ -17,7 +17,7 @@ import ReportHistory, { type ReportRun } from "./ReportHistory";
 import CustomerPackingOptions, { type PackingPackage, type PackingSelection } from "./CustomerPackingOptions";
 import MeetingTimePicker from "./MeetingTimePicker";
 import { useCustomerUpdates } from './useCustomerUpdates';
-import { browserDrivingMeters } from './googlePlaces';
+import { browserDrivingMeters, browserPricingLocation } from './googlePlaces';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
@@ -46,6 +46,7 @@ type Details = {
   packing_package: PackingPackage | null;
   packing_items: { id: string; name: string; label: string; price: number; selected: boolean; selected_service: string | null; services: { kind: 'packing' | 'crating'; price: number }[] }[];
   packing_saved: boolean;
+  unanswered_questions?: string[];
   pricing_error?: string;
   name: string;
   phone: string;
@@ -284,7 +285,11 @@ export default function CustomerMovePage() {
     const previous = pricingSteps[pricingSteps.indexOf(packingStep)-1];
     if (previous) setPackingStep(previous); else setShowQuestions(false);
   }
-  function nextPricingStep() {
+  async function nextPricingStep() {
+    if(packingStep === 'package' && data?.unanswered_questions?.includes('package')) {
+      savePricingChange({kind:'mode',mode:packageSelection.mode});
+      await answerQueue.current;
+    }
     if(currentStops && (stopsIncomplete[currentStops.location] || currentStops.answer==null || (currentStops.answer && !currentStops.stops.length))){setStopsMissing(true);return;}
     if (currentElevator && elevatorAnswers[currentElevator.location] == null) { setElevatorMissing(true); return; }
     if (showDeliveryCarry && carryAnswers.delivery == null) { setCarryMissing(true); return; }
@@ -304,8 +309,29 @@ export default function CustomerMovePage() {
 
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState('');
+  function openRequiredQuestions(missing: string[], source = data) {
+    const data = source;
+    if(!data)return;
+    setPackingSelection(Object.fromEntries(data.packing_items.filter(item=>item.selected).map(item=>[item.id,item.selected_service || ''])));
+    setPackageSelection(data.packing_package?.selection || {mode:'none',unpacking:false,item_ids:[]});
+    setStorageDate(data.storage?.available_date || '');
+    setShuttleAnswer(data.shuttle?.answer ?? null);
+    setPackingError('');setTermsStep(0);setTermsValidationAttempt(0);
+    setPackingStep(pricingSteps.find(step=>missing.includes(step)) || pricingSteps[0] || 'items');
+    setShowQuestions(true);
+    termsBody.current?.scrollTo({top:0});
+  }
   async function openEstimate() {
     setPdfError('');
+    if(data?.unanswered_questions?.length) {
+      openRequiredQuestions(data.unanswered_questions);
+      return;
+    }
+    if(answerPending.current || failedAnswers.current.size || failedPricing.current.size) {
+      openRequiredQuestions(pricingSteps);
+      setPackingError('Please finish saving your answers before viewing the estimate.');
+      return;
+    }
     const viewer = window.open('about:blank', '_blank');
     if (!viewer) { setPdfError('Allow pop-ups to open your estimate.'); return; }
     viewer.opener = null;
@@ -316,7 +342,14 @@ export default function CustomerMovePage() {
       const response = await fetch(base + '/estimate.pdf', { headers, cache: 'no-store' });
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
-        throw new Error(result.detail || 'Could not open the estimate. Please try again.');
+        if(result.detail?.unanswered_questions?.length) {
+          viewer.close();
+          const latest=await call('/details');
+          setData(latest);
+          openRequiredQuestions(result.detail.unanswered_questions, latest);
+          return;
+        }
+        throw new Error(typeof result.detail === 'string' ? result.detail : result.detail?.message || 'Could not open the estimate. Please try again.');
       }
       const url = URL.createObjectURL(new Blob([await response.blob()], {type:'application/pdf'}));
       if (viewer.closed) { URL.revokeObjectURL(url); return; }
@@ -329,7 +362,7 @@ export default function CustomerMovePage() {
   async function call(path:string, body?:unknown, method?:string) {
     const httpMethod = method || (body===undefined ? 'GET' : 'POST');
     const response=await fetch(base+path,{method:httpMethod,headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
-    const result=await response.json();
+    const result=await response.json().catch(()=>null);
     if (session && !customerSessionActive(session)) throw new Error('Please verify your phone or email to continue.');
     if(!response.ok){
       if((response.status===401||response.status===404)){
@@ -338,8 +371,9 @@ export default function CustomerMovePage() {
         setData(undefined);
         setSent(false);
       }
-      throw Object.assign(new Error(typeof result.detail==='string'?result.detail:result.detail?.message || 'Please check your details and try again.'), {detail:result.detail});
+      throw Object.assign(new Error(typeof result?.detail==='string'?result.detail:result?.detail?.message || (response.status>=500 ? 'The server could not finish saving. Your entries are still here. Please try again.' : 'Please check your details and try again.')), {detail:result?.detail});
     }
+    if(result===null) throw new Error('The server returned an incomplete response. Please try again.');
     return result;
   }
   useEffect(()=>{
@@ -436,7 +470,9 @@ export default function CustomerMovePage() {
     setError('');
     setMoveErrors({});
     try{
-      const result=await call('/details', { ...moveDraft, ...submittedAddresses });
+      const locationInputs=[submittedAddresses.pickup,submittedAddresses.delivery,data?.company_details?.office_address || ''].filter(Boolean);
+      const locations=await Promise.all(locationInputs.map(address=>browserPricingLocation(data?.google_maps_browser_key || '',address).catch(()=>null)));
+      const result=await call('/details', { ...moveDraft, ...submittedAddresses, pricing_locations:locations.filter(location=>location!==null) });
       setData(result);
       if (latestMoveDraft.current === moveDraft && addressDraft.current === submittedAddresses) setEditingMove(false);
     }catch(err){
@@ -455,14 +491,14 @@ export default function CustomerMovePage() {
     }
   }
 
-  async function refreshDetails(background = false){
+  async function refreshDetails(background = false, retryPricing = false){
     if(!session || !customerSessionActive(session))return;
     if (background && answerPending.current) return;
     const revision = answerRevision.current;
     if (!background) setBusy(true);
     setError('');
     try{
-      const next=await call('/details');
+      const next=await call('/details', retryPricing ? {} : undefined);
       if (customerSessionActive(session) && !answerPending.current && revision === answerRevision.current) {
         setData(next); if (next.company_details?.color) setThemeColor(next.company_details.color);
       }
@@ -774,7 +810,7 @@ export default function CustomerMovePage() {
                 )}
               </div>
               {calculationError && <p role="alert">{calculationError}</p>}
-              {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => void refreshDetails()}>Retry pricing</button></p>}
+              {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Retry pricing</button></p>}
               {data.estimate && Number(data.estimate.cuft) > 0 && (
                 <div className="cm-estimate-details">
                   <div className="cm-estimate-detail-item">

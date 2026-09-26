@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
+const source=readFileSync(new URL('../src/CustomerMovePage.tsx',import.meta.url),'utf8');
+const tree=ts.createSourceFile('CustomerMovePage.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+let declaration;
+function visit(node){if(ts.isFunctionDeclaration(node)&&node.name?.text==='call')declaration=node;ts.forEachChild(node,visit);}
+visit(tree);
+assert.ok(declaration);
+let response;
+const context=vm.createContext({base:'/api/public-moves/test',headers:{},session:'',fetch:async()=>response});
+vm.runInContext(ts.transpileModule(declaration.getText(tree),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context);
+response={ok:false,status:500,json:async()=>{throw new SyntaxError('Unexpected token I');}};
+await assert.rejects(context.call('/packing',{}),/server could not finish saving/);
+response={ok:false,status:422,json:async()=>({detail:'Route changed'})};
+await assert.rejects(context.call('/packing',{}),/Route changed/);
+response={ok:true,status:200,json:async()=>({saved:true})};
+assert.equal((await context.call('/packing',{})).saved,true);
+console.log('Customer API: plain-text server errors, validation errors and successful saves passed.');

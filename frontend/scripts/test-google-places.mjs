@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import ts from 'typescript';
 const source=await readFile(new URL('../src/googlePlaces.ts',import.meta.url),'utf8');
 const {outputText}=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022}});
-const {browserSuggestions,browserDrivingMeters}=await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+const {browserSuggestions,browserDrivingMeters,browserPricingLocation}=await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
 let requests=0;
 let complete;
 globalThis.window={google:{maps:{places:{AutocompleteService:class {
@@ -33,3 +33,10 @@ assert.equal(await browserDrivingMeters('existing-browser-key','Main address','E
 window.google.maps.DirectionsService=class {route(request,callback){callback(null,'REQUEST_DENIED');}};
 await assert.rejects(browserDrivingMeters('existing-browser-key','Main address','Extra stop'),/Directions API access/);
 console.log('Browser driving distances and provider errors passed.');
+window.google.maps.Geocoder=class {
+  geocode(request,callback){callback([{address_components:[{types:['country'],short_name:'US'},{types:['administrative_area_level_1'],short_name:'MD'}],geometry:{location:{lat:()=>39,lng:()=>-77}}}],'OK');}
+};
+for(const address of ['Rockville, MD, USA','Maryland','20850','11812 Devilwood Drive, Potomac, MD, USA']) {
+  assert.deepEqual(await browserPricingLocation('existing-browser-key',address),{address,state:'MD',zip_code:'',latitude:39,longitude:-77});
+}
+console.log('Browser pricing locations accept city/state, state, ZIP and street inputs.');

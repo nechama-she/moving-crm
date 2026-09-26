@@ -6,7 +6,9 @@ type PlacesLibrary = {
   AutocompleteService: new () => {getPlacePredictions(request: {input:string;componentRestrictions:{country:string};types:string[]}, callback:(results:Prediction[] | null,status:string)=>void):void};
 };
 type DirectionsService = {route(request:{origin:string;destination:string;travelMode:string},callback:(result:{routes:{legs:{distance?:{value:number}}[]}[]} | null,status:string)=>void):void};
-type MapsBrowser = Window & {google?:{maps:{places?:PlacesLibrary;DirectionsService?:new()=>DirectionsService}}; __crmAddressReady?:()=>void};
+type GeocodeResult={address_components:{short_name:string;types:string[]}[];geometry:{location:{lat():number;lng():number}}};
+type MapsBrowser = Window & {google?:{maps:{places?:PlacesLibrary;DirectionsService?:new()=>DirectionsService;Geocoder?:new()=>{geocode(request:{address:string;region:string},callback:(results:GeocodeResult[]|null,status:string)=>void):void}}}; __crmAddressReady?:()=>void};
+export type PricingLocation={address:string;state:string;zip_code:string;latitude:number;longitude:number};
 let loading: Promise<PlacesLibrary> | undefined;
 
 function loadPlaces(key: string): Promise<PlacesLibrary> {
@@ -61,6 +63,24 @@ export async function browserDrivingMeters(key:string,origin:string,destination:
         return;
       }
       resolve(legs.reduce((total,leg)=>total+leg.distance!.value,0));
+    });
+  });
+}
+
+export async function browserPricingLocation(key:string,address:string):Promise<PricingLocation> {
+  await loadPlaces(key);
+  const Geocoder=(window as MapsBrowser).google?.maps.Geocoder;
+  if(!Geocoder) throw new Error('Location lookup unavailable');
+  return new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>reject(new Error('Location lookup timed out')),15000);
+    new Geocoder().geocode({address,region:'US'},(results,status)=>{
+      clearTimeout(timer);
+      const result=results?.[0];
+      const part=(type:string)=>result?.address_components.find(row=>row.types.includes(type))?.short_name || '';
+      if(status!=='OK' || results?.length!==1 || !result || part('country')!=='US' || !part('administrative_area_level_1')) {
+        reject(new Error('Location could not be resolved'));return;
+      }
+      resolve({address,state:part('administrative_area_level_1'),zip_code:part('postal_code'),latitude:result.geometry.location.lat(),longitude:result.geometry.location.lng()});
     });
   });
 }

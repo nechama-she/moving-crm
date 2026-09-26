@@ -2,7 +2,7 @@
 from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
 import re
 from pydantic import BaseModel, Field, field_validator, model_validator
-from zip_state import STATE_CODES, delivery_location
+from zip_state import STATE_CODES, STATE_NAMES, delivery_location
 
 
 def parse_local_route_region(value: str) -> tuple[str, str | None, str | None]:
@@ -54,13 +54,20 @@ def match_region_from_address(
             zip_code = match.group(1)
     zip_digits = re.sub(r"\D", "", zip_code)
 
+    normalized_options = {}
+    for option in options:
+        normalized = option.strip()
+        for name in sorted(STATE_NAMES, key=len, reverse=True):
+            if re.match(r'^' + re.escape(name) + r'(?=$|[\s(])', normalized, re.IGNORECASE):
+                normalized = STATE_NAMES[name] + normalized[len(name):]
+                break
+        normalized_options[option] = normalized
     state_options = [
         option for option in options
         if option and (
-            option.upper() == state
-            or option.upper().startswith(f"{state} ")
-            or option.upper().startswith(f"{state} (")
-            or option.upper().startswith(f"{state}(")
+            normalized_options[option].upper() == state
+            or normalized_options[option].upper().startswith(f"{state} ")
+            or normalized_options[option].upper().startswith(f"{state}(")
         )
     ]
     if zip_digits:
@@ -78,7 +85,7 @@ def match_region_from_address(
             elif numbers and any(zip_digits.startswith(number) or number.startswith(zip_digits) for number in numbers):
                 return option
     for option in state_options:
-        if option.upper() == state:
+        if normalized_options[option].upper() == state:
             return option
     return next((option for option in state_options if not re.search(r'\d', option)), "")
 

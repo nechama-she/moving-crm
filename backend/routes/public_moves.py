@@ -1,6 +1,7 @@
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
 from manual_inventory import ManualInventoryInput, catalog, submit_inventory, save_inventory_draft
 from spark_history import report_history
+from pricing_addresses import with_job_locations
 from report_files import move_files, file_list, remove_report_file, preview_report_file
 import hmac
 import json
@@ -645,7 +646,10 @@ def _move_details(access, db, *, refresh_report=True):
     elevator = None
     long_carry = None
     stairs = None
-    pricing_error = ''
+    pricing_pending = json.loads(job.customer_packing_package or '{}').get('pricing_pending', False)
+    if pricing_pending:
+        estimate = None
+    pricing_error = 'Your changes are saved. An updated estimate is pending because pricing is not available for this route yet.' if pricing_pending else ''
     if not is_spark_pending and not report_import_pending and (job.company_id or lead.company_id):
         try:
             pricing_options = _customer_pricing_options(lead, job, db)
@@ -663,8 +667,14 @@ def _move_details(access, db, *, refresh_report=True):
             pricing_error = 'We could not load pricing options for your address. Your saved details and estimate have not changed. Please retry or contact your moving team.'
     from inventory_questions import questions
     item_questions = questions(active_company, conv_details, db) if spark_info and spark_info.get('status') == 'completed' else []
+    from estimate_questions import unanswered_questions
+    required_questions = unanswered_questions(dict(extra_stops=extra_stops, elevator=elevator, long_carry=long_carry,
+        stairs=stairs, storage=storage, shuttle=shuttle, packing_package=packing_package,
+        packing_items=packing_items, item_questions=item_questions),
+        package_saved='mode' in json.loads(job.customer_packing_package or '{}'))
     return {'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
+            'unanswered_questions': required_questions,
             'company': company_data['name'],
             'company_details': company_data,
             'link_sms': customer_link_sms_notice(access),
@@ -682,6 +692,7 @@ def _move_details(access, db, *, refresh_report=True):
             'files': conv_details.get('report_files', [{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files])}
 
 
+@with_job_locations
 def _customer_pricing_options(lead, job, db):
     from routes.pricing import (customer_packing_options, customer_packing_package,
                                 customer_shuttle, customer_storage, customer_elevator,
@@ -703,6 +714,10 @@ def _customer_pricing_options(lead, job, db):
 def download_estimate(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from estimate_pdf import build_estimate_pdf
     data = _move_details(access, db, refresh_report=False)
+    from estimate_questions import unanswered_questions
+    missing = data.get('unanswered_questions', unanswered_questions(data))
+    if missing or data.get('pricing_error'):
+        raise HTTPException(409, {'message': 'Answer all required questions before viewing your estimate PDF.', 'unanswered_questions': missing})
     if not data.get('estimate') or not data.get('spark') or data['spark']['status'] != 'completed':
         raise HTTPException(409, 'Your inventory and estimate must be ready before downloading.')
     conversation = db.get(LeadLiveSwitch, access.lead_id)
@@ -1001,6 +1016,9 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             selection['elevator'] = previous_package['elevator']
         if 'long_carry' in previous_package:
             selection['long_carry'] = previous_package['long_carry']
+        for key in ('pricing_locations', 'pricing_pending'):
+            if key in previous_package:
+                selection[key] = previous_package[key]
         if 'stairs' in previous_package:
             selection['stairs'] = previous_package['stairs']
         package_old_ids = ['package:full', 'package:partial', 'package:unpacking'] + [f'box:{item_id}' for item_id in previous_package.get('item_ids', [])]
@@ -1113,7 +1131,24 @@ def resolve_customer_address(body: AddressResolve, response: Response, access: P
     return resolve_address(body.place_id, body.session_token, access.id)
 
 
+class CustomerPricingLocation(BaseModel):
+    address: str = Field(min_length=1, max_length=500)
+    state: str
+    zip_code: str = Field(default='', pattern=r'^(?:\d{5})?$')
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+
+    @field_validator('state')
+    @classmethod
+    def valid_state(cls, value):
+        from zip_state import STATE_CODES
+        if value not in STATE_CODES:
+            raise ValueError('Unknown US state')
+        return value
+
+
 class CustomerDetailsPatch(BaseModel):
+    pricing_locations: list[CustomerPricingLocation] = Field(default_factory=list, max_length=3)
     pickup_place: CustomerAddressSelection | None = None
     delivery_place: CustomerAddressSelection | None = None
     name: str | None = Field(default=None, max_length=200)
@@ -1187,16 +1222,37 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
 
     pricing_changed = (new_pickup != current_pickup or new_delivery != current_delivery
                        or job.move_date != current_move_date)
-    if pricing_changed and (job.price is not None or float(lead.volume or 0) > 0):
+    selection = json.loads(job.customer_packing_package or '{}')
+    if body.pricing_locations:
+        incoming = {row.address.strip().lower(): row.model_dump() for row in body.pricing_locations}
+        locations = {row['address'].strip().lower(): row for row in selection.get('pricing_locations', [])}
+        locations.update(incoming)
+        selection['pricing_locations'] = list(locations.values())[-6:]
+        job.customer_packing_package = json.dumps(selection)
+    if (pricing_changed or selection.get('pricing_pending')) and (job.price is not None or float(lead.volume or 0) > 0):
         from routes.pricing import calculate_and_save_lead_job_price
-        had_estimate = job.price is not None
         try:
-            price = calculate_and_save_lead_job_price(lead, job, db)
-            if price is None and had_estimate:
-                raise HTTPException(422, 'No matching price was found for this route. Enter the complete delivery address including its ZIP code. If it still cannot be priced, contact your moving team. Your changes were not saved.')
-        except Exception:
-            db.rollback()
-            raise
+            # Keep the customer's edits even if rebuilding the quote fails.
+            with db.begin_nested():
+                price = calculate_and_save_lead_job_price(lead, job, db)
+                if price is None:
+                    raise HTTPException(422, 'No matching rate')
+                updated = json.loads(job.customer_packing_package or '{}')
+                updated.pop('pricing_pending', None)
+                job.customer_packing_package = json.dumps(updated)
+        except HTTPException as exc:
+            if exc.status_code not in (400, 409, 422, 502, 503, 504):
+                raise
+            from models import LeadJobCharge
+            from routes.leads import _refresh_lead_estimated_total
+            updated = json.loads(job.customer_packing_package or '{}')
+            updated['pricing_pending'] = True
+            job.customer_packing_package = json.dumps(updated)
+            job.price = None
+            db.query(LeadJobCharge).filter_by(job_id=job.id).delete()
+            for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+                link.published_price = None
+            _refresh_lead_estimated_total(lead.id, db)
     db.commit()
     return details(access, db)
 

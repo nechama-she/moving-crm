@@ -82,6 +82,38 @@ def test_estimate_pdf_rejects_pending_estimate(portal, monkeypatch):
     assert error.value.status_code == 409
 
 
+@pytest.mark.parametrize('questions', [
+    {'stairs': {'locations':[{'location':'pickup','flights':None}]}},
+    {'elevator': {'locations':[{'location':'delivery','uses_elevator':None}]}},
+    {'extra_stops': {'locations':[{'location':'pickup','answer':None,'stops':[]}]}},
+    {'storage': {'valid':False}},
+    {'shuttle': {'automatic':False,'answer':None}},
+    {'unanswered_questions':['package']},
+    {'item_questions':[{'answers':[{'id':'yes','acknowledge':True}], 'saved':{'answer_id':'yes','acknowledged':False}}]},
+])
+def test_estimate_pdf_blocks_unanswered_questions(portal, monkeypatch, questions):
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod, '_move_details', lambda *args, **kwargs: {
+        'estimate':{'price':'100','cuft':'5'},'spark':{'status':'completed'},**questions})
+    with pytest.raises(HTTPException) as error:
+        mod.download_estimate(access, db)
+    assert error.value.status_code == 409
+    assert error.value.detail['unanswered_questions']
+
+
+def test_estimate_question_gate_accepts_no_zero_and_acknowledged_unknown():
+    from estimate_questions import unanswered_questions
+    data = {'stairs':{'locations':[{'location':'pickup','flights':0}]},
+            'elevator':{'locations':[{'location':'delivery','uses_elevator':False}]},
+            'extra_stops':{'locations':[{'location':'pickup','answer':False,'stops':[]}]},
+            'long_carry':{'locations':[{'location':'pickup','distance_feet':None,'unknown':True,'acknowledged':True}]},
+            'shuttle':{'automatic':False,'answer':False},'storage':{'valid':True},
+            'packing_package':{'selection':{'mode':'none'}},
+            'item_questions':[{'answers':[{'id':'yes','acknowledge':True}], 'saved':{'answer_id':'yes','acknowledged':True}}]}
+    assert unanswered_questions(data, package_saved=True) == []
+    assert unanswered_questions(data, package_saved=False) == ['package']
+
+
 def test_link_does_not_grant_verified_access(portal):
     mod,db,lead,access=portal
     assert mod.public_access(access.id,request(link_token(access.id)),db).id==access.id
@@ -206,7 +238,7 @@ def test_request_is_idempotent_and_estimate_is_published_snapshot(portal):
     mod.update_page(lead.id,mod.StaffPagePatch(cuft='500'),user,db)
     assert mod.details(access,db)['estimate'] is None
     mod.update_page(lead.id,mod.StaffPagePatch(price='1234.50',publish=True),user,db)
-    assert mod.details(access,db)['estimate']=={'price':'1234.50','cuft':'500.00'}
+    assert mod.details(access,db)['estimate']=={'price':'1234.50','cuft':'500','charges':[]}
     mod.update_page(lead.id,mod.StaffPagePatch(price='2000'),user,db)
     assert mod.details(access,db)['estimate']['price']=='1234.50'
 
@@ -1913,21 +1945,45 @@ def test_contact_edit_does_not_replace_estimate(portal, monkeypatch):
 
 
 @pytest.mark.parametrize('failure', [None, HTTPException(502, 'Route unavailable')])
-def test_unpriceable_customer_change_rolls_back(portal, monkeypatch, failure):
+def test_unpriceable_customer_change_saves_details_and_clears_stale_quote(portal, monkeypatch, failure):
     mod, db, lead, access = portal
     job = db.get(models.LeadJob, access.job_id)
     job.price = access.published_price = 1000
+    lead.volume = 500
     job.move_date = '2026-10-01'
     db.commit()
     monkeypatch.setattr(mod, '_read_job_route', lambda db, job: (job.pickup_zip, [], job.delivery_zip))
     calculate = MagicMock(return_value=None, side_effect=failure)
     monkeypatch.setitem(sys.modules, 'routes.pricing', SimpleNamespace(calculate_and_save_lead_job_price=calculate))
-    with pytest.raises(HTTPException) as exc:
-        mod.update_customer_details(mod.CustomerDetailsPatch(name='Changed', move_date='2026-11-01'), access, db)
-    assert exc.value.status_code == (502 if failure else 422)
-    assert job.move_date == '2026-10-01'
-    assert lead.full_name == 'Jane Smith'
-    assert job.price == access.published_price == 1000
+    monkeypatch.setitem(sys.modules, 'routes.leads', SimpleNamespace(_refresh_lead_estimated_total=MagicMock()))
+    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    mod.update_customer_details(mod.CustomerDetailsPatch(name='Changed', move_date='2026-11-01'), access, db)
+    assert job.move_date == '2026-11-01'
+    assert lead.full_name == 'Changed'
+    assert job.price is None and access.published_price is None
+    assert json.loads(job.customer_packing_package)['pricing_pending'] is True
+    def recovered(*args):
+        job.price = access.published_price = 1500
+        return 1500
+    calculate.side_effect = recovered
+    mod.update_customer_details(mod.CustomerDetailsPatch(), access, db)
+    assert job.price == access.published_price == 1500
+    assert 'pricing_pending' not in json.loads(job.customer_packing_package)
+
+
+def test_partial_browser_lookup_preserves_saved_locations(portal, monkeypatch):
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    office = dict(address='Office',state='MD',zip_code='',latitude=39,longitude=-77)
+    pickup = dict(address='Origin',state='MD',zip_code='',latitude=39.1,longitude=-77)
+    job.customer_packing_package = json.dumps({'pricing_locations':[office,pickup]})
+    db.commit()
+    monkeypatch.setattr(mod, '_read_job_route', lambda db, job: (job.pickup_zip, [], job.delivery_zip))
+    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    mod.update_customer_details(mod.CustomerDetailsPatch(pricing_locations=[{**pickup,'latitude':39.2}]), access, db)
+    saved = {row['address']:row for row in json.loads(job.customer_packing_package)['pricing_locations']}
+    assert saved['Office'] == office
+    assert saved['Origin']['latitude'] == 39.2
 
 
 def test_selected_customer_route_preserves_stops(portal, monkeypatch):
@@ -2408,6 +2464,9 @@ def test_extra_stops_save_route_cache_and_remove_only_own_fees(portal,packing_pr
     assert job.price==1000 and not route
     save('pickup',[f'Extra {i}' for i in range(10)])
     assert job.price==1750 and len(route)==10
+    charges = db.query(models.LeadJobCharge).filter_by(job_id=job.id).all()
+    assert all(len(charge.id) <= models.LeadJobCharge.__table__.c.id.type.length for charge in charges)
+    assert len({charge.id for charge in charges}) == len(charges)
     if browser_routing:
         distance.assert_not_called()
         with pytest.raises(HTTPException) as error:
