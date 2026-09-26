@@ -74,62 +74,19 @@ def test_manual_liveswitch_list_only_missing_and_no_report_mutations(portal, mon
     assert db.query(models.LeadAttachment).count() == 1
 
 
-def test_manual_import_explicit_token_never_reads_shared_token(portal, monkeypatch):
+def test_manual_import_uses_shared_token_process(portal, monkeypatch):
     import httpx
     import liveswitch_manual_import as importer
     _, db, lead, _ = portal
-    shared = MagicMock(side_effect=AssertionError('Must not use shared authorization'))
+    shared = MagicMock(return_value='shared-token')
     monkeypatch.setitem(sys.modules,'routes.liveswitch',SimpleNamespace(AUDIENCE='https://api.test/',_access_token=shared))
     request = MagicMock(return_value=httpx.Response(200,json=[]))
     monkeypatch.setattr(importer.httpx,'get',request)
-    trace=[]
-    assert importer.missing_recordings(lead.id,'conversation',db,fresh_token='fresh-only',trace=trace) == {'files':[]}
-    assert request.call_args.kwargs['headers']['Authorization'] == 'Bearer fresh-only'
-    shared.assert_not_called()
-    assert 'fresh-only' not in json.dumps(trace)
+    assert importer.missing_recordings(lead.id,'conversation',db) == {'files':[]}
+    assert request.call_args.kwargs['headers']['Authorization'] == 'Bearer shared-token'
+    shared.assert_called_once_with()
 
 
-def test_import_trace_redacts_credentials_and_download_links():
-    from liveswitch_import_login import redact
-    data={'access_token':'access-secret','refresh_token':'refresh-secret','id_token':'id-secret',
-          'client_secret':'client-secret','code':'code-secret','state':'state-secret',
-          'nested':{'publicUrl':'https://media.example/video?signature=private','scope':'recordings'}}
-    trace=redact(json.dumps(data))
-    assert 'secret' not in json.dumps(list(trace.values()))
-    assert 'private' not in json.dumps(trace)
-    assert trace['nested']['scope'] == 'recordings'
-
-
-def test_fresh_import_callback_uses_code_token_without_saving_shared_auth(portal, monkeypatch):
-    import asyncio
-    import httpx
-    from contextlib import nullcontext
-    import liveswitch_import_login as login
-    import liveswitch_manual_import as importer
-    _, db, lead, _ = portal
-    original=json.dumps({'id':'conversation','last_spark_id':'unchanged'})
-    db.add(models.LeadLiveSwitch(lead_id=lead.id,details=original));db.commit()
-    fake_db=MagicMock()
-    fake_db.get.side_effect=lambda model,key: db.get(model,key) if model is models.LeadLiveSwitch else SimpleNamespace(id='user')
-    monkeypatch.setitem(sys.modules,'database',SimpleNamespace(SessionLocal=lambda:nullcontext(fake_db)))
-    monkeypatch.setitem(sys.modules,'routes.leads',SimpleNamespace(_get_visible_lead_or_404=lambda *args:lead,_ensure_not_dispatch_write=lambda *args:None))
-    monkeypatch.setitem(sys.modules,'routes.liveswitch',SimpleNamespace(_settings=lambda:('client','private-secret','https://crm.test/liveswitch/callback'),
-        TOKEN_URL='https://provider.test/token',AUTHORIZE_URL='https://provider.test/authorize',SCOPES='recordings',AUDIENCE='https://api.test/'))
-    class Client:
-        async def __aenter__(self): return self
-        async def __aexit__(self,*args): pass
-        async def post(self,url,json):
-            assert json['code']=='private-code'
-            return httpx.Response(200,json={'access_token':'fresh-secret','refresh_token':'unused-secret','scope':'recordings'})
-    monkeypatch.setattr(login.httpx,'AsyncClient',lambda **kwargs:Client())
-    fetch=MagicMock(return_value={'files':[]})
-    monkeypatch.setattr(importer,'missing_recordings',fetch)
-    callback_request=SimpleNamespace(url=SimpleNamespace(path='/api/liveswitch/oauth/callback'),query_params={'code':'private-code','state':'private-state'})
-    response=asyncio.run(login.complete_import_login(callback_request,'private-code','private-state','','',{'sub':'user','import_lead_id':lead.id}))
-    assert fetch.call_args.kwargs['fresh_token']=='fresh-secret'
-    assert b'fresh-secret' not in response.body and b'private-code' not in response.body and b'unused-secret' not in response.body
-    fake_db.commit.assert_not_called()
-    assert db.get(models.LeadLiveSwitch,lead.id).details==original
 
 
 @pytest.mark.parametrize('status,body', [(403,'{"errors":[{"description":"Missing scope: recordings"}]}'),(503,'Provider unavailable')])

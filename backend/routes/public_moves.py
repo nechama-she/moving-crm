@@ -1713,19 +1713,6 @@ def list_missing_liveswitch_files(lead_id: str, user: User = Depends(get_current
     return missing_recordings(lead_id, conversation_id, db)
 
 
-@router.post('/api/leads/{lead_id}/customer-page/liveswitch-import-login')
-def start_import_login(lead_id: str, response: Response, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    staff_access(lead_id,user,db)
-    from urllib.parse import urlencode
-    from routes.liveswitch import _settings, _create_state, AUTHORIZE_URL, AUDIENCE, SCOPES, STATE_TTL_SECONDS
-    client_id, _, redirect_uri = _settings()
-    state = _create_state(user.id,import_lead_id=lead_id)
-    params = {'response_type':'code','client_id':client_id,'redirect_uri':redirect_uri,
-        'scope':SCOPES,'audience':AUDIENCE,'state':state,'prompt':'login consent'}
-    response.set_cookie('liveswitch_oauth_state',state,max_age=STATE_TTL_SECONDS,httponly=True,
-        secure=redirect_uri.startswith('https://'),samesite='lax',path='/api/liveswitch/oauth')
-    response.headers['Cache-Control'] = 'no-store'
-    return {'authorization_url':AUTHORIZE_URL+'?'+urlencode(params)}
 
 
 def queue_uploaded_file(access, attachment_id, db):

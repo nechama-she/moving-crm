@@ -147,12 +147,11 @@ def _b64decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
-def _create_state(user_id: str, import_lead_id: str | None = None) -> str:
+def _create_state(user_id: str) -> str:
     payload = _b64encode(json.dumps({
         "sub": user_id,
         "exp": int(time.time()) + STATE_TTL_SECONDS,
         "nonce": secrets.token_urlsafe(18),
-        **({'import_lead_id': import_lead_id} if import_lead_id else {}),
     }, separators=(",", ":")).encode())
     signature = _b64encode(hmac.new(_state_secret(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{signature}"
@@ -193,7 +192,9 @@ def start_oauth(response: Response, admin: User = Depends(require_admin)):
     response.set_cookie("liveswitch_oauth_state", params["state"], max_age=STATE_TTL_SECONDS,
                         httponly=True, secure=redirect_uri.startswith("https://"), samesite="lax", path="/api/liveswitch/oauth")
     response.headers["Cache-Control"] = "no-store"
-    return {"authorization_url": authorization_url}
+    from liveswitch_connect_trace import redact, ConnectionTrace
+    return {"authorization_url": authorization_url, 'trace':ConnectionTrace([{'stage':'authorization request',
+        'method':'GET','url':AUTHORIZE_URL,'query':redact(params)}])}
 
 
 @router.get("/oauth/callback", response_class=HTMLResponse)
@@ -204,36 +205,50 @@ async def oauth_callback(
     error: str = Query(default=""),
     error_description: str = Query(default=""),
 ):
-    state_data = _validate_state(state)
+    _validate_state(state)
     if not hmac.compare_digest(state, request.cookies.get("liveswitch_oauth_state", "")):
         raise HTTPException(400, "Connection attempt expired. Return to Settings and click Connect LiveSwitch again.")
-    if state_data.get('import_lead_id'):
-        from liveswitch_import_login import complete_import_login
-        return await complete_import_login(request, code, state, error, error_description, state_data)
+    from liveswitch_connect_trace import redact, response_body, token_claims, trace_page, ConnectionTrace
+    trace=ConnectionTrace([{'stage':'callback received','method':request.method,'path':request.url.path,
+            'query':redact(dict(request.query_params),[code,state])}])
     if error:
         detail = error_description.strip() or error
-        raise HTTPException(status_code=400, detail=f"LiveSwitch authorization failed: {detail}")
+        trace.append({'error':redact(detail,[code,state])})
+        return trace_page(trace,False,400)
     if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code")
+        trace.append({'error':'Missing authorization code'})
+        return trace_page(trace,False,400)
 
     client_id, client_secret, redirect_uri = _settings()
+    token_request = {'grant_type':'authorization_code','code':code,'client_id':client_id,
+                     'client_secret':client_secret,'redirect_uri':redirect_uri}
+    trace.append({'stage':'token request','method':'POST','url':TOKEN_URL,
+                  'headers':{'Content-Type':'application/json'},'body':redact(token_request)})
+    exchange_started = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.post(TOKEN_URL, json={
-                "grant_type": "authorization_code",
-                "code": code,
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uri": redirect_uri,
-            })
+            response = await client.post(TOKEN_URL, json=token_request)
     except httpx.RequestError as exc:
-        raise HTTPException(status_code=502, detail="Could not reach LiveSwitch token service") from exc
+        trace.append({'stage':'token response','error':redact(str(exc),[code,state,client_secret])})
+        return trace_page(trace,False,502)
+    trace.append({'stage':'token response','status':response.status_code,
+        'duration_ms':round((time.monotonic()-exchange_started)*1000),
+        'headers':redact(dict(getattr(response,'headers',{}))),
+        'body':response_body(response,[code,state,client_secret])})
     if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="LiveSwitch rejected the authorization code")
-    tokens = response.json()
+        return trace_page(trace,False,502)
+    try:
+        tokens = response.json()
+    except ValueError:
+        trace.append({'error':'LiveSwitch returned a non-JSON token response'})
+        return trace_page(trace,False,502)
+    trace.append({'stage':'issued access token claims (diagnostic only)',
+                  'requested_scopes':SCOPES.split(), 'response_scope':tokens.get('scope'),
+                  'claims':token_claims(tokens.get('access_token',''))})
     refresh_token = str(tokens.get("refresh_token") or "")
     if not refresh_token:
-        raise HTTPException(status_code=502, detail="LiveSwitch did not return a refresh token")
+        trace.append({'error':'LiveSwitch did not return a refresh token'})
+        return trace_page(trace,False,502)
 
     boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1")).put_parameter(
         Name=_refresh_token_parameter(),
@@ -242,12 +257,8 @@ async def oauth_callback(
         Overwrite=True,
     )
     _token_cache.update(value="", expires=0.0)
-    result = HTMLResponse(
-        "<!doctype html><title>LiveSwitch connected</title>"
-        "<main style='font-family:system-ui;padding:40px'>"
-        "<h1>LiveSwitch connected</h1><p>Your CRM can now use LiveSwitch.</p><a href='/settings'>Return to Settings</a></main>",
-        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
-    )
+    trace.append({'stage':'CRM authorization save','status':'saved'})
+    result = trace_page(trace,True)
     result.delete_cookie("liveswitch_oauth_state", path="/api/liveswitch/oauth")
     return result
 

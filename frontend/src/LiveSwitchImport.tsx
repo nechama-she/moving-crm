@@ -24,7 +24,6 @@ export default function LiveSwitchImport({leadId,onImported,leadingAction}:{lead
   const [files,setFiles]=useState<RemoteFile[] | null>(null);
   const [active,setActive]=useState('');
   const [error,setError]=useState('');
-  const [supportTrace,setSupportTrace]=useState('');
   const operation=useRef<AbortController | null>(null);
   useEffect(()=>()=>operation.current?.abort(),[]);
   const base=`${API_BASE}/api/leads/${leadId}/customer-page`;
@@ -41,33 +40,12 @@ export default function LiveSwitchImport({leadId,onImported,leadingAction}:{lead
     catch(error) { if(!controller.signal.aborted)setError((error as Error).message); }
     finally { operation.current=null;if(!controller.signal.aborted)setActive(''); }
   }
-  async function freshFiles(signal:AbortSignal):Promise<RemoteFile[]> {
-    const popup=window.open('about:blank','_blank','popup,width=650,height=780');
-    if(!popup)throw new Error('Allow pop-ups to sign in to LiveSwitch.');
-    popup.document.body.textContent='Opening a fresh LiveSwitch login...';
-    setSupportTrace('');
-    try {
-      const result=await post(`${base}/liveswitch-import-login`,signal);
-      return await new Promise<RemoteFile[]>((resolve,reject)=>{
-        const expectedOrigin=new URL(API_BASE || window.location.origin,window.location.origin).origin;
-        const cleanup=()=>{window.removeEventListener('message',receive);signal.removeEventListener('abort',abort);clearInterval(timer);};
-        const abort=()=>{cleanup();popup.close();reject(new DOMException('Import cancelled','AbortError'));};
-        const receive=(event:MessageEvent)=>{
-          if(event.source!==popup || event.origin!==expectedOrigin || event.data?.type!=='liveswitch-import-result')return;
-          cleanup();popup.close();setSupportTrace(JSON.stringify(event.data.trace,null,2));
-          if(event.data.error)reject(new Error(typeof event.data.error==='string'?event.data.error:JSON.stringify(event.data.error,null,2)));
-          else resolve(event.data.files);
-        };
-        const started=Date.now();
-        const timer=setInterval(()=>{if(popup.closed || Date.now()-started>15*60*1000){cleanup();popup.close();reject(new Error('LiveSwitch login was closed or timed out.'));}},500);
-        window.addEventListener('message',receive);signal.addEventListener('abort',abort,{once:true});
-        if(signal.aborted){abort();return;}
-        popup.location.replace(result.authorization_url);
-      });
-    }catch(error){popup.close();throw error;}
+  async function loadFiles(signal:AbortSignal):Promise<RemoteFile[]> {
+    const result=await post(`${base}/liveswitch-files`,signal);
+    return result.files;
   }
   async function importFile(file:RemoteFile,signal:AbortSignal) {
-    const refreshed=(await freshFiles(signal)).find(row=>row.id===file.id);
+    const refreshed=(await loadFiles(signal)).find(row=>row.id===file.id);
     if(!refreshed)throw new Error('This recording is no longer missing or available.');
     file=refreshed;
     const url=new URL(file.url);
@@ -105,7 +83,7 @@ export default function LiveSwitchImport({leadId,onImported,leadingAction}:{lead
     <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',margin:'8px 0'}}>
     {leadingAction}
     <button type="button" className="slds-button" disabled={!!active} onClick={()=>void run('list',async signal=>{
-      setFiles(await freshFiles(signal));
+      setFiles(await loadFiles(signal));
     })}>{active==='list'?'Checking LiveSwitch...':'Import from LiveSwitch'}</button>
     </div>
     {files && <div aria-label="Missing LiveSwitch files">
@@ -124,9 +102,5 @@ export default function LiveSwitchImport({leadId,onImported,leadingAction}:{lead
         <pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',maxHeight:240,overflow:'auto',fontSize:12}}>{technicalDetails}</pre>
       </details>
     </div>}
-    {supportTrace && <details><summary>Support trace (credentials redacted)</summary>
-      <button type="button" className="slds-button" onClick={()=>void navigator.clipboard.writeText(supportTrace).catch(()=>setError('Could not copy the trace.'))}>Copy support trace</button>
-      <pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',maxHeight:320,overflow:'auto'}}>{supportTrace}</pre>
-    </details>}
   </div>;
 }

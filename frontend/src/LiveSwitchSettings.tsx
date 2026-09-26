@@ -83,6 +83,7 @@ export default function LiveSwitchSettings() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Could not connect to LiveSwitch.");
+      sessionStorage.setItem('liveswitch-connect-trace',JSON.stringify(data.trace || []));
       window.location.assign(data.authorization_url);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not connect to LiveSwitch.");

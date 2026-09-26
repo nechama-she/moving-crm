@@ -92,6 +92,10 @@ def test_start_and_callback_save_refresh_token(setup, monkeypatch):
     assert query["redirect_uri"] == [setup.config["redirect_uri"]]
     assert query['prompt'] == ['consent']
     assert query['scope'] == [setup.scope['SCOPES']]
+    trace = response.json()['trace'][0]
+    assert trace['query']['scope'] == setup.scope['SCOPES']
+    assert trace['query']['state'] == '[REDACTED]'
+    assert trace['at_utc'].endswith('+00:00')
 
     class FakeClient:
         async def __aenter__(self): return self
@@ -105,6 +109,9 @@ def test_start_and_callback_save_refresh_token(setup, monkeypatch):
     assert result.status_code == 200
     assert setup.store["/test/LIVESWITCH_REFRESH_TOKEN"] == "new-refresh"
     assert "new-refresh" not in result.text
+    assert 'token request' in result.text and 'token response' in result.text
+    assert 'duration_ms' in result.text and 'requested_scopes' in result.text
+    assert 'Copy support trace' in result.text
     assert "liveswitch_oauth_state" not in setup.client.cookies
 
 
