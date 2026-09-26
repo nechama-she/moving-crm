@@ -40,7 +40,7 @@ from models import (
     UserCompany,
 )
 from uuid import uuid4
-from zip_state import delivery_location
+from pricing_addresses import pricing_location as delivery_location
 from local_pricing import local_route_matches, match_region_from_address
 
 router = APIRouter(prefix="/api/pricing", tags=["Pricing"])
@@ -115,10 +115,6 @@ def _plan_destination_for_delivery(
     if not options:
         return ""
     destination = match_region_from_address(delivery_address, options, delivery_state or "", delivery_zip or "")
-    if not destination and delivery_state:
-        destination = next((option for option in options if delivery_state.lower() in option.lower()), "")
-    if not destination and options:
-        destination = options[0]
     return destination
 
 

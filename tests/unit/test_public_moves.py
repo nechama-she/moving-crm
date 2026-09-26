@@ -1836,6 +1836,71 @@ def test_invalid_address_does_not_mutate_customer_details(portal, monkeypatch):
     assert lead.full_name == 'Jane Smith'
 
 
+@pytest.mark.parametrize('changes', [
+    {'pickup': 'Miami, FL, USA'},
+    {'delivery': 'Orlando, FL, USA'},
+    {'move_date': '2026-11-15'},
+])
+def test_customer_pricing_factors_recalculate_full_estimate(portal, monkeypatch, changes):
+    from decimal import Decimal
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    lead.volume = '500'
+    job.price = access.published_price = Decimal('1000')
+    db.commit()
+    monkeypatch.setattr(mod, '_read_job_route', lambda db, job: (job.pickup_zip, [], job.delivery_zip))
+    monkeypatch.setattr(mod, '_persist_job_route', MagicMock())
+    monkeypatch.setattr(mod, 'selected_customer_address', lambda value, current, *args: current if value is None else value)
+    monkeypatch.setattr(mod, 'details', lambda access, db: {'price': access.published_price})
+    def calculate(actual_lead, actual_job, actual_db):
+        assert (actual_lead, actual_job, actual_db) == (lead, job, db)
+        for field, value in changes.items():
+            assert getattr(job, field + '_zip' if field in ('pickup', 'delivery') else field) == value
+        job.price = access.published_price = Decimal('1750')
+        return 1750
+    pricing = SimpleNamespace(calculate_and_save_lead_job_price=MagicMock(side_effect=calculate))
+    monkeypatch.setitem(sys.modules, 'routes.pricing', pricing)
+    result = mod.update_customer_details(mod.CustomerDetailsPatch(**changes), access, db)
+    assert result == {'price': Decimal('1750')}
+    pricing.calculate_and_save_lead_job_price.assert_called_once()
+
+
+def test_contact_edit_does_not_replace_estimate(portal, monkeypatch):
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    job.price = 1000
+    job.move_date = '2026-10-01'
+    db.commit()
+    monkeypatch.setattr(mod, '_read_job_route', lambda db, job: (job.pickup_zip, [], job.delivery_zip))
+    monkeypatch.setattr(mod, '_persist_job_route', MagicMock())
+    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    pricing = SimpleNamespace(calculate_and_save_lead_job_price=MagicMock())
+    monkeypatch.setitem(sys.modules, 'routes.pricing', pricing)
+    mod.update_customer_details(mod.CustomerDetailsPatch(name='Updated Name', pickup=job.pickup_zip,
+        delivery=job.delivery_zip, move_date=job.move_date), access, db)
+    assert lead.full_name == 'Updated Name'
+    assert job.price == 1000
+    pricing.calculate_and_save_lead_job_price.assert_not_called()
+
+
+@pytest.mark.parametrize('failure', [None, HTTPException(502, 'Route unavailable')])
+def test_unpriceable_customer_change_rolls_back(portal, monkeypatch, failure):
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    job.price = access.published_price = 1000
+    job.move_date = '2026-10-01'
+    db.commit()
+    monkeypatch.setattr(mod, '_read_job_route', lambda db, job: (job.pickup_zip, [], job.delivery_zip))
+    calculate = MagicMock(return_value=None, side_effect=failure)
+    monkeypatch.setitem(sys.modules, 'routes.pricing', SimpleNamespace(calculate_and_save_lead_job_price=calculate))
+    with pytest.raises(HTTPException) as exc:
+        mod.update_customer_details(mod.CustomerDetailsPatch(name='Changed', move_date='2026-11-01'), access, db)
+    assert exc.value.status_code == (502 if failure else 422)
+    assert job.move_date == '2026-10-01'
+    assert lead.full_name == 'Jane Smith'
+    assert job.price == access.published_price == 1000
+
+
 def test_selected_customer_route_preserves_stops(portal, monkeypatch):
     mod, db, lead, access = portal
     monkeypatch.setattr(mod,'_read_job_route',lambda db,job:('Old pickup',['Storage'], 'Old delivery'))

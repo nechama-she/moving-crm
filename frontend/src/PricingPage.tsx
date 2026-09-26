@@ -129,7 +129,7 @@ function destinationFromAddress(address: string | null | undefined, options: str
   if (!state) return "";
   const zip = resolvedZip || safeAddress.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1] || "";
   const zipDigits = zip.replace(/\D/g, "");
-  const stateOptions = (options || []).filter((option) => option && (option.toUpperCase() === state || option.toUpperCase().startsWith(`${state} `) || option.toUpperCase().startsWith(`${state} (`)));
+  const stateOptions = (options || []).filter((option) => option && (option.toUpperCase() === state || option.toUpperCase().startsWith(`${state} `) || option.toUpperCase().startsWith(`${state}(`)));
   if (zipDigits) {
     const ranged = stateOptions.find((option) => {
       const numbers = option.match(/\d+/g) || [];
@@ -145,7 +145,7 @@ function destinationFromAddress(address: string | null | undefined, options: str
     if (ranged) return ranged;
   }
   return stateOptions.find((option) => option.toUpperCase() === state)
-    || stateOptions[0]
+    || stateOptions.find((option) => !/\d/.test(option))
     || "";
 }
 
@@ -319,7 +319,7 @@ export default function PricingPage() {
       jobContext.job?.delivery_state || "",
       jobContext.job?.delivery_zip_code || "",
     );
-    if (inferred) setDestination(inferred);
+    setDestination(inferred);
   }, [jobContext, plan]);
   const rateRows = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -754,10 +754,10 @@ export default function PricingPage() {
 
               <section className="pricing-card pricing-calculator">
                 <div><span className="eyebrow">Job pricing</span><h2>Calculate price</h2></div>
-                {jobContext?.job.delivery_state && !destination ? (
+                {jobContext && !destination ? (
                   <div className="pricing-inline-unavailable">
                     <strong>Delivery area not available</strong>
-                    <span>There is no destination rate for {jobContext.job.delivery_state} in this pricing book. Please confirm the route with dispatch.</span>
+                    <span>{jobContext.job.delivery_state ? `No matching destination rate was found for this address in ${jobContext.job.delivery_state}. Check the delivery ZIP and pricing book.` : 'The delivery address could not be resolved. Check the address before calculating.'}</span>
                   </div>
                 ) : null}
                 <div className="pricing-calc-fields">

@@ -80,7 +80,7 @@ def match_region_from_address(
     for option in state_options:
         if option.upper() == state:
             return option
-    return state_options[0] if state_options else ""
+    return next((option for option in state_options if not re.search(r'\d', option)), "")
 
 
 def local_route_matches(pickup_address: str | None, delivery_address: str | None, pickup_rule: str, delivery_rule: str) -> bool:

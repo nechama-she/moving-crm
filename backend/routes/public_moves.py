@@ -1109,6 +1109,7 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
     job = db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
 
     current_pickup, current_stops, current_delivery = _read_job_route(db, job)
+    current_move_date = job.move_date
     # Validate route changes before mutating contact or scheduling details.
     addresses = {}
     for field, current in [('pickup', current_pickup), ('delivery', current_delivery)]:
@@ -1149,22 +1150,19 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
         job.pickup_zip = new_pickup
         job.delivery_zip = new_delivery
         _persist_job_route(db, job.id, new_pickup, current_stops, new_delivery)
-        if (new_pickup != current_pickup or new_delivery != current_delivery) and (job.company_id or lead.company_id):
-            from routes.pricing import sync_customer_shuttle_charge, sync_delivery_fee
-            sync_delivery_fee(lead, job, db)
-            sync_customer_shuttle_charge(lead, job, db)
-            from routes.pricing import sync_stairs_charges
-            sync_stairs_charges(lead, job, db)
-            from routes.pricing import sync_long_carry_charges
-            sync_long_carry_charges(lead, job, db)
-            from routes.pricing import sync_elevator_charges
-            sync_elevator_charges(lead, job, db)
-            from extra_stops import sync_charges as sync_extra_stops
-            sync_extra_stops(lead,job,db)
 
-    if (body.move_date is not None or body.pickup is not None or body.delivery is not None) and (job.company_id or lead.company_id):
-        from routes.pricing import sync_storage_charge
-        sync_storage_charge(lead, job, db)
+    pricing_changed = (new_pickup != current_pickup or new_delivery != current_delivery
+                       or job.move_date != current_move_date)
+    if pricing_changed and (job.price is not None or float(lead.volume or 0) > 0):
+        from routes.pricing import calculate_and_save_lead_job_price
+        had_estimate = job.price is not None
+        try:
+            price = calculate_and_save_lead_job_price(lead, job, db)
+            if price is None and had_estimate:
+                raise HTTPException(422, 'Could not calculate an estimate for these moving details. Please contact your moving team to check pricing. Your changes were not saved.')
+        except Exception:
+            db.rollback()
+            raise
     db.commit()
     return details(access, db)
 
