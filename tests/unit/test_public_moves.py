@@ -668,6 +668,32 @@ def test_customer_can_save_inventory_choices_before_base_price(portal, packing_p
     assert db.query(models.LeadJobCharge).count() == 0
 
 
+@pytest.mark.parametrize('status', [422, 502, 503, 504])
+def test_details_survives_address_lookup_failure(portal, packing_pricing, monkeypatch, status):
+    mod, db, lead, access = portal
+    company = models.Company(id='lookup-company', name='Moving company')
+    db.add(company)
+    job = db.get(models.LeadJob, access.job_id)
+    job.company_id = company.id
+    job.price = access.published_price = 1250
+    access.published_cuft = 500
+    db.commit()
+    monkeypatch.setattr(mod, '_read_job_route', lambda *args: ('Origin', [], 'Monroe, Georgia'))
+    lookup = MagicMock(side_effect=HTTPException(status, 'Address search is unavailable'))
+    monkeypatch.setattr(packing_pricing, 'customer_packing_package', lookup)
+    result = mod.details(access, db)
+    assert result['name'] == lead.full_name
+    assert result['delivery'] == 'Monroe, Georgia'
+    assert float(result['estimate']['price']) == 1250
+    assert result['pricing_error']
+    assert result['packing_items'] == []
+    assert result['storage'] is None
+    assert job.price == access.published_price == 1250
+    lookup.side_effect = None
+    lookup.return_value = None
+    assert mod.details(access, db)['pricing_error'] == ''
+
+
 def test_details_exposes_inventory_questions_without_estimate(portal, packing_pricing, monkeypatch):
     mod, db, lead, access = portal
     company = models.Company(id='packing-company', name='Moving company')

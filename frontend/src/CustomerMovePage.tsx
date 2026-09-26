@@ -45,6 +45,7 @@ type Details = {
   packing_package: PackingPackage | null;
   packing_items: { id: string; name: string; label: string; price: number; selected: boolean; selected_service: string | null; services: { kind: 'packing' | 'crating'; price: number }[] }[];
   packing_saved: boolean;
+  pricing_error?: string;
   name: string;
   phone: string;
   email: string;
@@ -765,6 +766,7 @@ export default function CustomerMovePage() {
                 )}
               </div>
               {calculationError && <p role="alert">{calculationError}</p>}
+              {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => void refreshDetails()}>Retry pricing</button></p>}
               {data.estimate && Number(data.estimate.cuft) > 0 && (
                 <div className="cm-estimate-details">
                   <div className="cm-estimate-detail-item">

@@ -645,26 +645,25 @@ def _move_details(access, db, *, refresh_report=True):
     elevator = None
     long_carry = None
     stairs = None
+    pricing_error = ''
     if not is_spark_pending and not report_import_pending and (job.company_id or lead.company_id):
-        from routes.pricing import customer_packing_options, customer_packing_package
-        packing_package = customer_packing_package(lead, job, db)
-        packing_items = customer_packing_options(lead, job, db)
-
-        from routes.pricing import customer_shuttle
-        shuttle = customer_shuttle(lead, job, db)
-        from routes.pricing import customer_storage
-        storage = customer_storage(lead, job, db)
-        from extra_stops import option as extra_stops_option
-        extra_stops = extra_stops_option(lead,job,db)
-        from routes.pricing import customer_elevator
-        elevator = customer_elevator(lead, job, db)
-        from routes.pricing import customer_long_carry
-        long_carry = customer_long_carry(lead, job, db)
-        from routes.pricing import customer_stairs
-        stairs = customer_stairs(lead, job, db)
+        try:
+            pricing_options = _customer_pricing_options(lead, job, db)
+            packing_package = pricing_options['packing_package']
+            packing_items = pricing_options['packing_items']
+            shuttle = pricing_options['shuttle']
+            storage = pricing_options['storage']
+            extra_stops = pricing_options['extra_stops']
+            elevator = pricing_options['elevator']
+            long_carry = pricing_options['long_carry']
+            stairs = pricing_options['stairs']
+        except HTTPException as exc:
+            if exc.status_code not in (422, 502, 503, 504):
+                raise
+            pricing_error = 'We could not load pricing options for your address. Your saved details and estimate have not changed. Please retry or contact your moving team.'
     from inventory_questions import questions
     item_questions = questions(active_company, conv_details, db) if spark_info and spark_info.get('status') == 'completed' else []
-    return {'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    return {'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'company': company_data['name'],
             'company_details': company_data,
@@ -681,6 +680,23 @@ def _move_details(access, db, *, refresh_report=True):
             'walkthrough': meeting_dict(meeting) if meeting else None,
             'participant_url': json.loads(conversation.details).get('participantJoinUrl', '') if conversation and meeting and meeting.status == 'scheduled' else '',
             'files': conv_details.get('report_files', [{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files])}
+
+
+def _customer_pricing_options(lead, job, db):
+    from routes.pricing import (customer_packing_options, customer_packing_package,
+                                customer_shuttle, customer_storage, customer_elevator,
+                                customer_long_carry, customer_stairs)
+    from extra_stops import option as extra_stops_option
+    return {
+        'packing_package': customer_packing_package(lead, job, db),
+        'packing_items': customer_packing_options(lead, job, db),
+        'shuttle': customer_shuttle(lead, job, db),
+        'storage': customer_storage(lead, job, db),
+        'extra_stops': extra_stops_option(lead, job, db),
+        'elevator': customer_elevator(lead, job, db),
+        'long_carry': customer_long_carry(lead, job, db),
+        'stairs': customer_stairs(lead, job, db),
+    }
 
 
 @router.get('/api/public-moves/{access_id}/estimate.pdf')
