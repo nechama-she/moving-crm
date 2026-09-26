@@ -83,9 +83,9 @@ def option(lead,job,db,plan=None,refresh=False):
         job.customer_packing_package=json.dumps(selection)
     return {'locations':locations}
 
-def add_charges(lead,job,db,plan=None):
+def add_charges(lead,job,db,plan=None,refresh=True):
     from models import LeadJobCharge
-    data=option(lead,job,db,plan,refresh=True)
+    data=option(lead,job,db,plan,refresh=refresh)
     total=Decimal(0)
     for group in data['locations'] if data else []:
         for i,row in enumerate(group['stops']):
@@ -97,16 +97,18 @@ def add_charges(lead,job,db,plan=None):
             total+=amount
     return total
 
-def sync_charges(lead,job,db):
+def sync_charges(lead,job,db,refresh=True):
     from models import LeadJobCharge,PublicMoveAccess
     # Resolve new routes before deleting any saved charge, including unpriced jobs.
-    option(lead,job,db,refresh=True)
     if job.price is None:return
+    data=option(lead,job,db,refresh=refresh)
+    if any(row.get('total') is None for group in (data['locations'] if data else []) for row in group['stops']):
+        raise HTTPException(422, 'Stop distances are pending.')
     old=db.query(LeadJobCharge).filter(LeadJobCharge.job_id==job.id,LeadJobCharge.id.like('extra-stop:%')).all()
     previous=sum((row.total_cost for row in old),Decimal(0))
     for row in old:db.delete(row)
     db.flush()
-    delta=add_charges(lead,job,db)-previous
+    delta=add_charges(lead,job,db,refresh=refresh)-previous
     job.price+=delta
     for access in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
         if access.published_price is not None:access.published_price+=delta

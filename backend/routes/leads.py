@@ -2480,6 +2480,8 @@ def _validate_job_route_has_one_side(pickup: str, delivery: str) -> None:
 
 def _serialize_job_with_addresses(job: LeadJob, db: Session) -> dict:
     payload = job.to_dict()
+    selection = json.loads(job.customer_packing_package or '{}')
+    payload['pricing_error'] = selection.get('pricing_save_error', '') if selection.get('pricing_pending') else ''
     pickup, stops, delivery = _read_job_route(db, job)
     payload["pickup_zip"] = pickup
     payload["delivery_zip"] = delivery
@@ -2810,8 +2812,8 @@ def update_lead_job(
     } & set(payload))
     if should_recalculate_price:
         from routes.pricing import calculate_and_save_lead_job_price
-
-        calculate_and_save_lead_job_price(lead, row, db)
+        from pricing_save import attempt_pricing
+        attempt_pricing(lead, row, db, lambda: calculate_and_save_lead_job_price(lead, row, db), require_price=True)
 
     db.commit()
     db.refresh(row)

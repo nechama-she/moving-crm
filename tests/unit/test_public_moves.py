@@ -1944,7 +1944,7 @@ def test_contact_edit_does_not_replace_estimate(portal, monkeypatch):
     pricing.calculate_and_save_lead_job_price.assert_not_called()
 
 
-@pytest.mark.parametrize('failure', [None, HTTPException(502, 'Route unavailable')])
+@pytest.mark.parametrize('failure', [None, HTTPException(502, 'Route unavailable'), RuntimeError('calculator failed')])
 def test_unpriceable_customer_change_saves_details_and_clears_stale_quote(portal, monkeypatch, failure):
     mod, db, lead, access = portal
     job = db.get(models.LeadJob, access.job_id)
@@ -1962,6 +1962,10 @@ def test_unpriceable_customer_change_saves_details_and_clears_stale_quote(portal
     assert lead.full_name == 'Changed'
     assert job.price is None and access.published_price is None
     assert json.loads(job.customer_packing_package)['pricing_pending'] is True
+    assert json.loads(job.customer_packing_package)['pricing_save_error'].startswith('Changes saved.')
+    db.expire_all()
+    assert job.move_date == '2026-11-01'
+    assert lead.full_name == 'Changed'
     def recovered(*args):
         job.price = access.published_price = 1500
         return 1500
@@ -1969,6 +1973,7 @@ def test_unpriceable_customer_change_saves_details_and_clears_stale_quote(portal
     mod.update_customer_details(mod.CustomerDetailsPatch(), access, db)
     assert job.price == access.published_price == 1500
     assert 'pricing_pending' not in json.loads(job.customer_packing_package)
+    assert 'pricing_save_error' not in json.loads(job.customer_packing_package)
 
 
 def test_partial_browser_lookup_preserves_saved_locations(portal, monkeypatch):
@@ -2449,6 +2454,14 @@ def test_extra_stops_save_route_cache_and_remove_only_own_fees(portal,packing_pr
         distances = {'route_origin':getattr(job,location+'_zip'),'stop_meters':[24140]*len(addresses)} if browser_routing else {}
         return mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'extra_stops','location':location,'has_stops':answer,'stops':addresses,**distances}),access,db)
     save('pickup',['Pickup B'])
+    if not browser_routing:
+        assert job.price is None
+        save('delivery',['Unroutable delivery'])
+        save('pickup',[],False)
+        assert route==['Unroutable delivery']
+        assert json.loads(job.customer_packing_package)['extra_stops']['pickup']['answer'] is False
+        distance.assert_not_called()
+        return
     assert job.price==access.published_price==1075
     save('pickup',['Pickup B'])
     assert distance.call_count==(0 if browser_routing else 1) and job.price==1075

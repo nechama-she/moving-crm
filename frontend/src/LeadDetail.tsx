@@ -54,6 +54,7 @@ type LeadAttachment = {
 };
 
 type LeadJobItem = {
+  pricing_error?: string;
   id: string;
   lead_id: string;
   company_id: string;
@@ -2931,6 +2932,7 @@ export default function LeadDetail() {
                 const chargesTotal = job.charges.reduce((sum, charge) => sum + charge.total_cost, 0);
                 return (
                   <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, background: primary ? "#f8fbff" : "#fff" }}>
+                    {job.pricing_error && <p role="status">{job.pricing_error}</p>}
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                       <button
                         type="button"

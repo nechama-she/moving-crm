@@ -226,8 +226,14 @@ export default function CustomerMovePage() {
         if(change.kind === 'extra_stops' && change.has_stops && change.stops?.length) {
           const origin = (change.location === 'pickup' ? data?.pickup : data?.delivery) || '';
           const distances: number[] = [];
-          for(const address of change.stops) distances.push(await browserDrivingMeters(data?.google_maps_browser_key || '',origin,address));
-          payload={...change,route_origin:origin,stop_meters:distances};
+          const savedStops=data?.extra_stops?.locations.find(group=>group.location===change.location)?.stops || [];
+          const removingOnly=change.stops.every(address=>savedStops.some(stop=>stop.address===address));
+          if(!removingOnly) {
+            try {
+              for(const address of change.stops) distances.push(await browserDrivingMeters(data?.google_maps_browser_key || '',origin,address));
+              payload={...change,route_origin:origin,stop_meters:distances};
+            } catch { /* Save the choices even when mileage is unavailable. */ }
+          }
         }
         setData(await call('/packing', { change: payload }));
         failedPricing.current.delete(id);
@@ -510,6 +516,42 @@ export default function CustomerMovePage() {
   }
 
   const updatesUnavailable = useCustomerUpdates(base, key, session, () => refreshDetails(true));
+  const estimateResult = useRef<HTMLDivElement>(null);
+  const reportMessage = useRef<HTMLParagraphElement>(null);
+  const pdfMessage = useRef<HTMLParagraphElement>(null);
+  const estimateFeedback = useRef<HTMLDivElement>(null);
+  const lastEstimate = useRef<string | null>(null);
+  const revealEstimate = useRef(false);
+  const previouslySaving = useRef(false);
+  const estimateSignature = data ? JSON.stringify([data.estimate?.price, data.spark?.status, data.pricing_error]) : null;
+  useEffect(() => {
+    if(estimateSignature === null) { lastEstimate.current=null; revealEstimate.current=false; return; }
+    if(lastEstimate.current !== null && lastEstimate.current !== estimateSignature) revealEstimate.current=true;
+    lastEstimate.current=estimateSignature;
+    if(showQuestions || !revealEstimate.current)return;
+    revealEstimate.current=false;
+    const frame=requestAnimationFrame(()=>{
+      const target=data?.pricing_error ? estimateFeedback.current : estimateResult.current;
+      const bounds=target?.getBoundingClientRect();
+      if(bounds && (bounds.bottom>window.innerHeight || bounds.top<0)) target?.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'nearest'});
+    });
+    return ()=>cancelAnimationFrame(frame);
+  },[estimateSignature,showQuestions,data?.pricing_error]);
+  useEffect(() => {
+    const finished=previouslySaving.current && !answersSaving;
+    previouslySaving.current=answersSaving;
+    if(!showQuestions || (!finished && !packingError))return;
+    const frame=requestAnimationFrame(()=>termsBody.current?.scrollTo({top:termsBody.current.scrollHeight,behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'}));
+    return ()=>cancelAnimationFrame(frame);
+  },[answersSaving,packingError,showQuestions]);
+  useEffect(() => {
+    if(!reportNotice && !pdfError && !calculationError)return;
+    const frame=requestAnimationFrame(()=>{
+      const target=pdfError ? pdfMessage.current : calculationError ? estimateFeedback.current : reportMessage.current;
+      target?.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'nearest'});
+    });
+    return ()=>cancelAnimationFrame(frame);
+  },[reportNotice,pdfError,calculationError]);
   const wait=Math.max(0,Math.ceil((resendAt-clock)/1000));
 
   const paletteStyle = useMemo(() => {
@@ -741,7 +783,7 @@ export default function CustomerMovePage() {
                     >
                       {startingReport ? 'Starting report...' : data.spark?.status === 'queued' || data.spark?.status === 'running' ? 'Report running...' : data.spark ? 'Rerun report & estimate' : 'Generate report & get estimate'}
                     </button>
-                    {reportNotice && <p role="status" className="cm-spark-notice">{reportNotice}</p>}
+                    {reportNotice && <p ref={reportMessage} role="status" className="cm-spark-notice">{reportNotice}</p>}
                   </div>
                 )}
               </section>
@@ -790,7 +832,7 @@ export default function CustomerMovePage() {
 
             <div className="cm-estimate cm-estimate-full">
               <div className="cm-estimate-top">
-                <div className="cm-estimate-main-info">
+                <div className="cm-estimate-main-info" ref={estimateResult} aria-live="polite">
                   <span className="cm-estimate-eyebrow">{data.estimate?'Your moving estimate':'Your estimate'}</span>
                   <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'?'Your report is ready. Pricing is pending.':'We\'re working on it.'}</strong>
                   <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Math.ceil(Number(data.estimate.cuft)).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
@@ -809,8 +851,10 @@ export default function CustomerMovePage() {
                   </div>
                 )}
               </div>
+              <div ref={estimateFeedback}>
               {calculationError && <p role="alert">{calculationError}</p>}
               {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Retry pricing</button></p>}
+              </div>
               {data.estimate && Number(data.estimate.cuft) > 0 && (
                 <div className="cm-estimate-details">
                   <div className="cm-estimate-detail-item">
@@ -869,7 +913,7 @@ export default function CustomerMovePage() {
               )}
               {data.estimate && data.spark?.status === 'completed' && <div className="cm-estimate-extra-actions">
                 <button type="button" className="cm-secondary-btn" disabled={pdfBusy || answersSaving || calculatingPrice || busy} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : 'View estimate PDF'}</button>
-                {pdfError && <p className="cm-field-error" role="alert" style={{ flexBasis: '100%', marginTop: 0 }}>{pdfError}</p>}
+                {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert" style={{ flexBasis: '100%', marginTop: 0 }}>{pdfError}</p>}
               </div>}
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
             </div>

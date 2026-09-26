@@ -650,6 +650,8 @@ def _move_details(access, db, *, refresh_report=True):
     if pricing_pending:
         estimate = None
     pricing_error = 'Your changes are saved. An updated estimate is pending because pricing is not available for this route yet.' if pricing_pending else ''
+    if pricing_pending:
+        pricing_error = json.loads(job.customer_packing_package or '{}').get('pricing_save_error') or pricing_error
     if not is_spark_pending and not report_import_pending and (job.company_id or lead.company_id):
         try:
             pricing_options = _customer_pricing_options(lead, job, db)
@@ -664,7 +666,7 @@ def _move_details(access, db, *, refresh_report=True):
         except HTTPException as exc:
             if exc.status_code not in (422, 502, 503, 504):
                 raise
-            pricing_error = 'We could not load pricing options for your address. Your saved details and estimate have not changed. Please retry or contact your moving team.'
+            pricing_error = pricing_error or 'We could not load pricing options for your address. Your saved details and estimate have not changed. Please retry or contact your moving team.'
     from inventory_questions import questions
     item_questions = questions(active_company, conv_details, db) if spark_info and spark_info.get('status') == 'completed' else []
     from estimate_questions import unanswered_questions
@@ -821,8 +823,6 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         change=body.change
         if change.location is None or change.has_stops is None:
             raise HTTPException(422,'Choose pickup or delivery and answer Yes or No.')
-        if stops_option(lead,job,db) is None:
-            raise HTTPException(409,'Extra stop pricing is not available.')
         addresses=[address.strip() for address in change.stops] if change.has_stops else []
         if any(not address or len(address)>500 for address in addresses) or len(set(a.lower() for a in addresses)) != len(addresses):
             raise HTTPException(422,'Enter a different complete address for each stop.')
@@ -850,7 +850,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                                'distance_source': 'google_browser'}
                               for address, meters in zip(addresses, change.stop_meters)]
         job.customer_packing_package=json.dumps(selection)
-        sync_charges(lead,job,db)
+        from pricing_save import attempt_pricing
+        attempt_pricing(lead,job,db,lambda: sync_charges(lead,job,db,refresh=False))
         db.commit()
         return _move_details(access,db,refresh_report=False)
     if body.change and body.change.kind == 'elevator':
@@ -1016,7 +1017,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             selection['elevator'] = previous_package['elevator']
         if 'long_carry' in previous_package:
             selection['long_carry'] = previous_package['long_carry']
-        for key in ('pricing_locations', 'pricing_pending'):
+        for key in ('pricing_locations', 'pricing_pending', 'pricing_save_error'):
             if key in previous_package:
                 selection[key] = previous_package[key]
         if 'stairs' in previous_package:
@@ -1231,28 +1232,8 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
         job.customer_packing_package = json.dumps(selection)
     if (pricing_changed or selection.get('pricing_pending')) and (job.price is not None or float(lead.volume or 0) > 0):
         from routes.pricing import calculate_and_save_lead_job_price
-        try:
-            # Keep the customer's edits even if rebuilding the quote fails.
-            with db.begin_nested():
-                price = calculate_and_save_lead_job_price(lead, job, db)
-                if price is None:
-                    raise HTTPException(422, 'No matching rate')
-                updated = json.loads(job.customer_packing_package or '{}')
-                updated.pop('pricing_pending', None)
-                job.customer_packing_package = json.dumps(updated)
-        except HTTPException as exc:
-            if exc.status_code not in (400, 409, 422, 502, 503, 504):
-                raise
-            from models import LeadJobCharge
-            from routes.leads import _refresh_lead_estimated_total
-            updated = json.loads(job.customer_packing_package or '{}')
-            updated['pricing_pending'] = True
-            job.customer_packing_package = json.dumps(updated)
-            job.price = None
-            db.query(LeadJobCharge).filter_by(job_id=job.id).delete()
-            for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
-                link.published_price = None
-            _refresh_lead_estimated_total(lead.id, db)
+        from pricing_save import attempt_pricing
+        attempt_pricing(lead,job,db,lambda: calculate_and_save_lead_job_price(lead,job,db),require_price=True)
     db.commit()
     return details(access, db)
 
@@ -1750,9 +1731,11 @@ def save_stop_types(lead_id: str, job_id: str, body: StopTypesBody, user: User =
     if [stop.address for stop in body.stops] != stops: raise HTTPException(409, 'Save the job addresses first, then reload the stop types.')
     job.stop_types = json.dumps([stop.model_dump() for stop in body.stops])
     from extra_stops import sync_charges as sync_extra_stops
-    sync_extra_stops(db.get(Lead,lead_id),job,db)
+    from pricing_save import attempt_pricing
+    lead = db.get(Lead,lead_id)
+    pricing_error = attempt_pricing(lead,job,db,lambda: sync_extra_stops(lead,job,db))
     db.commit()
-    return {'ok': True}
+    return {'ok': True, 'pricing_error': pricing_error}
 
 class PrepareUpload(BaseModel):
     request_id: str = Field(min_length=8, max_length=64)
