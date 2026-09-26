@@ -63,6 +63,16 @@ ZIP_PREFIX_RANGES = (
 
 STATE_CODES = {state for state, _ in ZIP_PREFIX_RANGES}
 
+STATE_NAMES = dict(zip(
+    ('Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|District of Columbia|'
+     'Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|'
+     'Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|'
+     'New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|'
+     'Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|'
+     'West Virginia|Wisconsin|Wyoming').lower().split('|'),
+    'AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'.split(),
+))
+
 
 def delivery_location(value: str | None) -> tuple[str, str]:
     raw = (value or "").strip()
@@ -74,6 +84,15 @@ def delivery_location(value: str | None) -> tuple[str, str]:
         state = explicit_codes[-1].upper()
         if state in STATE_CODES:
             return state, zip_code
+
+    suffix = re.sub(r',?\s*(?:USA|US|United States(?: of America)?)\s*$', '', raw, flags=re.IGNORECASE).strip()
+    suffix = re.sub(r'\s+\d{5}(?:-\d{4})?$', '', suffix).strip()
+    for name in sorted(STATE_NAMES, key=len, reverse=True):
+        if re.search(r'(?:^|,\s*|\s)' + re.escape(name) + r'$', suffix, re.IGNORECASE):
+            return STATE_NAMES[name], zip_code
+    code = re.search(r'(?:^|,\s*|\s)([A-Z]{2})$', suffix, re.IGNORECASE)
+    if code and code.group(1).upper() in STATE_CODES:
+        return code.group(1).upper(), zip_code
 
     if not zip_code:
         return "", ""

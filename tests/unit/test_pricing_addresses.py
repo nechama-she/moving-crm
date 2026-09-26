@@ -32,18 +32,16 @@ def google(monkeypatch):
     _google_location.cache_clear()
 
 
-def test_monroe_georgia_resolves_using_google_and_reuses_result(google):
+def test_monroe_georgia_does_not_require_server_lookup(google):
     assert pricing_location('Monroe, Georgia') == ('GA', '')
     assert pricing_location('Monroe, Georgia') == ('GA', '')
-    google.assert_called_once()
-    assert google.call_args.args == ('POST', 'places:searchText')
-    assert google.call_args.kwargs['json']['textQuery'] == 'Monroe, Georgia'
+    google.assert_not_called()
     assert match_region_from_address('Monroe, Georgia', ['FL', 'GA'], *pricing_location('Monroe, Georgia')) == 'GA'
 
 
 def test_google_zip_selects_correct_destination_band(google):
     google.return_value = {'places': [place(zip_code='30655')]}
-    state, zip_code = pricing_location('123 Main St, Monroe, Georgia')
+    state, zip_code = pricing_location('123 Main St, Monroe')
     assert match_region_from_address('123 Main St, Monroe, Georgia', ['GA (300-305)', 'GA (306-309)'], state, zip_code) == 'GA (306-309)'
 
 
@@ -69,8 +67,21 @@ def test_unresolved_or_ambiguous_addresses_are_rejected(google, result):
 def test_provider_failure_can_be_retried(google):
     google.side_effect = [HTTPException(502, 'Address lookup unavailable'), {'places': [place()]}]
     with pytest.raises(HTTPException):
-        pricing_location('Monroe, Georgia')
-    assert pricing_location('Monroe, Georgia') == ('GA', '')
+        pricing_location('123 Main St, Monroe')
+    assert pricing_location('123 Main St, Monroe') == ('GA', '')
+
+
+@pytest.mark.parametrize('address,expected', [
+    ('California, USA', ('CA', '')),
+    ('Monroe, GA, USA', ('GA', '')),
+    ('Mohegan Lake, New York 10547', ('NY', '10547')),
+    ('Charleston, West Virginia', ('WV', '')),
+    ('Washington, DC, United States', ('DC', '')),
+])
+def test_explicit_states_work_when_google_is_unavailable(google, address, expected):
+    google.side_effect = HTTPException(503, 'No server key')
+    assert pricing_location(address) == expected
+    google.assert_not_called()
 
 
 @pytest.mark.parametrize('options,state,zip_code', [

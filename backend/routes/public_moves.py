@@ -1175,7 +1175,7 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
         try:
             price = calculate_and_save_lead_job_price(lead, job, db)
             if price is None and had_estimate:
-                raise HTTPException(422, 'Could not calculate an estimate for these moving details. Please contact your moving team to check pricing. Your changes were not saved.')
+                raise HTTPException(422, 'No matching price was found for this route. Enter the complete delivery address including its ZIP code. If it still cannot be priced, contact your moving team. Your changes were not saved.')
         except Exception:
             db.rollback()
             raise

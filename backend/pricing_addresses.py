@@ -12,7 +12,7 @@ def pricing_location(value: str | None) -> tuple[str, str]:
     if not address:
         return '', ''
     state, zip_code = delivery_location(address)
-    if state and zip_code:
+    if state:
         return state, zip_code
     return _google_location(address, int(time.time() // 3600))
 
