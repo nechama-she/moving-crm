@@ -272,12 +272,13 @@ _token_cache = {"value": "", "expires": 0.0}
 
 def _access_token():
     # A configured API bearer token supports the direct integration as well as OAuth.
-    configured_token = str(get_config().get("LIVESWITCH_ACCESS_TOKEN") or os.getenv("LIVESWITCH_ACCESS_TOKEN", "")).strip()
+    config = get_config()
+    configured_token = '' if config.get('LIVESWITCH_ACCESS_RESET_20260926') else str(config.get("LIVESWITCH_ACCESS_TOKEN") or os.getenv("LIVESWITCH_ACCESS_TOKEN", "")).strip()
     if configured_token:
         return configured_token
     with _token_lock:
         client_id, client_secret, _ = _settings()
-        credential_key = hashlib.sha256((client_id + "\n" + client_secret).encode()).hexdigest()
+        credential_key = hashlib.sha256((client_id + "\n" + client_secret + "\n" + SCOPES).encode()).hexdigest()
         if _token_cache["expires"] > time.time() and _token_cache.get("credential_key") == credential_key:
             return _token_cache["value"]
         ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
@@ -287,7 +288,7 @@ def _access_token():
             raise HTTPException(503, "Connect LiveSwitch in Settings before starting a conversation") from exc
         try:
             response = httpx.post(TOKEN_URL, json={"grant_type": "refresh_token", "refresh_token": refresh,
-                "client_id": client_id, "client_secret": client_secret}, timeout=20)
+                "client_id": client_id, "client_secret": client_secret, "scope": SCOPES}, timeout=20)
             response.raise_for_status()
             data = response.json()
             token = data["access_token"]

@@ -774,6 +774,9 @@ Resources:
                   - ssm:GetParametersByPath
                   - ssm:PutParameter
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/*"
+              - Effect: Allow
+                Action: ssm:DeleteParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/LIVESWITCH_ACCESS_TOKEN"
               # DynamoDB (read leads for import)
               - Effect: Allow
                 Action:

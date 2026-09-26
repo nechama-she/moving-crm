@@ -11,6 +11,7 @@ phases:
 
   pre_build:
     commands:
+      - cd $CODEBUILD_SRC_DIR/backend && python reset_liveswitch_access_token.py
       - echo "Running database migrations"
       - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
       - echo "Ensuring seed data (admin user + company)"

@@ -179,6 +179,36 @@ def test_participant_sms_returns_aircall_error(api):
     assert exc.value.detail == 'SMS not enabled for this number'
 
 
+def test_refresh_requests_shared_scopes_and_reuses_cached_token():
+    import hashlib
+    import os
+    import threading
+    import time
+    source = Path(__file__).resolve().parents[2] / 'backend/routes/liveswitch.py'
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_access_token')
+    scopes = next(node.value.value for node in tree.body if isinstance(node, ast.Assign)
+                  and any(isinstance(target, ast.Name) and target.id == 'SCOPES' for target in node.targets))
+    ssm = MagicMock()
+    ssm.get_parameter.return_value = {'Parameter': {'Value': 'refresh'}}
+    response = MagicMock()
+    response.json.return_value = {'access_token':'new-token','expires_in':3600}
+    post = MagicMock(return_value=response)
+    import httpx
+    scope = {'get_config':lambda:{'LIVESWITCH_ACCESS_RESET_20260926':'complete'},
+        '_settings':lambda:('client','secret','redirect'), '_token_lock':threading.Lock(),
+        '_token_cache':{'value':'','expires':0}, 'SCOPES':scopes, 'hashlib':hashlib,
+        'os':os,'time':time,'boto3':SimpleNamespace(client=lambda *args,**kwargs:ssm),
+        '_refresh_token_parameter':lambda:'/test/refresh', 'TOKEN_URL':'https://token.test/',
+        'httpx':SimpleNamespace(post=post,HTTPError=httpx.HTTPError), 'HTTPException':HTTPException}
+    exec(compile(ast.Module(body=[function],type_ignores=[]),str(source),'exec'),scope)
+    assert scope['_access_token']() == 'new-token'
+    assert post.call_args.kwargs['json']['scope'] == scopes
+    assert 'recordings' in scopes.split()
+    assert scope['_access_token']() == 'new-token'
+    post.assert_called_once()
+
+
 def test_configured_bearer_token_does_not_require_oauth():
     source = Path(__file__).resolve().parents[2] / 'backend/routes/liveswitch.py'
     tree = ast.parse(source.read_text(encoding='utf-8'))

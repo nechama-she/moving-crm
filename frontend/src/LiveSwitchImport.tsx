@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { API_BASE } from './apiConfig';
 import { authHeaders, useAuth } from './AuthContext';
 import type { EditableReportFile } from './ReportFileList';
@@ -18,7 +19,7 @@ async function readResult(response: Response) {
   return result;
 }
 
-export default function LiveSwitchImport({leadId,onImported}:{leadId:string;onImported:(file:EditableReportFile)=>void}) {
+export default function LiveSwitchImport({leadId,onImported,leadingAction}:{leadId:string;onImported:(file:EditableReportFile)=>void;leadingAction?:ReactNode}) {
   const {token}=useAuth();
   const [files,setFiles]=useState<RemoteFile[] | null>(null);
   const [active,setActive]=useState('');
@@ -60,10 +61,23 @@ export default function LiveSwitchImport({leadId,onImported}:{leadId:string;onIm
     onImported({id:file.request_id,name:metadata.name,size:content.size,content_type:content.type});
     setFiles(current=>current?.filter(row=>row.id!==file.id) ?? []);
   }
+  let errorMessage=error.split('\n')[0];
+  let technicalDetails=error;
+  if(error.includes('\n')) {
+    try {
+      const body=JSON.parse(error.slice(error.indexOf('\n')+1));
+      const descriptions=body.errors?.map((item:{description?:string})=>item.description).filter(Boolean);
+      if(descriptions?.length)errorMessage=descriptions.join(' ');
+      technicalDetails=error.split('\n')[0]+'\n'+JSON.stringify(body,null,2);
+    }catch { /* Non-JSON provider errors remain available unchanged. */ }
+  }
   return <div>
+    <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',margin:'8px 0'}}>
+    {leadingAction}
     <button type="button" className="slds-button" disabled={!!active} onClick={()=>void run('list',async signal=>{
       const result=await post(`${base}/liveswitch-files`,signal);setFiles(result.files);
     })}>{active==='list'?'Checking LiveSwitch...':'Import from LiveSwitch'}</button>
+    </div>
     {files && <div aria-label="Missing LiveSwitch files">
       {!files.length && <p role="status">No missing LiveSwitch videos.</p>}
       {files.map(file=><div key={file.id} style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginTop:8}}>
@@ -74,6 +88,11 @@ export default function LiveSwitchImport({leadId,onImported}:{leadId:string;onIm
         </button>
       </div>)}
     </div>}
-    {error && <pre role="alert" style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',maxHeight:240,overflow:'auto'}}>{error}</pre>}
+    {error && <div style={{borderLeft:'3px solid #b42318',padding:'8px 12px',margin:'12px 0',background:'#fff5f4'}}>
+      <p role="alert" style={{margin:'0 0 8px',overflowWrap:'anywhere',color:'#8a2018'}}>{errorMessage}</p>
+      <details><summary style={{cursor:'pointer'}}>Technical details</summary>
+        <pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',maxHeight:240,overflow:'auto',fontSize:12}}>{technicalDetails}</pre>
+      </details>
+    </div>}
   </div>;
 }
