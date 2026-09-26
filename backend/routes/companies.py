@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,6 +15,17 @@ from models import Company, User, UserCompany, Lead
 logger = logging.getLogger("moving-crm")
 
 router = APIRouter(prefix="/api/companies", tags=["Companies"])
+
+_SENDER_EMAIL_RE = re.compile(r"^[^@\s<>\"]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$")
+
+
+def _clean_sender_email(value: str | None) -> str | None:
+    value = (value or "").strip().lower()
+    if not value:
+        return None
+    if not _SENDER_EMAIL_RE.match(value):
+        raise HTTPException(status_code=400, detail="Sender email must be a valid email address")
+    return value
 
 
 class CompanyLogo(BaseModel):
@@ -45,6 +57,7 @@ class CompanyCreate(CompanyLogo):
     color: Optional[str] = None
     phone: str = ""
     office_address: str = Field(default="", max_length=1000)
+    sender_email: str = Field(default="", max_length=255)
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
     aircall_name: str = ""
@@ -116,6 +129,7 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
         color=resolve_company_color(company_name, body.color),
         phone=(body.phone or "").strip(),
         office_address=body.office_address.strip(),
+        sender_email=_clean_sender_email(body.sender_email),
         facebook_page_id=page_id,
         aircall_number_id=(body.aircall_number_id or "").strip(),
         aircall_name=(body.aircall_name or "").strip() or None,
@@ -135,6 +149,7 @@ class CompanyUpdate(CompanyLogo):
     color: Optional[str] = None
     phone: str = ""
     office_address: str | None = Field(default=None, max_length=1000)
+    sender_email: str | None = Field(default=None, max_length=255)
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
     aircall_name: str = ""
@@ -168,6 +183,8 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     company.phone = (body.phone or "").strip()
     if body.office_address is not None:
         company.office_address = body.office_address.strip()
+    if body.sender_email is not None:
+        company.sender_email = _clean_sender_email(body.sender_email)
     company.facebook_page_id = (body.facebook_page_id or "").strip() or None
     company.aircall_number_id = (body.aircall_number_id or "").strip()
     company.aircall_name = (body.aircall_name or "").strip() or None

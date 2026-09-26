@@ -10,6 +10,7 @@ type Company = {
   logo?: string;
   phone?: string;
   office_address?: string;
+  sender_email?: string;
   facebook_page_id?: string;
   aircall_number_id?: string;
   aircall_name?: string;
@@ -26,6 +27,7 @@ type CompanyForm = {
   logo: string;
   phone: string;
   office_address: string;
+  sender_email: string;
   facebook_page_id: string;
   aircall_number_id: string;
   aircall_name: string;
@@ -41,6 +43,7 @@ const emptyForm: CompanyForm = {
   logo: "",
   phone: "",
   office_address: "",
+  sender_email: "",
   facebook_page_id: "",
   aircall_number_id: "",
   aircall_name: "",
@@ -108,6 +111,7 @@ export default function CompaniesPage() {
       logo: company.logo || "",
       phone: company.phone || "",
       office_address: company.office_address || "",
+      sender_email: company.sender_email || "",
       facebook_page_id: company.facebook_page_id || "",
       aircall_number_id: company.aircall_number_id || "",
       aircall_name: company.aircall_name || "",
@@ -137,6 +141,7 @@ export default function CompaniesPage() {
         logo: form.logo,
         phone: form.phone.trim(),
         office_address: form.office_address.trim(),
+        sender_email: form.sender_email.trim(),
         facebook_page_id: form.facebook_page_id.trim(),
         aircall_number_id: form.aircall_number_id.trim(),
         aircall_name: form.aircall_name.trim(),
@@ -224,6 +229,7 @@ export default function CompaniesPage() {
         c.color || "",
         c.phone || "",
         c.office_address || "",
+        c.sender_email || "",
         c.facebook_page_id || "",
         c.aircall_number_id || "",
         c.aircall_name || "",
@@ -275,6 +281,11 @@ export default function CompaniesPage() {
             Office address
             <input value={form.office_address} onChange={(e) => updateField("office_address", e.target.value)} style={inputStyle} placeholder="Street address, city, state, ZIP" maxLength={1000} />
             <small>Used for local travel time: office to pickup, and delivery back to office.</small>
+          </label>
+          <label style={{ ...fieldLabel, gridColumn: "1 / -1" }}>
+            Sender email
+            <input type="email" value={form.sender_email} onChange={(e) => updateField("sender_email", e.target.value)} style={inputStyle} placeholder="sales@company.com" maxLength={255} />
+            <small>Customer emails (verification codes) are sent from this address. Its domain must be verified in AWS SES first; leave empty to use the generic AWS sender.</small>
           </label>
           <label style={fieldLabel}>
             Facebook Page ID

@@ -429,8 +429,11 @@ def send_code(body: CodeRequest, access: PublicMoveAccess = Depends(public_acces
     if channel == 'email':
         # Serialize resends and store only the CRM hash of the emailed code.
         from customer_email_auth import send_email_code
+        # Send as the lead's company (or the default company), like the SMS path.
+        sender_company = db.get(Company, lead.company_id) if lead.company_id else db.query(Company).filter(
+            Company.is_default_company.is_(True)).one_or_none()
         try:
-            send_email_code(lead.email, code, access.id)
+            send_email_code(lead.email, code, access.id, sender_company)
         except Exception:
             access.otp_hash = None
             db.commit()

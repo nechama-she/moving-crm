@@ -33,6 +33,7 @@ def migrate() -> None:
         connection.execute(text("ALTER TABLE public_move_access ADD COLUMN IF NOT EXISTS link_sms_sent_at TIMESTAMP"))
         connection.execute(text("ALTER TABLE public_move_access ADD COLUMN IF NOT EXISTS link_sms_phone_last4 VARCHAR(4)"))
         connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS office_address TEXT NOT NULL DEFAULT ''"))
+        connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS sender_email VARCHAR(255)"))
         connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_default_company BOOLEAN NOT NULL DEFAULT FALSE"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_companies_default ON companies(is_default_company) WHERE is_default_company = TRUE"))
         connection.execute(text("ALTER TABLE lead_jobs ALTER COLUMN company_id DROP NOT NULL"))

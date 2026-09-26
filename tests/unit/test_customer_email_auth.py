@@ -79,6 +79,59 @@ def test_transport_error_is_unknown_not_delivery_failure(cognito, caplog):
     assert email_events(caplog)[-1]['status']=='unknown'
 
 
+@pytest.fixture
+def ses(monkeypatch):
+    client = MagicMock()
+    monkeypatch.setattr(auth, 'ses_client', lambda: client)
+    return client
+
+
+def company(sender='sales@gorillahaulers.com', name='Gorilla Haulers'):
+    from types import SimpleNamespace
+    return SimpleNamespace(name=name, sender_email=sender)
+
+
+def test_company_sender_sends_via_ses_not_cognito(cognito, ses):
+    auth.send_email_code('Jane@Example.com', '123456', 'access', company())
+    args = ses.send_email.call_args.kwargs
+    assert args['FromEmailAddress'] == 'Gorilla Haulers <sales@gorillahaulers.com>'
+    assert args['ReplyToAddresses'] == ['sales@gorillahaulers.com']
+    assert args['Destination'] == {'ToAddresses': ['jane@example.com']}
+    content = args['Content']['Simple']
+    assert '123456' in content['Body']['Text']['Data'] and '123456' in content['Body']['Html']['Data']
+    assert 'Gorilla Haulers' in content['Subject']['Data']
+    cognito.admin_create_user.assert_not_called()
+
+
+def test_company_without_sender_falls_back_to_cognito(cognito, ses):
+    auth.send_email_code('jane@example.com', '123456', 'access', company(sender=''))
+    ses.send_email.assert_not_called()
+    cognito.admin_create_user.assert_called_once()
+
+
+def test_company_name_is_html_escaped(cognito, ses):
+    auth.send_email_code('jane@example.com', '123456', 'access', company(name='A&B <Movers>'))
+    html_body = ses.send_email.call_args.kwargs['Content']['Simple']['Body']['Html']['Data']
+    assert 'A&amp;B &lt;Movers&gt;' in html_body and '<Movers>' not in html_body
+
+
+def test_ses_rejection_is_502_and_logged_without_code(cognito, ses, caplog):
+    ses.send_email.side_effect = ClientError({'Error': {'Code': 'MessageRejected', 'Message': 'Email address is not verified: 913725'},
+                                              'ResponseMetadata': {'RequestId': 'ses-req'}}, 'SendEmail')
+    with pytest.raises(HTTPException) as error: auth.send_email_code('jane@example.com', '913725', 'access-1', company())
+    assert error.value.status_code == 502
+    event = email_events(caplog)[-1]
+    assert (event['status'], event['action'], event['error_code']) == ('failed', 'SES', 'MessageRejected')
+    assert event['sender'] == 'sales@gorillahaulers.com'
+    assert '913725' not in caplog.text and 'jane@example.com' not in caplog.text
+
+
+def test_ses_throttling_is_429(cognito, ses):
+    ses.send_email.side_effect = ClientError({'Error': {'Code': 'TooManyRequestsException'}}, 'SendEmail')
+    with pytest.raises(HTTPException) as error: auth.send_email_code('jane@example.com', '123456', 'access', company())
+    assert error.value.status_code == 429
+
+
 def test_missing_pool_is_logged(cognito, caplog, monkeypatch):
     monkeypatch.delenv('PUBLIC_MOVE_COGNITO_POOL_ID')
     with pytest.raises(HTTPException): auth.send_email_code('jane@example.com','913725','access-1')
