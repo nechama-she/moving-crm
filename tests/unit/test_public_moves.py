@@ -2456,10 +2456,22 @@ def test_extra_stops_save_route_cache_and_remove_only_own_fees(portal,packing_pr
     save('pickup',['Pickup B'])
     if not browser_routing:
         assert job.price is None
+        def rebuild(*args):
+            assert not route
+            job.price = access.published_price = Decimal('900')
+            return 900
+        calculate = MagicMock(side_effect=rebuild)
+        monkeypatch.setattr(packing_pricing,'calculate_and_save_lead_job_price',calculate,raising=False)
         save('delivery',['Unroutable delivery'])
         save('pickup',[],False)
         assert route==['Unroutable delivery']
         assert json.loads(job.customer_packing_package)['extra_stops']['pickup']['answer'] is False
+        calculate.assert_not_called()
+        save('delivery',[],False)
+        calculate.assert_called_once()
+        assert job.price == access.published_price == 900
+        assert 'pricing_pending' not in json.loads(job.customer_packing_package)
+        assert 'pricing_save_error' not in json.loads(job.customer_packing_package)
         distance.assert_not_called()
         return
     assert job.price==access.published_price==1075

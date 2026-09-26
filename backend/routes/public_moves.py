@@ -851,7 +851,17 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                               for address, meters in zip(addresses, change.stop_meters)]
         job.customer_packing_package=json.dumps(selection)
         from pricing_save import attempt_pricing
-        attempt_pricing(lead,job,db,lambda: sync_charges(lead,job,db,refresh=False))
+        if selection.get('pricing_pending'):
+            from routes.pricing import calculate_and_save_lead_job_price
+            def rebuild_price():
+                # Missing browser distances must not trigger server routing on a stop edit.
+                options = stops_option(lead,job,db,refresh=False)
+                if any(row.get('total') is None for group in (options['locations'] if options else []) for row in group['stops']):
+                    raise HTTPException(422, 'Stop distances are pending.')
+                return calculate_and_save_lead_job_price(lead,job,db)
+            attempt_pricing(lead,job,db,rebuild_price,require_price=True)
+        else:
+            attempt_pricing(lead,job,db,lambda: sync_charges(lead,job,db,refresh=False))
         db.commit()
         return _move_details(access,db,refresh_report=False)
     if body.change and body.change.kind == 'elevator':
