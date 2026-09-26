@@ -1,4 +1,5 @@
 import ReportFileGallery from "./ReportFileGallery";
+import LiveSwitchImport from './LiveSwitchImport';
 import type { EditableReportFile } from "./ReportFileList";
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -56,7 +57,7 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
    const group=(rows:EditableReportFile[],title:string)=> <ReportFileGallery title={title} selectedIds={selectedIds.filter(id=>rows.some(file=>file.id===id))} onSelectionChange={ids=>selectFiles([...selectedIds.filter(id=>!rows.some(file=>file.id===id)),...ids])} onDownload={()=>void downloadSelected(selectedIds.filter(id=>rows.some(file=>file.id===id)))} files={rows} onRemove={removeFile} disabled={busy} loadPreview={preview}/>;
    return <div className="crm-report-gallery">
      <div className="crm-gallery-current"><h4>Files in the current report</h4><p>Already included. Keep selected to include them in your next report.</p>{current.length?group(current,'Current report files'):<p>No files in the current report yet.</p>}</div>
-     <div className="crm-gallery-available"><h4>Available files to add</h4><button type="button" className="slds-button" disabled={busy} onClick={()=>void importChatFiles()}>Import chat files</button><p>Not in the current report. Select the files you want to send to LiveSwitch.</p>{available.length?group(available,'Available files'):<p>No additional files available.</p>}</div>
+     <div className="crm-gallery-available"><h4>Available files to add</h4><button type="button" className="slds-button" disabled={busy} onClick={()=>void importChatFiles()}>Import chat files</button><LiveSwitchImport leadId={leadId} onImported={file=>setFiles(current=>current.some(row=>row.id===file.id)?current:[...current,file])}/><p>Not in the current report. Select the files you want to send to LiveSwitch.</p>{available.length?group(available,'Available files'):<p>No additional files available.</p>}</div>
      <p role="status"><strong>{selectedIds.length} files selected for the next report</strong></p>
      {notice&&<p role="alert">{notice}</p>}
    </div>;

@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api/liveswitch", tags=["LiveSwitch"])
 AUTHORIZE_URL = "https://id.liveswitch.com/authorize"
 TOKEN_URL = "https://id.liveswitch.com/oauth/token"
 AUDIENCE = "https://public-api.production.liveswitch.com/"
-SCOPES = "openid profile email offline_access conversations conversations.write contacts webhooks webhooks.write spark-templates sparks sparks.write"
+SCOPES = "openid profile email offline_access conversations conversations.write contacts webhooks webhooks.write spark-templates sparks sparks.write recordings"
 STATE_TTL_SECONDS = 300
 
 
@@ -419,12 +419,8 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
         row.sync_error = None
     access.published_price = access.published_cuft = access.published_at = None
     db.commit()
-    if files:
-        queue_files(access.id, db)
-    else:
-        start_ready_report(lead_id, db)
-        db.refresh(saved)
-        details = json.loads(saved.details or '{}')
+    queue_files(access.id, db)
+    start_ready_report(lead_id, db)
     return {'id': details['last_spark_id'], 'status': 'queued'}
 
 
@@ -446,23 +442,24 @@ def start_ready_report(lead_id: str, db: Session):
         saved.details = json.dumps(details)
         db.commit()
         return
-    # Allow five minutes to ingest the last uploaded file before analysis.
-    if rows:
-        import math
-        import boto3
-        remaining = 300 - (datetime.utcnow() - max(row.synced_at for row in rows)).total_seconds()
-        if remaining > 0:
-            if details.get('spark_start_queued_for') != details.get('last_spark_id'):
-                boto3.client('sqs').send_message(
-                    QueueUrl=os.environ['PUBLIC_MOVE_SYNC_QUEUE_URL'],
-                    DelaySeconds=min(900, max(1, math.ceil(remaining))),
-                    MessageBody=json.dumps({'start_report': details['last_spark_id'], 'lead_id': lead_id}),
-                )
-                details['spark_start_queued_for'] = details['last_spark_id']
-            details['last_spark_status'] = 'queued'
-            saved.details = json.dumps(details)
-            db.commit()
-            return
+    # Every report uses the same delay, measured from the request or last upload.
+    import math
+    import boto3
+    ready_at = max((row.synced_at for row in rows),
+                   default=datetime.utcfromtimestamp(details['last_spark_at']))
+    remaining = 300 - (datetime.utcnow() - ready_at).total_seconds()
+    if remaining > 0:
+        if details.get('spark_start_queued_for') != details.get('last_spark_id'):
+            boto3.client('sqs').send_message(
+                QueueUrl=os.environ['PUBLIC_MOVE_SYNC_QUEUE_URL'],
+                DelaySeconds=min(900, max(1, math.ceil(remaining))),
+                MessageBody=json.dumps({'start_report': details['last_spark_id'], 'lead_id': lead_id}),
+            )
+            details['spark_start_queued_for'] = details['last_spark_id']
+        details['last_spark_status'] = 'queued'
+        saved.details = json.dumps(details)
+        db.commit()
+        return
     result = _api_post(f"conversations/{details['id']}/sparks", payload)
     if not result.get('id'):
         raise HTTPException(502, 'LiveSwitch did not return a report ID.')

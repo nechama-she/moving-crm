@@ -54,6 +54,39 @@ def request(link='',session=''):
     return Request({'type':'http','method':'GET','path':'/','headers':[(b'x-public-link',link.encode()),(b'x-public-session',session.encode())], 'client':('127.0.0.1',1234)})
 
 
+def test_manual_liveswitch_list_only_missing_and_no_report_mutations(portal, monkeypatch):
+    from uuid import uuid5, NAMESPACE_URL
+    import httpx
+    import liveswitch_manual_import as importer
+    _, db, lead, _ = portal
+    state = {'id':'conversation','last_spark_id':'report','last_spark_status':'completed'}
+    db.add(models.LeadLiveSwitch(lead_id=lead.id,details=json.dumps(state)))
+    attachment_id = str(uuid5(NAMESPACE_URL,f'liveswitch:{lead.id}:already-saved'))
+    db.add(models.LeadAttachment(id=attachment_id,lead_id=lead.id,file_name='saved.mp4',file_blob=b'video',report_deleted_at=datetime.utcnow()))
+    db.commit()
+    monkeypatch.setitem(sys.modules,'routes.liveswitch',SimpleNamespace(AUDIENCE='https://api.test/',_access_token=lambda:'secret'))
+    rows = [{'id':recording_id,'conversationId':'conversation','recordingStatus':'Completed','publicUrl':'https://video.test/file'}
+        for recording_id in ['already-saved','missing','missing']]
+    monkeypatch.setattr(importer.httpx,'get',lambda *args,**kwargs:httpx.Response(200,json=rows))
+    result = importer.missing_recordings(lead.id,'conversation',db)
+    assert [row['id'] for row in result['files']] == ['missing']
+    assert json.loads(db.get(models.LeadLiveSwitch,lead.id).details) == state
+    assert db.query(models.LeadAttachment).count() == 1
+
+
+@pytest.mark.parametrize('status,body', [(403,'{"errors":[{"description":"Missing scope: recordings"}]}'),(503,'Provider unavailable')])
+def test_manual_liveswitch_preserves_provider_error_without_crm_logout(portal, monkeypatch, status, body):
+    import httpx
+    import liveswitch_manual_import as importer
+    _, db, lead, _ = portal
+    monkeypatch.setitem(sys.modules,'routes.liveswitch',SimpleNamespace(AUDIENCE='https://api.test/',_access_token=lambda:'secret'))
+    monkeypatch.setattr(importer.httpx,'get',lambda *args,**kwargs:httpx.Response(status,text=body))
+    with pytest.raises(HTTPException) as error:
+        importer.missing_recordings(lead.id,'conversation',db)
+    assert error.value.status_code == 502
+    assert error.value.detail == {'provider':'LiveSwitch','status':status,'body':body}
+
+
 
 
 def test_estimate_pdf_uses_verified_access_and_saved_report_only(portal, monkeypatch):
@@ -1136,6 +1169,37 @@ def test_rep_http_flow_injects_request_and_reuses_move_page(rep_portal):
 
 
 
+
+
+def test_report_without_selected_files_uses_shared_five_minute_delay(portal, processing_api, monkeypatch):
+    import boto3
+    import time
+    _, db, lead, _ = portal
+    db.add(models.LeadLiveSwitch(lead_id=lead.id,details=json.dumps({'id':'existing'})))
+    db.commit()
+    monkeypatch.setenv('PUBLIC_MOVE_SYNC_QUEUE_URL','queue')
+    queue = MagicMock()
+    monkeypatch.setattr(boto3,'client',lambda *args,**kwargs:queue)
+    sync = SimpleNamespace(queue_files=MagicMock())
+    monkeypatch.setitem(sys.modules,'public_move_sync',sync)
+    monkeypatch.setitem(sys.modules,'customer_report_updates',SimpleNamespace(queue_report_check=MagicMock()))
+    api = processing_api
+    api['_connection_config'] = lambda: {'spark_template_id':'template'}
+    api['ensure_lead_conversation'] = MagicMock(return_value={'id':'existing'})
+    api['_api_post'] = MagicMock(return_value={'id':'report','status':'queued'})
+    api['trigger_lead_spark'](lead.id,{'file_ids':[]},db)
+    sync.queue_files.assert_called_once()
+    api['_api_post'].assert_not_called()
+    assert 299 <= queue.send_message.call_args.kwargs['DelaySeconds'] <= 300
+    api['start_ready_report'](lead.id,db)
+    queue.send_message.assert_called_once()
+    saved = db.get(models.LeadLiveSwitch,lead.id)
+    state = json.loads(saved.details)
+    state['last_spark_at'] = time.time()-301
+    saved.details = json.dumps(state)
+    db.commit()
+    api['start_ready_report'](lead.id,db)
+    api['_api_post'].assert_called_once_with('conversations/existing/sparks',{'sparkTemplateId':'template','shareWith':['anyone']})
 
 
 def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_api, monkeypatch):

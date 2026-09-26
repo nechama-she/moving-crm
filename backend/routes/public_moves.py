@@ -1702,6 +1702,17 @@ def sync_files(lead_id: str, user: User = Depends(get_current_user), db: Session
     return queue_files(access.id, db, actor_id=user.id)
 
 
+@router.post('/api/leads/{lead_id}/customer-page/liveswitch-files')
+def list_missing_liveswitch_files(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    staff_access(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead_id)
+    conversation_id = json.loads(saved.details or '{}').get('id') if saved else None
+    if not conversation_id:
+        raise HTTPException(409, 'Open a LiveSwitch conversation first.')
+    from liveswitch_manual_import import missing_recordings
+    return missing_recordings(lead_id, conversation_id, db)
+
+
 def queue_uploaded_file(access, attachment_id, db):
     conversation = db.get(LeadLiveSwitch, access.lead_id)
     if not conversation or json.loads(conversation.details or '{}').get('last_spark_id'):
