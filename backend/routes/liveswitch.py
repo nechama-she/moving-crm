@@ -147,11 +147,12 @@ def _b64decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
-def _create_state(user_id: str) -> str:
+def _create_state(user_id: str, import_lead_id: str | None = None) -> str:
     payload = _b64encode(json.dumps({
         "sub": user_id,
         "exp": int(time.time()) + STATE_TTL_SECONDS,
         "nonce": secrets.token_urlsafe(18),
+        **({'import_lead_id': import_lead_id} if import_lead_id else {}),
     }, separators=(",", ":")).encode())
     signature = _b64encode(hmac.new(_state_secret(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{signature}"
@@ -203,9 +204,12 @@ async def oauth_callback(
     error: str = Query(default=""),
     error_description: str = Query(default=""),
 ):
-    _validate_state(state)
+    state_data = _validate_state(state)
     if not hmac.compare_digest(state, request.cookies.get("liveswitch_oauth_state", "")):
         raise HTTPException(400, "Connection attempt expired. Return to Settings and click Connect LiveSwitch again.")
+    if state_data.get('import_lead_id'):
+        from liveswitch_import_login import complete_import_login
+        return await complete_import_login(request, code, state, error, error_description, state_data)
     if error:
         detail = error_description.strip() or error
         raise HTTPException(status_code=400, detail=f"LiveSwitch authorization failed: {detail}")

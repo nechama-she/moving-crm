@@ -32,14 +32,20 @@ def token_diagnostics(token):
     return result
 
 
-def missing_recordings(lead_id, conversation_id, db):
+def missing_recordings(lead_id, conversation_id, db, fresh_token=None, trace=None):
     from routes.liveswitch import AUDIENCE, _access_token
-    token = _access_token()
+    token = fresh_token if fresh_token is not None else _access_token()
     try:
         response = httpx.get(f'{AUDIENCE}v1/recordings/conversation/{conversation_id}',
             headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/json'}, timeout=20)
     except httpx.RequestError as exc:
         raise HTTPException(502, f'LiveSwitch request failed: {exc}') from exc
+    if trace is not None:
+        from liveswitch_import_login import redact
+        trace.append({'stage':'recordings', 'request':{'method':'GET',
+            'url':f'{AUDIENCE}v1/recordings/conversation/{conversation_id}',
+            'headers':{'Authorization':'Bearer [REDACTED]','Accept':'application/json'}},
+            'response':{'status':response.status_code,'body':redact(response.text, [token])}})
     if not response.is_success:
         # Preserve the provider's actual error, but do not expose request credentials.
         raise HTTPException(502, {'provider': 'LiveSwitch', 'status': response.status_code, 'body': response.text,
