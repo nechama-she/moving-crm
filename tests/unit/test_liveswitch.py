@@ -195,7 +195,8 @@ def test_refresh_requests_shared_scopes_and_reuses_cached_token():
     response.json.return_value = {'access_token':'new-token','expires_in':3600}
     post = MagicMock(return_value=response)
     import httpx
-    scope = {'get_config':lambda:{'LIVESWITCH_ACCESS_RESET_20260926':'complete'},
+    from botocore.exceptions import ClientError
+    scope = {'get_config':lambda:{'LIVESWITCH_ACCESS_TOKEN':'stale-override'}, 'ClientError':ClientError,
         '_settings':lambda:('client','secret','redirect'), '_token_lock':threading.Lock(),
         '_token_cache':{'value':'','expires':0}, 'SCOPES':scopes, 'hashlib':hashlib,
         'os':os,'time':time,'boto3':SimpleNamespace(client=lambda *args,**kwargs:ssm),
@@ -207,14 +208,33 @@ def test_refresh_requests_shared_scopes_and_reuses_cached_token():
     assert 'recordings' in scopes.split()
     assert scope['_access_token']() == 'new-token'
     post.assert_called_once()
+    # Another instance handles reconnect; this instance still has an unexpired cache.
+    ssm.get_parameter.return_value = {'Parameter': {'Value':'new-authorization'}}
+    response.json.return_value = {'access_token':'reconnected-token','expires_in':3600,'refresh_token':'rotated'}
+    assert scope['_access_token']() == 'reconnected-token'
+    assert post.call_args.kwargs['json']['refresh_token'] == 'new-authorization'
+    ssm.get_parameter.return_value = {'Parameter': {'Value':'rotated'}}
+    assert scope['_access_token']() == 'reconnected-token'
+    assert post.call_count == 2
+    ssm.get_parameter.side_effect = ClientError({'Error':{'Code':'AccessDeniedException'}},'GetParameter')
+    with pytest.raises(HTTPException) as error:
+        scope['_access_token']()
+    assert error.value.status_code == 503
 
 
 def test_configured_bearer_token_does_not_require_oauth():
+    import os
+    import threading
+    from botocore.exceptions import ClientError
     source = Path(__file__).resolve().parents[2] / 'backend/routes/liveswitch.py'
     tree = ast.parse(source.read_text(encoding='utf-8'))
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_access_token')
     settings = MagicMock(side_effect=AssertionError('OAuth should not be required'))
-    scope = {'get_config': lambda: {'LIVESWITCH_ACCESS_TOKEN': 'test-token'}, '_settings': settings}
+    ssm = MagicMock()
+    ssm.get_parameter.side_effect = ClientError({'Error':{'Code':'ParameterNotFound'}},'GetParameter')
+    scope = {'get_config': lambda: {'LIVESWITCH_ACCESS_TOKEN': 'test-token'}, '_settings': settings,
+        'os':os,'_token_lock':threading.Lock(),'ClientError':ClientError,
+        'boto3':SimpleNamespace(client=lambda *args,**kwargs:ssm),'_refresh_token_parameter':lambda:'/test/refresh'}
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), scope)
     assert scope['_access_token']() == 'test-token'
     settings.assert_not_called()

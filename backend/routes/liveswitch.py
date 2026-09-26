@@ -184,6 +184,7 @@ def start_oauth(response: Response, admin: User = Depends(require_admin)):
         'client_id': client_id,
         'redirect_uri': redirect_uri,
         'scope': SCOPES,
+        'prompt': 'consent',
         'audience': AUDIENCE,
         'state': _create_state(admin.id),
     }
@@ -271,21 +272,28 @@ _token_cache = {"value": "", "expires": 0.0}
 
 
 def _access_token():
-    # A configured API bearer token supports the direct integration as well as OAuth.
-    config = get_config()
-    configured_token = '' if config.get('LIVESWITCH_ACCESS_RESET_20260926') else str(config.get("LIVESWITCH_ACCESS_TOKEN") or os.getenv("LIVESWITCH_ACCESS_TOKEN", "")).strip()
-    if configured_token:
-        return configured_token
     with _token_lock:
-        client_id, client_secret, _ = _settings()
-        credential_key = hashlib.sha256((client_id + "\n" + client_secret + "\n" + SCOPES).encode()).hexdigest()
-        if _token_cache["expires"] > time.time() and _token_cache.get("credential_key") == credential_key:
-            return _token_cache["value"]
         ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
         try:
             refresh = ssm.get_parameter(Name=_refresh_token_parameter(), WithDecryption=True)["Parameter"]["Value"]
+        except ClientError as exc:
+            if exc.response.get('Error', {}).get('Code') != 'ParameterNotFound':
+                raise HTTPException(503, 'Could not read the current LiveSwitch authorization.') from exc
+            config = get_config()
+            configured_token = '' if config.get('LIVESWITCH_ACCESS_RESET_20260926') else str(config.get('LIVESWITCH_ACCESS_TOKEN') or os.getenv('LIVESWITCH_ACCESS_TOKEN', '')).strip()
+            if configured_token:
+                return configured_token
+            raise HTTPException(503, 'Connect LiveSwitch in Settings before starting a conversation') from exc
         except Exception as exc:
-            raise HTTPException(503, "Connect LiveSwitch in Settings before starting a conversation") from exc
+            raise HTTPException(503, 'Could not read the current LiveSwitch authorization.') from exc
+        # Check shared authorization before using an instance-local cache. Reconnects
+        # must invalidate tokens on every warm API/worker instance, not only the callback.
+        client_id, client_secret, _ = _settings()
+        credential_key = hashlib.sha256((client_id + "\n" + client_secret + "\n" + SCOPES).encode()).hexdigest()
+        refresh_key = hashlib.sha256(refresh.encode()).hexdigest()
+        if (_token_cache['expires'] > time.time() and _token_cache.get('credential_key') == credential_key
+                and _token_cache.get('refresh_key') == refresh_key):
+            return _token_cache['value']
         try:
             response = httpx.post(TOKEN_URL, json={"grant_type": "refresh_token", "refresh_token": refresh,
                 "client_id": client_id, "client_secret": client_secret, "scope": SCOPES}, timeout=20)
@@ -296,7 +304,9 @@ def _access_token():
             raise HTTPException(502, "LiveSwitch connection needs to be reconnected in Settings") from exc
         if data.get("refresh_token") and data["refresh_token"] != refresh:
             ssm.put_parameter(Name=_refresh_token_parameter(), Value=data["refresh_token"], Type="SecureString", Overwrite=True)
-        _token_cache.update(value=token, credential_key=credential_key, expires=time.time() + max(0, int(data.get("expires_in", 300)) - 60))
+            refresh_key = hashlib.sha256(data['refresh_token'].encode()).hexdigest()
+        _token_cache.update(value=token, credential_key=credential_key, refresh_key=refresh_key,
+                            expires=time.time() + max(0, int(data.get("expires_in", 300)) - 60))
         return token
 
 

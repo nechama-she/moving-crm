@@ -90,6 +90,8 @@ def test_start_and_callback_save_refresh_token(setup, monkeypatch):
     assert "Secure" in response.headers["set-cookie"]
     query = parse_qs(urlsplit(response.json()["authorization_url"]).query)
     assert query["redirect_uri"] == [setup.config["redirect_uri"]]
+    assert query['prompt'] == ['consent']
+    assert query['scope'] == [setup.scope['SCOPES']]
 
     class FakeClient:
         async def __aenter__(self): return self
