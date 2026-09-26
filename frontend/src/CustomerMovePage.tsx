@@ -837,6 +837,7 @@ export default function CustomerMovePage() {
             {showQuestions && (
               <div className="cm-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="packing-title">
                 <div className="cm-modal-card">
+                  <div className="cm-question-heading">
                   <div className="cm-modal-header">
                     <div>
                       <span className="cm-eyebrow">{packingStep === 'items' ? 'MOVING TERMS' : 'EXTRA SERVICES'}</span>
@@ -849,13 +850,14 @@ export default function CustomerMovePage() {
                       {pricingSteps.flatMap<{id:string; step:PricingStep; index:number; label:string}>(step => step === 'items'
                         ? termsGroups.map((group, index) => ({id:`items:${index}`, step, index, label:group[0]?.question || `Moving terms ${index+1}`}))
                         : [{id:step, step, index:0, label:nextPricingLabels[step]}]
-                      ).map((entry, index) => <button type="button" key={entry.id} aria-current={packingStep === entry.step && (entry.step !== 'items' || currentTermsStep === entry.index) ? 'step' : undefined} onClick={() => {
+                      ).map((entry, index) => <button type="button" key={entry.id} title={entry.label.charAt(0).toUpperCase() + entry.label.slice(1)} aria-current={packingStep === entry.step && (entry.step !== 'items' || currentTermsStep === entry.index) ? 'step' : undefined} onClick={() => {
                         setPackingStep(entry.step);
                         if (entry.step === 'items') changeTermsStep(entry.index);
                         setPackingError(''); setCarryMissing(false); setStairsMissing(false); setShuttleMissing(false); setElevatorMissing(false); setStorageMissing(false);
                         termsBody.current?.scrollTo({top:0});
                       }}><span className="cm-question-menu-number" aria-hidden="true">{index + 1}</span><span className="cm-question-menu-label">{entry.label.charAt(0).toUpperCase() + entry.label.slice(1)}</span></button>)}
                     </nav>
+                  </div>
                   <div className="cm-modal-body" ref={termsBody}>
                     {currentStops ? <CustomerExtraStopsQuestion key={currentStops.location} group={currentStops} apiKey={data.google_maps_browser_key || ''} missing={stopsMissing} onIncomplete={value=>{setStopsIncomplete(old=>({...old,[currentStops.location]:value}));setStopsMissing(false);}} onChange={(has_stops,stops)=>savePricingChange({kind:'extra_stops',location:currentStops.location,has_stops,stops})}/> : currentElevator && data.elevator ? <CustomerElevatorQuestion config={data.elevator} location={currentElevator} value={elevatorAnswers[currentElevator.location] ?? null} missing={elevatorMissing} onChange={elevator => { setElevatorAnswers(prev => ({ ...prev, [currentElevator.location]: elevator })); setElevatorMissing(false); savePricingChange({kind:'elevator',location:currentElevator.location,revision:currentElevator.revision,elevator}); }} /> : currentCarry && data.long_carry ? <CustomerLongCarryQuestion key={`${currentCarry.location}:${currentCarry.revision}`} config={data.long_carry} shuttleCharge={currentCarry.location === 'delivery' && data.shuttle?.required ? data.shuttle.total : undefined} location={currentCarry} value={carryAnswers[currentCarry.location] ?? null} missing={carryMissing} onChange={carry_feet => { setCarryAnswers(prev => ({ ...prev, [currentCarry.location]: carry_feet })); setCarryMissing(false); if(carry_feet !== null) savePricingChange({ kind:'long_carry', location:currentCarry.location, revision:currentCarry.revision, ...(carry_feet === 'unknown' ? {carry_unknown:true, carry_acknowledged:true} : {carry_feet}) }); }} /> : currentStairs && data.stairs ? <CustomerStairsQuestion config={data.stairs} location={currentStairs} value={stairsAnswers[currentStairs.location] ?? null} missing={stairsMissing} onChange={flights => { setStairsAnswers(prev => ({ ...prev, [currentStairs.location]: flights })); setStairsMissing(false); if (flights !== null) savePricingChange({ kind: 'stairs', location: currentStairs.location, revision: currentStairs.revision, flights }); }} /> : packingStep === 'storage' && data.storage ? <CustomerStorageQuestion config={data.storage} value={storageDate} missing={storageMissing} onChange={date => { setStorageDate(date); setStorageMissing(false); savePricingChange({ kind: 'storage', available_date: date }); }} /> : packingStep === 'shuttle' && data.shuttle ? <fieldset style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
                       <legend>Delivery shuttle</legend>
