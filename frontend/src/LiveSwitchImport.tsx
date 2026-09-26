@@ -13,7 +13,7 @@ async function readResult(response: Response) {
   if (!response.ok) {
     const detail = result?.detail;
     throw new Error(detail?.provider === 'LiveSwitch'
-      ? `LiveSwitch HTTP ${detail.status}\n${detail.body}`
+      ? `LiveSwitch HTTP ${detail.status}\n${detail.body}${detail.diagnostics ? '\n\nCredential diagnostics\n'+JSON.stringify(detail.diagnostics,null,2) : ''}`
       : typeof detail === 'string' ? detail : `HTTP ${response.status}\n${body}`);
   }
   return result;
@@ -65,10 +65,11 @@ export default function LiveSwitchImport({leadId,onImported,leadingAction}:{lead
   let technicalDetails=error;
   if(error.includes('\n')) {
     try {
-      const body=JSON.parse(error.slice(error.indexOf('\n')+1));
+      const body=JSON.parse(error.slice(error.indexOf('\n')+1).split('\n\nCredential diagnostics\n')[0]);
       const descriptions=body.errors?.map((item:{description?:string})=>item.description).filter(Boolean);
       if(descriptions?.length)errorMessage=descriptions.join(' ');
-      technicalDetails=error.split('\n')[0]+'\n'+JSON.stringify(body,null,2);
+      technicalDetails=error.split('\n')[0]+'\n'+JSON.stringify(body,null,2)
+        +(error.includes('\n\nCredential diagnostics\n') ? '\n\nCredential diagnostics\n'+error.split('\n\nCredential diagnostics\n')[1] : '');
     }catch { /* Non-JSON provider errors remain available unchanged. */ }
   }
   return <div>

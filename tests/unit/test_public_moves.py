@@ -84,7 +84,11 @@ def test_manual_liveswitch_preserves_provider_error_without_crm_logout(portal, m
     with pytest.raises(HTTPException) as error:
         importer.missing_recordings(lead.id,'conversation',db)
     assert error.value.status_code == 502
-    assert error.value.detail == {'provider':'LiveSwitch','status':status,'body':body}
+    assert error.value.detail['provider'] == 'LiveSwitch'
+    assert error.value.detail['status'] == status
+    assert error.value.detail['body'] == body
+    assert error.value.detail['diagnostics']['has_recordings'] is None
+    assert 'secret' not in json.dumps(error.value.detail['diagnostics'])
 
 
 
