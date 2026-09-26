@@ -687,6 +687,16 @@ export default function CustomerMovePage() {
                       onChange={(text, place) => { clearMoveError('pickup'); addressDraft.current = { ...addressDraft.current, pickup: text, pickup_place: place }; }} />
                     <CustomerAddressInput label="Delivery address" error={moveErrors.delivery} apiKey={data.google_maps_browser_key || ''} initialValue={data.delivery || ''} disabled={busy}
                       onChange={(text, place) => { clearMoveError('delivery'); addressDraft.current = { ...addressDraft.current, delivery: text, delivery_place: place }; }} />
+                    {data.stops.length > 0 && (
+                      <ol aria-label="Saved extra stops">
+                        {data.stops.map((stop, index) => (
+                          <li key={`${index}:${stop.address}`}>
+                            <small>{stop.type === 'pickup' ? 'Extra pickup stop' : stop.type === 'delivery' ? 'Extra delivery stop' : 'Extra stop'}</small>
+                            <strong>{stop.address}</strong>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
                     <label>
                       Full Name
                       <input type="text" value={moveDraft.name} aria-invalid={!!moveErrors.name} aria-describedby={moveErrors.name ? 'move-name-error' : undefined} onChange={e=>{clearMoveError('name');setMoveDraft(prev=>({...prev,name:e.target.value}));}} />
