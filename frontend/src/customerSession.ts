@@ -41,8 +41,13 @@ export function installCustomerSessionFetch() {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.origin);
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     const token = headers.get('x-public-session');
-    if (!token || url.origin !== api.origin || !url.pathname.startsWith(api.pathname)) return original(input, init);
     const ended = () => new DOMException('Please verify your phone or email to continue.', 'AbortError');
+    if (url.origin !== api.origin || !url.pathname.startsWith(api.pathname)) return original(input, init);
+    if (!token) {
+      const endpoint = url.pathname.slice(api.pathname.length).split('/')[1];
+      if (endpoint && !['verify-options', 'send-code', 'verify'].includes(endpoint)) throw ended();
+      return original(input, init);
+    }
     if (!customerSessionActive(token)) throw ended();
     const session = sessions.get(token)!;
     const controller = new AbortController();
@@ -53,7 +58,7 @@ export function installCustomerSessionFetch() {
     session.requests.add(controller);
     try {
       const response = await original(input, { ...init, signal: controller.signal });
-      if (response.status === 401 || response.status === 404) expireCustomerSession(token);
+      if (response.status === 401) expireCustomerSession(token);
       if (!customerSessionActive(token)) throw ended();
       return response;
     } finally {

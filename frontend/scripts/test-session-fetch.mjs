@@ -23,4 +23,20 @@ current=jwt(Date.now()/1000+7200);status='pending';const old=current;const pendi
 current=jwt(Date.now()/1000+10800);resolve(new Response('{}',{status:401}));await pending;
 assert.equal(events.length,2);await assert.rejects(send(old),{name:'AbortError'});
 status=403;await send();assert.equal(events.length,2);
+const missingTokenCalls=calls;
+await assert.rejects(window.fetch('/api/leads/id/customer-page/sync-status'),{name:'AbortError'});
+assert.equal(calls,missingTokenCalls);
+await window.fetch('/api/auth/login',{method:'POST'});
+assert.equal(calls,missingTokenCalls+1);
+// A rejected staff request cancels other in-flight requests for that token.
+let finish;
+window.fetch=async(input,init)=>input.endsWith('/slow')
+  ? new Promise((resolve,reject)=>init.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError'))))
+  : new Promise(resolve=>{finish=resolve;});
+installSessionFetch();
+const slow=send(current,'/api/leads/slow');
+const rejectedSlow=assert.rejects(slow,{name:'AbortError'});
+const denied=send(current,'/api/leads/denied');
+finish(new Response('{}',{status:401}));
+await denied;await rejectedSlow;
 console.log('Session guard: expired/rejected tokens stop, one expiry event, old responses cannot log out new sessions, public and external requests isolated.');

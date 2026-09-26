@@ -371,7 +371,7 @@ export default function CustomerMovePage() {
     const result=await response.json().catch(()=>null);
     if (session && !customerSessionActive(session)) throw new Error('Please verify your phone or email to continue.');
     if(!response.ok){
-      if((response.status===401||response.status===404)){
+      if(response.status===401){
         sessionStorage.removeItem(sessionKey);
         setSession('');
         setData(undefined);

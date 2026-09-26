@@ -29,8 +29,17 @@ pending=false;status=401;exports.registerCustomerSession('rejected',4000);
 await assert.rejects(window.fetch(path,{headers:headers('rejected')}),{name:'AbortError'});
 const before=requests;await assert.rejects(window.fetch(path,{headers:headers('rejected')}),{name:'AbortError'});assert.equal(requests,before);
 status=200;
+const withoutToken=requests;
+for(const endpoint of ['details','estimate.pdf','realtime-token'])
+  await assert.rejects(window.fetch(`/api/public-moves/move/${endpoint}`),{name:'AbortError'});
+assert.equal(requests,withoutToken);
+exports.registerCustomerSession('missing-file',4000);
+status=404;
+assert.equal((await window.fetch('/api/public-moves/move/file-preview/missing',{headers:headers('missing-file')})).status,404);
+assert.ok(exports.customerSessionActive('missing-file'));
+status=200;
 await window.fetch('/api/public-moves/move/send-code');
 await window.fetch('https://storage.test/photo',{headers:headers('valid')});
-assert.equal(requests,before+2);
+assert.equal(requests,before+3);
 assert.ok(events.includes('valid')&&events.includes('new')&&events.includes('rejected'));
 console.log('Customer session: expired and unknown tokens blocked before network, active requests aborted, server rejection stops further requests; public verification and external uploads unaffected.');
