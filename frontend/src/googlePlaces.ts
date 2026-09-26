@@ -5,7 +5,8 @@ type Prediction = { place_id: string; description: string };
 type PlacesLibrary = {
   AutocompleteService: new () => {getPlacePredictions(request: {input:string;componentRestrictions:{country:string};types:string[]}, callback:(results:Prediction[] | null,status:string)=>void):void};
 };
-type MapsBrowser = Window & {google?:{maps:{places?:PlacesLibrary}}; __crmAddressReady?:()=>void};
+type DirectionsService = {route(request:{origin:string;destination:string;travelMode:string},callback:(result:{routes:{legs:{distance?:{value:number}}[]}[]} | null,status:string)=>void):void};
+type MapsBrowser = Window & {google?:{maps:{places?:PlacesLibrary;DirectionsService?:new()=>DirectionsService}}; __crmAddressReady?:()=>void};
 let loading: Promise<PlacesLibrary> | undefined;
 
 function loadPlaces(key: string): Promise<PlacesLibrary> {
@@ -42,6 +43,24 @@ export async function browserSuggestions(key:string,input:string,signal:AbortSig
     new places.AutocompleteService().getPlacePredictions({input,componentRestrictions:{country:'us'},types:['geocode']},(results,status)=>{
       clearTimeout(timer);
       finish(!signal.aborted && status==='OK' ? (results || []).map(row=>({place_id:row.place_id,text:row.description})) : []);
+    });
+  });
+}
+
+export async function browserDrivingMeters(key:string,origin:string,destination:string):Promise<number> {
+  await loadPlaces(key);
+  const Service=(window as MapsBrowser).google?.maps.DirectionsService;
+  if(!Service) throw new Error('Driving directions are unavailable. Please try again.');
+  return new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>reject(new Error('Driving directions timed out. Please try again.')),20000);
+    new Service().route({origin,destination,travelMode:'DRIVING'},(result,status)=>{
+      clearTimeout(timer);
+      const legs=result?.routes[0]?.legs;
+      if(status!=='OK' || !legs?.length || legs.some(leg=>!Number.isSafeInteger(leg.distance?.value) || leg.distance!.value<0)) {
+        reject(new Error(status==='REQUEST_DENIED' ? 'Google denied driving directions for this website. The browser Maps key needs Directions API access.' : 'Could not find a driving route. Check the stop address and try again.'));
+        return;
+      }
+      resolve(legs.reduce((total,leg)=>total+leg.distance!.value,0));
     });
   });
 }

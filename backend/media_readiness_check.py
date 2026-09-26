@@ -36,7 +36,12 @@ def check_media(message, db, dead_letter=False):
         try:
             response = httpx.get(AUDIENCE + 'v1/recordings/conversation/' + message['check_media'],
                 headers={'Authorization': 'Bearer ' + _access_token(), 'Accept': 'application/json'}, timeout=45)
-            check.update(status='complete', http_status=response.status_code)
+            check.update(status='complete' if 200 <= response.status_code < 300 else 'unavailable',
+                         http_status=response.status_code)
+            if response.status_code in (401, 403):
+                check['error'] = ('LiveSwitch denied recordings access. Reconnect LiveSwitch in Settings with recordings permission. '
+                                  'If LIVESWITCH_ACCESS_TOKEN is configured, replace it with an authorized token or remove that override. '
+                                  'This saved check does not retry automatically.')
             try:
                 check['response'] = safe_response(response.json())
             except ValueError:

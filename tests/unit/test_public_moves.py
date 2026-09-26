@@ -1126,7 +1126,10 @@ def test_media_readiness_check_is_once_and_redacts_links(portal, monkeypatch, st
     request.assert_called_once()
     result = json.loads(db.get(models.LeadLiveSwitch, lead.id).details)['media_readiness_check']
     assert result['http_status'] == status
-    assert result['status'] == 'complete'
+    assert result['status'] == ('complete' if status == 200 else 'unavailable')
+    if status == 403:
+        assert 'Reconnect LiveSwitch' in result['error']
+        assert 'LIVESWITCH_ACCESS_TOKEN' in result['error']
     assert 'private-video' not in json.dumps(result)
     if status == 200:
         assert result['response'][0]['recordingStatus'] == 'Processing'
@@ -2365,7 +2368,8 @@ def test_crm_rep_session_endpoint_requires_login(portal):
         assert client.post(f'/api/leads/{lead.id}/customer-page/rep-session').status_code==401
 
 
-def test_extra_stops_save_route_cache_and_remove_only_own_fees(portal,packing_pricing,monkeypatch):
+@pytest.mark.parametrize('browser_routing', [False, True])
+def test_extra_stops_save_route_cache_and_remove_only_own_fees(portal,packing_pricing,monkeypatch,browser_routing):
     from decimal import Decimal
     import extra_stops
     mod,db,lead,access=portal
@@ -2386,15 +2390,16 @@ def test_extra_stops_save_route_cache_and_remove_only_own_fees(portal,packing_pr
     monkeypatch.setattr(extra_stops,'driving_meters',distance)
     db.commit()
     def save(location,addresses,answer=True):
-        return mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'extra_stops','location':location,'has_stops':answer,'stops':addresses}),access,db)
+        distances = {'route_origin':getattr(job,location+'_zip'),'stop_meters':[24140]*len(addresses)} if browser_routing else {}
+        return mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'extra_stops','location':location,'has_stops':answer,'stops':addresses,**distances}),access,db)
     save('pickup',['Pickup B'])
     assert job.price==access.published_price==1075
     save('pickup',['Pickup B'])
-    assert distance.call_count==1 and job.price==1075
+    assert distance.call_count==(0 if browser_routing else 1) and job.price==1075
     save('delivery',['Delivery B'])
     assert job.price==1200 and route==['Pickup B','Delivery B']
     extra_stops.option(lead,job,db)
-    assert distance.call_count==2
+    assert distance.call_count==(0 if browser_routing else 2)
     save('pickup',[],False)
     assert job.price==1125 and route==['Delivery B']
     assert db.get(models.LeadJobCharge,'other').total_cost==1000
@@ -2403,6 +2408,11 @@ def test_extra_stops_save_route_cache_and_remove_only_own_fees(portal,packing_pr
     assert job.price==1000 and not route
     save('pickup',[f'Extra {i}' for i in range(10)])
     assert job.price==1750 and len(route)==10
+    if browser_routing:
+        distance.assert_not_called()
+        with pytest.raises(HTTPException) as error:
+            mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'extra_stops','location':'pickup','has_stops':True,'stops':['New stop'],'route_origin':'Old address','stop_meters':[1000]}),access,db)
+        assert error.value.status_code == 409
 
 
 def test_inventory_room_uses_report_snapshot_not_missing_model_field(portal):

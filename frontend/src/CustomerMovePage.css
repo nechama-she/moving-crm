@@ -22,6 +22,11 @@
 .cm-secondary-btn{display:inline-block;border:1px solid var(--cm-border);border-radius:9px;background:#fff;color:var(--cm-primary);padding:9px 16px;font-size:13px;font-weight:600;text-decoration:none;text-align:center;cursor:pointer;transition:all .15s}
 .cm-secondary-btn:hover:not(:disabled){background:var(--cm-tint-hover);border-color:var(--cm-primary)}
 .cm-secondary-btn:disabled{opacity:.45;cursor:default}
+.customer-move .cm-primary,.customer-move .cm-secondary-btn{appearance:none;font-family:inherit;line-height:1.4;min-height:40px;border-radius:8px;letter-spacing:0}
+.customer-move .cm-primary{border:1px solid transparent;cursor:pointer}
+.customer-move .cm-primary:focus-visible,.customer-move .cm-secondary-btn:focus-visible{outline:2px solid var(--cm-primary);outline-offset:3px}
+.cm-save-error{margin-top:16px;padding:12px 0;border-top:1px solid var(--cm-border-soft);display:flex;flex-direction:column;align-items:flex-start;gap:10px}
+.cm-save-error p{margin:0;overflow-wrap:anywhere}
 .cm-walkthrough-form{display:grid;gap:12px;margin-top:auto}
 .cm-walkthrough-form-actions{display:flex;align-items:center;gap:8px}
 .cm-walkthrough-notice{margin:6px 0 0;font-size:12px;color:var(--cm-primary)}

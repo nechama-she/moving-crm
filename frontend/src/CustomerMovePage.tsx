@@ -17,6 +17,7 @@ import ReportHistory, { type ReportRun } from "./ReportHistory";
 import CustomerPackingOptions, { type PackingPackage, type PackingSelection } from "./CustomerPackingOptions";
 import MeetingTimePicker from "./MeetingTimePicker";
 import { useCustomerUpdates } from './useCustomerUpdates';
+import { browserDrivingMeters } from './googlePlaces';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
@@ -220,7 +221,14 @@ export default function CustomerMovePage() {
     setAnswerSaveStarted(true);
     const task = answerQueue.current.then(async () => {
       try {
-        setData(await call('/packing', { change }));
+        let payload: PricingChange & {route_origin?:string;stop_meters?:number[]} = change;
+        if(change.kind === 'extra_stops' && change.has_stops && change.stops?.length) {
+          const origin = (change.location === 'pickup' ? data?.pickup : data?.delivery) || '';
+          const distances: number[] = [];
+          for(const address of change.stops) distances.push(await browserDrivingMeters(data?.google_maps_browser_key || '',origin,address));
+          payload={...change,route_origin:origin,stop_meters:distances};
+        }
+        setData(await call('/packing', { change: payload }));
         failedPricing.current.delete(id);
         failedAnswers.current.delete(id);
         setPackingError(failedPricing.current.size ? 'Some choices could not be saved. Please retry.' : '');
@@ -931,7 +939,7 @@ export default function CustomerMovePage() {
                     <p><strong>Selected services total: {money(data.packing_items.reduce((sum, item) => sum + (item.services.find(service => service.kind === packingSelection[item.id])?.price || 0), 0))}</strong></p>
                     </> : data.packing_package && <CustomerPackingOptions config={data.packing_package} selection={packageSelection} onChange={changePackage} disabled={false} />}
                     {!data.estimate && <p>Your choices will be saved and included when your estimate is ready.</p>}
-                    {packingError && <p role="alert">{packingError}{failedPricing.current.size > 0 && <button type="button" onClick={() => { for (const change of failedPricing.current.values()) savePricingChange(change); }}>Try again</button>}</p>}
+                    {packingError && <div className="cm-save-error" role="alert"><p>{packingError}</p>{failedPricing.current.size > 0 && <button type="button" className="cm-secondary-btn" disabled={answersSaving} onClick={() => { for (const change of failedPricing.current.values()) savePricingChange(change); }}>{answersSaving ? 'Retrying...' : 'Try again'}</button>}</div>}
                   </div>
                   {packingStep === 'items' && termsError && <p role="alert" className="cm-field-error">{termsError}</p>}
                   <div className="cm-modal-footer">

@@ -763,6 +763,15 @@ class CustomerPackingChange(BaseModel):
     kind: Literal['mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs', 'long_carry', 'elevator', 'extra_stops']
     location: Literal['pickup', 'delivery'] | None = None
     stops: list[str] = Field(default_factory=list, max_length=100)
+    route_origin: str | None = Field(default=None, max_length=500)
+    stop_meters: list[int] | None = Field(default=None, max_length=100)
+
+    @field_validator('stop_meters', mode='before')
+    @classmethod
+    def valid_stop_meters(cls, values):
+        if values is not None and (not isinstance(values, list) or any(type(value) is not int or not 0 <= value <= 20000000 for value in values)):
+            raise ValueError('Each stop must have a valid driving distance in meters.')
+        return values
     has_stops: bool | None = None
     elevator: bool | None = Field(default=None, strict=True)
     carry_feet: int | None = Field(default=None, ge=0, le=100000, strict=True)
@@ -803,6 +812,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         if any(not address or len(address)>500 for address in addresses) or len(set(a.lower() for a in addresses)) != len(addresses):
             raise HTTPException(422,'Enter a different complete address for each stop.')
         origin=getattr(job,change.location+'_zip') or ''
+        if change.stop_meters is not None and (change.route_origin != origin or len(change.stop_meters) != len(addresses)):
+            raise HTTPException(409, 'The route changed. Refresh and calculate the stop distances again.')
         if origin.strip().lower() in {a.lower() for a in addresses}:
             raise HTTPException(422,'An extra stop must differ from the main address.')
         pickup,old,delivery=_read_job_route(db,job)
@@ -816,6 +827,13 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         selection=json.loads(job.customer_packing_package or '{}')
         group=selection.setdefault('extra_stops',{}).setdefault(change.location,{})
         group['answer']=change.has_stops
+        if change.stop_meters is not None:
+            from extra_stops import route_revision
+            from uuid import uuid5, NAMESPACE_URL
+            group['stops'] = [{'id': str(uuid5(NAMESPACE_URL, f'extra-stop:{job.id}:{change.location}:{address}')),
+                               'address': address, 'meters': meters, 'revision': route_revision(origin, address),
+                               'distance_source': 'google_browser'}
+                              for address, meters in zip(addresses, change.stop_meters)]
         job.customer_packing_package=json.dumps(selection)
         sync_charges(lead,job,db)
         db.commit()
