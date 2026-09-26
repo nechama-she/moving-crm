@@ -1511,7 +1511,7 @@ Resources:
     Properties:
       QueueName: !Sub moving-crm-public-move-sync-dlq-${Environment}
       MessageRetentionPeriod: 1209600
-      VisibilityTimeout: 5400
+      VisibilityTimeout: 1080
       SqsManagedSseEnabled: true
 
   PublicMoveSyncQueue:
@@ -1519,7 +1519,7 @@ Resources:
     Properties:
       QueueName: !Sub moving-crm-public-move-sync-${Environment}
       MessageRetentionPeriod: 1209600
-      VisibilityTimeout: 5400
+      VisibilityTimeout: 1080
       SqsManagedSseEnabled: true
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt PublicMoveSyncDeadLetterQueue.Arn
@@ -1571,11 +1571,6 @@ Resources:
                 Resource: !Sub "${AttachmentBucket.Arn}/*"
               - Effect: Allow
                 Action:
-                  - s3:PutObject
-                  - s3:AbortMultipartUpload
-                Resource: !Sub "${AttachmentBucket.Arn}/leads/*/jobs/lead/liveswitch/*"
-              - Effect: Allow
-                Action:
                   - sqs:ReceiveMessage
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
@@ -1590,7 +1585,7 @@ Resources:
       FunctionName: !Sub moving-crm-public-move-sync-${Environment}
       Runtime: python3.11
       Handler: public_move_sync_handler.handler
-      Timeout: 900
+      Timeout: 180
       MemorySize: 512
       Role: !GetAtt PublicMoveSyncRole.Arn
       VpcConfig: !If

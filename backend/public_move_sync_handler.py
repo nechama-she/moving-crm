@@ -166,13 +166,7 @@ def handler(event, context):
             message = json.loads(record['body'])
             dead_letter = bool(os.getenv('PUBLIC_MOVE_SYNC_DLQ_ARN')) and record.get('eventSourceARN') == os.getenv('PUBLIC_MOVE_SYNC_DLQ_ARN')
             with SessionLocal() as db:
-                if 'import_recordings' in message:
-                    from liveswitch_recording_import import import_recordings
-                    import_recordings(message, db, dead_letter)
-                elif 'check_media' in message:
-                    from media_readiness_check import check_media
-                    check_media(message, db, dead_letter)
-                elif 'check_report' in message:
+                if 'check_report' in message:
                     from customer_report_updates import check_report
                     check_report(message, db, dead_letter)
                 elif 'start_report' in message:
@@ -183,7 +177,7 @@ def handler(event, context):
                         start_ready_report(message['lead_id'], db)
                 elif 'attachment_ids' in message:
                     dispatch_files(message, db, dead_letter)
-                else:
+                elif 'attachment_id' in message:
                     process_file(message, db, dead_letter)
         except Exception:
             logger.exception('Customer file sync message failed')

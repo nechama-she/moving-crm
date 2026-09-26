@@ -21,37 +21,6 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
  const [selectedIds,setSelectedIds]=useState<string[]>([]);
  const [reportFileIds,setReportFileIds]=useState<string[]>([]);
  const initialized=useRef(false);
- const [videoNotice,setVideoNotice]=useState('');
- useEffect(()=>{
-   if(section!=='files' || !token)return;
-   let disposed=false;
-   let timer:ReturnType<typeof setTimeout> | undefined;
-   const endpoint=`${API_BASE}/api/leads/${leadId}/customer-page`;
-   async function check(start=false){
-     try{
-       if(start){
-         setVideoNotice('Checking LiveSwitch videos...');
-         const response=await fetch(`${endpoint}/import-recordings`,{method:'POST',headers:authHeaders(token)});
-         const result=await response.json();
-         if(!response.ok)throw new Error(result.detail || 'Could not check LiveSwitch videos.');
-       }
-       const response=await fetch(`${endpoint}/sync-status`,{headers:authHeaders(token),cache:'no-store'});
-       if(!response.ok)throw new Error('Could not check video import status.');
-       const result=await response.json();
-       if(disposed)return;
-       setFiles(result.editable_files || []);
-       const state=result.recording_import || {};
-       if(state.status==='queued' || state.status==='running'){
-         setVideoNotice('Saving LiveSwitch videos to CRM...');
-         timer=setTimeout(()=>void check(),3000);
-       }else{
-         setVideoNotice(state.error || (state.imported ? `${state.imported} videos saved to CRM.` : state.pending ? 'Some LiveSwitch videos are still processing.' : ''));
-       }
-     }catch(error){if(!disposed)setVideoNotice((error as Error).message);}
-   }
-   void check(true);
-   return()=>{disposed=true;if(timer)clearTimeout(timer);};
- },[leadId,token,section]);
  function selectFiles(ids:string[]){setSelectedIds(ids);onSelectionChange?.(ids);}
  const base=`${API_BASE}/api/leads/${leadId}/customer-page`;
  useEffect(()=>{if(!token)return;let disposed=false;async function load(){try{const d=await readPage(base+(section==='files'?'/sync-status':''),token) as Page & {editable_files?:EditableReportFile[];files:EditableReportFile[];report_file_ids?:string[]} | null;if(disposed||!d)return;if(section==='files'){const available=d.editable_files || d.files;setFiles(available);setReportFileIds(d.report_file_ids || []);if(!initialized.current){initialized.current=true;selectFiles((d.report_file_ids || []).filter(id=>available.some(file=>file.id===id)));}}else setData(d);}catch{ /* A later explicit opening can retry. */ }}void load();return()=>{disposed=true;};},[base,token,section]);
@@ -90,7 +59,6 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
      <div className="crm-gallery-available"><h4>Available files to add</h4><button type="button" className="slds-button" disabled={busy} onClick={()=>void importChatFiles()}>Import chat files</button><p>Not in the current report. Select the files you want to send to LiveSwitch.</p>{available.length?group(available,'Available files'):<p>No additional files available.</p>}</div>
      <p role="status"><strong>{selectedIds.length} files selected for the next report</strong></p>
      {notice&&<p role="alert">{notice}</p>}
-     {videoNotice&&<p role="status">{videoNotice}</p>}
    </div>;
  }
 

@@ -201,7 +201,6 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
 
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   async function runSpark() {
-    if (!selectedFileIds.length) { setSparkError("Select files to include in the report."); return; }
     if (sparkRunning) return;
     setSparkRunning(true);
     setSparkNotice("");
@@ -210,7 +209,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
       const res = await request(`${base}/run-spark`, { file_ids: selectedFileIds });
       setConversation(await request(`${base}/conversation`));
       setProcessingRevision(value => value + 1);
-      setSparkNotice("New conversation created. Copying move files before generating the report.");
+      setSparkNotice(selectedFileIds.length ? "Copying selected files before generating the report." : "Generating the report on the current conversation.");
       if (res && res.id) {
         setSparkData({ id: res.id, status: res.status || "queued" });
       }

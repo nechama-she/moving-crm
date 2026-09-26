@@ -54,96 +54,6 @@ def request(link='',session=''):
     return Request({'type':'http','method':'GET','path':'/','headers':[(b'x-public-link',link.encode()),(b'x-public-session',session.encode())], 'client':('127.0.0.1',1234)})
 
 
-def test_liveswitch_recording_copy_is_physical_and_idempotent(portal, monkeypatch):
-    from contextlib import nullcontext
-    import liveswitch_recording_import as importer
-    _, db, lead, access = portal
-    monkeypatch.setenv('ATTACHMENTS_BUCKET', 'crm-files')
-    response = SimpleNamespace(is_redirect=False, headers={'content-type':'video/mp4','content-length':'10'},
-        raise_for_status=lambda: None, iter_bytes=lambda size: iter([b'video', b'bytes']))
-    client = MagicMock()
-    client.stream.return_value = nullcontext(response)
-    monkeypatch.setattr(importer.httpx, 'Client', lambda **kwargs: nullcontext(client))
-    copied = []
-    def upload(stream, bucket, key, **kwargs):
-        content = b''
-        while chunk := stream.read(3): content += chunk
-        copied.append((bucket, key, content))
-    monkeypatch.setattr(importer.boto3, 'client', lambda name: SimpleNamespace(upload_fileobj=upload))
-    recording = {'id':'recording-1','conversationId':'conversation-1','publicUrl':'https://media.liveswitch.com/video'}
-    assert importer.copy_recording(recording, lead.id, 'conversation-1', db)
-    assert not importer.copy_recording(recording, lead.id, 'conversation-1', db)
-    row = db.query(models.LeadAttachment).one()
-    assert copied[0][0] == 'crm-files' and copied[0][2] == b'videobytes'
-    assert row.file_size == 10 and row.external_url.startswith('s3://crm-files/')
-    from report_files import move_files
-    assert row in move_files(access, db)
-    row.report_deleted_at = datetime.utcnow()
-    db.commit()
-    assert not importer.copy_recording(recording, lead.id, 'conversation-1', db)
-    assert len(copied) == 1
-
-
-@pytest.mark.parametrize('url', ['http://media.liveswitch.com/video', 'https://127.0.0.1/video',
-    'https://liveswitch.com.evil.test/video', 'https://user:password@liveswitch.com/video'])
-def test_recording_import_rejects_unsafe_urls(url):
-    from liveswitch_recording_import import validate_media_url
-    with pytest.raises(ValueError): validate_media_url(url)
-
-
-def test_recording_import_queues_once_while_active(portal, monkeypatch):
-    import liveswitch_recording_import as importer
-    _, db, lead, _ = portal
-    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'id':'conversation-1'})))
-    db.commit()
-    monkeypatch.setenv('PUBLIC_MOVE_SYNC_QUEUE_URL','queue')
-    monkeypatch.setenv('ATTACHMENTS_BUCKET','bucket')
-    sqs = MagicMock()
-    monkeypatch.setattr(importer.boto3,'client',lambda name:sqs)
-    first = importer.queue_import(lead.id, db)
-    assert importer.queue_import(lead.id, db) == first
-    sqs.send_message.assert_called_once()
-
-
-def test_recording_import_does_not_save_html_as_video(portal, monkeypatch):
-    from contextlib import nullcontext
-    import liveswitch_recording_import as importer
-    _, db, lead, _ = portal
-    monkeypatch.setenv('ATTACHMENTS_BUCKET','bucket')
-    response = SimpleNamespace(is_redirect=False, headers={'content-type':'text/html'},raise_for_status=lambda:None)
-    client = MagicMock()
-    client.stream.return_value = nullcontext(response)
-    monkeypatch.setattr(importer.httpx,'Client',lambda **kwargs:nullcontext(client))
-    s3 = MagicMock()
-    monkeypatch.setattr(importer.boto3,'client',lambda name:s3)
-    with pytest.raises(ValueError, match='downloadable video'):
-        importer.copy_recording({'id':'r1','conversationId':'c1','publicUrl':'https://media.liveswitch.com/video'},lead.id,'c1',db)
-    s3.upload_fileobj.assert_not_called()
-    assert db.query(models.LeadAttachment).count() == 0
-
-
-@pytest.mark.parametrize('status', [200, 403])
-def test_recording_import_worker_skips_unfinished_and_reports_permission_error(portal, monkeypatch, status):
-    import liveswitch_recording_import as importer
-    _, db, lead, _ = portal
-    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'id':'conversation-1',
-        'recording_import':{'token':'request-1','status':'queued'}})))
-    db.commit()
-    monkeypatch.setitem(sys.modules,'routes.liveswitch',SimpleNamespace(_access_token=lambda:'token',AUDIENCE='https://api.test/'))
-    monkeypatch.setitem(sys.modules,'realtime',SimpleNamespace(publish_customer_update=lambda *args:None))
-    monkeypatch.setattr(importer.httpx,'get',lambda *args,**kwargs:SimpleNamespace(status_code=status,
-        raise_for_status=lambda:None,json=lambda:[{'recordingStatus':'Processing'},{'recordingStatus':'Completed'}]))
-    copy = MagicMock(return_value=True)
-    monkeypatch.setattr(importer,'copy_recording',copy)
-    importer.import_recordings({'lead_id':lead.id,'import_recordings':'conversation-1','token':'request-1'},db)
-    state=json.loads(db.get(models.LeadLiveSwitch,lead.id).details)['recording_import']
-    assert state['status'] == ('complete' if status == 200 else 'failed')
-    if status == 200:
-        copy.assert_called_once()
-        assert state['imported'] == state['pending'] == 1
-    else:
-        copy.assert_not_called()
-        assert 'permission' in state['error']
 
 
 def test_estimate_pdf_uses_verified_access_and_saved_report_only(portal, monkeypatch):
@@ -1224,40 +1134,8 @@ def test_rep_http_flow_injects_request_and_reuses_move_page(rep_portal):
         assert response.json()['name'] == lead.full_name
 
 
-@pytest.mark.parametrize('status', [200, 403])
-def test_media_readiness_check_is_once_and_redacts_links(portal, monkeypatch, status):
-    import media_readiness_check as diagnostic
-    mod, db, lead, access = portal
-    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
-        'id': 'test-conversation', 'media_readiness_check': {
-            'conversation_id': 'test-conversation', 'status': 'scheduled'}})))
-    db.commit()
-    remote = ModuleType('routes.liveswitch')
-    remote._access_token = lambda: 'test-token'
-    remote.AUDIENCE = 'https://example.invalid/'
-    monkeypatch.setitem(sys.modules, 'routes.liveswitch', remote)
-    response = MagicMock(status_code=status)
-    response.json.return_value = [{'id': 'video', 'recordingStatus': 'Processing',
-        'publicUrl': 'https://example.invalid/private-video'}] if status == 200 else {'message': 'Forbidden'}
-    request = MagicMock(return_value=response)
-    monkeypatch.setattr(diagnostic.httpx, 'get', request)
-    realtime = ModuleType('realtime')
-    realtime.publish_customer_update = MagicMock()
-    monkeypatch.setitem(sys.modules, 'realtime', realtime)
-    message = {'lead_id': lead.id, 'check_media': 'test-conversation'}
-    diagnostic.check_media(message, db)
-    diagnostic.check_media(message, db)
-    request.assert_called_once()
-    result = json.loads(db.get(models.LeadLiveSwitch, lead.id).details)['media_readiness_check']
-    assert result['http_status'] == status
-    assert result['status'] == ('complete' if status == 200 else 'unavailable')
-    if status == 403:
-        assert 'Reconnect LiveSwitch' in result['error']
-        assert 'LIVESWITCH_ACCESS_TOKEN' in result['error']
-    assert 'private-video' not in json.dumps(result)
-    if status == 200:
-        assert result['response'][0]['recordingStatus'] == 'Processing'
-    realtime.publish_customer_update.assert_called_once_with(lead.id)
+
+
 
 
 def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_api, monkeypatch):
@@ -1304,11 +1182,8 @@ def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_a
     api['start_ready_report'](lead.id, db)
     api['_api_post'].assert_not_called()
     assert queue.send_message.call_args.kwargs['DelaySeconds'] == 300
-    diagnostic = queue.send_message.call_args_list[0].kwargs
-    assert diagnostic['DelaySeconds'] == 60
-    assert json.loads(diagnostic['MessageBody']) == {'check_media': 'conversation-new', 'lead_id': lead.id}
     api['start_ready_report'](lead.id, db)
-    assert queue.send_message.call_count == 2
+    assert queue.send_message.call_count == 1
     rows[0].synced_at = datetime.utcnow() - timedelta(seconds=360)
     rows[1].synced_at = datetime.utcnow() - timedelta(seconds=299)
     db.commit()
