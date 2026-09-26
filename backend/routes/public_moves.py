@@ -1694,7 +1694,18 @@ def file_sync_status(lead_id: str, user: User = Depends(get_current_user), db: S
     conversation = db.get(LeadLiveSwitch, lead_id)
     details = json.loads(conversation.details or '{}') if conversation else {}
     result['report_file_ids'] = [file['id'] for file in details.get('report_files', [])]
+    result['recording_import'] = details.get('recording_import', {})
     return result
+
+
+@router.post('/api/leads/{lead_id}/customer-page/import-recordings', status_code=202)
+def import_conversation_recordings(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    staff_access(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead_id)
+    if not saved or not json.loads(saved.details or '{}').get('id'):
+        raise HTTPException(409, 'Open a LiveSwitch conversation first.')
+    from liveswitch_recording_import import queue_import
+    return queue_import(lead_id, db)
 
 
 @router.post('/api/leads/{lead_id}/customer-page/sync-files', status_code=202)

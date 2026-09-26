@@ -54,6 +54,98 @@ def request(link='',session=''):
     return Request({'type':'http','method':'GET','path':'/','headers':[(b'x-public-link',link.encode()),(b'x-public-session',session.encode())], 'client':('127.0.0.1',1234)})
 
 
+def test_liveswitch_recording_copy_is_physical_and_idempotent(portal, monkeypatch):
+    from contextlib import nullcontext
+    import liveswitch_recording_import as importer
+    _, db, lead, access = portal
+    monkeypatch.setenv('ATTACHMENTS_BUCKET', 'crm-files')
+    response = SimpleNamespace(is_redirect=False, headers={'content-type':'video/mp4','content-length':'10'},
+        raise_for_status=lambda: None, iter_bytes=lambda size: iter([b'video', b'bytes']))
+    client = MagicMock()
+    client.stream.return_value = nullcontext(response)
+    monkeypatch.setattr(importer.httpx, 'Client', lambda **kwargs: nullcontext(client))
+    copied = []
+    def upload(stream, bucket, key, **kwargs):
+        content = b''
+        while chunk := stream.read(3): content += chunk
+        copied.append((bucket, key, content))
+    monkeypatch.setattr(importer.boto3, 'client', lambda name: SimpleNamespace(upload_fileobj=upload))
+    recording = {'id':'recording-1','conversationId':'conversation-1','publicUrl':'https://media.liveswitch.com/video'}
+    assert importer.copy_recording(recording, lead.id, 'conversation-1', db)
+    assert not importer.copy_recording(recording, lead.id, 'conversation-1', db)
+    row = db.query(models.LeadAttachment).one()
+    assert copied[0][0] == 'crm-files' and copied[0][2] == b'videobytes'
+    assert row.file_size == 10 and row.external_url.startswith('s3://crm-files/')
+    from report_files import move_files
+    assert row in move_files(access, db)
+    row.report_deleted_at = datetime.utcnow()
+    db.commit()
+    assert not importer.copy_recording(recording, lead.id, 'conversation-1', db)
+    assert len(copied) == 1
+
+
+@pytest.mark.parametrize('url', ['http://media.liveswitch.com/video', 'https://127.0.0.1/video',
+    'https://liveswitch.com.evil.test/video', 'https://user:password@liveswitch.com/video'])
+def test_recording_import_rejects_unsafe_urls(url):
+    from liveswitch_recording_import import validate_media_url
+    with pytest.raises(ValueError): validate_media_url(url)
+
+
+def test_recording_import_queues_once_while_active(portal, monkeypatch):
+    import liveswitch_recording_import as importer
+    _, db, lead, _ = portal
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'id':'conversation-1'})))
+    db.commit()
+    monkeypatch.setenv('PUBLIC_MOVE_SYNC_QUEUE_URL','queue')
+    monkeypatch.setenv('ATTACHMENTS_BUCKET','bucket')
+    sqs = MagicMock()
+    monkeypatch.setattr(importer.boto3,'client',lambda name:sqs)
+    first = importer.queue_import(lead.id, db)
+    assert importer.queue_import(lead.id, db) == first
+    sqs.send_message.assert_called_once()
+
+
+def test_recording_import_does_not_save_html_as_video(portal, monkeypatch):
+    from contextlib import nullcontext
+    import liveswitch_recording_import as importer
+    _, db, lead, _ = portal
+    monkeypatch.setenv('ATTACHMENTS_BUCKET','bucket')
+    response = SimpleNamespace(is_redirect=False, headers={'content-type':'text/html'},raise_for_status=lambda:None)
+    client = MagicMock()
+    client.stream.return_value = nullcontext(response)
+    monkeypatch.setattr(importer.httpx,'Client',lambda **kwargs:nullcontext(client))
+    s3 = MagicMock()
+    monkeypatch.setattr(importer.boto3,'client',lambda name:s3)
+    with pytest.raises(ValueError, match='downloadable video'):
+        importer.copy_recording({'id':'r1','conversationId':'c1','publicUrl':'https://media.liveswitch.com/video'},lead.id,'c1',db)
+    s3.upload_fileobj.assert_not_called()
+    assert db.query(models.LeadAttachment).count() == 0
+
+
+@pytest.mark.parametrize('status', [200, 403])
+def test_recording_import_worker_skips_unfinished_and_reports_permission_error(portal, monkeypatch, status):
+    import liveswitch_recording_import as importer
+    _, db, lead, _ = portal
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'id':'conversation-1',
+        'recording_import':{'token':'request-1','status':'queued'}})))
+    db.commit()
+    monkeypatch.setitem(sys.modules,'routes.liveswitch',SimpleNamespace(_access_token=lambda:'token',AUDIENCE='https://api.test/'))
+    monkeypatch.setitem(sys.modules,'realtime',SimpleNamespace(publish_customer_update=lambda *args:None))
+    monkeypatch.setattr(importer.httpx,'get',lambda *args,**kwargs:SimpleNamespace(status_code=status,
+        raise_for_status=lambda:None,json=lambda:[{'recordingStatus':'Processing'},{'recordingStatus':'Completed'}]))
+    copy = MagicMock(return_value=True)
+    monkeypatch.setattr(importer,'copy_recording',copy)
+    importer.import_recordings({'lead_id':lead.id,'import_recordings':'conversation-1','token':'request-1'},db)
+    state=json.loads(db.get(models.LeadLiveSwitch,lead.id).details)['recording_import']
+    assert state['status'] == ('complete' if status == 200 else 'failed')
+    if status == 200:
+        copy.assert_called_once()
+        assert state['imported'] == state['pending'] == 1
+    else:
+        copy.assert_not_called()
+        assert 'permission' in state['error']
+
+
 def test_estimate_pdf_uses_verified_access_and_saved_report_only(portal, monkeypatch):
     module, db, lead, access = portal
     db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({

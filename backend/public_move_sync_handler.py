@@ -166,7 +166,10 @@ def handler(event, context):
             message = json.loads(record['body'])
             dead_letter = bool(os.getenv('PUBLIC_MOVE_SYNC_DLQ_ARN')) and record.get('eventSourceARN') == os.getenv('PUBLIC_MOVE_SYNC_DLQ_ARN')
             with SessionLocal() as db:
-                if 'check_media' in message:
+                if 'import_recordings' in message:
+                    from liveswitch_recording_import import import_recordings
+                    import_recordings(message, db, dead_letter)
+                elif 'check_media' in message:
                     from media_readiness_check import check_media
                     check_media(message, db, dead_letter)
                 elif 'check_report' in message:
