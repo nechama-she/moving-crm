@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import LocalPricing from "./LocalPricing";
 import LongDistancePackingCard, { isPackingCard } from "./LongDistancePackingCard";
+import LongDistanceMaterialsCard, { materialRows, withMaterials } from './LongDistanceMaterialsCard';
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
@@ -186,7 +187,7 @@ export default function PricingPage() {
   const [stairsFlights, setStairsFlights] = useState<Partial<Record<'pickup' | 'delivery', string>>>({});
   const [availableDate, setAvailableDate] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
-  const [openSections, setOpenSections] = useState({ extraStops: false, elevator: false, longCarry: false, stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
+  const [openSections, setOpenSections] = useState({ materials: false, extraStops: false, elevator: false, longCarry: false, stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
   const [pendingRateGroups, setPendingRateGroups] = useState<string[][]>([]);
 
   useEffect(() => {
@@ -263,7 +264,7 @@ export default function PricingPage() {
     setElevatorAnswers({});
     setCarryFeet({});
     setStairsFlights({});
-    setOpenSections({ extraStops: false, elevator: false, longCarry: false, stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
+    setOpenSections({ materials: false, extraStops: false, elevator: false, longCarry: false, stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
     calculationId.current++;
     setCalculating(false);
     setQuote(null);
@@ -438,7 +439,7 @@ export default function PricingPage() {
   const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
   const detailedTotal = Math.max(0, discountBase - discountTotal);
 
-  function startServiceEdit(section: 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
+  function startServiceEdit(section: 'materials' | 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin' || saving) return;
     setOpenSections(current => ({ ...current, [section]: true }));
     setEditing(true);
@@ -449,8 +450,9 @@ export default function PricingPage() {
     setEditing(false);
     setError('');
   }
-  function serviceEditActions(section: 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'packing' | 'bulkyItems') {
+  function serviceEditActions(section: 'materials' | 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin') return null;
+    if (section === 'materials' && !editing) return <button type="button" className="slds-button pricing-section-action" aria-label="Edit materials rates" title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
     return editing ? <>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={cancelServiceEdit}>Cancel changes</button>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save changes'}</button>
@@ -580,7 +582,7 @@ export default function PricingPage() {
           name: draft.name, pickup_regions: draft.pickup_regions,
           pickup_areas: draft.pickup_areas?.map(area => ({ ...area, zip_codes: area.zip_codes.map(zip => zip.trim()).filter(Boolean) })),
           fuel_percent: draft.fuel_percent, active: draft.active,
-          rules: draft.rules, rates: draft.rates, services: draft.services,
+          rules: draft.rules, rates: draft.rates, services: withMaterials(draft.services),
         }),
       });
       if (!response.ok) {
@@ -969,6 +971,10 @@ export default function PricingPage() {
 
               <PricingSection title="Packing rates" count={4} open={openSections.packing} toggle={() => setOpenSections(s => ({ ...s, packing: !s.packing }))} onDoubleClick={() => startServiceEdit('packing')} actions={serviceEditActions('packing')}>
                 <LongDistancePackingCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
+              </PricingSection>
+
+              <PricingSection title="Materials" count={materialRows(active.services).length} open={openSections.materials} toggle={() => setOpenSections(s => ({ ...s, materials: !s.materials }))} onDoubleClick={() => startServiceEdit('materials')} actions={serviceEditActions('materials')}>
+                <LongDistanceMaterialsCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
               <PricingSection title="Bulky items rates" count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))} onDoubleClick={() => startServiceEdit('bulkyItems')} actions={serviceEditActions('bulkyItems')}>

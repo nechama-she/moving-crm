@@ -25,11 +25,27 @@ class RequiredBoxItem(BaseModel):
             raise ValueError('Required-box items need a name')
         return value.strip()
 
+class MaterialRate(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=200)
+    material_price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
+    packing_price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
+    unpacking_price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
+
+    @field_validator('name')
+    @classmethod
+    def nonblank(cls, value):
+        if not value.strip():
+            raise ValueError('Materials need a description')
+        return value.strip()
+
+
 class PackingCard(BaseModel):
     full: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     partial: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     unpacking: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     items: list[RequiredBoxItem] = Field(default_factory=list, max_length=500)
+    materials: list[MaterialRate] = Field(default_factory=list, max_length=500)
 
     @field_validator('full', 'partial', 'unpacking', mode='before')
     @classmethod
@@ -40,6 +56,8 @@ class PackingCard(BaseModel):
     def unique_items(self):
         if len({item.id for item in self.items}) != len(self.items):
             raise ValueError('Required-box item IDs must be unique')
+        if len({item.id for item in self.materials}) != len(self.materials):
+            raise ValueError('Material IDs must be unique')
         return self
 
 
