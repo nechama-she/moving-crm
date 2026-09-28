@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user, require_admin
 from database import get_db
-from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, packing_card
+from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, MaterialRate, packing_card
+from material_calculation import MaterialItem, calculate_materials
 from shuttle import SHUTTLE_PREFIX, ShuttleCard, shuttle_card, shuttle_option
 from delivery_fees import DELIVERY_FEE_PREFIX, DeliveryFeeCard, delivery_fee, delivery_fee_card
 from storage_pricing import STORAGE_PREFIX, StorageCard, storage_card, storage_quote
@@ -45,6 +46,18 @@ from pricing_addresses import with_job_locations, job_location
 from local_pricing import local_route_matches, match_region_from_address
 
 router = APIRouter(prefix="/api/pricing", tags=["Pricing"])
+
+
+class MaterialPreview(BaseModel):
+    materials: list[MaterialRate] = Field(max_length=500)
+    item: MaterialItem
+
+
+@router.post('/materials/preview')
+def preview_materials(body: MaterialPreview, user: User = Depends(get_current_user)):
+    if len({row.id for row in body.materials}) != len(body.materials):
+        raise HTTPException(422, 'Material IDs must be unique')
+    return calculate_materials(body.materials, body.item)
 
 
 def _plan_counts_by_id(db: Session, plan_ids: list[str]) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:

@@ -1,7 +1,12 @@
 import { PACKING_CARD_PREFIX, isPackingCard } from './LongDistancePackingCard';
+import { Fragment } from 'react';
+import { defaultMaterialRule, emptyRule } from './materialRules';
+import type { MaterialRule } from './materialRules';
+import MaterialRuleEditor from './MaterialRuleEditor';
+import MaterialQuotePreview from './MaterialQuotePreview';
 
 type Service = { id?: string; name: string; rate_text: string; comments: string };
-type Material = { id: string; name: string; material_price: string; packing_price: string; unpacking_price: string };
+export type Material = { id: string; name: string; material_price: string; packing_price: string; unpacking_price: string; rule?:MaterialRule|null; box_capacity_cuft?:number|null };
 const rows: [string, number, number, number][] = [
   ['Book Box: 2 CU',9,5,15], ['Small Box: 2 Cuft',10,6,15],
   ['Medium Box: 3.0 Cuft',12,8,15], ['Large Box: 5 Cuft',12,8,15],
@@ -22,8 +27,12 @@ const rows: [string, number, number, number][] = [
 export function materialRows(services: Service[]): Material[] {
   const card = services.find(isPackingCard);
   const saved = card ? JSON.parse(card.comments.slice(PACKING_CARD_PREFIX.length)).materials : undefined;
-  return saved ?? rows.map(([name,material,packing,unpacking],index)=>({id:`material-${index+1}`,name,
-    material_price:String(material),packing_price:String(packing),unpacking_price:String(unpacking)}));
+  const defaults=rows.map(([name,material,packing,unpacking],index)=>({id:`material-${index+1}`,name,
+    material_price:String(material),packing_price:String(packing),unpacking_price:String(unpacking),rule:defaultMaterialRule(index)}));
+  return saved ? saved.map((item:Material)=>{
+    const original=defaults.find(row=>row.id===item.id && row.name===item.name);
+    return item.rule===undefined && original ? {...item,rule:original.rule} : item;
+  }) : defaults;
 }
 export function withMaterials(services: Service[], materials = materialRows(services)): Service[] {
   const existing = services.find(isPackingCard);
@@ -39,12 +48,18 @@ export default function LongDistanceMaterialsCard({services,editing,onChange}: {
   const update=(next:Material[])=>onChange(withMaterials(services,next));
   const fields=['material_price','packing_price','unpacking_price'] as const;
   const labels=['Materials','Packing','Unpacking'];
-  return <div className="ld-box-table-wrap"><table className="slds-table slds-table_bordered ld-box-table" style={{minWidth:800}} aria-label="Materials rates">
+  return <><div className="ld-box-table-wrap"><table className="slds-table slds-table_bordered ld-box-table" style={{minWidth:800}} aria-label="Materials rates">
     <thead><tr><th scope="col">Description</th>{labels.map(label=><th scope="col" className="ld-box-price" key={label}>{label} / unit</th>)}
       {editing && <th scope="col" className="ld-box-action"><button type="button" className="slds-button ld-box-icon" title="Add material" aria-label="Add material" onClick={()=>update([...materials,{id:crypto.randomUUID(),name:'',material_price:'0',packing_price:'0',unpacking_price:'0'}])}>+</button></th>}
-    </tr></thead><tbody>{materials.map((item,index)=><tr key={item.id}>
+    </tr></thead><tbody>{materials.map((item,index)=><Fragment key={item.id}><tr>
       <td>{editing?<input className="slds-input" aria-label={`Material ${index+1} description`} value={item.name} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,name:e.target.value}:row))}/>:item.name}</td>
       {fields.map((field,column)=><td key={field} className="ld-box-price">{editing?<input className="slds-input" type="number" min="0" step="0.01" aria-label={`${item.name || `Material ${index+1}`} ${labels[column]} rate`} value={item[field]} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,[field]:e.target.value}:row))}/>:Number(item[field]).toLocaleString('en-US',{style:'currency',currency:'USD'})}</td>)}
       {editing && <td><button type="button" className="slds-button ld-box-icon" title="Remove material" aria-label={`Remove ${item.name || 'material'}`} onClick={()=>update(materials.filter(row=>row.id!==item.id))}>&times;</button></td>}
-    </tr>)}</tbody></table></div>;
+    </tr><tr><td colSpan={editing?5:4}>
+      <details><summary>{item.rule ? `Matching: ${item.rule.protection} / ${item.rule.item_type}${item.rule.variant ? ` / ${item.rule.variant}` : ''}` : 'Manual selection only'}</summary>
+        {editing && <label><input type="checkbox" style={{width:16,height:16}} checked={!!item.rule} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,rule:e.target.checked?emptyRule():null}:row))}/> Automatic matching</label>}
+        {item.rule && <MaterialRuleEditor rule={item.rule} editing={editing} onChange={rule=>update(materials.map(row=>row.id===item.id?{...row,rule}:row))}/>}
+        <label>Box capacity (cu ft) {editing ? <input type="number" min="0.01" step="0.01" value={item.box_capacity_cuft??''} aria-label={`${item.name} box capacity`} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,box_capacity_cuft:e.target.value===''?null:Number(e.target.value)}:row))}/> : item.box_capacity_cuft ?? 'Not specified'}</label>
+      </details>
+    </td></tr></Fragment>)}</tbody></table></div><MaterialQuotePreview materials={materials}/></>;
 }

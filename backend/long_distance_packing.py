@@ -1,5 +1,6 @@
 """Validated packing-card configuration stored with a long-distance pricing book."""
 from decimal import Decimal
+from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 PACKING_CARD_PREFIX = '__ld_packing__:'
@@ -25,12 +26,38 @@ class RequiredBoxItem(BaseModel):
             raise ValueError('Required-box items need a name')
         return value.strip()
 
+class MaterialRule(BaseModel):
+    protection: Literal['fabric', 'fragile', 'both'] = 'fabric'
+    item_type: str = Field(default='any', min_length=1, max_length=100)
+    variant: str = Field(default='', max_length=100)
+    measure: Literal['none', 'cubic_feet', 'screen_inches'] = 'none'
+    minimum: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
+    maximum: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
+    minimum_inclusive: bool = True
+    maximum_inclusive: bool = True
+    unit: Literal['item', 'foot', 'sheet', 'roll'] = 'item'
+    units_per_item: Decimal = Field(default=1, gt=0, max_digits=10, decimal_places=2)
+
+    @model_validator(mode='after')
+    def valid_range(self):
+        if self.measure == 'none' and (self.minimum is not None or self.maximum is not None):
+            raise ValueError('Choose a measurement for size limits')
+        if self.minimum is not None and self.maximum is not None:
+            if self.minimum > self.maximum or (self.minimum == self.maximum and not (self.minimum_inclusive and self.maximum_inclusive)):
+                raise ValueError('Material size range is empty')
+        if not self.item_type.strip():
+            raise ValueError('Item type is required')
+        return self
+
+
 class MaterialRate(BaseModel):
     id: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=200)
     material_price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
     packing_price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
     unpacking_price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
+    rule: MaterialRule | None = None
+    box_capacity_cuft: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @field_validator('name')
     @classmethod
