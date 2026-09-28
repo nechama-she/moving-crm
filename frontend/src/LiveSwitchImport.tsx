@@ -22,15 +22,12 @@ async function readResult(response: Response) {
 
 export default function LiveSwitchImport({leadId,onImported,leadingAction}:{leadId:string;onImported:(file:EditableReportFile)=>void;leadingAction?:ReactNode}) {
   const {token}=useAuth();
-  const [previews,setPreviews]=useState<{id:string;url:string}[]>([]);
   const [status,setStatus]=useState('');
-  const previewUrls=useRef<string[]>([]);
   const [active,setActive]=useState('');
   const [error,setError]=useState('');
   const operation=useRef<AbortController | null>(null);
   useEffect(()=>()=>{
     operation.current?.abort();
-    previewUrls.current.forEach(url=>URL.revokeObjectURL(url));
   },[]);
   const base=`${API_BASE}/api/leads/${leadId}/customer-page`;
   const uploads=`${API_BASE}/api/liveswitch/leads/${leadId}`;
@@ -71,9 +68,6 @@ export default function LiveSwitchImport({leadId,onImported,leadingAction}:{lead
       await post(`${uploads}/finish-upload`,signal,metadata);
     }
     onImported({id:file.request_id,name:metadata.name,size:content.size,content_type:content.type});
-    const preview=URL.createObjectURL(content);
-    previewUrls.current.push(preview);
-    setPreviews(current=>[...current,{id:file.request_id,url:preview}]);
   }
   let errorMessage=error.split('\n')[0];
   let technicalDetails=error;
@@ -109,8 +103,6 @@ export default function LiveSwitchImport({leadId,onImported,leadingAction}:{lead
     })}>{active?'Importing...':'Import from LiveSwitch'}</button>
     </div>
     {status && !error && <p role="status">{status}</p>}
-    {previews.map((preview,index)=><video key={preview.id} src={preview.url} controls playsInline preload="metadata"
-      aria-label={`Imported LiveSwitch video ${index+1}`} style={{display:'block',width:'100%',maxWidth:480,aspectRatio:'16 / 9',marginTop:8,background:'#000'}}/>)}
     {error && <div style={{borderLeft:'3px solid #b42318',padding:'8px 12px',margin:'12px 0',background:'#fff5f4'}}>
       <p role="alert" style={{margin:'0 0 8px',overflowWrap:'anywhere',color:'#8a2018'}}>{errorMessage}</p>
       <details><summary style={{cursor:'pointer'}}>Technical details</summary>
