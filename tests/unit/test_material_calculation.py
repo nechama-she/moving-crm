@@ -56,3 +56,26 @@ def test_invalid_rules_and_manual_rates():
     material=rate()
     material.rule=None
     assert calculate_materials([material],MaterialItem(protection='fabric'))['status']=='needs_review'
+
+
+@pytest.mark.parametrize('volume,expected', [(1,'small'),(2,'small'),(2.01,'medium'),(3,'medium'),(4,'large'),(5,'large')])
+def test_capacity_selects_smallest_box_without_opt_in(volume,expected):
+    rows=[MaterialRate(id=id,name=name,material_price=price,packing_price=5,unpacking_price=15,rule=None)
+          for id,name,price in [('small','Small Box: 2 Cuft',10),('medium','Medium Box: 3.0 Cuft',12),('large','Large Box: 5 Cuft',12)]]
+    quote=calculate_materials(rows,MaterialItem(protection='fragile',cubic_feet=volume,quantity=2))
+    assert quote['status']=='priced'
+    assert quote['lines'][0]['material_id']==expected
+    assert quote['lines'][0]['quantity']==2
+    assert quote['packing_only']==10
+
+
+def test_special_box_category_and_changed_capacity():
+    generic=MaterialRate(id='small',name='Small Box: 2 Cuft',material_price=10,packing_price=6,unpacking_price=15)
+    books=MaterialRate(id='books',name='Book Box: 2 CU',material_price=9,packing_price=5,unpacking_price=15)
+    quote=calculate_materials([generic,books],MaterialItem(protection='fragile',item_type='books',cubic_feet=2))
+    assert quote['lines'][0]['material_id']=='books'
+    assert quote['packing_and_material']==14
+    assert calculate_materials([generic],MaterialItem(protection='fragile',cubic_feet=3))['status']=='needs_review'
+    generic.box_capacity_cuft=Decimal(4)
+    assert calculate_materials([generic],MaterialItem(protection='fragile',cubic_feet=3))['status']=='priced'
+    assert calculate_materials([generic],MaterialItem(protection='fragile'))['status']=='needs_review'

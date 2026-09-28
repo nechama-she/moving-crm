@@ -4,6 +4,14 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 PACKING_CARD_PREFIX = '__ld_packing__:'
+BOX_DEFAULTS = {
+    'Book Box: 2 CU': ('books', 2), 'Small Box: 2 Cuft': ('any', 2),
+    'Medium Box: 3.0 Cuft': ('any', 3), 'Large Box: 5 Cuft': ('any', 5),
+    'Dish Box: 6.0 Cuft': ('dishes', 6),
+    'Picture Box Standard 3.0cf: 3 CU': ('picture', 3),
+    'Picture Box Large 6.0cf: 6 cuft': ('picture', 6),
+    'Mirror Box: 6 cuft': ('mirror', 6), 'Wardrobe Box: 16 cuft': ('wardrobe', 16),
+}
 
 class RequiredBoxItem(BaseModel):
     id: str = Field(min_length=1, max_length=100)
@@ -58,6 +66,33 @@ class MaterialRate(BaseModel):
     unpacking_price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
     rule: MaterialRule | None = None
     box_capacity_cuft: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+    capacity: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+    capacity_unit: Literal['cuft', 'inches', 'sheets', 'feet', 'items'] = 'cuft'
+    capacity_kind: Literal['up_to', 'over'] = 'up_to'
+
+    @model_validator(mode='before')
+    @classmethod
+    def automatic_box(cls, value):
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        if 'capacity' in value:
+            capacity = value['capacity']
+            unit = value.get('capacity_unit', 'cuft')
+            value['box_capacity_cuft'] = capacity if unit == 'cuft' and value.get('capacity_kind', 'up_to') == 'up_to' else None
+            if capacity is not None and unit in ('cuft', 'inches'):
+                rule = dict(value.get('rule') or {'protection':'fragile', 'item_type':'any'})
+                over = value.get('capacity_kind') == 'over'
+                rule.update(measure='screen_inches' if unit == 'inches' else 'cubic_feet',
+                            minimum=capacity if over else None, maximum=None if over else capacity,
+                            minimum_inclusive=False if over else True, maximum_inclusive=True)
+                value['rule'] = rule
+        default = BOX_DEFAULTS.get(value.get('name'))
+        if default and 'capacity' not in value and value.get('box_capacity_cuft') is None:
+            value['box_capacity_cuft'] = default[1]
+        if value.get('box_capacity_cuft') is not None and not value.get('rule'):
+            value['rule'] = {'protection': 'fragile', 'item_type': default[0] if default else 'any'}
+        return value
 
     @field_validator('name')
     @classmethod

@@ -57,6 +57,12 @@ def calculate_materials(materials: list[MaterialRate], item: MaterialItem):
         missing = set()
         for material in candidates:
             rule = material.rule
+            if material.box_capacity_cuft is not None and rule.measure != 'screen_inches':
+                if item.cubic_feet is None:
+                    missing.add('cubic_feet')
+                    continue
+                if item.cubic_feet > material.box_capacity_cuft:
+                    continue
             if rule.measure != 'none':
                 value = getattr(item, rule.measure)
                 if value is None:
@@ -67,6 +73,9 @@ def calculate_materials(materials: list[MaterialRate], item: MaterialItem):
                 if rule.maximum is not None and (value > rule.maximum or (value == rule.maximum and not rule.maximum_inclusive)):
                     continue
             matches.append(material)
+        if matches and all(row.box_capacity_cuft is not None for row in matches):
+            smallest = min(row.box_capacity_cuft for row in matches)
+            matches = [row for row in matches if row.box_capacity_cuft == smallest]
         if missing:
             issues.append(f"{protection}: provide {', '.join(sorted(missing))}")
         elif len(matches) != 1:
