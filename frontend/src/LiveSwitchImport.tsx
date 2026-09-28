@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { API_BASE } from './apiConfig';
 import { authHeaders, useAuth } from './AuthContext';
 import type { EditableReportFile } from './ReportFileList';
+import { normalizeLiveSwitchVideo } from './liveSwitchVideo';
 
 type RemoteFile = {id:string; request_id:string; name:string; url:string; status:string};
 
@@ -21,11 +22,16 @@ async function readResult(response: Response) {
 
 export default function LiveSwitchImport({leadId,onImported,leadingAction}:{leadId:string;onImported:(file:EditableReportFile)=>void;leadingAction?:ReactNode}) {
   const {token}=useAuth();
-  const [files,setFiles]=useState<RemoteFile[] | null>(null);
+  const [previews,setPreviews]=useState<{id:string;url:string}[]>([]);
+  const [status,setStatus]=useState('');
+  const previewUrls=useRef<string[]>([]);
   const [active,setActive]=useState('');
   const [error,setError]=useState('');
   const operation=useRef<AbortController | null>(null);
-  useEffect(()=>()=>operation.current?.abort(),[]);
+  useEffect(()=>()=>{
+    operation.current?.abort();
+    previewUrls.current.forEach(url=>URL.revokeObjectURL(url));
+  },[]);
   const base=`${API_BASE}/api/leads/${leadId}/customer-page`;
   const uploads=`${API_BASE}/api/liveswitch/leads/${leadId}`;
   async function post(url:string,signal:AbortSignal,body?:unknown) {
@@ -52,8 +58,7 @@ export default function LiveSwitchImport({leadId,onImported,leadingAction}:{lead
     if(url.protocol!=='https:')throw new Error('LiveSwitch did not provide an HTTPS video download URL.');
     const response=await fetch(url,{signal,credentials:'omit',referrerPolicy:'no-referrer'});
     if(!response.ok)throw new Error(`LiveSwitch download HTTP ${response.status}\n${await response.text()}`);
-    const content=await response.blob();
-    if(!content.size || !content.type.startsWith('video/'))throw new Error(`LiveSwitch returned ${content.type || 'an unknown file type'}, not a downloadable video.`);
+    const content=await normalizeLiveSwitchVideo(await response.blob());
     const extension=content.type==='video/webm'?'.webm':content.type==='video/quicktime'?'.mov':'.mp4';
     const metadata={request_id:file.request_id,name:file.name.replace(/\.mp4$/,extension),size:content.size,content_type:content.type};
     const prepared=await post(`${uploads}/prepare-upload`,signal,metadata);
@@ -66,7 +71,9 @@ export default function LiveSwitchImport({leadId,onImported,leadingAction}:{lead
       await post(`${uploads}/finish-upload`,signal,metadata);
     }
     onImported({id:file.request_id,name:metadata.name,size:content.size,content_type:content.type});
-    setFiles(current=>current?.filter(row=>row.id!==file.id) ?? []);
+    const preview=URL.createObjectURL(content);
+    previewUrls.current.push(preview);
+    setPreviews(current=>[...current,{id:file.request_id,url:preview}]);
   }
   let errorMessage=error.split('\n')[0];
   let technicalDetails=error;
@@ -83,19 +90,27 @@ export default function LiveSwitchImport({leadId,onImported,leadingAction}:{lead
     <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',margin:'8px 0'}}>
     {leadingAction}
     <button type="button" className="slds-button" disabled={!!active} onClick={()=>void run('list',async signal=>{
-      setFiles(await loadFiles(signal));
-    })}>{active==='list'?'Checking LiveSwitch...':'Import from LiveSwitch'}</button>
+      setStatus('Checking LiveSwitch...');
+      const missing=await loadFiles(signal);
+      const ready=missing.filter(file=>file.status==='Completed' && file.url);
+      let imported=0;
+      const errors:string[]=[];
+      for(const file of ready) {
+        if(signal.aborted)return;
+        setStatus(`Importing video ${imported+errors.length+1} of ${ready.length}...`);
+        try { await importFile(file,signal); imported++; }
+        catch(error) {
+          if(signal.aborted)return;
+          errors.push((error as Error).message);
+        }
+      }
+      setStatus(`${imported ? `${imported} video${imported===1?'':'s'} imported.` : !missing.length ? 'No missing LiveSwitch videos.' : ''}${missing.length>ready.length ? ' Some videos are not ready to download yet.' : ''}`);
+      if(errors.length)throw new Error(errors.join('\n\n'));
+    })}>{active?'Importing...':'Import from LiveSwitch'}</button>
     </div>
-    {files && <div aria-label="Missing LiveSwitch files">
-      {!files.length && <p role="status">No missing LiveSwitch videos.</p>}
-      {files.map(file=><div key={file.id} style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginTop:8}}>
-        <span style={{overflowWrap:'anywhere',minWidth:0,flex:'1 1 180px'}}>{file.name}</span>
-        <button type="button" className="slds-button" disabled={!!active || file.status!=='Completed' || !file.url}
-          onClick={()=>void run(file.id,signal=>importFile(file,signal))}>
-          {active===file.id?'Importing...':file.status!=='Completed'?file.status:!file.url?'Download unavailable':'Import'}
-        </button>
-      </div>)}
-    </div>}
+    {status && !error && <p role="status">{status}</p>}
+    {previews.map((preview,index)=><video key={preview.id} src={preview.url} controls playsInline preload="metadata"
+      aria-label={`Imported LiveSwitch video ${index+1}`} style={{display:'block',width:'100%',maxWidth:480,aspectRatio:'16 / 9',marginTop:8,background:'#000'}}/>)}
     {error && <div style={{borderLeft:'3px solid #b42318',padding:'8px 12px',margin:'12px 0',background:'#fff5f4'}}>
       <p role="alert" style={{margin:'0 0 8px',overflowWrap:'anywhere',color:'#8a2018'}}>{errorMessage}</p>
       <details><summary style={{cursor:'pointer'}}>Technical details</summary>
