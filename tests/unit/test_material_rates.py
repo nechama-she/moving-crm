@@ -45,3 +45,17 @@ def test_capacity_units_are_saved_and_size_rules_follow_capacity():
     large=MaterialRate(**base,capacity=65,capacity_unit='inches',capacity_kind='over')
     assert large.rule.minimum==65
     assert not large.rule.minimum_inclusive
+
+
+def test_mattress_size_round_trip_and_matching():
+    from long_distance_packing import MaterialRate
+    from material_calculation import calculate_materials, MaterialItem
+    rows=[MaterialRate(id=size,name='Bag',material_price=26,packing_price=12,unpacking_price=15,
+                      capacity_unit='mattress_size',mattress_size=size) for size in ('twin','full','queen','king')]
+    rows=[MaterialRate.model_validate_json(row.model_dump_json()) for row in rows]
+    result=calculate_materials(rows,MaterialItem(protection='fabric',item_type='mattress',variant='queen'))
+    assert result['lines'][0]['material_id']=='queen'
+    assert result['packing_and_material']==38
+    assert result['packing_only']==12
+    with pytest.raises(ValidationError):
+        MaterialRate(id='bad',name='Bag',material_price=1,packing_price=1,unpacking_price=1,capacity_unit='mattress_size')

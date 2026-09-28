@@ -3,8 +3,10 @@ import { defaultMaterialRule, defaultBoxCapacity, emptyRule } from './materialRu
 import type { MaterialRule } from './materialRules';
 
 type Service = { id?: string; name: string; rate_text: string; comments: string };
-export type Material = { id: string; name: string; material_price: string; packing_price: string; unpacking_price: string; rule?:MaterialRule|null; box_capacity_cuft?:number|null; capacity?:number|null; capacity_unit?:'cuft'|'inches'|'sheets'|'feet'|'items';capacity_kind?:'up_to'|'over' };
+export type Material = { id: string; name: string; material_price: string; packing_price: string; unpacking_price: string; rule?:MaterialRule|null; box_capacity_cuft?:number|null; capacity?:number|null; capacity_unit?:'cuft'|'inches'|'sheets'|'feet'|'items'|'mattress_size';mattress_size?:string|null;capacity_kind?:'up_to'|'over' };
 function capacityFields(item:Material):Material {
+  if(item.capacity_unit==='mattress_size')return item;
+  if(item.capacity==null && item.rule?.item_type==='mattress' && ['twin','full','queen','king'].includes(item.rule.variant))return {...item,capacity:null,capacity_unit:'mattress_size',mattress_size:item.rule.variant};
   if(item.capacity!==undefined)return item;
   if(item.name==='Packing Paper (100): 100 Sheets')return {...item,capacity:100,capacity_unit:'sheets',capacity_kind:'up_to'};
   if(item.name==='Packing Paper (200): 200 Sheets')return {...item,capacity:200,capacity_unit:'sheets',capacity_kind:'up_to'};
@@ -60,9 +62,9 @@ export default function LongDistanceMaterialsCard({services,editing,onChange}: {
     </tr></thead><tbody>{materials.map((item,index)=><tr key={item.id}>
       <td>{editing?<input className="slds-input" aria-label={`Material ${index+1} description`} value={item.name} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,name:e.target.value}:row))}/>:item.name}</td>
       <td>{editing?<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
-        <input type="number" min="0.01" step="0.01" aria-label={`${item.name} capacity`} value={item.capacity??''} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,capacity:e.target.value===''?null:Number(e.target.value)}:row))}/>
-        <select aria-label={`${item.name} capacity unit`} value={item.capacity_unit??'cuft'} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,capacity_unit:e.target.value as Material['capacity_unit']}:row))}>{[['cuft','cu ft'],['inches','inches'],['sheets','sheets'],['feet','feet'],['items','items']].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>
-      </div>:item.capacity!=null?`${item.capacity} ${item.capacity_unit==='cuft'?'cu ft':item.capacity_unit}`:'Not specified'}</td>
+        {item.capacity_unit==='mattress_size'?<select aria-label={`${item.name} mattress size`} value={item.mattress_size??''} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,mattress_size:e.target.value}:row))}><option value="">Choose size</option>{['twin','full','queen','king'].map(size=><option key={size} value={size}>{size[0].toUpperCase()+size.slice(1)}</option>)}</select>:<input type="number" min="0.01" step="0.01" aria-label={`${item.name} capacity`} value={item.capacity??''} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,capacity:e.target.value===''?null:Number(e.target.value)}:row))}/>}
+        <select aria-label={`${item.name} capacity unit`} value={item.capacity_unit??'cuft'} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,capacity_unit:e.target.value as Material['capacity_unit'],capacity:null,rule:null}:row))}>{[['cuft','cu ft'],['inches','inches'],['sheets','sheets'],['feet','feet'],['items','items'],['mattress_size','mattress size']].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>
+      </div>:item.capacity_unit==='mattress_size'?`${item.mattress_size || ''} mattress`:item.capacity!=null?`${item.capacity} ${item.capacity_unit==='cuft'?'cu ft':item.capacity_unit}`:'Not specified'}</td>
       {fields.map((field,column)=><td key={field} className="ld-box-price">{editing?<input className="slds-input" type="number" min="0" step="0.01" aria-label={`${item.name || `Material ${index+1}`} ${labels[column]} rate`} value={item[field]} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,[field]:e.target.value}:row))}/>:Number(item[field]).toLocaleString('en-US',{style:'currency',currency:'USD'})}</td>)}
       {editing && <td><button type="button" className="slds-button ld-box-icon" title="Remove material" aria-label={`Remove ${item.name || 'material'}`} onClick={()=>update(materials.filter(row=>row.id!==item.id))}>&times;</button></td>}
     </tr>)}</tbody></table></div></>;

@@ -67,7 +67,8 @@ class MaterialRate(BaseModel):
     rule: MaterialRule | None = None
     box_capacity_cuft: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
     capacity: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
-    capacity_unit: Literal['cuft', 'inches', 'sheets', 'feet', 'items'] = 'cuft'
+    capacity_unit: Literal['cuft', 'inches', 'sheets', 'feet', 'items', 'mattress_size'] = 'cuft'
+    mattress_size: Literal['twin', 'full', 'queen', 'king'] | None = None
     capacity_kind: Literal['up_to', 'over'] = 'up_to'
 
     @model_validator(mode='before')
@@ -76,6 +77,14 @@ class MaterialRate(BaseModel):
         if not isinstance(value, dict):
             return value
         value = dict(value)
+        if value.get('capacity_unit') == 'mattress_size':
+            if not value.get('mattress_size'):
+                raise ValueError('Choose a mattress size')
+            value.update(capacity=None, box_capacity_cuft=None)
+            rule = dict(value.get('rule') or {})
+            rule.update(protection='fabric', item_type='mattress', variant=value['mattress_size'],
+                        measure='none', minimum=None, maximum=None)
+            value['rule'] = rule
         if 'capacity' in value:
             capacity = value['capacity']
             unit = value.get('capacity_unit', 'cuft')

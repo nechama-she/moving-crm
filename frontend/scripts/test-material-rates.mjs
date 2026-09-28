@@ -23,6 +23,8 @@ assert.equal(defaults[20].rule.minimum_inclusive,false);
 assert.equal(defaults[0].rule.item_type,'books');
 assert.equal(defaults[1].rule.protection,'fragile');
 assert.equal(defaults[1].box_capacity_cuft,2);
+assert.equal(defaults[7].capacity_unit,'mattress_size');
+assert.equal(defaults[7].mattress_size,'queen');
 const services=[{name:'Packing',rate_text:'',comments:prefix+JSON.stringify({full:'2',items:[{id:'old'}]})}];
 const saved=exports.withMaterials(services);
 assert.equal(JSON.parse(saved[0].comments.slice(prefix.length)).full,'2');
