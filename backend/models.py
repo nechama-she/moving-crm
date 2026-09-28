@@ -1054,6 +1054,8 @@ class AccessAuditLog(Base):
     query_params = Column(Text, nullable=True)
     status_code = Column(Integer, nullable=False, index=True)
     error_message = Column(Text, nullable=True)
+    request_body = Column(Text, nullable=True)
+    response_body = Column(Text, nullable=True)
     duration_ms = Column(Integer, nullable=False, default=0)
     user_agent = Column(Text, nullable=True)
     referer = Column(Text, nullable=True)
@@ -1072,6 +1074,8 @@ class AccessAuditLog(Base):
             "query_params": self.query_params or "",
             "status_code": self.status_code,
             "error_message": self.error_message or "",
+            "request_body": self.request_body,
+            "response_body": self.response_body,
             "duration_ms": self.duration_ms,
             "user_agent": self.user_agent or "",
             "referer": self.referer or "",

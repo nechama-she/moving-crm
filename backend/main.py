@@ -17,7 +17,7 @@ from config import get_config
 from database import SessionLocal
 from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
 from models import AccessAuditLog, Lead, User
-from access_errors import capture_response_error, exception_message
+from access_errors import capture_response_error, exception_message, audit_body
 from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
 from routes import public_moves, local_pricing, inventory_questions, inventory_catalog
 from routes.meta import messenger, instagram
@@ -243,10 +243,20 @@ async def track_access_history(request: Request, call_next):
 
     status_code = 500
     error_message = None
+    request_body = None
+    response_body = None
+    capture_bodies = request.method == 'POST' and path.rstrip('/') == '/api/leads'
     try:
+        if capture_bodies:
+            length = request.headers.get('content-length', '')
+            if length.isdigit() and int(length) <= 8000:
+                request_body = audit_body(await request.body(), request.headers.get('content-type', ''))
+            else:
+                request_body = '[Body omitted: unknown size or exceeds 8000 bytes]'
         response = await call_next(request)
         status_code = response.status_code
-        error_message = await capture_response_error(response)
+        error_message = await capture_response_error(response, capture_body=capture_bodies)
+        response_body = getattr(response, 'audit_body', None)
         return response
     except Exception as exc:
         status_code = getattr(exc, "status_code", 500)
@@ -268,6 +278,8 @@ async def track_access_history(request: Request, call_next):
                 query_params=query_params[:2000] if query_params else None,
                 status_code=status_code,
                 error_message=error_message,
+                request_body=request_body,
+                response_body=response_body,
                 duration_ms=duration_ms,
                 user_agent=user_agent[:1000] if user_agent else None,
                 referer=referer[:1000] if referer else None,

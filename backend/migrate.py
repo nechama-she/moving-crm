@@ -90,6 +90,8 @@ def migrate() -> None:
             )
         """))
         connection.execute(text("ALTER TABLE access_audit_logs ADD COLUMN IF NOT EXISTS error_message TEXT"))
+        connection.execute(text("ALTER TABLE access_audit_logs ADD COLUMN IF NOT EXISTS request_body TEXT"))
+        connection.execute(text("ALTER TABLE access_audit_logs ADD COLUMN IF NOT EXISTS response_body TEXT"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_created_at ON access_audit_logs (created_at DESC)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_user_id ON access_audit_logs (user_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_access_audit_logs_ip_address ON access_audit_logs (ip_address)"))

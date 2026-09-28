@@ -17,6 +17,8 @@ type AccessItem = {
   query_params: string;
   status_code: number;
   error_message?: string;
+  request_body?: string | null;
+  response_body?: string | null;
   duration_ms: number;
   user_agent: string;
   referer: string;
@@ -69,6 +71,12 @@ interface DrilldownPanelProps {
 }
 
 function ApiErrorDetail({ item }: { item: AccessItem }) {
+  if (item.request_body != null || item.response_body != null) return <details className="access-api-error">
+    <summary>View request and response</summary>
+    <strong>Request body</strong><pre>{item.request_body ?? 'Not recorded'}</pre>
+    <strong>Response body (HTTP {item.status_code})</strong><pre>{item.response_body ?? 'Not recorded'}</pre>
+    {item.error_message && <><strong>Error</strong><pre>{item.error_message}</pre></>}
+  </details>;
   if (item.status_code < 400) return null;
   return item.error_message ? <details className="access-api-error"><summary>View API error</summary><pre>{item.error_message}</pre></details> : <small className="access-api-error-missing">Error message not recorded</small>;
 }

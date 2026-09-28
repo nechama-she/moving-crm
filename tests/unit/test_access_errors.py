@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 BACKEND = Path(__file__).resolve().parents[2] / 'backend'
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
-from access_errors import capture_response_error, exception_message, response_message
+from access_errors import capture_response_error, exception_message, response_message, audit_body
 from models import AccessAuditLog
 
 
@@ -56,10 +56,14 @@ def test_middleware_records_api_errors_and_unhandled_exceptions():
              'SessionLocal': lambda: db, 'logger': logging.getLogger('audit-test'),
              '_extract_request_user': lambda req: (None, 'Anonymous', None, 'anonymous'),
              '_extract_client_ip': lambda req: '127.0.0.1',
-             'capture_response_error': capture_response_error, 'exception_message': exception_message}
+             'capture_response_error': capture_response_error, 'exception_message': exception_message, 'audit_body': audit_body}
     exec(compile(ast.Module(body=[node], type_ignores=[]), '<access-middleware>', 'exec'), scope)
     app = FastAPI()
     app.middleware('http')(scope['track_access_history'])
+    @app.post('/api/leads')
+    async def lead(request: Request):
+        body = await request.json()
+        return JSONResponse({'detail': 'full_name is required'}, status_code=400) if not body.get('full_name') else JSONResponse({'lead_id': 'created'})
     @app.get('/denied')
     def denied():
         return JSONResponse({'detail': 'Not authenticated'}, status_code=401)
@@ -84,3 +88,22 @@ def test_middleware_records_api_errors_and_unhandled_exceptions():
         assert 'Missing pricing configuration' in row.error_message
         assert client.get('/ok').json() == {'ok': True}
         assert db.add.call_args.args[0].error_message is None
+        response = client.post('/api/leads', json={'full_name': '', 'api_secret': 'private-value'})
+        assert response.json() == {'detail': 'full_name is required'}
+        row = db.add.call_args.args[0]
+        assert 'full_name' in row.request_body
+        assert 'private-value' not in row.request_body
+        assert '[REDACTED]' in row.request_body
+        assert 'full_name is required' in row.response_body
+        assert row.to_dict()['response_body'] == row.response_body
+        assert client.post('/api/leads', json={'full_name': 'Jane'}).status_code == 200
+        assert 'created' in db.add.call_args.args[0].response_body
+
+
+def test_body_capture_limits_and_redacts_nested_credentials():
+    assert 'omitted' in audit_body(b'x' * 8001, 'application/json')
+    assert 'omitted' in audit_body(b'password=private', 'text/plain')
+    assert 'omitted' in audit_body(b'{broken', 'application/json')
+    body = audit_body(b'{"nested":[{"access_token":"private","name":"Jane"}]}', 'application/json')
+    assert 'private' not in body
+    assert 'Jane' in body
