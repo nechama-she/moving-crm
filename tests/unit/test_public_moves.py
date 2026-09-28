@@ -2428,6 +2428,49 @@ def test_box_materials_include_labor_and_autosave_only_current_item(portal,packi
     assert json.loads(job.customer_packing_package)['item_ids']==['tv:1']
 
 
+def test_additional_material_save_reprice_remove_and_package_switch(portal, packing_pricing, monkeypatch):
+    from decimal import Decimal
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    lead.volume = 500
+    job.price = access.published_price = Decimal('1000')
+    plan = SimpleNamespace(rates=[], services=[SimpleNamespace(comments='__ld_packing__:' + json.dumps({
+        'full': '2', 'materials': [{'id':'wrap','name':'Wrap','material_price':10,'packing_price':12,'unpacking_price':15,
+            'rule':{'protection':'fabric','item_type':'any'}}]}))])
+    original = packing_pricing.customer_packing_package
+    monkeypatch.setattr(packing_pricing, 'customer_packing_package', lambda lead,job,db,**kwargs: original(lead,job,db,plan,'Long Distance',**kwargs))
+    monkeypatch.setattr(packing_pricing, 'customer_packing_options', lambda *args: [])
+    monkeypatch.setitem(sys.modules, 'routes.leads', MagicMock())
+    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    db.commit()
+    item={'label':'Fabric chair','protection':'fabric','quantity':2,'service':'self'}
+    def save(value):
+        mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'material','item_id':'chair','material_item':value}),access,db)
+    save(item)
+    assert job.price == 1000
+    item['service']='materials'
+    save(item)
+    save(item)
+    assert job.price == access.published_price == 1044
+    assert db.query(models.LeadJobCharge).count() == 1
+    item['service']='packing'
+    save(item)
+    assert job.price == 1024
+    mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'mode','mode':'full'}),access,db)
+    assert job.price == 2000
+    mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'mode','mode':'none'}),access,db)
+    assert job.price == 1024
+    save(None)
+    assert job.price == access.published_price == 1000
+    assert db.query(models.LeadJobCharge).count() == 0
+    save({**item,'protection':'fragile','service':'self'})
+    assert job.price == 1000
+    assert 'chair' in json.loads(job.customer_packing_package)['additional_items']
+    with pytest.raises(HTTPException):
+        save({**item,'protection':'fragile','service':'materials'})
+    assert job.price == 1000
+
+
 def test_box_split_prices_keep_legacy_totals():
     from long_distance_packing import RequiredBoxItem
     from pydantic import ValidationError

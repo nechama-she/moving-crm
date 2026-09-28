@@ -14,6 +14,20 @@ class MaterialItem(BaseModel):
     quantity: int = Field(default=1, ge=1, le=1000)
 
 
+class CustomerMaterialItem(MaterialItem):
+    label: str = Field(min_length=1, max_length=200)
+    service: Literal['self', 'packing', 'materials'] = 'self'
+
+
+def customer_material_quotes(materials, selections):
+    result = []
+    for id, values in selections.items():
+        item = CustomerMaterialItem.model_validate(values)
+        result.append({'id': id, 'label': item.label, 'service': item.service,
+                       **calculate_materials(materials, item)})
+    return result
+
+
 def calculate_materials(materials: list[MaterialRate], item: MaterialItem):
     selected = {}
     issues = []

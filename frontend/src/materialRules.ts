@@ -6,6 +6,7 @@ export type MaterialRule = {
 };
 export const emptyRule = ():MaterialRule => ({protection:'fabric',item_type:'any',variant:'',measure:'none',minimum:null,maximum:null,
   minimum_inclusive:true,maximum_inclusive:true,unit:'item',units_per_item:1});
+export const defaultBoxCapacity = (index:number):number|null => ({0:2,1:2,2:3,3:5,4:6,9:3,10:6,11:6,19:10,20:15,23:16} as Record<number,number>)[index] ?? null;
 export function defaultMaterialRule(index:number):MaterialRule|null {
   const base=emptyRule();
   if(index>=5 && index<=8)return {...base,item_type:'mattress',variant:['twin','full','queen','king'][index-5]};

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user, require_admin
 from database import get_db
 from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, MaterialRate, packing_card
-from material_calculation import MaterialItem, calculate_materials
+from material_calculation import MaterialItem, calculate_materials, customer_material_quotes
 from shuttle import SHUTTLE_PREFIX, ShuttleCard, shuttle_card, shuttle_option
 from delivery_fees import DELIVERY_FEE_PREFIX, DeliveryFeeCard, delivery_fee, delivery_fee_card
 from storage_pricing import STORAGE_PREFIX, StorageCard, storage_card, storage_quote
@@ -1003,7 +1003,8 @@ def customer_packing_options(lead, job, db, plan=None, move_type=None):
     return options
 
 
-def customer_packing_package(lead, job, db, plan=None, move_type=None):
+def customer_packing_package(lead, job, db, plan=None, move_type=None, selection_override=None):
+    from material_calculation import customer_material_quotes
     if plan is None:
         move_type, plan = infer_job_move_type(lead, job, db)
     if not plan or not move_type or move_type.lower() == 'local':
@@ -1036,8 +1037,12 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None):
                           'room': room,
                           'label': f'{item.name} ({index + 1} of {count})' if count > 1 else item.name,
                           'price': float(item.price), 'labor_price': float(item.labor_price), 'material_price': float(item.material_price)})
+    selection = selection_override if selection_override is not None else json.loads(job.customer_packing_package or '{}')
+    known = {_normalize_item_name(row.name) for row in card.items}
     return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': items,
-            'selection': {'mode': 'none', 'unpacking': False, 'item_ids': [], **json.loads(job.customer_packing_package or '{}')}}
+            'other_inventory': [row for row in inventory if _normalize_item_name(str(row.get('name') or '')) not in known],
+            'material_quotes': customer_material_quotes(card.materials, selection.get('additional_items', {})),
+            'selection': {'mode': 'none', 'unpacking': False, 'item_ids': [], **selection}}
 
 
 def customer_package_lines(package, selection):
@@ -1053,6 +1058,15 @@ def customer_package_lines(package, selection):
                           'description': f"{package['cubic_feet']} cu ft at ${rate['rate']:g} / cu ft",
                           'amount': Decimal(str(rate['total']))})
     if mode == 'none':
+        for item in package.get('material_quotes', []):
+            service = selection.get('additional_items', {}).get(item['id'], {}).get('service', 'self')
+            if service == 'self':
+                continue
+            if item['status'] != 'priced':
+                raise ValueError(f"Material pricing needs review for {item['label']}")
+            lines.append({'id': f"material:{item['id']}", 'name': f"{item['label']} Packing",
+                          'description': '; '.join(f"{line['quantity']} {line['unit']} {line['name']}" for line in item['lines']),
+                          'amount': Decimal(str(item['packing_and_material'] if service == 'materials' else item['packing_only']))})
         for item in package['items']:
             if item['id'] in selection.get('item_ids', []):
                 lines.append({'id': f"box:{item['id']}", 'name': f"{item['label']} Boxing",

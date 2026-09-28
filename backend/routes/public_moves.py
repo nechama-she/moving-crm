@@ -771,15 +771,20 @@ def calculate_report_price(access: PublicMoveAccess = Depends(verified), db: Ses
     return result
 
 
+from material_calculation import CustomerMaterialItem
+
+
 class CustomerPackageSelection(BaseModel):
     mode: Literal['full', 'partial', 'none'] = 'none'
     unpacking: bool = False
     item_ids: list[str] = Field(default_factory=list, max_length=1000)
     material_item_ids: list[str] | None = Field(default=None, max_length=1000)
+    additional_items: dict[str, CustomerMaterialItem] = Field(default_factory=dict, max_length=100)
 
 
 class CustomerPackingChange(BaseModel):
-    kind: Literal['mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs', 'long_carry', 'elevator', 'extra_stops']
+    kind: Literal['material', 'mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs', 'long_carry', 'elevator', 'extra_stops']
+    material_item: CustomerMaterialItem | None = None
     location: Literal['pickup', 'delivery'] | None = None
     stops: list[str] = Field(default_factory=list, max_length=100)
     route_origin: str | None = Field(default=None, max_length=500)
@@ -968,10 +973,20 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             if change.kind == 'mode':
                 touched.update(['package:full', 'package:partial'])
                 touched.update(f'box:{item_id}' for item_id in selection.get('item_ids', []))
+                touched.update(f'material:{item_id}' for item_id in selection.get('additional_items', {}))
                 selection['mode'] = change.mode
                 if change.mode != 'none':
                     selection['item_ids'] = []
                     selection['material_item_ids'] = []
+            elif change.kind == 'material':
+                if not change.item_id or len(change.item_id) > 100:
+                    raise HTTPException(422, 'A valid item ID is required.')
+                touched.add(f'material:{change.item_id}')
+                additional = selection.setdefault('additional_items', {})
+                if change.material_item is None:
+                    additional.pop(change.item_id, None)
+                else:
+                    additional[change.item_id] = change.material_item.model_dump(mode='json')
             elif change.kind == 'unpacking':
                 touched.add('package:unpacking')
                 selection['unpacking'] = change.enabled
@@ -1002,10 +1017,11 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     package_old_ids = []
     if body.package is not None:
         from routes.pricing import customer_packing_package, customer_package_lines
-        package = customer_packing_package(lead, job, db)
+        package = (customer_packing_package(lead, job, db, selection_override=body.package.model_dump(mode='json'))
+                   if body.package.additional_items else customer_packing_package(lead, job, db))
         if package is None:
             raise HTTPException(409, 'Long-distance packing is not available. Refresh your estimate.')
-        selection = body.package.model_dump()
+        selection = body.package.model_dump(mode='json')
         if selection['material_item_ids'] is None:
             selection['material_item_ids'] = list(selection['item_ids'])
         selection['item_ids'] = sorted(set(selection['item_ids']) | set(selection['material_item_ids']))
@@ -1035,7 +1051,11 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         if 'stairs' in previous_package:
             selection['stairs'] = previous_package['stairs']
         package_old_ids = ['package:full', 'package:partial', 'package:unpacking'] + [f'box:{item_id}' for item_id in previous_package.get('item_ids', [])]
-        package_lines = customer_package_lines(package, selection)
+        package_old_ids += [f'material:{item_id}' for item_id in previous_package.get('additional_items', {})]
+        try:
+            package_lines = customer_package_lines(package, selection)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
     if job.price is None:
         # Keep customer choices while the base estimate is still being prepared.
         # Repricing applies these selections when a complete price is available.

@@ -1,6 +1,6 @@
 import { PACKING_CARD_PREFIX, isPackingCard } from './LongDistancePackingCard';
 import { Fragment } from 'react';
-import { defaultMaterialRule, emptyRule } from './materialRules';
+import { defaultMaterialRule, defaultBoxCapacity, emptyRule } from './materialRules';
 import type { MaterialRule } from './materialRules';
 import MaterialRuleEditor from './MaterialRuleEditor';
 import MaterialQuotePreview from './MaterialQuotePreview';
@@ -28,10 +28,10 @@ export function materialRows(services: Service[]): Material[] {
   const card = services.find(isPackingCard);
   const saved = card ? JSON.parse(card.comments.slice(PACKING_CARD_PREFIX.length)).materials : undefined;
   const defaults=rows.map(([name,material,packing,unpacking],index)=>({id:`material-${index+1}`,name,
-    material_price:String(material),packing_price:String(packing),unpacking_price:String(unpacking),rule:defaultMaterialRule(index)}));
+    material_price:String(material),packing_price:String(packing),unpacking_price:String(unpacking),rule:defaultMaterialRule(index),box_capacity_cuft:defaultBoxCapacity(index)}));
   return saved ? saved.map((item:Material)=>{
     const original=defaults.find(row=>row.id===item.id && row.name===item.name);
-    return item.rule===undefined && original ? {...item,rule:original.rule} : item;
+    return original ? {...item,rule:item.rule===undefined?original.rule:item.rule,box_capacity_cuft:item.box_capacity_cuft===undefined?original.box_capacity_cuft:item.box_capacity_cuft} : item;
   }) : defaults;
 }
 export function withMaterials(services: Service[], materials = materialRows(services)): Service[] {
@@ -57,9 +57,9 @@ export default function LongDistanceMaterialsCard({services,editing,onChange}: {
       {editing && <td><button type="button" className="slds-button ld-box-icon" title="Remove material" aria-label={`Remove ${item.name || 'material'}`} onClick={()=>update(materials.filter(row=>row.id!==item.id))}>&times;</button></td>}
     </tr><tr><td colSpan={editing?5:4}>
       <details><summary>{item.rule ? `Matching: ${item.rule.protection} / ${item.rule.item_type}${item.rule.variant ? ` / ${item.rule.variant}` : ''}` : 'Manual selection only'}</summary>
-        {editing && <label><input type="checkbox" style={{width:16,height:16}} checked={!!item.rule} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,rule:e.target.checked?emptyRule():null}:row))}/> Automatic matching</label>}
+        {editing && <label style={{display:'flex',alignItems:'center',gap:8,margin:'12px 0'}}><input type="checkbox" style={{width:16,height:16}} checked={!!item.rule} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,rule:e.target.checked?emptyRule():null}:row))}/> Automatic matching</label>}
         {item.rule && <MaterialRuleEditor rule={item.rule} editing={editing} onChange={rule=>update(materials.map(row=>row.id===item.id?{...row,rule}:row))}/>}
-        <label>Box capacity (cu ft) {editing ? <input type="number" min="0.01" step="0.01" value={item.box_capacity_cuft??''} aria-label={`${item.name} box capacity`} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,box_capacity_cuft:e.target.value===''?null:Number(e.target.value)}:row))}/> : item.box_capacity_cuft ?? 'Not specified'}</label>
+        <label style={{display:'grid',gap:6,maxWidth:200,margin:'12px 0'}}>Box capacity (cu ft) {editing ? <input type="number" min="0.01" step="0.01" value={item.box_capacity_cuft??''} aria-label={`${item.name} box capacity`} onChange={e=>update(materials.map(row=>row.id===item.id?{...row,box_capacity_cuft:e.target.value===''?null:Number(e.target.value)}:row))}/> : item.box_capacity_cuft ?? 'Not specified'}</label>
       </details>
     </td></tr></Fragment>)}</tbody></table></div><MaterialQuotePreview materials={materials}/></>;
 }

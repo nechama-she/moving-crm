@@ -1,4 +1,6 @@
-export type PackingSelection = { mode: 'full' | 'partial' | 'none'; unpacking: boolean; item_ids: string[]; material_item_ids?: string[] };
+import CustomerMaterialItems from './CustomerMaterialItems';
+export type AdditionalMaterialItem = {label:string;protection:'fabric'|'fragile'|'both';item_type:string;variant:string;cubic_feet:number|string|null;screen_inches:number|string|null;quantity:number;service:'self'|'packing'|'materials'};
+export type PackingSelection = { mode: 'full' | 'partial' | 'none'; unpacking: boolean; item_ids: string[]; material_item_ids?: string[];additional_items?:Record<string,AdditionalMaterialItem> };
 export type PackingPackage = {
   cubic_feet: number;
   inventory_cubic_feet?: number;
@@ -6,6 +8,8 @@ export type PackingPackage = {
   rates: Partial<Record<'full' | 'partial' | 'unpacking', { rate: number; total: number }>>;
   items: { id: string; label: string; room?: string; price: number; labor_price?: number; material_price?: number }[];
   selection: PackingSelection;
+  other_inventory?:{name:string;quantity?:number;room?:string}[];
+  material_quotes?:{id:string;status:string;issues:string[];packing_only:number|null;packing_and_material:number|null}[];
 };
 const money = (amount: number) => amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 export default function CustomerPackingOptions({ config, selection, onChange, disabled }: {
@@ -20,7 +24,8 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
     if (!rooms.has(room)) rooms.set(room, []);
     rooms.get(room)!.push(item);
   }
-  const total = (selection.mode !== 'none' ? config.rates[selection.mode]?.total || 0 : config.items.filter(item => selection.item_ids.includes(item.id)).reduce((sum, item) => sum + (item.labor_price ?? item.price) + (materials.includes(item.id) ? item.material_price || 0 : 0), 0)) + (selection.unpacking ? config.rates.unpacking?.total || 0 : 0);
+  const extraTotal=(config.material_quotes||[]).reduce((sum,quote)=>{const service=selection.additional_items?.[quote.id]?.service;return sum+Number(service==='materials'?quote.packing_and_material||0:service==='packing'?quote.packing_only||0:0);},0);
+  const total = (selection.mode !== 'none' ? config.rates[selection.mode]?.total || 0 : extraTotal + config.items.filter(item => selection.item_ids.includes(item.id)).reduce((sum, item) => sum + (item.labor_price ?? item.price) + (materials.includes(item.id) ? item.material_price || 0 : 0), 0)) + (selection.unpacking ? config.rates.unpacking?.total || 0 : 0);
   return <div className="cm-packing-options">
     <div className="cm-packing-heading"><h4>Choose your packing service</h4><div className="cm-packing-volume"><span>{inventoryVolume.toLocaleString()} cu ft</span>{minimumApplies && <small>Minimum billable: {config.minimum_cubic_feet!.toLocaleString()} cu ft</small>}</div></div>
     <div className="cm-packing-choices">
@@ -52,6 +57,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
         </section>)}
       </div>
     </section>}
+    {selection.mode==='none' && <CustomerMaterialItems config={config} selection={selection} disabled={disabled} onChange={onChange}/>}
     {config.rates.unpacking && <section className="cm-unpacking-addon" aria-labelledby="cm-unpacking-heading">
       <h4 id="cm-unpacking-heading">Optional add-on</h4>
       <label className="cm-unpacking-control">
