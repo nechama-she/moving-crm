@@ -986,6 +986,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                 if change.material_item is None:
                     additional.pop(change.item_id, None)
                 else:
+                    if change.material_item.inventory_id and change.material_item.inventory_id != change.item_id:
+                        raise HTTPException(422, 'Inventory item ID must match the selected item.')
                     additional[change.item_id] = change.material_item.model_dump(mode='json')
             elif change.kind == 'unpacking':
                 touched.add('package:unpacking')

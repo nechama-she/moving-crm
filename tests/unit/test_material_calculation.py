@@ -79,3 +79,28 @@ def test_special_box_category_and_changed_capacity():
     generic.box_capacity_cuft=Decimal(4)
     assert calculate_materials([generic],MaterialItem(protection='fragile',cubic_feet=3))['status']=='priced'
     assert calculate_materials([generic],MaterialItem(protection='fragile'))['status']=='needs_review'
+
+
+def test_inventory_identifies_mattress_tv_and_individual_quantities():
+    from material_calculation import inventory_material_options, customer_material_quotes
+    inventory=[{'id':'m','name':'Queen mattress','room':'Bedroom','quantity':2,'cuft':80},
+               {'id':'tv','name':'TV 65 inches','quantity':1,'cuft':12}]
+    options=inventory_material_options(inventory)
+    assert len(options)==3
+    assert options[0]['variant']=='queen'
+    assert options[0]['cubic_feet']==40
+    assert options[0]['quantity']==1
+    assert options[0]['id']!=options[1]['id']
+    assert options[2]['screen_inches']==65
+    assert inventory_material_options(list(reversed(inventory)))[1]['id']==options[0]['id']
+    rows=[MaterialRate(id='queen',name='Queen bag',material_price=26,packing_price=12,unpacking_price=15,capacity_unit='mattress_size',mattress_size='queen')]
+    choice={**options[0],'variant':'twin','quantity':900,'service':'materials'}
+    quote=customer_material_quotes(rows,{options[0]['id']:choice},options)[0]
+    assert quote['packing_and_material']==38
+    assert customer_material_quotes(rows,{options[0]['id']:choice},[])[0]['status']=='needs_review'
+
+
+def test_unknown_mattress_sizes_are_not_guessed():
+    from material_calculation import inventory_material_options
+    for name in ['Mattress', 'California king mattress', 'Twin XL mattress']:
+        assert inventory_material_options([{'name':name}])[0]['variant']==''

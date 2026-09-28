@@ -1,5 +1,5 @@
 import CustomerMaterialItems from './CustomerMaterialItems';
-export type AdditionalMaterialItem = {label:string;protection:'fabric'|'fragile'|'both';item_type:string;variant:string;cubic_feet:number|string|null;screen_inches:number|string|null;quantity:number;service:'self'|'packing'|'materials'};
+export type AdditionalMaterialItem = {label:string;inventory_id?:string;protection:'fabric'|'fragile'|'both';item_type:string;variant:string;cubic_feet:number|string|null;screen_inches:number|string|null;quantity:number;service:'self'|'packing'|'materials'};
 export type PackingSelection = { mode: 'full' | 'partial' | 'none'; unpacking: boolean; item_ids: string[]; material_item_ids?: string[];additional_items?:Record<string,AdditionalMaterialItem> };
 export type PackingPackage = {
   cubic_feet: number;
@@ -8,7 +8,7 @@ export type PackingPackage = {
   rates: Partial<Record<'full' | 'partial' | 'unpacking', { rate: number; total: number }>>;
   items: { id: string; label: string; room?: string; price: number; labor_price?: number; material_price?: number }[];
   selection: PackingSelection;
-  other_inventory?:{name:string;quantity?:number;room?:string}[];
+  other_inventory?:(AdditionalMaterialItem & {id:string;name:string;room?:string})[];
   material_quotes?:{id:string;status:string;issues:string[];packing_only:number|null;packing_and_material:number|null}[];
 };
 const money = (amount: number) => amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' });

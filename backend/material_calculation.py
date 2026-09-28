@@ -1,5 +1,7 @@
 """Match explicit item facts against configured material rules, never display names."""
 from decimal import Decimal
+import re
+from uuid import uuid5, NAMESPACE_URL
 from typing import Literal
 from pydantic import BaseModel, Field
 from long_distance_packing import MaterialRate
@@ -17,11 +19,69 @@ class MaterialItem(BaseModel):
 class CustomerMaterialItem(MaterialItem):
     label: str = Field(min_length=1, max_length=200)
     service: Literal['self', 'packing', 'materials'] = 'self'
+    inventory_id: str | None = Field(default=None, max_length=100)
 
 
-def customer_material_quotes(materials, selections):
+def inventory_material_options(inventory):
+    result = []
+    occurrences = {}
+    for row in inventory:
+        name = str(row.get('name') or '').strip()
+        if not name:
+            continue
+        room = str(row.get('room') or '')
+        text = name.casefold()
+        item_type, variant, screen = 'any', '', None
+        protection = 'fabric' if re.search(r'\b(fabric|upholstered|sofa|couch|sectional|mattress|ottoman)\b', text) else 'fragile'
+        if 'mattress' in text:
+            item_type = 'mattress'
+            match = re.search(r'\b(twin|full|queen|king)\b', text)
+            # Extended sizes must not silently use a standard-sized bag.
+            if match and not re.search(r'\b(xl|california|cal)\b', text):
+                variant = match.group(1)
+        elif re.search(r'\b(tv|television)\b', text):
+            item_type = 'tv'
+            match = re.search(r'(\d+(?:\.\d+)?)\s*(?:-?\s*(?:inch(?:es)?\b|in\b)|["\u2033])', text)
+            if match:
+                screen = float(match.group(1))
+        else:
+            for pattern, category in [(r'\b(sofa|couch|sectional)\b','sofa'),(r'\bbed frame\b','bed_frame'),
+                                      (r'\bbooks?\b','books'),(r'\b(dishes|dishware)\b','dishes'),
+                                      (r'\b(picture|painting)\b','picture'),(r'\bmirror\b','mirror'),(r'\bwardrobe\b','wardrobe')]:
+                if re.search(pattern, text):
+                    item_type = category
+                    break
+        try:
+            quantity = min(1000, max(1, int(row.get('quantity') or row.get('amount') or 1)))
+            volume = Decimal(str(row.get('unit_cuft') or 0))
+            if not volume:
+                volume = Decimal(str(row.get('cuft') or 0)) / quantity
+            volume = float(volume) if volume.is_finite() and volume > 0 else None
+        except (ValueError, TypeError, ArithmeticError):
+            quantity, volume = 1, None
+        key = str(row.get('id') or f'{room}:{name}')
+        for index in range(quantity):
+            occurrences[key] = occurrences.get(key, 0) + 1
+            id = str(uuid5(NAMESPACE_URL, f'packing-inventory:{key}:{occurrences[key]}'))
+            result.append({'id': id, 'room': room, 'name': name,
+                          'label': f'{name} ({index+1} of {quantity})' if quantity > 1 else name,
+                          'inventory_id': id, 'protection': protection, 'item_type': item_type,
+                          'variant': variant, 'screen_inches': screen, 'cubic_feet': volume,
+                          'quantity': 1, 'service': 'self'})
+    return result
+
+
+def customer_material_quotes(materials, selections, inventory=None):
     result = []
     for id, values in selections.items():
+        if values.get('inventory_id') and inventory is not None:
+            source = next((row for row in inventory if row['id'] == values['inventory_id']), None)
+            if source is None:
+                result.append({'id':id,'label':values['label'],'service':values.get('service','self'),
+                               'status':'needs_review','issues':['Inventory item is no longer available'],
+                               'lines':[],'packing_only':None,'packing_and_material':None})
+                continue
+            values = {**source, 'service': values.get('service', 'self')}
         item = CustomerMaterialItem.model_validate(values)
         result.append({'id': id, 'label': item.label, 'service': item.service,
                        **calculate_materials(materials, item)})

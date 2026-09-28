@@ -585,7 +585,8 @@ def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
         index = item.sort_order or 0
         source = snapshot[index] if 0 <= index < len(snapshot) else {}
         room = source.get('room') or '' if source.get('name') == item.name else ''
-        res.append({"name": item.name or "", "quantity": qty, "room": room})
+        res.append({"id": item.id, "name": item.name or "", "quantity": qty, "room": room,
+                    "cuft": float(item.cuft) if item.cuft is not None else None})
     return res
 
 
@@ -1004,7 +1005,7 @@ def customer_packing_options(lead, job, db, plan=None, move_type=None):
 
 
 def customer_packing_package(lead, job, db, plan=None, move_type=None, selection_override=None):
-    from material_calculation import customer_material_quotes
+    from material_calculation import customer_material_quotes, inventory_material_options
     if plan is None:
         move_type, plan = infer_job_move_type(lead, job, db)
     if not plan or not move_type or move_type.lower() == 'local':
@@ -1039,9 +1040,10 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
                           'price': float(item.price), 'labor_price': float(item.labor_price), 'material_price': float(item.material_price)})
     selection = selection_override if selection_override is not None else json.loads(job.customer_packing_package or '{}')
     known = {_normalize_item_name(row.name) for row in card.items}
+    other_inventory = inventory_material_options([row for row in inventory if isinstance(row, dict) and _normalize_item_name(str(row.get('name') or '')) not in known])
     return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': items,
-            'other_inventory': [row for row in inventory if _normalize_item_name(str(row.get('name') or '')) not in known],
-            'material_quotes': customer_material_quotes(card.materials, selection.get('additional_items', {})),
+            'other_inventory': other_inventory,
+            'material_quotes': customer_material_quotes(card.materials, selection.get('additional_items', {}), other_inventory),
             'selection': {'mode': 'none', 'unpacking': False, 'item_ids': [], **selection}}
 
 
