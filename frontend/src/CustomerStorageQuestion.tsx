@@ -6,7 +6,7 @@ export default function CustomerStorageQuestion({ config, value, missing, onChan
   const valid = Boolean(value && config.pickup_date && value >= config.pickup_date);
   const calculated = valid ? storagePeriods(config.pickup_date,value,config.free_days,config.period_days) : null;
   const total = calculated ? Math.round(calculated.periods * config.cubic_feet * config.rate_per_cuft * 100)/100 : 0;
-  return <section aria-label="Delivery date and storage" aria-invalid={missing} style={{border:missing ? '1px solid #d32f2f' : undefined,borderRadius:12,padding:missing ? 12 : undefined}}>
+  return <section data-customer-action="delivery-storage" aria-label="Delivery date and storage" aria-invalid={missing} style={{border:missing ? '1px solid #d32f2f' : undefined,borderRadius:12,padding:missing ? 12 : undefined}}>
     <h4>{config.question}</h4>
     <p>Your first <strong>{config.free_days} days</strong> after pickup are free. After that, storage costs <strong>{money(config.rate_per_cuft)} per cu ft</strong> for each additional <strong>{config.period_days} days or part thereof</strong>.</p>
     {config.pickup_date ? <DeliveryDateCalendar key={config.pickup_date} value={value} minDate={config.pickup_date} freeDays={config.free_days} onChange={onChange} /> : <p>Confirm your pickup date before choosing your earliest delivery date.</p>}

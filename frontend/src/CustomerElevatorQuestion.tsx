@@ -5,7 +5,7 @@ const money = (n:number) => n.toLocaleString('en-US',{style:'currency',currency:
 export default function CustomerElevatorQuestion({config,location,value,missing,onChange}:{config:ElevatorOption;location:ElevatorLocation;value:boolean|null;missing:boolean;onChange:(value:boolean)=>void}) {
   const subtotal = value ? config.fee : 0;
   const discount = Math.round(subtotal*location.discount_percent)/100;
-  return <fieldset style={{border:missing ? '1px solid #d32f2f' : '1px solid #e5d8d5',borderRadius:12,padding:18}} aria-invalid={missing}>
+  return <fieldset data-customer-action={`elevator:${location.location}`} style={{border:missing ? '1px solid #d32f2f' : '1px solid #e5d8d5',borderRadius:12,padding:18}} aria-invalid={missing}>
     <legend>{location.location === 'pickup' ? 'Pickup' : 'Delivery'} address</legend>
     <p>{location.address}</p><h4>{location.question}</h4>
     <div style={{display:'flex',gap:12}}>{[true,false].map(answer => <label key={String(answer)} className="cm-secondary-btn" style={{display:'flex',alignItems:'center',gap:8}}><input type="radio" name={`elevator-${location.location}`} checked={value === answer} onChange={() => onChange(answer)} />{answer ? 'Yes' : 'No'}</label>)}</div>

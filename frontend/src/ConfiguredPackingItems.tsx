@@ -23,7 +23,7 @@ export default function ConfiguredPackingItems({config,selection,onChange,disabl
             return map;
           },new Map<string,typeof roomItems>()).values()].map(group=><section key={group[0].group_id||group[0].id} style={{display:'grid',gap:8,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
           <strong>{group[0].label}</strong>
-          {group.map(item=><div key={item.id} style={{display:'grid',gap:8,paddingTop:group.length>1?8:0,borderTop:group.length>1?'1px solid #eee5e2':'none'}}>
+          {group.map(item=><div key={item.id} data-customer-action={`configured:${item.id}`} style={{display:'grid',gap:8,paddingTop:group.length>1?8:0,borderTop:group.length>1?'1px solid #eee5e2':'none'}}>
             <span>{item.material_name || (item.packing_material==='plastic'?'Plastic':'Cardboard')}{item.quantity!=null?` - ${item.quantity} per item`:''}</span>
             <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px'}}>
             <label style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13}}>

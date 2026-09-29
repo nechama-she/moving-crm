@@ -41,7 +41,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
   const setBoxCounts=(counts:Record<string,number>)=>onChange({...selection,box_quantities:counts});
   return <div className="cm-packing-options">
     {stage === 'service' && <><div className="cm-packing-heading"><h4>Choose your packing service</h4><div className="cm-packing-volume"><span>{inventoryVolume.toLocaleString()} cu ft</span>{minimumApplies && <small>Minimum billable: {config.minimum_cubic_feet!.toLocaleString()} cu ft</small>}</div></div>
-    <div className="cm-packing-choices">
+    <div className="cm-packing-choices" data-customer-action="packing-service">
       {(['full', 'partial', 'none'] as const).filter(mode => mode === 'none' || config.rates[mode]).map(mode => <label key={mode} className={`cm-packing-choice ${selection.mode === mode ? 'selected' : ''}`}>
         <input type="radio" name="packing-package" disabled={disabled} checked={selection.mode === mode} onChange={() => onChange({ ...selection, mode, item_ids: [], material_item_ids: [] })} />
         <span className="cm-packing-copy"><strong className="cm-packing-title"><span>{mode === 'full' ? 'Full packing' : mode === 'partial' ? 'Partial packing' : 'No packing'}</span><span className="cm-packing-inline-price">&middot; {mode === 'none' ? '$0' : <>{money(config.rates[mode]!.rate)} / cu ft &middot; {money(config.rates[mode]!.total)}</>}</span></strong>
@@ -59,7 +59,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       </div>
       {boxChoice==='custom' && <div className="cm-box-packing-list">
         <div className="cm-box-packing-head"><span>Box type</span><span>Total</span><span>Movers pack</span><span>You pack</span></div>
-        {boxes.map(item=>{const movers=boxQuantities[item.id]||0;return <div className="cm-box-packing-row" key={item.id}>
+        {boxes.map(item=>{const movers=boxQuantities[item.id]||0;return <div className="cm-box-packing-row" key={item.id} data-customer-action={`box:${item.id}`}>
           <span><strong>{item.label}</strong>{item.available?<small>{money(item.labor_price+item.material_price)} each</small>:<small>Pricing unavailable</small>}</span>
           <span>{item.quantity}</span>
           <input aria-label={`Boxes packed by movers for ${item.label}`} type="number" min="0" max={item.quantity} step="1" disabled={disabled||!item.available} value={movers} onChange={event=>{const quantity=Math.max(0,Math.min(item.quantity,Number.parseInt(event.target.value||'0',10)||0));setBoxCounts({...boxQuantities,[item.id]:quantity});}}/>
@@ -70,7 +70,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
     {stage === 'protection' && selection.mode === 'none' && <>
     {config.configured_materials ? <>
     <ConfiguredPackingItems config={config} selection={selection} onChange={onChange} disabled={disabled}/>
-    <fieldset className="cm-protection-confirmation">
+    <fieldset className="cm-protection-confirmation" data-customer-action="additional-protection">
       <legend>Do you have any other fragile or fabric items?</legend>
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === false} onChange={() => onChange({...selection,has_additional_protection:false})}/> No, only the required items</label>
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === true} onChange={() => onChange({...selection,has_additional_protection:true})}/> Yes, I have more items</label>
@@ -82,7 +82,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       <div className="cm-checklist">
         {[...rooms].map(([room, items]) => <section key={room} aria-label={room}>
           <h4 style={{margin:'16px 0 4px',fontSize:12,fontWeight:400,color:'var(--cm-text-muted)'}}>{room}</h4>
-          {items.map(item => <section key={item.id} style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:10,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
+          {items.map(item => <section key={item.id} data-customer-action={`protection:${item.id}`} style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:10,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
           <strong>{item.label}</strong>
           <span>Required material: <strong>{item.packing_material === 'plastic' ? 'Plastic' : 'Cardboard'}</strong></span>
           <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px',width:'100%'}}>
@@ -107,7 +107,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
         </section>)}
       </div>
     </section>}
-    <fieldset className="cm-protection-confirmation">
+    <fieldset className="cm-protection-confirmation" data-customer-action="additional-protection">
       <legend>Do you have any other fragile or fabric items?</legend>
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === false} onChange={() => onChange({...selection,has_additional_protection:false})}/> No, I have no other fabric or fragile items</label>
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === true} onChange={() => onChange({...selection,has_additional_protection:true})}/> Yes, I have more items</label>

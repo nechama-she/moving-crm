@@ -579,6 +579,7 @@ export default function CustomerMovePage() {
   const lastEstimate = useRef<string | null>(null);
   const revealEstimate = useRef(false);
   const previouslySaving = useRef(false);
+  const lastCustomerAction = useRef<string | null>(null);
   const estimateSignature = data ? JSON.stringify([data.estimate?.price, data.spark?.status, data.pricing_error]) : null;
   useEffect(() => {
     if(estimateSignature === null) { lastEstimate.current=null; revealEstimate.current=false; return; }
@@ -597,7 +598,17 @@ export default function CustomerMovePage() {
     const finished=previouslySaving.current && !answersSaving;
     previouslySaving.current=answersSaving;
     if(!showQuestions || (!finished && !packingError))return;
-    const frame=requestAnimationFrame(()=>termsBody.current?.scrollTo({top:termsBody.current.scrollHeight,behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'}));
+    const frame=requestAnimationFrame(()=>{
+      const body=termsBody.current;
+      if(!body)return;
+      const behavior=window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth';
+      if(packingError){body.scrollTo({top:body.scrollHeight,behavior});return;}
+      const actions=[...body.querySelectorAll<HTMLElement>('[data-customer-action]')];
+      const current=actions.findIndex(action=>action.dataset.customerAction===lastCustomerAction.current);
+      const next=current>=0?actions[current+1]:undefined;
+      lastCustomerAction.current=null;
+      next?.scrollIntoView({behavior,block:'center'});
+    });
     return ()=>cancelAnimationFrame(frame);
   },[answersSaving,packingError,showQuestions]);
   useEffect(() => {
@@ -1023,11 +1034,11 @@ export default function CustomerMovePage() {
                       }}><span className="cm-question-menu-number" aria-hidden="true">{index + 1}</span><span className="cm-question-menu-label">{entry.label.charAt(0).toUpperCase() + entry.label.slice(1)}</span>{required && <span className="cm-question-required-mark" role="img" aria-label="Answer required">!</span>}</button>})}
                     </nav>
                   </div>
-                  <div className="cm-modal-body" ref={termsBody}>
+                  <div className="cm-modal-body" ref={termsBody} onChangeCapture={event=>{const action=(event.target as HTMLElement).closest<HTMLElement>('[data-customer-action]');if(action)lastCustomerAction.current=action.dataset.customerAction||null;}} onClickCapture={event=>{const action=(event.target as HTMLElement).closest<HTMLElement>('[data-customer-action]');if(action)lastCustomerAction.current=action.dataset.customerAction||null;}}>
                     {packingStep==='package'&&<nav className="cm-packing-subtabs" aria-label="Packing services sections">{packingSections.map(section=><button type="button" key={section} aria-current={packingSection===section?'page':undefined} onClick={()=>{setPackingSection(section);setPackingError('');termsBody.current?.scrollTo({top:0});}}>{section==='service'?'Service':section==='boxes'?'Boxes':'Item protection'}</button>)}</nav>}
                     {packingStep === 'stops' && data.extra_stops ? <div style={{display:'grid',gap:24}}>{data.extra_stops.locations.map(group=><CustomerExtraStopsQuestion key={group.location} group={group} apiKey={data.google_maps_browser_key || ''} missing={stopsMissing && (stopsIncomplete[group.location] || group.answer==null || (group.answer && !group.stops.length))} onIncomplete={value=>{setStopsIncomplete(old=>({...old,[group.location]:value}));setStopsMissing(false);}} onChange={(has_stops,stops)=>savePricingChange({kind:'extra_stops',location:group.location,has_stops,stops})}/>)}</div> : packingStep === 'elevator' && data.elevator ? <div style={{display:'grid',gap:24}}>{data.elevator.locations.map(location=><CustomerElevatorQuestion key={location.location} config={data.elevator!} location={location} value={elevatorAnswers[location.location] ?? null} missing={elevatorMissing && elevatorAnswers[location.location] == null} onChange={elevator => { setElevatorAnswers(prev => ({ ...prev, [location.location]: elevator })); setElevatorMissing(false); savePricingChange({kind:'elevator',location:location.location,revision:location.revision,elevator}); }} />)}</div> : packingStep === 'access' ? <div style={{display:'grid',gap:24}}>
                       {pickupCarry && data.long_carry && <CustomerLongCarryQuestion key={`pickup:${pickupCarry.revision}`} config={data.long_carry} location={pickupCarry} value={carryAnswers.pickup ?? null} missing={carryMissing && carryAnswers.pickup == null} onChange={carry_feet => { setCarryAnswers(prev => ({...prev,pickup:carry_feet})); setCarryMissing(false); if (carry_feet !== null) savePricingChange({kind:'long_carry',location:'pickup',revision:pickupCarry.revision,...(carry_feet === 'unknown' ? {carry_unknown:true,carry_acknowledged:true} : {carry_feet})}); }} />}
-                      {data.shuttle ? <fieldset style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
+                      {data.shuttle ? <fieldset data-customer-action="delivery-shuttle" style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
                       <legend>Delivery shuttle</legend>
                       {data.shuttle.automatic ? <p>A smaller shuttle vehicle is required for your delivery area and is included in your estimate.</p> : <>
                         <p><strong>{data.shuttle.question}</strong></p>
@@ -1065,7 +1076,7 @@ export default function CustomerMovePage() {
                     <p className="cm-step-sub">Unchecked items will be packed by owner. When both services are available, choose one.</p>
                     <div className="cm-checklist">
                       {data.packing_items.map(item => (
-                        <div key={item.id}>
+                        <div key={item.id} data-customer-action={`bulky:${item.id}`}>
                           <label className="cm-check-item">
                             <input type="checkbox" checked={item.id in packingSelection} onChange={e => {
                               const checked = e.target.checked;

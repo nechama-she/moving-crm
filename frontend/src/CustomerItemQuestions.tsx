@@ -34,13 +34,13 @@ function Question({ question, endpoint, linkKey, session, onSave, disabled, vali
    catch (e) { if (version === saveVersion.current) setError((e as Error).message); }
    finally { if (version === saveVersion.current) setBusy(false); }
  }
- return <fieldset disabled={disabled} className={`cm-item-question${missingChoice || missingAck || (validationAttempt > 0 && missingItems) ? ' cm-item-question-invalid' : ''}`}>
+ return <fieldset data-customer-action={`term:${question.id}`} disabled={disabled} className={`cm-item-question${missingChoice || missingAck || (validationAttempt > 0 && missingItems) ? ' cm-item-question-invalid' : ''}`}>
   <legend><strong>{question.label || question.name}</strong>{question.room && <span>{question.room}</span>}{!question.all_items && <span>Qty {question.quantity}</span>}</legend>
   {question.photo && <QuestionReferenceImages active={active} name={question.name} room={question.room} endpoint={`${endpoint}/question-images`} linkKey={linkKey} session={session} />}
   <p><strong>{question.question}</strong></p>
   <div className="cm-item-answers" role="group" aria-invalid={missingChoice || undefined} aria-describedby={missingChoice ? errorId : undefined}>{question.answers.map(answer => <label className="cm-check-item" key={answer.id}><input type="radio" name={question.id} checked={choice === answer.id} onChange={() => { setChoice(answer.id); setAck(false); setSelectedItems([]); void save(answer.id, false, []); }} />{answer.label}</label>)}</div>
   {missingChoice && <small id={errorId} className="cm-field-error" role="alert">Choose an answer to continue.</small>}
-  {needsItems && <div className="cm-applicable-items" role="group" aria-label="Select applicable items" aria-invalid={validationAttempt > 0 && missingItems || undefined}>
+  {needsItems && <div data-customer-action={`term-items:${question.id}`} className="cm-applicable-items" role="group" aria-label="Select applicable items" aria-invalid={validationAttempt > 0 && missingItems || undefined}>
     <p><strong>Select the items this applies to</strong></p>
     {(question.items || []).map(item => <label className="cm-check-item" key={item.id}><input type="checkbox" checked={selectedItems.includes(item.id)} onChange={e => {
       const next = e.target.checked ? [...selectedItems, item.id] : selectedItems.filter(id => id !== item.id);
@@ -50,7 +50,7 @@ function Question({ question, endpoint, linkKey, session, onSave, disabled, vali
     {validationAttempt > 0 && missingItems && <small className="cm-field-error" role="alert">Select at least one item.</small>}
   </div>}
   {option?.notice && <p role="status">{option.notice}</p>}
-  {option?.acknowledge && <label className={`cm-check-item${missingAck ? ' cm-ack-invalid' : ''}`}><input type="checkbox" aria-invalid={missingAck || undefined} aria-describedby={missingAck ? errorId : undefined} checked={ack} onChange={e => { setAck(e.target.checked); void save(choice, e.target.checked); }} />I understand these instructions.</label>}
+  {option?.acknowledge && <label data-customer-action={`term-ack:${question.id}`} className={`cm-check-item${missingAck ? ' cm-ack-invalid' : ''}`}><input type="checkbox" aria-invalid={missingAck || undefined} aria-describedby={missingAck ? errorId : undefined} checked={ack} onChange={e => { setAck(e.target.checked); void save(choice, e.target.checked); }} />I understand these instructions.</label>}
   {error && <p role="alert">Could not save: {error} <button type="button" className="slds-button" onClick={() => void save(choice, ack)}>Try again</button></p>}
   {missingAck && <small id={errorId} className="cm-field-error" role="alert">Please acknowledge the instructions to complete this answer.</small>}
   {saved && !error && !busy && option && (!option.acknowledge || ack) && !missingItems && option.action !== "none" && <p role="status">{({ exclude: "Excluded from shipment and estimated volume.", prepare: "Preparation required before moving.", review: "Flagged for the moving team to review.", notice: "Instructions acknowledged." } as Record<string, string>)[option.action]}</p>}

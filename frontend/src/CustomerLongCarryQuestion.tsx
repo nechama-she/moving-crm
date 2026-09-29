@@ -31,7 +31,7 @@ export default function CustomerLongCarryQuestion({ config, location, value, mis
       {reduction > 0 && <small><s>{money(gross)}</s> &middot; {location.discount_percent}% off</small>}
     </button>;
   }
-  return <section aria-label="Long carry" style={{ border: missing ? '1px solid #d32f2f' : undefined, borderRadius:12, padding:missing ? 12 : undefined }}>
+  return <section data-customer-action={`carry:${location.location}`} aria-label="Long carry" style={{ border: missing ? '1px solid #d32f2f' : undefined, borderRadius:12, padding:missing ? 12 : undefined }}>
     <p>{location.address}</p>{shuttleCharge !== undefined && <p>A smaller truck is needed for delivery. Shuttle charge: <strong>{money(shuttleCharge)}</strong>.</p>}<h4>Can the {shuttleCharge !== undefined ? 'smaller moving truck' : 'moving truck'} reach and park next to your {location.location} address, within {config.included_feet} feet of the entrance?</h4>
     <p>Follow the walking route from where the truck can park to your entrance. The first {config.included_feet} feet are included at this address.</p>
     <div style={{ display:'flex', flexWrap:'wrap', gap:12 }}>

@@ -16,7 +16,7 @@ export default function CustomerMaterialItems({config,selection,onChange,disable
     <h4>Additional fabric or fragile items</h4>
     {Object.entries(items).map(([id,item])=>{
       const quote=config.material_quotes?.find(row=>row.id===id);
-      return <section key={id} style={{borderBottom:'1px solid #e5d8d5',padding:'12px 0',display:'grid',gap:10}}>
+      return <section key={id} data-customer-action={`additional:${id}`} style={{borderBottom:'1px solid #e5d8d5',padding:'12px 0',display:'grid',gap:10}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
           <strong>{item.label}</strong>
           <button type="button" className="cm-secondary-btn" aria-label={`Remove ${item.label}`} title="Remove item" disabled={disabled} onClick={()=>save(id,null)}>&times;</button>
@@ -39,7 +39,7 @@ export default function CustomerMaterialItems({config,selection,onChange,disable
     <div style={{padding:'12px 0'}}>
       <input type="search" aria-label="Search inventory items to pack" placeholder="Search items" value={search} onChange={e=>setSearch(e.target.value)} style={{width:'100%',boxSizing:'border-box'}}/>
       <div style={{maxHeight:260,overflowY:'auto',marginTop:8}}>
-        {shown.map(row=><div key={row.id} style={{display:'flex',flexWrap:'wrap',alignItems:'center',gap:12,padding:'12px 0',borderBottom:'1px solid #e5d8d5'}}>
+        {shown.map(row=><div key={row.id} data-customer-action={`additional:${row.id}`} style={{display:'flex',flexWrap:'wrap',alignItems:'center',gap:12,padding:'12px 0',borderBottom:'1px solid #e5d8d5'}}>
           <span style={{flex:'1 1 140px'}}>{row.room && <small style={{display:'block'}}>{row.room}</small>}{row.label}</span>
           {(['fabric','fragile'] as const).map(protection=><label key={protection}><input type="checkbox" aria-label={`${row.label}: ${protection}`} disabled={disabled} checked={false} onChange={()=>save(row.id,{...row,protection,service:'self'})}/> {protection==='fabric'?'Fabric':'Fragile'}</label>)}
         </div>)}

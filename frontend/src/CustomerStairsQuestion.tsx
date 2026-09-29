@@ -8,7 +8,7 @@ export default function CustomerStairsQuestion({ config, location, value, missin
   const paid = value === null ? 0 : Math.max(0,value-config.free_flights);
   const subtotal = Math.round(paid*config.cubic_feet*config.rate_per_cuft*100)/100;
   const discount = Math.round(subtotal*location.discount_percent)/100;
-  return <section className={`cm-stairs-question ${missing ? 'missing' : ''}`} aria-invalid={missing}>
+  return <section data-customer-action={`stairs:${location.location}`} className={`cm-stairs-question ${missing ? 'missing' : ''}`} aria-invalid={missing}>
     <span className="cm-eyebrow">{location.location === 'pickup' ? 'PICKUP ADDRESS' : 'DELIVERY ADDRESS'}</span>
     <p className="cm-stairs-address">{location.address}</p>
     <h4>{location.question}</h4>

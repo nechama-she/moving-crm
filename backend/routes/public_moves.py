@@ -1112,7 +1112,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         if body.package is not None:
             job.customer_packing_package = json.dumps(selection)
         db.commit()
-        return details(access, db)
+        return _move_details(access, db, refresh_report=False)
     previous = set(json.loads(job.customer_packing or '[]'))
     ids = [customer_packing_charge_id(job.id, item_id) for item_id in previous | selected]
     ids.extend(customer_packing_charge_id(job.id, item_id) for item_id in package_old_ids)
@@ -1148,7 +1148,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             link.published_price += delta
     _refresh_lead_estimated_total(lead.id, db)
     db.commit()
-    return details(access, db)
+    return _move_details(access, db, refresh_report=False)
 
 
 class CustomerAddressSelection(BaseModel):

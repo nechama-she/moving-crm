@@ -642,7 +642,7 @@ def test_packing_save_repeat_remove_and_reject_unknown(portal, packing_pricing, 
     leads = ModuleType('routes.leads')
     leads._refresh_lead_estimated_total = lambda *args: None
     monkeypatch.setitem(sys.modules, 'routes.leads', leads)
-    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    monkeypatch.setattr(mod, '_move_details', lambda *args, **kwargs: {})
     for _ in range(2):
         mod.save_customer_packing(mod.CustomerPackingPatch(selected_ids=['piano:1']), access, db)
         assert job.price == Decimal('1120')
@@ -773,7 +773,7 @@ def test_inventory_box_quantities_autosave_and_reprice(portal, packing_pricing, 
     monkeypatch.setattr(packing_pricing, 'customer_packing_options', lambda *args: [])
     monkeypatch.setattr(packing_pricing, 'customer_packing_package', lambda *args, **kwargs: package)
     monkeypatch.setitem(sys.modules, 'routes.leads', MagicMock())
-    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    monkeypatch.setattr(mod, '_move_details', lambda *args, **kwargs: {})
     db.commit()
 
     def save(quantity):
@@ -805,7 +805,7 @@ def test_package_save_switch_and_validation(portal, packing_pricing, monkeypatch
     leads = ModuleType('routes.leads')
     leads._refresh_lead_estimated_total = lambda *args: None
     monkeypatch.setitem(sys.modules, 'routes.leads', leads)
-    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    monkeypatch.setattr(mod, '_move_details', lambda *args, **kwargs: {})
     for _ in range(2):
         mod.save_customer_packing(mod.CustomerPackingPatch(package={'mode': 'full', 'unpacking': True}), access, db)
         assert job.price == Decimal('2500')
@@ -864,7 +864,7 @@ def test_packing_route_uses_customer_session_through_global_auth(portal, packing
     leads = ModuleType('routes.leads')
     leads._refresh_lead_estimated_total = lambda *args: None
     monkeypatch.setitem(sys.modules, 'routes.leads', leads)
-    monkeypatch.setattr(mod, 'details', lambda *args: {'saved': True})
+    monkeypatch.setattr(mod, '_move_details', lambda *args, **kwargs: {'saved': True})
     source = ast.parse((BACKEND / 'main.py').read_text(encoding='utf-8'))
     auth = next(node for node in source.body if getattr(node, 'name', '') == 'enforce_authentication')
     scope = {'Request': Request, 're': re, 'HTTPException': HTTPException, 'PUBLIC_PATHS': set()}
@@ -900,7 +900,7 @@ def test_customer_can_save_inventory_choices_before_base_price(portal, packing_p
     leads = ModuleType('routes.leads')
     leads._refresh_lead_estimated_total = lambda *args: None
     monkeypatch.setitem(sys.modules, 'routes.leads', leads)
-    monkeypatch.setattr(mod, 'details', lambda *args: {'estimate': None})
+    monkeypatch.setattr(mod, '_move_details', lambda *args, **kwargs: {'estimate': None})
     result = mod.save_customer_packing(mod.CustomerPackingPatch(selections={'piano:1': 'packing'}), access, db)
     assert result['estimate'] is None
     assert json.loads(job.customer_packing) == {'piano:1': 'packing'}
@@ -2755,7 +2755,7 @@ def test_box_materials_include_labor_and_autosave_only_current_item(portal,packi
     monkeypatch.setattr(packing_pricing,'customer_packing_options',lambda *args:[])
     monkeypatch.setattr(packing_pricing,'customer_packing_package',lambda *args:package)
     monkeypatch.setitem(sys.modules,'routes.leads',MagicMock())
-    monkeypatch.setattr(mod,'details',lambda *args:{})
+    monkeypatch.setattr(mod,'_move_details',lambda *args,**kwargs:{})
     db.commit()
     def save(enabled,materials):
         mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'box','item_id':'tv:1','enabled':enabled,'materials':materials}),access,db)
@@ -2789,7 +2789,7 @@ def test_additional_material_save_reprice_remove_and_package_switch(portal, pack
     monkeypatch.setattr(packing_pricing, 'customer_packing_package', lambda lead,job,db,**kwargs: original(lead,job,db,plan,'Long Distance',**kwargs))
     monkeypatch.setattr(packing_pricing, 'customer_packing_options', lambda *args: [])
     monkeypatch.setitem(sys.modules, 'routes.leads', MagicMock())
-    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    monkeypatch.setattr(mod, '_move_details', lambda *args, **kwargs: {})
     db.commit()
     item={'label':'Fabric chair','protection':'fabric','quantity':2,'service':'self'}
     def save(value):
