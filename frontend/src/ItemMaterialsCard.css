@@ -5,4 +5,12 @@
 .pricing-item-material-row { display:grid; grid-template-columns:minmax(0,1fr) 80px 32px; gap:8px; align-items:center; margin:8px 0; }
 .pricing-item-material-row select,.pricing-item-material-row input { min-width:0; width:100%; }
 .pricing-item-material-row span { overflow-wrap:anywhere; }
+.pricing-catalog-navigation { display:flex; align-items:center; gap:12px; }
+.pricing-catalog-navigation span { min-width:90px; text-align:center; font-size:13px; }
+.pricing-catalog-browser { display:grid; grid-template-columns:minmax(180px,260px) minmax(0,1fr); gap:20px; }
+.pricing-catalog-list { max-height:420px; overflow:auto; border:1px solid #dddbda; }
+.pricing-catalog-list button { display:flex; justify-content:space-between; gap:8px; width:100%; border:0; border-bottom:1px solid #eee; padding:10px 12px; background:white; text-align:left; color:inherit; font:inherit; cursor:pointer; }
+.pricing-catalog-list button span { overflow-wrap:anywhere; }
+.pricing-catalog-list button[aria-current=true] { background:#eef6ff; box-shadow:inset 3px 0 #0176d3; }
+@media(max-width:700px) { .pricing-catalog-browser { grid-template-columns:minmax(0,1fr); }.pricing-catalog-list { max-height:180px; } }
 @media(max-width:800px) { .pricing-item-material-groups { grid-template-columns:minmax(0,1fr); gap:12px; } }

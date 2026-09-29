@@ -20,7 +20,10 @@ export default function ItemMaterialsCard({planId,blocked}:{planId:string;blocke
     return ()=>controller.abort();
   },[planId,token]);
   async function save() {
-    if(busy || !form.current?.reportValidity())return;
+    if(busy)return;
+    const invalid=rows.find(row=>!row.material_id || !Number.isFinite(Number(row.quantity)) || Number(row.quantity)<=0 || Number(row.quantity)>10000);
+    if(invalid){setSearch('');setSelected(invalid.item_id);setError('Choose a material and a valid quantity for this item.');return;}
+    if(!form.current?.reportValidity())return;
     setBusy(true);setError('');
     try {
       const response=await fetch(`${API_BASE}/api/pricing/${encodeURIComponent(planId)}/item-materials`,{method:'PUT',headers:{...authHeaders(token),'Content-Type':'application/json'},body:JSON.stringify({rows})});
@@ -29,8 +32,11 @@ export default function ItemMaterialsCard({planId,blocked}:{planId:string;blocke
       setData(body);setRows(body.rows);setEditing(false);setSelected('');
     }catch(e){setError((e as Error).message);}finally{setBusy(false);}
   }
-  const ids=Array.from(new Set([...rows.map(row=>row.item_id),...(selected?[selected]:[])]));
   const words=search.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const matches=(data?.items||[]).filter(item=>words.every(word=>item.name.toLowerCase().includes(word)));
+  const current=matches.find(item=>item.id===selected)||matches[0];
+  const position=matches.findIndex(item=>item.id===current?.id);
+  const ids=editing?(current?[current.id]:[]):Array.from(new Set(rows.map(row=>row.item_id)));
   const update=(index:number,patch:Partial<Row>)=>setRows(rows.map((row,i)=>i===index?{...row,...patch}:row));
   return <section className="pricing-card pricing-section">
     <div className="pricing-section-heading">
@@ -50,11 +56,21 @@ export default function ItemMaterialsCard({planId,blocked}:{planId:string;blocke
         <fieldset disabled={busy || blocked} style={{border:0,padding:0,minWidth:0}}>
           {editing && <div className="pricing-item-material-search">
             <input className="slds-input" type="search" placeholder="Search catalog items" aria-label="Search catalog items" value={search} onChange={e=>setSearch(e.target.value)}/>
-            <select className="slds-select" aria-label="Add catalog item" value={selected} onChange={e=>setSelected(e.target.value)}>
-              <option value="">Choose an item</option>{data.items.filter(item=>words.every(word=>item.name.toLowerCase().includes(word))).map(item=><option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
+            <div className="pricing-catalog-navigation">
+              <button type="button" className="slds-button ld-box-icon" aria-label="Previous catalog item" title="Previous item" disabled={position<=0} onClick={()=>setSelected(matches[position-1].id)}>&larr;</button>
+              <span>{current?position+1:0} of {matches.length}</span>
+              <button type="button" className="slds-button ld-box-icon" aria-label="Next catalog item" title="Next item" disabled={position<0 || position>=matches.length-1} onClick={()=>setSelected(matches[position+1].id)}>&rarr;</button>
+            </div>
           </div>}
-          {!ids.length && <p>No item materials configured.</p>}
+          <div className={editing?'pricing-catalog-browser':undefined}>
+          {editing && <nav className="pricing-catalog-list" aria-label="Catalog items">
+            {matches.map(item=><button type="button" key={item.id} aria-current={current?.id===item.id?'true':undefined} onClick={()=>setSelected(item.id)}>
+              <span>{item.name}</span><small>{rows.filter(row=>row.item_id===item.id).length || ''}</small>
+            </button>)}
+            {!matches.length && <p>No matching items.</p>}
+          </nav>}
+          <div style={{minWidth:0}}>
+          {!ids.length && !editing && <p>No item materials configured.</p>}
           {ids.map(id=><div key={id} style={{borderTop:'1px solid #dddbda',padding:'16px 0'}}>
             <strong>{data.items.find(item=>item.id===id)?.name || 'Unavailable catalog item'}</strong>
             <div className="pricing-item-material-groups">
@@ -77,6 +93,8 @@ export default function ItemMaterialsCard({planId,blocked}:{planId:string;blocke
               </div>)}
             </div>
           </div>)}
+          </div>
+          </div>
         </fieldset>
       </form>}
     </div>}
