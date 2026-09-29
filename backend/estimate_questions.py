@@ -25,7 +25,7 @@ def unanswered_questions(data, package_saved=True):
         missing.append('package')
     package = data.get('packing_package') or {}
     selection = package.get('selection') or {}
-    if package and selection.get('mode', 'none') == 'none':
+    if package and not package.get('configured_materials') and selection.get('mode', 'none') == 'none':
         additional = selection.get('has_additional_protection')
         if additional is None or (additional and not selection.get('additional_items')):
             missing.append('protection')

@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
-from item_materials import ItemMaterialsInput, material_setup, save_material_assignments
+from item_materials import ItemMaterialsInput, material_setup, save_material_assignments, customer_item_materials
 from long_distance_packing import PACKING_CARD_PREFIX
 
 
@@ -56,3 +56,46 @@ def test_edit_and_explicit_removal_keep_plan_id():
     assert result['rows'][0]['requirement'] == 'optional'
     assert save_material_assignments(plan, ItemMaterialsInput(rows=[]), db)['rows'] == []
     assert plan.id == 'east'
+
+
+def test_customer_required_and_optional_materials_use_catalog_and_quantity():
+    plan, db = setup()
+    db.query.return_value.all.return_value = [SimpleNamespace(id='bed',name='King bed')]
+    card = json.loads(plan.services[0].comments[len(PACKING_CARD_PREFIX):])
+    card['materials'].append(dict(id='wrap',name='Bed wrap',material_price=18,packing_price=12,unpacking_price=0))
+    plan.services[0].comments = PACKING_CARD_PREFIX + json.dumps(card)
+    plan.item_materials=json.dumps([
+        dict(item_id='bed',material_id='cover',quantity=1,requirement='required'),
+        dict(item_id='bed',material_id='wrap',quantity=2,requirement='optional')])
+    inventory=[dict(name='Bed King',room='Bedroom',amount=2)]
+    rows, matched=customer_item_materials(plan,inventory,db)
+    assert len(rows)==4 and len({row['id'] for row in rows})==4
+    assert rows[0]['requirement']=='required' and rows[0]['material_name']=='King cover'
+    assert rows[0]['labor_price']==12 and rows[0]['price']==38
+    assert rows[1]['requirement']=='optional' and rows[1]['price']==60
+    assert rows[1]['labor_price']==24 and rows[1]['material_price']==36
+    assert 'bed king' in matched
+    assert customer_item_materials(plan,inventory,db)[0]==rows
+    assert inventory==[dict(name='Bed King',room='Bedroom',amount=2)]
+
+
+def test_configured_customer_price_charges_only_selected_material():
+    import ast
+    from decimal import Decimal
+    source=(Path(__file__).resolve().parents[2]/'backend/routes/pricing.py').read_text(encoding='utf-8')
+    function=next(node for node in ast.parse(source).body if isinstance(node,ast.FunctionDef) and node.name=='customer_package_lines')
+    namespace={'Decimal':Decimal}
+    exec(compile(ast.Module(body=[function],type_ignores=[]),'pricing.py','exec'),namespace)
+    package={'rates':{},'items':[
+        dict(id='cover',label='Bed King',quantity=1,material_name='King cover',price=38,labor_price=12,material_price=26),
+        dict(id='wrap',label='Bed King',quantity=1,material_name='Wrap',price=30,labor_price=12,material_price=18)]}
+    lines=namespace['customer_package_lines'](package,dict(mode='none',item_ids=['cover'],material_item_ids=['cover']))
+    assert len(lines)==1 and lines[0]['amount']==38
+    assert 'King cover' in lines[0]['description']
+    lines=namespace['customer_package_lines'](package,dict(mode='none',item_ids=['cover','wrap'],material_item_ids=['cover']))
+    assert sum(line['amount'] for line in lines)==50
+
+
+def test_configured_materials_do_not_require_fabric_question():
+    from estimate_questions import unanswered_questions
+    assert unanswered_questions({'packing_package':{'configured_materials':True,'selection':{'mode':'none'}}})==[]

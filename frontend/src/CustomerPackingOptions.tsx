@@ -1,4 +1,5 @@
 import CustomerMaterialItems from './CustomerMaterialItems';
+import ConfiguredPackingItems from './ConfiguredPackingItems';
 export type AdditionalMaterialItem = {label:string;inventory_id?:string;protection:'fabric'|'fragile'|'both';item_type:string;variant:string;cubic_feet:number|string|null;screen_inches:number|string|null;quantity:number;service:'self'|'packing'|'materials'};
 export type PackingSelection = { mode: 'full' | 'partial' | 'none'; unpacking: boolean; item_ids: string[]; material_item_ids?: string[];additional_items?:Record<string,AdditionalMaterialItem>;has_additional_protection?:boolean|null };
 export type PackingPackage = {
@@ -6,7 +7,8 @@ export type PackingPackage = {
   inventory_cubic_feet?: number;
   minimum_cubic_feet?: number;
   rates: Partial<Record<'full' | 'partial' | 'unpacking', { rate: number; total: number }>>;
-  items: { id: string; label: string; room?: string; packing_material?:'plastic'|'cardboard'; price: number; labor_price?: number; material_price?: number }[];
+  configured_materials?:boolean;
+  items: { id: string; label: string; room?: string; packing_material?:'plastic'|'cardboard'; price: number; labor_price?: number; material_price?: number; requirement?:'required'|'optional'; material_name?:string; quantity?:number; available?:boolean }[];
   selection: PackingSelection;
   other_inventory?:(AdditionalMaterialItem & {id:string;name:string;room?:string})[];
   material_quotes?:{id:string;status:string;issues:string[];packing_only:number|null;packing_and_material:number|null}[];
@@ -37,6 +39,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
     </div>
     </>}
     {stage !== 'service' && selection.mode === 'none' && <>
+    {config.configured_materials ? <ConfiguredPackingItems config={config} selection={selection} onChange={onChange} disabled={disabled}/> : <>
     <p>Fabric items must be covered with plastic. Fragile items must be boxed in cardboard.</p>
     {config.items.length > 0 && <section className="cm-packing-items">
       <h4>These items require protection</h4>
@@ -67,6 +70,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === true} onChange={() => onChange({...selection,has_additional_protection:true})}/> Yes, I have more items</label>
     </fieldset>
     {selection.has_additional_protection === true && <CustomerMaterialItems config={config} selection={selection} disabled={disabled} onChange={onChange}/>}
+    </>}
     </>}
     <div className="cm-packing-total" aria-live="polite"><span>Packing total</span><strong>{money(total)}</strong></div>
   </div>;

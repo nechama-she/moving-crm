@@ -296,7 +296,7 @@ export default function CustomerMovePage() {
     if (previous) setPackingStep(previous); else setShowQuestions(false);
   }
   async function nextPricingStep() {
-    if (packingStep === 'protection' && (packageSelection.has_additional_protection == null || (packageSelection.has_additional_protection && !Object.keys(packageSelection.additional_items || {}).length))) {
+    if (packingStep === 'protection' && !data?.packing_package?.configured_materials && (packageSelection.has_additional_protection == null || (packageSelection.has_additional_protection && !Object.keys(packageSelection.additional_items || {}).length))) {
       setPackingError('Confirm whether you have other fabric or fragile items, and select them if you do.');
       return;
     }
@@ -979,7 +979,6 @@ export default function CustomerMovePage() {
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
-                    {missingQuestionTabs.size > 0 && <p className="cm-required-summary" role="status">{missingQuestionTabs.size} {missingQuestionTabs.size === 1 ? 'question needs' : 'questions need'} an answer</p>}
                     <nav className="cm-question-tabs" aria-label="Questions">
                       {pricingSteps.flatMap<{id:string; step:PricingStep; index:number; label:string}>(step => step === 'items'
                         ? termsGroups.map((group, index) => ({id:`items:${index}`, step, index, label:group[0]?.question || `Moving terms ${index+1}`}))

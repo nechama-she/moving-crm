@@ -1032,10 +1032,15 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
         if rate is not None:
             rates[kind] = {'rate': float(rate), 'total': float((rate * volume).quantize(Decimal('0.01')))}
     inventory = job._estimated_materials_data() + _job_spark_inventory_items(job.id, db)
+    from item_materials import customer_item_materials, material_assignments
+    configured_items, configured_names = customer_item_materials(plan, inventory, db)
+    configured_materials = bool(material_assignments(plan, db))
     occurrences = [(name, str(row.get('room') or '')) for row in inventory if isinstance(row, dict)
                    for name in _material_item_names([row])]
     items = []
     for item in card.items:
+        if ' '.join(sorted(re.findall(r'\w+', item.name.casefold()))) in configured_names:
+            continue
         rooms = [room for name, room in occurrences if _normalize_item_name(name) == _normalize_item_name(item.name)]
         count = len(rooms)
         for index, room in enumerate(rooms):
@@ -1047,7 +1052,8 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
     selection = selection_override if selection_override is not None else json.loads(job.customer_packing_package or '{}')
     known = {_normalize_item_name(row.name) for row in card.items}
     other_inventory = inventory_material_options([row for row in inventory if isinstance(row, dict) and _normalize_item_name(str(row.get('name') or '')) not in known])
-    return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': items,
+    return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': items + configured_items,
+            'configured_materials': configured_materials,
             'other_inventory': other_inventory,
             'material_rates': [row.model_dump(mode='json') for row in card.materials],
             'material_quotes': customer_material_quotes(card.materials, selection.get('additional_items', {}), other_inventory),
@@ -1078,8 +1084,10 @@ def customer_package_lines(package, selection):
                           'amount': Decimal(str(item['packing_and_material'] if service == 'materials' else item['packing_only']))})
         for item in package['items']:
             if item['id'] in selection.get('item_ids', []):
+                if item.get('available') is False:
+                    raise ValueError(f"Material pricing needs review for {item['label']}")
                 lines.append({'id': f"box:{item['id']}", 'name': f"{item['label']} Boxing",
-                              'description': 'Packing labor and materials' if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else 'Packing labor only; customer supplies box and materials',
+                              'description': (f"{item['quantity']:g} x {item['material_name']}. " if item.get('material_name') else '') + ('Packing labor and materials' if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else 'Packing labor only; customer supplies materials'),
                               'amount': Decimal(str(item.get('labor_price', item['price']))) + (Decimal(str(item.get('material_price', 0))) if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else Decimal(0))})
     return lines
 

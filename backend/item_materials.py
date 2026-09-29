@@ -1,5 +1,8 @@
 """Pricing-book-owned catalog material requirements."""
 import json
+import re
+from collections import Counter, defaultdict
+from uuid import uuid5, NAMESPACE_URL
 from decimal import Decimal
 from typing import Literal
 
@@ -50,3 +53,51 @@ def save_material_assignments(plan, body, db):
     plan.item_materials = json.dumps([row.model_dump(mode='json') for row in body.rows])
     db.commit()
     return material_setup(plan, db)
+
+
+def customer_item_materials(plan, inventory, db):
+    assignments = material_assignments(plan, db)
+    if not assignments:
+        return [], set()
+    card = packing_card(plan.services)
+    rates = {row.id: row for row in card.materials} if card else {}
+    catalog = db.query(InventoryCatalogItem).all()
+    def key(name):
+        return ' '.join(sorted(re.findall(r'\w+', str(name).casefold())))
+    by_name = defaultdict(list)
+    for item in catalog:
+        by_name[key(item.name)].append(item.id)
+    by_item = defaultdict(list)
+    for assignment in assignments:
+        by_item[assignment['item_id']].append(assignment)
+    result, matched = [], set()
+    occurrences = Counter()
+    for row in inventory:
+        if not isinstance(row, dict):
+            continue
+        item_id = row.get('item_id')
+        if not item_id:
+            candidates = by_name[key(row.get('name', ''))]
+            item_id = candidates[0] if len(candidates) == 1 else None
+        if item_id not in by_item:
+            continue
+        matched.add(key(row.get('name', '')))
+        room = str(row.get('room') or '')
+        count = max(1, int(row.get('amount') or row.get('quantity') or 1))
+        for _ in range(count):
+            occurrences[(item_id, room)] += 1
+            unit = occurrences[(item_id, room)]
+            for assignment in by_item[item_id]:
+                rate = rates.get(assignment['material_id'])
+                quantity = Decimal(str(assignment['quantity']))
+                labor = (rate.packing_price * quantity).quantize(Decimal('0.01')) if rate else Decimal(0)
+                material = (rate.material_price * quantity).quantize(Decimal('0.01')) if rate else Decimal(0)
+                identity = json.dumps([plan.id, item_id, room, unit, assignment['material_id']])
+                result.append({'id': 'configured:' + str(uuid5(NAMESPACE_URL, identity)),
+                               'label': str(row.get('name') or 'Item') + (f' ({unit})' if count > 1 else ''),
+                               'room': room, 'requirement': assignment['requirement'],
+                               'material_name': rate.name if rate else 'Unavailable material',
+                               'quantity': float(quantity), 'available': rate is not None,
+                               'price': float(labor + material), 'labor_price': float(labor),
+                               'material_price': float(material)})
+    return result, matched
