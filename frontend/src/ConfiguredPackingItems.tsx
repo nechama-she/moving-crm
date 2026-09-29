@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import type {PackingPackage, PackingSelection} from './CustomerPackingOptions';
 
 export default function ConfiguredPackingItems({config,selection,onChange,disabled,showRequired=true,showOptional=false}:{config:PackingPackage;selection:PackingSelection;onChange:(value:PackingSelection)=>void;disabled:boolean;showRequired?:boolean;showOptional?:boolean}) {
   const materials=selection.material_item_ids??selection.item_ids;
+  const [selectedRooms,setSelectedRooms]=useState<Record<string,string>>({});
   const money=(value:number)=>value.toLocaleString('en-US',{style:'currency',currency:'USD'});
   if(!config.items.length)return null;
   return <>
@@ -13,10 +15,14 @@ export default function ConfiguredPackingItems({config,selection,onChange,disabl
         map.set(room,[...(map.get(room)||[]),item]);
         return map;
       },new Map<string,typeof items>()).entries()];
+      const selectedRoom=rooms.some(([room])=>room===selectedRooms[requirement])?selectedRooms[requirement]:rooms[0][0];
+      const roomItems=rooms.find(([room])=>room===selectedRoom)![1];
       return <section key={requirement} className="cm-packing-items">
         <h4>{requirement==='required'?'Required packing':'Additional packing options'}</h4>
-        {rooms.map(([room,roomItems])=><section key={room} aria-label={room}>
-          <h5 style={{margin:'16px 0 4px',fontSize:12,fontWeight:400,color:'var(--cm-text-muted)'}}>{room}</h5>
+        <div className="cm-packing-room-tabs" role="tablist" aria-label={`${requirement==='required'?'Required packing':'Additional packing'} rooms`}>
+          {rooms.map(([room,items])=><button type="button" role="tab" key={room} aria-selected={room===selectedRoom} disabled={disabled} onClick={()=>setSelectedRooms(current=>({...current,[requirement]:room}))}>{room}<span>{items.length}</span></button>)}
+        </div>
+        <section role="tabpanel" aria-label={selectedRoom}>
           {[...roomItems.reduce((map,item)=>{
             const id=item.group_id||item.id;
             map.set(id,[...(map.get(id)||[]),item]);
@@ -42,7 +48,7 @@ export default function ConfiguredPackingItems({config,selection,onChange,disabl
             {item.available===false && <p role="status">Material pricing needs confirmation.</p>}
           </div>)}
         </section>)}
-        </section>)}
+        </section>
       </section>;
     })}
   </>;
