@@ -25,9 +25,14 @@ def unanswered_questions(data, package_saved=True):
         missing.append('package')
     package = data.get('packing_package') or {}
     selection = package.get('selection') or {}
-    if package and not package.get('configured_materials') and selection.get('mode', 'none') == 'none':
+    if package and selection.get('mode', 'none') == 'none':
         additional = selection.get('has_additional_protection')
-        if additional is None or (additional and not selection.get('additional_items')):
+        if package.get('configured_materials'):
+            optional_ids = {row['id'] for row in package.get('items', []) if row.get('requirement') == 'optional'}
+            additional_selected = bool(optional_ids.intersection(selection.get('item_ids', [])))
+        else:
+            additional_selected = bool(selection.get('additional_items'))
+        if additional is None or (additional and not additional_selected):
             missing.append('protection')
     for question in data.get('item_questions', []):
         saved = question.get('saved') or {}

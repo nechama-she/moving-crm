@@ -1,12 +1,11 @@
 import type {PackingPackage, PackingSelection} from './CustomerPackingOptions';
 
-export default function ConfiguredPackingItems({config,selection,onChange,disabled}:{config:PackingPackage;selection:PackingSelection;onChange:(value:PackingSelection)=>void;disabled:boolean}) {
+export default function ConfiguredPackingItems({config,selection,onChange,disabled,showOptional=false}:{config:PackingPackage;selection:PackingSelection;onChange:(value:PackingSelection)=>void;disabled:boolean;showOptional?:boolean}) {
   const materials=selection.material_item_ids??selection.item_ids;
   const money=(value:number)=>value.toLocaleString('en-US',{style:'currency',currency:'USD'});
   return <>
-    <p>Fabric items must be covered with plastic. Fragile items must be boxed in cardboard.</p>
     <p className="cm-step-sub">Choose a service, or leave unchecked to pack it yourself.</p>
-    {(['required','optional'] as const).map(requirement=>{
+    {(['required',...(showOptional?['optional'] as const:[])] as const).map(requirement=>{
       const items=config.items.filter(item=>(item.requirement||'required')===requirement);
       if(!items.length)return null;
       return <section key={requirement} className="cm-packing-items">

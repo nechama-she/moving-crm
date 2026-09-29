@@ -1032,9 +1032,9 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
         if rate is not None:
             rates[kind] = {'rate': float(rate), 'total': float((rate * volume).quantize(Decimal('0.01')))}
     inventory = job._estimated_materials_data() + _job_spark_inventory_items(job.id, db)
-    from item_materials import customer_item_materials, material_assignments
+    from item_materials import customer_item_materials, material_assignments, default_materials
     configured_items, configured_names = customer_item_materials(plan, inventory, db)
-    configured_materials = bool(material_assignments(plan, db))
+    configured_materials = bool(material_assignments(plan, db) or default_materials(plan, db))
     occurrences = [(name, str(row.get('room') or '')) for row in inventory if isinstance(row, dict)
                    for name in _material_item_names([row])]
     items = []

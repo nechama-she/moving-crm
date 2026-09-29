@@ -243,10 +243,21 @@ def test_estimate_question_gate_accepts_no_zero_and_acknowledged_unknown():
             'extra_stops':{'locations':[{'location':'pickup','answer':False,'stops':[]}]},
             'long_carry':{'locations':[{'location':'pickup','distance_feet':None,'unknown':True,'acknowledged':True}]},
             'shuttle':{'automatic':False,'answer':False},'storage':{'valid':True},
-            'packing_package':{'selection':{'mode':'none'}},
+            'packing_package':{'selection':{'mode':'none','has_additional_protection':False}},
             'item_questions':[{'answers':[{'id':'yes','acknowledge':True}], 'saved':{'answer_id':'yes','acknowledged':True}}]}
     assert unanswered_questions(data, package_saved=True) == []
     assert unanswered_questions(data, package_saved=False) == ['package']
+
+
+def test_estimate_question_gate_requires_configured_optional_selection_when_customer_has_more():
+    from estimate_questions import unanswered_questions
+    package = {'configured_materials': True, 'items': [
+        {'id': 'required', 'requirement': 'required'},
+        {'id': 'optional', 'requirement': 'optional'},
+    ], 'selection': {'mode': 'none', 'has_additional_protection': True, 'item_ids': []}}
+    assert unanswered_questions({'packing_package': package}, package_saved=True) == ['protection']
+    package['selection']['item_ids'] = ['required', 'optional']
+    assert unanswered_questions({'packing_package': package}, package_saved=True) == []
 
 
 def test_link_does_not_grant_verified_access(portal):

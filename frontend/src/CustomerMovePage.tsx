@@ -296,9 +296,14 @@ export default function CustomerMovePage() {
     if (previous) setPackingStep(previous); else setShowQuestions(false);
   }
   async function nextPricingStep() {
-    if (packingStep === 'protection' && (packageSelection.has_additional_protection == null || (packageSelection.has_additional_protection && !Object.keys(packageSelection.additional_items || {}).length))) {
-      setPackingError('Confirm whether you have other fabric or fragile items, and select them if you do.');
-      return;
+    if (packingStep === 'protection') {
+      const configured = !!data?.packing_package?.configured_materials;
+      const optionalSelected = data?.packing_package?.items.some(item => item.requirement === 'optional' && packageSelection.item_ids.includes(item.id));
+      const missingAdditional = packageSelection.has_additional_protection == null || (packageSelection.has_additional_protection && (configured ? !optionalSelected : !Object.keys(packageSelection.additional_items || {}).length));
+      if (missingAdditional) {
+        setPackingError(configured ? 'Confirm whether you have more items, and select at least one additional item if you do.' : 'Confirm whether you have other fabric or fragile items, and select them if you do.');
+        return;
+      }
     }
     if(packingStep === 'package' && data?.unanswered_questions?.includes('package')) {
       savePricingChange({kind:'mode',mode:packageSelection.mode});
@@ -764,7 +769,7 @@ export default function CustomerMovePage() {
                 <div className="cm-eyebrow">SHOW US WHAT'S MOVING</div>
                 <h2>Add files, a list, or request a virtual estimate.</h2>
                 <p>Upload photos, videos, or documents, create an item list, or schedule a live virtual walkthrough with our team.</p>
-                <p>Save and update your inventory anytime. When you&#8217;re ready, generate one report to calculate your total volume and estimate.</p>
+                <p>Your saved item list and uploaded media stay together. Generate one report to combine both into your inventory and estimate.</p>
                 <div className="cm-inventory-actions">
                   <button type="button" className="slds-button cm-add-list-button" onClick={() => setShowInventoryList(true)}>{data.inventory_draft ? 'Update list' : 'Add a list'}</button>
                   <button type="button" className="slds-button cm-add-list-button" disabled={busy || !photosRestored} onClick={() => filePicker.current?.click()} aria-busy={files.some(f => f.status === 'Uploading')}>{files.some(f => f.status === 'Uploading') ? 'Uploading...' : 'Upload files'}</button>
@@ -786,6 +791,14 @@ export default function CustomerMovePage() {
                     </article>
                   ))}
                 </div>
+                {data.inventory_draft?.rows.length ? <section className="cm-saved-list-summary" aria-label="Saved item list">
+                  <div>
+                    <strong>Saved item list</strong>
+                    <span>{data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((roomTotal, item) => roomTotal + Number(item.amount || 0), 0), 0)} items &middot; {data.inventory_draft.cuft.toLocaleString()} cu ft</span>
+                    <small>Included with your photos and videos in the next report.</small>
+                  </div>
+                  <button type="button" className="slds-button" onClick={() => setShowInventoryList(true)}>View / edit list</button>
+                </section> : null}
                 <ReportFileGallery newFileIds={(data.editable_files || data.files).filter(file => !(data.report_history?.find(report => report.current)?.files || []).some(previous => previous.id === file.id)).map(file => file.id)} files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={busy || reportState === 'running'} />
                 {data.walkthrough && <div className="cm-meeting-summary">
                   <div><strong>Virtual estimate</strong><span>{meetingTime(data.walkthrough)}</span><small>{({requested:'Requested',scheduled:'Confirmed',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status] || data.walkthrough.status}</small></div>
@@ -797,6 +810,7 @@ export default function CustomerMovePage() {
 
                 {((data.editable_files || data.files).length > 0 || !!data.inventory_draft?.rows.length) && (
                   <div className="cm-spark-box">
+                    <p className="cm-report-includes"><strong>Next report:</strong> {(data.editable_files || data.files).length} media file{(data.editable_files || data.files).length === 1 ? '' : 's'}{data.inventory_draft?.rows.length ? ` + saved item list (${data.inventory_draft.cuft.toLocaleString()} cu ft)` : ''}</p>
                     <button
                       type="button"
                       className="slds-button cm-primary cm-spark-btn"

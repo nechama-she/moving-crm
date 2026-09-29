@@ -98,4 +98,26 @@ def test_configured_customer_price_charges_only_selected_material():
 
 def test_configured_materials_do_not_require_fabric_question():
     from estimate_questions import unanswered_questions
-    assert unanswered_questions({'packing_package':{'configured_materials':True,'selection':{'mode':'none'}}})==[]
+    assert unanswered_questions({'packing_package':{'configured_materials':True,'selection':{'mode':'none','has_additional_protection':False}}})==[]
+
+
+def test_default_material_applies_only_without_item_specific_materials():
+    plan, db = setup()
+    db.query.return_value.all.return_value = [SimpleNamespace(id='bed', name='King bed')]
+    card = json.loads(plan.services[0].comments[len(PACKING_CARD_PREFIX):])
+    card['materials'].append(dict(id='wrap',name='Default wrap',material_price=10,packing_price=5,unpacking_price=0))
+    plan.services[0].comments = PACKING_CARD_PREFIX + json.dumps(card)
+    body = ItemMaterialsInput(
+        rows=[dict(item_id='bed',material_id='cover',requirement='required',quantity=1)],
+        defaults=[dict(material_id='wrap',requirement='optional',quantity=2)],
+    )
+    saved = save_material_assignments(plan, body, db)
+    assert saved['defaults'][0]['material_id'] == 'wrap'
+    rows, _ = customer_item_materials(plan, [
+        dict(item_id='bed',name='King bed',room='Bedroom',amount=1),
+        dict(name='Dresser',room='Bedroom',amount=1),
+    ], db)
+    assert [(row['label'], row['material_name'], row['requirement']) for row in rows] == [
+        ('King bed', 'King cover', 'required'),
+        ('Dresser', 'Default wrap', 'optional'),
+    ]

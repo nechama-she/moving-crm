@@ -1,4 +1,7 @@
 .pricing-item-material-search { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+.pricing-default-materials { padding:0 0 20px; margin-bottom:20px; border-bottom:1px solid #dddbda; }
+.pricing-default-materials-title>div { display:grid; gap:4px; }
+.pricing-default-materials-title small { color:#54698d; font-size:12px; }
 .pricing-item-material-search input,.pricing-item-material-search select { flex:1 1 220px; min-width:0; max-width:350px; }
 .pricing-item-material-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }
 .pricing-item-material-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:10px 0; }

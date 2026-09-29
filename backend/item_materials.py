@@ -19,24 +19,43 @@ class ItemMaterial(BaseModel):
     quantity: Decimal = Field(gt=0, le=10000, decimal_places=2, allow_inf_nan=False)
 
 
+class DefaultMaterial(BaseModel):
+    material_id: str = Field(min_length=1, max_length=100)
+    requirement: Literal['required', 'optional']
+    quantity: Decimal = Field(gt=0, le=10000, decimal_places=2, allow_inf_nan=False)
+
+
 class ItemMaterialsInput(BaseModel):
     rows: list[ItemMaterial] = Field(max_length=10000)
+    defaults: list[DefaultMaterial] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode='after')
     def unique_rows(self):
         keys = [(row.item_id, row.material_id) for row in self.rows]
         if len(keys) != len(set(keys)):
             raise ValueError('Choose each material once per item')
+        default_keys = [row.material_id for row in self.defaults]
+        if len(default_keys) != len(set(default_keys)):
+            raise ValueError('Choose each default material only once')
         return self
 
 
+def material_configuration(plan):
+    saved = json.loads(plan.item_materials or '[]')
+    return saved if isinstance(saved, dict) else {'rows': saved, 'defaults': []}
+
+
 def material_assignments(plan, db):
-    return json.loads(plan.item_materials or '[]')
+    return material_configuration(plan).get('rows', [])
+
+
+def default_materials(plan, db):
+    return material_configuration(plan).get('defaults', [])
 
 
 def material_setup(plan, db):
     card = packing_card(plan.services)
-    return {'rows': material_assignments(plan, db),
+    return {'rows': material_assignments(plan, db), 'defaults': default_materials(plan, db),
             'items': [{'id': item.id, 'name': item.name, 'active': item.active}
                       for item in db.query(InventoryCatalogItem).order_by(InventoryCatalogItem.name).all()],
             'materials': [{'id': row.id, 'name': row.name} for row in card.materials] if card else []}
@@ -45,19 +64,27 @@ def material_setup(plan, db):
 def save_material_assignments(plan, body, db):
     setup = material_setup(plan, db)
     old = {(row['item_id'], row['material_id']) for row in setup['rows']}
+    old_defaults = {row['material_id'] for row in setup['defaults']}
     items = {row['id'] for row in setup['items']}
     materials = {row['id'] for row in setup['materials']}
     for row in body.rows:
         if (row.item_id, row.material_id) not in old and (row.item_id not in items or row.material_id not in materials):
             raise HTTPException(422, 'Choose an existing catalog item and a material from this pricing book')
-    plan.item_materials = json.dumps([row.model_dump(mode='json') for row in body.rows])
+    for row in body.defaults:
+        if row.material_id not in materials and row.material_id not in old_defaults:
+            raise HTTPException(422, 'Choose a default material from this pricing book')
+    plan.item_materials = json.dumps({
+        'rows': [row.model_dump(mode='json') for row in body.rows],
+        'defaults': [row.model_dump(mode='json') for row in body.defaults],
+    })
     db.commit()
     return material_setup(plan, db)
 
 
 def customer_item_materials(plan, inventory, db):
     assignments = material_assignments(plan, db)
-    if not assignments:
+    defaults = default_materials(plan, db)
+    if not assignments and not defaults:
         return [], set()
     card = packing_card(plan.services)
     rates = {row.id: row for row in card.materials} if card else {}
@@ -79,7 +106,8 @@ def customer_item_materials(plan, inventory, db):
         if not item_id:
             candidates = by_name[key(row.get('name', ''))]
             item_id = candidates[0] if len(candidates) == 1 else None
-        if item_id not in by_item:
+        item_assignments = by_item.get(item_id) or defaults
+        if not item_assignments:
             continue
         matched.add(key(row.get('name', '')))
         room = str(row.get('room') or '')
@@ -87,12 +115,12 @@ def customer_item_materials(plan, inventory, db):
         for _ in range(count):
             occurrences[(item_id, room)] += 1
             unit = occurrences[(item_id, room)]
-            for assignment in by_item[item_id]:
+            for assignment in item_assignments:
                 rate = rates.get(assignment['material_id'])
                 quantity = Decimal(str(assignment['quantity']))
                 labor = (rate.packing_price * quantity).quantize(Decimal('0.01')) if rate else Decimal(0)
                 material = (rate.material_price * quantity).quantize(Decimal('0.01')) if rate else Decimal(0)
-                identity = json.dumps([plan.id, item_id, room, unit, assignment['material_id']])
+                identity = json.dumps([plan.id, item_id or key(row.get('name', '')), room, unit, assignment['material_id']])
                 result.append({'id': 'configured:' + str(uuid5(NAMESPACE_URL, identity)),
                                'label': str(row.get('name') or 'Item') + (f' ({unit})' if count > 1 else ''),
                                'room': room, 'requirement': assignment['requirement'],
