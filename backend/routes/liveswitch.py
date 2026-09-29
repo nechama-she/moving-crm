@@ -425,6 +425,7 @@ def stage_selected_media(lead_id, body, db, actor_id=None):
         if not saved:
             saved = LeadLiveSwitch(lead_id=lead_id)
             db.add(saved)
+    details.update(media['conversation'])
     saved.details = json.dumps(details)
     for attachment in files:
         row = db.get(PublicMoveUpload, attachment.id)
@@ -441,7 +442,7 @@ def stage_selected_media(lead_id, body, db, actor_id=None):
     rows = db.query(PublicMoveUpload).filter(PublicMoveUpload.attachment_id.in_([file.id for file in files])).all()
     if any(row.sync_status == 'failed' for row in rows):
         raise HTTPException(502, 'Some files could not be queued. Click Upload to LiveSwitch to retry.')
-    return {'ok': True, 'file_ids': [file.id for file in files]}
+    return {'ok': True, 'file_ids': [file.id for file in files], 'conversation': media['conversation']}
 
 
 def generate_uploaded_report(lead_id, body, db):

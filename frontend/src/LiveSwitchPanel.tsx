@@ -211,7 +211,8 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
     if (mediaActionRunning.current || busy || !selectedFileIds.length) return;
     mediaActionRunning.current = true; setBusy(true); setSparkNotice(''); setSparkError('');
     try {
-      await request(`${base}/upload-media`, { file_ids: selectedFileIds });
+      const result = await request(`${base}/upload-media`, { file_ids: selectedFileIds });
+      if (result?.conversation?.id) setConversation(result.conversation);
       setSparkNotice('Upload to LiveSwitch started.');
     } catch (err) {
       setSparkError(err instanceof Error ? err.message : 'Could not upload selected media.');

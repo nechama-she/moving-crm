@@ -3513,7 +3513,8 @@ def download_lead_attachments(
         Params={"Bucket": bucket, "Key": object_key, "ResponseContentDisposition": f'attachment; filename="{download_name}"'},
         ExpiresIn=300,
     )
-    return RedirectResponse(url=signed_url, status_code=307)
+    # The endpoint is POST, while the presigned S3 URL only accepts GET.
+    return RedirectResponse(url=signed_url, status_code=303)
 
 
 @router.get("/leads/{lead_id}/jobs/{job_id}/attachments")

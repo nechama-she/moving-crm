@@ -1451,7 +1451,9 @@ def staff_media_api(portal, processing_api, monkeypatch):
     api = processing_api
     api['_connection_config'] = lambda: {'spark_template_id': 'template'}
     api['_api_post'] = MagicMock(return_value={'id': 'new-report', 'status': 'queued'})
-    api['ensure_lead_conversation'] = MagicMock(return_value={'id': 'media-conversation'})
+    api['ensure_lead_conversation'] = MagicMock(return_value={
+        'id': 'media-conversation', 'hostJoinUrl': 'host-new',
+        'participantJoinUrl': 'participant-new', 'embeddedConversationUrl': 'embed-new'})
     saved = models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
         'id': 'old-conversation', 'last_spark_id': 'old-report', 'last_spark_status': 'completed',
         'report_files': [{'id': 'old-photo'}]}))
@@ -1464,10 +1466,14 @@ def staff_media_api(portal, processing_api, monkeypatch):
 
 def test_staff_media_upload_does_not_generate_and_reuses_batch(staff_media_api):
     api, db, lead, access, saved, queue = staff_media_api
-    api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
+    result = api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
     state = json.loads(saved.details)
     assert state['last_spark_id'] == 'old-report'
-    assert state['id'] == 'old-conversation'
+    assert state['id'] == 'media-conversation'
+    assert state['hostJoinUrl'] == 'host-new'
+    assert state['participantJoinUrl'] == 'participant-new'
+    assert state['embeddedConversationUrl'] == 'embed-new'
+    assert result['conversation']['id'] == 'media-conversation'
     assert state['report_files'] == [{'id': 'old-photo'}]
     assert 'pending_spark_payload' not in state
     message = json.loads(queue.send_message.call_args.kwargs['MessageBody'])
