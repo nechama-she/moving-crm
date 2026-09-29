@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import logging
+import mimetypes
 import os
 import re
 import zipfile
@@ -2926,6 +2927,53 @@ def _safe_attachment_name(value: str) -> str:
     return re.sub(r'[\\/\r\n"]+', "_", (value or "").strip())[:255] or "attachment"
 
 
+def _smartmoving_attachment_metadata(content: bytes, file_name: str, content_type: str) -> tuple[str, str]:
+    """Derive missing SmartMoving file metadata from the downloaded content."""
+    from media_type import detected_media_type
+
+    detected_type = detected_media_type(content[:64], "application/octet-stream")
+    declared_type = (content_type or "application/octet-stream").split(";", 1)[0].strip().lower()
+    normalized_type = detected_type if detected_type != "application/octet-stream" else declared_type
+    name = _safe_attachment_name(file_name)
+    if not os.path.splitext(name)[1] and normalized_type != "application/octet-stream":
+        extension = mimetypes.guess_extension(normalized_type, strict=False)
+        if extension:
+            name = name[:255 - len(extension)] + extension
+    return name, normalized_type
+
+
+def _repair_smartmoving_s3_metadata(row: LeadAttachment) -> bool:
+    """Repair extensionless SmartMoving rows during the next SmartMoving refresh."""
+    location = urlparse((row.external_url or "").strip())
+    if location.scheme != "s3" or not location.netloc or not location.path:
+        return False
+    storage = boto3.client("s3")
+    metadata = storage.head_object(Bucket=location.netloc, Key=location.path.lstrip("/"))
+    stream = storage.get_object(
+        Bucket=location.netloc,
+        Key=location.path.lstrip("/"),
+        Range="bytes=0-63",
+    )["Body"]
+    try:
+        header = stream.read(64)
+    finally:
+        stream.close()
+    file_name, content_type = _smartmoving_attachment_metadata(
+        header,
+        row.file_name,
+        row.content_type or metadata.get("ContentType") or "application/octet-stream",
+    )
+    changed = (row.file_name, row.content_type, row.file_size) != (
+        file_name,
+        content_type,
+        metadata["ContentLength"],
+    )
+    row.file_name = file_name
+    row.content_type = content_type
+    row.file_size = metadata["ContentLength"]
+    return changed
+
+
 def _upload_attachment_bytes_to_s3(
     lead_id: str,
     job_id: str | None,
@@ -3140,6 +3188,14 @@ def _sync_opportunity_files_to_s3(
             if existing_row and existing_row.job_id != target_job_id:
                 existing_row.job_id = target_job_id
                 reassigned += 1
+            if existing_row and (not os.path.splitext(existing_row.file_name or "")[1]
+                                 or (existing_row.content_type or "").split(";", 1)[0].strip().lower()
+                                 in ("", "application/octet-stream", "binary/octet-stream")):
+                try:
+                    if _repair_smartmoving_s3_metadata(existing_row):
+                        reassigned += 1
+                except Exception:
+                    logger.exception("Failed repairing SmartMoving file metadata for attachment %s", existing_row.id)
             continue
         fetched = download_opportunity_file(item["url"])
         if not fetched.get("ok"):
@@ -3155,7 +3211,11 @@ def _sync_opportunity_files_to_s3(
             "_",
             _clean_optional_text(fetched.get("file_name")) or item["name"],
         )[:255]
-        content_type = _clean_optional_text(fetched.get("content_type")) or "application/octet-stream"
+        file_name, content_type = _smartmoving_attachment_metadata(
+            content,
+            file_name,
+            _clean_optional_text(fetched.get("content_type")) or "application/octet-stream",
+        )
         file_scope = f"jobs/{target_job.id}" if target_job else "lead"
         object_key = f"leads/{lead.id}/{file_scope}/smartmoving/{source_hash}/{file_name}"
         try:
@@ -3275,6 +3335,14 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
             if existing.job_id:
                 existing.job_id = None
                 stored += 1
+            if (not os.path.splitext(existing.file_name or "")[1]
+                    or (existing.content_type or "").split(";", 1)[0].strip().lower()
+                    in ("", "application/octet-stream", "binary/octet-stream")):
+                try:
+                    if _repair_smartmoving_s3_metadata(existing):
+                        stored += 1
+                except Exception:
+                    logger.exception("Failed repairing SmartMoving document metadata for attachment %s", existing.id)
             continue
         fetched = download_opportunity_document(
             smartmoving_id,
@@ -3290,7 +3358,11 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
             or doc.get("name")
             or "SmartMoving Document"
         )
-        content_type = _clean_optional_text(fetched.get("content_type")) or "application/octet-stream"
+        file_name, content_type = _smartmoving_attachment_metadata(
+            content,
+            file_name,
+            _clean_optional_text(fetched.get("content_type")) or "application/octet-stream",
+        )
         try:
             s3_url = _upload_attachment_bytes_to_s3(
                 lead_id=lead.id,
