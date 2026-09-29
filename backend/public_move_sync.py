@@ -2,6 +2,8 @@
 import json
 import logging
 import os
+from datetime import datetime
+import math
 from uuid import uuid4
 
 import boto3
@@ -30,7 +32,14 @@ def sync_status(access_id, db):
          'error': row.sync_error or ''}
         for row, name in rows
     ]
+    waiting = bool(details.get('pending_spark_payload'))
+    remaining = None
+    if waiting and all(row.synced_at for row, _ in rows) and len(rows) == len(snapshot or []):
+        ready_at = max((row.synced_at for row, _ in rows), default=datetime.utcfromtimestamp(details.get('last_spark_at', 0)))
+        remaining = max(0, math.ceil(300 - (datetime.utcnow() - ready_at).total_seconds()))
     return {
+        'awaiting_report': waiting,
+        'wait_seconds': remaining,
         'files': files,
         'pending': sum(f['status'] != 'synced' for f in files),
         'active': sum(f['status'] in ('queued', 'syncing') for f in files),

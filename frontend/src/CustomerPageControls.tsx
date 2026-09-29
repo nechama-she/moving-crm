@@ -21,6 +21,18 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
  const {token}=useAuth();const [data,setData]=useState<Page>(),[files,setFiles]=useState<EditableReportFile[]>([]),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
  const [selectedIds,setSelectedIds]=useState<string[]>([]);
  const [reportFileIds,setReportFileIds]=useState<string[]>([]);
+ const [syncProgress,setSyncProgress]=useState<{awaiting_report:boolean;wait_seconds:number|null;synced:number;files:{id:string;name:string;status:string;error:string}[]}|null>(null);
+ useEffect(()=>{
+   if(section!=='files' || !token)return;
+   let disposed=false;
+   let timer:ReturnType<typeof setTimeout>;
+   async function poll(){
+     try{const result=await readPage(`${API_BASE}/api/leads/${leadId}/customer-page/sync-status`,token);if(!disposed && result)setSyncProgress(result as NonNullable<typeof syncProgress>);}
+     finally{if(!disposed)timer=setTimeout(()=>void poll().catch(()=>{}),5000);}
+   }
+   void poll().catch(()=>{});
+   return()=>{disposed=true;clearTimeout(timer);};
+ },[leadId,token,section]);
  const initialized=useRef(false);
  function selectFiles(ids:string[]){setSelectedIds(ids);onSelectionChange?.(ids);}
  const base=`${API_BASE}/api/leads/${leadId}/customer-page`;
@@ -56,6 +68,10 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
    const preview=async (id:string)=>{const response=await fetch(`${base}/file-preview/${encodeURIComponent(id)}`,{headers:authHeaders(token)});return response.ok?(await response.json()).url:null;};
    const group=(rows:EditableReportFile[],title:string)=> <ReportFileGallery title={title} selectedIds={selectedIds.filter(id=>rows.some(file=>file.id===id))} onSelectionChange={ids=>selectFiles([...selectedIds.filter(id=>!rows.some(file=>file.id===id)),...ids])} onDownload={()=>void downloadSelected(selectedIds.filter(id=>rows.some(file=>file.id===id)))} files={rows} onRemove={removeFile} disabled={busy} loadPreview={preview}/>;
    return <div className="crm-report-gallery">
+     {syncProgress?.awaiting_report && <div role="status">
+       <strong>{syncProgress.wait_seconds!=null?`Files uploaded. Waiting ${Math.ceil(syncProgress.wait_seconds/60)} min before generating the report.`:`Uploading to LiveSwitch: ${syncProgress.synced} of ${syncProgress.files.length} files complete.`}</strong>
+       {syncProgress.files.map(file=><div key={file.id}>{file.name}: {file.status==='synced'?'Uploaded':file.status}{file.error?` - ${file.error}`:''}</div>)}
+     </div>}
      <div className="crm-gallery-current"><h4>Files in the current report</h4><p>Already included. Keep selected to include them in your next report.</p>{current.length?group(current,'Current report files'):<p>No files in the current report yet.</p>}</div>
      <div className="crm-gallery-available"><h4>Available files to add</h4><LiveSwitchImport leadingAction={<button type="button" className="slds-button" disabled={busy} onClick={()=>void importChatFiles()}>Import chat files</button>} leadId={leadId} onImported={file=>setFiles(current=>current.some(row=>row.id===file.id)?current:[...current,file])}/><p>Not in the current report. Select the files you want to send to LiveSwitch.</p>{available.length?group(available,'Available files'):<p>No additional files available.</p>}</div>
      <p role="status"><strong>{selectedIds.length} files selected for the next report</strong></p>

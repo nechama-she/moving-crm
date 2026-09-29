@@ -442,6 +442,7 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
         if row is None:
             row = PublicMoveUpload(attachment_id=attachment.id, access_id=access.id, request_id='report-' + attachment.id)
             db.add(row)
+        row.access_id = access.id
         row.synced_at = None
         row.sync_status = 'pending'
         row.sync_token = None

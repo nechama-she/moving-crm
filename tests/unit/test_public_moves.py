@@ -1309,6 +1309,8 @@ def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_a
            'last_spark_id': 'report-old', 'last_spark_status': 'completed', 'last_spark_share_url': 'report-url',
            'spark_extracted_cuft': 50, 'report_files': [{'id': 'a', 'name': 'first.jpg'}]}
     db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps(old)))
+    db.add(models.PublicMoveUpload(attachment_id='a', access_id='older-customer-link',
+           request_id='previous-upload', synced_at=datetime.utcnow(), sync_status='synced'))
     for file_id, job_id in [('a', access.job_id), ('b', None), ('deleted', access.job_id)]:
         db.add(models.LeadAttachment(id=file_id, lead_id=lead.id, job_id=job_id, file_name=file_id+'.jpg',
                file_blob=b'image', file_size=5, content_type='image/jpeg',
@@ -1334,6 +1336,8 @@ def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_a
     assert 'spark_extracted_cuft' not in snapshot
     # A partial transfer must not start a report.
     rows = db.query(models.PublicMoveUpload).all()
+    assert all(row.access_id == access.id for row in rows)
+    assert all(row.synced_at is None for row in rows)
     rows[0].synced_at = datetime.utcnow()
     db.commit()
     api['start_ready_report'](lead.id, db)
