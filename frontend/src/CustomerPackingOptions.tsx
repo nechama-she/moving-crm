@@ -64,13 +64,13 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
         </section>)}
       </div>
     </section>}
+    </>}
     <fieldset className="cm-protection-confirmation">
       <legend>Do you have any other fabric or fragile items?</legend>
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === false} onChange={() => onChange({...selection,has_additional_protection:false})}/> No, I have no other fabric or fragile items</label>
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === true} onChange={() => onChange({...selection,has_additional_protection:true})}/> Yes, I have more items</label>
     </fieldset>
     {selection.has_additional_protection === true && <CustomerMaterialItems config={config} selection={selection} disabled={disabled} onChange={onChange}/>}
-    </>}
     </>}
     <div className="cm-packing-total" aria-live="polite"><span>Packing total</span><strong>{money(total)}</strong></div>
   </div>;

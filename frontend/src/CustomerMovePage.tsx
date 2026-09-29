@@ -296,7 +296,7 @@ export default function CustomerMovePage() {
     if (previous) setPackingStep(previous); else setShowQuestions(false);
   }
   async function nextPricingStep() {
-    if (packingStep === 'protection' && !data?.packing_package?.configured_materials && (packageSelection.has_additional_protection == null || (packageSelection.has_additional_protection && !Object.keys(packageSelection.additional_items || {}).length))) {
+    if (packingStep === 'protection' && (packageSelection.has_additional_protection == null || (packageSelection.has_additional_protection && !Object.keys(packageSelection.additional_items || {}).length))) {
       setPackingError('Confirm whether you have other fabric or fragile items, and select them if you do.');
       return;
     }
