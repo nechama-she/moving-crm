@@ -78,16 +78,14 @@ phases:
       - aws s3 cp $CODEBUILD_SRC_DIR/backend/message-stream-package.zip s3://${FRONTEND_BUCKET}/message-stream/package.zip
       - rm -rf $CODEBUILD_SRC_DIR/backend/message-stream-package $CODEBUILD_SRC_DIR/backend/message-stream-package.zip
 
+  post_build:
+    commands:
+      # Deploy uses frontend/dist; node_modules only makes BuildOutput slower.
+      - rm -rf $CODEBUILD_SRC_DIR/frontend/node_modules
+
 artifacts:
   files:
-    # Deploy only consumes the compiled frontend and the small set of backend
-    # files used by migrate.py / ensure_seed_data. Do not transfer node_modules,
-    # tests, source maps, or the rest of the repository between pipeline stages.
-    - "deployspec.yml"
-    - "frontend/dist/**/*"
-    - "backend/*.py"
-    - "backend/data/**/*"
-    - "backend/deploy-requirements.txt"
+    - "**/*"
   base-directory: .
 
 cache:

@@ -1116,7 +1116,7 @@ Resources:
             Value: leads
 
   # ===========================================================================
-  # CODEPIPELINE V2 — Source → Build → Infrastructure → Deploy
+  # CODEPIPELINE V2 — Source → Build + Infrastructure → Deploy
   # ===========================================================================
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -1153,9 +1153,8 @@ Resources:
               OutputArtifacts:
                 - Name: SourceCode
 
-        # --- Infrastructure: deploy CloudFormation template (self-mutating) ---
-        # --- Build: compile frontend, package Lambdas ---
-        - Name: Build
+        # Build and infrastructure are independent, so run them in parallel.
+        - Name: BuildAndInfrastructure
           Actions:
             - Name: Build
               ActionTypeId:
@@ -1169,10 +1168,6 @@ Resources:
                 - Name: SourceCode
               OutputArtifacts:
                 - Name: BuildOutput
-
-        # --- Infrastructure: deploy CloudFormation template (self-mutating) ---
-        - Name: Infrastructure
-          Actions:
             - Name: DeployInfra
               ActionTypeId:
                 Category: Deploy
