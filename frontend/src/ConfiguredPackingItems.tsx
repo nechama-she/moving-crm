@@ -1,11 +1,11 @@
 import type {PackingPackage, PackingSelection} from './CustomerPackingOptions';
 
-export default function ConfiguredPackingItems({config,selection,onChange,disabled,showOptional=false}:{config:PackingPackage;selection:PackingSelection;onChange:(value:PackingSelection)=>void;disabled:boolean;showOptional?:boolean}) {
+export default function ConfiguredPackingItems({config,selection,onChange,disabled,showRequired=true,showOptional=false}:{config:PackingPackage;selection:PackingSelection;onChange:(value:PackingSelection)=>void;disabled:boolean;showRequired?:boolean;showOptional?:boolean}) {
   const materials=selection.material_item_ids??selection.item_ids;
   const money=(value:number)=>value.toLocaleString('en-US',{style:'currency',currency:'USD'});
   if(!config.items.length)return null;
   return <>
-    {(['required',...(showOptional?['optional'] as const:[])] as const).map(requirement=>{
+    {([...(showRequired?['required'] as const:[]),...(showOptional?['optional'] as const:[])] as const).map(requirement=>{
       const items=config.items.filter(item=>(item.requirement||'required')===requirement);
       if(!items.length)return null;
       return <section key={requirement} className="cm-packing-items">

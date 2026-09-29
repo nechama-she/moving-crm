@@ -40,12 +40,13 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
     </>}
     {stage !== 'service' && selection.mode === 'none' && <>
     {config.configured_materials ? <>
-    <ConfiguredPackingItems config={config} selection={selection} onChange={onChange} disabled={disabled} showOptional={selection.has_additional_protection === true}/>
+    <ConfiguredPackingItems config={config} selection={selection} onChange={onChange} disabled={disabled}/>
     <fieldset className="cm-protection-confirmation">
       <legend>Do you have any other fragile or fabric items?</legend>
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === false} onChange={() => onChange({...selection,has_additional_protection:false})}/> No, only the required items</label>
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === true} onChange={() => onChange({...selection,has_additional_protection:true})}/> Yes, I have more items</label>
     </fieldset>
+    {selection.has_additional_protection === true && <ConfiguredPackingItems config={config} selection={selection} onChange={onChange} disabled={disabled} showRequired={false} showOptional/>}
     </> : <>
     {config.items.length > 0 && <section className="cm-packing-items">
       <h4>These items require protection</h4>
