@@ -167,7 +167,8 @@ export default function CustomerMovePage() {
   const [answerSaveStarted, setAnswerSaveStarted] = useState(false);
   const [showInventoryList, setShowInventoryList] = useState(false);
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
-  const [packingStep, setPackingStep] = useState<'stops' | 'elevator' | 'access' | 'stairs' | 'storage' | 'bulky' | 'package' | 'protection' | 'items'>('bulky');
+  const [packingStep, setPackingStep] = useState<'stops' | 'elevator' | 'access' | 'stairs' | 'storage' | 'bulky' | 'package' | 'items'>('bulky');
+  const [packingSection,setPackingSection]=useState<'service'|'boxes'|'protection'>('service');
   const [packageSelection, setPackageSelection] = useState<PackingSelection>({ mode: 'none', unpacking: false, item_ids: [] });
   const [calculatingPrice, setCalculatingPrice] = useState(false);
   const [calculationError, setCalculationError] = useState('');
@@ -250,7 +251,6 @@ export default function CustomerMovePage() {
     setPackageSelection(next);
     if (next.mode !== previous.mode) {
       savePricingChange({ kind: 'mode', mode: next.mode });
-      if (next.mode === 'none') setPackingStep('protection');
     }
     else if (next.has_additional_protection !== previous.has_additional_protection) savePricingChange({kind:'additional_protection',enabled:next.has_additional_protection === true});
     else if (next.unpacking !== previous.unpacking) savePricingChange({ kind: 'unpacking', enabled: next.unpacking });
@@ -275,11 +275,12 @@ export default function CustomerMovePage() {
     ...(data?.storage ? ['storage'] as PricingStep[] : []),
     ...(data?.packing_items?.length ? ['bulky'] as PricingStep[] : []),
     ...(data?.packing_package ? ['package'] as PricingStep[] : []),
-    ...(data?.packing_package && packageSelection.mode === 'none' ? ['protection'] as PricingStep[] : []),
     ...(data?.item_questions?.length ? ['items'] as PricingStep[] : []),
   ];
   const nextPricing = pricingSteps[pricingSteps.indexOf(packingStep)+1];
-  const nextPricingLabels: Record<PricingStep,string> = { stops:'extra stops', elevator:'elevator', access:'truck access', stairs:'stairs', storage:'delivery date', bulky:'bulky items', package:'packing services', protection:'item protection', items:'moving terms' };
+  const nextPricingLabels: Record<PricingStep,string> = { stops:'extra stops', elevator:'elevator', access:'truck access', stairs:'stairs', storage:'delivery date', bulky:'bulky items', package:'packing services', items:'moving terms' };
+  const packingSections:('service'|'boxes'|'protection')[]=['service',...(data?.packing_package?.box_items?.length?['boxes'] as const:[]),...(packageSelection.mode==='none'?['protection'] as const:[])];
+  const nextPackingSection=packingSections[packingSections.indexOf(packingSection)+1];
   useEffect(() => { setElevatorAnswers(Object.fromEntries((data?.elevator?.locations || []).map(row => [row.location,row.uses_elevator]))); setElevatorMissing(false); }, [data?.elevator?.locations.map(row => row.revision).join(':')]);
   const pickupCarry = data?.long_carry?.locations.find(row => row.location === 'pickup');
   const deliveryCarry = data?.long_carry?.locations.find(row => row.location === 'delivery');
@@ -291,6 +292,7 @@ export default function CustomerMovePage() {
     if (step.startsWith('elevator_')) return 'elevator';
     if (step.startsWith('carry_') || step === 'shuttle') return 'access';
     if (step.startsWith('stairs_')) return 'stairs';
+    if (step === 'protection') return 'package';
     return step as PricingStep;
   }
   function stepNeedsAnswer(step: PricingStep) {
@@ -298,15 +300,17 @@ export default function CustomerMovePage() {
     if (step === 'elevator') return missingQuestionTabs.has(step) || [...missingQuestionTabs].some(id => id.startsWith('elevator_'));
     if (step === 'access') return missingQuestionTabs.has(step) || [...missingQuestionTabs].some(id => id.startsWith('carry_') || id === 'shuttle');
     if (step === 'stairs') return missingQuestionTabs.has(step) || [...missingQuestionTabs].some(id => id.startsWith('stairs_'));
+    if (step === 'package') return missingQuestionTabs.has('package') || missingQuestionTabs.has('protection');
     return missingQuestionTabs.has(step);
   }
   function previousPricingStep() {
     if (packingStep === 'items' && currentTermsStep > 0) { changeTermsStep(currentTermsStep - 1); return; }
+    if(packingStep==='package'&&packingSections.indexOf(packingSection)>0){setPackingSection(packingSections[packingSections.indexOf(packingSection)-1]);termsBody.current?.scrollTo({top:0});return;}
     const previous = pricingSteps[pricingSteps.indexOf(packingStep)-1];
     if (previous) setPackingStep(previous); else setShowQuestions(false);
   }
   async function nextPricingStep() {
-    if (packingStep === 'protection') {
+    if (packingStep === 'package' && packingSection === 'protection') {
       const configured = !!data?.packing_package?.configured_materials;
       const optionalSelected = data?.packing_package?.items.some(item => item.requirement === 'optional' && packageSelection.item_ids.includes(item.id));
       const missingAdditional = packageSelection.has_additional_protection == null || (packageSelection.has_additional_protection && (configured ? !optionalSelected : !Object.keys(packageSelection.additional_items || {}).length));
@@ -315,7 +319,7 @@ export default function CustomerMovePage() {
         return;
       }
     }
-    if(packingStep === 'package' && data?.unanswered_questions?.includes('package')) {
+    if(packingStep === 'package' && packingSection === 'service' && data?.unanswered_questions?.includes('package')) {
       savePricingChange({kind:'mode',mode:packageSelection.mode});
       await answerQueue.current;
     }
@@ -329,6 +333,7 @@ export default function CustomerMovePage() {
     if (packingStep === 'bulky' && Object.values(packingSelection).some(value => !value)) { setPackingError('Choose packing or crating for each checked item.'); return; }
     if (answerPending.current || failedPricing.current.size) { setPackingError(answerPending.current ? 'Please wait for your choices to finish saving.' : 'Please retry the choices that could not be saved.'); return; }
     setPackingError(''); setStairsMissing(false);
+    if(packingStep==='package'&&nextPackingSection){setPackingSection(nextPackingSection);termsBody.current?.scrollTo({top:0});return;}
     if (nextPricing) setPackingStep(nextPricing); else setShowQuestions(false);
   }
   const [themeColor, setThemeColor] = useState<string>('#214c3e');
@@ -348,6 +353,7 @@ export default function CustomerMovePage() {
     const target = requiredQuestionTarget(missing, groupTerms(data.item_questions));
     setPackingError('');setTermsError('');setTermsStep(target.termsIndex);setTermsValidationAttempt(1);
     setPackingStep(combinedPricingStep(target.step));
+    setPackingSection(target.step === 'protection' ? 'protection' : 'service');
     setStopsMissing(missing.some(step => step.startsWith('stops_')));
     setElevatorMissing(missing.some(step => step.startsWith('elevator_')));
     setCarryMissing(missing.some(step => step.startsWith('carry_')) || missing.includes('shuttle'));
@@ -961,6 +967,7 @@ export default function CustomerMovePage() {
                       setCarryAnswers(Object.fromEntries((data.long_carry?.locations || []).map(row => [row.location,row.unknown && row.acknowledged ? 'unknown' : row.distance_feet]))); setCarryMissing(false);
                       setStairsAnswers(Object.fromEntries((data.stairs?.locations || []).map(row => [row.location, row.flights]))); setStairsMissing(false);
                       setPackingStep(pricingSteps[0] || 'items');
+                      setPackingSection('service');
                       setPackageSelection(data.packing_package?.selection || { mode: 'none', unpacking: false, item_ids: [] });
                       setPackingError('');
                       setTermsStep(0);
@@ -998,8 +1005,8 @@ export default function CustomerMovePage() {
                   <div className="cm-modal-header">
                     <div>
                       <span className="cm-eyebrow">{packingStep === 'items' ? 'MOVING TERMS' : 'EXTRA SERVICES'}</span>
-                      <h3 id="packing-title">{packingStep === 'stops' ? 'Extra stops' : packingStep === 'elevator' ? 'Elevator access' : packingStep === 'access' ? 'Truck access' : packingStep === 'stairs' ? 'Stairs' : packingStep === 'storage' ? 'Delivery availability & storage' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : packingStep === 'protection' ? 'Protecting your items' : 'Packing services'}</h3>
-                      <p>{packingStep === 'stops' ? 'Add any other pickup or delivery addresses the movers need to visit.' : packingStep === 'elevator' ? 'Tell us whether the movers will use an elevator at either address.' : packingStep === 'access' ? 'Tell us how closely the truck can access both addresses.' : packingStep === 'stairs' ? 'Outdoor and shared-building stairs at pickup and delivery.' : packingStep === 'storage' ? 'Choose when you can begin receiving your shipment.' : packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : packingStep === 'protection' ? 'Fragile items must be boxed, and fabric items must be wrapped in plastic. Moving blankets are free.' : 'Choose packing services for your move.'}</p>
+                      <h3 id="packing-title">{packingStep === 'stops' ? 'Extra stops' : packingStep === 'elevator' ? 'Elevator access' : packingStep === 'access' ? 'Truck access' : packingStep === 'stairs' ? 'Stairs' : packingStep === 'storage' ? 'Delivery availability & storage' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : packingSection === 'boxes' ? 'Box packing' : packingSection === 'protection' ? 'Protecting your items' : 'Packing services'}</h3>
+                      <p>{packingStep === 'stops' ? 'Add any other pickup or delivery addresses the movers need to visit.' : packingStep === 'elevator' ? 'Tell us whether the movers will use an elevator at either address.' : packingStep === 'access' ? 'Tell us how closely the truck can access both addresses.' : packingStep === 'stairs' ? 'Outdoor and shared-building stairs at pickup and delivery.' : packingStep === 'storage' ? 'Choose when you can begin receiving your shipment.' : packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : packingSection === 'boxes' ? 'Choose who will pack each box type in your inventory.' : packingSection === 'protection' ? 'Fragile items must be boxed, and fabric items must be wrapped in plastic. Moving blankets are free.' : 'Choose packing services for your move.'}</p>
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
@@ -1009,6 +1016,7 @@ export default function CustomerMovePage() {
                         : [{id:step, step, index:0, label:nextPricingLabels[step]}]
                       ).map((entry, index) => { const required=entry.step === 'items' ? missingQuestionTabs.has(entry.id) : stepNeedsAnswer(entry.step); return <button type="button" key={entry.id} className={required ? 'cm-question-required' : undefined} title={entry.label.charAt(0).toUpperCase() + entry.label.slice(1) + (required ? ' - Answer required' : '')} aria-current={packingStep === entry.step && (entry.step !== 'items' || currentTermsStep === entry.index) ? 'step' : undefined} onClick={() => {
                         setPackingStep(entry.step);
+                        if(entry.step==='package')setPackingSection('service');
                         if (entry.step === 'items') changeTermsStep(entry.index);
                         setPackingError(''); setStopsMissing(false); setCarryMissing(false); setStairsMissing(false); setShuttleMissing(false); setElevatorMissing(false); setStorageMissing(false);
                         termsBody.current?.scrollTo({top:0});
@@ -1016,6 +1024,7 @@ export default function CustomerMovePage() {
                     </nav>
                   </div>
                   <div className="cm-modal-body" ref={termsBody}>
+                    {packingStep==='package'&&<nav className="cm-packing-subtabs" aria-label="Packing services sections">{packingSections.map(section=><button type="button" key={section} aria-current={packingSection===section?'page':undefined} onClick={()=>{setPackingSection(section);setPackingError('');termsBody.current?.scrollTo({top:0});}}>{section==='service'?'Service':section==='boxes'?'Boxes':'Item protection'}</button>)}</nav>}
                     {packingStep === 'stops' && data.extra_stops ? <div style={{display:'grid',gap:24}}>{data.extra_stops.locations.map(group=><CustomerExtraStopsQuestion key={group.location} group={group} apiKey={data.google_maps_browser_key || ''} missing={stopsMissing && (stopsIncomplete[group.location] || group.answer==null || (group.answer && !group.stops.length))} onIncomplete={value=>{setStopsIncomplete(old=>({...old,[group.location]:value}));setStopsMissing(false);}} onChange={(has_stops,stops)=>savePricingChange({kind:'extra_stops',location:group.location,has_stops,stops})}/>)}</div> : packingStep === 'elevator' && data.elevator ? <div style={{display:'grid',gap:24}}>{data.elevator.locations.map(location=><CustomerElevatorQuestion key={location.location} config={data.elevator!} location={location} value={elevatorAnswers[location.location] ?? null} missing={elevatorMissing && elevatorAnswers[location.location] == null} onChange={elevator => { setElevatorAnswers(prev => ({ ...prev, [location.location]: elevator })); setElevatorMissing(false); savePricingChange({kind:'elevator',location:location.location,revision:location.revision,elevator}); }} />)}</div> : packingStep === 'access' ? <div style={{display:'grid',gap:24}}>
                       {pickupCarry && data.long_carry && <CustomerLongCarryQuestion key={`pickup:${pickupCarry.revision}`} config={data.long_carry} location={pickupCarry} value={carryAnswers.pickup ?? null} missing={carryMissing && carryAnswers.pickup == null} onChange={carry_feet => { setCarryAnswers(prev => ({...prev,pickup:carry_feet})); setCarryMissing(false); if (carry_feet !== null) savePricingChange({kind:'long_carry',location:'pickup',revision:pickupCarry.revision,...(carry_feet === 'unknown' ? {carry_unknown:true,carry_acknowledged:true} : {carry_feet})}); }} />}
                       {data.shuttle ? <fieldset style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
@@ -1087,14 +1096,14 @@ export default function CustomerMovePage() {
                       ))}
                     </div>
                     <p><strong>Selected services total: {money(data.packing_items.reduce((sum, item) => sum + (item.services.find(service => service.kind === packingSelection[item.id])?.price || 0), 0))}</strong></p>
-                    </> : data.packing_package && <CustomerPackingOptions stage={packingStep === 'protection' ? 'protection' : 'service'} config={data.packing_package} selection={packageSelection} onChange={changePackage} disabled={false} />}
+                    </> : data.packing_package && <CustomerPackingOptions stage={packingSection} config={data.packing_package} selection={packageSelection} onChange={changePackage} disabled={false} />}
                     {!data.estimate && <p>Your choices will be saved and included when your estimate is ready.</p>}
                     {packingError && <div className="cm-save-error" role="alert"><p>{packingError}</p>{failedPricing.current.size > 0 && <button type="button" className="cm-secondary-btn" disabled={answersSaving} onClick={() => { for (const change of failedPricing.current.values()) savePricingChange(change); }}>{answersSaving ? 'Retrying...' : 'Try again'}</button>}</div>}
                   </div>
                   {packingStep === 'items' && termsError && <p role="alert" className="cm-field-error">{termsError}</p>}
                   <div className="cm-modal-footer">
                     <button type="button" className="cm-secondary-btn" onClick={previousPricingStep}>{pricingSteps.indexOf(packingStep) === 0 && !(packingStep === 'items' && currentTermsStep > 0) ? 'Close' : 'Back'}</button>
-                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" aria-busy={answersSaving} onClick={nextTermsStep}>{currentTermsStep < termsGroups.length - 1 ? 'Next' : 'Done'}</button> : <button type="button" className="slds-button cm-primary" onClick={nextPricingStep}>{nextPricing ? `Next: ${nextPricingLabels[nextPricing]}` : 'Done'}</button>}
+                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" aria-busy={answersSaving} onClick={nextTermsStep}>{currentTermsStep < termsGroups.length - 1 ? 'Next' : 'Done'}</button> : <button type="button" className="slds-button cm-primary" onClick={nextPricingStep}>{packingStep==='package'&&nextPackingSection?`Next: ${nextPackingSection==='boxes'?'boxes':'item protection'}`:nextPricing ? `Next: ${nextPricingLabels[nextPricing]}` : 'Done'}</button>}
 
                   </div>
                   {<small className="cm-answer-autosave-note" role="status" aria-live="polite">{answersSaving ? 'Saving...' : failedAnswers.current.size ? 'Could not save all answers. Please retry.' : answerSaveStarted ? <><span className="cm-save-check" aria-hidden="true">&#10003;</span> Saved</> : 'Your answers save automatically.'}</small>}

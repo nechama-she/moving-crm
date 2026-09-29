@@ -17,7 +17,7 @@ export type PackingPackage = {
 };
 const money = (amount: number) => amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 export default function CustomerPackingOptions({ config, selection, onChange, disabled, stage }: {
-  config: PackingPackage; selection: PackingSelection; onChange: (value: PackingSelection) => void; disabled: boolean; stage?:'service'|'protection';
+  config: PackingPackage; selection: PackingSelection; onChange: (value: PackingSelection) => void; disabled: boolean; stage?:'service'|'boxes'|'protection';
 }) {
   const inventoryVolume = config.inventory_cubic_feet ?? config.cubic_feet;
   const minimumApplies = inventoryVolume < (config.minimum_cubic_feet ?? 0);
@@ -40,7 +40,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
   const total = (selection.mode !== 'none' ? config.rates[selection.mode]?.total || 0 : extraTotal + config.items.filter(item => selection.item_ids.includes(item.id)).reduce((sum, item) => sum + (item.labor_price ?? item.price) + (materials.includes(item.id) ? item.material_price || 0 : 0), 0))+boxTotal;
   const setBoxCounts=(counts:Record<string,number>)=>onChange({...selection,box_quantities:counts});
   return <div className="cm-packing-options">
-    {stage !== 'protection' && <><div className="cm-packing-heading"><h4>Choose your packing service</h4><div className="cm-packing-volume"><span>{inventoryVolume.toLocaleString()} cu ft</span>{minimumApplies && <small>Minimum billable: {config.minimum_cubic_feet!.toLocaleString()} cu ft</small>}</div></div>
+    {stage === 'service' && <><div className="cm-packing-heading"><h4>Choose your packing service</h4><div className="cm-packing-volume"><span>{inventoryVolume.toLocaleString()} cu ft</span>{minimumApplies && <small>Minimum billable: {config.minimum_cubic_feet!.toLocaleString()} cu ft</small>}</div></div>
     <div className="cm-packing-choices">
       {(['full', 'partial', 'none'] as const).filter(mode => mode === 'none' || config.rates[mode]).map(mode => <label key={mode} className={`cm-packing-choice ${selection.mode === mode ? 'selected' : ''}`}>
         <input type="radio" name="packing-package" disabled={disabled} checked={selection.mode === mode} onChange={() => onChange({ ...selection, mode, item_ids: [], material_item_ids: [] })} />
@@ -48,7 +48,8 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
         <small>{mode === 'full' ? 'All belongings, including personal-item boxes. Materials included.' : mode === 'partial' ? 'We box items that require it. Materials included; personal-item boxes excluded.' : (config.items.length ? 'Pack yourself, or choose individual items below.' : 'Pack your belongings yourself.')}</small></span>
       </label>)}
     </div>
-    {boxes.length>0 && selection.mode!=='full' && <section className="cm-box-packing">
+    </>}
+    {stage === 'boxes' && boxes.length>0 && (selection.mode==='full' ? <p>Box packing is included with full packing.</p> : <section className="cm-box-packing">
       <h4>Who will pack your boxes?</h4>
       <p>Your inventory includes <strong>{allBoxCount} boxes</strong>. These quantities reserve truck space; packing is included only when selected here.</p>
       <div className="cm-box-packing-modes">
@@ -65,9 +66,8 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
           <span>{item.quantity-movers}</span>
         </div>})}
       </div>}
-    </section>}
-    </>}
-    {stage !== 'service' && selection.mode === 'none' && <>
+    </section>)}
+    {stage === 'protection' && selection.mode === 'none' && <>
     {config.configured_materials ? <>
     <ConfiguredPackingItems config={config} selection={selection} onChange={onChange} disabled={disabled}/>
     <fieldset className="cm-protection-confirmation">
