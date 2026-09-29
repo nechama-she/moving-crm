@@ -125,8 +125,6 @@ def customer_realtime_token(access: PublicMoveAccess = Depends(verified), reques
                         'lead_id': access.lead_id, 'iss': os.getenv('JWT_ISSUER', 'moving-crm'),
                         'exp': int(expires.replace(tzinfo=timezone.utc).timestamp())},
                        os.environ['JWT_SECRET'], algorithm='HS256')
-    from customer_report_updates import queue_report_check
-    queue_report_check(access.lead_id, db)
     return {'token': token}
 
 
@@ -550,38 +548,8 @@ def _move_details(access, db, *, refresh_report=True):
     if conversation and conversation.details:
         try:
             conv_details = json.loads(conversation.details)
-            if refresh_report and conv_details.get('pending_spark_payload'):
-                from routes.liveswitch import start_ready_report
-                start_ready_report(lead.id, db)
-                conv_details = json.loads(conversation.details)
             spark_id = conv_details.get("last_spark_id")
             if spark_id:
-                if refresh_report and conv_details.get("report_source") != "manual" and not conv_details.get("pending_spark_payload") and (conv_details.get("last_spark_status") not in ("completed", "failed", "cancelled") or conv_details.get("spark_extracted_id") != spark_id):
-                    from routes.liveswitch import _api_get, apply_spark_results_to_lead
-                    try:
-                        remote = _api_get(f"sparks/{spark_id}")
-                        db.refresh(conversation, with_for_update=True)
-                        conv_details = json.loads(conversation.details)
-                        if conv_details.get("last_spark_id") != spark_id:
-                            spark_id = conv_details.get("last_spark_id")
-                            remote = None
-                        if isinstance(remote, dict) and "status" in remote:
-                            conv_details["last_spark_status"] = remote.get("status")
-                            share_url = remote.get("shareUrl")
-                            if share_url:
-                                conv_details["last_spark_share_url"] = share_url
-                            conversation.details = json.dumps(conv_details)
-                            db.commit()
-                            if remote.get("status") == "completed" and share_url and conv_details.get("spark_extracted_id") != spark_id:
-                                apply_spark_results_to_lead(access.lead_id, share_url, db)
-                                # Reload lead and job for updated estimate
-                                db.refresh(lead)
-                                db.refresh(job)
-                                db.refresh(access)
-                                db.refresh(conversation)
-                                conv_details = json.loads(conversation.details)
-                    except Exception:
-                        pass
                 spark_info = {
                     "id": spark_id,
                     "source": conv_details.get("report_source", "liveswitch"),

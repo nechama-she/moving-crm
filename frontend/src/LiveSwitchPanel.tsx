@@ -21,6 +21,8 @@ type Conversation = {
   last_spark_share_url?: string;
   spark_extracted_cuft?: number;
   spark_extracted_weight?: number;
+  report_check_timed_out?: boolean;
+  notification_error?: string;
 };
 type SparkInventoryRow = {
   id: string;
@@ -76,7 +78,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
   const priceRequestRunning = useRef(false);
   const [sparkNotice, setSparkNotice] = useState("");
   const [sparkError, setSparkError] = useState("");
-  const [sparkData, setSparkData] = useState<{ id: string; status: string; source?: string; shareUrl?: string; cuft?: number; weight?: number } | null>(null);
+  const [sparkData, setSparkData] = useState<{ id: string; status: string; source?: string; shareUrl?: string; cuft?: number; weight?: number; canGetResult?: boolean } | null>(null);
   const [inventoryExpanded, setInventoryExpanded] = useState(false);
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [inventoryLoaded, setInventoryLoaded] = useState(false);
@@ -123,7 +125,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
 
   const loadSparkStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${base}/spark-status?cached_only=true`, { headers: authHeaders(token) });
+      const res = await fetch(`${base}/spark-status`, { headers: authHeaders(token) });
       if (!res.ok) return;
       const json = await res.json();
       if (json && json.spark) {
@@ -149,6 +151,25 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
       }
     } catch { /* ignore */ }
   }, [base, token, onUploaded, inventoryExpanded, inventoryLoaded, loadSparkInventory]);
+
+  async function getReportResult() {
+    setSparkRunning(true);
+    setSparkError('');
+    try {
+      const json = await request(`${base}/spark-result`);
+      if (json?.spark) {
+        setSparkData({ ...json.spark, cuft: json.cuft || json.spark.cuft, weight: json.weight || json.spark.weight });
+      }
+      if (json?.spark?.status === 'completed') {
+        await loadSparkInventory(true);
+        onUploaded();
+      }
+    } catch (err) {
+      setSparkError(err instanceof Error ? err.message : 'Could not get the report result.');
+    } finally {
+      setSparkRunning(false);
+    }
+  }
 
   const reportUpdatesUnavailable = useReportUpdates(base, token, async () => {
     await loadSparkStatus();
@@ -286,6 +307,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
           shareUrl: String(nextConversation?.last_spark_share_url || ""),
           cuft: Number(nextConversation?.spark_extracted_cuft || 0) || undefined,
           weight: Number(nextConversation?.spark_extracted_weight || 0) || undefined,
+          canGetResult: Boolean(nextConversation?.report_check_timed_out),
         };
       });
     }
@@ -444,6 +466,11 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
                 >
                   View Report ↗
                 </a>
+              )}
+              {sparkData.canGetResult && (sparkData.status === 'queued' || sparkData.status === 'running') && (
+                <button type="button" className="slds-button" disabled={sparkRunning} onClick={() => void getReportResult()}>
+                  {sparkRunning ? 'Checking...' : 'Get result'}
+                </button>
               )}
             </div>
             {reportUpdatesUnavailable && <p role="status">Live report updates are unavailable. Reopen this panel to reconnect.</p>}

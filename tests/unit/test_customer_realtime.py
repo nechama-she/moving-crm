@@ -55,7 +55,8 @@ def test_broadcast_never_crosses_customer_or_staff_boundaries(sockets, target, e
 
 @pytest.fixture
 def monitor(monkeypatch):
-    state = {'last_spark_id':'report-1','last_spark_status':'queued'}
+    state = {'last_spark_id':'report-1','last_spark_status':'queued',
+             'notification_until':time.time()+900}
     saved = SimpleNamespace(details=json.dumps(state))
     db = MagicMock()
     db.get.return_value = saved
@@ -88,9 +89,15 @@ def test_stale_report_cannot_replace_new_report(monitor):
 def test_monitor_is_bounded_and_exposes_failure(monitor):
     saved, db, api, apply, publish, sqs = monitor
     api.return_value = {'status':'running'}
-    reports.check_report({'lead_id':'lead','check_report':'report-1','attempt':119},db)
+    saved.details = json.dumps({'last_spark_id':'report-1','last_spark_status':'running',
+                                'notification_until':time.time()-1})
+    reports.check_report({'lead_id':'lead','check_report':'report-1','attempt':14},db)
     sqs.send_message.assert_not_called()
-    assert 'notification_error' in json.loads(saved.details)
+    state = json.loads(saved.details)
+    assert 'notification_error' in state
+    assert state['report_check_timed_out'] is True
+    assert state['last_spark_status'] == 'running'
+    api.assert_not_called()
     publish.assert_called_with('lead')
 
 

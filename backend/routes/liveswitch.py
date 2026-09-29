@@ -458,8 +458,6 @@ def generate_uploaded_report(lead_id, body, db):
     if details.get('pending_spark_payload'):
         raise HTTPException(409, 'Upload this selection again to replace the pending automatic report before generating.')
     if media.get('report_id'):
-        from customer_report_updates import queue_report_check
-        queue_report_check(lead_id, db)
         return {'id': media['report_id'], 'status': details.get('last_spark_status', 'queued')}
     rows = db.query(PublicMoveUpload).filter(PublicMoveUpload.attachment_id.in_([file.id for file in files])).all()
     if len(rows) != len(files) or any(not row.synced_at or row.sync_token != media.get('sync_tokens', {}).get(row.attachment_id) for row in rows):
@@ -628,7 +626,8 @@ def start_ready_report(lead_id: str, db: Session):
         raise HTTPException(502, 'LiveSwitch did not return a report ID.')
     old_id = details['last_spark_id']
     details['spark_history'] = [row for row in details.get('spark_history', []) if row.get('last_spark_id') != old_id]
-    details.update(last_spark_id=result['id'], last_spark_status=result.get('status', 'queued'))
+    details.update(last_spark_id=result['id'], last_spark_status=result.get('status', 'queued'),
+                   last_spark_at=int(time.time()))
     details.pop('pending_spark_payload', None)
     remember_report(details)
     saved.details = json.dumps(details)
@@ -873,8 +872,6 @@ def report_events_token(lead_id: str, request: Request, user: User = Depends(get
     lead = _get_visible_lead_or_404(lead_id, user, db)
     from auth import decode_access_token
     claims = decode_access_token(request.headers.get('authorization', '').split(' ', 1)[-1])
-    from customer_report_updates import queue_report_check
-    queue_report_check(lead.id, db)
     token = jwt.encode({'sub': f'report-updates:{user.id}', 'role': 'report_updates', 'purpose': 'report_updates',
                         'lead_id': lead.id, 'iss': os.getenv('JWT_ISSUER', 'moving-crm'),
                         'exp': min(int(claims['exp']), int(time.time()) + 7200)}, os.environ['JWT_SECRET'], algorithm='HS256')
@@ -942,7 +939,6 @@ def apply_spark_report_endpoint(
 @router.get("/leads/{lead_id}/spark-status")
 def get_lead_spark_status(
     lead_id: str,
-    cached_only: bool = False,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -958,18 +954,31 @@ def get_lead_spark_status(
     if details.get('report_source') == 'manual':
         return {'spark': {'id': spark_id, 'status': 'completed', 'source': 'manual'},
                 'cuft': details.get('spark_extracted_cuft'), 'weight': details.get('spark_extracted_weight')}
-    if cached_only:
-        return {'spark': {'id': spark_id, 'status': details.get('last_spark_status', 'queued'),
-                          'shareUrl': details.get('last_spark_share_url'), 'error': details.get('upload_error')},
-                'cuft': details.get('spark_extracted_cuft'), 'weight': details.get('spark_extracted_weight')}
-    # File transfer must finish before asking LiveSwitch to analyze the new conversation.
-    if details.get("pending_spark_payload"):
-        start_ready_report(lead.id, db)
-        details = json.loads(saved.details)
-        spark_id = details.get("last_spark_id")
-        if details.get("pending_spark_payload"):
-            return {"spark": {"id": spark_id, "status": details.get("last_spark_status", "queued"), "error": details.get('upload_error')}}
-    # Poll LiveSwitch for latest status
+    return {'spark': {'id': spark_id, 'status': details.get('last_spark_status', 'queued'),
+                      'shareUrl': details.get('last_spark_share_url'),
+                      'error': details.get('upload_error') or details.get('notification_error'),
+                      'canGetResult': bool(details.get('report_check_timed_out'))},
+            'cuft': details.get('spark_extracted_cuft'), 'weight': details.get('spark_extracted_weight')}
+
+
+@router.post("/leads/{lead_id}/spark-result")
+def get_lead_spark_result(
+    lead_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Perform one explicit provider check after automatic monitoring has timed out."""
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    details = json.loads(saved.details or '{}') if saved else {}
+    spark_id = details.get('last_spark_id')
+    if not spark_id or details.get('report_source') == 'manual':
+        raise HTTPException(409, 'There is no pending LiveSwitch report to retrieve.')
+    if details.get('last_spark_status') in ('completed', 'failed', 'cancelled'):
+        return get_lead_spark_status(lead_id, user, db)
+    if not details.get('report_check_timed_out'):
+        raise HTTPException(409, 'Automatic result checks are still active.')
     try:
         remote = _api_get(f"sparks/{spark_id}")
         db.refresh(saved, with_for_update=True)
@@ -979,6 +988,7 @@ def get_lead_spark_status(
             remote = None
         if isinstance(remote, dict) and "status" in remote:
             details["last_spark_status"] = remote.get("status")
+            details.pop('notification_error', None)
             share_url = remote.get("shareUrl")
             if share_url:
                 details["last_spark_share_url"] = share_url
@@ -993,22 +1003,22 @@ def get_lead_spark_status(
                 except Exception:
                     pass
 
-            return {
+            result = {
                 "spark": remote,
                 "cuft": details.get("spark_extracted_cuft"),
                 "weight": details.get("spark_extracted_weight"),
             }
-    except Exception:
-        pass
-    return {
-        "spark": {
-            "id": spark_id,
-            "status": details.get("last_spark_status", "queued"),
-            "shareUrl": details.get("last_spark_share_url"),
-        },
-        "cuft": details.get("spark_extracted_cuft"),
-        "weight": details.get("spark_extracted_weight"),
-    }
+            result['spark']['canGetResult'] = remote.get('status') in ('queued', 'running')
+            if not result['spark']['canGetResult']:
+                details.pop('report_check_timed_out', None)
+                saved.details = json.dumps(details)
+                db.commit()
+            return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, 'LiveSwitch could not return the report result. Please try again.') from exc
+    raise HTTPException(502, 'LiveSwitch returned an invalid report result.')
 
 
 def ensure_lead_conversation(lead: Lead, db: Session, fresh: bool = False) -> dict:
