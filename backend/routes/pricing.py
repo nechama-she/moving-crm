@@ -196,12 +196,14 @@ def _plan_or_404(db: Session, user: User, plan_id: str) -> PricingPlan:
 
 
 class RuleInput(BaseModel):
+    id: str | None = Field(default=None, max_length=100)
     category: str = "general"
     title: str = "Pricing rule"
     description: str
 
 
 class RateInput(BaseModel):
+    id: str | None = Field(default=None, max_length=100)
     destination: str
     destination_group: str = ""
     minimum_price: float | None = None
@@ -214,6 +216,7 @@ class RateInput(BaseModel):
 
 
 class ServiceInput(BaseModel):
+    id: str | None = Field(default=None, max_length=100)
     name: str
     rate_text: str = ""
     comments: str = ""
@@ -1150,10 +1153,10 @@ def sync_elevator_charges(lead, job, db, location=None):
     ids = [customer_packing_charge_id(job.id, 'elevator:' + place) for place in ('pickup', 'delivery') if not location or place == location]
     old = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id, LeadJobCharge.id.in_(ids)).all()
     old_total = sum((row.total_cost for row in old), Decimal(0))
-    for row in old:
-        db.delete(row)
-    db.flush()
-    delta = add_elevator_charges(lead, job, db, location=location) - old_total
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, old)
+    delta = add_elevator_charges(lead, job, updates, location=location) - old_total
+    updates.finish()
     job.price += delta
     for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
         if link.published_price is not None:
@@ -1204,10 +1207,10 @@ def sync_long_carry_charges(lead, job, db, location=None):
     ids = [customer_packing_charge_id(job.id, 'long_carry:' + place) for place in ('pickup', 'delivery') if not location or place == location]
     old = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id, LeadJobCharge.id.in_(ids)).all()
     old_total = sum((row.total_cost for row in old), Decimal(0))
-    for row in old:
-        db.delete(row)
-    db.flush()
-    delta = add_long_carry_charges(lead, job, db, location=location) - old_total
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, old)
+    delta = add_long_carry_charges(lead, job, updates, location=location) - old_total
+    updates.finish()
     job.price += delta
     for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
         if link.published_price is not None:
@@ -1249,10 +1252,10 @@ def sync_stairs_charges(lead, job, db, location=None):
     ids = [customer_packing_charge_id(job.id, 'stairs:' + place) for place in ('pickup', 'delivery') if not location or place == location]
     old = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id, LeadJobCharge.id.in_(ids)).all()
     old_total = sum((row.total_cost for row in old), Decimal(0))
-    for row in old:
-        db.delete(row)
-    db.flush()
-    delta = add_stairs_charges(lead, job, db, location=location) - old_total
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, old)
+    delta = add_stairs_charges(lead, job, updates, location=location) - old_total
+    updates.finish()
     job.price += delta
     for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
         if link.published_price is not None:
@@ -1277,10 +1280,10 @@ def sync_storage_charge(lead, job, db):
         return
     old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'storage-periods'))
     old_total = old.total_cost if old else Decimal(0)
-    if old:
-        db.delete(old)
-        db.flush()
-    delta = add_storage_charge(lead, job, db) - old_total
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, [old] if old else [])
+    delta = add_storage_charge(lead, job, updates) - old_total
+    updates.finish()
     job.price += delta
     for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
         if link.published_price is not None:
@@ -1307,10 +1310,10 @@ def sync_customer_shuttle_charge(lead, job, db):
         return
     old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'shuttle'))
     old_total = old.total_cost if old else Decimal(0)
-    if old:
-        db.delete(old)
-        db.flush()
-    delta = add_customer_shuttle_charge(lead, job, db) - old_total
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, [old] if old else [])
+    delta = add_customer_shuttle_charge(lead, job, updates) - old_total
+    updates.finish()
     job.price += delta
     for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
         if link.published_price is not None:
@@ -1346,10 +1349,10 @@ def sync_delivery_fee(lead, job, db):
     fee = job_delivery_fee(job, plan if (move_type or '').lower() != 'local' else None)
     old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'delivery-mileage'))
     old_total = old.total_cost if old else Decimal(0)
-    if old:
-        db.delete(old)
-        db.flush()
-    delta = add_delivery_fee_charge(job, db, fee) - old_total
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, [old] if old else [])
+    delta = add_delivery_fee_charge(job, updates, fee) - old_total
+    updates.finish()
     job.price += delta
     for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
         if link.published_price is not None:
@@ -1425,7 +1428,8 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         )
         bulky_charges = _bulky_item_charges(list(matched_plan.services), all_materials, rate_multiplier=0.5)
 
-        db.query(LeadJobCharge).filter_by(job_id=job.id).delete()
+        from charge_updates import ChargeUpdates
+        db = ChargeUpdates(db, db.query(LeadJobCharge).filter_by(job_id=job.id).all(), match_legacy_base=True, remove_missing=False)
         all_lines = list(quote.get("charges", []))
         for b_charge in bulky_charges:
             if b_charge.get("default_selected", False) and b_charge.get("rate", 0) > 0:
@@ -1460,6 +1464,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         job.price += add_elevator_charges(lead, job, db, matched_plan, move_type)
         from extra_stops import add_charges as add_extra_stop_charges
         job.price += add_extra_stop_charges(lead,job,db,matched_plan)
+        db.finish()
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
         access = db.query(PublicMoveAccess).filter_by(job_id=job.id).first()
@@ -1520,7 +1525,8 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         if not lines:
             return None
 
-        db.query(LeadJobCharge).filter_by(job_id=job.id).delete()
+        from charge_updates import ChargeUpdates
+        db = ChargeUpdates(db, db.query(LeadJobCharge).filter_by(job_id=job.id).all(), match_legacy_base=True, remove_missing=False)
         for idx, line in enumerate(lines):
             db.add(LeadJobCharge(
                 id=str(uuid4()),
@@ -1543,6 +1549,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         job.price += add_elevator_charges(lead, job, db, matched_plan, move_type)
         from extra_stops import add_charges as add_extra_stop_charges
         job.price += add_extra_stop_charges(lead,job,db,matched_plan)
+        db.finish()
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
         access = db.query(PublicMoveAccess).filter_by(job_id=job.id).first()
@@ -1652,6 +1659,13 @@ def update_pricing_plan(
     if not body.rates:
         raise HTTPException(status_code=400, detail="At least one pricing rate is required")
 
+    from pricing_service_updates import prepare_service_updates
+    service_updates = prepare_service_updates(list(plan.services), body.services)
+    from pricing_row_updates import prepare_row_updates
+    rule_updates = prepare_row_updates(list(plan.rules), body.rules, ('category', 'title'), ('description',))
+    rate_updates = prepare_row_updates(list(plan.rates), body.rates,
+                                       ('destination', 'band_label'), ('destination', 'band_label'))
+
     plan.name = body.name.strip()
     if body.pickup_areas is not None:
         states = [area.state for area in body.pickup_areas]
@@ -1662,46 +1676,34 @@ def update_pricing_plan(
         plan.pickup_regions = body.pickup_regions.strip()
     plan.fuel_percent = body.fuel_percent
     plan.active = body.active
-    plan.rules.clear()
-    plan.rates.clear()
-    plan.services.clear()
-    db.flush()
-    plan.rules.extend(
-        PricingRule(
-            category=row.category.strip() or "general",
-            title=row.title.strip() or "Pricing rule",
-            description=row.description.strip(),
-            sort_order=index,
-        )
-        for index, row in enumerate(body.rules)
-        if row.description.strip()
-    )
-    plan.rates.extend(
-        PricingRate(
-            destination=row.destination.strip(),
-            destination_group=row.destination_group.strip(),
-            minimum_price=row.minimum_price,
-            minimum_text=row.minimum_text.strip(),
-            band_label=row.band_label.strip(),
-            cubic_feet_min=row.cubic_feet_min,
-            cubic_feet_max=row.cubic_feet_max,
-            rate=row.rate,
-            rate_text=row.rate_text.strip(),
-            sort_order=index,
-        )
-        for index, row in enumerate(body.rates)
-        if row.destination.strip() and row.band_label.strip()
-    )
-    plan.services.extend(
-        PricingService(
-            name=row.name.strip(),
-            rate_text=row.rate_text.strip(),
-            comments=row.comments.strip(),
-            sort_order=index,
-        )
-        for index, row in enumerate(body.services)
-        if row.name.strip()
-    )
+    retained_rules = []
+    for index, (existing, row) in enumerate(rule_updates):
+        rule = existing if existing is not None else PricingRule()
+        rule.category = row.category.strip() or 'general'
+        rule.title = row.title.strip() or 'Pricing rule'
+        rule.description = row.description.strip()
+        rule.sort_order = index
+        retained_rules.append(rule)
+    plan.rules[:] = retained_rules
+    retained_rates = []
+    for index, (existing, row) in enumerate(rate_updates):
+        rate = existing if existing is not None else PricingRate()
+        for key in ('destination', 'destination_group', 'minimum_text', 'band_label', 'rate_text'):
+            setattr(rate, key, getattr(row, key).strip())
+        for key in ('minimum_price', 'cubic_feet_min', 'cubic_feet_max', 'rate'):
+            setattr(rate, key, getattr(row, key))
+        rate.sort_order = index
+        retained_rates.append(rate)
+    plan.rates[:] = retained_rates
+    retained_services = []
+    for index, (existing, row) in enumerate(service_updates):
+        service = existing if existing is not None else PricingService()
+        service.name = row.name.strip()
+        service.rate_text = row.rate_text.strip()
+        service.comments = row.comments.strip()
+        service.sort_order = index
+        retained_services.append(service)
+    plan.services[:] = retained_services
     db.commit()
     db.refresh(plan)
     return plan.to_dict()

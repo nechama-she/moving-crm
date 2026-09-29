@@ -582,7 +582,9 @@ export default function PricingPage() {
           name: draft.name, pickup_regions: draft.pickup_regions,
           pickup_areas: draft.pickup_areas?.map(area => ({ ...area, zip_codes: area.zip_codes.map(zip => zip.trim()).filter(Boolean) })),
           fuel_percent: draft.fuel_percent, active: draft.active,
-          rules: draft.rules, rates: draft.rates, services: withMaterials(draft.services),
+          rules: draft.rules,
+          rates: draft.rates.map(row => ({ ...row, id: pendingRateGroups.some(ids => row.id && ids.includes(row.id)) ? undefined : row.id })),
+          services: withMaterials(draft.services),
         }),
       });
       if (!response.ok) {

@@ -80,23 +80,11 @@ def save_settings(plan_id: str, body: LocalSettingsPayload, user: User = Depends
     else:
         db.add(AppSetting(key=key, value=settings.model_dump_json()))
 
-    db.query(LocalPricingRoute).filter(LocalPricingRoute.company_id == plan.company_id).delete()
-    for index, route in enumerate(body.routes):
-        # Validate route strings but store them as-is (trimmed).
-        parse_local_route_region(route.pickup)
-        parse_local_route_region(route.delivery)
-        db.add(LocalPricingRoute(
-            id=str(uuid4()),
-            company_id=plan.company_id,
-            pickup=route.pickup.strip(),
-            delivery=route.delivery.strip(),
-            sort_order=index,
-        ))
-
+    # Routes have dedicated create/update/delete endpoints; settings never replace them.
     db.commit()
     return {
         'settings': settings,
-        'routes': [{'pickup': row.pickup, 'delivery': row.delivery} for row in load_routes(plan.company_id, db)],
+        'routes': [row.to_dict() for row in load_routes(plan.company_id, db)],
     }
 
 

@@ -99,16 +99,17 @@ def add_charges(lead,job,db,plan=None,refresh=True):
 
 def sync_charges(lead,job,db,refresh=True):
     from models import LeadJobCharge,PublicMoveAccess
-    # Resolve new routes before deleting any saved charge, including unpriced jobs.
+    # Resolve routes before updating any saved charge.
     if job.price is None:return
     data=option(lead,job,db,refresh=refresh)
     if any(row.get('total') is None for group in (data['locations'] if data else []) for row in group['stops']):
         raise HTTPException(422, 'Stop distances are pending.')
     old=db.query(LeadJobCharge).filter(LeadJobCharge.job_id==job.id,LeadJobCharge.id.like('extra-stop:%')).all()
     previous=sum((row.total_cost for row in old),Decimal(0))
-    for row in old:db.delete(row)
-    db.flush()
-    delta=add_charges(lead,job,db,refresh=refresh)-previous
+    from charge_updates import ChargeUpdates
+    updates=ChargeUpdates(db,old)
+    delta=add_charges(lead,job,updates,refresh=refresh)-previous
+    updates.finish()
     job.price+=delta
     for access in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
         if access.published_price is not None:access.published_price+=delta

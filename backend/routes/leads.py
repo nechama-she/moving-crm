@@ -2150,6 +2150,7 @@ def _get_or_create_primary_lead_job(lead: Lead, db: Session) -> LeadJob:
 class LeadJobChargePayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    id: str | None = None
     name: str = ""
     description: str = ""
     editable_description: str | None = Field(default=None, alias="editableDescription")
@@ -2310,7 +2311,10 @@ def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload | dict
     if not job.id:
         db.flush()
 
-    db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id).delete(synchronize_session=False)
+    from charge_updates import ChargeUpdates
+    existing = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id).all()
+    updates = ChargeUpdates(db, existing, match_legacy_base=True)
+    existing_ids = {row.id for row in existing}
 
     for index, charge in enumerate(charges):
         if isinstance(charge, dict):
@@ -2319,12 +2323,14 @@ def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload | dict
         display_name = (charge.editable_description or "").strip() or (charge.name or "").strip()
         if not display_name:
             continue
-        charge_id = None
-        if charge.pricing_key:
+        charge_id = charge.id
+        if charge_id and charge_id not in existing_ids:
+            raise HTTPException(409, 'Charge changed. Refresh the job before saving.')
+        if not charge_id and charge.pricing_key:
             from uuid import uuid5, NAMESPACE_URL
             charge_id = charge.pricing_key if charge.pricing_key.startswith('extra-stop:') else str(uuid5(NAMESPACE_URL, f'customer-packing:{job.id}:{charge.pricing_key}'))
-        db.add(LeadJobCharge(
-            id=charge_id,
+        updates.add(LeadJobCharge(
+            id=charge_id or str(uuid4()),
             job_id=job.id,
             name=display_name,
             description=(charge.description or "").strip(),
@@ -2333,6 +2339,7 @@ def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload | dict
             discount_amount=_to_money_decimal(charge.discount_amount, "discount_amount"),
             total_cost=_to_money_decimal(charge.total_cost, "total_cost"),
         ))
+    updates.finish()
 
 
 class LeadJobCreate(BaseModel):

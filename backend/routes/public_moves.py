@@ -1073,27 +1073,27 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         ids = [customer_packing_charge_id(job.id, item_id) for item_id in touched]
     old_rows = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id, LeadJobCharge.id.in_(ids)).all()
     old_total = sum((row.total_cost for row in old_rows), Decimal(0))
-    for row in old_rows:
-        db.delete(row)
-    db.flush()
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, old_rows)
     new_total = Decimal(0)
     for index, item in enumerate(options):
         if item['id'] in selected and (touched is None or item['id'] in touched):
             service = next(service for service in item['services'] if service['kind'] == choices[item['id']])
             amount = Decimal(str(service['price']))
-            db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, item['id']), job_id=job.id,
+            updates.add(LeadJobCharge(id=customer_packing_charge_id(job.id, item['id']), job_id=job.id,
                                 name=f"{item['label']} {choices[item['id']].title()}", description='', sort_order=1000 + index,
                                 subtotal=amount, discount_amount=0, total_cost=amount))
             new_total += amount
     if package_lines is not None:
         for index, line in enumerate(package_lines):
             if touched is not None and line['id'] not in touched: continue
-            db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, line['id']), job_id=job.id,
+            updates.add(LeadJobCharge(id=customer_packing_charge_id(job.id, line['id']), job_id=job.id,
                                 name=line['name'], description=line['description'], sort_order=2000 + index,
                                 subtotal=line['amount'], discount_amount=0, total_cost=line['amount']))
             new_total += line['amount']
         job.customer_packing_package = json.dumps(selection)
     job.customer_packing = json.dumps(choices, sort_keys=True)
+    updates.finish()
     delta = new_total - old_total
     job.price += delta
     for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
