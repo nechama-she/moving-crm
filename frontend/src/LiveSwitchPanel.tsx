@@ -249,7 +249,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
       const res = await request(`${base}/run-spark`, { file_ids: selectedFileIds });
       setConversation(await request(`${base}/conversation`));
       setProcessingRevision(value => value + 1);
-      setSparkNotice("Report requested in LiveSwitch.");
+      setSparkNotice("Report scheduled. LiveSwitch analysis will start in 5 minutes.");
       if (res && res.id) {
         setSparkData({ id: res.id, status: res.status || "queued" });
       }

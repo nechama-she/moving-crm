@@ -448,6 +448,7 @@ def stage_selected_media(lead_id, body, db, actor_id=None):
 def generate_uploaded_report(lead_id, body, db):
     from models import PublicMoveUpload, LeadJob
     from spark_history import REPORT_KEYS
+    from uuid import uuid4
     db.query(Lead).filter_by(id=lead_id).with_for_update().one()
     files = selected_media(lead_id, body, db)
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
@@ -465,17 +466,12 @@ def generate_uploaded_report(lead_id, body, db):
         if failures:
             raise HTTPException(409, 'Upload failed for ' + ', '.join(failures) + '. Click Upload to LiveSwitch to retry.')
         raise HTTPException(409, 'The selected files have not finished uploading to LiveSwitch. Please try Generate Report again after the upload finishes.')
-    remaining = 300 - (datetime.utcnow() - max(row.synced_at for row in rows)).total_seconds()
-    if remaining > 0:
-        import math
-        raise HTTPException(409, f'Files were sent. Allow LiveSwitch {math.ceil(remaining)} more seconds to prepare the media, then click Generate Report.')
+    if not os.getenv('PUBLIC_MOVE_SYNC_QUEUE_URL', '').strip():
+        raise HTTPException(503, 'Report worker is not configured.')
     template_id = body.get('sparkTemplateId') or _connection_config().get('spark_template_id')
     if not template_id:
         raise HTTPException(400, 'No Spark template is configured. Choose one in Settings.')
     payload = {'sparkTemplateId': template_id, 'shareWith': ['anyone']}
-    result = _api_post(f"conversations/{media['conversation']['id']}/sparks", payload)
-    if not result.get('id'):
-        raise HTTPException(502, 'LiveSwitch did not return a report ID.')
     remember_report(details)
     details['carried_question_state'] = details.get('carried_question_state') or {key: details[key] for key in ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot') if key in details}
     for key in REPORT_KEYS:
@@ -489,19 +485,20 @@ def generate_uploaded_report(lead_id, body, db):
     job = db.get(LeadJob, access.job_id)
     details.update(report_customer_packing=job.customer_packing, report_customer_package=job.customer_packing_package)
     details.update(media['conversation'])
-    details.update(last_spark_id=result['id'], last_spark_status=result.get('status', 'queued'),
+    pending_id = 'pending-' + str(uuid4())
+    details.update(last_spark_id=pending_id, last_spark_status='queued',
                    last_spark_at=int(time.time()), spark_pricing_ready=False,
-                   report_conversation=media['conversation'], report_files=media['files'])
-    media['report_id'] = result['id']
+                   report_conversation=media['conversation'], report_files=media['files'],
+                   pending_spark_payload=payload)
+    media.pop('report_id', None)
     details['media_upload'] = media
     details.pop('upload_error', None)
     remember_report(details)
     saved.details = json.dumps(details)
     access.published_price = access.published_cuft = access.published_at = None
     db.commit()
-    from customer_report_updates import queue_report_check
-    queue_report_check(lead_id, db)
-    return {'id': result['id'], 'status': details['last_spark_status']}
+    start_ready_report(lead_id, db)
+    return {'id': pending_id, 'status': 'queued'}
 
 
 def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = None):
@@ -603,11 +600,11 @@ def start_ready_report(lead_id: str, db: Session):
         saved.details = json.dumps(details)
         db.commit()
         return
-    # Every report uses the same delay, measured from the request or last upload.
+    # Wait five minutes from Generate, or from the last upload when Generate also uploads files.
     import math
     import boto3
-    ready_at = max((row.synced_at for row in rows),
-                   default=datetime.utcfromtimestamp(details['last_spark_at']))
+    ready_at = max([datetime.utcfromtimestamp(details['last_spark_at']),
+                    *(row.synced_at for row in rows)])
     remaining = 300 - (datetime.utcnow() - ready_at).total_seconds()
     if remaining > 0:
         if details.get('spark_start_queued_for') != details.get('last_spark_id'):
@@ -629,6 +626,11 @@ def start_ready_report(lead_id: str, db: Session):
     details.update(last_spark_id=result['id'], last_spark_status=result.get('status', 'queued'),
                    last_spark_at=int(time.time()))
     details.pop('pending_spark_payload', None)
+    details.pop('spark_start_queued_for', None)
+    media = details.get('media_upload') or {}
+    if {row.get('id') for row in media.get('files', [])} == set(file_ids):
+        media['report_id'] = result['id']
+        details['media_upload'] = media
     remember_report(details)
     saved.details = json.dumps(details)
     db.commit()

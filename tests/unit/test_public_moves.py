@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -1584,17 +1585,16 @@ def test_staff_media_upload_cancels_legacy_automatic_start(staff_media_api):
     api['_api_post'].assert_not_called()
 
 
-@pytest.mark.parametrize('state', ['pending', 'failed', 'wrong-token', 'preparing'])
+@pytest.mark.parametrize('state', ['pending', 'failed', 'wrong-token'])
 def test_staff_generate_rejects_incomplete_media_without_uploading(staff_media_api, state):
     api, db, lead, access, saved, queue = staff_media_api
     api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
     row = db.get(models.PublicMoveUpload, 'photo')
     if state == 'failed':
         row.sync_status = 'failed'
-    elif state in ('wrong-token', 'preparing'):
-        row.synced_at = datetime.utcnow() - timedelta(seconds=301 if state == 'wrong-token' else 0)
-        if state == 'wrong-token':
-            row.sync_token = 'another-batch'
+    elif state == 'wrong-token':
+        row.synced_at = datetime.utcnow() - timedelta(seconds=301)
+        row.sync_token = 'another-batch'
     db.commit()
     with pytest.raises(HTTPException) as error:
         api['generate_uploaded_report'](lead.id, {'file_ids': ['photo']}, db)
@@ -1607,16 +1607,27 @@ def test_staff_generate_uses_uploaded_selection_without_uploading(staff_media_ap
     api, db, lead, access, saved, queue = staff_media_api
     api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
     row = db.get(models.PublicMoveUpload, 'photo')
-    row.synced_at = datetime.utcnow() - timedelta(seconds=301)
+    row.synced_at = datetime.utcnow()
     row.sync_status = 'synced'
     db.commit()
     result = api['generate_uploaded_report'](lead.id, {'file_ids': ['photo']}, db)
-    assert result['id'] == 'new-report'
-    api['_api_post'].assert_called_once_with('conversations/media-conversation/sparks',
-        {'sparkTemplateId': 'template', 'shareWith': ['anyone']})
-    assert queue.send_message.call_count == 1
+    assert result['id'].startswith('pending-')
+    api['_api_post'].assert_not_called()
+    assert queue.send_message.call_count == 2
+    start_message = json.loads(queue.send_message.call_args.kwargs['MessageBody'])
+    assert start_message == {'start_report': result['id'], 'lead_id': lead.id}
+    assert 299 <= queue.send_message.call_args.kwargs['DelaySeconds'] <= 300
     assert api['ensure_lead_conversation'].call_count == 1
     assert json.loads(saved.details)['report_files'][0]['id'] == 'photo'
+    state = json.loads(saved.details)
+    state['last_spark_at'] = time.time() - 301
+    saved.details = json.dumps(state)
+    row.synced_at = datetime.utcnow() - timedelta(seconds=301)
+    db.commit()
+    api['start_ready_report'](lead.id, db)
+    api['_api_post'].assert_called_once_with('conversations/media-conversation/sparks',
+        {'sparkTemplateId': 'template', 'shareWith': ['anyone']})
+    assert json.loads(saved.details)['media_upload']['report_id'] == 'new-report'
     api['generate_uploaded_report'](lead.id, {'file_ids': ['photo']}, db)
     assert api['_api_post'].call_count == 1
     db.add(models.LeadAttachment(id='other', lead_id=lead.id, file_name='other.jpg',
@@ -1625,7 +1636,7 @@ def test_staff_generate_uses_uploaded_selection_without_uploading(staff_media_ap
     with pytest.raises(HTTPException, match='Upload this selection'):
         api['generate_uploaded_report'](lead.id, {'file_ids': ['photo', 'other']}, db)
     assert api['_api_post'].call_count == 1
-    assert queue.send_message.call_count == 1
+    assert queue.send_message.call_count == 2
 
 
 def test_customer_file_list_uses_selected_report_snapshot(portal):
