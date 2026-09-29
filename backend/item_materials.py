@@ -106,7 +106,11 @@ def customer_item_materials(plan, inventory, db):
         if not item_id:
             candidates = by_name[key(row.get('name', ''))]
             item_id = candidates[0] if len(candidates) == 1 else None
-        item_assignments = by_item.get(item_id) or defaults
+        item_assignments = by_item.get(item_id)
+        if not item_assignments:
+            if re.search(r'\bbox(?:es)?\b', str(row.get('name') or ''), re.IGNORECASE):
+                continue
+            item_assignments = defaults
         if not item_assignments:
             continue
         matched.add(key(row.get('name', '')))

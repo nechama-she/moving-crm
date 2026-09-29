@@ -142,3 +142,30 @@ def test_multiple_default_materials_have_separate_choices_in_one_item_group():
     assert len({row['id'] for row in rows}) == 2
     assert [row['material_name'] for row in rows] == ['King cover', 'Shrink Wrap']
     assert [(row['labor_price'], row['material_price']) for row in rows] == [(12, 26), (5, 10)]
+
+
+def test_defaults_do_not_apply_to_boxes_but_explicit_box_materials_do():
+    plan, db = setup()
+    db.query.return_value.all.return_value = [
+        SimpleNamespace(id='small-box', name='Small Box (CP)', active=True),
+        SimpleNamespace(id='vase', name='Vase', active=True),
+    ]
+    db.query.return_value.order_by.return_value.all.return_value = db.query.return_value.all.return_value
+    save_material_assignments(plan, ItemMaterialsInput(rows=[], defaults=[
+        dict(material_id='cover', requirement='optional', quantity=1),
+    ]), db)
+    inventory = [
+        dict(item_id='small-box', name='Small Box (CP)', room='Office', amount=2),
+        dict(item_id='medium-box', name='Medium Box (CP)', room='Office', amount=1),
+        dict(item_id='vase', name='Vase', room='Office', amount=1),
+    ]
+
+    rows, _ = customer_item_materials(plan, inventory, db)
+
+    assert [row['label'] for row in rows] == ['Vase']
+
+    save_material_assignments(plan, ItemMaterialsInput(rows=[
+        dict(item_id='small-box', material_id='cover', requirement='optional', quantity=1),
+    ], defaults=[dict(material_id='cover', requirement='optional', quantity=1)]), db)
+    rows, _ = customer_item_materials(plan, inventory, db)
+    assert [row['label'] for row in rows] == ['Small Box (CP) (1)', 'Small Box (CP) (2)', 'Vase']
