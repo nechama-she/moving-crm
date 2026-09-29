@@ -811,10 +811,11 @@ class CustomerPackageSelection(BaseModel):
     item_ids: list[str] = Field(default_factory=list, max_length=1000)
     material_item_ids: list[str] | None = Field(default=None, max_length=1000)
     additional_items: dict[str, CustomerMaterialItem] = Field(default_factory=dict, max_length=100)
+    box_quantities: dict[str, int] = Field(default_factory=dict, max_length=500)
 
 
 class CustomerPackingChange(BaseModel):
-    kind: Literal['additional_protection', 'material', 'mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs', 'long_carry', 'elevator', 'extra_stops']
+    kind: Literal['additional_protection', 'material', 'inventory_boxes', 'mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs', 'long_carry', 'elevator', 'extra_stops']
     material_item: CustomerMaterialItem | None = None
     location: Literal['pickup', 'delivery'] | None = None
     stops: list[str] = Field(default_factory=list, max_length=100)
@@ -840,6 +841,7 @@ class CustomerPackingChange(BaseModel):
     enabled: bool = False
     materials: bool | None = None
     service: Literal['packing', 'crating'] | None = None
+    box_quantities: dict[str, int] = Field(default_factory=dict, max_length=500)
 
 
 class CustomerPackingPatch(BaseModel):
@@ -1005,6 +1007,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                 touched.update(['package:full', 'package:partial'])
                 touched.update(f'box:{item_id}' for item_id in selection.get('item_ids', []))
                 touched.update(f'material:{item_id}' for item_id in selection.get('additional_items', {}))
+                touched.update(f'inventory-box:{item_id}' for item_id in selection.get('box_quantities', {}))
                 selection['mode'] = change.mode
                 if change.mode != 'none':
                     selection['item_ids'] = []
@@ -1023,6 +1026,10 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                     if change.material_item.inventory_id and change.material_item.inventory_id != change.item_id:
                         raise HTTPException(422, 'Inventory item ID must match the selected item.')
                     additional[change.item_id] = change.material_item.model_dump(mode='json')
+            elif change.kind == 'inventory_boxes':
+                touched.update(f'inventory-box:{item_id}' for item_id in selection.get('box_quantities', {}))
+                touched.update(f'inventory-box:{item_id}' for item_id in change.box_quantities)
+                selection['box_quantities'] = change.box_quantities
             elif change.kind == 'unpacking':
                 touched.add('package:unpacking')
                 selection['unpacking'] = change.enabled
@@ -1065,6 +1072,11 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             raise HTTPException(409, 'That packing service is not priced. Refresh your estimate.')
         if not set(selection['item_ids']).issubset({item['id'] for item in package['items']}):
             raise HTTPException(409, 'Your required-box items changed. Refresh your estimate.')
+        box_limits = {item['id']: item['quantity'] for item in package.get('box_items', [])}
+        if any(item_id not in box_limits or quantity < 0 or quantity > box_limits[item_id]
+               for item_id, quantity in selection['box_quantities'].items()):
+            raise HTTPException(409, 'Your box inventory changed. Refresh your estimate.')
+        selection['box_quantities'] = {item_id: quantity for item_id, quantity in selection['box_quantities'].items() if quantity > 0}
         if selection['mode'] != 'none':
             selection['item_ids'] = []
             selection['material_item_ids'] = []
@@ -1087,6 +1099,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         if 'stairs' in previous_package:
             selection['stairs'] = previous_package['stairs']
         package_old_ids = ['package:full', 'package:partial', 'package:unpacking'] + [f'box:{item_id}' for item_id in previous_package.get('item_ids', [])]
+        package_old_ids += [f'inventory-box:{item_id}' for item_id in previous_package.get('box_quantities', {})]
         package_old_ids += [f'material:{item_id}' for item_id in previous_package.get('additional_items', {})]
         try:
             package_lines = customer_package_lines(package, selection)

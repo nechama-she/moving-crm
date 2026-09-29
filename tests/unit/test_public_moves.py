@@ -729,6 +729,68 @@ def test_long_distance_package_inventory_volume_and_materials(portal, packing_pr
     assert db.query(models.LeadJobCharge).count() == 1
 
 
+def test_inventory_boxes_group_by_type_and_price_split_quantity(portal, packing_pricing):
+    _, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    lead.volume = 500
+    job.estimated_materials = json.dumps([
+        {'name': 'Small Box (CP)', 'room': 'Office', 'quantity': 12},
+        {'name': 'Small Box (CP)', 'room': 'Bedroom', 'quantity': 8},
+        {'name': 'Book Box (CP)', 'room': 'Office', 'quantity': 5},
+        {'name': 'Box Spring', 'room': 'Bedroom', 'quantity': 1},
+        {'name': 'Sofa', 'room': 'Living Room', 'quantity': 1},
+    ])
+    service = SimpleNamespace(comments='__ld_packing__:' + json.dumps({'materials': [
+        {'id': 'small', 'name': 'Small Box: 2 Cuft', 'material_price': 10, 'packing_price': 6, 'unpacking_price': 15},
+        {'id': 'book', 'name': 'Book Box: 2 CU', 'material_price': 9, 'packing_price': 5, 'unpacking_price': 15},
+    ]}))
+    plan = SimpleNamespace(services=[service], rates=[], item_materials='[]')
+
+    package = packing_pricing.customer_packing_package(lead, job, db, plan, 'Long Distance')
+
+    assert [(row['label'], row['quantity']) for row in package['box_items']] == [
+        ('Small Box (CP)', 20), ('Book Box (CP)', 5)]
+    small, book = package['box_items']
+    lines = packing_pricing.customer_package_lines(package, {
+        'mode': 'none', 'box_quantities': {small['id']: 7, book['id']: 2}})
+    assert [line['name'] for line in lines] == ['Small Box (CP) Packing', 'Book Box (CP) Packing']
+    assert [line['amount'] for line in lines] == [112, 28]
+    assert '7 of 20' in lines[0]['description']
+    job.customer_packing_package = json.dumps({'mode': 'none', 'box_quantities': {small['id']: 999, 'removed': 3}})
+    refreshed = packing_pricing.customer_packing_package(lead, job, db, plan, 'Long Distance')
+    assert refreshed['selection']['box_quantities'] == {small['id']: 20}
+
+
+def test_inventory_box_quantities_autosave_and_reprice(portal, packing_pricing, monkeypatch):
+    from decimal import Decimal
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    job.price = access.published_price = Decimal('1000')
+    package = {'cubic_feet': 500, 'rates': {}, 'items': [], 'box_items': [{
+        'id': 'small', 'label': 'Small Box', 'quantity': 20, 'available': True,
+        'labor_price': 6, 'material_price': 10,
+    }]}
+    monkeypatch.setattr(packing_pricing, 'customer_packing_options', lambda *args: [])
+    monkeypatch.setattr(packing_pricing, 'customer_packing_package', lambda *args, **kwargs: package)
+    monkeypatch.setitem(sys.modules, 'routes.leads', MagicMock())
+    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    db.commit()
+
+    def save(quantity):
+        return mod.save_customer_packing(mod.CustomerPackingPatch(change={
+            'kind': 'inventory_boxes', 'box_quantities': {'small': quantity} if quantity else {},
+        }), access, db)
+
+    save(3)
+    assert job.price == access.published_price == Decimal('1048')
+    save(7)
+    assert job.price == access.published_price == Decimal('1112')
+    save(0)
+    assert job.price == access.published_price == Decimal('1000')
+    with pytest.raises(HTTPException):
+        save(21)
+
+
 def test_package_save_switch_and_validation(portal, packing_pricing, monkeypatch):
     from decimal import Decimal
     mod, db, lead, access = portal

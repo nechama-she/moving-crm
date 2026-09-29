@@ -207,7 +207,7 @@ export default function CustomerMovePage() {
       setReportState('idle');
     } finally { setBusy(false); }
   }
-  type PricingChange = { kind: 'additional_protection' | 'material' | 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; material_item?:import('./CustomerPackingOptions').AdditionalMaterialItem|null; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
+  type PricingChange = { kind: 'additional_protection' | 'material' | 'inventory_boxes' | 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; material_item?:import('./CustomerPackingOptions').AdditionalMaterialItem|null; box_quantities?:Record<string,number>; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
   const failedPricing = useRef(new Map<string, PricingChange>());
   function savePricingChange(change: PricingChange) {
     const id = `pricing:${change.kind}:${change.location || change.item_id || ''}`;
@@ -254,6 +254,7 @@ export default function CustomerMovePage() {
     }
     else if (next.has_additional_protection !== previous.has_additional_protection) savePricingChange({kind:'additional_protection',enabled:next.has_additional_protection === true});
     else if (next.unpacking !== previous.unpacking) savePricingChange({ kind: 'unpacking', enabled: next.unpacking });
+    else if(JSON.stringify(next.box_quantities||{})!==JSON.stringify(previous.box_quantities||{})) savePricingChange({kind:'inventory_boxes',box_quantities:next.box_quantities||{}});
     else if(JSON.stringify(next.additional_items||{})!==JSON.stringify(previous.additional_items||{})) {
       const id=[...new Set([...Object.keys(next.additional_items||{}),...Object.keys(previous.additional_items||{})])].find(id=>JSON.stringify(next.additional_items?.[id])!==JSON.stringify(previous.additional_items?.[id]));
       if(id)savePricingChange({kind:'material',item_id:id,material_item:next.additional_items?.[id]||null});

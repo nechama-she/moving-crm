@@ -1027,6 +1027,7 @@ def customer_packing_options(lead, job, db, plan=None, move_type=None):
 
 def customer_packing_package(lead, job, db, plan=None, move_type=None, selection_override=None):
     from material_calculation import customer_material_quotes, inventory_material_options
+    from uuid import NAMESPACE_URL, uuid5
     if plan is None:
         move_type, plan = infer_job_move_type(lead, job, db)
     if not plan or not move_type or move_type.lower() == 'local':
@@ -1051,6 +1052,42 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
     from item_materials import customer_item_materials, material_assignments, default_materials
     configured_items, configured_names = customer_item_materials(plan, inventory, db)
     configured_materials = bool(material_assignments(plan, db) or default_materials(plan, db))
+    ignored_box_words = {'box', 'cp', 'cu', 'cuft', 'cf', 'cubic', 'foot', 'feet', 'pack', 'packing', 'item'}
+    def box_words(value):
+        words = []
+        for word in re.findall(r'[a-z]+', str(value).casefold()):
+            word = 'box' if word == 'boxes' else word[:-1] if len(word) > 3 and word.endswith('s') else word
+            if word not in ignored_box_words:
+                words.append(word)
+        return frozenset(words)
+    box_rates = [row for row in card.materials if row.box_capacity_cuft is not None or re.search(r'\bbox(?:es)?\b', row.name, re.IGNORECASE)]
+    inventory_boxes = {}
+    for row in inventory:
+        if not isinstance(row, dict) or not re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b', str(row.get('name') or ''), re.IGNORECASE):
+            continue
+        name = str(row.get('name') or 'Boxes').strip()
+        group_key = _normalize_item_name(name)
+        try:
+            quantity = max(1, int(float(row.get('amount') or row.get('quantity') or 1)))
+        except (TypeError, ValueError):
+            quantity = 1
+        group = inventory_boxes.setdefault(group_key, {'label': name, 'quantity': 0})
+        group['quantity'] += quantity
+    box_items = []
+    for group_key, group in inventory_boxes.items():
+        words = box_words(group['label'])
+        matches = sorted(box_rates, key=lambda rate: (
+            box_words(rate.name) == words,
+            len(box_words(rate.name) & words) / max(1, len(box_words(rate.name) | words)),
+        ), reverse=True)
+        rate = matches[0] if matches and (box_words(matches[0].name) == words or box_words(matches[0].name) & words) else None
+        if rate is None:
+            continue
+        box_items.append({'id': str(uuid5(NAMESPACE_URL, f'inventory-box:{job.id}:{group_key}')),
+                          'label': group['label'], 'quantity': group['quantity'],
+                          'material_name': rate.name, 'available': True,
+                          'labor_price': float(rate.packing_price),
+                          'material_price': float(rate.material_price)})
     occurrences = [(name, str(row.get('room') or '')) for row in inventory if isinstance(row, dict)
                    for name in _material_item_names([row])]
     items = []
@@ -1066,9 +1103,21 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
                           'label': f'{item.name} ({index + 1} of {count})' if count > 1 else item.name,
                           'price': float(item.price), 'labor_price': float(item.labor_price), 'material_price': float(item.material_price)})
     selection = selection_override if selection_override is not None else json.loads(job.customer_packing_package or '{}')
+    if selection_override is None:
+        box_limits = {item['id']: item['quantity'] for item in box_items}
+        saved_box_quantities = {}
+        for item_id, quantity in selection.get('box_quantities', {}).items():
+            try:
+                quantity = int(quantity)
+            except (TypeError, ValueError):
+                continue
+            if item_id in box_limits and quantity > 0:
+                saved_box_quantities[item_id] = min(quantity, box_limits[item_id])
+        selection = {**selection, 'box_quantities': saved_box_quantities}
     known = {_normalize_item_name(row.name) for row in card.items}
     other_inventory = inventory_material_options([row for row in inventory if isinstance(row, dict) and _normalize_item_name(str(row.get('name') or '')) not in known])
     return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': items + configured_items,
+            'box_items': box_items,
             'configured_materials': configured_materials,
             'other_inventory': other_inventory,
             'material_rates': [row.model_dump(mode='json') for row in card.materials],
@@ -1105,6 +1154,18 @@ def customer_package_lines(package, selection):
                 lines.append({'id': f"box:{item['id']}", 'name': f"{item['label']} Boxing",
                               'description': ((f"{item['quantity']:g} x " if item.get('quantity') is not None else '') + f"{item['material_name']}. " if item.get('material_name') else '') + ('Packing labor and materials' if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else 'Packing labor only; customer supplies materials'),
                               'amount': Decimal(str(item.get('labor_price', item['price']))) + (Decimal(str(item.get('material_price', 0))) if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else Decimal(0))})
+    if mode != 'full':
+        quantities = selection.get('box_quantities', {})
+        for item in package.get('box_items', []):
+            quantity = int(quantities.get(item['id'], 0) or 0)
+            if quantity <= 0:
+                continue
+            if item.get('available') is False:
+                raise ValueError(f"Box packing pricing needs review for {item['label']}")
+            unit_price = Decimal(str(item.get('labor_price', 0))) + Decimal(str(item.get('material_price', 0)))
+            lines.append({'id': f"inventory-box:{item['id']}", 'name': f"{item['label']} Packing",
+                          'description': f"Movers pack {quantity} of {item['quantity']} boxes; labor and materials included",
+                          'amount': unit_price * quantity})
     return lines
 
 

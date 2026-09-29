@@ -1,7 +1,8 @@
 import CustomerMaterialItems from './CustomerMaterialItems';
 import ConfiguredPackingItems from './ConfiguredPackingItems';
+import {useEffect,useState} from 'react';
 export type AdditionalMaterialItem = {label:string;inventory_id?:string;protection:'fabric'|'fragile'|'both';item_type:string;variant:string;cubic_feet:number|string|null;screen_inches:number|string|null;quantity:number;service:'self'|'packing'|'materials'};
-export type PackingSelection = { mode: 'full' | 'partial' | 'none'; unpacking: boolean; item_ids: string[]; material_item_ids?: string[];additional_items?:Record<string,AdditionalMaterialItem>;has_additional_protection?:boolean|null };
+export type PackingSelection = { mode: 'full' | 'partial' | 'none'; unpacking: boolean; item_ids: string[]; material_item_ids?: string[];additional_items?:Record<string,AdditionalMaterialItem>;has_additional_protection?:boolean|null;box_quantities?:Record<string,number> };
 export type PackingPackage = {
   cubic_feet: number;
   inventory_cubic_feet?: number;
@@ -9,6 +10,7 @@ export type PackingPackage = {
   rates: Partial<Record<'full' | 'partial' | 'unpacking', { rate: number; total: number }>>;
   configured_materials?:boolean;
   items: { id: string; group_id?:string; label: string; room?: string; packing_material?:'plastic'|'cardboard'; price: number; labor_price?: number; material_price?: number; requirement?:'required'|'optional'; material_name?:string; materials?:{id:string;name:string;quantity:number}[]; quantity?:number; available?:boolean }[];
+  box_items?:{id:string;label:string;quantity:number;material_name:string;available:boolean;labor_price:number;material_price:number}[];
   selection: PackingSelection;
   other_inventory?:(AdditionalMaterialItem & {id:string;name:string;room?:string})[];
   material_quotes?:{id:string;status:string;issues:string[];packing_only:number|null;packing_and_material:number|null}[];
@@ -20,6 +22,13 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
   const inventoryVolume = config.inventory_cubic_feet ?? config.cubic_feet;
   const minimumApplies = inventoryVolume < (config.minimum_cubic_feet ?? 0);
   const materials = selection.material_item_ids ?? selection.item_ids;
+  const boxes=config.box_items||[];
+  const boxQuantities=selection.box_quantities||{};
+  const moverBoxCount=boxes.reduce((sum,item)=>sum+(boxQuantities[item.id]||0),0);
+  const allBoxCount=boxes.reduce((sum,item)=>sum+item.quantity,0);
+  const savedBoxChoice=moverBoxCount===0?'self':moverBoxCount===allBoxCount?'movers':'custom';
+  const [boxChoice,setBoxChoice]=useState<'self'|'movers'|'custom'>(savedBoxChoice);
+  useEffect(()=>setBoxChoice(savedBoxChoice),[savedBoxChoice]);
   const rooms = new Map<string, PackingPackage['items']>();
   for (const item of config.items) {
     const room = item.room?.trim() || 'Other items';
@@ -27,7 +36,9 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
     rooms.get(room)!.push(item);
   }
   const extraTotal=selection.has_additional_protection === false ? 0 : (config.material_quotes||[]).reduce((sum,quote)=>{const service=selection.additional_items?.[quote.id]?.service;return sum+Number(service==='materials'?quote.packing_and_material||0:service==='packing'?quote.packing_only||0:0);},0);
-  const total = selection.mode !== 'none' ? config.rates[selection.mode]?.total || 0 : extraTotal + config.items.filter(item => selection.item_ids.includes(item.id)).reduce((sum, item) => sum + (item.labor_price ?? item.price) + (materials.includes(item.id) ? item.material_price || 0 : 0), 0);
+  const boxTotal=selection.mode==='full'?0:boxes.reduce((sum,item)=>sum+(boxQuantities[item.id]||0)*(item.labor_price+item.material_price),0);
+  const total = (selection.mode !== 'none' ? config.rates[selection.mode]?.total || 0 : extraTotal + config.items.filter(item => selection.item_ids.includes(item.id)).reduce((sum, item) => sum + (item.labor_price ?? item.price) + (materials.includes(item.id) ? item.material_price || 0 : 0), 0))+boxTotal;
+  const setBoxCounts=(counts:Record<string,number>)=>onChange({...selection,box_quantities:counts});
   return <div className="cm-packing-options">
     {stage !== 'protection' && <><div className="cm-packing-heading"><h4>Choose your packing service</h4><div className="cm-packing-volume"><span>{inventoryVolume.toLocaleString()} cu ft</span>{minimumApplies && <small>Minimum billable: {config.minimum_cubic_feet!.toLocaleString()} cu ft</small>}</div></div>
     <div className="cm-packing-choices">
@@ -37,6 +48,24 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
         <small>{mode === 'full' ? 'All belongings, including personal-item boxes. Materials included.' : mode === 'partial' ? 'We box items that require it. Materials included; personal-item boxes excluded.' : (config.items.length ? 'Pack yourself, or choose individual items below.' : 'Pack your belongings yourself.')}</small></span>
       </label>)}
     </div>
+    {boxes.length>0 && selection.mode!=='full' && <section className="cm-box-packing">
+      <h4>Who will pack your boxes?</h4>
+      <p>Your inventory includes <strong>{allBoxCount} boxes</strong>. These quantities reserve truck space; packing is included only when selected here.</p>
+      <div className="cm-box-packing-modes">
+        <label><input type="radio" name="box-packing" checked={boxChoice==='self'} onChange={()=>{setBoxChoice('self');setBoxCounts({});}}/> I will pack all</label>
+        <label><input type="radio" name="box-packing" checked={boxChoice==='movers'} disabled={boxes.some(item=>!item.available)} onChange={()=>{setBoxChoice('movers');setBoxCounts(Object.fromEntries(boxes.map(item=>[item.id,item.quantity])));}}/> Movers pack all</label>
+        <label><input type="radio" name="box-packing" checked={boxChoice==='custom'} onChange={()=>setBoxChoice('custom')}/> Choose by box type</label>
+      </div>
+      {boxChoice==='custom' && <div className="cm-box-packing-list">
+        <div className="cm-box-packing-head"><span>Box type</span><span>Total</span><span>Movers pack</span><span>You pack</span></div>
+        {boxes.map(item=>{const movers=boxQuantities[item.id]||0;return <div className="cm-box-packing-row" key={item.id}>
+          <span><strong>{item.label}</strong>{item.available?<small>{money(item.labor_price+item.material_price)} each</small>:<small>Pricing unavailable</small>}</span>
+          <span>{item.quantity}</span>
+          <input aria-label={`Boxes packed by movers for ${item.label}`} type="number" min="0" max={item.quantity} step="1" disabled={disabled||!item.available} value={movers} onChange={event=>{const quantity=Math.max(0,Math.min(item.quantity,Number.parseInt(event.target.value||'0',10)||0));setBoxCounts({...boxQuantities,[item.id]:quantity});}}/>
+          <span>{item.quantity-movers}</span>
+        </div>})}
+      </div>}
+    </section>}
     </>}
     {stage !== 'service' && selection.mode === 'none' && <>
     {config.configured_materials ? <>

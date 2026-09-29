@@ -41,7 +41,7 @@ class ItemMaterialsInput(BaseModel):
 
 
 def material_configuration(plan):
-    saved = json.loads(plan.item_materials or '[]')
+    saved = json.loads(getattr(plan, 'item_materials', None) or '[]')
     return saved if isinstance(saved, dict) else {'rows': saved, 'defaults': []}
 
 
