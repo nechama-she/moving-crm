@@ -80,7 +80,14 @@ phases:
 
 artifacts:
   files:
-    - "**/*"
+    # Deploy only consumes the compiled frontend and the small set of backend
+    # files used by migrate.py / ensure_seed_data. Do not transfer node_modules,
+    # tests, source maps, or the rest of the repository between pipeline stages.
+    - "deployspec.yml"
+    - "frontend/dist/**/*"
+    - "backend/*.py"
+    - "backend/data/**/*"
+    - "backend/deploy-requirements.txt"
   base-directory: .
 
 cache:
