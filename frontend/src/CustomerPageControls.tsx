@@ -17,38 +17,38 @@ function readPage(url:string, token:string | null) {
 }
 type Page={url:string;rep_url?:string;revoked:boolean;requests:{id:string;status:string;scheduled_at:string;rep_name:string;availability:string}[]};
 function ActionIcon({kind}:{kind:'copy'|'sms'|'revoke'|'restore'}){return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">{kind==='copy'?<><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></>:kind==='sms'?<path d="M4 3h16v13H9l-5 5V3Z M8 7h8M8 11h6"/>:kind==='restore'?<><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6"/><path d="m9 13 2 2 4-4"/></>:<><circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/></>}</svg>}
-export default function CustomerPageControls({leadId,section='meeting',onFilesBusyChange,onSelectionChange}:{leadId:string;section?:'links'|'files'|'meeting';onFilesBusyChange?:(busy:boolean)=>void;onSelectionChange?:(ids:string[])=>void}){
+export default function CustomerPageControls({leadId,section='meeting',onFilesBusyChange,onSelectionChange,refreshRevision=0,disabled=false}:{leadId:string;section?:'links'|'files'|'meeting';onFilesBusyChange?:(busy:boolean)=>void;onSelectionChange?:(ids:string[])=>void;refreshRevision?:number;disabled?:boolean}){
  const {token}=useAuth();const [data,setData]=useState<Page>(),[files,setFiles]=useState<EditableReportFile[]>([]),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
  const [selectedIds,setSelectedIds]=useState<string[]>([]);
  const [importFiles,setImportFiles]=useState<EditableReportFile[]|null>(null);
  const [importIds,setImportIds]=useState<string[]>([]);
  const [importSearch,setImportSearch]=useState('');
+ const currentFiles=useRef<EditableReportFile[]>([]);
+ const currentSelection=useRef<string[]>([]);
+ const mediaRevision=useRef(0);
+ function selectFiles(ids:string[]){currentSelection.current=ids;setSelectedIds(ids);onSelectionChange?.(ids);}
+ function updateFiles(incoming:EditableReportFile[],replace=false){
+   mediaRevision.current+=1;
+   const previous=currentFiles.current;
+   const incomingById=new Map(incoming.map(file=>[file.id,file]));
+   const added=[...incomingById.values()].filter(file=>!previous.some(row=>row.id===file.id));
+   const next=[...previous.filter(file=>!replace||incomingById.has(file.id)).map(file=>incomingById.get(file.id)||file),...added];
+   currentFiles.current=next;setFiles(next);
+   selectFiles([...currentSelection.current.filter(id=>next.some(file=>file.id===id)),...added.map(file=>file.id)]);
+ }
+ function filesBusy(value:boolean){setBusy(value);onFilesBusyChange?.(value);}
+ const base=`${API_BASE}/api/leads/${leadId}/customer-page`;
+ useEffect(()=>{if(!token)return;let disposed=false;const controller=new AbortController();const revision=mediaRevision.current;async function load(){try{const result=await (section==='files'?fetch(`${base}/media`,{headers:authHeaders(token),cache:'no-store',signal:controller.signal}).then(async response=>{if(!response.ok)throw new Error('Could not load media');return response.json();}):readPage(base,token)) as Page & {files:EditableReportFile[]} | null;if(disposed||!result)return;if(section==='files'){if(revision===mediaRevision.current)updateFiles(result.files,true);}else setData(result);}catch{if(!disposed&&revision===mediaRevision.current)setNotice('Could not load this section. Close and reopen this panel to retry.');}}void load();return()=>{disposed=true;controller.abort();};},[base,token,section,refreshRevision]);
  async function openFileImport(){
-   setNotice('');
+   filesBusy(true);setNotice('');
    try{const response=await fetch(`${base}/importable-files`,{headers:authHeaders(token)});const result=await response.json();if(!response.ok)throw new Error(result.detail||'Could not load lead files');setImportFiles(result.files);setImportIds([]);setImportSearch('');}
-   catch(e){setNotice((e as Error).message);}
+   catch(error){setNotice((error as Error).message);}finally{filesBusy(false);}
  }
  async function importSelectedFiles(){
-   setBusy(true);
-   try{const response=await fetch(`${base}/import-files`,{method:'POST',headers:{...authHeaders(token),'Content-Type':'application/json'},body:JSON.stringify({file_ids:importIds})});const result=await response.json();if(!response.ok)throw new Error(result.detail||'Could not import files');setFiles(current=>[...current,...result.files.filter((file:EditableReportFile)=>!current.some(row=>row.id===file.id))]);setImportFiles(null);}
-   catch(e){setNotice((e as Error).message);}finally{setBusy(false);}
+   filesBusy(true);setNotice('');
+   try{const response=await fetch(`${base}/import-files`,{method:'POST',headers:{...authHeaders(token),'Content-Type':'application/json'},body:JSON.stringify({file_ids:importIds})});const result=await response.json();if(!response.ok)throw new Error(result.detail||'Could not import files');updateFiles(result.files);setImportFiles(null);}
+   catch(error){setNotice((error as Error).message);}finally{filesBusy(false);}
  }
- const [reportFileIds,setReportFileIds]=useState<string[]>([]);
- const [syncProgress,setSyncProgress]=useState<{awaiting_report:boolean;wait_seconds:number|null;synced:number;files:{id:string;name:string;status:string;error:string;synced_at?:string|null}[]}|null>(null);
- useEffect(()=>{
-   if(section!=='files' || !token)return;
-   let disposed=false;
-   async function loadStatus(){
-     const result=await readPage(`${API_BASE}/api/leads/${leadId}/customer-page/sync-status`,token);
-     if(!disposed && result)setSyncProgress(result as NonNullable<typeof syncProgress>);
-   }
-   void loadStatus().catch(()=>{});
-   return()=>{disposed=true;};
- },[leadId,token,section]);
- const initialized=useRef(false);
- function selectFiles(ids:string[]){setSelectedIds(ids);onSelectionChange?.(ids);}
- const base=`${API_BASE}/api/leads/${leadId}/customer-page`;
- useEffect(()=>{if(!token)return;let disposed=false;async function load(){try{const d=await readPage(base+(section==='files'?'/sync-status':''),token) as Page & {editable_files?:EditableReportFile[];files:EditableReportFile[];report_file_ids?:string[]} | null;if(disposed||!d)return;if(section==='files'){const available=d.editable_files || d.files;setFiles(available);setReportFileIds(d.report_file_ids || []);if(!initialized.current){initialized.current=true;selectFiles((d.report_file_ids || []).filter(id=>available.some(file=>file.id===id)));}}else setData(d);}catch{ /* A later explicit opening can retry. */ }}void load();return()=>{disposed=true;};},[base,token,section]);
  async function openRepPage(){
    if(busy || data?.revoked)return;
    const tab=window.open('about:blank','_blank');
@@ -83,28 +83,24 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
        const r=await fetch(`${base}/files/${encodeURIComponent(id)}`,{method:'DELETE',headers:authHeaders(token)});
        const result=await r.json();if(!r.ok)throw new Error(result.detail||'Could not delete file');
        removedIds.push(id);
-       setFiles(current=>current.filter(file=>file.id!==id));
-       setSyncProgress(current=>current?{...current,files:current.files.filter(file=>file.id!==id)}:current);
+      mediaRevision.current+=1;
+      currentFiles.current=currentFiles.current.filter(file=>file.id!==id);
+      setFiles(currentFiles.current);
      }
-   }finally{if(removedIds.length)selectFiles(selectedIds.filter(value=>!removedIds.includes(value)));setBusy(false);onFilesBusyChange?.(false);}
+  }finally{if(removedIds.length)selectFiles(currentSelection.current.filter(value=>!removedIds.includes(value)));setBusy(false);onFilesBusyChange?.(false);}
  }
  async function downloadSelected(ids=selectedIds){setNotice('');try{for(const id of ids){const r=await fetch(`${base}/file-download/${encodeURIComponent(id)}`,{headers:authHeaders(token)});const d=await r.json();if(!r.ok || !d.url)throw new Error('Could not download this file.');const link=document.createElement('a');link.href=d.url;link.download=files.find(f=>f.id===id)?.name || 'file';document.body.appendChild(link);link.click();link.remove();}}catch(e){setNotice((e as Error).message);}}
- async function importChatFiles(){setBusy(true);onFilesBusyChange?.(true);setNotice('Importing chat files...');let imported=0,failed=0;try{let next:{conversation:number;cursor:unknown}={conversation:0,cursor:null};while(true){const response=await fetch(`${base}/import-chat-files`,{method:'POST',headers:{...authHeaders(token),'Content-Type':'application/json'},body:JSON.stringify(next)});const result=await response.json();if(!response.ok)throw new Error(result.detail || 'Could not import chat files');imported+=result.imported || 0;failed+=result.failed || 0;setNotice(`Importing chat files: ${imported} saved...`);if(result.done)break;next={conversation:result.conversation,cursor:result.cursor};}const response=await fetch(`${base}/sync-status`,{headers:authHeaders(token)});if(response.ok){const result=await response.json();setFiles(result.editable_files || []);}setNotice(`${imported} chat files imported.${failed ? ` ${failed} could not be saved; the source may be unavailable or the file too large.` : ''}`);}catch(e){setNotice((e as Error).message);}finally{setBusy(false);onFilesBusyChange?.(false);}}
+ async function importChatFiles(){filesBusy(true);setNotice('Importing chat files...');let imported=0,failed=0;try{let next:{conversation:number;cursor:unknown}={conversation:0,cursor:null};const seen=new Set<string>();while(true){const cursor=JSON.stringify(next);if(seen.has(cursor))throw new Error('Chat import stopped because the server repeated the same page.');seen.add(cursor);const response=await fetch(`${base}/import-chat-files`,{method:'POST',headers:{...authHeaders(token),'Content-Type':'application/json'},body:JSON.stringify(next)});const result=await response.json();if(!response.ok)throw new Error(result.detail || 'Could not import chat files');imported+=result.imported || 0;failed+=result.failed || 0;if(result.done)break;next={conversation:result.conversation,cursor:result.cursor};}const response=await fetch(`${base}/media`,{headers:authHeaders(token)});if(!response.ok)throw new Error('Could not reload imported chat files.');updateFiles((await response.json()).files,true);setNotice(`${imported} chat files imported.${failed ? ` ${failed} could not be saved; the source may be unavailable or the file too large.` : ''}`);}catch(e){setNotice((e as Error).message);}finally{filesBusy(false);}}
  if(section==='files') {
-   const current=files.filter(file=>reportFileIds.includes(file.id));
-   const available=files.filter(file=>!reportFileIds.includes(file.id));
    const preview=async (id:string)=>{const response=await fetch(`${base}/file-preview/${encodeURIComponent(id)}`,{headers:authHeaders(token)});return response.ok?(await response.json()).url:null;};
-  const group=(rows:EditableReportFile[],title:string)=> <ReportFileGallery title={title} newFileIds={available.map(file=>file.id)} uploadStatus={Object.fromEntries((syncProgress?.files||[]).map(file=>[file.id,file]))} selectedIds={selectedIds.filter(id=>rows.some(file=>file.id===id))} onSelectionChange={ids=>selectFiles([...selectedIds.filter(id=>!rows.some(file=>file.id===id)),...ids])} onDownload={()=>void downloadSelected(selectedIds.filter(id=>rows.some(file=>file.id===id)))} files={rows} onRemoveSelected={removeFiles} disabled={busy} loadPreview={preview}/>;
    return <div className="crm-report-gallery">
-     <div className="crm-gallery-current"><h4>Files in the current report</h4><p>Already included. Keep selected to include them in your next report.</p>{current.length?group(current,'Current report files'):<p>No files in the current report yet.</p>}</div>
-     <div className="crm-gallery-available"><h4>Available files to add</h4><LiveSwitchImport leadingAction={<><button type="button" className="slds-button" disabled={busy} onClick={()=>void openFileImport()}>Import from files</button><button type="button" className="slds-button" disabled={busy} onClick={()=>void importChatFiles()}>Import chat files</button></>} leadId={leadId} onImported={file=>setFiles(current=>current.some(row=>row.id===file.id)?current:[...current,file])}/>
-       {importFiles && <section aria-label="Import lead files">
-         <input type="search" className="slds-input" placeholder="Search lead files" aria-label="Search lead files" value={importSearch} onChange={e=>setImportSearch(e.target.value)}/>
-         <div style={{maxHeight:320,overflow:'auto',margin:'10px 0'}}>{importFiles.length ? <ReportFileGallery title="Lead files" files={importFiles.filter(file=>file.name.toLowerCase().includes(importSearch.toLowerCase()))} selectedIds={importIds} onSelectionChange={setImportIds} loadPreview={preview} disabled={busy}/> : <p>No more lead files to import.</p>}</div>
-         <button type="button" className="slds-button" disabled={busy} onClick={()=>setImportFiles(null)}>Cancel</button><button type="button" className="slds-button" disabled={busy||!importIds.length} onClick={()=>void importSelectedFiles()}>Import selected ({importIds.length})</button>
-       </section>}
-       <p>Not in the current report. Select the files you want to send to LiveSwitch.</p>{available.length?group(available,'Available files'):<p>No additional files available.</p>}</div>
-     <p role="status"><strong>{selectedIds.length} files selected for the next report</strong></p>
+     <LiveSwitchImport disabled={disabled||busy} onBusyChange={filesBusy} leadingAction={<><button type="button" className="slds-button" disabled={disabled||busy} onClick={()=>void importChatFiles()}>Import from chat</button><button type="button" className="slds-button" disabled={disabled||busy} onClick={()=>void openFileImport()}>Import from files</button></>} leadId={leadId} onImported={file=>updateFiles([file])}/>
+     {importFiles && <section aria-label="Choose lead files" className="crm-file-import">
+       <input type="search" className="slds-input" placeholder="Search lead files" aria-label="Search lead files" value={importSearch} onChange={event=>setImportSearch(event.target.value)}/>
+       <div style={{maxHeight:320,overflow:'auto',margin:'10px 0'}}><ReportFileGallery title="Lead files" files={importFiles.filter(file=>file.name.toLowerCase().includes(importSearch.toLowerCase()))} selectedIds={importIds} onSelectionChange={setImportIds} loadPreview={preview} disabled={disabled||busy}/></div>
+       <div className="ls-actions"><button type="button" className="slds-button" disabled={disabled||busy} onClick={()=>setImportFiles(null)}>Cancel</button><button type="button" className="slds-button" disabled={disabled||busy||!importIds.length} onClick={()=>void importSelectedFiles()}>Add selected ({importIds.length})</button></div>
+     </section>}
+     <ReportFileGallery title="Report media" selectedIds={selectedIds} onSelectionChange={selectFiles} onDownload={()=>void downloadSelected()} files={files} onRemoveSelected={removeFiles} disabled={disabled||busy} loadPreview={preview}/>
      {notice&&<p role="alert">{notice}</p>}
    </div>;
  }

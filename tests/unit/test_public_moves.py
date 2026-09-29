@@ -934,7 +934,7 @@ def processing_api():
     from spark_processing import SparkProcessingLog
     from spark_history import remember_report, report_history, activate_report
     source = BACKEND / 'routes/liveswitch.py'
-    names = {'_safe_float', 'fetch_and_extract_spark_report', 'apply_spark_results_to_lead', 'get_spark_processing', 'select_spark_report', 'get_report_history', 'trigger_lead_spark', 'start_ready_report'}
+    names = {'_safe_float', 'fetch_and_extract_spark_report', 'apply_spark_results_to_lead', 'get_spark_processing', 'select_spark_report', 'get_report_history', 'trigger_lead_spark', 'start_ready_report', 'selected_media', 'stage_selected_media', 'generate_uploaded_report'}
     nodes = [n for n in ast.parse(source.read_text(encoding='utf-8')).body if getattr(n, 'name', '') in names]
     for node in nodes:
         node.decorator_list = []
@@ -1373,23 +1373,179 @@ def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_a
     assert snapshot['report_files'] == [{'id': 'a', 'name': 'first.jpg'}]
 
 
-def test_staff_panel_import_and_remove_keeps_lead_attachment(portal, monkeypatch):
+def test_staff_panel_remove_keeps_lead_attachment(portal, monkeypatch):
     mod, db, lead, access = portal
     monkeypatch.setattr(mod, 'staff_access', lambda *args: (lead, access))
     attachment = models.LeadAttachment(id='panel-file', lead_id=lead.id, file_name='photo.jpg',
-        file_blob=b'image', file_size=5, content_type='image/jpeg')
+        file_blob=b'image', file_size=5, content_type='image/jpeg', liveswitch_panel_visible=True)
     db.add(attachment)
     db.commit()
-    assert not attachment.liveswitch_panel_visible
-    assert mod.importable_lead_files(lead.id, None, db)['files'][0]['id']=='panel-file'
-    mod.import_lead_files(lead.id, mod.ImportLeadFiles(file_ids=['panel-file']), None, db)
     assert attachment.liveswitch_panel_visible
-    assert mod.importable_lead_files(lead.id, None, db)['files']==[]
     mod.delete_staff_report_file(lead.id, attachment.id, None, db)
     db.refresh(attachment)
     assert not attachment.liveswitch_panel_visible
     assert attachment.file_blob==b'image' and attachment.report_deleted_at is None
-    assert mod.importable_lead_files(lead.id, None, db)['files'][0]['id']=='panel-file'
+
+
+def test_staff_file_import_validates_bytes_and_corrects_type(portal, monkeypatch):
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod, 'staff_access', lambda *args: (lead, access))
+    content = b'\xff\xd8\xffphoto'
+    attachment = models.LeadAttachment(id='photo', lead_id=lead.id, file_name='SmsAttachment-0',
+        file_blob=content, file_size=1, content_type='text/plain')
+    db.add(attachment)
+    db.commit()
+    result = mod.import_lead_files(lead.id, mod.ImportLeadFiles(file_ids=['photo']), None, db)
+    assert result['files'][0]['content_type'] == 'image/jpeg'
+    assert result['files'][0]['size'] == len(content)
+    assert attachment.file_blob == content
+    assert attachment.liveswitch_panel_visible
+    assert mod.importable_lead_files(lead.id, None, db)['files'] == []
+    assert mod.staff_media(lead.id, None, db)['files'] == result['files']
+
+
+def test_staff_file_import_rejects_link_without_content(portal, monkeypatch):
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod, 'staff_access', lambda *args: (lead, access))
+    attachment = models.LeadAttachment(id='link', lead_id=lead.id, file_name='link.jpg',
+        file_blob=b'', file_size=100, content_type='image/jpeg',
+        is_external_link=True, external_url='https://example.test/photo.jpg')
+    db.add(attachment)
+    db.commit()
+    with pytest.raises(HTTPException, match='no stored file content'):
+        mod.import_lead_files(lead.id, mod.ImportLeadFiles(file_ids=['link']), None, db)
+    assert not attachment.liveswitch_panel_visible
+
+
+def test_staff_file_import_validates_s3_bytes(portal, monkeypatch):
+    import io
+    import boto3
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod, 'staff_access', lambda *args: (lead, access))
+    content = b'\x89PNG\r\n\x1a\nphoto'
+    storage = MagicMock()
+    storage.head_object.return_value = {'ContentLength': len(content), 'ContentType': 'application/octet-stream'}
+    stream = io.BytesIO(content)
+    storage.get_object.return_value = {'Body': stream}
+    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: storage)
+    attachment = models.LeadAttachment(id='stored', lead_id=lead.id, file_name='photo',
+        file_blob=b'', file_size=1, content_type='application/octet-stream',
+        is_external_link=True, external_url='s3://bucket/photo', external_source='crm_s3')
+    db.add(attachment)
+    db.commit()
+    result = mod.import_lead_files(lead.id, mod.ImportLeadFiles(file_ids=['stored']), None, db)
+    assert result['files'][0]['content_type'] == 'image/png'
+    assert result['files'][0]['size'] == len(content)
+    assert stream.closed
+
+
+@pytest.fixture
+def staff_media_api(portal, processing_api, monkeypatch):
+    import boto3
+    import customer_report_updates
+    _, db, lead, access = portal
+    monkeypatch.setenv('PUBLIC_MOVE_SYNC_QUEUE_URL', 'https://queue.test/media')
+    queue = MagicMock()
+    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: queue)
+    monkeypatch.setattr(customer_report_updates, 'queue_report_check', MagicMock())
+    api = processing_api
+    api['_connection_config'] = lambda: {'spark_template_id': 'template'}
+    api['_api_post'] = MagicMock(return_value={'id': 'new-report', 'status': 'queued'})
+    api['ensure_lead_conversation'] = MagicMock(return_value={'id': 'media-conversation'})
+    saved = models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+        'id': 'old-conversation', 'last_spark_id': 'old-report', 'last_spark_status': 'completed',
+        'report_files': [{'id': 'old-photo'}]}))
+    db.add(saved)
+    db.add(models.LeadAttachment(id='photo', lead_id=lead.id, file_name='photo.jpg',
+        file_blob=b'\xff\xd8\xffphoto', file_size=8, content_type='application/octet-stream', liveswitch_panel_visible=True))
+    db.commit()
+    return api, db, lead, access, saved, queue
+
+
+def test_staff_media_upload_does_not_generate_and_reuses_batch(staff_media_api):
+    api, db, lead, access, saved, queue = staff_media_api
+    api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
+    state = json.loads(saved.details)
+    assert state['last_spark_id'] == 'old-report'
+    assert state['id'] == 'old-conversation'
+    assert state['report_files'] == [{'id': 'old-photo'}]
+    assert 'pending_spark_payload' not in state
+    message = json.loads(queue.send_message.call_args.kwargs['MessageBody'])
+    assert message['upload_only'] is True
+    assert message['conversation_id'] == 'media-conversation'
+    assert message['attachment_ids'] == ['photo']
+    api['_api_post'].assert_not_called()
+    api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
+    assert queue.send_message.call_count == 1
+    assert api['ensure_lead_conversation'].call_count == 1
+    row = db.get(models.PublicMoveUpload, 'photo')
+    row.sync_status = 'failed'
+    db.commit()
+    api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
+    assert queue.send_message.call_count == 2
+    assert api['ensure_lead_conversation'].call_count == 1
+    api['_api_post'].assert_not_called()
+
+
+def test_staff_media_upload_cancels_legacy_automatic_start(staff_media_api):
+    api, db, lead, access, saved, queue = staff_media_api
+    api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
+    state = json.loads(saved.details)
+    state.update(pending_spark_payload={'sparkTemplateId': 'template'}, last_spark_status='queued', spark_start_queued_for='old-report')
+    saved.details = json.dumps(state)
+    db.commit()
+    api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
+    state = json.loads(saved.details)
+    assert 'pending_spark_payload' not in state
+    assert 'spark_start_queued_for' not in state
+    assert state['last_spark_status'] == 'cancelled'
+    assert state['spark_history'][0]['last_spark_status'] == 'cancelled'
+    assert queue.send_message.call_count == 1
+    api['_api_post'].assert_not_called()
+
+
+@pytest.mark.parametrize('state', ['pending', 'failed', 'wrong-token', 'preparing'])
+def test_staff_generate_rejects_incomplete_media_without_uploading(staff_media_api, state):
+    api, db, lead, access, saved, queue = staff_media_api
+    api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
+    row = db.get(models.PublicMoveUpload, 'photo')
+    if state == 'failed':
+        row.sync_status = 'failed'
+    elif state in ('wrong-token', 'preparing'):
+        row.synced_at = datetime.utcnow() - timedelta(seconds=301 if state == 'wrong-token' else 0)
+        if state == 'wrong-token':
+            row.sync_token = 'another-batch'
+    db.commit()
+    with pytest.raises(HTTPException) as error:
+        api['generate_uploaded_report'](lead.id, {'file_ids': ['photo']}, db)
+    assert error.value.status_code == 409
+    assert queue.send_message.call_count == 1
+    api['_api_post'].assert_not_called()
+
+
+def test_staff_generate_uses_uploaded_selection_without_uploading(staff_media_api):
+    api, db, lead, access, saved, queue = staff_media_api
+    api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
+    row = db.get(models.PublicMoveUpload, 'photo')
+    row.synced_at = datetime.utcnow() - timedelta(seconds=301)
+    row.sync_status = 'synced'
+    db.commit()
+    result = api['generate_uploaded_report'](lead.id, {'file_ids': ['photo']}, db)
+    assert result['id'] == 'new-report'
+    api['_api_post'].assert_called_once_with('conversations/media-conversation/sparks',
+        {'sparkTemplateId': 'template', 'shareWith': ['anyone']})
+    assert queue.send_message.call_count == 1
+    assert api['ensure_lead_conversation'].call_count == 1
+    assert json.loads(saved.details)['report_files'][0]['id'] == 'photo'
+    api['generate_uploaded_report'](lead.id, {'file_ids': ['photo']}, db)
+    assert api['_api_post'].call_count == 1
+    db.add(models.LeadAttachment(id='other', lead_id=lead.id, file_name='other.jpg',
+        file_blob=b'\xff\xd8\xffphoto', file_size=8, content_type='image/jpeg', liveswitch_panel_visible=True))
+    db.commit()
+    with pytest.raises(HTTPException, match='Upload this selection'):
+        api['generate_uploaded_report'](lead.id, {'file_ids': ['photo', 'other']}, db)
+    assert api['_api_post'].call_count == 1
+    assert queue.send_message.call_count == 1
 
 
 def test_customer_file_list_uses_selected_report_snapshot(portal):
@@ -1402,7 +1558,8 @@ def test_customer_file_list_uses_selected_report_snapshot(portal):
     assert mod.details(access, db)['files'] == snapshot
 
 
-def test_file_worker_uses_pinned_conversation_even_if_selection_changes(portal, monkeypatch):
+@pytest.mark.parametrize('upload_only', [False, True])
+def test_file_worker_uses_pinned_conversation_even_if_selection_changes(portal, monkeypatch, upload_only):
     mod, db, lead, access = portal
     attachment = models.LeadAttachment(id='pinned-photo', lead_id=lead.id, job_id=None,
         file_name='SmsAttachment-0', file_blob=b'\xff\xd8\xffimage', file_size=8, content_type='application/octet-stream')
@@ -1428,14 +1585,20 @@ def test_file_worker_uses_pinned_conversation_even_if_selection_changes(portal, 
     put = MagicMock()
     monkeypatch.setattr(worker.httpx, 'put', put)
     message = {'attachment_id': attachment.id, 'access_id': access.id, 'sync_token': 'token',
-               'conversation_id': 'original-conversation'}
+               'conversation_id': 'original-conversation', 'upload_only': upload_only}
     worker.process_file(message, db)
     assert row.synced_at is not None
     assert liveswitch._api_post.call_args.args[0] == 'conversations/original-conversation/upload-urls/images'
     assert liveswitch._api_post.call_args.args[1][0]['contentType'] == 'image/jpeg'
-    liveswitch.start_ready_report.assert_called_once_with(lead.id, db)
+    assert put.call_args.kwargs['content'] == b'\xff\xd8\xffimage'
+    if upload_only:
+        liveswitch.start_ready_report.assert_not_called()
+    else:
+        liveswitch.start_ready_report.assert_called_once_with(lead.id, db)
     worker.process_file(message, db)
     assert put.call_count == 1
+    if upload_only:
+        liveswitch.start_ready_report.assert_not_called()
 
 
 def test_delete_report_file_excludes_it_but_preserves_history(portal):

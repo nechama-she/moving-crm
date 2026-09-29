@@ -70,6 +70,9 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
   const [calculatingPrice, setCalculatingPrice] = useState(false);
   const [reportHistory, setReportHistory] = useState<ReportRun[]>([]);
   const [processingRevision, setProcessingRevision] = useState(0);
+  const [mediaRevision, setMediaRevision] = useState(0);
+  const lastReportStatus = useRef('');
+  const mediaActionRunning = useRef(false);
   const priceRequestRunning = useRef(false);
   const [sparkNotice, setSparkNotice] = useState("");
   const [sparkError, setSparkError] = useState("");
@@ -124,6 +127,10 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
       if (!res.ok) return;
       const json = await res.json();
       if (json && json.spark) {
+        const signature = JSON.stringify(json);
+        if (lastReportStatus.current === signature) return;
+        lastReportStatus.current = signature;
+        setProcessingRevision(value => value + 1);
         const status = String(json.spark.status || "");
         if (json.spark.error) { setSparkError(json.spark.error); setSparkNotice(''); }
         const cuftVal = json.cuft || json.spark.cuft;
@@ -145,7 +152,6 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
 
   const reportUpdatesUnavailable = useReportUpdates(base, token, async () => {
     await loadSparkStatus();
-    setProcessingRevision(value => value + 1);
   });
 
   const loadReportHistory = useCallback(async () => {
@@ -201,8 +207,19 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
   }
 
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
+  async function uploadSelectedMedia() {
+    if (mediaActionRunning.current || busy || !selectedFileIds.length) return;
+    mediaActionRunning.current = true; setBusy(true); setSparkNotice(''); setSparkError('');
+    try {
+      await request(`${base}/upload-media`, { file_ids: selectedFileIds });
+      setSparkNotice('Upload to LiveSwitch started.');
+    } catch (err) {
+      setSparkError(err instanceof Error ? err.message : 'Could not upload selected media.');
+    } finally { mediaActionRunning.current = false; setBusy(false); }
+  }
   async function runSpark() {
-    if (sparkRunning) return;
+    if (mediaActionRunning.current || busy || !selectedFileIds.length) return;
+    mediaActionRunning.current = true;
     setSparkRunning(true);
     setSparkNotice("");
     setSparkError("");
@@ -210,7 +227,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
       const res = await request(`${base}/run-spark`, { file_ids: selectedFileIds });
       setConversation(await request(`${base}/conversation`));
       setProcessingRevision(value => value + 1);
-      setSparkNotice(selectedFileIds.length ? "Copying selected files before generating the report." : "Generating the report on the current conversation.");
+      setSparkNotice("Report requested in LiveSwitch.");
       if (res && res.id) {
         setSparkData({ id: res.id, status: res.status || "queued" });
       }
@@ -221,6 +238,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
     } catch (err) {
       setSparkError(err instanceof Error ? err.message : "Could not run inventory report.");
     } finally {
+      mediaActionRunning.current = false;
       setSparkRunning(false);
     }
   }
@@ -239,11 +257,12 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
     }
   }
   const [customerPageReady,setCustomerPageReady]=useState(hasCustomerPage);
+  const customerPageExists = useRef(hasCustomerPage);
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
       const nextConversation = await request(`${base}/conversation`);
-      if (!hasCustomerPage) await fetch(`${API_BASE}/api/leads/${encodeURIComponent(leadId)}/customer-page/generate`, {
+      if (!customerPageExists.current) await fetch(`${API_BASE}/api/leads/${encodeURIComponent(leadId)}/customer-page/generate`, {
         method: "POST",
         headers: authHeaders(token),
       }).then(async response => {
@@ -253,6 +272,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
         }
       });
       setCustomerPageReady(true);
+      customerPageExists.current = true;
       setConversation(nextConversation);
       setSparkData(current => {
         if (current) return current;
@@ -270,7 +290,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
     }
     catch (err) { setError(err instanceof Error ? err.message : "Could not start LiveSwitch"); }
     finally { setLoading(false); }
-  }, [base, leadId, request, token, hasCustomerPage]);
+  }, [base, leadId, request, token]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     const clampWidth = () => setPanelWidth(width => Math.min(window.innerWidth, Math.max(360, width)));
@@ -333,13 +353,13 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
                 }
                 crm = true; update(item.id, { crm });
               }
-              live = true; // Saved files are copied into the new conversation when a report starts.
-              update(item.id, { live, crm, progress: 100, status: "Saved for next report", error: undefined });
+              live = true;
+              update(item.id, { live, crm, progress: 100, status: "Saved to CRM", error: undefined });
             } catch (err) { update(item.id, { live, crm, status: "Retry", error: err instanceof Error ? err.message : "Upload failed" }); }
           }
         }
       }
-    } finally { running.current = false; setBusy(false); setItems(current => current.filter(item => !item.crm)); setProcessingRevision(value => value + 1); onUploaded(); }
+    } finally { running.current = false; setBusy(false); setItems(current => current.filter(item => !item.crm)); setMediaRevision(value => value + 1); onUploaded(); }
   }
   const completed = items.filter(item => item.crm && item.live).length;
   return createPortal(<div className="ls-backdrop" onClick={() => { if (!busy) onClose(); }}>
@@ -389,16 +409,17 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
         {items.length > 0 && <p role="status">{completed} of {items.length} files uploaded{completed > 0 ? ". Files will be included in the next report." : ""}</p>}
         <div className="ls-files">{items.map(item => <article key={item.id}>{item.preview ? <img src={item.preview} alt=""/> : <span className="ls-file-icon">{item.type.startsWith("video/") ? "Video" : "File"}</span>}<div className="ls-file-content"><strong title={item.name}>{item.name}</strong><small>{(item.file.size / 1024 / 1024).toFixed(1)} MB   {item.status}</small><progress value={item.progress} max={100} aria-label={`${item.name} upload progress`}/>{item.error && <details className="ls-error" style={{ overflowWrap: "anywhere" }}><summary style={{ cursor: "pointer" }}>{item.status === "Cannot upload" ? "Cannot upload" : item.crm ? "LiveSwitch upload failed" : "CRM save failed"} — View error</summary><div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{item.error}</div></details>}</div>{!busy && !item.crm && !item.live && <button className="slds-button" aria-label={`Remove ${item.name}`} onClick={() => setItems(current => current.filter(row => row.id !== item.id))}>&times;</button>}{item.crm && item.live && <span className="ls-success" aria-label="Uploaded">&#10003;</span>}</article>)}</div>
         <div className="ls-actions">
-          <button className="slds-button ls-primary" disabled={busy || !items.some(item => !(item.crm && item.live) && item.status !== "Cannot upload")} onClick={() => void upload()}>{busy ? "Uploading " : items.some(item => item.status === "Retry") ? "Upload / Retry failed" : "Upload files"}</button>
+          <button className="slds-button ls-primary" disabled={busy || sparkRunning || !items.some(item => !(item.crm && item.live) && item.status !== "Cannot upload")} onClick={() => void upload()}>{running.current ? "Uploading " : items.some(item => item.status === "Retry") ? "Upload / Retry failed" : "Upload to CRM"}</button>
           <button className="slds-button" disabled={busy || !items.length} onClick={() => setItems(current => current.filter(item => item.crm || item.live))}>Clear selection</button>
         </div>
-        {customerPageReady && <CustomerPageControls key={`files:${sparkData?.id}:${processingRevision}`} leadId={leadId} section="files" onSelectionChange={setSelectedFileIds} onFilesBusyChange={setBusy}/>}
+        {customerPageReady && <CustomerPageControls key={`files:${leadId}`} leadId={leadId} section="files" refreshRevision={mediaRevision} disabled={busy||sparkRunning||calculatingPrice} onSelectionChange={setSelectedFileIds} onFilesBusyChange={setBusy}/>}
         <div className="ls-actions">
+          <button type="button" className="slds-button" disabled={busy||sparkRunning||calculatingPrice||!selectedFileIds.length} onClick={()=>void uploadSelectedMedia()}>Upload to LiveSwitch</button>
           <button
             type="button"
             className="slds-button ls-primary"
             style={{ marginLeft: "auto", background: "#084e8a" }}
-            disabled={busy || sparkRunning || calculatingPrice}
+            disabled={busy || sparkRunning || calculatingPrice || !selectedFileIds.length}
             onClick={() => void runSpark()}
           >
             {sparkRunning ? "Running Report..." : "Generate Inventory Report"}

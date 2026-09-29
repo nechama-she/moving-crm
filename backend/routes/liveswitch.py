@@ -373,7 +373,136 @@ def run_spark_on_conversation(
 ):
     _ensure_not_dispatch_write(user)
     lead = _get_visible_lead_or_404(lead_id, user, db)
-    return trigger_lead_spark(lead.id, body, db)
+    return generate_uploaded_report(lead.id, body, db)
+
+
+def selected_media(lead_id, body, db):
+    from models import LeadAttachment
+    selected = body.get('file_ids') if isinstance(body, dict) else None
+    if not isinstance(selected, list) or not selected or any(not isinstance(value, str) for value in selected):
+        raise HTTPException(400, 'Select files for this action.')
+    rows = db.query(LeadAttachment).filter(LeadAttachment.lead_id == lead_id,
+        LeadAttachment.id.in_(selected), LeadAttachment.liveswitch_panel_visible.is_(True)).order_by(LeadAttachment.id).all()
+    if {row.id for row in rows} != set(selected):
+        raise HTTPException(400, 'Some selected files are no longer in this gallery.')
+    return rows
+
+
+@router.post('/leads/{lead_id}/upload-media', status_code=202)
+def upload_media(lead_id: str, body: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    return stage_selected_media(lead.id, body, db, user.id)
+
+
+def stage_selected_media(lead_id, body, db, actor_id=None):
+    from models import PublicMoveUpload
+    from public_move_sync import queue_files
+    from report_files import file_list, validate_report_media
+    if not os.getenv('PUBLIC_MOVE_SYNC_QUEUE_URL', '').strip():
+        raise HTTPException(503, 'File upload worker is not configured.')
+    lead = db.query(Lead).filter_by(id=lead_id).with_for_update().one()
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
+    if not access:
+        raise HTTPException(409, 'Open the customer page before uploading media.')
+    files = selected_media(lead_id, body, db)
+    for attachment in files:
+        validate_report_media(attachment)
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
+    details = json.loads(saved.details or '{}') if saved else {}
+    if details.get('pending_spark_payload'):
+        details['last_spark_status'] = 'cancelled'
+        details.pop('pending_spark_payload', None)
+        details.pop('spark_start_queued_for', None)
+        remember_report(details)
+    media = details.get('media_upload') or {}
+    same_files = {file['id'] for file in media.get('files', [])} == {file.id for file in files}
+    reuse = same_files and not media.get('report_id')
+    if not reuse:
+        conversation = ensure_lead_conversation(lead, db, fresh=True)
+        media = {'conversation': conversation, 'files': file_list(files), 'sync_tokens': {}}
+        details['media_upload'] = media
+        if not saved:
+            saved = LeadLiveSwitch(lead_id=lead_id)
+            db.add(saved)
+    saved.details = json.dumps(details)
+    for attachment in files:
+        row = db.get(PublicMoveUpload, attachment.id)
+        if row is None:
+            row = PublicMoveUpload(attachment_id=attachment.id, access_id=access.id, request_id='media-' + attachment.id)
+            db.add(row)
+        if not reuse or row.sync_token != media.get('sync_tokens', {}).get(attachment.id):
+            row.access_id = access.id
+            row.synced_at = None
+            row.sync_status = 'pending'
+            row.sync_token = row.sync_upload_url = row.sync_error = None
+    db.flush()
+    queue_files(access.id, db, actor_id=actor_id, upload_only=True)
+    rows = db.query(PublicMoveUpload).filter(PublicMoveUpload.attachment_id.in_([file.id for file in files])).all()
+    if any(row.sync_status == 'failed' for row in rows):
+        raise HTTPException(502, 'Some files could not be queued. Click Upload to LiveSwitch to retry.')
+    return {'ok': True, 'file_ids': [file.id for file in files]}
+
+
+def generate_uploaded_report(lead_id, body, db):
+    from models import PublicMoveUpload, LeadJob
+    from spark_history import REPORT_KEYS
+    db.query(Lead).filter_by(id=lead_id).with_for_update().one()
+    files = selected_media(lead_id, body, db)
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
+    details = json.loads(saved.details or '{}') if saved else {}
+    media = details.get('media_upload') or {}
+    if {file['id'] for file in media.get('files', [])} != {file.id for file in files}:
+        raise HTTPException(409, 'Upload this selection to LiveSwitch before generating a report.')
+    if details.get('pending_spark_payload'):
+        raise HTTPException(409, 'Upload this selection again to replace the pending automatic report before generating.')
+    if media.get('report_id'):
+        from customer_report_updates import queue_report_check
+        queue_report_check(lead_id, db)
+        return {'id': media['report_id'], 'status': details.get('last_spark_status', 'queued')}
+    rows = db.query(PublicMoveUpload).filter(PublicMoveUpload.attachment_id.in_([file.id for file in files])).all()
+    if len(rows) != len(files) or any(not row.synced_at or row.sync_token != media.get('sync_tokens', {}).get(row.attachment_id) for row in rows):
+        failures = [file.file_name for file in files if any(row.attachment_id == file.id and row.sync_status == 'failed' for row in rows)]
+        if failures:
+            raise HTTPException(409, 'Upload failed for ' + ', '.join(failures) + '. Click Upload to LiveSwitch to retry.')
+        raise HTTPException(409, 'The selected files have not finished uploading to LiveSwitch. Please try Generate Report again after the upload finishes.')
+    remaining = 300 - (datetime.utcnow() - max(row.synced_at for row in rows)).total_seconds()
+    if remaining > 0:
+        import math
+        raise HTTPException(409, f'Files were sent. Allow LiveSwitch {math.ceil(remaining)} more seconds to prepare the media, then click Generate Report.')
+    template_id = body.get('sparkTemplateId') or _connection_config().get('spark_template_id')
+    if not template_id:
+        raise HTTPException(400, 'No Spark template is configured. Choose one in Settings.')
+    payload = {'sparkTemplateId': template_id, 'shareWith': ['anyone']}
+    result = _api_post(f"conversations/{media['conversation']['id']}/sparks", payload)
+    if not result.get('id'):
+        raise HTTPException(502, 'LiveSwitch did not return a report ID.')
+    remember_report(details)
+    details['carried_question_state'] = details.get('carried_question_state') or {key: details[key] for key in ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot') if key in details}
+    for key in REPORT_KEYS:
+        if key != 'carried_question_state':
+            details.pop(key, None)
+    draft = details.get('inventory_draft') or {}
+    details.update(report_list_body=draft.get('body'), report_list_rows=draft.get('rows', []),
+                   report_list_cuft=draft.get('cuft', 0), report_list_weight=draft.get('weight', 0),
+                   manual_rooms=draft.get('rooms', []), report_source='combined' if draft.get('rows') else 'liveswitch')
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
+    job = db.get(LeadJob, access.job_id)
+    details.update(report_customer_packing=job.customer_packing, report_customer_package=job.customer_packing_package)
+    details.update(media['conversation'])
+    details.update(last_spark_id=result['id'], last_spark_status=result.get('status', 'queued'),
+                   last_spark_at=int(time.time()), spark_pricing_ready=False,
+                   report_conversation=media['conversation'], report_files=media['files'])
+    media['report_id'] = result['id']
+    details['media_upload'] = media
+    details.pop('upload_error', None)
+    remember_report(details)
+    saved.details = json.dumps(details)
+    access.published_price = access.published_cuft = access.published_at = None
+    db.commit()
+    from customer_report_updates import queue_report_check
+    queue_report_check(lead_id, db)
+    return {'id': result['id'], 'status': details['last_spark_status']}
 
 
 def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = None):

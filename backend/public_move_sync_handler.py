@@ -42,7 +42,7 @@ def mark_report_upload_failed(db, row):
 def process_file(message, db, dead_letter=False):
     row = locked_upload(db, message)
     if not current_job(row, message):
-        if not dead_letter and row and row.synced_at and row.sync_token == message['sync_token']:
+        if not message.get('upload_only') and not dead_letter and row and row.synced_at and row.sync_token == message['sync_token']:
             access = db.get(PublicMoveAccess, message['access_id'])
             if access:
                 from routes.liveswitch import start_ready_report
@@ -53,6 +53,10 @@ def process_file(message, db, dead_letter=False):
         row.sync_error = 'The background worker could not finish this file. Please retry.'
         db.commit()
         mark_report_upload_failed(db, row)
+        if message.get('upload_only'):
+            access = db.get(PublicMoveAccess, message['access_id'])
+            if access:
+                publish_report_update(access.lead_id)
         return
     access = db.get(PublicMoveAccess, message['access_id'])
     if not access:
@@ -121,7 +125,7 @@ def process_file(message, db, dead_letter=False):
                 stream.close()
         else:
             from routes.leads import _stored_attachment_bytes
-            content = _stored_attachment_bytes(attachment)
+            content = bytes(attachment.file_blob) if attachment.file_blob else _stored_attachment_bytes(attachment)
             if not content:
                 raise ValueError('The saved customer file could not be read.')
             response = httpx.put(row.sync_upload_url, content=content,
@@ -133,8 +137,9 @@ def process_file(message, db, dead_letter=False):
         row.sync_upload_url = None
         db.commit()  # Persist this file now, never at the end of an entire move.
         publish_report_update(access.lead_id)
-        from routes.liveswitch import start_ready_report
-        start_ready_report(access.lead_id, db)
+        if not message.get('upload_only'):
+            from routes.liveswitch import start_ready_report
+            start_ready_report(access.lead_id, db)
     except Exception as exc:
         db.rollback()
         row = locked_upload(db, message)
@@ -161,6 +166,8 @@ def process_file(message, db, dead_letter=False):
                 row.sync_error = 'Customer file sync failed. Please retry.'
             db.commit()
             mark_report_upload_failed(db, row)
+            if message.get('upload_only'):
+                publish_report_update(access.lead_id)
         logger.warning('Customer file sync failed for %s (%s)', message['attachment_id'], type(exc).__name__)
 
 

@@ -20,7 +20,7 @@ async function readResult(response: Response) {
   return result;
 }
 
-export default function LiveSwitchImport({leadId,onImported,leadingAction}:{leadId:string;onImported:(file:EditableReportFile)=>void;leadingAction?:ReactNode}) {
+export default function LiveSwitchImport({leadId,onImported,leadingAction,disabled=false,onBusyChange}:{leadId:string;onImported:(file:EditableReportFile)=>void;leadingAction?:ReactNode;disabled?:boolean;onBusyChange?:(busy:boolean)=>void}) {
   const {token}=useAuth();
   const [status,setStatus]=useState('');
   const [active,setActive]=useState('');
@@ -36,12 +36,12 @@ export default function LiveSwitchImport({leadId,onImported,leadingAction}:{lead
       body:body===undefined?undefined:JSON.stringify(body),signal}));
   }
   async function run(id:string,action:(signal:AbortSignal)=>Promise<void>) {
-    if(operation.current)return;
+    if(operation.current||disabled)return;
     const controller=new AbortController();operation.current=controller;
-    setActive(id);setError('');
+    setActive(id);setError('');onBusyChange?.(true);
     try { await action(controller.signal); }
     catch(error) { if(!controller.signal.aborted)setError((error as Error).message); }
-    finally { operation.current=null;if(!controller.signal.aborted)setActive(''); }
+    finally { operation.current=null;if(!controller.signal.aborted){setActive('');onBusyChange?.(false);} }
   }
   async function loadFiles(signal:AbortSignal):Promise<RemoteFile[]> {
     const result=await post(`${base}/liveswitch-files`,signal);
@@ -83,7 +83,7 @@ export default function LiveSwitchImport({leadId,onImported,leadingAction}:{lead
   return <div>
     <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',margin:'8px 0'}}>
     {leadingAction}
-    <button type="button" className="slds-button" disabled={!!active} onClick={()=>void run('list',async signal=>{
+    <button type="button" className="slds-button" disabled={disabled||!!active} onClick={()=>void run('list',async signal=>{
       setStatus('Checking LiveSwitch...');
       const missing=await loadFiles(signal);
       const ready=missing.filter(file=>file.status==='Completed' && file.url);

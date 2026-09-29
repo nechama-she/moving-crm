@@ -40,7 +40,7 @@ export function useReportUpdates(base: string, token: string | null, refresh: ()
         socket = new WebSocket(`${window.__WS_URL__}?token=${encodeURIComponent(socketToken)}`);
         socket.onopen = () => {
           if (stopped) return;
-          failures = 0; setUnavailable(false);
+          setUnavailable(false);
           // Close the gap between the initial load and subscription (also on reconnect).
           void update();
         };

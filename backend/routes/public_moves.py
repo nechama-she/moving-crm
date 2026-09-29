@@ -1688,7 +1688,7 @@ def delete_staff_report_file(lead_id: str, attachment_id: str, user: User = Depe
 
 
 class ImportLeadFiles(BaseModel):
-    file_ids: list[str] = Field(max_length=1000)
+    file_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
 @router.get('/api/leads/{lead_id}/customer-page/importable-files')
@@ -1700,10 +1700,13 @@ def importable_lead_files(lead_id: str, user: User = Depends(get_current_user), 
 
 @router.post('/api/leads/{lead_id}/customer-page/import-files')
 def import_lead_files(lead_id: str, body: ImportLeadFiles, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from report_files import validate_report_media
     staff_access(lead_id, user, db)
     rows = db.query(LeadAttachment).filter(LeadAttachment.lead_id == lead_id, LeadAttachment.id.in_(body.file_ids)).with_for_update().all()
     if {row.id for row in rows} != set(body.file_ids):
         raise HTTPException(404, 'Some selected files are no longer on this lead.')
+    for row in rows:
+        validate_report_media(row)
     for row in rows:
         row.liveswitch_panel_visible = True
     db.commit()
@@ -1774,6 +1777,12 @@ def import_chat_files(lead_id: str, body: ImportChatFilesRequest, user: User = D
     next_conversation = body.conversation if cursor else body.conversation + 1
     return {'done': next_conversation >= len(conversations), 'conversation': next_conversation,
             'cursor': cursor, 'imported': imported, 'failed': failed}
+
+
+@router.get('/api/leads/{lead_id}/customer-page/media')
+def staff_media(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _, access = staff_access(lead_id, user, db)
+    return {'files': file_list([row for row in move_files(access, db, all_lead=True, include_removed=True) if row.liveswitch_panel_visible])}
 
 
 @router.get('/api/leads/{lead_id}/customer-page/sync-status')

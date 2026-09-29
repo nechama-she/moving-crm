@@ -49,21 +49,26 @@ def sync_status(access_id, db):
     }
 
 
-def queue_files(access_id, db, actor_id=None, attachment_id=None):
+def queue_files(access_id, db, actor_id=None, attachment_id=None, upload_only=False):
     queue_url = os.getenv('PUBLIC_MOVE_SYNC_QUEUE_URL', '').strip()
     if not queue_url:
         raise HTTPException(503, 'Customer file sync worker is not configured')
     access = db.get(PublicMoveAccess, access_id)
     conversation = db.get(LeadLiveSwitch, access.lead_id) if access else None
     details = json.loads(conversation.details or '{}') if conversation else {}
-    if details.get('last_spark_id') and not details.get('pending_spark_payload'):
+    media = details.get('media_upload') if upload_only else None
+    if upload_only and not media:
+        raise HTTPException(409, 'Select media to upload first.')
+    if not upload_only and details.get('last_spark_id') and not details.get('pending_spark_payload'):
         return sync_status(access_id, db)
     query = db.query(PublicMoveUpload).filter(
         PublicMoveUpload.access_id == access_id,
         PublicMoveUpload.synced_at.is_(None),
         PublicMoveUpload.sync_status.in_(['pending', 'failed']),
     )
-    if details.get('pending_spark_payload'):
+    if media:
+        query = query.filter(PublicMoveUpload.attachment_id.in_([file['id'] for file in media['files']]))
+    elif details.get('pending_spark_payload'):
         query = query.filter(PublicMoveUpload.attachment_id.in_([f['id'] for f in details.get('report_files', [])]))
     if attachment_id:
         query = query.filter(PublicMoveUpload.attachment_id == attachment_id)
@@ -77,16 +82,24 @@ def queue_files(access_id, db, actor_id=None, attachment_id=None):
     access = db.get(PublicMoveAccess, access_id)
     conversation = db.get(LeadLiveSwitch, access.lead_id) if access else None
     conversation_id = json.loads(conversation.details or '{}').get('id') if conversation else None
+    if media:
+        conversation_id = media['conversation']['id']
     for row in rows:
         row.sync_token = token
         row.sync_status = 'queued'
         row.sync_error = None
+        if media:
+            media.setdefault('sync_tokens', {})[row.attachment_id] = token
+    if media:
+        details['media_upload'] = media
+        conversation.details = json.dumps(details)
     try:
         # One small queue message even for hundreds of files. The worker fans it
         # out into one-file jobs, outside the HTTP request's time limit.
         sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps({
             'access_id': access_id, 'attachment_ids': [row.attachment_id for row in rows],
             'sync_token': token, 'actor_id': actor_id, 'conversation_id': conversation_id,
+            'upload_only': upload_only,
         }))
     except Exception:
         logger.exception('Could not queue customer files for access %s', access_id)

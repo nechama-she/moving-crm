@@ -29,6 +29,35 @@ def file_list(rows):
     return [{'id': row.id, 'name': row.file_name, 'size': row.file_size, 'content_type': row.content_type} for row in rows]
 
 
+def validate_report_media(row):
+    import boto3
+    from urllib.parse import urlparse
+    from media_type import detected_media_type
+    location = urlparse(row.external_url or '')
+    try:
+        if location.scheme == 's3':
+            storage = boto3.client('s3')
+            metadata = storage.head_object(Bucket=location.netloc, Key=location.path.lstrip('/'))
+            size = metadata['ContentLength']
+            stream = storage.get_object(Bucket=location.netloc, Key=location.path.lstrip('/'), Range='bytes=0-63')['Body']
+            try:
+                header = stream.read(64)
+            finally:
+                stream.close()
+            declared_type = row.content_type or metadata.get('ContentType')
+        else:
+            content = bytes(row.file_blob or b'')
+            size, header = len(content), content[:64]
+            declared_type = row.content_type
+    except Exception as exc:
+        raise HTTPException(502, f'Could not read {row.file_name} from CRM storage. Please retry.') from exc
+    if not size or not header:
+        raise HTTPException(400, f'{row.file_name} has no stored file content. Upload the original file to the CRM first.')
+    detected = detected_media_type(header, 'application/octet-stream')
+    row.content_type = detected if detected != 'application/octet-stream' else (declared_type or 'application/octet-stream').split(';')[0].strip().lower()
+    row.file_size = size
+
+
 def preview_report_file(access, attachment_id, db, download=False, all_lead=False, include_removed=False):
     import base64
     import boto3
