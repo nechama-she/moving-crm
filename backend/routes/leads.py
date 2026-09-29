@@ -2489,6 +2489,7 @@ def _serialize_job_with_addresses(job: LeadJob, db: Session) -> dict:
     payload = job.to_dict()
     selection = json.loads(job.customer_packing_package or '{}')
     payload['pricing_error'] = selection.get('pricing_save_error', '') if selection.get('pricing_pending') else ''
+    payload['pricing_error'] = job.price_refresh_error or payload['pricing_error']
     pickup, stops, delivery = _read_job_route(db, job)
     payload["pickup_zip"] = pickup
     payload["delivery_zip"] = delivery
@@ -2514,6 +2515,10 @@ def list_lead_jobs(
     if user.role == "foreman":
         rows_query = rows_query.filter(LeadJob.foreman_id == user.id)
     rows = rows_query.order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc()).all()
+    if user.role != 'foreman':
+        from price_validity import refresh_expired_price
+        for row in rows:
+            refresh_expired_price(lead, row, db)
     return {"items": [_serialize_job_with_addresses(row, db) for row in rows]}
 
 
@@ -2670,6 +2675,8 @@ def save_lead_job_price(
     db.query(Lead).filter(Lead.id == lead_id).with_for_update().one()
     _replace_job_charges(row, charges, db)
     row.price = body.price
+    row.price_calculated_at = datetime.utcnow()
+    row.price_refresh_error = None
     _refresh_lead_estimated_total(lead_id, db)
     lead_obj = db.get(Lead, lead_id)
     access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()

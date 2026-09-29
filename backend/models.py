@@ -499,6 +499,9 @@ class LeadJob(Base):
     estimated_materials = Column(Text)
     customer_packing = Column(Text)
     customer_packing_package = Column(Text)
+    price_calculated_at = Column(DateTime)
+    price_refresh_attempted_at = Column(DateTime)
+    price_refresh_error = Column(Text)
     price = Column(Numeric(12, 2))
     stop_types = Column(Text)
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
@@ -827,6 +830,7 @@ class PricingPlan(Base):
     source_sheet = Column(String(255), nullable=False, default="")
     pickup_regions = Column(Text, nullable=False, default="")
     fuel_percent = Column(Numeric(7, 3))
+    price_valid_days = Column(Integer, nullable=False, default=7, server_default='7')
     active = Column(Boolean, nullable=False, default=True)
     sort_order = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), default=_now)
@@ -855,6 +859,7 @@ class PricingPlan(Base):
             "pickup_regions": pickup_summary(self.pickup_regions),
             "pickup_areas": pickup_areas(self.pickup_regions),
             "fuel_percent": float(self.fuel_percent) if self.fuel_percent is not None else None,
+            "price_valid_days": self.price_valid_days,
             "active": bool(self.active),
             "rate_count": len(self.rates),
             "rule_count": len(self.rules),

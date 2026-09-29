@@ -245,6 +245,7 @@ class ServiceInput(BaseModel):
 
 class PlanUpdate(BaseModel):
     name: str
+    price_valid_days: int = Field(default=7, ge=1, le=3650)
     pickup_regions: str = ""
     pickup_areas: list[PickupArea] | None = Field(default=None, max_length=51)
     fuel_percent: float | None = Field(default=None, ge=0, le=100)
@@ -1377,6 +1378,9 @@ def add_customer_packing_charges(lead, job, db, plan, move_type):
 def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> float | None:
     if not lead or not job:
         return None
+    from price_validity import price_is_locked
+    if price_is_locked(lead, job):
+        return float(job.price) if job.price is not None else None
     vol = _rounded_cubic_feet(lead.volume)
     if vol <= 0:
         return None
@@ -1475,6 +1479,8 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         selection = json.loads(job.customer_packing_package or '{}')
         selection.pop('pricing_pending', None)
         job.customer_packing_package = json.dumps(selection)
+        job.price_calculated_at = datetime.utcnow()
+        job.price_refresh_error = None
         return float(job.price)
 
     else:
@@ -1560,6 +1566,8 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         selection = json.loads(job.customer_packing_package or '{}')
         selection.pop('pricing_pending', None)
         job.customer_packing_package = json.dumps(selection)
+        job.price_calculated_at = datetime.utcnow()
+        job.price_refresh_error = None
         return float(job.price)
 
 
@@ -1675,6 +1683,7 @@ def update_pricing_plan(
     else:
         plan.pickup_regions = body.pickup_regions.strip()
     plan.fuel_percent = body.fuel_percent
+    plan.price_valid_days = getattr(body, 'price_valid_days', 7)
     plan.active = body.active
     retained_rules = []
     for index, (existing, row) in enumerate(rule_updates):

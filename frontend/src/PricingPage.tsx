@@ -18,7 +18,7 @@ import { authHeaders, useAuth } from "./AuthContext";
 
 type PlanSummary = {
   id: string; company_name: string; name: string; pickup_regions: string; pickup_areas?: PickupArea[];
-  fuel_percent: number | null; rate_count: number; rule_count: number;
+  fuel_percent: number | null; price_valid_days: number; rate_count: number; rule_count: number;
   service_count: number; updated_at: string;
 };
 type Rule = { id?: string; category: string; title: string; description: string };
@@ -582,6 +582,7 @@ export default function PricingPage() {
           name: draft.name, pickup_regions: draft.pickup_regions,
           pickup_areas: draft.pickup_areas?.map(area => ({ ...area, zip_codes: area.zip_codes.map(zip => zip.trim()).filter(Boolean) })),
           fuel_percent: draft.fuel_percent, active: draft.active,
+          price_valid_days: draft.price_valid_days ?? 7,
           rules: draft.rules,
           rates: draft.rates.map(row => ({ ...row, id: pendingRateGroups.some(ids => row.id && ids.includes(row.id)) ? undefined : row.id })),
           services: withMaterials(draft.services),
@@ -747,6 +748,7 @@ export default function PricingPage() {
                   <p>{active.pickup_regions || "Pickup coverage is described in the rules below."}</p>
                 </div>
                 <div className="pricing-kpis">
+                  <div><span>Price valid for (days)</span>{editing ? <input aria-label="Price valid for (days)" type="number" min="1" max="3650" step="1" value={active.price_valid_days ?? 7} onChange={event => patchDraft({ price_valid_days: Number(event.target.value) })} /> : <strong>{active.price_valid_days ?? 7}</strong>}</div>
                   <div><span>Fuel</span>{editing ? <input type="number" step="0.1" value={active.fuel_percent ?? ""} onChange={(e) => patchDraft({ fuel_percent: e.target.value === "" ? null : Number(e.target.value) })} /> : <strong>{active.fuel_percent == null ? "See rules" : `${active.fuel_percent}%`}</strong>}</div>
                   <div><span>Destinations</span><strong>{destinations.length}</strong></div>
                   <div><span>Services</span><strong>{active.services.length}</strong></div>

@@ -527,6 +527,11 @@ def _customer_charge_description(name: str, desc: str) -> str:
 
 @router.get('/api/public-moves/{access_id}/details')
 def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from price_validity import refresh_expired_price
+    lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
+    if lead and job:
+        refresh_expired_price(lead, job, db)
+        db.refresh(access)
     return _move_details(access, db)
 
 
@@ -653,6 +658,7 @@ def _move_details(access, db, *, refresh_report=True):
     if pricing_pending:
         estimate = None
     pricing_error = 'Your changes are saved. An updated estimate is pending because pricing is not available for this route yet.' if pricing_pending else ''
+    pricing_error = job.price_refresh_error or pricing_error
     if pricing_pending:
         pricing_error = json.loads(job.customer_packing_package or '{}').get('pricing_save_error') or pricing_error
     if not is_spark_pending and not report_import_pending and (job.company_id or lead.company_id):
@@ -763,6 +769,9 @@ def recalculate_current_price(access: PublicMoveAccess = Depends(verified), db: 
     job = db.get(LeadJob, access.job_id)
     if not lead or not job or job.lead_id != lead.id:
         raise HTTPException(404, 'Move not found.')
+    from price_validity import price_is_locked
+    if price_is_locked(lead, job):
+        raise HTTPException(409, 'The price is locked for this booked or closed move.')
     with db.begin_nested():
         price = calculate_and_save_lead_job_price(lead, job, db)
         if price is None:
@@ -771,6 +780,8 @@ def recalculate_current_price(access: PublicMoveAccess = Depends(verified), db: 
         selection.pop('pricing_pending', None)
         selection.pop('pricing_save_error', None)
         job.customer_packing_package = json.dumps(selection)
+        job.price_calculated_at = NOW()
+        job.price_refresh_error = None
     db.commit()
     return {'ok': True, 'price': price}
 
