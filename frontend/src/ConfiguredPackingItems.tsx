@@ -4,6 +4,7 @@ export default function ConfiguredPackingItems({config,selection,onChange,disabl
   const materials=selection.material_item_ids??selection.item_ids;
   const money=(value:number)=>value.toLocaleString('en-US',{style:'currency',currency:'USD'});
   return <>
+    <p>Fabric items must be covered with plastic. Fragile items must be boxed in cardboard.</p>
     <p className="cm-step-sub">Choose a service, or leave unchecked to pack it yourself.</p>
     {(['required','optional'] as const).map(requirement=>{
       const items=config.items.filter(item=>(item.requirement||'required')===requirement);
