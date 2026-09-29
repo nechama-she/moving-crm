@@ -1018,7 +1018,7 @@ export default function CustomerMovePage() {
                     <div>
                       <span className="cm-eyebrow">{packingStep === 'items' ? 'MOVING TERMS' : 'EXTRA SERVICES'}</span>
                       <h3 id="packing-title">{packingStep === 'stops' ? 'Extra stops' : packingStep === 'elevator' ? 'Elevator access' : packingStep === 'access' ? 'Truck access' : packingStep === 'stairs' ? 'Stairs' : packingStep === 'storage' ? 'Delivery availability & storage' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : packingSection === 'boxes' ? 'Box packing' : packingSection === 'protection' ? 'Protecting your items' : 'Packing services'}</h3>
-                      <p>{packingStep === 'stops' ? 'Add any other pickup or delivery addresses the movers need to visit.' : packingStep === 'elevator' ? 'Tell us whether the movers will use an elevator at either address.' : packingStep === 'access' ? 'Tell us how closely the truck can access both addresses.' : packingStep === 'stairs' ? 'Outdoor and shared-building stairs at pickup and delivery.' : packingStep === 'storage' ? 'Choose when you can begin receiving your shipment.' : packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : packingSection === 'boxes' ? 'Choose who will pack each box type in your inventory.' : packingSection === 'protection' ? 'Fragile items must be boxed, and fabric items must be wrapped in plastic. Moving blankets are free.' : 'Choose packing services for your move.'}</p>
+                      <p>{packingStep === 'stops' ? 'Add any other pickup or delivery addresses the movers need to visit.' : packingStep === 'elevator' ? 'Tell us whether the movers will use an elevator at either address.' : packingStep === 'access' ? 'Tell us how closely the truck can access both addresses.' : packingStep === 'stairs' ? 'Outdoor and shared-building stairs at pickup and delivery.' : packingStep === 'storage' ? 'Choose when you can begin receiving your shipment.' : packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Choose who will pack or crate each item.' : packingSection === 'boxes' ? 'Choose who will pack each box type in your inventory.' : packingSection === 'protection' ? 'Fragile items must be boxed, and fabric items must be wrapped in plastic. Moving blankets are free.' : 'Choose packing services for your move.'}</p>
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
@@ -1077,40 +1077,35 @@ export default function CustomerMovePage() {
                       answerQueue.current = task.catch(() => {});
                       return task;
                     }} /> : packingStep === 'bulky' ? <>
-                    <p className="cm-step-sub">Unchecked items will be packed by owner. When both services are available, choose one.</p>
-                    <div className="cm-checklist">
+                    <div className="cm-bulky-list">
                       {data.packing_items.map(item => (
-                        <div key={item.id} data-customer-action={`bulky:${item.id}`}>
-                          <label className="cm-check-item">
-                            <input type="checkbox" checked={item.id in packingSelection} onChange={e => {
-                              const checked = e.target.checked;
-                              const service = checked ? item.services[0].kind : null;
-                              savePricingChange({ kind: 'bulky', item_id: item.id, service });
-                              setPackingSelection(prev => {
-                                const next = { ...prev };
-                                if (checked) next[item.id] = item.services[0].kind;
-                                else delete next[item.id];
-                                return next;
-                              });
-                            }} />
-                            <span>{item.label}{item.services.length === 1 && <> &mdash; {item.services[0].kind === 'packing' ? 'Packing' : 'Crating'}: {money(item.services[0].price)}</>}</span>
-                          </label>
-                          <QuestionReferenceImages name={item.name} endpoint={`${base}/question-images`} linkKey={key} session={session} />
-                          {item.id in packingSelection && item.services.length > 1 && (
-                            <fieldset>
-                              <legend>Choose a service for {item.label}</legend>
+                        <div className="cm-bulky-item" key={item.id} data-customer-action={`bulky:${item.id}`}>
+                          <div className="cm-bulky-item-heading">
+                            <QuestionReferenceImages compact name={item.name} endpoint={`${base}/question-images`} linkKey={key} session={session} />
+                            <strong>{item.label}</strong>
+                          </div>
+                          <fieldset className="cm-bulky-services">
+                            <legend className="cm-visually-hidden">Packing choice for {item.label}</legend>
+                            <div className="cm-bulky-service-options">
+                              <label>
+                                <input type="radio" name={`service-${item.id}`} checked={!(item.id in packingSelection)} onChange={() => {
+                                  setPackingSelection(prev => { const next = { ...prev }; delete next[item.id]; return next; });
+                                  savePricingChange({ kind: 'bulky', item_id: item.id, service: null });
+                                }} />
+                                <span>Pack myself</span><strong>{money(0)}</strong>
+                              </label>
                               {item.services.map(service => (
-                                <label key={service.kind} className="cm-check-item">
+                                <label key={service.kind}>
                                   <input type="radio" name={`service-${item.id}`} checked={packingSelection[item.id] === service.kind} onChange={() => { setPackingSelection(prev => ({ ...prev, [item.id]: service.kind })); savePricingChange({ kind: 'bulky', item_id: item.id, service: service.kind }); }} />
-                                  <span>{service.kind === 'packing' ? 'Packing' : 'Crating'} &mdash; {money(service.price)}</span>
+                                  <span>{service.kind === 'packing' ? 'Packing' : 'Crating'}</span><strong>{money(service.price)}</strong>
                                 </label>
                               ))}
-                            </fieldset>
-                          )}
+                            </div>
+                          </fieldset>
                         </div>
                       ))}
                     </div>
-                    <p><strong>Selected services total: {money(data.packing_items.reduce((sum, item) => sum + (item.services.find(service => service.kind === packingSelection[item.id])?.price || 0), 0))}</strong></p>
+                    <div className="cm-bulky-total"><span>Selected services</span><strong>{money(data.packing_items.reduce((sum, item) => sum + (item.services.find(service => service.kind === packingSelection[item.id])?.price || 0), 0))}</strong></div>
                     </> : data.packing_package && <CustomerPackingOptions stage={packingSection} config={data.packing_package} selection={packageSelection} onChange={changePackage} disabled={false} />}
                     {!data.estimate && <p>Your choices will be saved and included when your estimate is ready.</p>}
                     {packingError && <div className="cm-save-error" role="alert"><p>{packingError}</p>{failedPricing.current.size > 0 && <button type="button" className="cm-secondary-btn" disabled={answersSaving} onClick={() => { for (const change of failedPricing.current.values()) savePricingChange(change); }}>{answersSaving ? 'Retrying...' : 'Try again'}</button>}</div>}

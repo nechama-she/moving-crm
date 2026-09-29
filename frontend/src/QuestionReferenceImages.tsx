@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 type Image = { url: string; room: string; name: string; expires_at: number };
-export default function QuestionReferenceImages({ name, room, endpoint, linkKey, session, active = true }: { active?: boolean; name: string; room?: string; endpoint: string; linkKey: string; session: string }) {
+export default function QuestionReferenceImages({ name, room, endpoint, linkKey, session, active = true, compact = false }: { active?: boolean; compact?: boolean; name: string; room?: string; endpoint: string; linkKey: string; session: string }) {
   const [images, setImages] = useState<Image[]>([]);
   const [notice, setNotice] = useState("");
   const [refresh, setRefresh] = useState(0);
@@ -42,5 +42,5 @@ export default function QuestionReferenceImages({ name, room, endpoint, linkKey,
       }).catch(() => { if (!controller.signal.aborted) setNotice("Reference photos are unavailable. You can still answer this question."); });
     return cleanup;
   }, [name, room, endpoint, linkKey, session, refresh, active, tabVisible]);
-  return <>{images.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0 16px" }}>{images.map(image => <a key={image.room + image.url} href={image.url} target="_blank" rel="noopener noreferrer" style={{ maxWidth: "100%" }}><img src={image.url} alt={`${image.name}${image.room ? ` in ${image.room}` : ''}`} loading="lazy" style={{ width: 104, height: 80, objectFit: "cover", borderRadius: 8 }} /><small style={{ display: "block" }}>{image.room}</small></a>)}</div>}{notice && <small role="status">{notice}</small>}</>;
+  return <>{images.length > 0 && <div className={`cm-reference-images${compact ? ' cm-reference-images-compact' : ''}`}>{images.map(image => <a key={image.room + image.url} href={image.url} target="_blank" rel="noopener noreferrer"><img src={image.url} alt={`${image.name}${image.room ? ` in ${image.room}` : ''}`} loading="lazy" /><small>{image.room}</small></a>)}</div>}{notice && <small role="status">{notice}</small>}</>;
 }
