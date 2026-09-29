@@ -35,10 +35,11 @@ function Tile({ file, loadPreview, onOpen }: { file: EditableReportFile; loadPre
     <span className="cm-gallery-name">{loading ? 'Opening...' : openError ? 'Could not open. Click to retry.' : file.name}</span>
   </button>;
 }
-export default function ReportFileGallery({ files, loadPreview, onRemove, disabled, newFileIds = [], selectedIds, onSelectionChange, onDownload, title = "Media" }: {
+export default function ReportFileGallery({ files, loadPreview, onRemove, disabled, newFileIds = [], selectedIds, onSelectionChange, onDownload, uploadStatus, title = "Media" }: {
   title?: string;
   selectedIds?: string[]; onSelectionChange?: (ids: string[]) => void; onDownload?: () => void;
   newFileIds?: string[];
+  uploadStatus?: Record<string, {status:string;error?:string;synced_at?:string|null}>;
   files: EditableReportFile[]; loadPreview: (id: string) => Promise<string | null>; onRemove: (id: string) => Promise<void>; disabled: boolean;
 }) {
   const [removing, setRemoving] = useState('');
@@ -64,6 +65,9 @@ export default function ReportFileGallery({ files, loadPreview, onRemove, disabl
     <div className="cm-gallery-grid">{files.map(file => <div className="cm-gallery-tile" key={file.id}>
       <Tile file={file} loadPreview={loadPreview} onOpen={url => setOpen({ url, name: file.name, type: file.content_type || '' })} />
       {newFileIds.includes(file.id) && <span className="cm-gallery-new" title="New file for the next report">New</span>}
+      {uploadStatus && <div className="cm-gallery-upload-status" role="status" title={uploadStatus[file.id]?.error || (uploadStatus[file.id]?.synced_at ? `Uploaded to LiveSwitch: ${new Date(uploadStatus[file.id].synced_at!).toLocaleString()}` : 'LiveSwitch upload status')}>
+        {uploadStatus[file.id]?.status==='synced' && uploadStatus[file.id]?.synced_at ? <span style={{color:'#18733b'}}>&#10003; Sent</span> : uploadStatus[file.id]?.status==='failed' ? <span style={{color:'#ba0517'}}>Upload failed</span> : uploadStatus[file.id]?.status==='syncing' ? 'Uploading...' : uploadStatus[file.id]?.status==='queued' ? 'Queued' : 'Not sent'}
+      </div>}
       {onSelectionChange ? <input className="cm-gallery-select" type="checkbox" aria-label={`Select ${file.name}`} checked={selectedIds?.includes(file.id) || false} disabled={disabled} onChange={event => onSelectionChange(event.target.checked ? [...(selectedIds || []), file.id] : (selectedIds || []).filter(id => id !== file.id))} /> : <button type="button" className="cm-gallery-delete" title={`Delete ${file.name}`} aria-label={`Delete ${file.name}`} disabled={disabled || !!removing} onClick={() => void remove(file.id)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>}
     </div>)}</div>
     {open && <div className="cm-gallery-lightbox" role="dialog" aria-modal="true" aria-label={open.name} onClick={() => setOpen(undefined)}><button ref={close} type="button" aria-label="Close file preview" onClick={() => setOpen(undefined)}>&times;</button><figure onClick={event => event.stopPropagation()}>{open.type.startsWith('image/') && open.type !== 'image/svg+xml' ? <img src={open.url} alt={open.name} /> : open.type.startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(open.name) ? <video src={open.url} controls playsInline autoPlay tabIndex={0} onError={() => setError('This video format cannot play here. Use Open / download file.')} /> : open.type.startsWith('audio/') ? <audio src={open.url} controls tabIndex={0} /> : open.type === 'application/pdf' ? <iframe src={open.url} title={open.name} /> : <p>Open or download this file using the link below.</p>}

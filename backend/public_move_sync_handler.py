@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from database import SessionLocal
 from models import LeadAttachment, LeadLiveSwitch, PublicMoveAccess, PublicMoveUpload, User
+from realtime import publish_report_update
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,18 @@ def locked_upload(db, message):
 
 def current_job(row, message):
     return row and not row.synced_at and row.sync_token == message['sync_token'] and row.sync_status in ('queued', 'syncing')
+
+
+def mark_report_upload_failed(db, row):
+    access = db.get(PublicMoveAccess, row.access_id)
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first() if access else None
+    details = json.loads(saved.details or '{}') if saved else {}
+    if details.get('pending_spark_payload') and row.attachment_id in {file['id'] for file in details.get('report_files', [])}:
+        details['last_spark_status'] = 'failed'
+        details['upload_error'] = row.sync_error
+        saved.details = json.dumps(details)
+        db.commit()
+        publish_report_update(access.lead_id)
 
 
 def process_file(message, db, dead_letter=False):
@@ -39,12 +52,14 @@ def process_file(message, db, dead_letter=False):
         row.sync_status = 'failed'
         row.sync_error = 'The background worker could not finish this file. Please retry.'
         db.commit()
+        mark_report_upload_failed(db, row)
         return
     access = db.get(PublicMoveAccess, message['access_id'])
     if not access:
         return
     row.sync_status = 'syncing'
     db.commit()
+    publish_report_update(access.lead_id)
     try:
         conversation = db.get(LeadLiveSwitch, access.lead_id)
         if message.get('conversation_id'):
@@ -64,6 +79,18 @@ def process_file(message, db, dead_letter=False):
         attachment = db.get(LeadAttachment, row.attachment_id)
         if not attachment or attachment.lead_id != access.lead_id:
             raise ValueError('The customer file is no longer available on this job.')
+        from media_type import detected_media_type
+        if (attachment.content_type or '').split(';')[0].strip().lower() in ('', 'application/octet-stream', 'binary/octet-stream'):
+            location = urlparse(attachment.external_url or '')
+            if location.scheme == 's3':
+                sample = boto3.client('s3').get_object(Bucket=location.netloc, Key=location.path.lstrip('/'), Range='bytes=0-63')['Body']
+                try:
+                    header = sample.read(64)
+                finally:
+                    sample.close()
+            else:
+                header = bytes(attachment.file_blob or b'')[:64]
+            attachment.content_type = detected_media_type(header, attachment.content_type)
         if not row.sync_upload_url:
             from routes.liveswitch import _api_post
             kind = 'images' if attachment.content_type.startswith('image/') else 'videos' if attachment.content_type.startswith('video/') else 'documents'
@@ -105,6 +132,7 @@ def process_file(message, db, dead_letter=False):
         row.sync_error = None
         row.sync_upload_url = None
         db.commit()  # Persist this file now, never at the end of an entire move.
+        publish_report_update(access.lead_id)
         from routes.liveswitch import start_ready_report
         start_ready_report(access.lead_id, db)
     except Exception as exc:
@@ -132,6 +160,7 @@ def process_file(message, db, dead_letter=False):
             else:
                 row.sync_error = 'Customer file sync failed. Please retry.'
             db.commit()
+            mark_report_upload_failed(db, row)
         logger.warning('Customer file sync failed for %s (%s)', message['attachment_id'], type(exc).__name__)
 
 

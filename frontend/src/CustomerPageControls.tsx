@@ -21,17 +21,16 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
  const {token}=useAuth();const [data,setData]=useState<Page>(),[files,setFiles]=useState<EditableReportFile[]>([]),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
  const [selectedIds,setSelectedIds]=useState<string[]>([]);
  const [reportFileIds,setReportFileIds]=useState<string[]>([]);
- const [syncProgress,setSyncProgress]=useState<{awaiting_report:boolean;wait_seconds:number|null;synced:number;files:{id:string;name:string;status:string;error:string}[]}|null>(null);
+ const [syncProgress,setSyncProgress]=useState<{awaiting_report:boolean;wait_seconds:number|null;synced:number;files:{id:string;name:string;status:string;error:string;synced_at?:string|null}[]}|null>(null);
  useEffect(()=>{
    if(section!=='files' || !token)return;
    let disposed=false;
-   let timer:ReturnType<typeof setTimeout>;
-   async function poll(){
-     try{const result=await readPage(`${API_BASE}/api/leads/${leadId}/customer-page/sync-status`,token);if(!disposed && result)setSyncProgress(result as NonNullable<typeof syncProgress>);}
-     finally{if(!disposed)timer=setTimeout(()=>void poll().catch(()=>{}),5000);}
+   async function loadStatus(){
+     const result=await readPage(`${API_BASE}/api/leads/${leadId}/customer-page/sync-status`,token);
+     if(!disposed && result)setSyncProgress(result as NonNullable<typeof syncProgress>);
    }
-   void poll().catch(()=>{});
-   return()=>{disposed=true;clearTimeout(timer);};
+   void loadStatus().catch(()=>{});
+   return()=>{disposed=true;};
  },[leadId,token,section]);
  const initialized=useRef(false);
  function selectFiles(ids:string[]){setSelectedIds(ids);onSelectionChange?.(ids);}
@@ -66,7 +65,7 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
    const current=files.filter(file=>reportFileIds.includes(file.id));
    const available=files.filter(file=>!reportFileIds.includes(file.id));
    const preview=async (id:string)=>{const response=await fetch(`${base}/file-preview/${encodeURIComponent(id)}`,{headers:authHeaders(token)});return response.ok?(await response.json()).url:null;};
-   const group=(rows:EditableReportFile[],title:string)=> <ReportFileGallery title={title} selectedIds={selectedIds.filter(id=>rows.some(file=>file.id===id))} onSelectionChange={ids=>selectFiles([...selectedIds.filter(id=>!rows.some(file=>file.id===id)),...ids])} onDownload={()=>void downloadSelected(selectedIds.filter(id=>rows.some(file=>file.id===id)))} files={rows} onRemove={removeFile} disabled={busy} loadPreview={preview}/>;
+   const group=(rows:EditableReportFile[],title:string)=> <ReportFileGallery title={title} newFileIds={available.map(file=>file.id)} uploadStatus={Object.fromEntries((syncProgress?.files||[]).map(file=>[file.id,file]))} selectedIds={selectedIds.filter(id=>rows.some(file=>file.id===id))} onSelectionChange={ids=>selectFiles([...selectedIds.filter(id=>!rows.some(file=>file.id===id)),...ids])} onDownload={()=>void downloadSelected(selectedIds.filter(id=>rows.some(file=>file.id===id)))} files={rows} onRemove={removeFile} disabled={busy} loadPreview={preview}/>;
    return <div className="crm-report-gallery">
      {syncProgress?.awaiting_report && <div role="status">
        <strong>{syncProgress.wait_seconds!=null?`Files uploaded. Waiting ${Math.ceil(syncProgress.wait_seconds/60)} min before generating the report.`:`Uploading to LiveSwitch: ${syncProgress.synced} of ${syncProgress.files.length} files complete.`}</strong>

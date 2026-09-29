@@ -1386,7 +1386,7 @@ def test_customer_file_list_uses_selected_report_snapshot(portal):
 def test_file_worker_uses_pinned_conversation_even_if_selection_changes(portal, monkeypatch):
     mod, db, lead, access = portal
     attachment = models.LeadAttachment(id='pinned-photo', lead_id=lead.id, job_id=None,
-        file_name='photo.jpg', file_blob=b'image', file_size=5, content_type='image/jpeg')
+        file_name='SmsAttachment-0', file_blob=b'\xff\xd8\xffimage', file_size=8, content_type='application/octet-stream')
     db.add(attachment)
     db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'id': 'different-conversation'})))
     db.flush()
@@ -1395,7 +1395,7 @@ def test_file_worker_uses_pinned_conversation_even_if_selection_changes(portal, 
     db.add(row)
     db.commit()
     liveswitch = ModuleType('routes.liveswitch')
-    liveswitch._api_post = MagicMock(return_value={'results': [{'fileName': 'pinned-photo-photo.jpg',
+    liveswitch._api_post = MagicMock(return_value={'results': [{'fileName': 'pinned-photo-SmsAttachment-0',
         'presignedUrl': 'https://bucket.s3.amazonaws.com/upload'}]})
     liveswitch.start_ready_report = MagicMock()
     monkeypatch.setitem(sys.modules, 'routes.liveswitch', liveswitch)
@@ -1413,6 +1413,7 @@ def test_file_worker_uses_pinned_conversation_even_if_selection_changes(portal, 
     worker.process_file(message, db)
     assert row.synced_at is not None
     assert liveswitch._api_post.call_args.args[0] == 'conversations/original-conversation/upload-urls/images'
+    assert liveswitch._api_post.call_args.args[1][0]['contentType'] == 'image/jpeg'
     liveswitch.start_ready_report.assert_called_once_with(lead.id, db)
     worker.process_file(message, db)
     assert put.call_count == 1

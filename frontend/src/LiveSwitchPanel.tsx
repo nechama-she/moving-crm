@@ -125,6 +125,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
       const json = await res.json();
       if (json && json.spark) {
         const status = String(json.spark.status || "");
+        if (json.spark.error) { setSparkError(json.spark.error); setSparkNotice(''); }
         const cuftVal = json.cuft || json.spark.cuft;
         const weightVal = json.weight || json.spark.weight;
         setSparkData({

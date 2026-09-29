@@ -432,6 +432,7 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
                    last_spark_at=int(time.time()), spark_pricing_ready=False,
                    report_conversation=conversation, pending_spark_payload=payload,
                    report_files=[{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files])
+    details.pop('upload_error', None)
     remember_report(details)
     if not saved:
         saved = LeadLiveSwitch(lead_id=lead_id)
@@ -828,7 +829,7 @@ def get_lead_spark_status(
                 'cuft': details.get('spark_extracted_cuft'), 'weight': details.get('spark_extracted_weight')}
     if cached_only:
         return {'spark': {'id': spark_id, 'status': details.get('last_spark_status', 'queued'),
-                          'shareUrl': details.get('last_spark_share_url')},
+                          'shareUrl': details.get('last_spark_share_url'), 'error': details.get('upload_error')},
                 'cuft': details.get('spark_extracted_cuft'), 'weight': details.get('spark_extracted_weight')}
     # File transfer must finish before asking LiveSwitch to analyze the new conversation.
     if details.get("pending_spark_payload"):
@@ -836,7 +837,7 @@ def get_lead_spark_status(
         details = json.loads(saved.details)
         spark_id = details.get("last_spark_id")
         if details.get("pending_spark_payload"):
-            return {"spark": {"id": spark_id, "status": details.get("last_spark_status", "queued")}}
+            return {"spark": {"id": spark_id, "status": details.get("last_spark_status", "queued"), "error": details.get('upload_error')}}
     # Poll LiveSwitch for latest status
     try:
         remote = _api_get(f"sparks/{spark_id}")

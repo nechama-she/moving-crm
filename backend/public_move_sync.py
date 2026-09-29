@@ -29,6 +29,7 @@ def sync_status(access_id, db):
     files = [
         {'id': row.attachment_id, 'name': name,
          'status': 'synced' if row.synced_at else row.sync_status,
+         'synced_at': row.synced_at.isoformat() + 'Z' if row.synced_at else None,
          'error': row.sync_error or ''}
         for row, name in rows
     ]
