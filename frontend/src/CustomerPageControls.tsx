@@ -20,6 +20,19 @@ function ActionIcon({kind}:{kind:'copy'|'sms'|'revoke'|'restore'}){return <svg a
 export default function CustomerPageControls({leadId,section='meeting',onFilesBusyChange,onSelectionChange}:{leadId:string;section?:'links'|'files'|'meeting';onFilesBusyChange?:(busy:boolean)=>void;onSelectionChange?:(ids:string[])=>void}){
  const {token}=useAuth();const [data,setData]=useState<Page>(),[files,setFiles]=useState<EditableReportFile[]>([]),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
  const [selectedIds,setSelectedIds]=useState<string[]>([]);
+ const [importFiles,setImportFiles]=useState<EditableReportFile[]|null>(null);
+ const [importIds,setImportIds]=useState<string[]>([]);
+ const [importSearch,setImportSearch]=useState('');
+ async function openFileImport(){
+   setNotice('');
+   try{const response=await fetch(`${base}/importable-files`,{headers:authHeaders(token)});const result=await response.json();if(!response.ok)throw new Error(result.detail||'Could not load lead files');setImportFiles(result.files);setImportIds([]);setImportSearch('');}
+   catch(e){setNotice((e as Error).message);}
+ }
+ async function importSelectedFiles(){
+   setBusy(true);
+   try{const response=await fetch(`${base}/import-files`,{method:'POST',headers:{...authHeaders(token),'Content-Type':'application/json'},body:JSON.stringify({file_ids:importIds})});const result=await response.json();if(!response.ok)throw new Error(result.detail||'Could not import files');setFiles(current=>[...current,...result.files.filter((file:EditableReportFile)=>!current.some(row=>row.id===file.id))]);setImportFiles(null);}
+   catch(e){setNotice((e as Error).message);}finally{setBusy(false);}
+ }
  const [reportFileIds,setReportFileIds]=useState<string[]>([]);
  const [syncProgress,setSyncProgress]=useState<{awaiting_report:boolean;wait_seconds:number|null;synced:number;files:{id:string;name:string;status:string;error:string;synced_at?:string|null}[]}|null>(null);
  useEffect(()=>{
@@ -58,7 +71,18 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
    }catch(error){tab.close();setNotice((error as Error).message);}finally{setBusy(false);}
  }
  async function act(action:'sms'|'revoke'){setBusy(true);setNotice('');try{const r=await fetch(base+(action==='sms'?'/sms':''),{method:action==='sms'?'POST':'PATCH',headers:{...authHeaders(token),'Content-Type':'application/json'},body:action==='revoke'?JSON.stringify({revoke:!data?.revoked}):undefined});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Could not complete action');if(action==='revoke')setData(prev=>prev?{...prev,revoked:!prev.revoked}:prev);setNotice(action==='sms'?'SMS sent.':'Access updated.');}catch(e){setNotice((e as Error).message);}finally{setBusy(false);}}
- async function removeFile(id:string){onFilesBusyChange?.(true);try{const r=await fetch(`${base}/files/${encodeURIComponent(id)}`,{method:'DELETE',headers:authHeaders(token)});const result=await r.json();if(!r.ok)throw new Error(result.detail||'Could not delete file');setFiles(current=>current.filter(file=>file.id!==id));}finally{onFilesBusyChange?.(false);}}
+ async function removeFile(id:string){
+   const name=files.find(file=>file.id===id)?.name || 'this file';
+   if(!window.confirm(`Remove ${name} from this panel? The file stays attached to the lead.`))return;
+   onFilesBusyChange?.(true);
+   try{
+     const r=await fetch(`${base}/files/${encodeURIComponent(id)}`,{method:'DELETE',headers:authHeaders(token)});
+     const result=await r.json();if(!r.ok)throw new Error(result.detail||'Could not delete file');
+     setFiles(current=>current.filter(file=>file.id!==id));
+     selectFiles(selectedIds.filter(value=>value!==id));
+     setSyncProgress(current=>current?{...current,files:current.files.filter(file=>file.id!==id)}:current);
+   }finally{onFilesBusyChange?.(false);}
+ }
  async function downloadSelected(ids=selectedIds){setNotice('');try{for(const id of ids){const r=await fetch(`${base}/file-download/${encodeURIComponent(id)}`,{headers:authHeaders(token)});const d=await r.json();if(!r.ok || !d.url)throw new Error('Could not download this file.');const link=document.createElement('a');link.href=d.url;link.download=files.find(f=>f.id===id)?.name || 'file';document.body.appendChild(link);link.click();link.remove();}}catch(e){setNotice((e as Error).message);}}
  async function importChatFiles(){setBusy(true);onFilesBusyChange?.(true);setNotice('Importing chat files...');let imported=0,failed=0;try{let next:{conversation:number;cursor:unknown}={conversation:0,cursor:null};while(true){const response=await fetch(`${base}/import-chat-files`,{method:'POST',headers:{...authHeaders(token),'Content-Type':'application/json'},body:JSON.stringify(next)});const result=await response.json();if(!response.ok)throw new Error(result.detail || 'Could not import chat files');imported+=result.imported || 0;failed+=result.failed || 0;setNotice(`Importing chat files: ${imported} saved...`);if(result.done)break;next={conversation:result.conversation,cursor:result.cursor};}const response=await fetch(`${base}/sync-status`,{headers:authHeaders(token)});if(response.ok){const result=await response.json();setFiles(result.editable_files || []);}setNotice(`${imported} chat files imported.${failed ? ` ${failed} could not be saved; the source may be unavailable or the file too large.` : ''}`);}catch(e){setNotice((e as Error).message);}finally{setBusy(false);onFilesBusyChange?.(false);}}
  if(section==='files') {
@@ -72,7 +96,13 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
        {syncProgress.files.map(file=><div key={file.id}>{file.name}: {file.status==='synced'?'Uploaded':file.status}{file.error?` - ${file.error}`:''}</div>)}
      </div>}
      <div className="crm-gallery-current"><h4>Files in the current report</h4><p>Already included. Keep selected to include them in your next report.</p>{current.length?group(current,'Current report files'):<p>No files in the current report yet.</p>}</div>
-     <div className="crm-gallery-available"><h4>Available files to add</h4><LiveSwitchImport leadingAction={<button type="button" className="slds-button" disabled={busy} onClick={()=>void importChatFiles()}>Import chat files</button>} leadId={leadId} onImported={file=>setFiles(current=>current.some(row=>row.id===file.id)?current:[...current,file])}/><p>Not in the current report. Select the files you want to send to LiveSwitch.</p>{available.length?group(available,'Available files'):<p>No additional files available.</p>}</div>
+     <div className="crm-gallery-available"><h4>Available files to add</h4><LiveSwitchImport leadingAction={<><button type="button" className="slds-button" disabled={busy} onClick={()=>void openFileImport()}>Import from files</button><button type="button" className="slds-button" disabled={busy} onClick={()=>void importChatFiles()}>Import chat files</button></>} leadId={leadId} onImported={file=>setFiles(current=>current.some(row=>row.id===file.id)?current:[...current,file])}/>
+       {importFiles && <section aria-label="Import lead files">
+         <input type="search" className="slds-input" placeholder="Search lead files" aria-label="Search lead files" value={importSearch} onChange={e=>setImportSearch(e.target.value)}/>
+         <div style={{maxHeight:260,overflow:'auto',margin:'10px 0'}}>{importFiles.filter(file=>file.name.toLowerCase().includes(importSearch.toLowerCase())).map(file=><label key={file.id} style={{display:'flex',gap:8,padding:'8px 0'}}><input type="checkbox" disabled={busy} checked={importIds.includes(file.id)} onChange={e=>setImportIds(current=>e.target.checked?[...current,file.id]:current.filter(id=>id!==file.id))}/><span style={{overflowWrap:'anywhere'}}>{file.name}</span></label>)}{!importFiles.length && <p>No more lead files to import.</p>}</div>
+         <button type="button" className="slds-button" disabled={busy} onClick={()=>setImportFiles(null)}>Cancel</button><button type="button" className="slds-button" disabled={busy||!importIds.length} onClick={()=>void importSelectedFiles()}>Import selected ({importIds.length})</button>
+       </section>}
+       <p>Not in the current report. Select the files you want to send to LiveSwitch.</p>{available.length?group(available,'Available files'):<p>No additional files available.</p>}</div>
      <p role="status"><strong>{selectedIds.length} files selected for the next report</strong></p>
      {notice&&<p role="alert">{notice}</p>}
    </div>;

@@ -1395,6 +1395,7 @@ def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...), x_up
     name = _safe_attachment_name(file.filename or 'Customer file')
     stored = _upload_attachment_bytes_to_s3(access.lead_id, access.job_id, name, content, mime, 'public_move')
     row = LeadAttachment(lead_id=access.lead_id, job_id=access.job_id, file_name=name, content_type=mime, file_size=len(content), file_blob=b'', external_url=stored, is_external_link=True, external_source='public_move_s3', uploaded_by=None)
+    row.liveswitch_panel_visible = True
     try:
         db.add(row); db.flush(); db.add(PublicMoveUpload(attachment_id=row.id, access_id=access.id, request_id=x_upload_id)); db.commit()
     except Exception:
@@ -1678,7 +1679,35 @@ def schedule(request_id: str, body: ScheduleBody, user: User = Depends(require_a
 @router.delete('/api/leads/{lead_id}/customer-page/files/{attachment_id}')
 def delete_staff_report_file(lead_id: str, attachment_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _, access = staff_access(lead_id, user, db)
-    return remove_report_file(access, attachment_id, db)
+    row = db.query(LeadAttachment).filter_by(id=attachment_id, lead_id=lead_id).with_for_update().first()
+    if not row:
+        raise HTTPException(404, 'File not found on this lead.')
+    row.liveswitch_panel_visible = False
+    db.commit()
+    return {'ok': True}
+
+
+class ImportLeadFiles(BaseModel):
+    file_ids: list[str] = Field(max_length=1000)
+
+
+@router.get('/api/leads/{lead_id}/customer-page/importable-files')
+def importable_lead_files(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    staff_access(lead_id, user, db)
+    rows = db.query(LeadAttachment).filter_by(lead_id=lead_id, liveswitch_panel_visible=False).all()
+    return {'files': file_list(rows)}
+
+
+@router.post('/api/leads/{lead_id}/customer-page/import-files')
+def import_lead_files(lead_id: str, body: ImportLeadFiles, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    staff_access(lead_id, user, db)
+    rows = db.query(LeadAttachment).filter(LeadAttachment.lead_id == lead_id, LeadAttachment.id.in_(body.file_ids)).with_for_update().all()
+    if {row.id for row in rows} != set(body.file_ids):
+        raise HTTPException(404, 'Some selected files are no longer on this lead.')
+    for row in rows:
+        row.liveswitch_panel_visible = True
+    db.commit()
+    return {'files': file_list(rows)}
 
 
 @router.get('/api/leads/{lead_id}/customer-page/file-preview/{attachment_id}')
@@ -1736,6 +1765,9 @@ def import_chat_files(lead_id: str, body: ImportChatFilesRequest, user: User = D
         expected = sum(1 for index, item in enumerate(attachments) if isinstance(item, dict)
                        and not any(row.source_external_id == f'{message_id}:{index}' for row in existing))
         imported += archive_meta_attachments(db, lead_id, channel, message_id, attachments)
+        db.flush()
+        for row in db.query(LeadAttachment).filter(LeadAttachment.lead_id == lead_id, LeadAttachment.external_source == 'meta_s3', LeadAttachment.source_external_id.in_([f'{message_id}:{index}' for index in range(len(attachments))])).all():
+            row.liveswitch_panel_visible = True
         db.commit()
         failed += max(0, expected - imported)
     cursor = response.get('LastEvaluatedKey')
@@ -1749,7 +1781,7 @@ def file_sync_status(lead_id: str, user: User = Depends(get_current_user), db: S
     _, access = staff_access(lead_id, user, db)
     result = sync_status(access.id, db)
     rows = move_files(access, db, all_lead=True, include_removed=True)
-    result['editable_files'] = file_list(rows)
+    result['editable_files'] = file_list([row for row in rows if row.liveswitch_panel_visible])
     removed_ids = {row.id for row in rows if row.report_deleted_at is not None}
     conversation = db.get(LeadLiveSwitch, lead_id)
     details = json.loads(conversation.details or '{}') if conversation else {}
@@ -1874,6 +1906,7 @@ def finish_upload(body: FinishUpload, background_tasks: BackgroundTasks, access:
     s3.copy({'Bucket':bucket,'Key':pending.object_key},bucket,destination,ExtraArgs={'ServerSideEncryption':'AES256'})
     stored=f's3://{bucket}/{destination}'
     row=LeadAttachment(lead_id=access.lead_id,job_id=access.job_id,file_name=pending.file_name,content_type=pending.content_type,file_size=pending.file_size,file_blob=b'',external_url=stored,is_external_link=True,external_source='public_move_s3',uploaded_by=None)
+    row.liveswitch_panel_visible = True
     temporary_key=pending.object_key
     try:
         db.add(row);db.flush();db.add(PublicMoveUpload(attachment_id=row.id,access_id=access.id,request_id=body.request_id));db.delete(pending);db.commit()

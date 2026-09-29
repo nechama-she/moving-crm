@@ -65,6 +65,7 @@ export default function ReportFileGallery({ files, loadPreview, onRemove, disabl
     <div className="cm-gallery-grid">{files.map(file => <div className="cm-gallery-tile" key={file.id}>
       <Tile file={file} loadPreview={loadPreview} onOpen={url => setOpen({ url, name: file.name, type: file.content_type || '' })} />
       {newFileIds.includes(file.id) && <span className="cm-gallery-new" title="New file for the next report">New</span>}
+      {onSelectionChange && <button type="button" className="cm-gallery-remove-file" title={`Delete ${file.name}`} aria-label={`Delete ${file.name}`} disabled={disabled || !!removing} onClick={()=>void remove(file.id)}>Delete</button>}
       {uploadStatus && <div className="cm-gallery-upload-status" role="status" title={uploadStatus[file.id]?.error || (uploadStatus[file.id]?.synced_at ? `Uploaded to LiveSwitch: ${new Date(uploadStatus[file.id].synced_at!).toLocaleString()}` : 'LiveSwitch upload status')}>
         {uploadStatus[file.id]?.status==='synced' && uploadStatus[file.id]?.synced_at ? <span style={{color:'#18733b'}}>&#10003; Sent</span> : uploadStatus[file.id]?.status==='failed' ? <span style={{color:'#ba0517'}}>Upload failed</span> : uploadStatus[file.id]?.status==='syncing' ? 'Uploading...' : uploadStatus[file.id]?.status==='queued' ? 'Queued' : 'Not sent'}
       </div>}

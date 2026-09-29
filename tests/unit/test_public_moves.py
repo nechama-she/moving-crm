@@ -1373,6 +1373,25 @@ def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_a
     assert snapshot['report_files'] == [{'id': 'a', 'name': 'first.jpg'}]
 
 
+def test_staff_panel_import_and_remove_keeps_lead_attachment(portal, monkeypatch):
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod, 'staff_access', lambda *args: (lead, access))
+    attachment = models.LeadAttachment(id='panel-file', lead_id=lead.id, file_name='photo.jpg',
+        file_blob=b'image', file_size=5, content_type='image/jpeg')
+    db.add(attachment)
+    db.commit()
+    assert not attachment.liveswitch_panel_visible
+    assert mod.importable_lead_files(lead.id, None, db)['files'][0]['id']=='panel-file'
+    mod.import_lead_files(lead.id, mod.ImportLeadFiles(file_ids=['panel-file']), None, db)
+    assert attachment.liveswitch_panel_visible
+    assert mod.importable_lead_files(lead.id, None, db)['files']==[]
+    mod.delete_staff_report_file(lead.id, attachment.id, None, db)
+    db.refresh(attachment)
+    assert not attachment.liveswitch_panel_visible
+    assert attachment.file_blob==b'image' and attachment.report_deleted_at is None
+    assert mod.importable_lead_files(lead.id, None, db)['files'][0]['id']=='panel-file'
+
+
 def test_customer_file_list_uses_selected_report_snapshot(portal):
     mod, db, lead, access = portal
     snapshot = [{'id': 'old-photo', 'name': 'old.jpg', 'size': 10}]

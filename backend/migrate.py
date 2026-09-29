@@ -31,6 +31,7 @@ def migrate() -> None:
         connection.execute(text("ALTER TABLE inventory_catalog_items ADD COLUMN IF NOT EXISTS packing_materials TEXT NOT NULL DEFAULT '[]'"))
         seed_inventory_catalog(connection)
         connection.execute(text("ALTER TABLE lead_attachments ADD COLUMN IF NOT EXISTS report_deleted_at TIMESTAMP"))
+        connection.execute(text("ALTER TABLE lead_attachments ADD COLUMN IF NOT EXISTS liveswitch_panel_visible BOOLEAN NOT NULL DEFAULT FALSE"))
         connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS logo TEXT"))
         connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS customer_questions TEXT"))
         connection.execute(text("ALTER TABLE public_move_access ADD COLUMN IF NOT EXISTS link_sms_sent_at TIMESTAMP"))

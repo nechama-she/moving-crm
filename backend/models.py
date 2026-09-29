@@ -449,6 +449,7 @@ class LeadAttachment(Base):
     __tablename__ = "lead_attachments"
 
     report_deleted_at = Column(DateTime, nullable=True)
+    liveswitch_panel_visible = Column(Boolean, nullable=False, default=False, server_default='false')
     id = Column(String(36), primary_key=True, default=_uuid)
     lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
     job_id = Column(String(36), ForeignKey("lead_jobs.id"), nullable=True, index=True)

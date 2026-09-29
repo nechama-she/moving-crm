@@ -1020,6 +1020,8 @@ def panel_upload_context(lead_id, body, user, db):
 def prepare_panel_upload(lead_id: str, body: PanelUpload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lead, existing, bucket, key, name = panel_upload_context(lead_id, body, user, db)
     if existing:
+        existing.liveswitch_panel_visible = True
+        db.commit()
         return {"completed": True, "id": existing.id}
     signed = boto3.client("s3").generate_presigned_post(
         Bucket=bucket, Key=key, Fields={"Content-Type": body.content_type},
@@ -1043,6 +1045,7 @@ def finish_panel_upload(lead_id: str, body: PanelUpload, user: User = Depends(ge
     destination = f"leads/{lead.id}/jobs/lead/crm/{body.request_id}/{name}"
     s3.copy({"Bucket": bucket, "Key": key}, bucket, destination, ExtraArgs={"ServerSideEncryption": "AES256"})
     row = LeadAttachment(id=body.request_id, lead_id=lead.id, file_name=name, content_type=body.content_type,
+        liveswitch_panel_visible=True,
         file_size=body.size, file_blob=b"", external_url=f"s3://{bucket}/{destination}",
         is_external_link=True, external_source="crm_s3", uploaded_by=user.id)
     try:
