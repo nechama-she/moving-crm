@@ -19,4 +19,10 @@
 .ic-dialog .ic-checkbox { display: flex; align-items: center; gap: 8px; }
 .ic-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .ic-error { color: #ba0517; }.ic-notice { padding: 10px; border-radius: 6px; background: #eef6ff; }
+.ic-materials { border-top: 1px solid #e5e9ef; padding-top: 12px; margin-top: 16px; }
+.ic-materials h3 { font-size: 14px; margin: 0; }
+.ic-material-row { display: grid; grid-template-columns: minmax(0, 1fr) 85px 34px; align-items: end; gap: 8px; margin-top: 10px; }
+.ic-material-row label { min-width: 0; margin: 0; font-size: 12px; }
+.ic-material-row select { width: 100%; min-width: 0; height: 38px; margin-top: 6px; border: 1px solid #c9d3df; border-radius: 6px; background: white; font: inherit; }
+.ic-material-row button { height: 38px; padding: 6px; }
 @media (max-width: 480px) { .ic-card, .ic-dialog { padding: 16px; }.ic-measurements { grid-template-columns: 1fr; gap: 0; }.ic-table-wrap th, .ic-table-wrap td { padding: 8px; } }

@@ -67,3 +67,28 @@ def test_update_missing_item_returns_404(catalog_api):
     with pytest.raises(HTTPException) as error:
         api.update_item('missing', api.CatalogItemInput(name='Item', cuft=10, weight=0), None, db)
     assert error.value.status_code == 404
+
+
+def test_material_lists_preserve_id_and_omitted_updates(catalog_api):
+    api, db = catalog_api
+    choices = [{'plan_id': 'book', 'material_id': 'cover', 'name': 'King cover', 'plan_name': 'Long distance'},
+               {'plan_id': 'book', 'material_id': 'wrap', 'name': 'Plastic', 'plan_name': 'Long distance'}]
+    materials = [{'plan_id': 'book', 'material_id': 'cover', 'quantity': 1, 'requirement': 'required'},
+                 {'plan_id': 'book', 'material_id': 'wrap', 'quantity': 2, 'requirement': 'optional'}]
+    with patch.object(api, 'material_options', return_value={'items': choices}):
+        row = api.create_item(api.CatalogItemInput(name='Bed', cuft=80, weight=0, packing_materials=materials), None, db)
+        assert len(row['packing_materials']) == 2
+        updated = api.update_item(row['id'], api.CatalogItemInput(name='King bed', cuft=80, weight=0), None, db)
+        assert updated['id'] == row['id']
+        assert updated['packing_materials'] == row['packing_materials']
+        with pytest.raises(HTTPException):
+            api.update_item(row['id'], api.CatalogItemInput(name='Bed', cuft=80, weight=0, packing_materials=[materials[0], materials[0]]), None, db)
+        cleared = api.update_item(row['id'], api.CatalogItemInput(name='Bed', cuft=80, weight=0, packing_materials=[]), None, db)
+        assert cleared['packing_materials'] == []
+
+
+def test_unknown_material_rejected(catalog_api):
+    api, db = catalog_api
+    with pytest.raises(HTTPException):
+        api.create_item(api.CatalogItemInput(name='Bed', cuft=80, weight=0, packing_materials=[
+            {'plan_id':'missing', 'material_id':'missing', 'quantity':1, 'requirement':'required'}]), None, db)
