@@ -1,0 +1,8 @@
+.pricing-item-material-search { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+.pricing-item-material-search input,.pricing-item-material-search select { flex:1 1 220px; min-width:0; max-width:350px; }
+.pricing-item-material-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }
+.pricing-item-material-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:10px 0; }
+.pricing-item-material-row { display:grid; grid-template-columns:minmax(0,1fr) 80px 32px; gap:8px; align-items:center; margin:8px 0; }
+.pricing-item-material-row select,.pricing-item-material-row input { min-width:0; width:100%; }
+.pricing-item-material-row span { overflow-wrap:anywhere; }
+@media(max-width:800px) { .pricing-item-material-groups { grid-template-columns:minmax(0,1fr); gap:12px; } }

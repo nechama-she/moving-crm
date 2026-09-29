@@ -5,7 +5,8 @@ export default function CustomerMaterialItems({config,selection,onChange,disable
   const [search,setSearch]=useState('');
   const items=selection.additional_items||{};
   const available=(config.other_inventory||[]).filter(row=>!items[row.id] && !Object.values(items).some(item=>item.inventory_id===row.id));
-  const shown=available.filter(row=>`${row.room||''} ${row.label}`.toLowerCase().includes(search.toLowerCase()));
+  const searchWords=search.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const shown=available.filter(row=>searchWords.every(word=>`${row.room||''} ${row.label}`.toLowerCase().includes(word)));
   function save(id:string,item:AdditionalMaterialItem|null) {
     const next={...items};
     if(item)next[id]=item;else delete next[id];

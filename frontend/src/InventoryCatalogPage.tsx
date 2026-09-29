@@ -22,7 +22,8 @@ export default function InventoryCatalogPage() {
       .finally(() => { if (!abort.signal.aborted) setLoading(false); });
     return () => abort.abort();
   }, [token, retry]);
-  const shown = items.filter(item => `${item.name} ${item.description}`.toLowerCase().includes(search.trim().toLowerCase()))
+  const searchWords = search.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const shown = items.filter(item => searchWords.every(word => `${item.name} ${item.description}`.toLowerCase().includes(word)))
     .sort((a, b) => a.name.localeCompare(b.name) || a.cuft - b.cuft);
   return <main className="ic-page">
     <Link to="/settings" className="slds-button">Back to Settings</Link>

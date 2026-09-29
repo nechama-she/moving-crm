@@ -41,6 +41,7 @@ from models import (
     UserCompany,
 )
 from uuid import uuid4
+from item_materials import ItemMaterialsInput, material_setup, save_material_assignments
 from pricing_addresses import pricing_location as delivery_location
 from pricing_addresses import with_job_locations, job_location
 from local_pricing import local_route_matches, match_region_from_address
@@ -1718,3 +1719,14 @@ def update_pricing_plan(
     db.commit()
     db.refresh(plan)
     return plan.to_dict()
+
+
+@router.get('/{plan_id}/item-materials')
+def get_item_materials(plan_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return material_setup(_plan_or_404(db, user, plan_id), db)
+
+
+@router.put('/{plan_id}/item-materials')
+def put_item_materials(plan_id: str, body: ItemMaterialsInput, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    plan = _plan_or_404(db, user, plan_id)
+    return save_material_assignments(plan, body, db)

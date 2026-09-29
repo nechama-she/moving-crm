@@ -831,6 +831,7 @@ class PricingPlan(Base):
     pickup_regions = Column(Text, nullable=False, default="")
     fuel_percent = Column(Numeric(7, 3))
     price_valid_days = Column(Integer, nullable=False, default=7, server_default='7')
+    item_materials = Column(Text, nullable=True)
     active = Column(Boolean, nullable=False, default=True)
     sort_order = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), default=_now)

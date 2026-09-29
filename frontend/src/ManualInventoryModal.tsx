@@ -100,7 +100,8 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   const cuft = rooms.reduce((sum, room) => sum + total(room, 'cuft'), 0);
   const weight = rooms.reduce((sum, room) => sum + total(room, 'weight'), 0);
   const room = rooms.find(r => r.id === selected);
-  const matches = (catalog?.items || []).filter(item => `${item.name} ${item.description}`.toLowerCase().includes(search.toLowerCase()));
+  const searchWords = search.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const matches = (catalog?.items || []).filter(item => searchWords.every(word => `${item.name} ${item.description}`.toLowerCase().includes(word)));
   const selectedMatches = matches.filter(item => (room?.items[item.id] || 0) > 0);
   const otherMatches = matches.filter(item => !(room?.items[item.id] || 0));
   const visibleItems = [...selectedMatches, ...otherMatches.slice(0, limit)];

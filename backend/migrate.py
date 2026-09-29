@@ -128,6 +128,7 @@ def migrate() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_spark_inventory_items_job_id ON lead_spark_inventory_items (job_id)"))
         connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS system_permissions TEXT"))
         connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS price_valid_days INTEGER NOT NULL DEFAULT 7"))
+        connection.execute(text("ALTER TABLE pricing_plans ADD COLUMN IF NOT EXISTS item_materials TEXT"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS price_calculated_at TIMESTAMP"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS price_refresh_attempted_at TIMESTAMP"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS price_refresh_error TEXT"))

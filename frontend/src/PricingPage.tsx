@@ -13,6 +13,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import LocalPricing from "./LocalPricing";
 import LongDistancePackingCard, { isPackingCard } from "./LongDistancePackingCard";
 import LongDistanceMaterialsCard, { materialRows, withMaterials } from './LongDistanceMaterialsCard';
+import ItemMaterialsCard from './ItemMaterialsCard';
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
@@ -980,6 +981,8 @@ export default function PricingPage() {
               <PricingSection title="Materials" count={materialRows(active.services).length} open={openSections.materials} toggle={() => setOpenSections(s => ({ ...s, materials: !s.materials }))} onDoubleClick={() => startServiceEdit('materials')} actions={serviceEditActions('materials')}>
                 <LongDistanceMaterialsCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
               </PricingSection>
+
+              <ItemMaterialsCard key={active.id} planId={active.id} blocked={editing || saving} />
 
               <PricingSection title="Bulky items rates" count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))} onDoubleClick={() => startServiceEdit('bulkyItems')} actions={serviceEditActions('bulkyItems')}>
                 <div className="pricing-services pricing-bulky-rates">
