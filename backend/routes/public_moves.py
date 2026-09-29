@@ -2,7 +2,7 @@
 from manual_inventory import ManualInventoryInput, catalog, submit_inventory, save_inventory_draft
 from spark_history import report_history
 from pricing_addresses import with_job_locations
-from report_files import move_files, file_list, remove_report_file, preview_report_file
+from report_files import active_report_files, move_files, file_list, remove_report_file, preview_report_file
 import hmac
 import json
 import os
@@ -541,7 +541,7 @@ def _move_details(access, db, *, refresh_report=True):
     pickup, stops, delivery = _read_job_route(db, job)
     typed = json.loads(job.stop_types or '[]')
     meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first()
-    files = move_files(access, db)
+    files = active_report_files(access, db)
     conversation = db.get(LeadLiveSwitch, lead.id)
 
     # Extract spark report details if available, and auto-process if finished
@@ -1308,7 +1308,7 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
 
 @router.get('/api/public-moves/{access_id}/file-preview/{attachment_id}')
 def customer_file_preview(attachment_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    return preview_report_file(access, attachment_id, db)
+    return preview_report_file(access, attachment_id, db, active_media=True)
 
 
 @router.delete('/api/public-moves/{access_id}/files/{attachment_id}')
@@ -1319,7 +1319,7 @@ def delete_customer_report_file(attachment_id: str, access: PublicMoveAccess = D
 @router.post('/api/public-moves/{access_id}/generate-inventory-report')
 def customer_generate_inventory_report(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     # Verify that this customer actually uploaded files
-    count = len(move_files(access, db))
+    count = len(active_report_files(access, db))
     if count == 0:
         saved = db.get(LeadLiveSwitch, access.lead_id)
         details = json.loads(saved.details or '{}') if saved else {}
@@ -1709,6 +1709,7 @@ def import_lead_files(lead_id: str, body: ImportLeadFiles, user: User = Depends(
         validate_report_media(row)
     for row in rows:
         row.liveswitch_panel_visible = True
+        row.report_deleted_at = None
     db.commit()
     return {'files': file_list(rows)}
 
@@ -1782,7 +1783,7 @@ def import_chat_files(lead_id: str, body: ImportChatFilesRequest, user: User = D
 @router.get('/api/leads/{lead_id}/customer-page/media')
 def staff_media(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _, access = staff_access(lead_id, user, db)
-    return {'files': file_list([row for row in move_files(access, db, all_lead=True, include_removed=True) if row.liveswitch_panel_visible])}
+    return {'files': file_list(active_report_files(access, db))}
 
 
 @router.get('/api/leads/{lead_id}/customer-page/sync-status')
@@ -1790,7 +1791,7 @@ def file_sync_status(lead_id: str, user: User = Depends(get_current_user), db: S
     _, access = staff_access(lead_id, user, db)
     result = sync_status(access.id, db)
     rows = move_files(access, db, all_lead=True, include_removed=True)
-    result['editable_files'] = file_list([row for row in rows if row.liveswitch_panel_visible])
+    result['editable_files'] = file_list(active_report_files(access, db))
     removed_ids = {row.id for row in rows if row.report_deleted_at is not None}
     conversation = db.get(LeadLiveSwitch, lead_id)
     details = json.loads(conversation.details or '{}') if conversation else {}

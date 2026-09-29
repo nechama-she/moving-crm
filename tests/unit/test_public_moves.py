@@ -1325,7 +1325,8 @@ def test_new_runs_have_new_conversations_and_all_move_files(portal, processing_a
     for file_id, job_id in [('a', access.job_id), ('b', None), ('deleted', access.job_id)]:
         db.add(models.LeadAttachment(id=file_id, lead_id=lead.id, job_id=job_id, file_name=file_id+'.jpg',
                file_blob=b'image', file_size=5, content_type='image/jpeg',
-               report_deleted_at=datetime.utcnow() if file_id == 'deleted' else None))
+               report_deleted_at=datetime.utcnow() if file_id == 'deleted' else None,
+               liveswitch_panel_visible=file_id != 'deleted'))
     db.commit()
     monkeypatch.setenv('PUBLIC_MOVE_SYNC_QUEUE_URL', 'test-queue')
     sync = ModuleType('public_move_sync')

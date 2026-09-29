@@ -4,6 +4,15 @@ from fastapi import HTTPException
 from models import LeadAttachment
 
 
+def active_report_files(access, db):
+    """Return the one active media collection shared by staff and customer pages."""
+    return db.query(LeadAttachment).filter(
+        LeadAttachment.lead_id == access.lead_id,
+        LeadAttachment.liveswitch_panel_visible.is_(True),
+        LeadAttachment.report_deleted_at.is_(None),
+    ).order_by(LeadAttachment.created_at, LeadAttachment.id).all()
+
+
 def move_files(access, db, all_lead=False, include_removed=False):
     return db.query(LeadAttachment).filter(
         LeadAttachment.lead_id == access.lead_id,
@@ -15,12 +24,14 @@ def move_files(access, db, all_lead=False, include_removed=False):
 def remove_report_file(access, attachment_id, db):
     row = db.query(LeadAttachment).filter(
         LeadAttachment.id == attachment_id, LeadAttachment.lead_id == access.lead_id,
-        (LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None),
+        (LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None)
+        | LeadAttachment.liveswitch_panel_visible.is_(True),
     ).with_for_update().first()
     if not row:
         raise HTTPException(404, 'File not found on this move.')
     if row.report_deleted_at is None:
         row.report_deleted_at = datetime.utcnow()
+    row.liveswitch_panel_visible = False
     db.commit()
     return {'ok': True}
 
@@ -58,13 +69,16 @@ def validate_report_media(row):
     row.file_size = size
 
 
-def preview_report_file(access, attachment_id, db, download=False, all_lead=False, include_removed=False):
+def preview_report_file(access, attachment_id, db, download=False, all_lead=False, include_removed=False, active_media=False):
+    scope = (LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None)
+    if active_media:
+        scope = LeadAttachment.liveswitch_panel_visible.is_(True)
     import base64
     import boto3
     from urllib.parse import urlparse
     row = db.query(LeadAttachment).filter(
         LeadAttachment.id == attachment_id, LeadAttachment.lead_id == access.lead_id,
-        True if all_lead else ((LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None)),
+        True if all_lead else scope,
         True if include_removed else LeadAttachment.report_deleted_at.is_(None),
     ).first()
     if not row:

@@ -519,9 +519,10 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
     if not access:
         raise HTTPException(409, 'Generate the customer page before running an inventory report.')
-    from report_files import move_files
+    from report_files import active_report_files, move_files
     explicit_files = bool(body is not None and 'file_ids' in body)
-    files = move_files(access, db, all_lead=explicit_files, include_removed=explicit_files)
+    files = (move_files(access, db, all_lead=True, include_removed=True)
+             if explicit_files else active_report_files(access, db))
     if body is not None and 'file_ids' in body:
         selected = body['file_ids']
         if not isinstance(selected, list) or any(not isinstance(value, str) for value in selected):
