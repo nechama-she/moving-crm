@@ -71,17 +71,22 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
    }catch(error){tab.close();setNotice((error as Error).message);}finally{setBusy(false);}
  }
  async function act(action:'sms'|'revoke'){setBusy(true);setNotice('');try{const r=await fetch(base+(action==='sms'?'/sms':''),{method:action==='sms'?'POST':'PATCH',headers:{...authHeaders(token),'Content-Type':'application/json'},body:action==='revoke'?JSON.stringify({revoke:!data?.revoked}):undefined});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Could not complete action');if(action==='revoke')setData(prev=>prev?{...prev,revoked:!prev.revoked}:prev);setNotice(action==='sms'?'SMS sent.':'Access updated.');}catch(e){setNotice((e as Error).message);}finally{setBusy(false);}}
- async function removeFile(id:string){
-   const name=files.find(file=>file.id===id)?.name || 'this file';
+ async function removeFiles(ids:string[]){
+   if(!ids.length)return;
+   const name=ids.length===1 ? files.find(file=>file.id===ids[0])?.name || 'this file' : `${ids.length} selected files`;
    if(!window.confirm(`Remove ${name} from this panel? The file stays attached to the lead.`))return;
+   const removedIds:string[]=[];
+   setBusy(true);
    onFilesBusyChange?.(true);
    try{
-     const r=await fetch(`${base}/files/${encodeURIComponent(id)}`,{method:'DELETE',headers:authHeaders(token)});
-     const result=await r.json();if(!r.ok)throw new Error(result.detail||'Could not delete file');
-     setFiles(current=>current.filter(file=>file.id!==id));
-     selectFiles(selectedIds.filter(value=>value!==id));
-     setSyncProgress(current=>current?{...current,files:current.files.filter(file=>file.id!==id)}:current);
-   }finally{onFilesBusyChange?.(false);}
+     for(const id of ids){
+       const r=await fetch(`${base}/files/${encodeURIComponent(id)}`,{method:'DELETE',headers:authHeaders(token)});
+       const result=await r.json();if(!r.ok)throw new Error(result.detail||'Could not delete file');
+       removedIds.push(id);
+       setFiles(current=>current.filter(file=>file.id!==id));
+       setSyncProgress(current=>current?{...current,files:current.files.filter(file=>file.id!==id)}:current);
+     }
+   }finally{if(removedIds.length)selectFiles(selectedIds.filter(value=>!removedIds.includes(value)));setBusy(false);onFilesBusyChange?.(false);}
  }
  async function downloadSelected(ids=selectedIds){setNotice('');try{for(const id of ids){const r=await fetch(`${base}/file-download/${encodeURIComponent(id)}`,{headers:authHeaders(token)});const d=await r.json();if(!r.ok || !d.url)throw new Error('Could not download this file.');const link=document.createElement('a');link.href=d.url;link.download=files.find(f=>f.id===id)?.name || 'file';document.body.appendChild(link);link.click();link.remove();}}catch(e){setNotice((e as Error).message);}}
  async function importChatFiles(){setBusy(true);onFilesBusyChange?.(true);setNotice('Importing chat files...');let imported=0,failed=0;try{let next:{conversation:number;cursor:unknown}={conversation:0,cursor:null};while(true){const response=await fetch(`${base}/import-chat-files`,{method:'POST',headers:{...authHeaders(token),'Content-Type':'application/json'},body:JSON.stringify(next)});const result=await response.json();if(!response.ok)throw new Error(result.detail || 'Could not import chat files');imported+=result.imported || 0;failed+=result.failed || 0;setNotice(`Importing chat files: ${imported} saved...`);if(result.done)break;next={conversation:result.conversation,cursor:result.cursor};}const response=await fetch(`${base}/sync-status`,{headers:authHeaders(token)});if(response.ok){const result=await response.json();setFiles(result.editable_files || []);}setNotice(`${imported} chat files imported.${failed ? ` ${failed} could not be saved; the source may be unavailable or the file too large.` : ''}`);}catch(e){setNotice((e as Error).message);}finally{setBusy(false);onFilesBusyChange?.(false);}}
@@ -89,7 +94,7 @@ export default function CustomerPageControls({leadId,section='meeting',onFilesBu
    const current=files.filter(file=>reportFileIds.includes(file.id));
    const available=files.filter(file=>!reportFileIds.includes(file.id));
    const preview=async (id:string)=>{const response=await fetch(`${base}/file-preview/${encodeURIComponent(id)}`,{headers:authHeaders(token)});return response.ok?(await response.json()).url:null;};
-   const group=(rows:EditableReportFile[],title:string)=> <ReportFileGallery title={title} newFileIds={available.map(file=>file.id)} uploadStatus={Object.fromEntries((syncProgress?.files||[]).map(file=>[file.id,file]))} selectedIds={selectedIds.filter(id=>rows.some(file=>file.id===id))} onSelectionChange={ids=>selectFiles([...selectedIds.filter(id=>!rows.some(file=>file.id===id)),...ids])} onDownload={()=>void downloadSelected(selectedIds.filter(id=>rows.some(file=>file.id===id)))} files={rows} onRemove={removeFile} disabled={busy} loadPreview={preview}/>;
+  const group=(rows:EditableReportFile[],title:string)=> <ReportFileGallery title={title} newFileIds={available.map(file=>file.id)} uploadStatus={Object.fromEntries((syncProgress?.files||[]).map(file=>[file.id,file]))} selectedIds={selectedIds.filter(id=>rows.some(file=>file.id===id))} onSelectionChange={ids=>selectFiles([...selectedIds.filter(id=>!rows.some(file=>file.id===id)),...ids])} onDownload={()=>void downloadSelected(selectedIds.filter(id=>rows.some(file=>file.id===id)))} files={rows} onRemoveSelected={removeFiles} disabled={busy} loadPreview={preview}/>;
    return <div className="crm-report-gallery">
      <div className="crm-gallery-current"><h4>Files in the current report</h4><p>Already included. Keep selected to include them in your next report.</p>{current.length?group(current,'Current report files'):<p>No files in the current report yet.</p>}</div>
      <div className="crm-gallery-available"><h4>Available files to add</h4><LiveSwitchImport leadingAction={<><button type="button" className="slds-button" disabled={busy} onClick={()=>void openFileImport()}>Import from files</button><button type="button" className="slds-button" disabled={busy} onClick={()=>void importChatFiles()}>Import chat files</button></>} leadId={leadId} onImported={file=>setFiles(current=>current.some(row=>row.id===file.id)?current:[...current,file])}/>
