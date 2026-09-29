@@ -20,7 +20,13 @@ export default function CustomerMaterialItems({config,selection,onChange,disable
           <strong>{item.label}</strong>
           <button type="button" className="cm-secondary-btn" aria-label={`Remove ${item.label}`} title="Remove item" disabled={disabled} onClick={()=>save(id,null)}>&times;</button>
         </div>
-        <label>Item type <select aria-label={`Protection for ${item.label}`} disabled={disabled} value={item.protection} onChange={e=>save(id,{...item,protection:e.target.value as AdditionalMaterialItem['protection'],service:'self'})}><option value="fabric">Fabric</option><option value="fragile">Fragile</option><option value="both">Fabric and fragile</option></select></label>
+        <div role="group" aria-label={`Protection for ${item.label}`} style={{display:'flex',flexWrap:'wrap',gap:'8px 16px'}}>
+          {(['fabric','fragile'] as const).map(type=><label key={type} style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:13}}>
+            <input type="checkbox" checked={item.protection===type || item.protection==='both'} disabled={disabled}
+              onChange={e=>save(id,{...item,protection:e.target.checked?'both':type==='fabric'?'fragile':'fabric',service:'self'})}/>
+            {type==='fabric'?'Fabric':'Fragile'}
+          </label>)}
+        </div>
         <span>Required material: <strong>{item.protection==='fabric'?'Plastic':item.protection==='fragile'?'Cardboard':'Plastic and cardboard'}</strong></span>
         <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px'}}>{(['packing','materials'] as const).map(service=><label key={service} style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13}}>
           <input type="checkbox" disabled={disabled || quote?.status!=='priced'} checked={item.service===service} onChange={e=>save(id,{...item,service:e.target.checked?service:'self'})}/>
