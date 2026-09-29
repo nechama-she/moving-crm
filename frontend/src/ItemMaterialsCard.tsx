@@ -39,8 +39,8 @@ export default function ItemMaterialsCard({planId,blocked}:{planId:string;blocke
         {user?.role==='admin' && (editing?<>
           <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={busy} onClick={()=>{setRows(data?.rows||[]);setSelected('');setEditing(false);setError('');}}>Cancel changes</button>
           <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={busy || blocked} onClick={()=>void save()}>{busy?'Saving...':'Save changes'}</button>
-        </>:<button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={!data || blocked} onClick={()=>{setEditing(true);setOpen(true);}}>Edit</button>)}
-        <button type="button" className="slds-button pricing-section-toggle" aria-label={open?'Collapse item packing materials':'Expand item packing materials'} onClick={()=>setOpen(!open)}>{open?'-':'+'}</button>
+        </>:<button type="button" className="slds-button pricing-section-action" aria-label="Edit item packing materials" title="Edit" disabled={!data || blocked} onClick={()=>{setEditing(true);setOpen(true);}}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>)}
+        <button type="button" className="slds-button pricing-section-toggle" aria-label={open?'Collapse item packing materials':'Expand item packing materials'} onClick={()=>setOpen(!open)}>{open?'\u2212':'+'}</button>
       </div>
     </div>
     {open && <div className="pricing-section-body">
