@@ -1684,13 +1684,13 @@ def delete_staff_report_file(lead_id: str, attachment_id: str, user: User = Depe
 @router.get('/api/leads/{lead_id}/customer-page/file-preview/{attachment_id}')
 def staff_file_preview(lead_id: str, attachment_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _, access = staff_access(lead_id, user, db)
-    return preview_report_file(access, attachment_id, db, all_lead=True)
+    return preview_report_file(access, attachment_id, db, all_lead=True, include_removed=True)
 
 
 @router.get('/api/leads/{lead_id}/customer-page/file-download/{attachment_id}')
 def staff_file_download(lead_id: str, attachment_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _, access = staff_access(lead_id, user, db)
-    return preview_report_file(access, attachment_id, db, download=True, all_lead=True)
+    return preview_report_file(access, attachment_id, db, download=True, all_lead=True, include_removed=True)
 
 
 class ImportChatFilesRequest(BaseModel):
@@ -1748,10 +1748,12 @@ def import_chat_files(lead_id: str, body: ImportChatFilesRequest, user: User = D
 def file_sync_status(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _, access = staff_access(lead_id, user, db)
     result = sync_status(access.id, db)
-    result['editable_files'] = file_list(move_files(access, db, all_lead=True))
+    rows = move_files(access, db, all_lead=True, include_removed=True)
+    result['editable_files'] = file_list(rows)
+    removed_ids = {row.id for row in rows if row.report_deleted_at is not None}
     conversation = db.get(LeadLiveSwitch, lead_id)
     details = json.loads(conversation.details or '{}') if conversation else {}
-    result['report_file_ids'] = [file['id'] for file in details.get('report_files', [])]
+    result['report_file_ids'] = [file['id'] for file in details.get('report_files', []) if file['id'] not in removed_ids]
     return result
 
 

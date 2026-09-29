@@ -4,11 +4,11 @@ from fastapi import HTTPException
 from models import LeadAttachment
 
 
-def move_files(access, db, all_lead=False):
+def move_files(access, db, all_lead=False, include_removed=False):
     return db.query(LeadAttachment).filter(
         LeadAttachment.lead_id == access.lead_id,
         True if all_lead else ((LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None)),
-        LeadAttachment.report_deleted_at.is_(None),
+        True if include_removed else LeadAttachment.report_deleted_at.is_(None),
     ).order_by(LeadAttachment.created_at, LeadAttachment.id).all()
 
 
@@ -29,14 +29,14 @@ def file_list(rows):
     return [{'id': row.id, 'name': row.file_name, 'size': row.file_size, 'content_type': row.content_type} for row in rows]
 
 
-def preview_report_file(access, attachment_id, db, download=False, all_lead=False):
+def preview_report_file(access, attachment_id, db, download=False, all_lead=False, include_removed=False):
     import base64
     import boto3
     from urllib.parse import urlparse
     row = db.query(LeadAttachment).filter(
         LeadAttachment.id == attachment_id, LeadAttachment.lead_id == access.lead_id,
         True if all_lead else ((LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None)),
-        LeadAttachment.report_deleted_at.is_(None),
+        True if include_removed else LeadAttachment.report_deleted_at.is_(None),
     ).first()
     if not row:
         raise HTTPException(404, 'File not found on this move.')

@@ -390,7 +390,8 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     if not access:
         raise HTTPException(409, 'Generate the customer page before running an inventory report.')
     from report_files import move_files
-    files = move_files(access, db, all_lead=bool(body is not None and 'file_ids' in body))
+    explicit_files = bool(body is not None and 'file_ids' in body)
+    files = move_files(access, db, all_lead=explicit_files, include_removed=explicit_files)
     if body is not None and 'file_ids' in body:
         selected = body['file_ids']
         if not isinstance(selected, list) or any(not isinstance(value, str) for value in selected):
@@ -407,6 +408,9 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
         if body and key in body:
             payload[key] = body[key]
     conversation = ensure_lead_conversation(lead, db, fresh=bool(files))
+    if explicit_files:
+        for file in files:
+            file.report_deleted_at = None
     saved = db.get(LeadLiveSwitch, lead_id)
     details = json.loads(saved.details or '{}') if saved else {}
     job = db.get(LeadJob, access.job_id)
