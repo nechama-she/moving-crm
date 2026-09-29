@@ -608,9 +608,6 @@ export default function CustomerMovePage() {
       const next=current>=0?actions[current+1]:undefined;
       lastCustomerAction.current=null;
       if(next){next.scrollIntoView({behavior,block:'center'});return;}
-      if(current<0)return;
-      if(packingStep==='items')nextTermsStep();
-      else void nextPricingStep(true);
     });
     return ()=>cancelAnimationFrame(frame);
   },[answersSaving,packingError,showQuestions]);
