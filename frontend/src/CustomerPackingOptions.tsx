@@ -8,7 +8,7 @@ export type PackingPackage = {
   minimum_cubic_feet?: number;
   rates: Partial<Record<'full' | 'partial' | 'unpacking', { rate: number; total: number }>>;
   configured_materials?:boolean;
-  items: { id: string; label: string; room?: string; packing_material?:'plastic'|'cardboard'; price: number; labor_price?: number; material_price?: number; requirement?:'required'|'optional'; material_name?:string; materials?:{id:string;name:string;quantity:number}[]; quantity?:number; available?:boolean }[];
+  items: { id: string; group_id?:string; label: string; room?: string; packing_material?:'plastic'|'cardboard'; price: number; labor_price?: number; material_price?: number; requirement?:'required'|'optional'; material_name?:string; materials?:{id:string;name:string;quantity:number}[]; quantity?:number; available?:boolean }[];
   selection: PackingSelection;
   other_inventory?:(AdditionalMaterialItem & {id:string;name:string;room?:string})[];
   material_quotes?:{id:string;status:string;issues:string[];packing_only:number|null;packing_and_material:number|null}[];

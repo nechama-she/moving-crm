@@ -123,7 +123,7 @@ def test_default_material_applies_only_without_item_specific_materials():
     ]
 
 
-def test_multiple_default_materials_group_inventory_item_once():
+def test_multiple_default_materials_have_separate_choices_in_one_item_group():
     plan, db = setup()
     db.query.return_value.all.return_value = [SimpleNamespace(id='tv', name='TV')]
     card = json.loads(plan.services[0].comments[len(PACKING_CARD_PREFIX):])
@@ -136,9 +136,9 @@ def test_multiple_default_materials_group_inventory_item_once():
 
     rows, _ = customer_item_materials(plan, [dict(item_id='tv', name='TV', room='Living Room', amount=1)], db)
 
-    assert len(rows) == 1
-    assert rows[0]['label'] == 'TV'
-    assert rows[0]['requirement'] == 'optional'
-    assert [material['name'] for material in rows[0]['materials']] == ['King cover', 'Shrink Wrap']
-    assert rows[0]['labor_price'] == 17
-    assert rows[0]['material_price'] == 36
+    assert len(rows) == 2
+    assert [row['label'] for row in rows] == ['TV', 'TV']
+    assert len({row['group_id'] for row in rows}) == 1
+    assert len({row['id'] for row in rows}) == 2
+    assert [row['material_name'] for row in rows] == ['King cover', 'Shrink Wrap']
+    assert [(row['labor_price'], row['material_price']) for row in rows] == [(12, 26), (5, 10)]

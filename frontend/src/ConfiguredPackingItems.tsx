@@ -8,13 +8,19 @@ export default function ConfiguredPackingItems({config,selection,onChange,disabl
     {([...(showRequired?['required'] as const:[]),...(showOptional?['optional'] as const:[])] as const).map(requirement=>{
       const items=config.items.filter(item=>(item.requirement||'required')===requirement);
       if(!items.length)return null;
+      const groups=[...items.reduce((map,item)=>{
+        const id=item.group_id||item.id;
+        map.set(id,[...(map.get(id)||[]),item]);
+        return map;
+      },new Map<string,typeof items>()).values()];
       return <section key={requirement} className="cm-packing-items">
         <h4>{requirement==='required'?'Required packing':'Additional packing options'}</h4>
-        {items.map(item=><section key={item.id} style={{display:'grid',gap:8,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
-          {item.room && <small>{item.room}</small>}
-          <strong>{item.label}</strong>
-          <span>{item.material_name || (item.packing_material==='plastic'?'Plastic':'Cardboard')}{item.quantity!=null?` - ${item.quantity} per item`:''}</span>
-          <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px'}}>
+        {groups.map(group=><section key={group[0].group_id||group[0].id} style={{display:'grid',gap:8,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
+          {group[0].room && <small>{group[0].room}</small>}
+          <strong>{group[0].label}</strong>
+          {group.map(item=><div key={item.id} style={{display:'grid',gap:8,paddingTop:group.length>1?8:0,borderTop:group.length>1?'1px solid #eee5e2':'none'}}>
+            <span>{item.material_name || (item.packing_material==='plastic'?'Plastic':'Cardboard')}{item.quantity!=null?` - ${item.quantity} per item`:''}</span>
+            <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px'}}>
             <label style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13}}>
               <input type="checkbox" disabled={disabled} checked={!selection.item_ids.includes(item.id)}
                 onChange={()=>onChange({...selection,item_ids:selection.item_ids.filter(id=>id!==item.id),material_item_ids:materials.filter(id=>id!==item.id)})}/>
@@ -27,8 +33,9 @@ export default function ConfiguredPackingItems({config,selection,onChange,disabl
                   material_item_ids:e.target.checked && withMaterials?[...new Set([...materials,item.id])]:materials.filter(id=>id!==item.id)})}/>
               <span>{withMaterials?'Packing and material':'Packing only'} <strong>{money((item.labor_price??item.price)+(withMaterials?item.material_price||0:0))}</strong></span>
             </label>)}
-          </div>
-          {item.available===false && <p role="status">Material pricing needs confirmation.</p>}
+            </div>
+            {item.available===false && <p role="status">Material pricing needs confirmation.</p>}
+          </div>)}
         </section>)}
       </section>;
     })}
