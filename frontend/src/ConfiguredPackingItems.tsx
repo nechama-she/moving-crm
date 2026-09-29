@@ -8,15 +8,20 @@ export default function ConfiguredPackingItems({config,selection,onChange,disabl
     {([...(showRequired?['required'] as const:[]),...(showOptional?['optional'] as const:[])] as const).map(requirement=>{
       const items=config.items.filter(item=>(item.requirement||'required')===requirement);
       if(!items.length)return null;
-      const groups=[...items.reduce((map,item)=>{
-        const id=item.group_id||item.id;
-        map.set(id,[...(map.get(id)||[]),item]);
+      const rooms=[...items.reduce((map,item)=>{
+        const room=item.room?.trim()||'Other items';
+        map.set(room,[...(map.get(room)||[]),item]);
         return map;
-      },new Map<string,typeof items>()).values()];
+      },new Map<string,typeof items>()).entries()];
       return <section key={requirement} className="cm-packing-items">
         <h4>{requirement==='required'?'Required packing':'Additional packing options'}</h4>
-        {groups.map(group=><section key={group[0].group_id||group[0].id} style={{display:'grid',gap:8,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
-          {group[0].room && <small>{group[0].room}</small>}
+        {rooms.map(([room,roomItems])=><section key={room} aria-label={room}>
+          <h5 style={{margin:'16px 0 4px',fontSize:12,fontWeight:400,color:'var(--cm-text-muted)'}}>{room}</h5>
+          {[...roomItems.reduce((map,item)=>{
+            const id=item.group_id||item.id;
+            map.set(id,[...(map.get(id)||[]),item]);
+            return map;
+          },new Map<string,typeof roomItems>()).values()].map(group=><section key={group[0].group_id||group[0].id} style={{display:'grid',gap:8,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
           <strong>{group[0].label}</strong>
           {group.map(item=><div key={item.id} style={{display:'grid',gap:8,paddingTop:group.length>1?8:0,borderTop:group.length>1?'1px solid #eee5e2':'none'}}>
             <span>{item.material_name || (item.packing_material==='plastic'?'Plastic':'Cardboard')}{item.quantity!=null?` - ${item.quantity} per item`:''}</span>
@@ -36,6 +41,7 @@ export default function ConfiguredPackingItems({config,selection,onChange,disabl
             </div>
             {item.available===false && <p role="status">Material pricing needs confirmation.</p>}
           </div>)}
+        </section>)}
         </section>)}
       </section>;
     })}
