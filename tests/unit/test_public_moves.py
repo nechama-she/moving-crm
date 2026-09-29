@@ -50,6 +50,39 @@ def portal(monkeypatch):
     engine.dispose()
 
 
+@pytest.mark.parametrize('fails', [False, True])
+def test_recalculate_current_price_does_not_import_report_or_replace_answers(portal, monkeypatch, fails):
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    job.customer_packing = '{"item":"packing"}'
+    job.customer_packing_package = '{"mode":"none","elevator":{"pickup":true}}'
+    job.estimated_materials = '[{"name":"Sofa","quantity":1}]'
+    job.price = 100
+    db.commit()
+    before = (job.customer_packing, job.customer_packing_package, job.estimated_materials)
+    pricing = ModuleType('routes.pricing')
+    def calculate(current_lead, current_job, session):
+        assert current_lead is lead and current_job is job and session is db
+        current_job.price = 200
+        return None if fails else 200
+    pricing.calculate_and_save_lead_job_price = MagicMock(side_effect=calculate)
+    liveswitch = ModuleType('routes.liveswitch')
+    liveswitch.apply_spark_results_to_lead = MagicMock(side_effect=AssertionError('Must not import a report'))
+    monkeypatch.setitem(sys.modules, 'routes.pricing', pricing)
+    monkeypatch.setitem(sys.modules, 'routes.liveswitch', liveswitch)
+    if fails:
+        with pytest.raises(HTTPException) as error:
+            mod.recalculate_current_price(access, db)
+        assert error.value.status_code == 422
+        assert job.price == 100
+    else:
+        assert mod.recalculate_current_price(access, db) == {'ok': True, 'price': 200}
+        assert job.price == 200
+    assert (job.customer_packing, json.loads(job.customer_packing_package), job.estimated_materials) == (before[0], json.loads(before[1]), before[2])
+    liveswitch.apply_spark_results_to_lead.assert_not_called()
+    pricing.calculate_and_save_lead_job_price.assert_called_once()
+
+
 def request(link='',session=''):
     return Request({'type':'http','method':'GET','path':'/','headers':[(b'x-public-link',link.encode()),(b'x-public-session',session.encode())], 'client':('127.0.0.1',1234)})
 

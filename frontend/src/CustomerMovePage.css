@@ -194,6 +194,9 @@
 .customer-move .cm-question-tabs button{display:flex;align-items:center;gap:6px;min-width:0;height:36px;border:1px solid transparent;border-radius:6px 6px 0 0;padding:8px;background:#e5e9ed;font:inherit;font-size:12px;line-height:1.3;color:var(--cm-text);cursor:pointer;text-align:left;max-width:100%}
 .cm-question-menu-number{font-size:10px;opacity:.65;flex-shrink:0}
 .cm-question-menu-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.customer-move .cm-question-tabs button.cm-question-required{border-color:#c98928;background:#fff5df}
+.cm-question-required-mark{display:inline-flex;align-items:center;justify-content:center;flex:0 0 16px;height:16px;margin-left:auto;border-radius:50%;background:#855000;color:#fff;font-size:12px;font-weight:700}
+.customer-move .cm-required-summary{margin:0;padding:8px 24px;color:#855000;font-size:13px;font-weight:600}
 .customer-move .cm-question-tabs button:hover{background:#fff}
 .customer-move .cm-question-tabs button[aria-current="step"]{background:#fff;border-color:#d6dce1;border-bottom-color:#fff;box-shadow:inset 0 3px var(--cm-primary,#d3332d);color:var(--cm-text);font-weight:600}
 .customer-move .cm-question-tabs button:focus-visible{outline:2px solid var(--cm-primary,#d3332d);outline-offset:2px}

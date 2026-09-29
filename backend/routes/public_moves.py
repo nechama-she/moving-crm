@@ -756,6 +756,25 @@ def submit_customer_inventory(body: ManualInventoryInput, access: PublicMoveAcce
     return result
 
 
+@router.post('/api/public-moves/{access_id}/recalculate-price')
+def recalculate_current_price(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from routes.pricing import calculate_and_save_lead_job_price
+    lead = db.get(Lead, access.lead_id)
+    job = db.get(LeadJob, access.job_id)
+    if not lead or not job or job.lead_id != lead.id:
+        raise HTTPException(404, 'Move not found.')
+    with db.begin_nested():
+        price = calculate_and_save_lead_job_price(lead, job, db)
+        if price is None:
+            raise HTTPException(422, 'No price could be calculated from the current inventory and pricing settings.')
+        selection = json.loads(job.customer_packing_package or '{}')
+        selection.pop('pricing_pending', None)
+        selection.pop('pricing_save_error', None)
+        job.customer_packing_package = json.dumps(selection)
+    db.commit()
+    return {'ok': True, 'price': price}
+
+
 @router.post('/api/public-moves/{access_id}/calculate-price')
 def calculate_report_price(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from routes.liveswitch import apply_spark_results_to_lead

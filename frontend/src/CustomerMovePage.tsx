@@ -7,6 +7,7 @@ import { CUSTOMER_SESSION_EXPIRED, customerSessionActive, expireCustomerSession,
 ﻿import CustomerAddressInput from "./CustomerAddressInput";
 import type { SelectedAddress } from "./googlePlaces";
 import CustomerItemQuestions, { type ItemQuestion } from "./CustomerItemQuestions";
+import { groupTerms, needsTermAnswer, requiredQuestionTarget } from './customerQuestionNavigation';
 import QuestionReferenceImages from "./QuestionReferenceImages";
 import ReportLinks from './ReportLinks';
 import { savedPhotos, storePhoto, removePhoto } from './photoDrafts';
@@ -134,16 +135,11 @@ export default function CustomerMovePage() {
   const [termsError, setTermsError] = useState('');
   const [termsValidationAttempt, setTermsValidationAttempt] = useState(0);
   const [termsStep, setTermsStep] = useState(0);
-  const termsGroups = useMemo(() => {
-    const groups = new Map<string, ItemQuestion[]>();
-    for (const question of data?.item_questions || []) {
-      const id = question.rule_id || question.question;
-      const group = groups.get(id) || [];
-      group.push(question);
-      groups.set(id, group);
-    }
-    return [...groups.values()];
-  }, [data?.item_questions]);
+  const termsGroups = useMemo(() => groupTerms(data?.item_questions), [data?.item_questions]);
+  const missingQuestionTabs = new Set([
+    ...(data?.unanswered_questions || []).filter(step => step !== 'items'),
+    ...termsGroups.flatMap((group, index) => group.some(needsTermAnswer) ? [`items:${index}`] : []),
+  ]);
   const currentTermsStep = Math.min(termsStep, Math.max(0, termsGroups.length - 1));
   const currentTerms = termsGroups[currentTermsStep] || [];
   const visibleTermsIds = new Set(currentTerms.map(question => question.id));
@@ -325,10 +321,37 @@ export default function CustomerMovePage() {
     setPackageSelection(data.packing_package?.selection || {mode:'none',unpacking:false,item_ids:[]});
     setStorageDate(data.storage?.available_date || '');
     setShuttleAnswer(data.shuttle?.answer ?? null);
-    setPackingError('');setTermsStep(0);setTermsValidationAttempt(0);
-    setPackingStep(pricingSteps.find(step=>missing.includes(step)) || pricingSteps[0] || 'items');
+    const target = requiredQuestionTarget(missing, groupTerms(data.item_questions));
+    setPackingError('');setTermsError('');setTermsStep(target.termsIndex);setTermsValidationAttempt(1);
+    setPackingStep(target.step as PricingStep);
+    setStopsMissing(missing.some(step => step.startsWith('stops_')));
+    setElevatorMissing(missing.some(step => step.startsWith('elevator_')));
+    setCarryMissing(missing.some(step => step.startsWith('carry_')) || missing.includes('shuttle'));
+    setStairsMissing(missing.some(step => step.startsWith('stairs_')));
+    setStorageMissing(missing.includes('storage'));
+    setShuttleMissing(missing.includes('shuttle'));
     setShowQuestions(true);
     termsBody.current?.scrollTo({top:0});
+  }
+  const priceCalculationRunning = useRef(false);
+  async function recalculatePrice() {
+    if (priceCalculationRunning.current) return;
+    priceCalculationRunning.current = true;
+    setCalculatingPrice(true);
+    setCalculationError('');
+    try {
+      await answerQueue.current;
+      if (failedAnswers.current.size || failedPricing.current.size) {
+        throw new Error('Please retry saving your answers before calculating the price.');
+      }
+      await call('/recalculate-price', {});
+      setData(await call('/details'));
+    } catch (error) {
+      setCalculationError((error as Error).message);
+    } finally {
+      priceCalculationRunning.current = false;
+      setCalculatingPrice(false);
+    }
   }
   async function openEstimate() {
     setPdfError('');
@@ -919,9 +942,12 @@ export default function CustomerMovePage() {
                   )}
                 </div>
               )}
-              {data.estimate && data.spark?.status === 'completed' && <div className="cm-estimate-extra-actions">
+              {(data.estimate || data.spark?.status === 'completed') && <div className="cm-estimate-extra-actions">
+                <button type="button" className="cm-secondary-btn" disabled={calculatingPrice || answersSaving || busy || reportState === 'running'} onClick={() => void recalculatePrice()}>{calculatingPrice ? 'Calculating price...' : 'Calculate price'}</button>
+                {data.estimate && data.spark?.status === 'completed' && <>
                 <button type="button" className="cm-secondary-btn" disabled={pdfBusy || answersSaving || calculatingPrice || busy} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : 'View estimate PDF'}</button>
                 {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert" style={{ flexBasis: '100%', marginTop: 0 }}>{pdfError}</p>}
+                </>}
               </div>}
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
             </div>
@@ -944,16 +970,17 @@ export default function CustomerMovePage() {
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
+                    {missingQuestionTabs.size > 0 && <p className="cm-required-summary" role="status">{missingQuestionTabs.size} {missingQuestionTabs.size === 1 ? 'question needs' : 'questions need'} an answer</p>}
                     <nav className="cm-question-tabs" aria-label="Questions">
                       {pricingSteps.flatMap<{id:string; step:PricingStep; index:number; label:string}>(step => step === 'items'
                         ? termsGroups.map((group, index) => ({id:`items:${index}`, step, index, label:group[0]?.question || `Moving terms ${index+1}`}))
                         : [{id:step, step, index:0, label:nextPricingLabels[step]}]
-                      ).map((entry, index) => <button type="button" key={entry.id} title={entry.label.charAt(0).toUpperCase() + entry.label.slice(1)} aria-current={packingStep === entry.step && (entry.step !== 'items' || currentTermsStep === entry.index) ? 'step' : undefined} onClick={() => {
+                      ).map((entry, index) => <button type="button" key={entry.id} className={missingQuestionTabs.has(entry.id) ? 'cm-question-required' : undefined} title={entry.label.charAt(0).toUpperCase() + entry.label.slice(1) + (missingQuestionTabs.has(entry.id) ? ' - Answer required' : '')} aria-current={packingStep === entry.step && (entry.step !== 'items' || currentTermsStep === entry.index) ? 'step' : undefined} onClick={() => {
                         setPackingStep(entry.step);
                         if (entry.step === 'items') changeTermsStep(entry.index);
                         setPackingError(''); setCarryMissing(false); setStairsMissing(false); setShuttleMissing(false); setElevatorMissing(false); setStorageMissing(false);
                         termsBody.current?.scrollTo({top:0});
-                      }}><span className="cm-question-menu-number" aria-hidden="true">{index + 1}</span><span className="cm-question-menu-label">{entry.label.charAt(0).toUpperCase() + entry.label.slice(1)}</span></button>)}
+                      }}><span className="cm-question-menu-number" aria-hidden="true">{index + 1}</span><span className="cm-question-menu-label">{entry.label.charAt(0).toUpperCase() + entry.label.slice(1)}</span>{missingQuestionTabs.has(entry.id) && <span className="cm-question-required-mark" role="img" aria-label="Answer required">!</span>}</button>)}
                     </nav>
                   </div>
                   <div className="cm-modal-body" ref={termsBody}>
