@@ -121,3 +121,24 @@ def test_default_material_applies_only_without_item_specific_materials():
         ('King bed', 'King cover', 'required'),
         ('Dresser', 'Default wrap', 'optional'),
     ]
+
+
+def test_multiple_default_materials_group_inventory_item_once():
+    plan, db = setup()
+    db.query.return_value.all.return_value = [SimpleNamespace(id='tv', name='TV')]
+    card = json.loads(plan.services[0].comments[len(PACKING_CARD_PREFIX):])
+    card['materials'].append(dict(id='wrap', name='Shrink Wrap', material_price=10, packing_price=5, unpacking_price=0))
+    plan.services[0].comments = PACKING_CARD_PREFIX + json.dumps(card)
+    save_material_assignments(plan, ItemMaterialsInput(rows=[], defaults=[
+        dict(material_id='cover', requirement='optional', quantity=1),
+        dict(material_id='wrap', requirement='optional', quantity=1),
+    ]), db)
+
+    rows, _ = customer_item_materials(plan, [dict(item_id='tv', name='TV', room='Living Room', amount=1)], db)
+
+    assert len(rows) == 1
+    assert rows[0]['label'] == 'TV'
+    assert rows[0]['requirement'] == 'optional'
+    assert [material['name'] for material in rows[0]['materials']] == ['King cover', 'Shrink Wrap']
+    assert rows[0]['labor_price'] == 17
+    assert rows[0]['material_price'] == 36

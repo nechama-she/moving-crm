@@ -577,10 +577,26 @@ def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
     from models import LeadJob, LeadLiveSwitch
     if not job_id:
         return []
-    items = db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job_id).all()
     job = db.get(LeadJob, job_id)
     report = db.get(LeadLiveSwitch, job.lead_id) if job else None
     snapshot = json.loads(report.details or '{}').get('spark_inventory_snapshot', []) if report else []
+    if snapshot:
+        result = []
+        for row in snapshot:
+            if not isinstance(row, dict) or not row.get('name'):
+                continue
+            try:
+                quantity = max(1, int(float(row.get('amount') or row.get('quantity') or 1)))
+            except (TypeError, ValueError):
+                quantity = 1
+            try:
+                cuft = float(row['cuft']) if row.get('cuft') is not None else None
+            except (TypeError, ValueError):
+                cuft = None
+            result.append({'item_id': row.get('item_id'), 'name': str(row['name']),
+                           'quantity': quantity, 'room': str(row.get('room') or ''), 'cuft': cuft})
+        return result
+    items = db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job_id).all()
     res = []
     for item in items:
         try:
@@ -1087,7 +1103,7 @@ def customer_package_lines(package, selection):
                 if item.get('available') is False:
                     raise ValueError(f"Material pricing needs review for {item['label']}")
                 lines.append({'id': f"box:{item['id']}", 'name': f"{item['label']} Boxing",
-                              'description': (f"{item['quantity']:g} x {item['material_name']}. " if item.get('material_name') else '') + ('Packing labor and materials' if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else 'Packing labor only; customer supplies materials'),
+                              'description': ((f"{item['quantity']:g} x " if item.get('quantity') is not None else '') + f"{item['material_name']}. " if item.get('material_name') else '') + ('Packing labor and materials' if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else 'Packing labor only; customer supplies materials'),
                               'amount': Decimal(str(item.get('labor_price', item['price']))) + (Decimal(str(item.get('material_price', 0))) if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else Decimal(0))})
     return lines
 

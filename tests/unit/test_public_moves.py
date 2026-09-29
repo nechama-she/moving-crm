@@ -2893,4 +2893,6 @@ def test_inventory_room_uses_report_snapshot_not_missing_model_field(portal):
     db.add(models.LeadSparkInventoryItem(job_id=access.job_id, name='TV', amount=1, sort_order=0))
     db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'spark_inventory_snapshot': [{'name':'TV', 'room':'Living Room'}]})))
     db.commit()
-    assert scope['_job_spark_inventory_items'](access.job_id, db) == [{'name':'TV','quantity':1,'room':'Living Room'}]
+    assert scope['_job_spark_inventory_items'](access.job_id, db) == [
+        {'item_id': None, 'name':'TV', 'quantity':1, 'room':'Living Room', 'cuft': None}
+    ]

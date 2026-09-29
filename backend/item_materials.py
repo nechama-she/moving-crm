@@ -115,17 +115,35 @@ def customer_item_materials(plan, inventory, db):
         for _ in range(count):
             occurrences[(item_id, room)] += 1
             unit = occurrences[(item_id, room)]
+            grouped = defaultdict(list)
             for assignment in item_assignments:
-                rate = rates.get(assignment['material_id'])
-                quantity = Decimal(str(assignment['quantity']))
-                labor = (rate.packing_price * quantity).quantize(Decimal('0.01')) if rate else Decimal(0)
-                material = (rate.material_price * quantity).quantize(Decimal('0.01')) if rate else Decimal(0)
-                identity = json.dumps([plan.id, item_id or key(row.get('name', '')), room, unit, assignment['material_id']])
-                result.append({'id': 'configured:' + str(uuid5(NAMESPACE_URL, identity)),
+                grouped[assignment['requirement']].append(assignment)
+            for requirement, group in grouped.items():
+                labor = material = Decimal(0)
+                material_rows = []
+                available = True
+                for assignment in group:
+                    rate = rates.get(assignment['material_id'])
+                    quantity = Decimal(str(assignment['quantity']))
+                    available = available and rate is not None
+                    if rate:
+                        labor += (rate.packing_price * quantity).quantize(Decimal('0.01'))
+                        material += (rate.material_price * quantity).quantize(Decimal('0.01'))
+                    material_rows.append({'id': assignment['material_id'],
+                                          'name': rate.name if rate else 'Unavailable material',
+                                          'quantity': float(quantity)})
+                identity = json.dumps([plan.id, item_id or key(row.get('name', '')), room, unit,
+                                       requirement, [entry['id'] for entry in material_rows]])
+                description = ', '.join(f"{entry['name']} - {entry['quantity']:g} per item" for entry in material_rows)
+                configured = {'id': 'configured:' + str(uuid5(NAMESPACE_URL, identity)),
                                'label': str(row.get('name') or 'Item') + (f' ({unit})' if count > 1 else ''),
-                               'room': room, 'requirement': assignment['requirement'],
-                               'material_name': rate.name if rate else 'Unavailable material',
-                               'quantity': float(quantity), 'available': rate is not None,
+                               'room': room, 'requirement': requirement,
+                               'material_name': material_rows[0]['name'] if len(material_rows) == 1 else description,
+                               'materials': material_rows,
+                               'available': available,
                                'price': float(labor + material), 'labor_price': float(labor),
-                               'material_price': float(material)})
+                               'material_price': float(material)}
+                if len(material_rows) == 1:
+                    configured['quantity'] = material_rows[0]['quantity']
+                result.append(configured)
     return result, matched
