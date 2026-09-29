@@ -1026,7 +1026,7 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
     minimum_volume = _service_billable_volume(plan, destination, 0)
     volume = max(volume, minimum_volume)
     rates = {}
-    for kind in ('full', 'partial', 'unpacking'):
+    for kind in ('full', 'partial'):
         rate = getattr(card, kind)
         if rate is not None:
             rates[kind] = {'rate': float(rate), 'total': float((rate * volume).quantize(Decimal('0.01')))}
@@ -1056,7 +1056,7 @@ def customer_package_lines(package, selection):
         return []
     lines = []
     mode = selection.get('mode', 'none')
-    for kind in (mode, 'unpacking' if selection.get('unpacking') else 'none'):
+    for kind in (mode,):
         if kind in package['rates']:
             rate = package['rates'][kind]
             name = {'full': 'Full packing', 'partial': 'Partial packing', 'unpacking': 'Unpacking'}[kind]

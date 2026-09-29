@@ -101,9 +101,12 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   const weight = rooms.reduce((sum, room) => sum + total(room, 'weight'), 0);
   const room = rooms.find(r => r.id === selected);
   const matches = (catalog?.items || []).filter(item => `${item.name} ${item.description}`.toLowerCase().includes(search.toLowerCase()));
+  const selectedMatches = matches.filter(item => (room?.items[item.id] || 0) > 0);
+  const otherMatches = matches.filter(item => !(room?.items[item.id] || 0));
+  const visibleItems = [...selectedMatches, ...otherMatches.slice(0, limit)];
   const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  function quantity(id: string, value: number) {
-    setRooms(current => current.map(r => r.id === selected ? { ...r, items: { ...r.items, [id]: Math.min(999, Math.max(0, Math.floor(value || 0))) } } : r));
+  function quantity(id: string, value: number, roomId = selected) {
+    setRooms(current => current.map(r => r.id === roomId ? { ...r, items: { ...r.items, [id]: Math.min(999, Math.max(0, Math.floor(value || 0))) } } : r));
   }
   async function save() {
     if (busy) return;
@@ -163,12 +166,12 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
           <div className="mi-quantity"><input type="number" min="1" max="999" aria-label={`Quantity of ${item.name}`} value={item.quantity} disabled={busy} onChange={e => setRooms(current => current.map(r => r.id === selected ? { ...r, custom_items: r.custom_items?.map(i => i.id === item.id ? { ...i, quantity: Math.min(999, Math.max(1, Math.floor(Number(e.target.value) || 1))) } : i) } : r))} /><button type="button" className="slds-button" aria-label={`Remove ${item.name}`} disabled={busy} onClick={() => setRooms(current => current.map(r => r.id === selected ? { ...r, custom_items: r.custom_items?.filter(i => i.id !== item.id) } : r))}>&times;</button></div>
         </div>)}
         <p className="mi-hint">{count(room)} items selected in this room. Measurements shown are per item.</p>
-        {matches.slice(0, limit).map(item => <div className={`mi-item ${room.items[item.id] ? 'mi-item-selected' : ''}`} key={item.id}>
+        {visibleItems.map(item => <div className={`mi-item ${room.items[item.id] ? 'mi-item-selected' : ''}`} key={item.id}>
           <div><strong>{item.name}</strong><small>{number(item.cuft)} cu ft &middot; {number(item.weight)} lb{item.description ? ` - ${item.description}` : ''}</small></div>
           <div className="mi-quantity"><button type="button" className="slds-button" disabled={busy || !room.items[item.id]} aria-label={`Remove one ${item.name}`} onClick={() => quantity(item.id, (room.items[item.id] || 0) - 1)}>&minus;</button><input type="number" min="0" max="999" disabled={busy} aria-label={`Quantity of ${item.name}, ${item.cuft} cubic feet`} value={room.items[item.id] || 0} onChange={e => quantity(item.id, Number(e.target.value))} /><button type="button" className="slds-button" disabled={busy || room.items[item.id] >= 999} aria-label={`Add one ${item.name}`} onClick={() => quantity(item.id, (room.items[item.id] || 0) + 1)}>+</button></div>
         </div>)}
         {!matches.length && <p>No matching items.</p>}
-        {matches.length > limit && <button type="button" className="slds-button" onClick={() => setLimit(value => value + 60)}>Show more items</button>}
+        {otherMatches.length > limit && <button type="button" className="slds-button" onClick={() => setLimit(value => value + 60)}>Show more items</button>}
       </> : <>
         <p>Choose a room to add items. You can add multiple bedrooms or other rooms.</p>
         <div className="mi-rooms">{rooms.map(r => <article key={r.id}><button type="button" disabled={busy} onClick={() => { setSelected(r.id); setSearch(''); setLimit(60); }}><strong>{r.name}</strong><span>{count(r)} items &middot; {number(total(r, 'cuft'))} cu ft</span></button><button type="button" className="mi-remove" disabled={busy} aria-label={`Delete room ${r.name}`} onClick={() => setRooms(current => current.filter(value => value.id !== r.id))}>&times;</button></article>)}</div>
@@ -179,9 +182,9 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
             <summary><strong>{r.name}</strong> &middot; {count(r)} items</summary>
             {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <div className="mi-summary-item" key={id}>
               <span>{qty} &times; {items.get(id)?.name || 'Item'}</span>
-              <span>{number((items.get(id)?.cuft || 0) * qty)} cu ft</span>
+              <span className="mi-summary-actions"><span>{number((items.get(id)?.cuft || 0) * qty)} cu ft</span><button type="button" className="slds-button" disabled={busy} title={`Remove ${items.get(id)?.name || 'item'} from ${r.name}`} aria-label={`Remove all ${items.get(id)?.name || 'item'} from ${r.name}`} onClick={() => quantity(id, 0, r.id)}>&times;</button></span>
             </div>)}
-            {(r.custom_items || []).map(item => <div className="mi-summary-item" key={item.id}><span>{item.quantity} &times; {item.name}</span><span>{number(item.cuft * item.quantity)} cu ft</span></div>)}
+            {(r.custom_items || []).map(item => <div className="mi-summary-item" key={item.id}><span>{item.quantity} &times; {item.name}</span><span className="mi-summary-actions"><span>{number(item.cuft * item.quantity)} cu ft</span><button type="button" className="slds-button" disabled={busy} title={`Remove ${item.name} from ${r.name}`} aria-label={`Remove all ${item.name} from ${r.name}`} onClick={() => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.filter(entry => entry.id !== item.id) } : value))}>&times;</button></span></div>)}
           </details>)}
           <p><strong>List total: {number(cuft)} cu ft</strong></p>
         </section>}

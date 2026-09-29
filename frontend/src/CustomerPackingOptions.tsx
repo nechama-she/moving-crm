@@ -25,7 +25,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
     rooms.get(room)!.push(item);
   }
   const extraTotal=(config.material_quotes||[]).reduce((sum,quote)=>{const service=selection.additional_items?.[quote.id]?.service;return sum+Number(service==='materials'?quote.packing_and_material||0:service==='packing'?quote.packing_only||0:0);},0);
-  const total = (selection.mode !== 'none' ? config.rates[selection.mode]?.total || 0 : extraTotal + config.items.filter(item => selection.item_ids.includes(item.id)).reduce((sum, item) => sum + (item.labor_price ?? item.price) + (materials.includes(item.id) ? item.material_price || 0 : 0), 0)) + (selection.unpacking ? config.rates.unpacking?.total || 0 : 0);
+  const total = selection.mode !== 'none' ? config.rates[selection.mode]?.total || 0 : extraTotal + config.items.filter(item => selection.item_ids.includes(item.id)).reduce((sum, item) => sum + (item.labor_price ?? item.price) + (materials.includes(item.id) ? item.material_price || 0 : 0), 0);
   return <div className="cm-packing-options">
     <div className="cm-packing-heading"><h4>Choose your packing service</h4><div className="cm-packing-volume"><span>{inventoryVolume.toLocaleString()} cu ft</span>{minimumApplies && <small>Minimum billable: {config.minimum_cubic_feet!.toLocaleString()} cu ft</small>}</div></div>
     <div className="cm-packing-choices">
@@ -58,16 +58,6 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       </div>
     </section>}
     {selection.mode==='none' && <CustomerMaterialItems config={config} selection={selection} disabled={disabled} onChange={onChange}/>}
-    {config.rates.unpacking && <section className="cm-unpacking-addon" aria-labelledby="cm-unpacking-heading">
-      <h4 id="cm-unpacking-heading">Optional add-on</h4>
-      <label className="cm-unpacking-control">
-        <input type="checkbox" disabled={disabled} checked={selection.unpacking} onChange={e => onChange({ ...selection, unpacking: e.target.checked })} />
-        <span className="cm-packing-copy">
-          <strong className="cm-packing-title"><span>Add unpacking</span><span className="cm-packing-inline-price">&middot; {money(config.rates.unpacking.rate)} / cu ft &middot; {money(config.rates.unpacking.total)}</span></strong>
-          <small>A separate service for your move. Available with full, partial, or no packing.</small>
-        </span>
-      </label>
-    </section>}
-    <div className="cm-packing-total" aria-live="polite"><span>Packing &amp; unpacking total</span><strong>{money(total)}</strong></div>
+    <div className="cm-packing-total" aria-live="polite"><span>Packing total</span><strong>{money(total)}</strong></div>
   </div>;
 }

@@ -121,6 +121,16 @@ def test_recalculate_price_accepts_verified_portal_session_through_global_auth(p
         pricing.calculate_and_save_lead_job_price.assert_called_once()
 
 
+def test_packing_totals_ignore_saved_unpacking_for_now(packing_pricing):
+    package = {'cubic_feet': 100, 'rates': {'full': {'rate': 2, 'total': 200},
+                                         'unpacking': {'rate': 1, 'total': 100}}, 'items': []}
+    selection = {'mode': 'full', 'unpacking': True}
+    lines = packing_pricing.customer_package_lines(package, selection)
+    assert [line['name'] for line in lines] == ['Full packing']
+    assert sum(line['amount'] for line in lines) == 200
+    assert selection['unpacking'] is True
+
+
 def request(link='',session=''):
     return Request({'type':'http','method':'GET','path':'/','headers':[(b'x-public-link',link.encode()),(b'x-public-session',session.encode())], 'client':('127.0.0.1',1234)})
 

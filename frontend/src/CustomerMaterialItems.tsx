@@ -21,10 +21,11 @@ export default function CustomerMaterialItems({config,selection,onChange,disable
           <strong>{item.label}</strong>
           <button type="button" className="cm-secondary-btn" aria-label={`Remove ${item.label}`} title="Remove item" disabled={disabled} onClick={()=>save(id,null)}>&times;</button>
         </div>
-        {quote?.status==='priced'?<div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px'}}>{(['packing','materials'] as const).map(service=><label key={service} style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13}}>
-          <input type="checkbox" disabled={disabled} checked={item.service===service} onChange={e=>save(id,{...item,service:e.target.checked?service:'self'})}/>
-          <span>{service==='packing'?'Packing only':'Packing and material'} <strong>{money(service==='packing'?quote.packing_only:quote.packing_and_material)}</strong></span>
-        </label>)}</div>:<p role="status">{quote?'Saved for the moving team to confirm packing pricing.':'Calculating packing prices...'}</p>}
+        <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px'}}>{(['packing','materials'] as const).map(service=><label key={service} style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13}}>
+          <input type="checkbox" disabled={disabled || quote?.status!=='priced'} checked={item.service===service} onChange={e=>save(id,{...item,service:e.target.checked?service:'self'})}/>
+          <span>{service==='packing'?'Packing only':'Packing and material'} {quote?.status==='priced' && <strong>{money(service==='packing'?quote.packing_only:quote.packing_and_material)}</strong>}</span>
+        </label>)}</div>
+        {quote?.status!=='priced' && <p role="status">{quote?'Packing price unavailable: the moving team needs to confirm the material for this item.':'Calculating packing prices...'}</p>}
       </section>;
     })}
     <button type="button" className="cm-secondary-btn" disabled={disabled} aria-expanded={open} onClick={()=>setOpen(!open)}>{open?'Close item list':'+ Add items from inventory'}</button>
