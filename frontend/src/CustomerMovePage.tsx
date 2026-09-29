@@ -231,7 +231,7 @@ export default function CustomerMovePage() {
             } catch { /* Save the choices even when mileage is unavailable. */ }
           }
         }
-        setData(await call('/packing', { change: payload }));
+        await call('/packing?compact=true', { change: payload });
         failedPricing.current.delete(id);
         failedAnswers.current.delete(id);
         setPackingError(failedPricing.current.size ? 'Some choices could not be saved. Please retry.' : '');
@@ -241,7 +241,7 @@ export default function CustomerMovePage() {
         setPackingError((error as Error).message);
       } finally {
         answerPending.current -= 1;
-        if (!answerPending.current) setAnswersSaving(false);
+        if (!answerPending.current) { setAnswersSaving(false); void refreshDetails(true); }
       }
     });
     answerQueue.current = task.catch(() => {});
@@ -309,7 +309,7 @@ export default function CustomerMovePage() {
     const previous = pricingSteps[pricingSteps.indexOf(packingStep)-1];
     if (previous) setPackingStep(previous); else setShowQuestions(false);
   }
-  async function nextPricingStep() {
+  async function nextPricingStep(currentActionSaved = false) {
     if (packingStep === 'package' && packingSection === 'protection') {
       const configured = !!data?.packing_package?.configured_materials;
       const optionalSelected = data?.packing_package?.items.some(item => item.requirement === 'optional' && packageSelection.item_ids.includes(item.id));
@@ -319,7 +319,7 @@ export default function CustomerMovePage() {
         return;
       }
     }
-    if(packingStep === 'package' && packingSection === 'service' && data?.unanswered_questions?.includes('package')) {
+    if(!currentActionSaved && packingStep === 'package' && packingSection === 'service' && data?.unanswered_questions?.includes('package')) {
       savePricingChange({kind:'mode',mode:packageSelection.mode});
       await answerQueue.current;
     }
@@ -607,7 +607,10 @@ export default function CustomerMovePage() {
       const current=actions.findIndex(action=>action.dataset.customerAction===lastCustomerAction.current);
       const next=current>=0?actions[current+1]:undefined;
       lastCustomerAction.current=null;
-      next?.scrollIntoView({behavior,block:'center'});
+      if(next){next.scrollIntoView({behavior,block:'center'});return;}
+      if(current<0)return;
+      if(packingStep==='items')nextTermsStep();
+      else void nextPricingStep(true);
     });
     return ()=>cancelAnimationFrame(frame);
   },[answersSaving,packingError,showQuestions]);
@@ -1066,9 +1069,13 @@ export default function CustomerMovePage() {
                       setAnswersSaving(true);
                       setAnswerSaveStarted(true);
                       const task = answerQueue.current.then(async () => {
-                        try { const next = await call('/item-answer', { ...answer, report_id: reportId }); setData(next); failedAnswers.current.delete(answer.question_id); setTermsError(''); }
+                        try {
+                          await call('/item-answer?compact=true', { ...answer, report_id: reportId });
+                          setData(current=>current?{...current,item_questions:current.item_questions?.map(question=>question.id===answer.question_id?{...question,saved:{answer_id:answer.answer_id,acknowledged:answer.acknowledged,pending:answer.pending,selected_items:answer.selected_items}}:question)}:current);
+                          failedAnswers.current.delete(answer.question_id); setTermsError('');
+                        }
                         catch (error) { failedAnswers.current.add(answer.question_id); setTermsError('Please retry the answer that could not be saved.'); throw error; }
-                        finally { answerPending.current -= 1; if (!answerPending.current) setAnswersSaving(false); }
+                        finally { answerPending.current -= 1; if (!answerPending.current) { setAnswersSaving(false); void refreshDetails(true); } }
                       });
                       answerQueue.current = task.catch(() => {});
                       return task;
@@ -1114,7 +1121,7 @@ export default function CustomerMovePage() {
                   {packingStep === 'items' && termsError && <p role="alert" className="cm-field-error">{termsError}</p>}
                   <div className="cm-modal-footer">
                     <button type="button" className="cm-secondary-btn" onClick={previousPricingStep}>{pricingSteps.indexOf(packingStep) === 0 && !(packingStep === 'items' && currentTermsStep > 0) ? 'Close' : 'Back'}</button>
-                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" aria-busy={answersSaving} onClick={nextTermsStep}>{currentTermsStep < termsGroups.length - 1 ? 'Next' : 'Done'}</button> : <button type="button" className="slds-button cm-primary" onClick={nextPricingStep}>{packingStep==='package'&&nextPackingSection?`Next: ${nextPackingSection==='boxes'?'boxes':'item protection'}`:nextPricing ? `Next: ${nextPricingLabels[nextPricing]}` : 'Done'}</button>}
+                    {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" aria-busy={answersSaving} onClick={nextTermsStep}>{currentTermsStep < termsGroups.length - 1 ? 'Next' : 'Done'}</button> : <button type="button" className="slds-button cm-primary" onClick={()=>void nextPricingStep()}>{packingStep==='package'&&nextPackingSection?`Next: ${nextPackingSection==='boxes'?'boxes':'item protection'}`:nextPricing ? `Next: ${nextPricingLabels[nextPricing]}` : 'Done'}</button>}
 
                   </div>
                   {<small className="cm-answer-autosave-note" role="status" aria-live="polite">{answersSaving ? 'Saving...' : failedAnswers.current.size ? 'Could not save all answers. Please retry.' : answerSaveStarted ? <><span className="cm-save-check" aria-hidden="true">&#10003;</span> Saved</> : 'Your answers save automatically.'}</small>}

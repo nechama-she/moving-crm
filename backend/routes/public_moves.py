@@ -852,12 +852,14 @@ class CustomerPackingPatch(BaseModel):
 
 
 @router.post('/api/public-moves/{access_id}/packing')
-def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), compact: bool = False):
     from models import LeadJobCharge
     from routes.pricing import customer_packing_options, customer_packing_charge_id
     from routes.leads import _refresh_lead_estimated_total
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
     lead = db.get(Lead, access.lead_id)
+    def saved_response():
+        return {'saved': True} if compact else _move_details(access, db, refresh_report=False)
     if body.change and body.change.kind == 'extra_stops':
         from extra_stops import option as stops_option, sync_charges
         change=body.change
@@ -903,7 +905,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         else:
             attempt_pricing(lead,job,db,lambda: sync_charges(lead,job,db,refresh=False))
         db.commit()
-        return _move_details(access,db,refresh_report=False)
+        return saved_response()
     if body.change and body.change.kind == 'elevator':
         from routes.pricing import customer_elevator, sync_elevator_charges
         change = body.change
@@ -918,7 +920,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         job.customer_packing_package = json.dumps(selection)
         sync_elevator_charges(lead, job, db, change.location)
         db.commit()
-        return _move_details(access, db, refresh_report=False)
+        return saved_response()
     if body.change and body.change.kind == 'long_carry':
         from routes.pricing import customer_long_carry, sync_long_carry_charges
         change = body.change
@@ -934,7 +936,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         job.customer_packing_package = json.dumps(selection)
         sync_long_carry_charges(lead, job, db, change.location)
         db.commit()
-        return _move_details(access, db, refresh_report=False)
+        return saved_response()
     if body.change and body.change.kind == 'stairs':
         from routes.pricing import customer_stairs, sync_stairs_charges
         change = body.change
@@ -949,7 +951,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         job.customer_packing_package = json.dumps(selection)
         sync_stairs_charges(lead, job, db, change.location)
         db.commit()
-        return _move_details(access, db, refresh_report=False)
+        return saved_response()
     if body.change and body.change.kind == 'storage':
         from routes.pricing import customer_storage, sync_storage_charge
         from datetime import date
@@ -967,7 +969,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         job.customer_packing_package = json.dumps(selection)
         sync_storage_charge(lead, job, db)
         db.commit()
-        return _move_details(access, db, refresh_report=False)
+        return saved_response()
     if body.change and body.change.kind == 'shuttle':
         from routes.pricing import customer_shuttle, sync_customer_shuttle_charge
         if 'enabled' not in body.change.model_fields_set:
@@ -985,7 +987,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         from routes.pricing import sync_long_carry_charges
         sync_long_carry_charges(lead, job, db, 'delivery')
         db.commit()
-        return _move_details(access, db, refresh_report=False)
+        return saved_response()
     options = customer_packing_options(lead, job, db)
     change = body.change
     touched = None
@@ -1112,7 +1114,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         if body.package is not None:
             job.customer_packing_package = json.dumps(selection)
         db.commit()
-        return _move_details(access, db, refresh_report=False)
+        return saved_response()
     previous = set(json.loads(job.customer_packing or '[]'))
     ids = [customer_packing_charge_id(job.id, item_id) for item_id in previous | selected]
     ids.extend(customer_packing_charge_id(job.id, item_id) for item_id in package_old_ids)
@@ -1148,7 +1150,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             link.published_price += delta
     _refresh_lead_estimated_total(lead.id, db)
     db.commit()
-    return _move_details(access, db, refresh_report=False)
+    return saved_response()
 
 
 class CustomerAddressSelection(BaseModel):
@@ -1974,7 +1976,7 @@ class ItemAnswerInput(BaseModel):
 
 
 @router.post('/api/public-moves/{access_id}/item-answer')
-def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), compact: bool = False):
     from inventory_questions import questions
     from spark_history import remember_report
     from routes.liveswitch import apply_spark_results_to_lead
@@ -2029,8 +2031,8 @@ def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(v
     if not inventory_changed:
         from realtime import publish_customer_update
         publish_customer_update(lead.id)
-        return details(access, db)
+        return {'saved': True} if compact else details(access, db)
     result = apply_spark_results_to_lead(lead.id, state.get('last_spark_share_url', ''), db,
         expected_report_id=body.report_id, use_snapshot=True)
     if not result.get('ok'): raise HTTPException(502, result.get('detail', 'Could not update the estimate'))
-    return details(access, db)
+    return {'saved': True} if compact else details(access, db)
