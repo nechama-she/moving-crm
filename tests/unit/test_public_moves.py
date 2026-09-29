@@ -706,16 +706,16 @@ def test_long_distance_package_inventory_volume_and_materials(portal, packing_pr
     assert package['rates']['full']['total'] == 1002
     assert len(package['items']) == 2
     lines = packing_pricing.customer_package_lines(package, {'mode': 'none', 'unpacking': True, 'item_ids': ['mirror:2']})
-    assert [line['name'] for line in lines] == ['Unpacking', 'Mirror (2 of 2) Boxing']
-    assert sum(line['amount'] for line in lines) == 280.5
+    assert [line['name'] for line in lines] == ['Mirror (2 of 2) Boxing']
+    assert sum(line['amount'] for line in lines) == 30
     lines = packing_pricing.customer_package_lines(package, {'mode': 'partial', 'unpacking': True, 'item_ids': ['mirror:2']})
-    assert [line['name'] for line in lines] == ['Partial packing', 'Unpacking']
-    assert sum(line['amount'] for line in lines) == 751.5
+    assert [line['name'] for line in lines] == ['Partial packing']
+    assert sum(line['amount'] for line in lines) == 501
     assert packing_pricing.customer_packing_package(lead, job, db, plan, 'Local') is None
     job.customer_packing_package = json.dumps({'mode': 'partial', 'unpacking': True, 'item_ids': []})
-    assert packing_pricing.add_customer_package_charges(lead, job, db, plan, 'Long Distance') == 751.5
+    assert packing_pricing.add_customer_package_charges(lead, job, db, plan, 'Long Distance') == 501
     db.flush()
-    assert db.query(models.LeadJobCharge).count() == 2
+    assert db.query(models.LeadJobCharge).count() == 1
 
 
 def test_package_save_switch_and_validation(portal, packing_pricing, monkeypatch):
@@ -2534,6 +2534,11 @@ def test_additional_material_save_reprice_remove_and_package_switch(portal, pack
     save(item)
     assert job.price == access.published_price == 1044
     assert db.query(models.LeadJobCharge).count() == 1
+    mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'additional_protection','enabled':False}),access,db)
+    assert job.price == 1000
+    assert json.loads(job.customer_packing_package)['additional_items']['chair']['service'] == 'materials'
+    mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'additional_protection','enabled':True}),access,db)
+    assert job.price == 1044
     item['service']='packing'
     save(item)
     assert job.price == 1024

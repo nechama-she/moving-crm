@@ -85,3 +85,35 @@ def test_fully_discounted_stairs_remains_in_pdf():
     text=''.join(page.get_text() for page in doc)
     assert 'Pickup stairs' in text and 'Before discount: $57.20' in text
     assert 'Discount (100%): -$57.20' in text and '$0.00' in text
+
+
+def test_material_price_list_is_appended_with_no_packing_and_does_not_change_total():
+    import copy
+    import pymupdf
+    data = sample()
+    data['packing_package'].update(selection={'mode': 'none'}, material_rates=[
+        {'name': 'Mattress Bag (Queen)', 'mattress_size': 'queen', 'material_price': '26', 'packing_price': '12', 'unpacking_price': '15'},
+        {'name': 'Book Box', 'capacity': '2', 'capacity_unit': 'cuft', 'material_price': '9', 'packing_price': '5'},
+    ])
+    original = copy.deepcopy(data)
+    doc = pymupdf.open(stream=build_estimate_pdf(data, []), filetype='pdf')
+    text = doc[-1].get_text()
+    assert 'Materials price list' in text
+    assert 'Queen mattress' in text and '2 cu ft' in text
+    assert '$26.00' in text and '$12.00' in text and '$9.00' in text
+    assert 'Unpacking' not in text and '$15.00' not in text
+    assert '$1,910.00' in doc[0].get_text()
+    assert data == original
+
+
+def test_material_table_repeats_headers_across_pages():
+    import pymupdf
+    data = sample()
+    data['packing_package']['material_rates'] = [
+        {'name': f'Material {i} with a longer description that wraps onto another line',
+         'material_price': i, 'packing_price': '0'} for i in range(80)]
+    doc = pymupdf.open(stream=build_estimate_pdf(data, []), filetype='pdf')
+    material_pages = [page.get_text() for page in doc][1:]
+    assert len(material_pages) > 1
+    assert all('Material / unit' in text for text in material_pages)
+    assert 'Material 79' in material_pages[-1]

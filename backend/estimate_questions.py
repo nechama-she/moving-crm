@@ -23,6 +23,12 @@ def unanswered_questions(data, package_saved=True):
         missing.append('bulky')
     if data.get('packing_package') and not package_saved:
         missing.append('package')
+    package = data.get('packing_package') or {}
+    selection = package.get('selection') or {}
+    if package and selection.get('mode', 'none') == 'none':
+        additional = selection.get('has_additional_protection')
+        if additional is None or (additional and not selection.get('additional_items')):
+            missing.append('protection')
     for question in data.get('item_questions', []):
         saved = question.get('saved') or {}
         answer = next((row for row in question['answers'] if row['id'] == saved.get('answer_id')), None)

@@ -805,6 +805,7 @@ from material_calculation import CustomerMaterialItem
 
 
 class CustomerPackageSelection(BaseModel):
+    has_additional_protection: bool | None = None
     mode: Literal['full', 'partial', 'none'] = 'none'
     unpacking: bool = False
     item_ids: list[str] = Field(default_factory=list, max_length=1000)
@@ -813,7 +814,7 @@ class CustomerPackageSelection(BaseModel):
 
 
 class CustomerPackingChange(BaseModel):
-    kind: Literal['material', 'mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs', 'long_carry', 'elevator', 'extra_stops']
+    kind: Literal['additional_protection', 'material', 'mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs', 'long_carry', 'elevator', 'extra_stops']
     material_item: CustomerMaterialItem | None = None
     location: Literal['pickup', 'delivery'] | None = None
     stops: list[str] = Field(default_factory=list, max_length=100)
@@ -1008,6 +1009,9 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                 if change.mode != 'none':
                     selection['item_ids'] = []
                     selection['material_item_ids'] = []
+            elif change.kind == 'additional_protection':
+                selection['has_additional_protection'] = change.enabled
+                touched.update(f'material:{item_id}' for item_id in selection.get('additional_items', {}))
             elif change.kind == 'material':
                 if not change.item_id or len(change.item_id) > 100:
                     raise HTTPException(422, 'A valid item ID is required.')
@@ -1057,7 +1061,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         if selection['material_item_ids'] is None:
             selection['material_item_ids'] = list(selection['item_ids'])
         selection['item_ids'] = sorted(set(selection['item_ids']) | set(selection['material_item_ids']))
-        if (selection['mode'] != 'none' and selection['mode'] not in package['rates']) or (selection['unpacking'] and 'unpacking' not in package['rates']):
+        if selection['mode'] != 'none' and selection['mode'] not in package['rates']:
             raise HTTPException(409, 'That packing service is not priced. Refresh your estimate.')
         if not set(selection['item_ids']).issubset({item['id'] for item in package['items']}):
             raise HTTPException(409, 'Your required-box items changed. Refresh your estimate.')

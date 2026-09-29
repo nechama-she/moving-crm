@@ -81,7 +81,8 @@ def customer_material_quotes(materials, selections, inventory=None):
                                'status':'needs_review','issues':['Inventory item is no longer available'],
                                'lines':[],'packing_only':None,'packing_and_material':None})
                 continue
-            values = {**source, 'service': values.get('service', 'self')}
+            values = {**source, 'protection': values.get('protection', source['protection']),
+                      'service': values.get('service', 'self')}
         item = CustomerMaterialItem.model_validate(values)
         result.append({'id': id, 'label': item.label, 'service': item.service,
                        **calculate_materials(materials, item)})

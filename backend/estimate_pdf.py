@@ -11,7 +11,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, PageBreak
 
 
 def inventory_entries(rows, questions):
@@ -226,6 +226,30 @@ def build_estimate_pdf(data, rows):
                 story.append(p(saved['notice'], 'NoteEstimate'))
             if saved.get('pending'):
                 story.append(p('Answer incomplete - item selection or acknowledgment required.', 'NoteEstimate'))
+    materials = package.get('material_rates') or []
+    if materials:
+        story += [PageBreak(), p('Materials price list', 'SectionEstimate'),
+                  p('Price reference only. Materials and packing labor are priced separately per unit. Only selected services are included in the estimate total.', 'NoteEstimate'),
+                  Spacer(1, 8)]
+        body = [[p('Description'), p('Capacity / size'),
+                 p('Material / unit', 'RightEstimate'), p('Packing / unit', 'RightEstimate')]]
+        units = {'cuft': 'cu ft', 'inches': 'inches', 'sheets': 'sheets', 'feet': 'feet', 'items': 'items'}
+        for material in materials:
+            size = '-'
+            if material.get('mattress_size'):
+                size = material['mattress_size'].title() + ' mattress'
+            else:
+                capacity = material.get('capacity')
+                unit = material.get('capacity_unit') or 'cuft'
+                if capacity is None and material.get('box_capacity_cuft') is not None:
+                    capacity, unit = material['box_capacity_cuft'], 'cuft'
+                if capacity is not None:
+                    prefix = 'Over ' if material.get('capacity_kind') == 'over' else ''
+                    size = f"{prefix}{Decimal(str(capacity)):g} {units.get(unit, unit)}"
+            body.append([p(material['name']), p(size, 'NoteEstimate'),
+                         p(money(material.get('material_price')), 'RightEstimate'),
+                         p(money(material.get('packing_price')), 'RightEstimate')])
+        story.append(table(body, [228, 104, 95, 95], header=True))
     def footer(canvas, doc):
         canvas.saveState()
         canvas.setStrokeColor(colors.HexColor('#dce4e8'))

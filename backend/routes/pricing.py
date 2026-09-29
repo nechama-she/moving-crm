@@ -1040,6 +1040,7 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
         for index, room in enumerate(rooms):
             items.append({'id': f'{item.id}:{index + 1}',
                           'room': room,
+                          'packing_material': item.packing_material,
                           'label': f'{item.name} ({index + 1} of {count})' if count > 1 else item.name,
                           'price': float(item.price), 'labor_price': float(item.labor_price), 'material_price': float(item.material_price)})
     selection = selection_override if selection_override is not None else json.loads(job.customer_packing_package or '{}')
@@ -1047,6 +1048,7 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
     other_inventory = inventory_material_options([row for row in inventory if isinstance(row, dict) and _normalize_item_name(str(row.get('name') or '')) not in known])
     return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': items,
             'other_inventory': other_inventory,
+            'material_rates': [row.model_dump(mode='json') for row in card.materials],
             'material_quotes': customer_material_quotes(card.materials, selection.get('additional_items', {}), other_inventory),
             'selection': {'mode': 'none', 'unpacking': False, 'item_ids': [], **selection}}
 
@@ -1064,7 +1066,7 @@ def customer_package_lines(package, selection):
                           'description': f"{package['cubic_feet']} cu ft at ${rate['rate']:g} / cu ft",
                           'amount': Decimal(str(rate['total']))})
     if mode == 'none':
-        for item in package.get('material_quotes', []):
+        for item in package.get('material_quotes', []) if selection.get('has_additional_protection') is not False else []:
             service = selection.get('additional_items', {}).get(item['id'], {}).get('service', 'self')
             if service == 'self':
                 continue

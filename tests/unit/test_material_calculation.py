@@ -104,3 +104,28 @@ def test_unknown_mattress_sizes_are_not_guessed():
     from material_calculation import inventory_material_options
     for name in ['Mattress', 'California king mattress', 'Twin XL mattress']:
         assert inventory_material_options([{'name':name}])[0]['variant']==''
+
+
+def test_customer_classification_selects_material_but_cannot_change_size():
+    from material_calculation import inventory_material_options, customer_material_quotes
+    options = inventory_material_options([{'id':'bed','name':'Bed King','quantity':1,'cuft':80}])
+    rows = [MaterialRate(id='wrap',name='Large plastic wrap',material_price=18,packing_price=12,unpacking_price=0,
+                        rule={'protection':'fabric','item_type':'any','measure':'cubic_feet','minimum':25})]
+    choice = {**options[0], 'protection':'fabric', 'cubic_feet':1, 'quantity':999, 'service':'materials'}
+    quote = customer_material_quotes(rows,{options[0]['id']:choice},options)[0]
+    assert quote['status'] == 'priced'
+    assert quote['packing_only'] == 12
+    assert quote['packing_and_material'] == 30
+    choice['protection'] = 'fragile'
+    assert customer_material_quotes(rows,{options[0]['id']:choice},options)[0]['status'] == 'needs_review'
+
+
+def test_required_material_configuration_preserves_ids_and_prices():
+    from long_distance_packing import RequiredBoxItem
+    sofa = RequiredBoxItem(id='same',name='Sectional sofa large',labor_price=26,material_price=12)
+    assert sofa.packing_material == 'plastic'
+    mirror = RequiredBoxItem(id='mirror',name='Mirror',labor_price=10,material_price=20)
+    assert mirror.packing_material == 'cardboard'
+    edited = RequiredBoxItem.model_validate({**sofa.model_dump(),'packing_material':'cardboard'})
+    assert edited.id == 'same' and edited.price == 38
+    assert edited.packing_material == 'cardboard'

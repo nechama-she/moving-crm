@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import BulkyCatalogPicker from './BulkyCatalogPicker';
 type Service = { id?: string; name: string; rate_text: string; comments: string };
-type BoxItem = { id: string; name: string; price?: string; labor_price?: string; material_price?: string };
+type BoxItem = { id: string; name: string; price?: string; labor_price?: string; material_price?: string; packing_material?: 'plastic'|'cardboard' };
 type Config = { full: string; partial: string; unpacking: string; items: BoxItem[] };
+const materialFor = (item: BoxItem) => item.packing_material || (/\b(fabric|upholstered|sofa|couch|sectional|mattress|ottoman)\b/i.test(item.name) ? 'plastic' : 'cardboard');
 export const PACKING_CARD_PREFIX = "__ld_packing__:";
 export const isPackingCard = (service: Service) => service.comments.startsWith(PACKING_CARD_PREFIX);
 export default function LongDistancePackingCard({ services, editing, onChange }: {
@@ -30,24 +31,24 @@ export default function LongDistancePackingCard({ services, editing, onChange }:
         setCatalogTarget(null);
       }}
     />}
-    <p>Set packing and unpacking rates per cubic foot of the move.</p>
+    <p>Set packing rates per cubic foot of the move.</p>
     <div className="pricing-services pricing-packing-rates">
       {([
         ['full', 'Full packing', 'Full packing service'],
         ['partial', 'Partial packing', 'Required-box items; all materials included. Excludes boxes of personal belongings.'],
-        ['unpacking', 'Unpacking', 'Unpacking service'],
       ] as const).map(([key, title, description]) => <article key={key}>
         <div><strong>{title}</strong><small>{description}</small></div>
         {editing ? <span className="ld-packing-rate-input"><input type="number" min="0" step="0.01" aria-label={`${title} dollars per cubic foot`} placeholder="Not configured" value={config[key]} onChange={e => update({ [key]: e.target.value })} /><span>$/cu ft</span></span> : <b>{money(config[key])}{config[key] !== '' && ' / cu ft'}</b>}
       </article>)}
       <article><div><strong>No packing</strong><small>Customer packs their own items, with optional packing for individual items below.</small></div><b>No package charge</b></article>
     </div>
-    <h4>Items that must be boxed</h4>
-    <p>These items cannot be shipped with blanket wrapping alone. With no packing selected, the customer can pay us to pack individual items or pack them themselves. Boxing is required either way. Customers can select labor only, or labor and materials. Materials always include labor.</p>
+    <h4>Items requiring protection</h4>
+    <p>Fabric items require plastic covers. Fragile items require cardboard boxes.</p>
     <div className="ld-box-table-wrap">
       <table className="slds-table slds-table_bordered ld-box-table" aria-label="Items that must be boxed">
         <thead><tr>
           <th scope="col">Item</th>
+          <th scope="col">Required material</th>
           <th scope="col" className="ld-box-price">Labor / item</th>
           <th scope="col" className="ld-box-price">Materials / item</th>
           {editing && <th scope="col" className="ld-box-action"><button type="button" className="slds-button ld-box-icon" aria-label="Add required-box item" title="Add item" onClick={() => setCatalogTarget('new')}>+</button></th>}
@@ -55,10 +56,11 @@ export default function LongDistancePackingCard({ services, editing, onChange }:
         <tbody>
           {config.items.map((item, index) => <tr key={item.id}>
             <td>{editing ? <button type="button" className="slds-button" style={{width:'100%',justifyContent:'flex-start',textAlign:'left'}} aria-label={`Choose catalog item for ${item.name || `item ${index + 1}`}`} onClick={() => setCatalogTarget(item.id)}>{item.name || 'Choose catalog item'}</button> : item.name}</td>
+            <td>{editing ? <select aria-label={`Required material for ${item.name}`} value={materialFor(item)} onChange={e => update({items:config.items.map(row => row.id === item.id ? {...row,packing_material:e.target.value as 'plastic'|'cardboard'} : row)})}><option value="plastic">Plastic</option><option value="cardboard">Cardboard</option></select> : materialFor(item) === 'plastic' ? 'Plastic' : 'Cardboard'}</td>
             {(['labor_price','material_price'] as const).map(field => <td key={field} className="ld-box-price">{editing ? <input className="slds-input" aria-label={`Item ${index + 1} ${field === 'labor_price' ? 'labor' : 'materials'} price`} type="number" min="0" step="0.01" value={item[field] ?? (field === 'labor_price' ? item.price ?? '' : '0')} placeholder="0.00" onChange={e => update({ items: config.items.map(row => row.id === item.id ? { ...row, labor_price: row.labor_price ?? row.price ?? '0', material_price: row.material_price ?? '0', [field]: e.target.value } : row) })} /> : money(item[field] ?? (field === 'labor_price' ? item.price ?? '0' : '0'))}</td>)}
             {editing && <td className="ld-box-action"><button type="button" className="slds-button ld-box-icon" aria-label={`Remove ${item.name || `item ${index + 1}`}`} title="Remove item" onClick={() => update({ items: config.items.filter(row => row.id !== item.id) })}>&times;</button></td>}
           </tr>)}
-          {!config.items.length && <tr><td colSpan={editing ? 4 : 3} className="ld-box-empty">No required-box items configured.{editing && ' Use + to add an item.'}</td></tr>}
+          {!config.items.length && <tr><td colSpan={editing ? 5 : 4} className="ld-box-empty">No required items configured.{editing && ' Use + to add an item.'}</td></tr>}
         </tbody>
       </table>
     </div>

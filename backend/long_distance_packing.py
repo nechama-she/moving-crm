@@ -1,5 +1,6 @@
 """Validated packing-card configuration stored with a long-distance pricing book."""
 from decimal import Decimal
+import re
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -19,6 +20,16 @@ class RequiredBoxItem(BaseModel):
     price: Decimal = Field(default=0, ge=0, max_digits=10, decimal_places=2)
     labor_price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     material_price: Decimal = Field(default=0, ge=0, max_digits=10, decimal_places=2)
+    packing_material: Literal['plastic', 'cardboard'] = 'cardboard'
+
+    @model_validator(mode='before')
+    @classmethod
+    def default_protection(cls, value):
+        if isinstance(value, dict) and not value.get('packing_material'):
+            value = {**value, 'packing_material': 'plastic' if re.search(
+                r'\b(fabric|upholstered|sofa|couch|sectional|mattress|ottoman)\b',
+                str(value.get('name', '')), re.IGNORECASE) else 'cardboard'}
+        return value
 
     @model_validator(mode='after')
     def split_price(self):

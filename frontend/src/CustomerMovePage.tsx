@@ -167,7 +167,7 @@ export default function CustomerMovePage() {
   const [answerSaveStarted, setAnswerSaveStarted] = useState(false);
   const [showInventoryList, setShowInventoryList] = useState(false);
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
-  const [packingStep, setPackingStep] = useState<'stops_pickup' | 'stops_delivery' | 'elevator_pickup' | 'elevator_delivery' | 'carry_pickup' | 'carry_delivery' | 'stairs_pickup' | 'stairs_delivery' | 'storage' | 'shuttle' | 'bulky' | 'package' | 'items'>('bulky');
+  const [packingStep, setPackingStep] = useState<'stops_pickup' | 'stops_delivery' | 'elevator_pickup' | 'elevator_delivery' | 'carry_pickup' | 'carry_delivery' | 'stairs_pickup' | 'stairs_delivery' | 'storage' | 'shuttle' | 'bulky' | 'package' | 'protection' | 'items'>('bulky');
   const [packageSelection, setPackageSelection] = useState<PackingSelection>({ mode: 'none', unpacking: false, item_ids: [] });
   const [calculatingPrice, setCalculatingPrice] = useState(false);
   const [calculationError, setCalculationError] = useState('');
@@ -207,7 +207,7 @@ export default function CustomerMovePage() {
       setReportState('idle');
     } finally { setBusy(false); }
   }
-  type PricingChange = { kind: 'material' | 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; material_item?:import('./CustomerPackingOptions').AdditionalMaterialItem|null; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
+  type PricingChange = { kind: 'additional_protection' | 'material' | 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; material_item?:import('./CustomerPackingOptions').AdditionalMaterialItem|null; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
   const failedPricing = useRef(new Map<string, PricingChange>());
   function savePricingChange(change: PricingChange) {
     const id = `pricing:${change.kind}:${change.location || change.item_id || ''}`;
@@ -248,7 +248,11 @@ export default function CustomerMovePage() {
   function changePackage(next: PackingSelection) {
     const previous = packageSelection;
     setPackageSelection(next);
-    if (next.mode !== previous.mode) savePricingChange({ kind: 'mode', mode: next.mode });
+    if (next.mode !== previous.mode) {
+      savePricingChange({ kind: 'mode', mode: next.mode });
+      if (next.mode === 'none') setPackingStep('protection');
+    }
+    else if (next.has_additional_protection !== previous.has_additional_protection) savePricingChange({kind:'additional_protection',enabled:next.has_additional_protection === true});
     else if (next.unpacking !== previous.unpacking) savePricingChange({ kind: 'unpacking', enabled: next.unpacking });
     else if(JSON.stringify(next.additional_items||{})!==JSON.stringify(previous.additional_items||{})) {
       const id=[...new Set([...Object.keys(next.additional_items||{}),...Object.keys(previous.additional_items||{})])].find(id=>JSON.stringify(next.additional_items?.[id])!==JSON.stringify(previous.additional_items?.[id]));
@@ -272,10 +276,11 @@ export default function CustomerMovePage() {
     ...(data?.storage ? ['storage'] as PricingStep[] : []),
     ...(data?.packing_items?.length ? ['bulky'] as PricingStep[] : []),
     ...(data?.packing_package ? ['package'] as PricingStep[] : []),
+    ...(data?.packing_package && packageSelection.mode === 'none' ? ['protection'] as PricingStep[] : []),
     ...(data?.item_questions?.length ? ['items'] as PricingStep[] : []),
   ];
   const nextPricing = pricingSteps[pricingSteps.indexOf(packingStep)+1];
-  const nextPricingLabels: Record<PricingStep,string> = { stops_pickup:'extra pickup stops',stops_delivery:'extra delivery stops', elevator_pickup:'pickup elevator', elevator_delivery:'delivery elevator', carry_pickup:'pickup truck access', carry_delivery:'delivery truck access', stairs_pickup:'pickup stairs', stairs_delivery:'delivery stairs', storage:'delivery date', shuttle:'delivery access', bulky:'bulky items', package:'packing services', items:'moving terms' };
+  const nextPricingLabels: Record<PricingStep,string> = { stops_pickup:'extra pickup stops',stops_delivery:'extra delivery stops', elevator_pickup:'pickup elevator', elevator_delivery:'delivery elevator', carry_pickup:'pickup truck access', carry_delivery:'delivery truck access', stairs_pickup:'pickup stairs', stairs_delivery:'delivery stairs', storage:'delivery date', shuttle:'delivery access', bulky:'bulky items', package:'packing services', protection:'item protection', items:'moving terms' };
   const currentStops=data?.extra_stops?.locations.find(row=>packingStep===`stops_${row.location}`);
   const currentElevator = data?.elevator?.locations.find(row => packingStep === `elevator_${row.location}`);
   useEffect(() => { setElevatorAnswers(Object.fromEntries((data?.elevator?.locations || []).map(row => [row.location,row.uses_elevator]))); setElevatorMissing(false); }, [data?.elevator?.locations.map(row => row.revision).join(':')]);
@@ -291,6 +296,10 @@ export default function CustomerMovePage() {
     if (previous) setPackingStep(previous); else setShowQuestions(false);
   }
   async function nextPricingStep() {
+    if (packingStep === 'protection' && (packageSelection.has_additional_protection == null || (packageSelection.has_additional_protection && !Object.keys(packageSelection.additional_items || {}).length))) {
+      setPackingError('Confirm whether you have other fabric or fragile items, and select them if you do.');
+      return;
+    }
     if(packingStep === 'package' && data?.unanswered_questions?.includes('package')) {
       savePricingChange({kind:'mode',mode:packageSelection.mode});
       await answerQueue.current;
@@ -965,8 +974,8 @@ export default function CustomerMovePage() {
                   <div className="cm-modal-header">
                     <div>
                       <span className="cm-eyebrow">{packingStep === 'items' ? 'MOVING TERMS' : 'EXTRA SERVICES'}</span>
-                      <h3 id="packing-title">{currentStops ? `Extra ${currentStops.location} stops` : currentElevator ? `Elevator at ${currentElevator.location}` : currentCarry ? `Truck access at ${currentCarry.location}` : currentStairs ? (currentStairs.location === 'pickup' ? 'Stairs at pickup' : 'Stairs at delivery') : packingStep === 'storage' ? 'Delivery availability & storage' : packingStep === 'shuttle' ? 'Delivery truck access' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : 'Packing services'}</h3>
-                      <p>{currentStops ? "Add any other addresses the movers need to visit." : currentElevator ? "Tell us whether the movers will use an elevator." : currentCarry ? "Distance between the parked truck and your entrance." : currentStairs ? 'Outdoor and shared-building stairs only.' : packingStep === 'storage' ? 'Choose when you can begin receiving your shipment.' : packingStep === 'shuttle' ? 'Help us plan the right vehicle for your delivery.' : packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : 'Choose packing services for your move.'}</p>
+                      <h3 id="packing-title">{currentStops ? `Extra ${currentStops.location} stops` : currentElevator ? `Elevator at ${currentElevator.location}` : currentCarry ? `Truck access at ${currentCarry.location}` : currentStairs ? (currentStairs.location === 'pickup' ? 'Stairs at pickup' : 'Stairs at delivery') : packingStep === 'storage' ? 'Delivery availability & storage' : packingStep === 'shuttle' ? 'Delivery truck access' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : packingStep === 'protection' ? 'Protecting your items' : 'Packing services'}</h3>
+                      <p>{currentStops ? "Add any other addresses the movers need to visit." : currentElevator ? "Tell us whether the movers will use an elevator." : currentCarry ? "Distance between the parked truck and your entrance." : currentStairs ? 'Outdoor and shared-building stairs only.' : packingStep === 'storage' ? 'Choose when you can begin receiving your shipment.' : packingStep === 'shuttle' ? 'Help us plan the right vehicle for your delivery.' : packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Select each item you want us to pack or crate.' : packingStep === 'protection' ? 'Required protection for your move.' : 'Choose packing services for your move.'}</p>
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
@@ -1052,7 +1061,7 @@ export default function CustomerMovePage() {
                       ))}
                     </div>
                     <p><strong>Selected services total: {money(data.packing_items.reduce((sum, item) => sum + (item.services.find(service => service.kind === packingSelection[item.id])?.price || 0), 0))}</strong></p>
-                    </> : data.packing_package && <CustomerPackingOptions config={data.packing_package} selection={packageSelection} onChange={changePackage} disabled={false} />}
+                    </> : data.packing_package && <CustomerPackingOptions stage={packingStep === 'protection' ? 'protection' : 'service'} config={data.packing_package} selection={packageSelection} onChange={changePackage} disabled={false} />}
                     {!data.estimate && <p>Your choices will be saved and included when your estimate is ready.</p>}
                     {packingError && <div className="cm-save-error" role="alert"><p>{packingError}</p>{failedPricing.current.size > 0 && <button type="button" className="cm-secondary-btn" disabled={answersSaving} onClick={() => { for (const change of failedPricing.current.values()) savePricingChange(change); }}>{answersSaving ? 'Retrying...' : 'Try again'}</button>}</div>}
                   </div>
