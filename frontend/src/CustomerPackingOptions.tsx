@@ -42,15 +42,13 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
     {config.configured_materials ? <>
     <ConfiguredPackingItems config={config} selection={selection} onChange={onChange} disabled={disabled} showOptional={selection.has_additional_protection === true}/>
     <fieldset className="cm-protection-confirmation">
-      <legend>Do you have any other items you want us to pack?</legend>
+      <legend>Do you have any other fragile or fabric items?</legend>
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === false} onChange={() => onChange({...selection,has_additional_protection:false})}/> No, only the required items</label>
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === true} onChange={() => onChange({...selection,has_additional_protection:true})}/> Yes, I have more items</label>
     </fieldset>
     </> : <>
-    <p>Fabric items must be covered with plastic. Fragile items must be boxed in cardboard.</p>
     {config.items.length > 0 && <section className="cm-packing-items">
       <h4>These items require protection</h4>
-      <p className="cm-step-sub">Choose a service, or leave unchecked to pack it yourself.</p>
       <div className="cm-checklist">
         {[...rooms].map(([room, items]) => <section key={room} aria-label={room}>
           <h4 style={{margin:'16px 0 4px',fontSize:12,fontWeight:400,color:'var(--cm-text-muted)'}}>{room}</h4>
@@ -58,6 +56,14 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
           <strong>{item.label}</strong>
           <span>Required material: <strong>{item.packing_material === 'plastic' ? 'Plastic' : 'Cardboard'}</strong></span>
           <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px',width:'100%'}}>
+            <label style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
+              <input type="checkbox" disabled={disabled} checked={!selection.item_ids.includes(item.id)} onChange={() => onChange({
+                ...selection,
+                item_ids: selection.item_ids.filter(id => id !== item.id),
+                material_item_ids: materials.filter(id => id !== item.id),
+              })} />
+              <span>Pack myself</span>
+            </label>
             {([false, true] as const).map(withMaterials => <label key={String(withMaterials)} style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
               <input type="checkbox" disabled={disabled} checked={selection.item_ids.includes(item.id) && materials.includes(item.id) === withMaterials} onChange={e => onChange({
                 ...selection,
@@ -72,7 +78,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       </div>
     </section>}
     <fieldset className="cm-protection-confirmation">
-      <legend>Do you have any other fabric or fragile items?</legend>
+      <legend>Do you have any other fragile or fabric items?</legend>
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === false} onChange={() => onChange({...selection,has_additional_protection:false})}/> No, I have no other fabric or fragile items</label>
       <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === true} onChange={() => onChange({...selection,has_additional_protection:true})}/> Yes, I have more items</label>
     </fieldset>
