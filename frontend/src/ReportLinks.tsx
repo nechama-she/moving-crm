@@ -1,11 +1,11 @@
 import { useRef } from 'react';
 import type { ReportRun } from './ReportHistory';
-export default function ReportLinks({ report }: { report: ReportRun }) {
+export default function ReportLinks({ report, onEditInventory }: { report: ReportRun; onEditInventory?:()=>void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const rooms = report.rooms?.length ? report.rooms : report.source === 'manual' ? [{ name: 'Items', items: report.inventory }] : [];
   return <div className="report-links">
     {report.shareUrl && <a href={report.shareUrl} target="_blank" rel="noopener noreferrer">View virtual tour report &#8599;</a>}
-    {rooms.length > 0 && <button type="button" onClick={() => dialog.current?.showModal()}>View itemized list</button>}
+    {(rooms.length > 0 || onEditInventory) && <button type="button" onClick={() => onEditInventory ? onEditInventory() : dialog.current?.showModal()}>{onEditInventory?'View / edit inventory':'View itemized list'}</button>}
     <dialog aria-label="Saved itemized list" ref={dialog} className="report-list-dialog" onClick={event => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
       <header><div><h3>Itemized list</h3><small>{report.created_at ? new Date(report.created_at * 1000).toLocaleString() : 'Saved report'}</small></div><button type="button" aria-label="Close itemized list" onClick={() => dialog.current?.close()} autoFocus>&times;</button></header>
       <p>Items entered in the list for this report. Photos and videos are shown in the virtual tour report.</p>

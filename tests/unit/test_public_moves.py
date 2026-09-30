@@ -494,8 +494,8 @@ def packing_pricing(monkeypatch):
     import re
     from decimal import Decimal
     source = (BACKEND / 'routes/pricing.py').read_text(encoding='utf-8')
-    names = {'customer_elevator', 'sync_elevator_charges', 'add_elevator_charges', 'customer_long_carry', 'sync_long_carry_charges', 'add_long_carry_charges', 'customer_stairs', 'sync_stairs_charges', 'add_stairs_charges', 'customer_storage', 'sync_storage_charge', 'add_storage_charge', '_parsed_move_date', 'sync_customer_shuttle_charge', 'customer_shuttle', 'add_customer_shuttle_charge', '_service_billable_volume', '_plan_destination_for_delivery', '_normalize_item_name', '_is_bulky_service', '_bulky_item_prices', '_bulky_item_charges',
-             '_material_item_names', 'customer_packing_options', 'customer_packing_charge_id', 'add_customer_packing_charges', 'customer_packing_package', 'customer_package_lines', 'add_customer_package_charges', '_packing_service_charges', '_charge_amount'}
+    names = {'customer_elevator', 'sync_elevator_charges', 'add_elevator_charges', 'customer_long_carry', 'sync_long_carry_charges', 'add_long_carry_charges', 'customer_stairs', 'sync_stairs_charges', 'add_stairs_charges', 'customer_storage', 'sync_storage_charge', 'add_storage_charge', '_parsed_move_date', 'sync_customer_shuttle_charge', 'customer_shuttle', 'add_customer_shuttle_charge', '_service_billable_volume', '_plan_destination_for_delivery', '_normalize_item_name', '_box_base_name', '_is_bulky_service', '_bulky_item_prices', '_bulky_item_charges',
+             '_material_item_names', 'customer_packing_options', 'customer_packing_charge_id', 'add_customer_packing_charges', 'customer_packing_package', 'customer_package_lines', 'apply_box_packing_to_inventory', 'add_customer_package_charges', '_packing_service_charges', '_charge_amount'}
     nodes = [n for n in ast.parse(source).body if getattr(n, 'name', '') in names]
     from zip_state import delivery_location
     from local_pricing import match_region_from_address
@@ -749,17 +749,48 @@ def test_inventory_boxes_group_by_type_and_price_split_quantity(portal, packing_
 
     package = packing_pricing.customer_packing_package(lead, job, db, plan, 'Long Distance')
 
-    assert [(row['label'], row['quantity']) for row in package['box_items']] == [
-        ('Small Box (CP)', 20), ('Book Box (CP)', 5)]
-    small, book = package['box_items']
+    assert [(row['room'], row['label'], row['quantity']) for row in package['box_items']] == [
+        ('Office', 'Small Box', 12), ('Bedroom', 'Small Box', 8), ('Office', 'Book Box', 5)]
+    small, _, book = package['box_items']
     lines = packing_pricing.customer_package_lines(package, {
         'mode': 'none', 'box_quantities': {small['id']: 7, book['id']: 2}})
-    assert [line['name'] for line in lines] == ['Small Box (CP) Packing', 'Book Box (CP) Packing']
+    assert [line['name'] for line in lines] == ['Small Box Packing', 'Book Box Packing']
     assert [line['amount'] for line in lines] == [112, 28]
-    assert '7 of 20' in lines[0]['description']
+    assert '7 of 12' in lines[0]['description']
     job.customer_packing_package = json.dumps({'mode': 'none', 'box_quantities': {small['id']: 999, 'removed': 3}})
     refreshed = packing_pricing.customer_packing_package(lead, job, db, plan, 'Long Distance')
-    assert refreshed['selection']['box_quantities'] == {small['id']: 20}
+    assert refreshed['selection']['box_quantities'] == {small['id']: 12}
+
+
+def test_box_packing_updates_same_report_inventory_without_changing_totals(portal, packing_pricing):
+    _, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    rows = [
+        {'name': 'Small Box (CP)', 'room': 'Office', 'amount': 12, 'cuft': 25.2, 'weight': 0,
+         'reference_name': 'Small Box (CP)'},
+        {'name': 'Chair', 'room': 'Office', 'amount': 1, 'cuft': 8, 'weight': 4},
+    ]
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+        'last_spark_id': 'report-1', 'last_spark_status': 'completed',
+        'spark_inventory_snapshot': rows, 'question_original_rows': rows,
+    })))
+    db.commit()
+    package = {'box_items': [{'id': 'office-small', 'label': 'Small Box', 'room': 'Office', 'quantity': 12}]}
+
+    packing_pricing.apply_box_packing_to_inventory(
+        job, db, package, {'box_quantities': {'office-small': 7}})
+    db.flush()
+
+    state = json.loads(db.get(models.LeadLiveSwitch, lead.id).details)
+    boxes = [row for row in state['spark_inventory_snapshot'] if row['name'].startswith('Small Box')]
+    assert [(row['name'], row['amount']) for row in boxes] == [('Small Box (PBO)', 5), ('Small Box (CP)', 7)]
+    assert sum(row['cuft'] for row in boxes) == pytest.approx(25.2)
+    assert sum(row['amount'] for row in boxes) == 12
+    assert state['spark_inventory_snapshot'][-1]['name'] == 'Chair'
+    assert state['question_original_rows'] == state['spark_inventory_snapshot']
+    saved = db.query(models.LeadSparkInventoryItem).filter_by(job_id=job.id).order_by(models.LeadSparkInventoryItem.sort_order).all()
+    assert [(row.name, int(row.amount)) for row in saved] == [
+        ('Small Box (PBO)', 5), ('Small Box (CP)', 7), ('Chair', 1)]
 
 
 def test_inventory_box_quantities_autosave_and_reprice(portal, packing_pricing, monkeypatch):
@@ -1918,7 +1949,9 @@ def test_manual_inventory_endpoints_require_verification(manual_catalog, monkeyp
         expires_at=datetime.utcnow() + timedelta(hours=1), contact_hash=contact_fingerprint(lead)))
     db.commit()
     save = MagicMock(return_value={'ok': True, 'price': 400})
+    replace = MagicMock(return_value={'ok': True, 'price': 400})
     monkeypatch.setattr(mod, 'save_inventory_draft', save)
+    monkeypatch.setattr(mod, 'replace_current_inventory', replace)
     source = ast.parse((BACKEND / 'main.py').read_text(encoding='utf-8'))
     node = next(node for node in source.body if getattr(node, 'name', '') == 'enforce_authentication')
     scope = {'Request': Request, 're': re, 'HTTPException': HTTPException, 'PUBLIC_PATHS': set()}
@@ -1935,10 +1968,14 @@ def test_manual_inventory_endpoints_require_verification(manual_catalog, monkeyp
         assert response.status_code == (200 if authenticated else 401), response.text
         if authenticated:
             assert response.json()['items'][0]['cuft'] == 10
-        response = client.post(base + '/manual-inventory', headers=headers, json={'request_id': str(uuid4()),
-            'rooms': [{'room_type_id': 'bedroom', 'name': 'Bedroom', 'items': [{'item_id': 'chair', 'quantity': 2}]}]})
+        body = {'request_id': str(uuid4()),
+            'rooms': [{'room_type_id': 'bedroom', 'name': 'Bedroom', 'items': [{'item_id': 'chair', 'quantity': 2}]}]}
+        response = client.post(base + '/manual-inventory', headers=headers, json=body)
+        assert response.status_code == (200 if authenticated else 401), response.text
+        response = client.put(base + '/inventory', headers=headers, json=body)
         assert response.status_code == (200 if authenticated else 401), response.text
     assert save.call_count == (1 if authenticated else 0)
+    assert replace.call_count == (1 if authenticated else 0)
 
 
 def test_gallery_preview_is_scoped_and_hides_deleted_files(portal, monkeypatch):
@@ -1986,6 +2023,33 @@ def test_saving_list_does_not_generate_report(manual_catalog):
     body.rooms = []
     mod.submit_customer_inventory(body, access, db)
     assert json.loads(db.get(models.LeadLiveSwitch, lead.id).details)['inventory_draft']['rows'] == []
+
+
+def test_customer_can_replace_current_combined_inventory(manual_catalog, monkeypatch):
+    from manual_inventory import ManualInventoryInput, replace_current_inventory
+    from uuid import uuid4
+    _, db, lead, access = manual_catalog
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+        'last_spark_id': 'combined-report', 'last_spark_status': 'completed',
+        'last_spark_share_url': 'https://example.test/report',
+        'spark_inventory_snapshot': [{'name': 'Old item', 'room': 'Office', 'amount': 1, 'cuft': 5}],
+        'inventory_draft': {'rows': [{'name': 'Old item'}]},
+    })))
+    db.commit()
+    apply = MagicMock(return_value={'ok': True, 'price': 200})
+    monkeypatch.setitem(sys.modules, 'routes.liveswitch', SimpleNamespace(apply_spark_results_to_lead=apply))
+    body = ManualInventoryInput(request_id=uuid4(), rooms=[{'room_type_id': 'bedroom', 'name': 'Bedroom',
+        'items': [{'item_id': 'chair', 'quantity': 2}]}])
+
+    assert replace_current_inventory(body, access, db)['ok']
+
+    details = json.loads(db.get(models.LeadLiveSwitch, lead.id).details)
+    assert [(row['room'], row['name'], row['amount']) for row in details['spark_inventory_snapshot']] == [
+        ('Bedroom', 'Chair', 2)]
+    assert details['spark_extracted_cuft'] == 20
+    assert 'inventory_draft' not in details
+    apply.assert_called_once_with(lead.id, 'https://example.test/report', db,
+                                  expected_report_id='combined-report', use_snapshot=True)
 
 
 def test_combined_report_uses_snapshot_once_on_recalculation(portal, processing_api, monkeypatch):

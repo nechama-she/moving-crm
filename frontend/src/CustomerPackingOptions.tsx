@@ -11,7 +11,7 @@ export type PackingPackage = {
   rates: Partial<Record<'full' | 'partial' | 'unpacking', { rate: number; total: number }>>;
   configured_materials?:boolean;
   items: { id: string; group_id?:string; label: string; room?: string; packing_material?:'plastic'|'cardboard'; price: number; labor_price?: number; material_price?: number; requirement?:'required'|'optional'; material_name?:string; materials?:{id:string;name:string;quantity:number}[]; quantity?:number; available?:boolean }[];
-  box_items?:{id:string;label:string;quantity:number;material_name:string;available:boolean;labor_price:number;material_price:number}[];
+  box_items?:{id:string;label:string;room?:string;quantity:number;material_name:string;available:boolean;labor_price:number;material_price:number}[];
   selection: PackingSelection;
   other_inventory?:(AdditionalMaterialItem & {id:string;name:string;room?:string})[];
   material_quotes?:{id:string;status:string;issues:string[];packing_only:number|null;packing_and_material:number|null}[];
@@ -45,6 +45,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
     item_ids:service==='self'?selection.item_ids.filter(value=>value!==id):[...new Set([...selection.item_ids,id])],
     material_item_ids:service==='materials'?[...new Set([...materials,id])]:materials.filter(value=>value!==id),
   });
+  const boxRooms=[...boxes.reduce((map,item)=>{const room=item.room?.trim()||'Other items';map.set(room,[...(map.get(room)||[]),item]);return map;},new Map<string,typeof boxes>()).entries()];
   return <div className="cm-packing-options">
     {stage === 'service' && <><div className="cm-packing-heading"><h4>Choose your packing service</h4><div className="cm-packing-volume"><span>{inventoryVolume.toLocaleString()} cu ft</span>{minimumApplies && <small>Minimum billable: {config.minimum_cubic_feet!.toLocaleString()} cu ft</small>}</div></div>
     <div className="cm-packing-choices" data-customer-action="packing-service">
@@ -65,12 +66,12 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       </div>
       {boxChoice==='custom' && <div className="cm-box-packing-list">
         <div className="cm-box-packing-head"><span>Box type</span><span>Total</span><span>Movers pack</span><span>You pack</span></div>
-        {boxes.map(item=>{const movers=boxQuantities[item.id]||0;return <div className="cm-box-packing-row" key={item.id} data-customer-action={`box:${item.id}`}>
+        {boxRooms.map(([room,items])=><section className="cm-box-room" key={room}><h5>{room}</h5>{items.map(item=>{const movers=boxQuantities[item.id]||0;return <div className="cm-box-packing-row" key={item.id} data-customer-action={`box:${item.id}`}>
           <span><strong>{item.label}</strong>{item.available?<small>{money(item.labor_price+item.material_price)} each</small>:<small>Pricing unavailable</small>}</span>
           <span>{item.quantity}</span>
           <input aria-label={`Boxes packed by movers for ${item.label}`} type="number" min="0" max={item.quantity} step="1" disabled={disabled||!item.available} value={movers} onChange={event=>{const quantity=Math.max(0,Math.min(item.quantity,Number.parseInt(event.target.value||'0',10)||0));setBoxCounts({...boxQuantities,[item.id]:quantity});}}/>
           <span>{item.quantity-movers}</span>
-        </div>})}
+        </div>})}</section>)}
       </div>}
     </section>)}
     {stage === 'protection' && selection.mode === 'none' && <>

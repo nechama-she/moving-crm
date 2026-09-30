@@ -39,6 +39,7 @@ type Details = {
   link_sms?: LinkSms | null;
   list_changed?: boolean;
   inventory_draft?: { body: { rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number }[] }[] }; rooms: { name: string; items: { name: string; amount: number; cuft: number }[] }[]; rows: unknown[]; cuft: number };
+  combined_inventory?: {name:string;room?:string;amount?:number;quantity?:number;cuft?:number;unit_cuft?:number;reference_name?:string}[];
   report_history?: ReportRun[];
   new_file_count?: number;
   editable_files?: EditableReportFile[];
@@ -798,7 +799,7 @@ export default function CustomerMovePage() {
                 <p>Upload photos, videos, or documents, create an item list, or schedule a live virtual walkthrough with our team.</p>
                 <p>Your saved item list and uploaded media stay together. Generate one report to combine both into your inventory and estimate.</p>
                 <div className="cm-inventory-actions">
-                  <button type="button" className="slds-button cm-add-list-button" onClick={() => setShowInventoryList(true)}>{data.inventory_draft ? 'Update list' : 'Add a list'}</button>
+                  <button type="button" className="slds-button cm-add-list-button" onClick={() => setShowInventoryList(true)}>{data.combined_inventory?.length||data.inventory_draft ? 'Update inventory' : 'Add a list'}</button>
                   <button type="button" className="slds-button cm-add-list-button" disabled={busy || !photosRestored} onClick={() => filePicker.current?.click()} aria-busy={files.some(f => f.status === 'Uploading')}>{files.some(f => f.status === 'Uploading') ? 'Uploading...' : 'Upload files'}</button>
                   <button type="button" className="slds-button cm-add-list-button" onClick={() => meetingDialog.current?.showModal()}>Virtual estimate</button>
                   <input ref={filePicker} type="file" multiple hidden disabled={busy || !photosRestored} onChange={e=>{void choose(e.target.files);e.target.value='';}}/>
@@ -818,7 +819,7 @@ export default function CustomerMovePage() {
                     </article>
                   ))}
                 </div>
-                {data.inventory_draft?.rows.length ? <section className="cm-saved-list-summary" aria-label="Saved item list">
+                {data.inventory_draft?.rows.length && !data.combined_inventory?.length ? <section className="cm-saved-list-summary" aria-label="Saved item list">
                   <div>
                     <strong>Saved item list</strong>
                     <span>{data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((roomTotal, item) => roomTotal + Number(item.amount || 0), 0), 0)} items &middot; {data.inventory_draft.cuft.toLocaleString()} cu ft</span>
@@ -837,7 +838,7 @@ export default function CustomerMovePage() {
 
                 {((data.editable_files || data.files).length > 0 || !!data.inventory_draft?.rows.length) && (
                   <div className="cm-spark-box">
-                    <p className="cm-report-includes"><strong>Next report:</strong> {(data.editable_files || data.files).length} media file{(data.editable_files || data.files).length === 1 ? '' : 's'}{data.inventory_draft?.rows.length ? ` + saved item list (${data.inventory_draft.cuft.toLocaleString()} cu ft)` : ''}</p>
+                    <p className="cm-report-includes"><strong>Next report:</strong> {(data.editable_files || data.files).length} media file{(data.editable_files || data.files).length === 1 ? '' : 's'}{data.inventory_draft?.rows.length&&!data.combined_inventory?.length ? ` + saved item list (${data.inventory_draft.cuft.toLocaleString()} cu ft)` : ''}</p>
                     <button
                       type="button"
                       className="slds-button cm-primary cm-spark-btn"
@@ -927,7 +928,7 @@ export default function CustomerMovePage() {
                       </span>
                       {data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{Math.ceil(data.spark.cuft)} cu ft</strong> : null}
                     </div>
-                    {data.report_history?.find(report => report.current) && <ReportLinks report={data.report_history.find(report => report.current)!} />}
+                    {data.report_history?.find(report => report.current) && <ReportLinks report={data.report_history.find(report => report.current)!} onEditInventory={()=>setShowInventoryList(true)} />}
 
                   </div>
                 )}
@@ -1003,8 +1004,8 @@ export default function CustomerMovePage() {
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
             </div>
 
-            {showInventoryList && <ManualInventoryModal initialRooms={data.inventory_draft?.body.rooms} draftKey={`cm_inventory_draft_${accessId}`} loadCatalog={() => call('/inventory-catalog')} onClose={() => { setShowInventoryList(false); void refreshDetails(); }} submit={async body => {
-              await call('/manual-inventory', body);
+            {showInventoryList && <ManualInventoryModal initialRooms={data.combined_inventory?.length?undefined:data.inventory_draft?.body.rooms} initialRows={data.combined_inventory} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}`} loadCatalog={() => call('/inventory-catalog')} onClose={() => { setShowInventoryList(false); void refreshDetails(); }} submit={async body => {
+              await call(data.combined_inventory?.length?'/inventory':'/manual-inventory', body, data.combined_inventory?.length?'PUT':undefined);
               // Refresh the summary when the editor closes; edits save without closing it.
               setCalculationError('');
               setReportState('idle');

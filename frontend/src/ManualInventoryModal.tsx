@@ -1,14 +1,20 @@
 import { dimensionFeet } from './dimensions';
+import QuestionReferenceImages from './QuestionReferenceImages';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './ManualInventoryModal.css';
 type CatalogItem = { id: string; name: string; description: string; cuft: number; weight: number };
 type RoomType = { id: string; name: string };
-type CustomItem = { id: string; name: string; cuft: number; quantity: number };
+type CustomItem = { id: string; name: string; cuft: number; quantity: number; reference_name?: string };
 type Room = { id: string; room_type_id: string; name: string; items: Record<string, number>; custom_items?: CustomItem[] };
 type Catalog = { rooms: RoomType[]; items: CatalogItem[] };
-export default function ManualInventoryModal({ loadCatalog, submit, onClose, draftKey, initialRooms }: {
+type InitialRow = { name:string; room?:string; amount?:number; quantity?:number; cuft?:number; unit_cuft?:number; reference_name?:string };
+export default function ManualInventoryModal({ loadCatalog, submit, onClose, draftKey, initialRooms, initialRows, imageEndpoint, linkKey='', session='' }: {
   draftKey: string;
   initialRooms?: { room_type_id: string; name: string; items: { item_id: string; quantity: number }[]; custom_items?: CustomItem[] }[];
+  initialRows?: InitialRow[];
+  imageEndpoint?: string;
+  linkKey?: string;
+  session?: string;
   loadCatalog: () => Promise<Catalog>;
   submit: (body: { request_id: string; rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number }[]; custom_items?: CustomItem[] }[] }) => Promise<void>;
   onClose: () => void;
@@ -28,6 +34,26 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [draftError, setDraftError] = useState('');
+  function roomsFromRows(rows:InitialRow[], value:Catalog):Room[] {
+    const normalized=(text:string)=>text.toLowerCase().replace(/\s*\((?:cp|pbo)\)\s*$/i,'').replace(/[^a-z0-9]+/g,' ').trim();
+    const grouped=new Map<string,InitialRow[]>();
+    rows.forEach(row=>{const name=row.room?.trim()||'Other items';grouped.set(name,[...(grouped.get(name)||[]),row]);});
+    return [...grouped].map(([name,contents])=>{
+      const key=normalized(name);
+      const type=value.rooms.find(candidate=>normalized(candidate.name)===key || key.includes(normalized(candidate.name)) || normalized(candidate.name).includes(key)) || value.rooms[0];
+      const merged=new Map<string,CustomItem>();
+      contents.forEach(row=>{
+        const quantity=Math.max(1,Math.floor(Number(row.amount??row.quantity??1)||1));
+        const total=Math.max(0.01,Number(row.cuft||0));
+        const itemName=String(row.name||'Item').replace(/\s*\((?:cp|pbo)\)\s*$/i,'');
+        const itemKey=normalized(itemName);
+        const existing=merged.get(itemKey);
+        if(existing){const combined=existing.cuft*existing.quantity+total;existing.quantity+=quantity;existing.cuft=combined/existing.quantity;}
+        else merged.set(itemKey,{id:crypto.randomUUID(),name:itemName,quantity,cuft:Number(row.unit_cuft||total/quantity)||0.01,reference_name:row.reference_name||row.name});
+      });
+      return {id:crypto.randomUUID(),room_type_id:type?.id||'',name,items:{},custom_items:[...merged.values()]};
+    });
+  }
   useLayoutEffect(() => {
     if (!catalog) return;
     try { localStorage.setItem(draftKey, JSON.stringify(rooms)); setDraftError(''); }
@@ -37,6 +63,8 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   const latest = useRef<Room[]>([]);
   const pending = useRef<Room[] | null>(null);
   const saving = useRef<Promise<void> | null>(null);
+  const loadedRooms = useRef<Room[] | null>(null);
+  const dirty = useRef(false);
   const submitRef = useRef(submit);
   submitRef.current = submit;
   function flush(): Promise<void> {
@@ -59,6 +87,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
       }
       setError('');
       setSaveStatus('All changes saved');
+      dirty.current = false;
     })();
     saving.current = operation;
     void operation.finally(() => { saving.current = null; }).catch(() => {});
@@ -67,6 +96,11 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   useEffect(() => {
     if (!catalog) return;
     latest.current = rooms;
+    if (loadedRooms.current === rooms) {
+      loadedRooms.current = null;
+      return;
+    }
+    dirty.current = true;
     pending.current = rooms;
     void flush().catch(err => setError(err instanceof Error ? err.message : 'Could not save your list.'));
   }, [rooms, catalog]);
@@ -88,7 +122,9 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
       setCatalog(value); setRoomType(value.rooms[0]?.id || '');
       let saved: Room[] | undefined;
       try { const raw = localStorage.getItem(draftKey); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed) && parsed.every(r => r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.room_type_id === 'string' && r.items && typeof r.items === 'object' && Object.values(r.items).every(q => typeof q === 'number' && Number.isInteger(q) && q >= 0 && q <= 999))) saved = parsed; } } catch { /* Start with default rooms if storage is unavailable. */ }
-      setRooms(saved || initialRooms?.map(r => ({ id: crypto.randomUUID(), room_type_id: r.room_type_id, name: r.name, custom_items: (r.custom_items || []).map(item => ({ ...item, cuft: Number(item.cuft) })), items: Object.fromEntries(r.items.map(i => [i.item_id, i.quantity])) })) || value.rooms.filter(r => ['bedroom', 'living-room', 'dining-room', 'kitchen'].includes(r.id)).map(r => ({ id: crypto.randomUUID(), room_type_id: r.id, name: r.name, items: {} })));
+      const loaded = saved || initialRooms?.map(r => ({ id: crypto.randomUUID(), room_type_id: r.room_type_id, name: r.name, custom_items: (r.custom_items || []).map(item => ({ ...item, cuft: Number(item.cuft) })), items: Object.fromEntries(r.items.map(i => [i.item_id, i.quantity])) })) || (initialRows?.length?roomsFromRows(initialRows,value):value.rooms.filter(r => ['bedroom', 'living-room', 'dining-room', 'kitchen'].includes(r.id)).map(r => ({ id: crypto.randomUUID(), room_type_id: r.id, name: r.name, items: {} })));
+      loadedRooms.current = loaded;
+      setRooms(loaded);
     }).catch(err => { if (active) setError(err.message); });
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -113,6 +149,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
     if (busy) return;
     if (!catalog) { onClose(); return; }
     if (rooms.some(r => !r.name.trim())) { setError('Enter a name for each room before closing.'); return; }
+    if (!dirty.current && !pending.current && !saving.current) { onClose(); return; }
     setBusy(true); setError('');
     try {
       pending.current = rooms;
@@ -163,7 +200,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
           {customCuft > 10000 && <p role="alert">Estimated volume must be 10,000 cu ft or less per item.</p>}
         </section>}
         {(room.custom_items || []).map(item => <div className="mi-item" key={item.id}>
-          <div><strong>{item.name}</strong><small>Custom item &middot; {number(item.cuft)} cu ft each</small></div>
+          <div><strong>{item.name}</strong><small>{number(item.cuft)} cu ft each</small>{imageEndpoint&&item.reference_name&&<QuestionReferenceImages compact name={item.reference_name} room={room.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/>}</div>
           <div className="mi-quantity"><input type="number" min="1" max="999" aria-label={`Quantity of ${item.name}`} value={item.quantity} disabled={busy} onChange={e => setRooms(current => current.map(r => r.id === selected ? { ...r, custom_items: r.custom_items?.map(i => i.id === item.id ? { ...i, quantity: Math.min(999, Math.max(1, Math.floor(Number(e.target.value) || 1))) } : i) } : r))} /><button type="button" className="slds-button" aria-label={`Remove ${item.name}`} disabled={busy} onClick={() => setRooms(current => current.map(r => r.id === selected ? { ...r, custom_items: r.custom_items?.filter(i => i.id !== item.id) } : r))}>&times;</button></div>
         </div>)}
         <p className="mi-hint">{count(room)} items selected in this room. Measurements shown are per item.</p>

@@ -1,5 +1,5 @@
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
-from manual_inventory import ManualInventoryInput, catalog, submit_inventory, save_inventory_draft
+from manual_inventory import ManualInventoryInput, catalog, submit_inventory, save_inventory_draft, replace_current_inventory
 from spark_history import archive_report_for_new_media, report_history
 from pricing_addresses import with_job_locations
 from report_files import active_report_files, move_files, file_list, remove_report_file, preview_report_file
@@ -565,6 +565,12 @@ def _move_details(access, db, *, refresh_report=True):
     # If a spark report is currently pending/running, hide the old estimate until it completes
     estimate = None
     is_spark_pending = bool(spark_info and spark_info.get("status") in ("queued", "running"))
+    from uuid import uuid5, NAMESPACE_URL
+    saved_package = json.loads(job.customer_packing_package or '{}')
+    internal_box_charge_ids = {
+        str(uuid5(NAMESPACE_URL, f'customer-packing:{job.id}:inventory-box:{item_id}'))
+        for item_id in saved_package.get('box_quantities', {})
+    }
     charges_list = [
         {
             'name': c.name,
@@ -575,7 +581,9 @@ def _move_details(access, db, *, refresh_report=True):
             'discount_percent': round(float(c.discount_amount or 0) / float(c.subtotal) * 100, 2) if c.subtotal and c.subtotal > 0 else 0,
         }
         for c in (job.charges or [])
-        if (c.total_cost and float(c.total_cost) > 0) or (c.discount_amount and float(c.discount_amount) > 0)
+        if c.id not in internal_box_charge_ids and (
+            (c.total_cost and float(c.total_cost) > 0) or (c.discount_amount and float(c.discount_amount) > 0)
+        )
     ]
     report_import_pending = bool(spark_info and conv_details.get('spark_extracted_id') != spark_info['id'])
     if not is_spark_pending and not report_import_pending and conv_details.get('spark_pricing_ready') is not False:
@@ -622,7 +630,7 @@ def _move_details(access, db, *, refresh_report=True):
     elevator = None
     long_carry = None
     stairs = None
-    pricing_pending = json.loads(job.customer_packing_package or '{}').get('pricing_pending', False)
+    pricing_pending = saved_package.get('pricing_pending', False)
     if pricing_pending:
         estimate = None
     pricing_error = 'Your changes are saved. An updated estimate is pending because pricing is not available for this route yet.' if pricing_pending else ''
@@ -662,6 +670,7 @@ def _move_details(access, db, *, refresh_report=True):
             'report_history': report_history(conv_details),
             'editable_files': file_list(files),
             'inventory_draft': conv_details.get('inventory_draft'),
+            'combined_inventory': conv_details.get('spark_inventory_snapshot', []) if spark_info and spark_info.get('status') == 'completed' else [],
             'list_changed': conv_details.get('inventory_draft', {}).get('body') != conv_details.get('report_list_body'),
             'files_changed': {f.id for f in files} != {row['id'] for row in conv_details.get('report_files', [])},
             'new_file_count': sum(f.id not in {row['id'] for row in conv_details.get('report_files', [])} for f in files) if 'report_files' in conv_details else 0,
@@ -725,6 +734,14 @@ def get_customer_inventory_catalog(access: PublicMoveAccess = Depends(verified),
 @router.post('/api/public-moves/{access_id}/manual-inventory')
 def submit_customer_inventory(body: ManualInventoryInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     result = save_inventory_draft(body, access, db)
+    if not result.get('ok'):
+        raise HTTPException(422, result.get('detail'))
+    return result
+
+
+@router.put('/api/public-moves/{access_id}/inventory')
+def update_customer_inventory(body: ManualInventoryInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    result = replace_current_inventory(body, access, db)
     if not result.get('ok'):
         raise HTTPException(422, result.get('detail'))
     return result
@@ -1075,6 +1092,14 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             package_lines = customer_package_lines(package, selection)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
+        if change and change.kind in ('inventory_boxes', 'mode'):
+            from routes.pricing import apply_box_packing_to_inventory
+            inventory_selection = selection
+            if selection['mode'] == 'full':
+                inventory_selection = {**selection, 'box_quantities': {
+                    item['id']: item['quantity'] for item in package.get('box_items', [])
+                }}
+            apply_box_packing_to_inventory(job, db, package, inventory_selection)
     if job.price is None:
         # Keep customer choices while the base estimate is still being prepared.
         # Repricing applies these selections when a complete price is available.

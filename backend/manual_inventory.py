@@ -21,6 +21,7 @@ class CustomInventoryItemInput(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     cuft: Decimal = Field(gt=0, le=10000, allow_inf_nan=False)
     quantity: int = Field(ge=1, le=999, strict=True)
+    reference_name: str | None = Field(default=None, max_length=200)
 
 
 class InventoryRoomInput(BaseModel):
@@ -75,7 +76,8 @@ def build_inventory(body, db, allow_empty=False):
             cuft += volume
             row = {'item_id': 'custom-' + str(entry.id), 'room': room.name.strip(), 'name': entry.name.strip(),
                    'amount': entry.quantity, 'cuft': float(volume), 'weight': 0,
-                   'unit_cuft': float(entry.cuft), 'unit_weight': 0, 'custom': True}
+                   'unit_cuft': float(entry.cuft), 'unit_weight': 0, 'custom': True,
+                   'reference_name': entry.reference_name or entry.name.strip()}
             rows.append(row)
             contents.append(row)
         rooms.append({'room_type_id': room.room_type_id, 'name': room.name.strip(), 'items': contents})
@@ -131,3 +133,29 @@ def save_inventory_draft(body, access, db):
     saved.details = json.dumps(details)
     db.commit()
     return {'ok': True}
+
+
+def replace_current_inventory(body, access, db):
+    """Replace the active report's editable inventory without replacing its media report."""
+    from routes.liveswitch import apply_spark_results_to_lead
+    rooms, rows, cuft, weight = build_inventory(body, db, allow_empty=True)
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
+    details = json.loads(saved.details or '{}') if saved else {}
+    report_id = details.get('last_spark_id')
+    if not report_id or details.get('last_spark_status') != 'completed':
+        raise HTTPException(409, 'The current inventory is not ready to edit.')
+    details['spark_inventory_snapshot'] = rows
+    details['question_original_rows'] = [dict(row) for row in rows]
+    details['manual_rooms'] = rooms
+    details['spark_extracted_cuft'] = cuft
+    details['spark_extracted_weight'] = weight
+    details['spark_pricing_ready'] = False
+    details.pop('spark_extracted_id', None)
+    details.pop('inventory_draft', None)
+    for key in ('question_excluded_items', 'report_question_answers'):
+        details.pop(key, None)
+    remember_report(details)
+    saved.details = json.dumps(details)
+    db.commit()
+    return apply_spark_results_to_lead(access.lead_id, details.get('last_spark_share_url') or '', db,
+                                       expected_report_id=report_id, use_snapshot=True)

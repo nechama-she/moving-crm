@@ -312,6 +312,10 @@ def _normalize_item_name(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").strip().lower())
 
 
+def _box_base_name(value: str) -> str:
+    return re.sub(r'\s*\((?:cp|pbo)\)\s*$', '', str(value or ''), flags=re.IGNORECASE).strip()
+
+
 def _is_bulky_service(service: PricingService) -> bool:
     return service.comments == BULKY_ITEM_MARKER or service.comments.startswith(BULKY_ITEM_PREFIX)
 
@@ -1052,7 +1056,7 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
     from item_materials import customer_item_materials, material_assignments, default_materials
     configured_items, configured_names = customer_item_materials(plan, inventory, db)
     configured_materials = bool(material_assignments(plan, db) or default_materials(plan, db))
-    ignored_box_words = {'box', 'cp', 'cu', 'cuft', 'cf', 'cubic', 'foot', 'feet', 'pack', 'packing', 'item'}
+    ignored_box_words = {'box', 'cp', 'pbo', 'cu', 'cuft', 'cf', 'cubic', 'foot', 'feet', 'pack', 'packing', 'item'}
     def box_words(value):
         words = []
         for word in re.findall(r'[a-z]+', str(value).casefold()):
@@ -1065,13 +1069,14 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
     for row in inventory:
         if not isinstance(row, dict) or not re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b', str(row.get('name') or ''), re.IGNORECASE):
             continue
-        name = str(row.get('name') or 'Boxes').strip()
-        group_key = _normalize_item_name(name)
+        name = _box_base_name(row.get('name') or 'Boxes')
+        room = str(row.get('room') or 'Other items').strip() or 'Other items'
+        group_key = f'{_normalize_item_name(room)}:{_normalize_item_name(name)}'
         try:
             quantity = max(1, int(float(row.get('amount') or row.get('quantity') or 1)))
         except (TypeError, ValueError):
             quantity = 1
-        group = inventory_boxes.setdefault(group_key, {'label': name, 'quantity': 0})
+        group = inventory_boxes.setdefault(group_key, {'label': name, 'room': room, 'quantity': 0})
         group['quantity'] += quantity
     box_items = []
     for group_key, group in inventory_boxes.items():
@@ -1084,7 +1089,7 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
         if rate is None:
             continue
         box_items.append({'id': str(uuid5(NAMESPACE_URL, f'inventory-box:{job.id}:{group_key}')),
-                          'label': group['label'], 'quantity': group['quantity'],
+                          'label': group['label'], 'room': group['room'], 'quantity': group['quantity'],
                           'material_name': rate.name, 'available': True,
                           'labor_price': float(rate.packing_price),
                           'material_price': float(rate.material_price)})
@@ -1123,6 +1128,59 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
             'material_rates': [row.model_dump(mode='json') for row in card.materials],
             'material_quotes': customer_material_quotes(card.materials, selection.get('additional_items', {}), other_inventory),
             'selection': {'mode': 'none', 'unpacking': False, 'item_ids': [], **selection}}
+
+
+def apply_box_packing_to_inventory(job, db, package, selection):
+    """Persist CP/PBO as inventory metadata while keeping one box inventory."""
+    from models import LeadLiveSwitch, LeadSparkInventoryItem
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=job.lead_id).with_for_update().first()
+    if not saved:
+        return
+    details = json.loads(saved.details or '{}')
+    rows = details.get('spark_inventory_snapshot') or []
+    quantities = selection.get('box_quantities', {})
+    changed = False
+    for box in package.get('box_items', []):
+        room_key = _normalize_item_name(box.get('room') or 'Other items')
+        name_key = _normalize_item_name(_box_base_name(box.get('label') or ''))
+        indexes = [index for index, row in enumerate(rows) if isinstance(row, dict)
+                   and _normalize_item_name(row.get('room') or 'Other items') == room_key
+                   and _normalize_item_name(_box_base_name(row.get('name') or '')) == name_key]
+        if not indexes:
+            continue
+        source = [rows[index] for index in indexes]
+        total_qty = sum(max(1, int(float(row.get('amount') or row.get('quantity') or 1))) for row in source)
+        cp_qty = max(0, min(total_qty, int(quantities.get(box['id'], 0) or 0)))
+        totals = {field: sum(float(row.get(field) or 0) for row in source) for field in ('cuft', 'weight')}
+        template = dict(source[0])
+        base_name = _box_base_name(template.get('name') or box['label'])
+        replacements = []
+        for suffix, quantity in (('PBO', total_qty - cp_qty), ('CP', cp_qty)):
+            if quantity <= 0:
+                continue
+            row = dict(template)
+            row['name'] = f'{base_name} ({suffix})'
+            row['amount'] = quantity
+            row['quantity'] = quantity
+            row['cuft'] = round(totals['cuft'] * quantity / total_qty, 4)
+            row['weight'] = round(totals['weight'] * quantity / total_qty, 4)
+            replacements.append(row)
+        first = indexes[0]
+        rows = [row for index, row in enumerate(rows) if index not in set(indexes)]
+        rows[first:first] = replacements
+        changed = True
+    if not changed:
+        return
+    details['spark_inventory_snapshot'] = rows
+    if details.get('question_original_rows'):
+        details['question_original_rows'] = [dict(row) for row in rows]
+    from spark_history import remember_report
+    remember_report(details)
+    saved.details = json.dumps(details)
+    db.query(LeadSparkInventoryItem).filter_by(job_id=job.id).delete(synchronize_session=False)
+    for index, row in enumerate(rows):
+        db.add(LeadSparkInventoryItem(job_id=job.id, name=str(row.get('name') or 'Item'),
+            cuft=Decimal(str(row.get('cuft') or 0)), amount=Decimal(str(row.get('amount') or 0)), sort_order=index))
 
 
 def customer_package_lines(package, selection):
