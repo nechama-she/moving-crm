@@ -1006,7 +1006,7 @@ def processing_api():
     import httpx
     from decimal import Decimal
     from spark_processing import SparkProcessingLog
-    from spark_history import remember_report, report_history, activate_report
+    from spark_history import archive_report_for_new_media, remember_report, report_history, activate_report
     source = BACKEND / 'routes/liveswitch.py'
     names = {'_safe_float', '_can_get_spark_result', 'fetch_and_extract_spark_report', 'apply_spark_results_to_lead', 'get_spark_processing', 'select_spark_report', 'get_report_history', 'trigger_lead_spark', 'start_ready_report', 'selected_media', 'stage_selected_media', 'generate_uploaded_report'}
     nodes = [n for n in ast.parse(source.read_text(encoding='utf-8')).body if getattr(n, 'name', '') in names]
@@ -1018,6 +1018,7 @@ def processing_api():
                 arg.annotation = None
     scope = {'Lead': models.Lead, 'LeadLiveSwitch': models.LeadLiveSwitch, 'Session': Session,
              'SparkProcessingLog': SparkProcessingLog, 'json': json, 're': re,
+             'archive_report_for_new_media': archive_report_for_new_media,
              'remember_report': remember_report, 'report_history': report_history, 'activate_report': activate_report,
              'PublicMoveAccess': models.PublicMoveAccess, 'os': os, 'time': __import__('time'),
              'httpx': SimpleNamespace(get=MagicMock()), 'Decimal': Decimal, 'datetime': datetime, 'HTTPException': HTTPException}
@@ -1468,12 +1469,19 @@ def test_staff_panel_remove_keeps_lead_attachment(portal, monkeypatch):
     attachment = models.LeadAttachment(id='panel-file', lead_id=lead.id, file_name='photo.jpg',
         file_blob=b'image', file_size=5, content_type='image/jpeg', liveswitch_panel_visible=True)
     db.add(attachment)
+    saved = models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+        'last_spark_id': 'current-report', 'last_spark_status': 'completed',
+        'report_files': [{'id': 'panel-file', 'name': 'photo.jpg'}]}))
+    db.add(saved)
     db.commit()
     assert attachment.liveswitch_panel_visible
     mod.delete_staff_report_file(lead.id, attachment.id, None, db)
     db.refresh(attachment)
     assert not attachment.liveswitch_panel_visible
     assert attachment.file_blob==b'image' and attachment.report_deleted_at is None
+    state = json.loads(saved.details)
+    assert 'last_spark_id' not in state
+    assert state['spark_history'][0]['last_spark_id'] == 'current-report'
 
 
 def test_staff_file_import_validates_bytes_and_corrects_type(portal, monkeypatch):
@@ -1557,13 +1565,15 @@ def test_staff_media_upload_does_not_generate_and_reuses_batch(staff_media_api):
     api, db, lead, access, saved, queue = staff_media_api
     result = api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
     state = json.loads(saved.details)
-    assert state['last_spark_id'] == 'old-report'
+    assert 'last_spark_id' not in state
+    assert state['spark_history'][0]['last_spark_id'] == 'old-report'
+    assert state['spark_history'][0]['report_files'] == [{'id': 'old-photo'}]
     assert state['id'] == 'media-conversation'
     assert state['hostJoinUrl'] == 'host-new'
     assert state['participantJoinUrl'] == 'participant-new'
     assert state['embeddedConversationUrl'] == 'embed-new'
     assert result['conversation']['id'] == 'media-conversation'
-    assert state['report_files'] == [{'id': 'old-photo'}]
+    assert 'report_files' not in state
     assert 'pending_spark_payload' not in state
     message = json.loads(queue.send_message.call_args.kwargs['MessageBody'])
     assert message['upload_only'] is True
@@ -1586,17 +1596,30 @@ def test_staff_media_upload_cancels_legacy_automatic_start(staff_media_api):
     api, db, lead, access, saved, queue = staff_media_api
     api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
     state = json.loads(saved.details)
-    state.update(pending_spark_payload={'sparkTemplateId': 'template'}, last_spark_status='queued', spark_start_queued_for='old-report')
+    state.update(pending_spark_payload={'sparkTemplateId': 'template'}, last_spark_id='pending-report',
+                 last_spark_status='queued', last_spark_at=time.time(), spark_start_queued_for='pending-report')
     saved.details = json.dumps(state)
     db.commit()
     api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
     state = json.loads(saved.details)
     assert 'pending_spark_payload' not in state
     assert 'spark_start_queued_for' not in state
-    assert state['last_spark_status'] == 'cancelled'
-    assert state['spark_history'][0]['last_spark_status'] == 'cancelled'
+    assert 'last_spark_status' not in state
+    assert any(row.get('last_spark_id') == 'pending-report' and row.get('last_spark_status') == 'cancelled'
+               for row in state['spark_history'])
     assert queue.send_message.call_count == 1
     api['_api_post'].assert_not_called()
+
+
+def test_staff_media_upload_archives_current_report_before_queue_validation(staff_media_api, monkeypatch):
+    api, db, lead, access, saved, queue = staff_media_api
+    monkeypatch.delenv('PUBLIC_MOVE_SYNC_QUEUE_URL')
+    with pytest.raises(HTTPException, match='worker is not configured'):
+        api['stage_selected_media'](lead.id, {'file_ids': ['photo']}, db)
+    state = json.loads(saved.details)
+    assert 'last_spark_id' not in state
+    assert state['spark_history'][0]['last_spark_id'] == 'old-report'
+    queue.send_message.assert_not_called()
 
 
 @pytest.mark.parametrize('state', ['pending', 'failed', 'wrong-token'])
@@ -1644,13 +1667,17 @@ def test_staff_generate_uses_uploaded_selection_without_uploading(staff_media_ap
     assert json.loads(saved.details)['media_upload']['report_id'] == 'new-report'
     api['generate_uploaded_report'](lead.id, {'file_ids': ['photo']}, db)
     assert api['_api_post'].call_count == 1
+    assert queue.send_message.call_count == 3
     db.add(models.LeadAttachment(id='other', lead_id=lead.id, file_name='other.jpg',
         file_blob=b'\xff\xd8\xffphoto', file_size=8, content_type='image/jpeg', liveswitch_panel_visible=True))
     db.commit()
     with pytest.raises(HTTPException, match='Upload this selection'):
         api['generate_uploaded_report'](lead.id, {'file_ids': ['photo', 'other']}, db)
     assert api['_api_post'].call_count == 1
-    assert queue.send_message.call_count == 2
+    assert queue.send_message.call_count == 3
+    state = json.loads(saved.details)
+    assert 'last_spark_id' not in state
+    assert any(row.get('last_spark_status') == 'cancelled' for row in state['spark_history'])
 
 
 def test_customer_file_list_uses_selected_report_snapshot(portal):

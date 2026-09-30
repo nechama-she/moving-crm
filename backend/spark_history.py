@@ -33,6 +33,10 @@ def archive_report_for_new_media(details):
     """Move the active run to history before starting a new media selection."""
     if not details.get('last_spark_id'):
         return False
+    if details.get('pending_spark_payload'):
+        details['last_spark_status'] = 'cancelled'
+        details.pop('pending_spark_payload', None)
+        details.pop('spark_start_queued_for', None)
     remember_report(details)
     details['carried_question_state'] = details.get('carried_question_state') or {
         key: deepcopy(details[key]) for key in

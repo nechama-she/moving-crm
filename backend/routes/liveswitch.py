@@ -399,24 +399,23 @@ def stage_selected_media(lead_id, body, db, actor_id=None):
     from models import PublicMoveUpload
     from public_move_sync import queue_files
     from report_files import file_list, validate_report_media
+    lead = db.query(Lead).filter_by(id=lead_id).with_for_update().one()
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
+    details = json.loads(saved.details or '{}') if saved else {}
+    if archive_report_for_new_media(details):
+        saved.details = json.dumps(details)
+        db.commit()
     if not os.getenv('PUBLIC_MOVE_SYNC_QUEUE_URL', '').strip():
         raise HTTPException(503, 'File upload worker is not configured.')
-    lead = db.query(Lead).filter_by(id=lead_id).with_for_update().one()
     access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
     if not access:
         raise HTTPException(409, 'Open the customer page before uploading media.')
     files = selected_media(lead_id, body, db)
     for attachment in files:
         validate_report_media(attachment)
-    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
-    details = json.loads(saved.details or '{}') if saved else {}
-    if details.get('pending_spark_payload'):
-        details['last_spark_status'] = 'cancelled'
-        details.pop('pending_spark_payload', None)
-        details.pop('spark_start_queued_for', None)
-        remember_report(details)
+    selected_ids = {file.id for file in files}
     media = details.get('media_upload') or {}
-    same_files = {file['id'] for file in media.get('files', [])} == {file.id for file in files}
+    same_files = {file['id'] for file in media.get('files', [])} == selected_ids
     reuse = same_files and not media.get('report_id')
     if not reuse:
         conversation = ensure_lead_conversation(lead, db, fresh=True)
@@ -450,9 +449,12 @@ def generate_uploaded_report(lead_id, body, db):
     from spark_history import REPORT_KEYS
     from uuid import uuid4
     db.query(Lead).filter_by(id=lead_id).with_for_update().one()
-    files = selected_media(lead_id, body, db)
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
     details = json.loads(saved.details or '{}') if saved else {}
+    if archive_report_for_new_media(details):
+        saved.details = json.dumps(details)
+        db.commit()
+    files = selected_media(lead_id, body, db)
     media = details.get('media_upload') or {}
     if {file['id'] for file in media.get('files', [])} != {file.id for file in files}:
         raise HTTPException(409, 'Upload this selection to LiveSwitch before generating a report.')

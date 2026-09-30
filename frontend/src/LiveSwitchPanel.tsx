@@ -149,6 +149,8 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
         if (cuftVal) {
           onUploaded(); // Updates volume, weight, and pricing on lead details
         }
+      } else {
+        setSparkData(null);
       }
     } catch { /* ignore */ }
   }, [base, token, onUploaded, inventoryExpanded, inventoryLoaded, loadSparkInventory]);
@@ -184,6 +186,17 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
   useEffect(() => {
     void loadReportHistory().catch(err => setSparkError(err.message));
   }, [loadReportHistory, sparkData?.id, sparkData?.status, processingRevision]);
+  function beginNewReportSession() {
+    setSparkData(null);
+    setInventoryLoaded(false);
+    setInventoryError("");
+    setInventoryRows([]);
+    setProcessingRevision(value => value + 1);
+  }
+  function filesChanged() {
+    beginNewReportSession();
+    void loadReportHistory().catch(err => setSparkError(err.message));
+  }
   async function selectReport(id: string) {
     setCalculatingPrice(true);
     try {
@@ -231,6 +244,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   async function uploadSelectedMedia() {
     if (mediaActionRunning.current || busy || !selectedFileIds.length) return;
+    beginNewReportSession();
     mediaActionRunning.current = true; setBusy(true); setSparkNotice(''); setSparkError('');
     try {
       const result = await request(`${base}/upload-media`, { file_ids: selectedFileIds });
@@ -238,10 +252,15 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
       setSparkNotice('Upload to LiveSwitch started.');
     } catch (err) {
       setSparkError(err instanceof Error ? err.message : 'Could not upload selected media.');
-    } finally { mediaActionRunning.current = false; setBusy(false); }
+    } finally {
+      void loadReportHistory().catch(err => setSparkError(err.message));
+      mediaActionRunning.current = false;
+      setBusy(false);
+    }
   }
   async function runSpark() {
     if (mediaActionRunning.current || busy || !selectedFileIds.length) return;
+    beginNewReportSession();
     mediaActionRunning.current = true;
     setSparkRunning(true);
     setSparkNotice("");
@@ -437,7 +456,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
           <button className="slds-button ls-primary" disabled={busy || sparkRunning || !items.some(item => !(item.crm && item.live) && item.status !== "Cannot upload")} onClick={() => void upload()}>{running.current ? "Uploading " : items.some(item => item.status === "Retry") ? "Upload / Retry failed" : "Upload to CRM"}</button>
           <button className="slds-button" disabled={busy || !items.length} onClick={() => setItems(current => current.filter(item => item.crm || item.live))}>Clear selection</button>
         </div>
-        {customerPageReady && <CustomerPageControls key={`files:${leadId}`} leadId={leadId} section="files" refreshRevision={mediaRevision} disabled={busy||sparkRunning||calculatingPrice} onSelectionChange={setSelectedFileIds} onFilesChanged={()=>setSparkData(null)} onFilesBusyChange={setBusy}/>}
+        {customerPageReady && <CustomerPageControls key={`files:${leadId}`} leadId={leadId} section="files" refreshRevision={mediaRevision} disabled={busy||sparkRunning||calculatingPrice} onSelectionChange={setSelectedFileIds} onFilesChanged={filesChanged} onFilesBusyChange={setBusy}/>}
         <div className="ls-actions">
           <button type="button" className="slds-button" disabled={busy||sparkRunning||calculatingPrice||!selectedFileIds.length} onClick={()=>void uploadSelectedMedia()}>Upload to LiveSwitch</button>
           <button

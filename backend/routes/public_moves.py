@@ -1671,6 +1671,11 @@ def delete_staff_report_file(lead_id: str, attachment_id: str, user: User = Depe
     if not row:
         raise HTTPException(404, 'File not found on this lead.')
     row.liveswitch_panel_visible = False
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
+    if saved:
+        details = json.loads(saved.details or '{}')
+        if archive_report_for_new_media(details):
+            saved.details = json.dumps(details)
     db.commit()
     return {'ok': True}
 
