@@ -186,6 +186,10 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
   useEffect(() => {
     void loadReportHistory().catch(err => setSparkError(err.message));
   }, [loadReportHistory, sparkData?.id, sparkData?.status, processingRevision]);
+  useEffect(() => {
+    if (!sparkData || !['running', 'completed', 'failed'].includes(sparkData.status)) return;
+    setSparkNotice(current => current.startsWith('Report scheduled.') ? '' : current);
+  }, [sparkData?.status]);
   function beginNewReportSession() {
     setSparkData(null);
     setInventoryLoaded(false);
