@@ -1906,8 +1906,11 @@ def test_manual_inventory_rejects_unknown_items_and_client_measurements(manual_c
     from uuid import uuid4
     mod, db, lead, access = manual_catalog
     body = {'request_id': str(uuid4()), 'rooms': [{'room_type_id': 'bedroom', 'name': 'Bedroom',
-             'items': [{'item_id': 'chair', 'quantity': 2}]}]}
-    assert build_inventory(ManualInventoryInput(**body), db)[2:] == (20, 140)
+             'items': [{'item_id': 'chair', 'quantity': 2, 'name': 'Desk chairs'}]}]}
+    _, rows, cuft, weight = build_inventory(ManualInventoryInput(**body), db)
+    assert (cuft, weight) == (20, 140)
+    assert rows[0]['name'] == 'Desk chairs'
+    assert rows[0]['reference_name'] == 'Chair'
     body['rooms'][0]['items'][0]['cuft'] = 1
     with pytest.raises(ValueError):
         ManualInventoryInput(**body)

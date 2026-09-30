@@ -13,6 +13,7 @@ class InventoryItemInput(BaseModel):
     model_config = ConfigDict(extra='forbid')
     item_id: str
     quantity: int = Field(ge=1, le=999, strict=True)
+    name: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class CustomInventoryItemInput(BaseModel):
@@ -64,9 +65,12 @@ def build_inventory(body, db, allow_empty=False):
             mass = item.weight * entry.quantity
             cuft += volume
             weight += mass
-            row = {'item_id': item.id, 'room': room.name.strip(), 'name': item.name,
+            display_name = entry.name.strip() if entry.name else item.name
+            row = {'item_id': item.id, 'room': room.name.strip(), 'name': display_name,
                    'amount': entry.quantity, 'cuft': float(volume), 'weight': float(mass),
                    'unit_cuft': float(item.cuft), 'unit_weight': float(item.weight)}
+            if display_name != item.name:
+                row['reference_name'] = item.name
             rows.append(row)
             contents.append(row)
         for entry in room.custom_items:
