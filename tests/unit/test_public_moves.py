@@ -1146,11 +1146,16 @@ def test_selecting_history_reimports_and_reprices(portal, processing_api, monkey
     from spark_history import remember_report, report_history
     mod, db, lead, access = portal
     report = {'last_spark_id': 'older', 'last_spark_status': 'completed', 'last_spark_at': 100,
-              'last_spark_share_url': 'https://example.com/reports/older', 'spark_extracted_id': 'older'}
+              'last_spark_share_url': 'https://example.com/reports/older', 'spark_extracted_id': 'older',
+              'report_customer_package': json.dumps({'mode': 'none'})}
     remember_report(report)
     report.update(last_spark_id='newer', last_spark_at=200,
                   last_spark_share_url='https://example.com/reports/newer', spark_extracted_id='newer')
     db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps(report)))
+    job = db.get(models.LeadJob, access.job_id)
+    current_stops = {'pickup': {'answer': True, 'stops': [
+        {'id': 'stop', 'address': 'Miami, FL, USA', 'meters': 6437, 'revision': 'saved-route'}]}}
+    job.customer_packing_package = json.dumps({'mode': 'full', 'extra_stops': current_stops})
     db.commit()
     pricing = ModuleType('routes.pricing')
     def calculate(lead, job, db):
@@ -1166,6 +1171,9 @@ def test_selecting_history_reimports_and_reprices(portal, processing_api, monkey
     assert float(lead.volume) == 40
     assert float(access.published_price) == 400
     assert db.query(models.LeadSparkInventoryItem).one().amount == 2
+    selected_package = json.loads(job.customer_packing_package)
+    assert selected_package['mode'] == 'none'
+    assert selected_package['extra_stops'] == current_stops
     reports = report_history(json.loads(db.get(models.LeadLiveSwitch, lead.id).details))
     assert [row['id'] for row in reports] == ['newer', 'older']
     assert [row['id'] for row in reports if row['current']] == ['older']

@@ -830,6 +830,7 @@ def select_spark_report(lead_id: str, report_id: str, db: Session):
         raise HTTPException(409, 'Wait for the new report to finish before choosing an earlier report.')
     from models import LeadJob
     job = db.query(LeadJob).filter_by(lead_id=lead_id).order_by(LeadJob.job_order).first()
+    current_package = json.loads(job.customer_packing_package or '{}') if job else {}
     if job:
         details['report_customer_packing'] = job.customer_packing
         details['report_customer_package'] = job.customer_packing_package
@@ -839,7 +840,17 @@ def select_spark_report(lead_id: str, report_id: str, db: Session):
         raise HTTPException(409, str(exc)) from exc
     if job:
         job.customer_packing = details.get('report_customer_packing')
-        job.customer_packing_package = details.get('report_customer_package')
+        selected_package = json.loads(details.get('report_customer_package') or '{}')
+        # Route and access services belong to the job, not an inventory report.
+        # Keep their current answers and cached distances when changing reports.
+        for key in ('extra_stops', 'elevator', 'long_carry', 'stairs', 'storage_date', 'shuttle',
+                    'delivery_route', 'pricing_locations', 'pricing_pending', 'pricing_save_error'):
+            if key in current_package:
+                selected_package[key] = current_package[key]
+            else:
+                selected_package.pop(key, None)
+        job.customer_packing_package = json.dumps(selected_package)
+        details['report_customer_package'] = job.customer_packing_package
     # The selected report is pending import, even if it was imported previously.
     details.pop('spark_extracted_id', None)
     details['spark_pricing_ready'] = False
