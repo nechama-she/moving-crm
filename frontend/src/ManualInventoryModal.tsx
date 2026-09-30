@@ -15,6 +15,8 @@ function InventoryRow({ name, cuft, quantity, busy, photo, onSave, onRemove }: {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ name, cuft: String(cuft), quantity: String(quantity) });
   const valid = draft.name.trim() && Number(draft.cuft) > 0 && Number(draft.cuft) <= 10000 && Number.isInteger(Number(draft.quantity)) && Number(draft.quantity) >= 1 && Number(draft.quantity) <= 999;
+  const totalVolume = editing ? Number(draft.cuft) * Number(draft.quantity) : cuft * quantity;
+  const totalVolumeLabel = Number.isFinite(totalVolume) ? totalVolume.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '';
   const save = () => { if (!valid) return; onSave({ name: draft.name.trim(), cuft: Number(draft.cuft), quantity: Number(draft.quantity) }); setEditing(false); };
   return <div className="mi-inventory-row" onKeyDown={event => {
     if (!editing) return;
@@ -24,16 +26,18 @@ function InventoryRow({ name, cuft, quantity, busy, photo, onSave, onRemove }: {
     <div className="mi-inventory-photo">{photo}</div>
     {editing ? <>
       <input autoFocus aria-label="Item name" maxLength={200} value={draft.name} disabled={busy} onChange={e => setDraft({ ...draft, name: e.target.value })} />
-      <label className="mi-inventory-volume"><input aria-label="Cubic feet per item" type="number" min="0.0001" max="10000" step="any" value={draft.cuft} disabled={busy} onChange={e => setDraft({ ...draft, cuft: e.target.value })} /><small>cu ft each</small></label>
+      <label className="mi-inventory-volume"><input aria-label="Cubic feet per item" type="number" min="0.0001" max="10000" step="any" value={draft.cuft} disabled={busy} onChange={e => setDraft({ ...draft, cuft: e.target.value })} /></label>
+      <span aria-label="Total volume in cubic feet">{totalVolumeLabel}</span>
       <input aria-label="Quantity" type="number" min="1" max="999" step="1" value={draft.quantity} disabled={busy} onChange={e => setDraft({ ...draft, quantity: e.target.value })} />
     </> : <>
       <strong>{name}</strong>
-      <span>{cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })} cu ft<small>each</small></span>
+      <span>{cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+      <span aria-label="Total volume in cubic feet">{totalVolumeLabel}</span>
       <span aria-label={`Quantity: ${quantity}`}>{quantity}</span>
     </>}
     <button type="button" className="slds-button" disabled={busy || (editing && !valid)} aria-label={editing ? `Save ${name}` : `Edit ${name}`} title={editing ? 'Save item' : 'Edit item'} onClick={() => {
       if (editing) save(); else { setDraft({ name, cuft: String(cuft), quantity: String(quantity) }); setEditing(true); }
-    }}>{editing ? '?' : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5" /></svg>}</button>
+    }}>{editing ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h10V3M7 21v-8h10v8"/></svg> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5" /></svg>}</button>
     <button type="button" className="slds-button" disabled={busy} aria-label={`Remove ${name}`} onClick={onRemove}>&times;</button>
   </div>;
 }
@@ -85,6 +89,13 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   const [roomPickerOpen, setRoomPickerOpen] = useState(false);
   const addRoomButton = useRef<HTMLButtonElement>(null);
   const [customOpen, setCustomOpen] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogLimit, setCatalogLimit] = useState(60);
+  const catalogScroll = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    setCatalogOpen(false); setCustomOpen(false); setCatalogSearch(''); setCatalogLimit(60);
+  }, [selected]);
   const [customName, setCustomName] = useState('');
   const [customDimensions, setCustomDimensions] = useState({ width: '', height: '', depth: '' });
   const [manualCuft, setManualCuft] = useState<string | null>(null);
@@ -195,6 +206,8 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   const cuft = rooms.reduce((sum, room) => sum + total(room, 'cuft'), 0);
   const weight = rooms.reduce((sum, room) => sum + total(room, 'weight'), 0);
   const room = rooms.find(r => r.id === selected);
+  const catalogWords = catalogSearch.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const catalogMatches = (catalog?.items || []).filter(item => catalogWords.every(word => `${item.name} ${item.description}`.toLowerCase().includes(word)));
   const visibleRooms = room ? [room] : rooms;
   const visibleCuft = visibleRooms.reduce((sum, value) => sum + total(value, 'cuft'), 0);
   const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -252,9 +265,14 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
           onDelete={() => { setRooms(current => current.filter(value => value.id !== r.id)); if (selected === r.id) { setSelected(''); setCustomOpen(false); } }} />)}</div>
         {room &&
         <section className="mi-room-editor">
-        <button type="button" className="slds-button" style={{ marginTop: 12 }} disabled={busy} onClick={() => setCustomOpen(!customOpen)}>+ Add item</button>
+        <button type="button" className="slds-button" style={{ marginTop: 12 }} disabled={busy} aria-expanded={catalogOpen} aria-controls="mi-add-item-catalog" onClick={() => { setCatalogOpen(open => !open); setCustomOpen(false); }}>+ Add item</button>
+        {catalogOpen && <section className="mi-catalog-card" id="mi-add-item-catalog" aria-label="Add inventory items">
+          <div className="mi-catalog-toolbar">
+            <input type="search" placeholder="Search items..." aria-label="Search catalog items" value={catalogSearch} disabled={busy} onChange={event => { setCatalogSearch(event.target.value); setCatalogLimit(60); catalogScroll.current?.scrollTo({ top: 0 }); }} />
+            <button type="button" className="slds-button" disabled={busy} aria-expanded={customOpen} onClick={() => setCustomOpen(open => !open)}>+ Add custom item</button>
+          </div>
         {customOpen && <section className="mi-custom-item">
-          <h3>Add an item</h3>
+          <h3>Add a custom item</h3>
           <p className="mi-dimension-help">Enter cubic feet directly, or calculate it from width &times; height &times; depth. For dimensions, enter 2', 24&quot;, or 2' 6&quot;. Plain numbers mean feet.</p>
           <div className="mi-custom-entry-row">
           <svg viewBox="0 0 260 150" width="120" height="80" role="img" aria-label="Box showing width, height and depth" style={{ maxWidth: '100%', color: 'var(--cm-primary)' }}>
@@ -275,12 +293,26 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
           {Object.values(customDimensions).some(value => value.trim() && dimensionFeet(value) === null) && <p role="status">Use feet (2'), inches (24&quot;), or both (2' 6&quot;).</p>}
           {customCuft > 10000 && <p role="alert">Estimated volume must be 10,000 cu ft or less per item.</p>}
         </section>}
+          <div className="mi-catalog-scroll" ref={catalogScroll} tabIndex={0} aria-label="Catalog items" onScroll={event => {
+            const list = event.currentTarget;
+            if (list.scrollHeight - list.scrollTop - list.clientHeight < 160) setCatalogLimit(limit => Math.min(limit + 60, catalogMatches.length));
+          }}>
+            {catalogMatches.slice(0, catalogLimit).map(item => <div className="mi-catalog-row" key={item.id}>
+              <div><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</div>
+              <span>{number(item.cuft)} cu ft</span>
+              <button type="button" className="slds-button" disabled={busy || (room.items[item.id] || 0) >= 999} aria-label={`Add ${item.name} to ${room.name}`} onClick={() => quantity(item.id, (room.items[item.id] || 0) + 1, room.id)}>+ Add{room.items[item.id] ? ` (${room.items[item.id]})` : ''}</button>
+            </div>)}
+            {!catalogMatches.length && <p>No matching items. You can add a custom item above.</p>}
+            {catalogMatches.length > catalogLimit && <p className="mi-catalog-more">Scroll for more items</p>}
+          </div>
+        </section>}
         </section>}
         <section className="mi-room-summary">
           <h3>Your inventory</h3>
           {!visibleRooms.some(r => count(r) > 0) && <p>{room ? 'No items in this room yet. Click Add item to get started.' : 'No items yet. Choose a room to add an item.'}</p>}
           {visibleRooms.filter(r => count(r) > 0).map(r => <details key={r.id} open>
             <summary><strong>{r.name}</strong> &middot; {count(r)} items</summary>
+            <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span className="mi-inventory-actions-heading">Actions</span></div>
             {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <InventoryRow key={id}
               name={r.item_names?.[id] || items.get(id)?.name || 'Item'} cuft={items.get(id)?.cuft || 0} quantity={qty} busy={busy}
               onSave={value => setRooms(current => current.map(valueRoom => valueRoom.id === r.id ? {
