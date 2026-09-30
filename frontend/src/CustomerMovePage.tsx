@@ -938,10 +938,23 @@ export default function CustomerMovePage() {
             <div className="cm-estimate cm-estimate-full">
               <div className="cm-estimate-top">
                 <div className="cm-estimate-main-info" ref={estimateResult} aria-live="polite">
-                  <span className="cm-estimate-eyebrow">{data.estimate?'Your moving estimate':'Your estimate'}</span>
-                  {data.estimate?.charges?.some(charge => charge.pending) && <p role="status">Partial estimate ? pending charges are not included in this total. See the errors beside those charges below.</p>}
-                  <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'?'Your report is ready. Pricing is pending.':'We\'re working on it.'}</strong>
-                  <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Math.ceil(Number(data.estimate.cuft)).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+                  {data.estimate ? <>
+                    <div className="cm-estimate-summary">
+                      <div className="cm-estimate-detail-item">
+                        <span>Price</span>
+                        <strong>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(data.estimate.price))}</strong>
+                      </div>
+                      <div className="cm-estimate-detail-item">
+                        <span>Volume</span>
+                        <strong>{Math.ceil(Number(data.estimate.cuft)).toLocaleString()} cu ft</strong>
+                      </div>
+                    </div>
+                    {data.estimate.charges?.some(charge => charge.pending) && <p role="status">Partial estimate: pending charges are not included in this total. See the errors beside those charges below.</p>}
+                  </> : <>
+                    <span className="cm-estimate-eyebrow">Your estimate</span>
+                  <strong>{data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'?'Your report is ready. Pricing is pending.':'We\'re working on it.'}</strong>
+                  <p className="cm-estimate-desc">{data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+                  </>}
                 </div>
                 {data.spark && (
                   <div className="cm-spark-card cm-spark-estimate-card">
@@ -953,7 +966,7 @@ export default function CustomerMovePage() {
                       {data.spark.status === 'completed' && <button type="button" className="cm-calculate-icon" title={calculatingPrice ? 'Calculating price...' : 'Calculate price'} aria-label={calculatingPrice ? 'Calculating price...' : 'Calculate price'} aria-busy={calculatingPrice} disabled={calculatingPrice || answersSaving || busy || reportState === 'running'} onClick={() => void recalculatePrice()}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M8 5h8v4H8zM8 13h1M12 13h1M16 13h.01M8 17h1M12 17h1M16 17h.01"/></svg>
                       </button>}
-                      {data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{Math.ceil(data.spark.cuft)} cu ft</strong> : null}
+                      {!data.estimate && data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{Math.ceil(data.spark.cuft)} cu ft</strong> : null}
                     </div>
                     {data.report_history?.find(report => report.current) && <ReportLinks report={data.report_history.find(report => report.current)!} onEditInventory={()=>setShowInventoryList(true)} />}
 
@@ -964,14 +977,6 @@ export default function CustomerMovePage() {
               {calculationError && <p role="alert">{calculationError}</p>}
               {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Retry pricing</button></p>}
               </div>
-              {data.estimate && Number(data.estimate.cuft) > 0 && (
-                <div className="cm-estimate-details">
-                  <div className="cm-estimate-detail-item">
-                    <span>Volume</span>
-                    <strong>{Math.ceil(Number(data.estimate.cuft)).toLocaleString()} cu ft</strong>
-                  </div>
-                </div>
-              )}
               {data.estimate?.charges && data.estimate.charges.length > 0 && (
                 <div className="cm-estimate-breakdown">
                   <div className="cm-estimate-breakdown-title">Price Breakdown</div>
@@ -992,8 +997,9 @@ export default function CustomerMovePage() {
                 </div>
               )}
 
-              {(data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) && (
-                <div className="cm-estimate-extra-actions">
+              {((data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) || (data.estimate && data.spark?.status === 'completed')) && (
+                <div className="cm-estimate-extra-actions" style={{flexWrap: 'wrap'}}>
+                  {(data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) && (
                   <button
                     type="button"
                     className="slds-button cm-primary cm-extra-services-btn"
@@ -1016,14 +1022,13 @@ export default function CustomerMovePage() {
                   >
                     {data.packing_saved ? '✓ Review extra services & questions' : '+ Add extra services & details'}
                   </button>
-                </div>
-              )}
-              {data.estimate && data.spark?.status === 'completed' && <div className="cm-estimate-extra-actions">
+                  )}
                 {data.estimate && data.spark?.status === 'completed' && <>
                 <button type="button" className="cm-secondary-btn" disabled={pdfBusy || answersSaving || calculatingPrice || busy} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : 'View estimate PDF'}</button>
                 {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert" style={{ flexBasis: '100%', marginTop: 0 }}>{pdfError}</p>}
                 </>}
-              </div>}
+                </div>
+              )}
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
             </div>
 
