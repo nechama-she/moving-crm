@@ -565,6 +565,7 @@ def _move_details(access, db, *, refresh_report=True):
     # If a spark report is currently pending/running, hide the old estimate until it completes
     estimate = None
     is_spark_pending = bool(spark_info and spark_info.get("status") in ("queued", "running"))
+    saved_package = json.loads(job.customer_packing_package or '{}')
     charges_list = [
         {
             'name': c.name,
