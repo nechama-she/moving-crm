@@ -1,7 +1,8 @@
-from charge_errors import isolated_charge, pending_line
 """Pricing book API backed by normalized Excel imports."""
 
 from __future__ import annotations
+
+from charge_errors import isolated_charge, pending_line
 
 from pickup_areas import PickupArea, pickup_areas, pickup_summary, pickup_match_score, select_pickup_plan
 
