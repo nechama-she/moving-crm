@@ -842,13 +842,13 @@ input, select, textarea, button {
     max-height: calc(100dvh - 16px) !important;
   }
 }
-button:focus-visible {
-  outline: 2px solid var(--brand);
-  outline-offset: 2px;
+/* Pointer focus has no native ring; keyboard focus uses the app theme. */
+:focus:not(:focus-visible) {
+  outline: none;
 }
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+:focus-visible {
+  outline: 2px solid var(--cm-primary, var(--brand, #0176d3));
+  outline-offset: 2px;
 }
 
 @media (prefers-color-scheme: light) {

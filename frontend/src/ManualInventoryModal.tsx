@@ -18,6 +18,37 @@ function EditableItemName({value,disabled,onCommit}:{value:string;disabled:boole
       if(event.key==='Escape'){event.preventDefault();setDraft(value);event.currentTarget.blur();}
     }}/>;
 }
+function RoomCard({ room, selected, busy, summary, onSelect, onRename, onDelete }: {
+  room: Room; selected: boolean; busy: boolean; summary: string;
+  onSelect: () => void; onRename: (name: string) => void; onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(room.name);
+  const cancelled = useRef(false);
+  const pencil = useRef<HTMLButtonElement>(null);
+  const commit = () => {
+    if (!cancelled.current && draft.trim() && draft.trim() !== room.name) onRename(draft.trim());
+    setEditing(false);
+  };
+  return <article className={selected ? 'mi-room-selected' : ''}>
+    <button type="button" className="mi-room-filter" disabled={busy} aria-label={`Filter by ${room.name}`} aria-pressed={selected} onClick={onSelect} />
+    <div className="mi-room-card-content">
+      <div className="mi-room-card-name">
+        {editing ? <input autoFocus aria-label={`Room name: ${room.name}`} maxLength={100} value={draft} disabled={busy}
+          onFocus={event => event.currentTarget.select()} onChange={event => setDraft(event.target.value)} onBlur={commit}
+          onKeyDown={event => {
+            if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); event.currentTarget.blur(); pencil.current?.focus(); }
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancelled.current = true; setEditing(false); pencil.current?.focus(); }
+          }} /> : <strong>{room.name}</strong>}
+        <button ref={pencil} type="button" className="mi-room-rename" disabled={busy} aria-label={`Rename room ${room.name}`} title="Rename room" onClick={() => { cancelled.current = false; setDraft(room.name); setEditing(true); }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5" /></svg>
+        </button>
+      </div>
+      <span>{summary}</span>
+    </div>
+    <button type="button" className="mi-remove" disabled={busy} aria-label={`Delete room ${room.name}`} onClick={onDelete}>&times;</button>
+  </article>;
+}
 export default function ManualInventoryModal({ loadCatalog, submit, onClose, draftKey, initialRooms, initialRows, imageEndpoint, linkKey='', session='' }: {
   draftKey: string;
   initialRooms?: { room_type_id: string; name: string; items: { item_id: string; quantity: number; name?:string }[]; custom_items?: CustomItem[] }[];
@@ -195,10 +226,13 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
             </div>}
           </div>
         </div>
-        <div className="mi-rooms">{rooms.map(r => <article className={r.id===selected?'mi-room-selected':''} key={r.id}><button type="button" disabled={busy} aria-pressed={r.id===selected} onClick={() => { setSelected(current => current === r.id ? '' : r.id); setCustomOpen(false); }}><strong>{r.name}</strong><span>{count(r)} items &middot; {number(total(r, 'cuft'))} cu ft</span></button><button type="button" className="mi-remove" disabled={busy} aria-label={`Delete room ${r.name}`} onClick={() => { setRooms(current => current.filter(value => value.id !== r.id)); if (selected === r.id) { setSelected(''); setCustomOpen(false); } }}>&times;</button></article>)}</div>
+        <div className="mi-rooms">{rooms.map(r => <RoomCard key={r.id} room={r} selected={r.id === selected} busy={busy}
+          summary={`${count(r)} items ? ${number(total(r, 'cuft'))} cu ft`}
+          onSelect={() => { setSelected(current => current === r.id ? '' : r.id); setCustomOpen(false); }}
+          onRename={name => setRooms(current => current.map(value => value.id === r.id ? { ...value, name } : value))}
+          onDelete={() => { setRooms(current => current.filter(value => value.id !== r.id)); if (selected === r.id) { setSelected(''); setCustomOpen(false); } }} />)}</div>
         {room &&
         <section className="mi-room-editor">
-        <label className="mi-room-name">Room name<input maxLength={100} value={room.name} disabled={busy} onChange={e => setRooms(current => current.map(r => r.id === selected ? { ...r, name: e.target.value } : r))} /></label>
         <button type="button" className="slds-button" style={{ marginTop: 12 }} disabled={busy} onClick={() => setCustomOpen(!customOpen)}>+ Add item</button>
         {customOpen && <section className="mi-custom-item">
           <h3>Add an item</h3>
