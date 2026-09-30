@@ -17,7 +17,10 @@ def test_delivery_fee(miles,total):
 
 def test_parameters_and_partial_mile():
     rule=StopRate(free_miles=5,stop_fee=20,per_mile=2)
-    assert stop_price(rule,Decimal('5.5')*Decimal('1609.344'))['total']==21
+    assert stop_price(rule,Decimal('5.5')*Decimal('1609.344')) == {
+        'miles': 6, 'billable_miles': 1, 'total': 22}
+    assert stop_price(rule,Decimal('3.1')*Decimal('1609.344'))['miles']==4
+    assert stop_price(rule,Decimal('4')*Decimal('1609.344'))['miles']==4
     with pytest.raises(ValueError):StopRate(free_miles=-1,stop_fee=50,per_mile=5)
 
 

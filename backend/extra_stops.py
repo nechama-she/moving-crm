@@ -2,7 +2,7 @@
 import hashlib
 import base64
 import json
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from uuid import UUID, uuid5, NAMESPACE_URL
 from pydantic import BaseModel, Field
 from fastapi import HTTPException
@@ -27,11 +27,12 @@ def stops_card(services):
 
 def stop_price(rule, meters):
     exact = Decimal(meters) / Decimal('1609.344')
-    billable = max(Decimal(0), exact - rule.free_miles)
+    miles = exact.to_integral_value(rounding=ROUND_CEILING)
+    billable = max(Decimal(0), miles - rule.free_miles)
     # Pickup stops within their allowance are entirely free. A zero allowance
     # means the delivery stop fee applies even to a zero-mile route.
-    amount = Decimal(0) if rule.free_miles > 0 and exact <= rule.free_miles else rule.stop_fee + billable * rule.per_mile
-    return {'miles': float(exact.quantize(Decimal('.01'), rounding=ROUND_HALF_UP)),
+    amount = Decimal(0) if rule.free_miles > 0 and miles <= rule.free_miles else rule.stop_fee + billable * rule.per_mile
+    return {'miles': float(miles),
             'billable_miles': float(billable.quantize(Decimal('.01'), rounding=ROUND_HALF_UP)),
             'total': float(amount.quantize(Decimal('.01'), rounding=ROUND_HALF_UP))}
 
