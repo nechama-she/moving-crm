@@ -1,6 +1,6 @@
 import { dimensionFeet } from './dimensions';
 import QuestionReferenceImages from './QuestionReferenceImages';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './ManualInventoryModal.css';
 type CatalogItem = { id: string; name: string; description: string; cuft: number; weight: number };
 type RoomType = { id: string; name: string };
@@ -8,15 +8,34 @@ type CustomItem = { id: string; name: string; cuft: number; quantity: number; re
 type Room = { id: string; room_type_id: string; name: string; items: Record<string, number>; item_names?: Record<string,string>; custom_items?: CustomItem[] };
 type Catalog = { rooms: RoomType[]; items: CatalogItem[] };
 type InitialRow = { name:string; room?:string; amount?:number; quantity?:number; cuft?:number; unit_cuft?:number; reference_name?:string };
-function EditableItemName({value,disabled,onCommit}:{value:string;disabled:boolean;onCommit:(name:string)=>void}) {
-  const [draft,setDraft]=useState(value);
-  useEffect(()=>setDraft(value),[value]);
-  const commit=()=>{const name=draft.trim();if(!name){setDraft(value);return;}if(name!==value)onCommit(name);};
-  return <input className="mi-item-name" aria-label={`Item name: ${value}`} maxLength={200} value={draft} disabled={disabled}
-    onChange={event=>setDraft(event.target.value)} onBlur={commit} onKeyDown={event=>{
-      if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}
-      if(event.key==='Escape'){event.preventDefault();setDraft(value);event.currentTarget.blur();}
-    }}/>;
+function InventoryRow({ name, cuft, quantity, busy, photo, onSave, onRemove }: {
+  name: string; cuft: number; quantity: number; busy: boolean; photo?: ReactNode;
+  onSave: (value: { name: string; cuft: number; quantity: number }) => void; onRemove: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({ name, cuft: String(cuft), quantity: String(quantity) });
+  const valid = draft.name.trim() && Number(draft.cuft) > 0 && Number(draft.cuft) <= 10000 && Number.isInteger(Number(draft.quantity)) && Number(draft.quantity) >= 1 && Number(draft.quantity) <= 999;
+  const save = () => { if (!valid) return; onSave({ name: draft.name.trim(), cuft: Number(draft.cuft), quantity: Number(draft.quantity) }); setEditing(false); };
+  return <div className="mi-inventory-row" onKeyDown={event => {
+    if (!editing) return;
+    if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); save(); }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setEditing(false); }
+  }}>
+    <div className="mi-inventory-photo">{photo}</div>
+    {editing ? <>
+      <input autoFocus aria-label="Item name" maxLength={200} value={draft.name} disabled={busy} onChange={e => setDraft({ ...draft, name: e.target.value })} />
+      <label className="mi-inventory-volume"><input aria-label="Cubic feet per item" type="number" min="0.0001" max="10000" step="any" value={draft.cuft} disabled={busy} onChange={e => setDraft({ ...draft, cuft: e.target.value })} /><small>cu ft each</small></label>
+      <input aria-label="Quantity" type="number" min="1" max="999" step="1" value={draft.quantity} disabled={busy} onChange={e => setDraft({ ...draft, quantity: e.target.value })} />
+    </> : <>
+      <strong>{name}</strong>
+      <span>{cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })} cu ft<small>each</small></span>
+      <span aria-label={`Quantity: ${quantity}`}>{quantity}</span>
+    </>}
+    <button type="button" className="slds-button" disabled={busy || (editing && !valid)} aria-label={editing ? `Save ${name}` : `Edit ${name}`} title={editing ? 'Save item' : 'Edit item'} onClick={() => {
+      if (editing) save(); else { setDraft({ name, cuft: String(cuft), quantity: String(quantity) }); setEditing(true); }
+    }}>{editing ? '?' : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5" /></svg>}</button>
+    <button type="button" className="slds-button" disabled={busy} aria-label={`Remove ${name}`} onClick={onRemove}>&times;</button>
+  </div>;
 }
 function RoomCard({ room, selected, busy, summary, onSelect, onRename, onDelete }: {
   room: Room; selected: boolean; busy: boolean; summary: string;
@@ -262,11 +281,17 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
           {!visibleRooms.some(r => count(r) > 0) && <p>{room ? 'No items in this room yet. Click Add item to get started.' : 'No items yet. Choose a room to add an item.'}</p>}
           {visibleRooms.filter(r => count(r) > 0).map(r => <details key={r.id} open>
             <summary><strong>{r.name}</strong> &middot; {count(r)} items</summary>
-            {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <div className="mi-summary-item" key={id}>
-              <span className="mi-summary-editor"><input type="number" min="1" max="999" disabled={busy} aria-label={`Quantity of ${r.item_names?.[id]||items.get(id)?.name||'item'}`} value={qty} onChange={event=>quantity(id,Number(event.target.value),r.id)}/><span>&times;</span><EditableItemName value={r.item_names?.[id]||items.get(id)?.name||'Item'} disabled={busy} onCommit={name=>setRooms(current=>current.map(value=>value.id===r.id?{...value,item_names:{...value.item_names,[id]:name}}:value))}/></span>
-              <span className="mi-summary-actions"><span>{number((items.get(id)?.cuft || 0) * qty)} cu ft</span><button type="button" className="slds-button" disabled={busy} title={`Remove ${items.get(id)?.name || 'item'} from ${r.name}`} aria-label={`Remove all ${items.get(id)?.name || 'item'} from ${r.name}`} onClick={() => quantity(id, 0, r.id)}>&times;</button></span>
-            </div>)}
-            {(r.custom_items || []).map(item => <div className="mi-summary-item" key={item.id}><span className="mi-summary-editor"><input type="number" min="1" max="999" disabled={busy} aria-label={`Quantity of ${item.name}`} value={item.quantity} onChange={event=>setRooms(current=>current.map(value=>value.id===r.id?{...value,custom_items:value.custom_items?.map(entry=>entry.id===item.id?{...entry,quantity:Math.min(999,Math.max(1,Math.floor(Number(event.target.value)||1)))}:entry)}:value))}/><span>&times;</span><EditableItemName value={item.name} disabled={busy} onCommit={name=>setRooms(current=>current.map(value=>value.id===r.id?{...value,custom_items:value.custom_items?.map(entry=>entry.id===item.id?{...entry,name}:entry)}:value))}/></span><span className="mi-summary-actions">{imageEndpoint&&item.reference_name&&<QuestionReferenceImages compact name={item.reference_name} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/>}<span>{number(item.cuft * item.quantity)} cu ft</span><button type="button" className="slds-button" disabled={busy} title={`Remove ${item.name} from ${r.name}`} aria-label={`Remove all ${item.name} from ${r.name}`} onClick={() => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.filter(entry => entry.id !== item.id) } : value))}>&times;</button></span></div>)}
+            {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <InventoryRow key={id}
+              name={r.item_names?.[id] || items.get(id)?.name || 'Item'} cuft={items.get(id)?.cuft || 0} quantity={qty} busy={busy}
+              onSave={value => setRooms(current => current.map(valueRoom => valueRoom.id === r.id ? {
+                ...valueRoom, items: { ...valueRoom.items, [id]: 0 },
+                custom_items: [...(valueRoom.custom_items || []), { id: crypto.randomUUID(), ...value, reference_name: items.get(id)?.name }],
+              } : valueRoom))}
+              onRemove={() => quantity(id, 0, r.id)} />)}
+            {(r.custom_items || []).map(item => <InventoryRow key={item.id} name={item.name} cuft={item.cuft} quantity={item.quantity} busy={busy}
+              photo={imageEndpoint && item.reference_name ? <QuestionReferenceImages compact name={item.reference_name} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
+              onSave={changes => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, ...changes } : entry) } : value))}
+              onRemove={() => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.filter(entry => entry.id !== item.id) } : value))} />)}
           </details>)}
           <p><strong>{room ? 'Room total' : 'List total'}: {number(visibleCuft)} cu ft</strong></p>
         </section>
