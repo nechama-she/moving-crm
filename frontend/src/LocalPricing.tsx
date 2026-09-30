@@ -30,6 +30,11 @@ const numeric = (value: unknown): number | null => value == null || value === ""
 const normalize = (data: Settings): Settings => ({ travel_hourly_rate: numeric(data.travel_hourly_rate), travel_in_minimum: Boolean(data.travel_in_minimum), fuel_charge: numeric(data.fuel_charge), minimum_hours: numeric(data.minimum_hours), capacity_per_mover: numeric(data.capacity_per_mover), full_pack_hourly: numeric(data.full_pack_hourly), hourly_rates: data.hourly_rates.map(numeric), crew_thresholds: data.crew_thresholds.map(numeric), truck_thresholds: data.truck_thresholds.map(numeric) });
 const money = (value: unknown) => value == null ? "Not set" : Number(value).toLocaleString("en-US", { style: "currency", currency: "USD" });
 const number = (value: unknown) => Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 });
+const duration = (value: unknown) => {
+  const minutes = Math.round(Number(value) * 60);
+  const hours = Math.floor(minutes / 60);
+  return `${hours} ${hours === 1 ? 'hour' : 'hours'}${minutes % 60 ? ` ${minutes % 60} minutes` : ''}`;
+};
 const roundedCubicFeet = (value: string | number | null | undefined) => {
   if (value == null || value === "") return "";
   const parsed = typeof value === "number" ? value : Number(value);
@@ -223,7 +228,7 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
       <div className="local-fields">
         <label>Volume (cubic feet)<input type="number" min="1" step="1" value={volume} placeholder="e.g. 1,000" onChange={e => { setVolume(roundedCubicFeet(e.target.value)); setNotice(""); }} /></label>
         <label>Movers<select value={crew} onChange={e => { setCrew(e.target.value); setNotice(""); }}><option value="">Automatic from volume</option>{Array.from({ length: 10 }, (_, i) => <option key={i} value={i + 1}>{i + 1} {i ? "movers" : "mover"}</option>)}</select></label>
-        <label>Moving hours override (before packing)<input type="number" min="0.01" step="0.01" placeholder="Automatic from volume" value={hours} onChange={e => { setHours(e.target.value); setNotice(""); }} /></label>
+        <label>Moving hours override (before packing)<input type="number" min="0.5" step="0.5" placeholder="Automatic from volume" value={hours} onChange={e => { setHours(e.target.value); setNotice(""); }} /></label>
       </div>
       <section className="local-travel" aria-label="Office travel estimate">
         <div className="local-section-heading"><div><span className="eyebrow">Travel fee</span><h3>Office travel estimate</h3></div>{user?.role === "admin" && <Link to="/settings/companies">Manage office address</Link>}</div>
@@ -240,8 +245,8 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
       </section>
       <label className="local-pack"><input type="checkbox" checked={fullPack} onChange={e => { setFullPack(e.target.checked); setNotice(""); }} /><span><strong>Add full packing</strong><small>Adds 2 hours for the first 1,000 cuft, then 1 hour per additional 1,000 cuft, rounded up. Adds {money(settings.full_pack_hourly)} per billable hour for the whole crew.</small></span><b>+{money(settings.full_pack_hourly)}/hr</b></label>
       {quote ? <>
-        <div className="local-metrics"><div><span>Movers</span><strong>{quote.crew_size}</strong><small>{quote.recommended_crew} recommended</small></div><div><span>Trucks</span><strong>{quote.trucks}</strong><small>Based on volume</small></div><div><span>Billable hours</span><strong>{number(quote.billable_hours)}</strong><small>{quote.minimum_applied ? `${settings.minimum_hours}-hour minimum applied` : `${number(quote.capacity)} cf per hour`}</small></div><div><span>Hourly rate</span><strong>{quote.hourly_rate == null ? "Not set" : money(Number(quote.hourly_rate) + Number(quote.full_pack_hourly))}</strong><small>{fullPack ? "Including full packing" : "Moving crew"}</small></div></div>
-        {Number(quote.packing_hours) > 0 && <p className="local-hint"><strong>{number(quote.base_hours)} moving hours + {number(quote.packing_hours)} packing hours = {number(quote.billable_hours)} billable hours.</strong> Travel is shown separately.</p>}
+        <div className="local-metrics"><div><span>Movers</span><strong>{quote.crew_size}</strong><small>{quote.recommended_crew} recommended</small></div><div><span>Trucks</span><strong>{quote.trucks}</strong><small>Based on volume</small></div><div><span>Billable hours</span><strong>{duration(quote.billable_hours)}</strong><small>{quote.minimum_applied ? `${settings.minimum_hours}-hour minimum applied` : `${number(quote.capacity)} cf per hour`}</small></div><div><span>Hourly rate</span><strong>{quote.hourly_rate == null ? "Not set" : money(Number(quote.hourly_rate) + Number(quote.full_pack_hourly))}</strong><small>{fullPack ? "Including full packing" : "Moving crew"}</small></div></div>
+        {Number(quote.packing_hours) > 0 && <p className="local-hint"><strong>{duration(quote.base_hours)} moving + {duration(quote.packing_hours)} packing = {duration(quote.billable_hours)} billable.</strong> Travel is shown separately.</p>}
         {quote.travel_complete && <p className="local-hint"><strong>Billable travel: {number(quote.travel_hours)} {Number(quote.travel_hours) === 1 ? "hour" : "hours"}</strong> (nearest whole hour, minimum 1 hour).</p>}
         {quote.warning && <p role="status" className="local-warning">{quote.warning}</p>}
         {quote.total != null && <div className="local-total"><div>{quote.charges.map(line => <div className="local-charge" key={line.name}><span><strong>{line.name}</strong><small>{line.description}</small></span><b>{money(line.totalCost)}</b></div>)}<div className="local-total-bottom"><strong>{quote.travel_complete ? "Estimated total" : "Estimated total before travel"}</strong><b>{money(quote.total)}</b></div></div>
@@ -250,7 +255,7 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
       </> : <p className="local-hint" role="status">{cubicFeetValue(volume) > 0 ? "Calculating estimate..." : "Enter the move volume to calculate crew, trucks, hours, and price."}</p>}
       {job && !travel && <p className="local-hint">Estimate both travel legs before saving the price.</p>}
       {job && job.moveType !== "Local" && <p className="local-warning">{job.moveType === "Long Distance" ? "This job crosses state lines. Use Long Distance pricing for this job." : "Confirm pickup and delivery addresses in the same state before saving local pricing."}</p>}
-      <p className="local-hint">Estimated hours = cubic feet ÷ (movers × {settings.capacity_per_mover} cf/hour). Billable hours are at least {settings.minimum_hours}. Trucks are a planning count; no separate truck fee is included.</p>
+      <p className="local-hint">Estimated hours = cubic feet ÷ (movers × {settings.capacity_per_mover} cf/hour). Billable time rounds up to the next 30 minutes, with a minimum of {duration(settings.minimum_hours)}. Trucks are a planning count; no separate truck fee is included.</p>
     </section>}
     <form className="pricing-card local-settings" onSubmit={saveSettings}>
       <div className="local-section-heading"><div><span className="eyebrow">Rate settings</span><h2>A simple table. Every day.</h2></div>{user?.role === "admin" && !editing && <button type="button" className="slds-button" onClick={() => { setDraft(settings ? structuredClone(settings) : blankSettings()); setEditing(true); setNotice(""); }}>Edit local settings</button>}</div>

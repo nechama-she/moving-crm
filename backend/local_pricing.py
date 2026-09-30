@@ -165,6 +165,13 @@ class LocalCalculation(BaseModel):
         return self
 
 
+def format_hours(hours: Decimal) -> str:
+    minutes = int(hours * 60)
+    whole, remainder = divmod(minutes, 60)
+    label = f'{whole} hour' + ('' if whole == 1 else 's')
+    return f'{label} {remainder} minutes' if remainder else label
+
+
 def calculate_local(settings: LocalSettings, body: LocalCalculation):
     money = lambda value: value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     recommended_crew = 1 + sum(body.cubic_feet > threshold for threshold in settings.crew_thresholds)
@@ -177,18 +184,18 @@ def calculate_local(settings: LocalSettings, body: LocalCalculation):
     travel_hours = max(Decimal('1'), estimated_travel_hours.quantize(Decimal('1'), rounding=ROUND_HALF_UP)) if travel_complete else Decimal(0)
     moving_hours = body.hours if body.hours is not None else estimated_hours
     minimum_moving_hours = max(Decimal(0), settings.minimum_hours - travel_hours) if settings.travel_in_minimum else settings.minimum_hours
-    base_hours = max(minimum_moving_hours, moving_hours)
+    base_hours = (max(minimum_moving_hours, moving_hours) * 2).to_integral_value(rounding=ROUND_CEILING) / 2
     packing_hours = (Decimal(1) + (body.cubic_feet / 1000).to_integral_value(rounding=ROUND_CEILING)) if body.full_pack else Decimal(0)
     hours = base_hours + packing_hours
     rate = settings.hourly_rates[crew - 1]
     travel_rate = rate + (settings.full_pack_hourly if body.full_pack else Decimal(0)) if rate is not None else None
     charges = []
     if rate is not None:
-        charges.append({'name': 'Local moving', 'description': f'{crew} movers for {hours:.2f} hours at ${rate:.2f}/hour',
+        charges.append({'name': 'Local moving', 'description': f'{crew} movers for {format_hours(hours)} at ${rate:.2f}/hour',
                         'subtotal': money(rate * hours), 'discountAmount': Decimal(0), 'totalCost': money(rate * hours)})
         if body.full_pack and settings.full_pack_hourly:
             amount = money(settings.full_pack_hourly * hours)
-            charges.append({'name': 'Full packing', 'description': f'{hours:.2f} hours at ${settings.full_pack_hourly:.2f}/hour',
+            charges.append({'name': 'Full packing', 'description': f'{format_hours(hours)} at ${settings.full_pack_hourly:.2f}/hour',
                             'subtotal': amount, 'discountAmount': Decimal(0), 'totalCost': amount})
         if travel_complete and travel_hours and travel_rate:
             amount = money(travel_hours * travel_rate)

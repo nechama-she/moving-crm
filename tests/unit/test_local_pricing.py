@@ -311,3 +311,27 @@ def test_manual_and_report_use_identical_complete_calculation(api, travel_fails)
         assert travel.call_count == 2
         for call in travel.call_args_list:
             assert call.args == ('office', 'pickup', 'delivery')
+
+
+@pytest.mark.parametrize('hours,expected,label', [
+    ('10.65', '11', '11 hours'),
+    (str(Decimal(10) + Decimal(25) / 60), '10.5', '10 hours 30 minutes'),
+    ('10', '10', '10 hours'),
+    ('10.5', '10.5', '10 hours 30 minutes'),
+    ('10.5001', '11', '11 hours'),
+])
+def test_moving_time_rounds_up_to_half_hour(hours, expected, label):
+    quote = calculate_local(LocalSettings(), LocalCalculation(cubic_feet=1000, crew_size=3, hours=hours))
+    assert quote['billable_hours'] == Decimal(expected)
+    moving = quote['charges'][0]
+    assert moving['description'] == f'3 movers for {label} at $195.00/hour'
+    assert moving['totalCost'] == Decimal(expected) * 195
+
+
+def test_volume_estimate_rounds_up_and_packing_uses_same_billable_time():
+    quote = calculate_local(LocalSettings(), LocalCalculation(cubic_feet=1597, full_pack=True))
+    assert quote['base_hours'] == 11
+    assert quote['billable_hours'] == 14
+    assert quote['charges'][0]['totalCost'] == 14 * 195
+    assert quote['charges'][1]['totalCost'] == 14 * 65
+    assert quote['charges'][1]['description'] == '14 hours at $65.00/hour'
