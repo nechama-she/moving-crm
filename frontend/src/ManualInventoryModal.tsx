@@ -4,7 +4,7 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 're
 import './ManualInventoryModal.css';
 type CatalogItem = { id: string; name: string; description: string; cuft: number; weight: number };
 type RoomType = { id: string; name: string };
-type CustomItem = { id: string; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean };
+type CustomItem = { id: string; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean; mover_pack?: boolean };
 type Room = { id: string; room_type_id: string; name: string; items: Record<string, number>; item_names?: Record<string,string>; custom_items?: CustomItem[] };
 type Catalog = { rooms: RoomType[]; items: CatalogItem[] };
 type InitialRow = { name:string; room?:string; amount?:number; quantity?:number; cuft?:number; unit_cuft?:number; reference_name?:string; going?:boolean };
@@ -12,8 +12,9 @@ function packingItemName(name: string) {
   if (/\((?:cp|pbo)\)\s*$/i.test(name)) return name;
   return /\bbox(?:es)?\b|\bdish\s*pack\b/i.test(name) ? `${name} (PBO)` : name;
 }
-function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onSave, onRemove }: {
+function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onMoverPackChange, packingLocked = false, onSave, onRemove }: {
   name: string; cuft: number; quantity: number; busy: boolean; photo?: ReactNode; going?: boolean; onGoingChange: (going: boolean) => void;
+  onMoverPackChange?: (checked: boolean) => void; packingLocked?: boolean;
   onSave: (value: { name: string; cuft: number; quantity: number }) => void; onRemove: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -40,6 +41,7 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
       <span aria-label={`Quantity: ${quantity}`}>{quantity}</span>
     </>}
     <input className="mi-going-checkbox" type="checkbox" aria-label={`Going: ${name}`} checked={going} disabled={busy} onChange={event => onGoingChange(event.target.checked)} />
+    <span>{onMoverPackChange && <input className="mi-going-checkbox" type="checkbox" aria-label={`Movers pack: ${name}`} title={packingLocked ? 'Included with full packing' : 'Movers pack this box'} checked={/\(CP\)\s*$/i.test(name)} disabled={busy || packingLocked || !going} onChange={event => onMoverPackChange(event.target.checked)} />}</span>
     <button type="button" className="slds-button" disabled={busy || (editing && !valid)} aria-label={editing ? `Save ${name}` : `Edit ${name}`} title={editing ? 'Save item' : 'Edit item'} onClick={() => {
       if (editing) save(); else { setDraft({ name, cuft: String(cuft), quantity: String(quantity) }); setEditing(true); }
     }}>{editing ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h10V3M7 21v-8h10v8"/></svg> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5" /></svg>}</button>
@@ -341,7 +343,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
           {!visibleRooms.some(r => count(r) > 0) && <p>{room ? 'No items in this room yet. Click Add item to get started.' : 'No items yet. Choose a room to add an item.'}</p>}
           {visibleRooms.filter(r => count(r) > 0).map(r => <details key={r.id} open>
             <summary><strong>{r.name}</strong> &middot; {count(r)} items</summary>
-            <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span>Going</span><span className="mi-inventory-actions-heading">Actions</span></div>
+            <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span>Going</span><span>Movers pack</span><span className="mi-inventory-actions-heading">Actions</span></div>
             {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <InventoryRow key={id}
               name={packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item')} cuft={items.get(id)?.cuft || 0} quantity={qty} busy={busy}
               onSave={value => setRooms(current => current.map(valueRoom => valueRoom.id === r.id ? {
@@ -349,9 +351,13 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
                 custom_items: [...(valueRoom.custom_items || []), { id: crypto.randomUUID(), ...value, reference_name: items.get(id)?.name }],
               } : valueRoom))}
               onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, items: { ...value.items, [id]: 0 }, custom_items: [...(value.custom_items || []), { id: crypto.randomUUID(), name: r.item_names?.[id] || items.get(id)?.name || 'Item', cuft: items.get(id)?.cuft || 0.01, quantity: qty, going }] } : value))}
+              packingLocked={packing?.full}
+              onMoverPackChange={/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(items.get(id)?.name || '') ? checked => setRooms(current => current.map(value => value.id === r.id ? { ...value, items: { ...value.items, [id]: 0 }, custom_items: [...(value.custom_items || []), { id: crypto.randomUUID(), name: (r.item_names?.[id] || items.get(id)?.name || 'Box').replace(/\s*\((?:CP|PBO)\)\s*$/i, '') + (checked ? ' (CP)' : ' (PBO)'), cuft: items.get(id)?.cuft || 0.01, quantity: qty, mover_pack: checked }] } : value)) : undefined}
               onRemove={() => quantity(id, 0, r.id)} />)}
             {(r.custom_items || []).map(item => <InventoryRow key={item.id} name={packingItemName(item.name)} cuft={item.cuft} quantity={item.quantity} busy={busy}
               going={item.going} onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, going } : entry) } : value))}
+              packingLocked={packing?.full}
+              onMoverPackChange={/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(item.name) ? checked => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, mover_pack: checked, name: entry.name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') + (checked ? ' (CP)' : ' (PBO)') } : entry) } : value)) : undefined}
               photo={imageEndpoint && item.reference_name ? <QuestionReferenceImages compact name={item.reference_name} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
               onSave={changes => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, ...changes } : entry) } : value))}
               onRemove={() => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.filter(entry => entry.id !== item.id) } : value))} />)}

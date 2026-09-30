@@ -1,5 +1,6 @@
 """Customer-entered room inventories use catalog values and the shared pricing flow."""
 import json
+import re
 import time
 from decimal import Decimal
 from uuid import UUID
@@ -22,6 +23,7 @@ class CustomInventoryItemInput(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     cuft: Decimal = Field(gt=0, le=10000, allow_inf_nan=False)
     quantity: int = Field(ge=1, le=999, strict=True)
+    mover_pack: bool | None = None
     going: bool = True
     reference_name: str | None = Field(default=None, max_length=200)
 
@@ -81,7 +83,7 @@ def build_inventory(body, db, allow_empty=False):
             cuft += volume
             row = {'item_id': 'custom-' + str(entry.id), 'room': room.name.strip(), 'name': entry.name.strip(),
                    'amount': entry.quantity, 'cuft': float(volume), 'weight': 0,
-                   'unit_cuft': float(entry.cuft), 'unit_weight': 0, 'custom': True, 'going': entry.going,
+                   'unit_cuft': float(entry.cuft), 'unit_weight': 0, 'custom': True, 'going': entry.going, 'mover_pack': entry.mover_pack,
                    'reference_name': entry.reference_name or entry.name.strip()}
             rows.append(row)
             contents.append(row)
@@ -168,6 +170,21 @@ def replace_current_inventory(body, access, db):
     package = customer_packing_package(db.get(Lead, access.lead_id), job, db)
     if package:
         selection = package['selection']
+        def box_key(room, name):
+            return (room.strip().casefold(), re.sub(r'\s*\((?:CP|PBO)\)\s*$', '', name, flags=re.I).strip().casefold())
+        touched = {box_key(row['room'], row['name']) for row in rows if row.get('mover_pack') is not None}
+        if touched and selection.get('mode') != 'full':
+            quantities = dict(selection.get('box_quantities', {}))
+            for box in package.get('box_items', []):
+                key = box_key(box.get('room') or 'Other items', box['label'])
+                if key in touched:
+                    quantities[box['id']] = sum(int(row['amount']) for row in rows
+                        if row.get('going') is not False and box_key(row['room'], row['name']) == key
+                        and (row.get('mover_pack') is True or (row.get('mover_pack') is None and re.search(r'\(CP\)\s*$', row['name'], re.I))))
+            stored_selection = json.loads(job.customer_packing_package or '{}')
+            stored_selection['box_quantities'] = quantities
+            job.customer_packing_package = json.dumps(stored_selection)
+            selection = {**selection, 'box_quantities': quantities}
         if selection.get('mode') == 'full':
             selection = {**selection, 'box_quantities': {item['id']: item['quantity'] for item in package.get('box_items', [])}}
         apply_box_packing_to_inventory(job, db, package, selection)
