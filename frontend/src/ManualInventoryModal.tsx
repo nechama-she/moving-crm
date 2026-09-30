@@ -32,7 +32,8 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   const [catalog, setCatalog] = useState<Catalog>();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [selected, setSelected] = useState('');
-  const [roomType, setRoomType] = useState('');
+  const [roomPickerOpen, setRoomPickerOpen] = useState(false);
+  const addRoomButton = useRef<HTMLButtonElement>(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [customName, setCustomName] = useState('');
   const [customDimensions, setCustomDimensions] = useState({ width: '', height: '', depth: '' });
@@ -129,7 +130,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
     modal.current?.focus();
     loader.current().then(value => {
       if (!active) return;
-      setCatalog(value); setRoomType(value.rooms[0]?.id || '');
+      setCatalog(value);
       let saved: Room[] | undefined;
       try { const raw = localStorage.getItem(draftKey); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed) && parsed.every(r => r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.room_type_id === 'string' && r.items && typeof r.items === 'object' && Object.values(r.items).every(q => typeof q === 'number' && Number.isInteger(q) && q >= 0 && q <= 999))) saved = parsed; } } catch { /* Start with default rooms if storage is unavailable. */ }
       const loaded = saved || initialRooms?.map(r => ({ id: crypto.randomUUID(), room_type_id: r.room_type_id, name: r.name, custom_items: (r.custom_items || []).map(item => ({ ...item, cuft: Number(item.cuft) })), items: Object.fromEntries(r.items.map(i => [i.item_id, i.quantity])), item_names:Object.fromEntries(r.items.filter(i=>i.name).map(i=>[i.item_id,i.name!])) })) || (initialRows?.length?roomsFromRows(initialRows,value):value.rooms.filter(r => ['bedroom', 'living-room', 'dining-room', 'kitchen'].includes(r.id)).map(r => ({ id: crypto.randomUUID(), room_type_id: r.id, name: r.name, items: {} })));
@@ -183,9 +184,23 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
     {error && <p className="mi-error" role="alert">{error}</p>}
     <div className="mi-body">
       {!catalog ? <p>Loading item catalog...</p> : <>
-        <p>Choose a room to add items. You can add multiple bedrooms or other rooms.</p>
+        <div className="mi-room-toolbar">
+          <p>Choose a room to add items. You can add multiple bedrooms or other rooms.</p>
+          <div className="mi-room-picker" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setRoomPickerOpen(false); }} onKeyDown={event => {
+            if (event.key === 'Escape' && roomPickerOpen) { event.preventDefault(); event.stopPropagation(); setRoomPickerOpen(false); addRoomButton.current?.focus(); }
+          }}>
+            <button ref={addRoomButton} type="button" className="slds-button" disabled={busy || rooms.length >= 100 || !catalog.rooms.length} aria-expanded={roomPickerOpen} aria-controls="mi-room-choices" onClick={() => setRoomPickerOpen(open => !open)}>+ Add room</button>
+            {roomPickerOpen && <div id="mi-room-choices" className="mi-room-choices" role="group" aria-label="Choose a room to add">
+              {catalog.rooms.map(type => <button type="button" key={type.id} disabled={busy} onClick={() => {
+                const id = crypto.randomUUID();
+                const n = rooms.filter(r => r.room_type_id === type.id).length;
+                setRooms(current => [...current, { id, room_type_id: type.id, name: type.name + (n ? ` ${n + 1}` : ''), items: {} }]);
+                setSelected(id); setSearch(''); setLimit(60); setCustomOpen(false); setRoomPickerOpen(false); addRoomButton.current?.focus();
+              }}>{type.name}</button>)}
+            </div>}
+          </div>
+        </div>
         <div className="mi-rooms">{rooms.map(r => <article className={r.id===selected?'mi-room-selected':''} key={r.id}><button type="button" disabled={busy} onClick={() => { setSelected(r.id); setSearch(''); setLimit(60); setCustomOpen(false); }}><strong>{r.name}</strong><span>{count(r)} items &middot; {number(total(r, 'cuft'))} cu ft</span></button><button type="button" className="mi-remove" disabled={busy} aria-label={`Delete room ${r.name}`} onClick={() => setRooms(current => current.filter(value => value.id !== r.id))}>&times;</button></article>)}</div>
-        <div className="mi-add-room"><select aria-label="Room type" value={roomType} disabled={busy} onChange={e => setRoomType(e.target.value)}>{catalog.rooms.map(r => <option value={r.id} key={r.id}>{r.name}</option>)}</select><button type="button" className="slds-button" disabled={busy || rooms.length >= 100 || !roomType} onClick={() => { const type = catalog.rooms.find(r => r.id === roomType)!; const id = crypto.randomUUID(); const n = rooms.filter(r => r.room_type_id === roomType).length; setRooms(current => [...current, { id, room_type_id: roomType, name: type.name + (n ? ` ${n + 1}` : ''), items: {} }]); setSelected(id); setSearch(''); setLimit(60); }}>+ Add room</button></div>
         {room ?
         <section className="mi-room-editor">
         <label className="mi-room-name">Room name<input maxLength={100} value={room.name} disabled={busy} onChange={e => setRooms(current => current.map(r => r.id === selected ? { ...r, name: e.target.value } : r))} /></label>
