@@ -669,23 +669,24 @@ def fetch_and_extract_spark_report(share_url: str, processing=None) -> tuple[flo
                 total_vol = 0.0
                 total_wt = 0.0
                 for row in sec["rows"]:
-                    if row.get("going", True):
-                        qty = _safe_float(row.get("quantity"))
-                        u_vol = _safe_float(row.get("unit_volume"))
-                        u_wt = _safe_float(row.get("unit_weight"))
-                        row_cuft = round(qty * u_vol, 2)
-                        total_vol += qty * u_vol
-                        total_wt += qty * u_wt
-                        name = str(row.get("item_name") or row.get("name") or row.get("item") or "").strip()
-                        if name or qty > 0 or row_cuft > 0:
-                            inventory_rows.append({
-                                "name": name or "Item",
-                                "room": str(row.get("room") or ""),
-                                "weight": round(qty * u_wt, 2),
-                                "cuft": row_cuft if row_cuft > 0 else 0.0,
-                                "amount": round(qty, 2) if qty > 0 else 0.0,
-                            })
-                if total_vol > 0:
+                    qty = _safe_float(row.get("quantity"))
+                    u_vol = _safe_float(row.get("unit_volume"))
+                    u_wt = _safe_float(row.get("unit_weight"))
+                    row_cuft = round(qty * u_vol, 2)
+                    total_vol += qty * u_vol if row.get("going", True) else 0
+                    total_wt += qty * u_wt if row.get("going", True) else 0
+                    name = str(row.get("item_name") or row.get("name") or row.get("item") or "").strip()
+                    if name or qty > 0 or row_cuft > 0:
+                        inventory_rows.append({
+                            "name": name or "Item",
+                            "room": str(row.get("room") or ""),
+                            "going": row.get("going", True),
+                            "unit_cuft": u_vol,
+                            "weight": round(qty * u_wt, 2) if row.get("going", True) else 0,
+                            "cuft": row_cuft if row_cuft > 0 and row.get("going", True) else 0.0,
+                            "amount": round(qty, 2) if qty > 0 else 0.0,
+                        })
+                if inventory_rows:
                     cuft = total_vol
                     weight = round(total_wt, 1)
 
@@ -764,6 +765,8 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
         if job:
             db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job.id).delete(synchronize_session=False)
             for index, row in enumerate(inventory_rows):
+                if row.get("going") is False:
+                    continue
                 db.add(LeadSparkInventoryItem(
                     job_id=job.id,
                     name=str(row.get("name") or "Item"),

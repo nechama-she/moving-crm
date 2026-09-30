@@ -22,6 +22,7 @@ class CustomInventoryItemInput(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     cuft: Decimal = Field(gt=0, le=10000, allow_inf_nan=False)
     quantity: int = Field(ge=1, le=999, strict=True)
+    going: bool = True
     reference_name: str | None = Field(default=None, max_length=200)
 
 
@@ -76,11 +77,11 @@ def build_inventory(body, db, allow_empty=False):
         for entry in room.custom_items:
             if not entry.name.strip():
                 raise HTTPException(400, 'Enter a name for each custom item.')
-            volume = entry.cuft * entry.quantity
+            volume = entry.cuft * entry.quantity if entry.going else Decimal(0)
             cuft += volume
             row = {'item_id': 'custom-' + str(entry.id), 'room': room.name.strip(), 'name': entry.name.strip(),
                    'amount': entry.quantity, 'cuft': float(volume), 'weight': 0,
-                   'unit_cuft': float(entry.cuft), 'unit_weight': 0, 'custom': True,
+                   'unit_cuft': float(entry.cuft), 'unit_weight': 0, 'custom': True, 'going': entry.going,
                    'reference_name': entry.reference_name or entry.name.strip()}
             rows.append(row)
             contents.append(row)

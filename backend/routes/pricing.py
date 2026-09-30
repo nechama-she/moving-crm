@@ -587,7 +587,7 @@ def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
     if snapshot:
         result = []
         for row in snapshot:
-            if not isinstance(row, dict) or not row.get('name'):
+            if not isinstance(row, dict) or not row.get('name') or row.get('going') is False:
                 continue
             try:
                 quantity = max(1, int(float(row.get('amount') or row.get('quantity') or 1)))
@@ -1144,6 +1144,7 @@ def apply_box_packing_to_inventory(job, db, package, selection):
         room_key = _normalize_item_name(box.get('room') or 'Other items')
         name_key = _normalize_item_name(_box_base_name(box.get('label') or ''))
         indexes = [index for index, row in enumerate(rows) if isinstance(row, dict)
+                   and row.get('going') is not False
                    and _normalize_item_name(row.get('room') or 'Other items') == room_key
                    and _normalize_item_name(_box_base_name(row.get('name') or '')) == name_key]
         if not indexes:
@@ -1179,6 +1180,8 @@ def apply_box_packing_to_inventory(job, db, package, selection):
     saved.details = json.dumps(details)
     db.query(LeadSparkInventoryItem).filter_by(job_id=job.id).delete(synchronize_session=False)
     for index, row in enumerate(rows):
+        if row.get('going') is False:
+            continue
         db.add(LeadSparkInventoryItem(job_id=job.id, name=str(row.get('name') or 'Item'),
             cuft=Decimal(str(row.get('cuft') or 0)), amount=Decimal(str(row.get('amount') or 0)), sort_order=index))
 

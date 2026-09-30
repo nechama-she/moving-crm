@@ -4,12 +4,16 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 're
 import './ManualInventoryModal.css';
 type CatalogItem = { id: string; name: string; description: string; cuft: number; weight: number };
 type RoomType = { id: string; name: string };
-type CustomItem = { id: string; name: string; cuft: number; quantity: number; reference_name?: string };
+type CustomItem = { id: string; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean };
 type Room = { id: string; room_type_id: string; name: string; items: Record<string, number>; item_names?: Record<string,string>; custom_items?: CustomItem[] };
 type Catalog = { rooms: RoomType[]; items: CatalogItem[] };
-type InitialRow = { name:string; room?:string; amount?:number; quantity?:number; cuft?:number; unit_cuft?:number; reference_name?:string };
-function InventoryRow({ name, cuft, quantity, busy, photo, onSave, onRemove }: {
-  name: string; cuft: number; quantity: number; busy: boolean; photo?: ReactNode;
+type InitialRow = { name:string; room?:string; amount?:number; quantity?:number; cuft?:number; unit_cuft?:number; reference_name?:string; going?:boolean };
+function packingItemName(name: string) {
+  if (/\((?:cp|pbo)\)\s*$/i.test(name)) return name;
+  return /\bbox(?:es)?\b|\bdish\s*pack\b/i.test(name) ? `${name} (PBO)` : name;
+}
+function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onSave, onRemove }: {
+  name: string; cuft: number; quantity: number; busy: boolean; photo?: ReactNode; going?: boolean; onGoingChange: (going: boolean) => void;
   onSave: (value: { name: string; cuft: number; quantity: number }) => void; onRemove: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -35,6 +39,7 @@ function InventoryRow({ name, cuft, quantity, busy, photo, onSave, onRemove }: {
       <span aria-label="Total volume in cubic feet">{totalVolumeLabel}</span>
       <span aria-label={`Quantity: ${quantity}`}>{quantity}</span>
     </>}
+    <select aria-label={`Moving status of ${name}`} value={going ? 'going' : 'not-going'} disabled={busy} onChange={event => onGoingChange(event.target.value === 'going')}><option value="going">Going</option><option value="not-going">Not going</option></select>
     <button type="button" className="slds-button" disabled={busy || (editing && !valid)} aria-label={editing ? `Save ${name}` : `Edit ${name}`} title={editing ? 'Save item' : 'Edit item'} onClick={() => {
       if (editing) save(); else { setDraft({ name, cuft: String(cuft), quantity: String(quantity) }); setEditing(true); }
     }}>{editing ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h10V3M7 21v-8h10v8"/></svg> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5" /></svg>}</button>
@@ -114,12 +119,12 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
       const merged=new Map<string,CustomItem>();
       contents.forEach(row=>{
         const quantity=Math.max(1,Math.floor(Number(row.amount??row.quantity??1)||1));
-        const total=Math.max(0.01,Number(row.cuft||0));
-        const itemName=String(row.name||'Item').replace(/\s*\((?:cp|pbo)\)\s*$/i,'');
-        const itemKey=normalized(itemName);
+        const total=Math.max(0.01,row.unit_cuft != null ? Number(row.unit_cuft) * quantity : Number(row.cuft||0));
+        const itemName=packingItemName(String(row.name||'Item'));
+        const itemKey=itemName.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim() + (row.going === false ? ':not-going' : ':going');
         const existing=merged.get(itemKey);
         if(existing){const combined=existing.cuft*existing.quantity+total;existing.quantity+=quantity;existing.cuft=combined/existing.quantity;}
-        else merged.set(itemKey,{id:crypto.randomUUID(),name:itemName,quantity,cuft:Number(row.unit_cuft||total/quantity)||0.01,reference_name:row.reference_name||row.name});
+        else merged.set(itemKey,{id:crypto.randomUUID(),name:itemName,quantity,going:row.going !== false,cuft:Number(row.unit_cuft||total/quantity)||0.01,reference_name:row.reference_name||row.name});
       });
       return {id:crypto.randomUUID(),room_type_id:type?.id||'',name,items:{},custom_items:[...merged.values()]};
     });
@@ -201,7 +206,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
     return () => { active = false; document.body.style.overflow = overflow; previous?.focus(); };
   }, []);
   const items = new Map((catalog?.items || []).map(item => [item.id, item]));
-  const total = (room: Room, field: 'cuft' | 'weight') => Object.entries(room.items).reduce((sum, [id, qty]) => sum + (items.get(id)?.[field] || 0) * qty, 0) + (field === 'cuft' ? (room.custom_items || []).reduce((sum, item) => sum + item.cuft * item.quantity, 0) : 0);
+  const total = (room: Room, field: 'cuft' | 'weight') => Object.entries(room.items).reduce((sum, [id, qty]) => sum + (items.get(id)?.[field] || 0) * qty, 0) + (field === 'cuft' ? (room.custom_items || []).reduce((sum, item) => sum + (item.going === false ? 0 : item.cuft * item.quantity), 0) : 0);
   const count = (room: Room) => Object.values(room.items).reduce((sum, qty) => sum + qty, 0) + (room.custom_items || []).reduce((sum, item) => sum + item.quantity, 0);
   const cuft = rooms.reduce((sum, room) => sum + total(room, 'cuft'), 0);
   const weight = rooms.reduce((sum, room) => sum + total(room, 'weight'), 0);
@@ -300,7 +305,13 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
             {catalogMatches.slice(0, catalogLimit).map(item => <div className="mi-catalog-row" key={item.id}>
               <div><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</div>
               <span>{number(item.cuft)} cu ft</span>
-              <button type="button" className="slds-button" disabled={busy || (room.items[item.id] || 0) >= 999} aria-label={`Add ${item.name} to ${room.name}`} onClick={() => quantity(item.id, (room.items[item.id] || 0) + 1, room.id)}>+ Add{room.items[item.id] ? ` (${room.items[item.id]})` : ''}</button>
+              <div className="mi-catalog-count" role="group" aria-label={`Quantity of ${item.name}`}>
+                <button type="button" disabled={busy || !room.items[item.id]} aria-label={`Remove ${item.name} from ${room.name}`} title="Remove item" onClick={() => quantity(item.id, 0, room.id)}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>
+                </button>
+                <input type="number" min="0" max="999" step="1" aria-label={`Count of ${item.name}`} disabled={busy} value={room.items[item.id] || ''} placeholder="0" onChange={event => quantity(item.id, Number(event.target.value), room.id)} />
+                <button type="button" disabled={busy || (room.items[item.id] || 0) >= 999} aria-label={`Add one ${item.name} to ${room.name}`} title="Add one" onClick={() => quantity(item.id, (room.items[item.id] || 0) + 1, room.id)}>+</button>
+              </div>
             </div>)}
             {!catalogMatches.length && <p>No matching items. You can add a custom item above.</p>}
             {catalogMatches.length > catalogLimit && <p className="mi-catalog-more">Scroll for more items</p>}
@@ -312,15 +323,17 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
           {!visibleRooms.some(r => count(r) > 0) && <p>{room ? 'No items in this room yet. Click Add item to get started.' : 'No items yet. Choose a room to add an item.'}</p>}
           {visibleRooms.filter(r => count(r) > 0).map(r => <details key={r.id} open>
             <summary><strong>{r.name}</strong> &middot; {count(r)} items</summary>
-            <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span className="mi-inventory-actions-heading">Actions</span></div>
+            <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span>Status</span><span className="mi-inventory-actions-heading">Actions</span></div>
             {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <InventoryRow key={id}
-              name={r.item_names?.[id] || items.get(id)?.name || 'Item'} cuft={items.get(id)?.cuft || 0} quantity={qty} busy={busy}
+              name={packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item')} cuft={items.get(id)?.cuft || 0} quantity={qty} busy={busy}
               onSave={value => setRooms(current => current.map(valueRoom => valueRoom.id === r.id ? {
                 ...valueRoom, items: { ...valueRoom.items, [id]: 0 },
                 custom_items: [...(valueRoom.custom_items || []), { id: crypto.randomUUID(), ...value, reference_name: items.get(id)?.name }],
               } : valueRoom))}
+              onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, items: { ...value.items, [id]: 0 }, custom_items: [...(value.custom_items || []), { id: crypto.randomUUID(), name: r.item_names?.[id] || items.get(id)?.name || 'Item', cuft: items.get(id)?.cuft || 0.01, quantity: qty, going }] } : value))}
               onRemove={() => quantity(id, 0, r.id)} />)}
-            {(r.custom_items || []).map(item => <InventoryRow key={item.id} name={item.name} cuft={item.cuft} quantity={item.quantity} busy={busy}
+            {(r.custom_items || []).map(item => <InventoryRow key={item.id} name={packingItemName(item.name)} cuft={item.cuft} quantity={item.quantity} busy={busy}
+              going={item.going} onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, going } : entry) } : value))}
               photo={imageEndpoint && item.reference_name ? <QuestionReferenceImages compact name={item.reference_name} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
               onSave={changes => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, ...changes } : entry) } : value))}
               onRemove={() => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.filter(entry => entry.id !== item.id) } : value))} />)}

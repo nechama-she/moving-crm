@@ -57,10 +57,11 @@ def selectable_items(rows):
     return [{'id': f'{index}:{unit}', 'item_index': index, 'unit_index': unit,
              'name': row.get('name', 'Item'), 'room': row.get('room', ''),
              'label': f"{row.get('name', 'Item')} ({unit + 1} of {max(1, int(row.get('amount') or 1))})"}
-            for index, row in enumerate(rows) for unit in range(max(1, int(row.get('amount') or 1)))]
+            for index, row in enumerate(rows) if row.get('going') is not False for unit in range(max(1, int(row.get('amount') or 1)))]
 
 
 def matches(rule, row, catalog_names):
+    if row.get('going') is False: return False
     if row.get('item_id') in rule.get('item_ids', []): return True
     name = normalized(row.get('name'))
     if name and name in {normalized(catalog_names.get(i, '')) for i in rule.get('item_ids', [])}: return True

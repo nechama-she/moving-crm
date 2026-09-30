@@ -29,7 +29,7 @@ def inventory_entries(rows, questions):
         related = by_item[index]
         for unit in range(count if related else 1):
             answers = [q for q in related if q.get('unit_index', 0) == unit]
-            excluded = any((q.get('saved') or {}).get('action') == 'exclude'
+            excluded = row.get('going') is False or any((q.get('saved') or {}).get('action') == 'exclude'
                            and not (q.get('saved') or {}).get('pending') for q in answers)
             yield dict(name=row.get('name') or 'Item', room=row.get('room') or 'Inventory',
                        label=f"{row.get('name', 'Item')} ({unit + 1} of {count})" if related and count > 1 else row.get('name', 'Item'),
