@@ -1,10 +1,19 @@
 import { useState } from 'react';
 import type {PackingPackage, PackingSelection} from './CustomerPackingOptions';
+import PackingServiceSelect, {type PackingMaterialService} from './PackingServiceSelect';
 
 export default function ConfiguredPackingItems({config,selection,onChange,disabled,showRequired=true,showOptional=false}:{config:PackingPackage;selection:PackingSelection;onChange:(value:PackingSelection)=>void;disabled:boolean;showRequired?:boolean;showOptional?:boolean}) {
   const materials=selection.material_item_ids??selection.item_ids;
   const [selectedRooms,setSelectedRooms]=useState<Record<string,string>>({});
-  const money=(value:number)=>value.toLocaleString('en-US',{style:'currency',currency:'USD'});
+  function serviceFor(id:string):PackingMaterialService {
+    return !selection.item_ids.includes(id)?'self':materials.includes(id)?'materials':'packing';
+  }
+  function selectService(id:string,service:PackingMaterialService) {
+    onChange({...selection,
+      item_ids:service==='self'?selection.item_ids.filter(value=>value!==id):[...new Set([...selection.item_ids,id])],
+      material_item_ids:service==='materials'?[...new Set([...materials,id])]:materials.filter(value=>value!==id),
+    });
+  }
   if(!config.items.length)return null;
   return <>
     {([...(showRequired?['required'] as const:[]),...(showOptional?['optional'] as const:[])] as const).map(requirement=>{
@@ -29,24 +38,11 @@ export default function ConfiguredPackingItems({config,selection,onChange,disabl
             return map;
           },new Map<string,typeof roomItems>()).values()].map(group=><section key={group[0].group_id||group[0].id} style={{display:'grid',gap:8,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
           <strong>{group[0].label}</strong>
-          {group.map(item=><div key={item.id} data-customer-action={`configured:${item.id}`} style={{display:'grid',gap:8,paddingTop:group.length>1?8:0,borderTop:group.length>1?'1px solid #eee5e2':'none'}}>
-            <span>{item.material_name || (item.packing_material==='plastic'?'Plastic':'Cardboard')}{item.quantity!=null?` - ${item.quantity} per item`:''}</span>
-            <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px'}}>
-            <label style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13}}>
-              <input type="checkbox" disabled={disabled} checked={!selection.item_ids.includes(item.id)}
-                onChange={()=>onChange({...selection,item_ids:selection.item_ids.filter(id=>id!==item.id),material_item_ids:materials.filter(id=>id!==item.id)})}/>
-              <span>Pack myself</span>
-            </label>
-            {item.available!==false && ([false,true] as const).map(withMaterials=><label key={String(withMaterials)} style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13}}>
-              <input type="checkbox" disabled={disabled} checked={selection.item_ids.includes(item.id) && materials.includes(item.id)===withMaterials}
-                onChange={e=>onChange({...selection,
-                  item_ids:e.target.checked?[...new Set([...selection.item_ids,item.id])]:selection.item_ids.filter(id=>id!==item.id),
-                  material_item_ids:e.target.checked && withMaterials?[...new Set([...materials,item.id])]:materials.filter(id=>id!==item.id)})}/>
-              <span>{withMaterials?'Packing and material':'Packing only'} <strong>{money((item.labor_price??item.price)+(withMaterials?item.material_price||0:0))}</strong></span>
-            </label>)}
-            </div>
+          {group.map(item=>{const materialLabel=`${item.material_name || (item.packing_material==='plastic'?'Plastic':'Cardboard')}${item.quantity!=null?` - ${item.quantity} per item`:''}`;return <div key={item.id} data-customer-action={`configured:${item.id}`} className="cm-material-service-row" style={{paddingTop:group.length>1?8:0,borderTop:group.length>1?'1px solid #eee5e2':'none'}}>
+            <span>{materialLabel}</span>
+            <PackingServiceSelect label={`${group[0].label}, ${materialLabel}`} value={serviceFor(item.id)} packingPrice={item.labor_price??item.price} materialsPrice={(item.labor_price??item.price)+(item.material_price||0)} available={item.available!==false} disabled={disabled} onChange={service=>selectService(item.id,service)}/>
             {item.available===false && <p role="status">Material pricing needs confirmation.</p>}
-          </div>)}
+          </div>})}
         </section>)}
         </section>
       </section>;

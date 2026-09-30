@@ -1,5 +1,6 @@
 import CustomerMaterialItems from './CustomerMaterialItems';
 import ConfiguredPackingItems from './ConfiguredPackingItems';
+import PackingServiceSelect, {type PackingMaterialService} from './PackingServiceSelect';
 import {useEffect,useState} from 'react';
 export type AdditionalMaterialItem = {label:string;inventory_id?:string;protection:'fabric'|'fragile'|'both';item_type:string;variant:string;cubic_feet:number|string|null;screen_inches:number|string|null;quantity:number;service:'self'|'packing'|'materials'};
 export type PackingSelection = { mode: 'full' | 'partial' | 'none'; unpacking: boolean; item_ids: string[]; material_item_ids?: string[];additional_items?:Record<string,AdditionalMaterialItem>;has_additional_protection?:boolean|null;box_quantities?:Record<string,number> };
@@ -39,6 +40,11 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
   const boxTotal=selection.mode==='full'?0:boxes.reduce((sum,item)=>sum+(boxQuantities[item.id]||0)*(item.labor_price+item.material_price),0);
   const total = (selection.mode !== 'none' ? config.rates[selection.mode]?.total || 0 : extraTotal + config.items.filter(item => selection.item_ids.includes(item.id)).reduce((sum, item) => sum + (item.labor_price ?? item.price) + (materials.includes(item.id) ? item.material_price || 0 : 0), 0))+boxTotal;
   const setBoxCounts=(counts:Record<string,number>)=>onChange({...selection,box_quantities:counts});
+  const materialService=(id:string):PackingMaterialService=>!selection.item_ids.includes(id)?'self':materials.includes(id)?'materials':'packing';
+  const setMaterialService=(id:string,service:PackingMaterialService)=>onChange({...selection,
+    item_ids:service==='self'?selection.item_ids.filter(value=>value!==id):[...new Set([...selection.item_ids,id])],
+    material_item_ids:service==='materials'?[...new Set([...materials,id])]:materials.filter(value=>value!==id),
+  });
   return <div className="cm-packing-options">
     {stage === 'service' && <><div className="cm-packing-heading"><h4>Choose your packing service</h4><div className="cm-packing-volume"><span>{inventoryVolume.toLocaleString()} cu ft</span>{minimumApplies && <small>Minimum billable: {config.minimum_cubic_feet!.toLocaleString()} cu ft</small>}</div></div>
     <div className="cm-packing-choices" data-customer-action="packing-service">
@@ -85,24 +91,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
           {items.map(item => <section key={item.id} data-customer-action={`protection:${item.id}`} style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:10,borderBottom:'1px solid #e5d8d5',padding:'12px 0'}}>
           <strong>{item.label}</strong>
           <span>Required material: <strong>{item.packing_material === 'plastic' ? 'Plastic' : 'Cardboard'}</strong></span>
-          <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px',width:'100%'}}>
-            <label style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
-              <input type="checkbox" disabled={disabled} checked={!selection.item_ids.includes(item.id)} onChange={() => onChange({
-                ...selection,
-                item_ids: selection.item_ids.filter(id => id !== item.id),
-                material_item_ids: materials.filter(id => id !== item.id),
-              })} />
-              <span>Pack myself</span>
-            </label>
-            {([false, true] as const).map(withMaterials => <label key={String(withMaterials)} style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13,cursor:'pointer'}}>
-              <input type="checkbox" disabled={disabled} checked={selection.item_ids.includes(item.id) && materials.includes(item.id) === withMaterials} onChange={e => onChange({
-                ...selection,
-                item_ids: e.target.checked ? [...new Set([...selection.item_ids,item.id])] : selection.item_ids.filter(id => id !== item.id),
-                material_item_ids: e.target.checked && withMaterials ? [...new Set([...materials,item.id])] : materials.filter(id => id !== item.id),
-              })} />
-              <span>{withMaterials ? 'Packing and material' : 'Packing only'} <strong>{money((item.labor_price ?? item.price) + (withMaterials ? item.material_price || 0 : 0))}</strong></span>
-            </label>)}
-          </div>
+          <PackingServiceSelect label={item.label} value={materialService(item.id)} packingPrice={item.labor_price??item.price} materialsPrice={(item.labor_price??item.price)+(item.material_price||0)} disabled={disabled} onChange={service=>setMaterialService(item.id,service)}/>
           </section>)}
         </section>)}
       </div>

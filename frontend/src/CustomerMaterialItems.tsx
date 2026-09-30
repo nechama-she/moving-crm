@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { AdditionalMaterialItem, PackingPackage, PackingSelection } from './CustomerPackingOptions';
-const money=(value:number|null)=>Number(value||0).toLocaleString('en-US',{style:'currency',currency:'USD'});
+import PackingServiceSelect from './PackingServiceSelect';
 export default function CustomerMaterialItems({config,selection,onChange,disabled}:{config:PackingPackage;selection:PackingSelection;onChange:(value:PackingSelection)=>void;disabled:boolean}) {
   const [search,setSearch]=useState('');
   const items=selection.additional_items||{};
@@ -29,10 +29,7 @@ export default function CustomerMaterialItems({config,selection,onChange,disable
           </label>)}
         </div>
         <span>Required material: <strong>{item.protection==='fabric'?'Plastic':item.protection==='fragile'?'Cardboard':'Plastic and cardboard'}</strong></span>
-        <div style={{display:'flex',flexWrap:'wrap',gap:'8px 14px'}}>{(['packing','materials'] as const).map(service=><label key={service} style={{display:'inline-flex',alignItems:'center',gap:7,fontSize:13}}>
-          <input type="checkbox" disabled={disabled || quote?.status!=='priced'} checked={item.service===service} onChange={e=>save(id,{...item,service:e.target.checked?service:'self'})}/>
-          <span>{service==='packing'?'Packing only':'Packing and material'} {quote?.status==='priced' && <strong>{money(service==='packing'?quote.packing_only:quote.packing_and_material)}</strong>}</span>
-        </label>)}</div>
+        <PackingServiceSelect label={item.label} value={item.service} packingPrice={Number(quote?.packing_only||0)} materialsPrice={Number(quote?.packing_and_material||0)} available={quote?.status==='priced'} disabled={disabled} onChange={service=>save(id,{...item,service})}/>
         {quote?.status!=='priced' && <p role="status">{quote?'Packing price unavailable: the moving team needs to confirm the material for this item.':'Calculating packing prices...'}</p>}
       </section>;
     })}
