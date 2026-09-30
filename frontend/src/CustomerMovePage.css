@@ -237,3 +237,5 @@
 .cm-editable-stop,.cm-editable-stop *{cursor:pointer}
 
 .cm-editable-stop>small{margin-right:6px}
+
+.customer-move .cm-calculate-icon{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid var(--cm-border);border-radius:6px;background:transparent;color:var(--cm-primary);cursor:pointer;flex-shrink:0}.customer-move .cm-calculate-icon:hover:not(:disabled){background:var(--cm-tint)}

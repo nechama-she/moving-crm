@@ -950,6 +950,9 @@ export default function CustomerMovePage() {
                         <span className={`cm-spark-dot ${data.spark.status === 'completed' ? 'dot-complete' : data.spark.status === 'failed' ? 'dot-failed' : 'dot-pulse'}`} />
                         {data.spark.status === 'completed' ? (data.spark.source === 'manual' ? 'Inventory list ready' : 'Report ready') : data.spark.status === 'running' ? 'Analyzing media...' : data.spark.status === 'failed' ? 'Report failed' : 'Queued'}
                       </span>
+                      {data.spark.status === 'completed' && <button type="button" className="cm-calculate-icon" title={calculatingPrice ? 'Calculating price...' : 'Calculate price'} aria-label={calculatingPrice ? 'Calculating price...' : 'Calculate price'} aria-busy={calculatingPrice} disabled={calculatingPrice || answersSaving || busy || reportState === 'running'} onClick={() => void recalculatePrice()}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M8 5h8v4H8zM8 13h1M12 13h1M16 13h.01M8 17h1M12 17h1M16 17h.01"/></svg>
+                      </button>}
                       {data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{Math.ceil(data.spark.cuft)} cu ft</strong> : null}
                     </div>
                     {data.report_history?.find(report => report.current) && <ReportLinks report={data.report_history.find(report => report.current)!} onEditInventory={()=>setShowInventoryList(true)} />}
@@ -1013,13 +1016,9 @@ export default function CustomerMovePage() {
                   >
                     {data.packing_saved ? '✓ Review extra services & questions' : '+ Add extra services & details'}
                   </button>
-                  {data.packing_saved && (
-                    <span className="cm-meeting-status">Extra services saved</span>
-                  )}
                 </div>
               )}
-              {(data.estimate || data.spark?.status === 'completed') && <div className="cm-estimate-extra-actions">
-                <button type="button" className="cm-secondary-btn" disabled={calculatingPrice || answersSaving || busy || reportState === 'running'} onClick={() => void recalculatePrice()}>{calculatingPrice ? 'Calculating price...' : 'Calculate price'}</button>
+              {data.estimate && data.spark?.status === 'completed' && <div className="cm-estimate-extra-actions">
                 {data.estimate && data.spark?.status === 'completed' && <>
                 <button type="button" className="cm-secondary-btn" disabled={pdfBusy || answersSaving || calculatingPrice || busy} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : 'View estimate PDF'}</button>
                 {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert" style={{ flexBasis: '100%', marginTop: 0 }}>{pdfError}</p>}
