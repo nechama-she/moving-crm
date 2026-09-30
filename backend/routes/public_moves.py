@@ -565,12 +565,6 @@ def _move_details(access, db, *, refresh_report=True):
     # If a spark report is currently pending/running, hide the old estimate until it completes
     estimate = None
     is_spark_pending = bool(spark_info and spark_info.get("status") in ("queued", "running"))
-    from uuid import uuid5, NAMESPACE_URL
-    saved_package = json.loads(job.customer_packing_package or '{}')
-    internal_box_charge_ids = {
-        str(uuid5(NAMESPACE_URL, f'customer-packing:{job.id}:inventory-box:{item_id}'))
-        for item_id in saved_package.get('box_quantities', {})
-    }
     charges_list = [
         {
             'name': c.name,
@@ -581,7 +575,7 @@ def _move_details(access, db, *, refresh_report=True):
             'discount_percent': round(float(c.discount_amount or 0) / float(c.subtotal) * 100, 2) if c.subtotal and c.subtotal > 0 else 0,
         }
         for c in (job.charges or [])
-        if c.id not in internal_box_charge_ids and (
+        if (
             (c.total_cost and float(c.total_cost) > 0) or (c.discount_amount and float(c.discount_amount) > 0)
         )
     ]
