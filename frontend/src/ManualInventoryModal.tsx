@@ -230,7 +230,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
     <div className="mi-body">
       {!catalog ? <p>Loading inventory...</p> : <>
         <div className="mi-room-toolbar">
-          <p>Choose a room to filter your inventory. You can add multiple bedrooms or other rooms.</p>
+          <p>Choose a room to update its inventory, or add a room.</p>
           <div className="mi-room-picker" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setRoomPickerOpen(false); }} onKeyDown={event => {
             if (event.key === 'Escape' && roomPickerOpen) { event.preventDefault(); event.stopPropagation(); setRoomPickerOpen(false); addRoomButton.current?.focus(); }
           }}>
