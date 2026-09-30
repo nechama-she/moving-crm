@@ -29,7 +29,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
   const allBoxCount=boxes.reduce((sum,item)=>sum+item.quantity,0);
   const savedBoxChoice=moverBoxCount===0?'self':moverBoxCount===allBoxCount?'movers':'custom';
   const [boxChoice,setBoxChoice]=useState<'self'|'movers'|'custom'>(savedBoxChoice);
-  useEffect(()=>setBoxChoice(savedBoxChoice),[savedBoxChoice]);
+  useEffect(()=>setBoxChoice(current=>current==='custom'?'custom':savedBoxChoice),[savedBoxChoice]);
   const rooms = new Map<string, PackingPackage['items']>();
   for (const item of config.items) {
     const room = item.room?.trim() || 'Other items';
@@ -60,9 +60,9 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       <h4>Who will pack your boxes?</h4>
       <p>Your inventory includes <strong>{allBoxCount} boxes</strong>. These quantities reserve truck space; packing is included only when selected here.</p>
       <div className="cm-box-packing-modes">
-        <label><input type="radio" name="box-packing" checked={boxChoice==='self'} onChange={()=>{setBoxChoice('self');setBoxCounts({});}}/> I will pack all</label>
-        <label><input type="radio" name="box-packing" checked={boxChoice==='movers'} disabled={boxes.some(item=>!item.available)} onChange={()=>{setBoxChoice('movers');setBoxCounts(Object.fromEntries(boxes.map(item=>[item.id,item.quantity])));}}/> Movers pack all</label>
-        <label><input type="radio" name="box-packing" checked={boxChoice==='custom'} onChange={()=>setBoxChoice('custom')}/> Choose by box type</label>
+        <label><input type="radio" name="box-packing" checked={boxChoice==='self'} disabled={disabled} onChange={()=>{setBoxChoice('self');setBoxCounts({});}}/> I will pack all</label>
+        <label><input type="radio" name="box-packing" checked={boxChoice==='movers'} disabled={disabled||boxes.some(item=>!item.available)} onChange={()=>{setBoxChoice('movers');setBoxCounts(Object.fromEntries(boxes.map(item=>[item.id,item.quantity])));}}/> Movers pack all</label>
+        <label><input type="radio" name="box-packing" checked={boxChoice==='custom'} disabled={disabled} onChange={()=>{setBoxChoice('custom');setBoxCounts({});}}/> Choose by box type</label>
       </div>
       {boxChoice==='custom' && <div className="cm-box-packing-list">
         <div className="cm-box-packing-head"><span>Box type</span><span>Total</span><span>Movers pack</span><span>You pack</span></div>
