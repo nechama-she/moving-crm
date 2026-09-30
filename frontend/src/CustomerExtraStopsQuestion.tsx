@@ -1,6 +1,6 @@
 import {useState} from 'react';
 import CustomerAddressInput from './CustomerAddressInput';
-export type ExtraStopGroup={location:'pickup'|'delivery';origin:string;answer:boolean|null;free_miles:number;stop_fee:number;per_mile:number;stops:{id:string;address:string;miles:number|null;total:number|null}[]};
+export type ExtraStopGroup={location:'pickup'|'delivery';origin:string;answer:boolean|null;free_miles:number;stop_fee:number;per_mile:number;stops:{id:string;address:string;meters?:number;miles:number|null;total:number|null}[]};
 export type ExtraStopsOption={locations:ExtraStopGroup[]};
 const money=(n:number)=>n.toLocaleString('en-US',{style:'currency',currency:'USD'});
 export default function CustomerExtraStopsQuestion({group,apiKey,onChange,onIncomplete,missing}:{group:ExtraStopGroup;apiKey:string;onChange:(answer:boolean,stops:string[])=>void;onIncomplete:(incomplete:boolean)=>void;missing:boolean}){

@@ -206,7 +206,7 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
     try {
       const response = await fetch(`${API_BASE}/api/leads/${encodeURIComponent(job.leadId)}/jobs/${encodeURIComponent(job.jobId)}/price`, {
         method: "PUT", headers: { ...authHeaders(token), "Content-Type": "application/json" },
-        body: JSON.stringify({ price: quote.total, estimatedCharges: quote.charges.filter(line => Number(line.totalCost) !== 0).map((line, sortOrder) => ({ ...line, sortOrder })) }),
+        body: JSON.stringify({ price: quote.total, estimatedCharges: quote.charges.filter(line => Number(line.totalCost) !== 0 || line.description.startsWith('Calculation pending: ')).map((line, sortOrder) => ({ ...line, sortOrder })) }),
       });
       if (!response.ok) throw new Error(await failure(response));
       setNotice(`Saved ${money(quote.total)} to Job ${job.order}.`);
@@ -249,7 +249,7 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
         {Number(quote.packing_hours) > 0 && <p className="local-hint"><strong>{duration(quote.base_hours)} moving + {duration(quote.packing_hours)} packing = {duration(quote.billable_hours)} billable.</strong> Travel is shown separately.</p>}
         {quote.travel_complete && <p className="local-hint"><strong>Billable travel: {number(quote.travel_hours)} {Number(quote.travel_hours) === 1 ? "hour" : "hours"}</strong> (nearest whole hour, minimum 1 hour).</p>}
         {quote.warning && <p role="status" className="local-warning">{quote.warning}</p>}
-        {quote.total != null && <div className="local-total"><div>{quote.charges.map(line => <div className="local-charge" key={line.name}><span><strong>{line.name}</strong><small>{line.description}</small></span><b>{money(line.totalCost)}</b></div>)}<div className="local-total-bottom"><strong>{quote.travel_complete ? "Estimated total" : "Estimated total before travel"}</strong><b>{money(quote.total)}</b></div></div>
+        {quote.total != null && <div className="local-total"><div>{quote.charges.map(line => <div className="local-charge" key={line.name}><span><strong>{line.name}</strong><small>{line.description}</small></span><b>{line.description.startsWith('Calculation pending: ') ? 'Pending' : money(line.totalCost)}</b></div>)}<div className="local-total-bottom"><strong>{quote.charges.some(line => line.description.startsWith('Calculation pending: ')) ? 'Partial estimate ? pending charges excluded' : quote.travel_complete ? 'Estimated total' : 'Estimated total before travel'}</strong><b>{money(quote.total)}</b></div></div>
           {job && <button className="slds-button primary" disabled={saving || travelBusy || !quote.travel_complete || Number(quote.total) <= 0 || job.moveType !== "Local"} onClick={() => void savePrice()}>{saving ? "Saving..." : "Save price"}</button>}
         </div>}
       </> : <p className="local-hint" role="status">{cubicFeetValue(volume) > 0 ? "Calculating estimate..." : "Enter the move volume to calculate crew, trucks, hours, and price."}</p>}

@@ -89,7 +89,7 @@ def build_estimate_pdf(data, rows):
              Spacer(1, 12), Paragraph('MOVING ESTIMATE', styles['Title']),
              p('Prepared ' + datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)'), 'NoteEstimate')]
     story.append(table([[p('CUSTOMER\n' + data.get('name', '')), p('MOVE DATE\n' + str(data.get('move_date') or 'Not scheduled'))],
-                        [p('\n'.join(filter(None, [data.get('phone'), data.get('email')]))), p('ESTIMATED TOTAL\n' + money(estimate['price']))],
+                        [p('\n'.join(filter(None, [data.get('phone'), data.get('email')]))), p(('PARTIAL ESTIMATE\n' if any(c.get('pending') for c in estimate.get('charges', [])) else 'ESTIMATED TOTAL\n') + money(estimate['price']))],
                         [p('PICKUP\n' + data.get('pickup', '')), p('DELIVERY\n' + data.get('delivery', ''))]], [261, 261]))
     for stop in data.get('stops', []):
         story.append(p(f"Additional stop ({stop.get('type') or 'unspecified'}): {stop.get('address', '')}"))
@@ -103,13 +103,13 @@ def build_estimate_pdf(data, rows):
         basis = charge.get('description') or 'Not specified'
         if charge.get('discount_amount', 0) > 0:
             basis += f"\nBefore discount: {money(charge['subtotal'])}\nDiscount ({charge['discount_percent']:g}%): -{money(charge['discount_amount'])}"
-        charges.append([p(charge['name']), p(basis, 'NoteEstimate'), p(money(charge['total']), 'RightEstimate')])
+        charges.append([p(charge['name']), p(basis, 'NoteEstimate'), p('Pending' if charge.get('pending') else money(charge['total']), 'RightEstimate')])
     if len(charges) == 1:
         charges.append([p('Moving estimate'), p('Not specified', 'NoteEstimate'), p(money(estimate['price']), 'RightEstimate')])
     charge_table = table(charges, [180, 247, 95], header=True)
     charge_table.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), .4, colors.HexColor('#bdc9d0'))]))
     story.append(charge_table)
-    story.append(table([[p('TOTAL ESTIMATED PRICE'), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
+    story.append(table([[p('PARTIAL ESTIMATE ? PENDING CHARGES EXCLUDED' if any(c.get('pending') for c in estimate.get('charges', [])) else 'TOTAL ESTIMATED PRICE'), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
     if data.get('list_changed') or data.get('files_changed'):
         story.append(p('This estimate reflects the current generated report. New inventory edits or files are not included until a new report is generated.', 'NoteEstimate'))
     story.append(p('Declared inventory', 'SectionEstimate'))

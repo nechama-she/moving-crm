@@ -178,13 +178,20 @@ def calculate_book_price(plan, body, db, pickup, delivery):
     settings = load_settings(plan, db)
     if settings is None:
         raise HTTPException(400, 'Set up Local pricing for this book first.')
-    travel = book_travel(plan, db, pickup, delivery)
+    from charge_errors import pending_line
     values = body.model_dump(include=set(LocalCalculation.model_fields))
-    values.update(office_to_pickup_miles=travel['office_to_pickup_miles'],
-                  delivery_to_office_miles=travel['delivery_to_office_miles'])
+    travel_error = None
+    try:
+        travel = book_travel(plan, db, pickup, delivery)
+        values.update(office_to_pickup_miles=travel['office_to_pickup_miles'],
+                      delivery_to_office_miles=travel['delivery_to_office_miles'])
+    except Exception as error:
+        travel_error = pending_line('travel', 'Travel fee', error)
+        values.update(office_to_pickup_miles=None, delivery_to_office_miles=None)
     quote = calculate_local(settings, LocalCalculation.model_validate(values))
-    if not quote['travel_complete']:
-        raise HTTPException(422, 'Both travel distances are required before pricing this move.')
+    if travel_error:
+        quote['charges'].append(travel_error)
+        quote['incomplete'] = True
     return quote
 
 

@@ -66,7 +66,7 @@ type Details = {
   estimate: {
     price: string;
     cuft: string;
-    charges?: { name: string; description: string; total: number; subtotal?: number; discount_amount?: number; discount_percent?: number }[];
+    charges?: { pending?: boolean; name: string; description: string; total: number; subtotal?: number; discount_amount?: number; discount_percent?: number }[];
   } | null;
   spark?: { id: string; status: string; source?: string; shareUrl?: string; cuft?: number; update_error?: string } | null;
   walkthrough: { status: string; availability: string; scheduled_at: string | null; timezone: string } | null;
@@ -224,12 +224,13 @@ export default function CustomerMovePage() {
           const origin = (change.location === 'pickup' ? data?.pickup : data?.delivery) || '';
           const distances: number[] = [];
           const savedStops=data?.extra_stops?.locations.find(group=>group.location===change.location)?.stops || [];
-          const removingOnly=change.stops.every(address=>savedStops.some(stop=>stop.address===address));
+          const removingOnly=change.stops.every(address=>savedStops.some(stop=>stop.address===address && stop.miles != null));
           if(!removingOnly) {
-            try {
-              for(const address of change.stops) distances.push(await browserDrivingMeters(data?.google_maps_browser_key || '',origin,address));
-              payload={...change,route_origin:origin,stop_meters:distances};
-            } catch { /* Save the choices even when mileage is unavailable. */ }
+            for(const address of change.stops) {
+              const saved = savedStops.find(stop => stop.address === address && stop.miles != null && stop.meters != null);
+              distances.push(saved?.meters ?? await browserDrivingMeters(data?.google_maps_browser_key || '',origin,address));
+            }
+            payload={...change,route_origin:origin,stop_meters:distances};
           }
         }
         await call('/packing?compact=true', { change: payload });
@@ -247,6 +248,21 @@ export default function CustomerMovePage() {
     });
     answerQueue.current = task.catch(() => {});
   }
+  const distanceRepairs = useRef(new Set<string>());
+  const stopDistanceState = JSON.stringify([session, data?.pickup, data?.delivery, data?.extra_stops]);
+  useEffect(() => {
+    if (!session || !data) return;
+    for (const group of data.extra_stops?.locations || []) {
+      const routeKey = JSON.stringify([session, group.location, group.origin, group.stops.map(stop => stop.address)]);
+      if (!group.stops.some(stop => stop.miles == null)) {
+        distanceRepairs.current.delete(routeKey);
+        continue;
+      }
+      if (distanceRepairs.current.has(routeKey)) continue;
+      distanceRepairs.current.add(routeKey);
+      savePricingChange({ kind: 'extra_stops', location: group.location, has_stops: true, stops: group.stops.map(stop => stop.address) });
+    }
+  }, [stopDistanceState]);
   function changePackage(next: PackingSelection) {
     const previous = packageSelection;
     setPackageSelection(next);
@@ -916,6 +932,7 @@ export default function CustomerMovePage() {
               <div className="cm-estimate-top">
                 <div className="cm-estimate-main-info" ref={estimateResult} aria-live="polite">
                   <span className="cm-estimate-eyebrow">{data.estimate?'Your moving estimate':'Your estimate'}</span>
+                  {data.estimate?.charges?.some(charge => charge.pending) && <p role="status">Partial estimate ? pending charges are not included in this total. See the errors beside those charges below.</p>}
                   <strong>{data.estimate?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(data.estimate.price)):data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'?'Your report is ready. Pricing is pending.':'We\'re working on it.'}</strong>
                   <p className="cm-estimate-desc">{data.estimate?(Number(data.estimate.cuft) > 0 ? `${Math.ceil(Number(data.estimate.cuft)).toLocaleString()} cubic feet estimated` : 'Based on your moving details'):data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
                 </div>
@@ -957,7 +974,7 @@ export default function CustomerMovePage() {
                           {(charge.discount_amount || 0) > 0 && <small>Before discount: {money(charge.subtotal || 0)}; Discount ({charge.discount_percent}%): -{money(charge.discount_amount || 0)}</small>}
                         </div>
                         <span>
-                          {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charge.total)}
+                          {charge.pending ? 'Pending' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charge.total)}
                         </span>
                       </div>
                     ))}

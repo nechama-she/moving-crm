@@ -1,3 +1,4 @@
+from charge_errors import isolated_charge, pending_line
 """Pricing book API backed by normalized Excel imports."""
 
 from __future__ import annotations
@@ -828,7 +829,15 @@ def _service_billable_volume(plan, destination, cubic_feet):
 
 def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
     cubic_feet = _rounded_cubic_feet(body.cubic_feet)
-    matched, transport, minimum, base = _transportation_price(plan, body.destination, cubic_feet)
+    failures = []
+    try:
+        matched, transport, minimum, base = _transportation_price(plan, body.destination, cubic_feet)
+        if base is None:
+            raise ValueError('No transportation rate is configured for this route.')
+    except Exception as error:
+        matched = transport = minimum = None
+        base = Decimal(0)
+        failures.append(pending_line('transportation', 'Transportation charge', error))
     service_volume = _service_billable_volume(plan, body.destination, cubic_feet)
 
     charges: list[dict] = []
@@ -844,12 +853,17 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
             "applies": True,
             "quantity_label": "",
         })
-    seasonal = _seasonal_charge(plan, _parsed_move_date(body.move_date))
-    if seasonal:
-        charges.append(seasonal)
-    charges.extend(_packing_service_charges(list(plan.services), service_volume, body.quantities))
-    charges.extend(_bulky_item_charges(list(plan.services), body.bulky_items))
-    charges.extend(charge for rule in plan.rules for charge in _rule_charges(rule))
+    def collect(key, name, calculate):
+        try:
+            charges.extend(calculate())
+        except Exception as error:
+            failures.append(pending_line(key, name, error))
+    collect('seasonal', 'Seasonal charge', lambda: [row for row in [_seasonal_charge(plan, _parsed_move_date(body.move_date))] if row])
+    for service in plan.services:
+        collect(f'packing:{service.id}', service.name, lambda service=service: _packing_service_charges([service], service_volume, body.quantities))
+        collect(f'bulky:{service.id}', service.name, lambda service=service: _bulky_item_charges([service], body.bulky_items))
+    for rule in plan.rules:
+        collect(f'rule:{rule.id}', getattr(rule, 'name', None) or 'Pricing rule', lambda rule=rule: _rule_charges(rule))
 
     deduped: list[dict] = []
     seen = set()
@@ -875,15 +889,22 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
             selected = True
         if charge["automatic"] and not charge["applies"]:
             selected = False
-        if charge["calculation_type"] == "percent":
-            amount = (base or Decimal(0)) * Decimal(str(charge["rate"])) / Decimal(100)
-        else:
-            amount = _charge_amount(
-                charge,
-                service_volume,
-                quantity,
-                body.manual_amounts.get(charge["id"], 0),
-            )
+        try:
+            if charge["calculation_type"] == "percent":
+                if any(line['id'] == 'transportation' for line in failures):
+                    raise ValueError('Waiting for the transportation charge to calculate.')
+                amount = (base or Decimal(0)) * Decimal(str(charge["rate"])) / Decimal(100)
+            else:
+                amount = _charge_amount(
+                    charge,
+                    service_volume,
+                    quantity,
+                    body.manual_amounts.get(charge["id"], 0),
+                )
+        except Exception as error:
+            if selected:
+                calculated.append(pending_line(charge['id'], charge['name'], error))
+            continue
         if selected:
             total += amount
         description = charge["description"]
@@ -911,76 +932,91 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
             "amount": float(amount),
         })
 
-    config = elevator_card(plan.services)
-    elevator = elevator_quote(config, {}, {}, cubic_feet)
-    if elevator:
-        saved = {row['location']: {'revision': row['revision'], 'uses_elevator': getattr(body, row['location'] + '_elevator')} for row in elevator['locations']}
-        elevator = elevator_quote(config, {}, saved, cubic_feet)
-        for row in elevator['locations']:
-            if row['uses_elevator'] is None:
-                continue
-            calculated.append({'id': f"elevator:{row['location']}", 'name': row['location'].title() + ' elevator',
-                               'description': row['description'], 'calculation_type': 'fixed', 'rate': row['total'],
-                               'default_selected': True, 'automatic': True, 'applies': True, 'required': True,
-                               'quantity_label': '', 'selected': True, 'amount': row['total'],
-                               'subtotal': row['subtotal'], 'discount_amount': row['discount_amount'], 'discount_percent': row['discount_percent']})
-            total += Decimal(str(row['total']))
-    config = long_carry_card(plan.services)
-    long_carry = long_carry_quote(config, {}, {}, cubic_feet, _service_billable_volume(plan, body.destination, 0))
-    if long_carry:
-        saved = {row['location']: {'revision': row['revision'], 'distance_feet': getattr(body, row['location'] + '_carry_feet')} for row in long_carry['locations']}
-        long_carry = long_carry_quote(config, {}, saved, cubic_feet, _service_billable_volume(plan, body.destination, 0))
-        for row in long_carry['locations']:
-            if row['distance_feet'] is None:
-                continue
-            calculated.append({'id': f"long_carry:{row['location']}", 'name': row['location'].title() + ' long carry',
-                               'description': row['description'], 'calculation_type': 'fixed', 'rate': row['total'],
-                               'default_selected': True, 'automatic': True, 'applies': True, 'required': True,
-                               'quantity_label': '', 'selected': True, 'amount': row['total'],
-                               'subtotal': row['subtotal'], 'discount_amount': row['discount_amount'], 'discount_percent': row['discount_percent']})
-            total += Decimal(str(row['total']))
-    config = stairs_card(plan.services)
-    stairs = stairs_quote(config, {}, {}, cubic_feet, _service_billable_volume(plan, body.destination, 0))
-    if stairs:
-        saved = {row['location']: {'revision': row['revision'], 'flights': getattr(body, row['location'] + '_flights')} for row in stairs['locations']}
-        stairs = stairs_quote(config, {}, saved, cubic_feet, _service_billable_volume(plan, body.destination, 0))
-        for row in stairs['locations']:
-            if row['flights'] is None:
-                continue
-            calculated.append({'id': f"stairs:{row['location']}", 'name': row['location'].title() + ' stairs',
-                               'description': row['description'], 'calculation_type': 'fixed', 'rate': row['total'],
-                               'default_selected': True, 'automatic': True, 'applies': True, 'required': True,
-                               'quantity_label': '', 'selected': True, 'amount': row['total'],
-                               'subtotal': row['subtotal'], 'discount_amount': row['discount_amount'], 'discount_percent': row['discount_percent']})
-            total += Decimal(str(row['total']))
-    storage = storage_quote(storage_card(plan.services), _parsed_move_date(body.move_date), body.available_date,
-                            cubic_feet, _service_billable_volume(plan, body.destination, 0))
-    if storage and storage['valid']:
-        calculated.append({'id': 'storage-periods', 'name': 'Storage', 'description': storage['description'],
-                           'calculation_type': 'fixed', 'rate': storage['total'], 'default_selected': True,
-                           'automatic': True, 'applies': True, 'required': True, 'quantity_label': '',
-                           'selected': True, 'amount': storage['total']})
-        total += Decimal(str(storage['total']))
-    if body.delivery_address:
-        fee = delivery_fee(plan.services, body.delivery_address)
-        if fee:
-            calculated.append({'id': 'delivery-mileage', 'name': 'Destination fees',
-                               'description': fee['description'], 'calculation_type': 'fixed',
-                               'rate': float(fee['amount']), 'default_selected': True, 'automatic': True,
-                               'applies': True, 'required': True, 'quantity_label': '', 'selected': True,
-                               'amount': float(fee['amount'])})
-            total += fee['amount']
-        state, zip_code = delivery_location(body.delivery_address)
-        card = shuttle_card(plan.services)
-        option = shuttle_option(card, body.delivery_address, state, zip_code, cubic_feet,
-                                _service_billable_volume(plan, body.destination, 0), {})
-        if option and (option['automatic'] or body.shuttle_access is False):
-            calculated.append({'id': 'delivery-shuttle', 'name': 'Delivery shuttle',
-                               'description': f"{option['cubic_feet']} cu ft at ${option['rate']:g} / cu ft",
-                               'calculation_type': 'fixed', 'rate': option['total'],
-                               'default_selected': True, 'automatic': True, 'applies': True,
-                               'required': True, 'quantity_label': '', 'selected': True, 'amount': option['total']})
-            total += Decimal(str(option['total']))
+    try:
+        config = elevator_card(plan.services)
+        elevator = elevator_quote(config, {}, {}, cubic_feet)
+        if elevator:
+            saved = {row['location']: {'revision': row['revision'], 'uses_elevator': getattr(body, row['location'] + '_elevator')} for row in elevator['locations']}
+            elevator = elevator_quote(config, {}, saved, cubic_feet)
+            for row in elevator['locations']:
+                if row['uses_elevator'] is None:
+                    continue
+                calculated.append({'id': f"elevator:{row['location']}", 'name': row['location'].title() + ' elevator',
+                                   'description': row['description'], 'calculation_type': 'fixed', 'rate': row['total'],
+                                   'default_selected': True, 'automatic': True, 'applies': True, 'required': True,
+                                   'quantity_label': '', 'selected': True, 'amount': row['total'],
+                                   'subtotal': row['subtotal'], 'discount_amount': row['discount_amount'], 'discount_percent': row['discount_percent']})
+                total += Decimal(str(row['total']))
+    except Exception as error:
+        failures.append(pending_line('elevator', 'Elevator', error))
+    try:
+        config = long_carry_card(plan.services)
+        long_carry = long_carry_quote(config, {}, {}, cubic_feet, _service_billable_volume(plan, body.destination, 0))
+        if long_carry:
+            saved = {row['location']: {'revision': row['revision'], 'distance_feet': getattr(body, row['location'] + '_carry_feet')} for row in long_carry['locations']}
+            long_carry = long_carry_quote(config, {}, saved, cubic_feet, _service_billable_volume(plan, body.destination, 0))
+            for row in long_carry['locations']:
+                if row['distance_feet'] is None:
+                    continue
+                calculated.append({'id': f"long_carry:{row['location']}", 'name': row['location'].title() + ' long carry',
+                                   'description': row['description'], 'calculation_type': 'fixed', 'rate': row['total'],
+                                   'default_selected': True, 'automatic': True, 'applies': True, 'required': True,
+                                   'quantity_label': '', 'selected': True, 'amount': row['total'],
+                                   'subtotal': row['subtotal'], 'discount_amount': row['discount_amount'], 'discount_percent': row['discount_percent']})
+                total += Decimal(str(row['total']))
+    except Exception as error:
+        failures.append(pending_line('long-carry', 'Long carry', error))
+    try:
+        config = stairs_card(plan.services)
+        stairs = stairs_quote(config, {}, {}, cubic_feet, _service_billable_volume(plan, body.destination, 0))
+        if stairs:
+            saved = {row['location']: {'revision': row['revision'], 'flights': getattr(body, row['location'] + '_flights')} for row in stairs['locations']}
+            stairs = stairs_quote(config, {}, saved, cubic_feet, _service_billable_volume(plan, body.destination, 0))
+            for row in stairs['locations']:
+                if row['flights'] is None:
+                    continue
+                calculated.append({'id': f"stairs:{row['location']}", 'name': row['location'].title() + ' stairs',
+                                   'description': row['description'], 'calculation_type': 'fixed', 'rate': row['total'],
+                                   'default_selected': True, 'automatic': True, 'applies': True, 'required': True,
+                                   'quantity_label': '', 'selected': True, 'amount': row['total'],
+                                   'subtotal': row['subtotal'], 'discount_amount': row['discount_amount'], 'discount_percent': row['discount_percent']})
+                total += Decimal(str(row['total']))
+    except Exception as error:
+        failures.append(pending_line('stairs', 'Stairs', error))
+    try:
+        storage = storage_quote(storage_card(plan.services), _parsed_move_date(body.move_date), body.available_date,
+                                cubic_feet, _service_billable_volume(plan, body.destination, 0))
+        if storage and storage['valid']:
+            calculated.append({'id': 'storage-periods', 'name': 'Storage', 'description': storage['description'],
+                               'calculation_type': 'fixed', 'rate': storage['total'], 'default_selected': True,
+                               'automatic': True, 'applies': True, 'required': True, 'quantity_label': '',
+                               'selected': True, 'amount': storage['total']})
+            total += Decimal(str(storage['total']))
+    except Exception as error:
+        failures.append(pending_line('storage', 'Storage', error))
+    try:
+        if body.delivery_address:
+            fee = delivery_fee(plan.services, body.delivery_address)
+            if fee:
+                calculated.append({'id': 'delivery-mileage', 'name': 'Destination fees',
+                                   'description': fee['description'], 'calculation_type': 'fixed',
+                                   'rate': float(fee['amount']), 'default_selected': True, 'automatic': True,
+                                   'applies': True, 'required': True, 'quantity_label': '', 'selected': True,
+                                   'amount': float(fee['amount'])})
+                total += fee['amount']
+            state, zip_code = delivery_location(body.delivery_address)
+            card = shuttle_card(plan.services)
+            option = shuttle_option(card, body.delivery_address, state, zip_code, cubic_feet,
+                                    _service_billable_volume(plan, body.destination, 0), {})
+            if option and (option['automatic'] or body.shuttle_access is False):
+                calculated.append({'id': 'delivery-shuttle', 'name': 'Delivery shuttle',
+                                   'description': f"{option['cubic_feet']} cu ft at ${option['rate']:g} / cu ft",
+                                   'calculation_type': 'fixed', 'rate': option['total'],
+                                   'default_selected': True, 'automatic': True, 'applies': True,
+                                   'required': True, 'quantity_label': '', 'selected': True, 'amount': option['total']})
+                total += Decimal(str(option['total']))
+    except Exception as error:
+        failures.append(pending_line('destination-services', 'Destination services', error))
     return {
         "match": matched.to_dict() if matched else None,
         "transport": float(transport) if transport is not None else None,
@@ -989,7 +1025,8 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
             transport is not None and minimum is not None and minimum > transport
         ),
         "base_price": float(base) if base is not None else None,
-        "charges": calculated,
+        "charges": calculated + failures,
+        "incomplete": bool(failures or any(row.get("pending") for row in calculated)),
         "total": float(total),
         "warning": "" if matched and matched.rate is not None else "No numeric transportation rate matched. Select another destination or enter manual pricing.",
     }
@@ -1204,14 +1241,16 @@ def customer_package_lines(package, selection):
             if service == 'self':
                 continue
             if item['status'] != 'priced':
-                raise ValueError(f"Material pricing needs review for {item['label']}")
+                lines.append(pending_line(f"material:{item['id']}", f"{item['label']} Packing", ValueError('Material pricing needs review.')))
+                continue
             lines.append({'id': f"material:{item['id']}", 'name': f"{item['label']} Packing",
                           'description': '; '.join(f"{line['quantity']} {line['unit']} {line['name']}" for line in item['lines']),
                           'amount': Decimal(str(item['packing_and_material'] if service == 'materials' else item['packing_only']))})
         for item in package['items']:
             if item['id'] in selection.get('item_ids', []):
                 if item.get('available') is False:
-                    raise ValueError(f"Material pricing needs review for {item['label']}")
+                    lines.append(pending_line(f"box:{item['id']}", f"{item['label']} Boxing", ValueError('Material pricing needs review.')))
+                    continue
                 lines.append({'id': f"box:{item['id']}", 'name': f"{item['label']} Boxing",
                               'description': ((f"{item['quantity']:g} x " if item.get('quantity') is not None else '') + f"{item['material_name']}. " if item.get('material_name') else '') + ('Packing labor and materials' if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else 'Packing labor only; customer supplies materials'),
                               'amount': Decimal(str(item.get('labor_price', item['price']))) + (Decimal(str(item.get('material_price', 0))) if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else Decimal(0))})
@@ -1222,7 +1261,8 @@ def customer_package_lines(package, selection):
             if quantity <= 0:
                 continue
             if item.get('available') is False:
-                raise ValueError(f"Box packing pricing needs review for {item['label']}")
+                lines.append(pending_line(f"inventory-box:{item['id']}", f"{item['label']} Packing", ValueError('Box packing pricing needs review.')))
+                continue
             unit_price = Decimal(str(item.get('labor_price', 0))) + Decimal(str(item.get('material_price', 0)))
             lines.append({'id': f"inventory-box:{item['id']}", 'name': f"{item['label']} Packing",
                           'description': f"Movers pack {quantity} of {item['quantity']} boxes; labor and materials included",
@@ -1230,6 +1270,7 @@ def customer_package_lines(package, selection):
     return lines
 
 
+@isolated_charge('Packing services')
 def add_customer_package_charges(lead, job, db, plan, move_type):
     package = customer_packing_package(lead, job, db, plan, move_type)
     total = Decimal(0)
@@ -1282,6 +1323,7 @@ def customer_elevator(lead, job, db, plan=None, move_type=None):
                         saved, _rounded_cubic_feet(lead.volume))
 
 
+@isolated_charge('Elevator')
 def add_elevator_charges(lead, job, db, plan=None, move_type=None, location=None):
     option = customer_elevator(lead, job, db, plan, move_type)
     total = Decimal(0)
@@ -1336,6 +1378,7 @@ def customer_long_carry(lead, job, db, plan=None, move_type=None):
     return option
 
 
+@isolated_charge('Long carry')
 def add_long_carry_charges(lead, job, db, plan=None, move_type=None, location=None):
     option = customer_long_carry(lead, job, db, plan, move_type)
     total = Decimal(0)
@@ -1381,6 +1424,7 @@ def customer_stairs(lead, job, db, plan=None, move_type=None):
                         saved, _rounded_cubic_feet(lead.volume), _service_billable_volume(plan, destination, 0))
 
 
+@isolated_charge('Stairs')
 def add_stairs_charges(lead, job, db, plan=None, move_type=None, location=None):
     option = customer_stairs(lead, job, db, plan, move_type)
     total = Decimal(0)
@@ -1414,6 +1458,7 @@ def sync_stairs_charges(lead, job, db, location=None):
     _refresh_lead_estimated_total(lead.id, db)
 
 
+@isolated_charge('Storage')
 def add_storage_charge(lead, job, db, plan=None, move_type=None):
     option = customer_storage(lead, job, db, plan, move_type)
     if not option or not option['valid'] or not option['paid_periods']:
@@ -1442,6 +1487,7 @@ def sync_storage_charge(lead, job, db):
     _refresh_lead_estimated_total(lead.id, db)
 
 
+@isolated_charge('Shuttle')
 def add_customer_shuttle_charge(lead, job, db, plan=None, move_type=None):
     option = customer_shuttle(lead, job, db, plan, move_type)
     if not option or not option['required']:
@@ -1483,7 +1529,10 @@ def job_delivery_fee(job, plan):
     return fee
 
 
+@isolated_charge('Destination fees')
 def add_delivery_fee_charge(job, db, fee):
+    if callable(fee):
+        fee = fee()
     if not fee:
         return Decimal(0)
     db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'delivery-mileage'), job_id=job.id,
@@ -1496,7 +1545,7 @@ def sync_delivery_fee(lead, job, db):
     if job.price is None:
         return
     move_type, plan = infer_job_move_type(lead, job, db)
-    fee = job_delivery_fee(job, plan if (move_type or '').lower() != 'local' else None)
+    fee = lambda: job_delivery_fee(job, plan if (move_type or '').lower() != 'local' else None)
     old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'delivery-mileage'))
     old_total = old.total_cost if old else Decimal(0)
     from charge_updates import ChargeUpdates
@@ -1511,6 +1560,7 @@ def sync_delivery_fee(lead, job, db):
     _refresh_lead_estimated_total(lead.id, db)
 
 
+@isolated_charge('Item packing')
 def add_customer_packing_charges(lead, job, db, plan, move_type):
     total = Decimal(0)
     for index, item in enumerate(customer_packing_options(lead, job, db, plan, move_type)):
@@ -1569,17 +1619,28 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
     if move_type.lower() == "local":
         from routes.local_pricing import calculate_book_price
         from local_pricing import LocalCalculation
-        quote = calculate_book_price(matched_plan, LocalCalculation(cubic_feet=Decimal(vol)),
-                                     db, pickup_addr, delivery_addr)
+        try:
+            quote = calculate_book_price(matched_plan, LocalCalculation(cubic_feet=Decimal(vol)),
+                                         db, pickup_addr, delivery_addr)
+        except Exception as error:
+            quote = {'total': 0, 'incomplete': True, 'charges': [pending_line('local-moving', 'Local moving', error)]}
         total = quote.get("total")
-        if total is None or total <= 0:
+        if total is None:
+            quote['charges'].append(pending_line('local-moving', 'Local moving', ValueError(quote.get('warning') or 'Hourly rate is not configured.')))
+            quote['incomplete'] = True
+        if (total is None or total <= 0) and not quote.get('incomplete'):
             return None
 
         all_materials = (
             _material_item_names(job._estimated_materials_data())
             + _material_item_names(_job_spark_inventory_items(job.id, db))
         )
-        bulky_charges = _bulky_item_charges(list(matched_plan.services), all_materials, rate_multiplier=0.5)
+        bulky_charges = []
+        for service in matched_plan.services:
+            try:
+                bulky_charges.extend(_bulky_item_charges([service], all_materials, rate_multiplier=0.5))
+            except Exception as error:
+                quote['charges'].append(pending_line(f'bulky:{service.id}', service.name, error))
 
         from charge_updates import ChargeUpdates
         db = ChargeUpdates(db, db.query(LeadJobCharge).filter_by(job_id=job.id).all(), match_legacy_base=True, remove_missing=False)
@@ -1596,7 +1657,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
                 })
 
         for idx, line in enumerate(all_lines):
-            if line.get("totalCost", 0) > 0:
+            if line.get("totalCost", 0) > 0 or line.get("pending"):
                 db.add(LeadJobCharge(
                     id=str(uuid4()),
                     job_id=job.id,
@@ -1647,10 +1708,9 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             move_date=job.move_date or "",
             bulky_items=all_materials,
         )
-        fee = job_delivery_fee(job, matched_plan)
         quote = compute_plan_calculation(matched_plan, calc_body)
         total = quote.get("total", 0.0)
-        if total <= 0:
+        if total <= 0 and not quote.get("incomplete"):
             return None
 
         lines = []
@@ -1668,7 +1728,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
                 "total_cost": Decimal(str(quote["base_price"])),
             })
         for c in quote.get("charges", []):
-            if c.get("selected") and c.get("amount", 0) > 0:
+            if c.get("selected") and (c.get("amount", 0) > 0 or c.get("pending")):
                 amt = Decimal(str(c["amount"]))
                 lines.append({
                     "name": c["name"],
@@ -1694,7 +1754,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
                 total_cost=line["total_cost"],
             ))
         job.price = sum(l["total_cost"] for l in lines)
-        job.price += add_delivery_fee_charge(job, db, fee)
+        job.price += add_delivery_fee_charge(job, db, lambda: job_delivery_fee(job, matched_plan))
         job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
         job.price += add_customer_package_charges(lead, job, db, matched_plan, move_type)
         job.price += add_customer_shuttle_charge(lead, job, db, matched_plan, move_type)
@@ -1728,22 +1788,40 @@ def calculate_pricing(
     db: Session = Depends(get_db),
 ):
     plan = _plan_or_404(db, user, plan_id)
-    card = delivery_fee_card(plan.services)
-    if not body.delivery_address and card and card.enabled and card.rules:
-        raise HTTPException(422, 'Enter the delivery address or ZIP to calculate destination fees.')
-    storage = storage_quote(storage_card(plan.services), _parsed_move_date(body.move_date), body.available_date, body.cubic_feet, 0)
-    if storage and not storage['valid']:
-        raise HTTPException(422, 'Choose a pickup date and an earliest delivery date on or after pickup to calculate storage.')
-    stairs = stairs_card(plan.services)
-    if stairs and stairs.enabled and (body.pickup_flights is None or body.delivery_flights is None):
-        raise HTTPException(422, 'Enter the outdoor/building flights at pickup and delivery, including zero when there are no stairs.')
-    carry = long_carry_card(plan.services)
-    if carry and carry.enabled and (body.pickup_carry_feet is None or body.delivery_carry_feet is None):
-        raise HTTPException(422, 'Enter the carrying distance at pickup and delivery in feet.')
-    elevator = elevator_card(plan.services)
-    if elevator and elevator.enabled and (body.pickup_elevator is None or body.delivery_elevator is None):
-        raise HTTPException(422, 'Answer whether an elevator is needed at pickup and delivery.')
+    input_failures = []
+    try:
+        card = delivery_fee_card(plan.services)
+        if not body.delivery_address and card and card.enabled and card.rules:
+            raise HTTPException(422, 'Enter the delivery address or ZIP to calculate destination fees.')
+    except Exception as error:
+        input_failures.append(pending_line('destination-fees', 'Destination fees', error))
+    try:
+        storage = storage_quote(storage_card(plan.services), _parsed_move_date(body.move_date), body.available_date, body.cubic_feet, 0)
+        if storage and not storage['valid']:
+            raise HTTPException(422, 'Choose a pickup date and an earliest delivery date on or after pickup to calculate storage.')
+    except Exception as error:
+        input_failures.append(pending_line('storage', 'Storage', error))
+    try:
+        stairs = stairs_card(plan.services)
+        if stairs and stairs.enabled and (body.pickup_flights is None or body.delivery_flights is None):
+            raise HTTPException(422, 'Enter the outdoor/building flights at pickup and delivery, including zero when there are no stairs.')
+    except Exception as error:
+        input_failures.append(pending_line('stairs', 'Stairs', error))
+    try:
+        carry = long_carry_card(plan.services)
+        if carry and carry.enabled and (body.pickup_carry_feet is None or body.delivery_carry_feet is None):
+            raise HTTPException(422, 'Enter the carrying distance at pickup and delivery in feet.')
+    except Exception as error:
+        input_failures.append(pending_line('long-carry', 'Long carry', error))
+    try:
+        elevator = elevator_card(plan.services)
+        if elevator and elevator.enabled and (body.pickup_elevator is None or body.delivery_elevator is None):
+            raise HTTPException(422, 'Answer whether an elevator is needed at pickup and delivery.')
+    except Exception as error:
+        input_failures.append(pending_line('elevator', 'Elevator', error))
     result = compute_plan_calculation(plan, body)
+    result['charges'].extend(input_failures)
+    result['incomplete'] = result.get('incomplete', False) or bool(input_failures)
     if body.source_job_id:
         from routes.leads import _get_job_or_404
         from extra_stops import option as extra_stops_option
@@ -1754,11 +1832,15 @@ def calculate_pricing(
         extra = extra_stops_option(lead,job,db,plan,refresh=True)
         for group in extra['locations'] if extra else []:
             for i,row in enumerate(group['stops']):
+                if row['total'] is None:
+                    result['charges'].append(pending_line('extra-stop:' + row['id'], f"Extra {group['location']} stop {i+1}", ValueError('Driving distance is not available.')))
+                    result['incomplete'] = True
+                    continue
                 result['charges'].append({'id':'extra-stop:'+row['id'], 'name':f"Extra {group['location']} stop {i+1}",
                     'description':f"{row['address']}; {row['miles']} driving miles from {group['origin']}; {group['free_miles']} free miles, ${group['stop_fee']:.2f} per chargeable stop plus ${group['per_mile']:.2f} per mile beyond the allowance.",
                     'calculation_type':'fixed','rate':row['total'],'amount':row['total'],'selected':True,
                     'default_selected':True,'automatic':True,'applies':True,'required':True,'quantity_label':''})
-                result['total']=float(Decimal(str(result['total']))+Decimal(str(row['total'])))
+                result['total']=float(Decimal(str(result['total']))+Decimal(str(row['total'] or 0)))
         db.commit()
     return result
 

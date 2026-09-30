@@ -1,3 +1,4 @@
+from charge_errors import isolated_charge, error_description
 """Extra-stop pricing. Saved route distances avoid network requests on page reads."""
 import hashlib
 import base64
@@ -6,7 +7,6 @@ from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from uuid import UUID, uuid5, NAMESPACE_URL
 from pydantic import BaseModel, Field
 from fastapi import HTTPException
-from delivery_fees import driving_meters
 
 EXTRA_STOPS_PREFIX = '__extra_stops__:'
 class StopRate(BaseModel):
@@ -71,11 +71,6 @@ def option(lead,job,db,plan=None,refresh=False):
         for row in state[location]['stops']:
             revision=route_revision(origin,row['address'])
             meters=row.get('meters') if row.get('revision')==revision else None
-            if meters is None and refresh:
-                if not origin.strip(): raise HTTPException(422,'Enter the main '+location+' address first.')
-                try: meters=driving_meters(origin,row['address'])
-                except HTTPException as exc: raise HTTPException(exc.status_code,'Could not calculate driving miles for extra '+location+' stop: '+row['address']+'. '+str(exc.detail)) from exc
-                row.update(meters=meters,revision=revision)
             priced=stop_price(rule,meters) if meters is not None else {'miles':None,'billable_miles':None,'total':None}
             rows.append({**row,**priced})
         locations.append({'location':location,'origin':origin,'answer':state[location]['answer'],'stops':rows,**{k:float(v) for k,v in rule.model_dump().items()}})
@@ -84,15 +79,18 @@ def option(lead,job,db,plan=None,refresh=False):
         job.customer_packing_package=json.dumps(selection)
     return {'locations':locations}
 
+@isolated_charge('Extra stops')
 def add_charges(lead,job,db,plan=None,refresh=True):
     from models import LeadJobCharge
     data=option(lead,job,db,plan,refresh=refresh)
     total=Decimal(0)
     for group in data['locations'] if data else []:
         for i,row in enumerate(group['stops']):
-            amount=Decimal(str(row['total']))
+            amount=Decimal(str(row['total'] or 0))
             name='Extra '+group['location']+' stop '+str(i+1)
             description=f"{row['address']}; {row['miles']} driving miles from {group['origin']}. {group['free_miles']:g} miles free; ${group['stop_fee']:.2f} per chargeable stop + ${group['per_mile']:.2f} per mile beyond the allowance."
+            if row['total'] is None:
+                description = error_description(ValueError(f"Driving distance unavailable for {row['address']}"))
             charge_id = 'extra-stop:' + base64.urlsafe_b64encode(UUID(row['id']).bytes).decode().rstrip('=')
             db.add(LeadJobCharge(id=charge_id,job_id=job.id,name=name,description=description,subtotal=amount,discount_amount=0,total_cost=amount,sort_order=2900+i))
             total+=amount
@@ -103,8 +101,6 @@ def sync_charges(lead,job,db,refresh=True):
     # Resolve routes before updating any saved charge.
     if job.price is None:return
     data=option(lead,job,db,refresh=refresh)
-    if any(row.get('total') is None for group in (data['locations'] if data else []) for row in group['stops']):
-        raise HTTPException(422, 'Stop distances are pending.')
     old=db.query(LeadJobCharge).filter(LeadJobCharge.job_id==job.id,LeadJobCharge.id.like('extra-stop:%')).all()
     previous=sum((row.total_cost for row in old),Decimal(0))
     from charge_updates import ChargeUpdates

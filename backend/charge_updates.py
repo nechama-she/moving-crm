@@ -44,4 +44,6 @@ class ChargeUpdates:
                     self.db.delete(row)
                 else:
                     row.subtotal = row.discount_amount = row.total_cost = 0
+                    if (row.description or "").startswith("Calculation pending: "):
+                        row.description = ""
         self.db.flush()

@@ -551,7 +551,7 @@ export default function PricingPage() {
       const defaultDiscount = 'defaultDiscount' in line ? line.defaultDiscount || 0 : 0;
       const discount = cents(defaultDiscount + discounts.reduce((sum, item) => sum + item.amount, 0));
       return { pricingKey: 'pricingKey' in line ? line.pricingKey : undefined, name: line.name, description: [line.description, ...discounts.filter(item => item.amount > 0).map(item => item.title.trim() || "Discount")].join(" ? "), subtotal: subtotal / 100, discountAmount: discount / 100, totalCost: (subtotal - discount) / 100 };
-    }).filter(line => line.totalCost !== 0 || line.discountAmount > 0).map((line, sortOrder) => ({ ...line, sortOrder }));
+    }).filter(line => line.totalCost !== 0 || line.discountAmount > 0 || line.description.startsWith('Calculation pending: ')).map((line, sortOrder) => ({ ...line, sortOrder }));
     const price = estimatedCharges.reduce((sum, line) => sum + cents(line.totalCost), 0) / 100;
     if (!Number.isFinite(price) || price <= 0) { setError("Calculate a price greater than zero before saving."); return; }
     priceSaveRunning.current = true;
@@ -814,7 +814,7 @@ export default function PricingPage() {
                                   </span>
                                 ))}
                               </div>
-                              <div className="pricing-line-price"><b className={charge.amount < 0 ? "discount" : ""}>{money(charge.amount)}</b><button className="slds-button" type="button" onClick={() => addLineDiscount(`charge:${charge.id}`)}>+ Discount</button></div>
+                              <div className="pricing-line-price"><b className={charge.amount < 0 ? "discount" : ""}>{charge.description.startsWith('Calculation pending: ') ? 'Pending' : money(charge.amount)}</b><button className="slds-button" type="button" onClick={() => addLineDiscount(`charge:${charge.id}`)}>+ Discount</button></div>
                             </div>
                             {lineDiscounts(`charge:${charge.id}`).map((discount) => (
                               <DiscountRow key={discount.id} discount={discount} originalAmount={discountTargets[`charge:${charge.id}`] || 0} setDiscounts={setCustomDiscounts} />
@@ -832,7 +832,7 @@ export default function PricingPage() {
                             ))}
                           </div>
                         ))}
-                        <div className="pricing-quote-total"><strong>Estimated Total</strong><b>{money(detailedTotal)}</b></div>
+                        <div className="pricing-quote-total"><strong>{quote.charges.some(charge => charge.description.startsWith('Calculation pending: ')) ? 'Partial estimate ? pending charges excluded' : 'Estimated Total'}</strong><b>{money(detailedTotal)}</b></div>
                       </div>
                       {quote.warning ? <p className="pricing-quote-warning" role="status">{quote.warning}</p> : null}
                       {jobContext && !editing && <div className="pricing-quote-actions"><button type="button" className="slds-button primary" disabled={savingPrice || calculating || detailedTotal <= 0 || quote.base_price == null} onClick={() => void savePrice()}>{savingPrice ? "Saving price..." : "Save price"}</button></div>}
@@ -896,7 +896,7 @@ export default function PricingPage() {
                               }}
                             />
                           ) : null}
-                          <b>{charge.selected ? money(charge.amount) : "Not added"}</b>
+                          <b>{charge.description.startsWith('Calculation pending: ') ? 'Pending' : charge.selected ? money(charge.amount) : 'Not added'}</b>
                         </article>
                       ))}
                       <div className="pricing-manual-adjustments">

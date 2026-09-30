@@ -597,6 +597,7 @@ def _move_details(access, db, *, refresh_report=True):
         {
             'name': c.name,
             'description': _customer_charge_description(c.name, c.description or ''),
+            'pending': (c.description or '').startswith('Calculation pending: '),
             'total': float(c.total_cost or 0),
             'subtotal': float(c.subtotal or 0),
             'discount_amount': float(c.discount_amount or 0),
@@ -604,7 +605,7 @@ def _move_details(access, db, *, refresh_report=True):
         }
         for c in (job.charges or [])
         if (
-            (c.total_cost and float(c.total_cost) > 0) or (c.discount_amount and float(c.discount_amount) > 0)
+            ((c.description or '').startswith('Calculation pending: ')) or (c.total_cost and float(c.total_cost) > 0) or (c.discount_amount and float(c.discount_amount) > 0)
         )
     ]
     charges_list = _group_box_packing_charges(charges_list)
@@ -616,7 +617,7 @@ def _move_details(access, db, *, refresh_report=True):
                 'cuft': str(ceil(access.published_cuft or lead.volume or 0)),
                 'charges': charges_list,
             }
-        elif job.price is not None and float(job.price) > 0:
+        elif job.price is not None and (float(job.price) > 0 or any(c.get('pending') for c in charges_list)):
             estimate = {
                 'price': str(job.price),
                 'cuft': str(ceil(lead.volume or 0)),
@@ -906,8 +907,6 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             def rebuild_price():
                 # Missing browser distances must not trigger server routing on a stop edit.
                 options = stops_option(lead,job,db,refresh=False)
-                if any(row.get('total') is None for group in (options['locations'] if options else []) for row in group['stops']):
-                    raise HTTPException(422, 'Stop distances are pending.')
                 return calculate_and_save_lead_job_price(lead,job,db)
             attempt_pricing(lead,job,db,rebuild_price,require_price=True)
         else:
