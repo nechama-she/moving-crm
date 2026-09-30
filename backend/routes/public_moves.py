@@ -1,6 +1,6 @@
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
 from manual_inventory import ManualInventoryInput, catalog, submit_inventory, save_inventory_draft
-from spark_history import report_history
+from spark_history import archive_report_for_new_media, report_history
 from pricing_addresses import with_job_locations
 from report_files import active_report_files, move_files, file_list, remove_report_file, preview_report_file
 import hmac
@@ -1380,7 +1380,12 @@ def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...), x_up
     row = LeadAttachment(lead_id=access.lead_id, job_id=access.job_id, file_name=name, content_type=mime, file_size=len(content), file_blob=b'', external_url=stored, is_external_link=True, external_source='public_move_s3', uploaded_by=None)
     row.liveswitch_panel_visible = True
     try:
-        db.add(row); db.flush(); db.add(PublicMoveUpload(attachment_id=row.id, access_id=access.id, request_id=x_upload_id)); db.commit()
+        db.add(row); db.flush(); db.add(PublicMoveUpload(attachment_id=row.id, access_id=access.id, request_id=x_upload_id))
+        saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
+        if saved:
+            details = json.loads(saved.details or '{}')
+            if archive_report_for_new_media(details): saved.details = json.dumps(details)
+        db.commit()
     except Exception:
         db.rollback(); _delete_s3_url(stored); raise
     queue_uploaded_file(access, row.id, db)
@@ -1693,6 +1698,10 @@ def import_lead_files(lead_id: str, body: ImportLeadFiles, user: User = Depends(
     for row in rows:
         row.liveswitch_panel_visible = True
         row.report_deleted_at = None
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
+    if saved:
+        details = json.loads(saved.details or '{}')
+        if archive_report_for_new_media(details): saved.details = json.dumps(details)
     db.commit()
     return {'files': file_list(rows)}
 
@@ -1755,6 +1764,11 @@ def import_chat_files(lead_id: str, body: ImportChatFilesRequest, user: User = D
         db.flush()
         for row in db.query(LeadAttachment).filter(LeadAttachment.lead_id == lead_id, LeadAttachment.external_source == 'meta_s3', LeadAttachment.source_external_id.in_([f'{message_id}:{index}' for index in range(len(attachments))])).all():
             row.liveswitch_panel_visible = True
+        if imported:
+            saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
+            if saved:
+                details = json.loads(saved.details or '{}')
+                if archive_report_for_new_media(details): saved.details = json.dumps(details)
         db.commit()
         failed += max(0, expected - imported)
     cursor = response.get('LastEvaluatedKey')
@@ -1902,7 +1916,12 @@ def finish_upload(body: FinishUpload, background_tasks: BackgroundTasks, access:
     row.liveswitch_panel_visible = True
     temporary_key=pending.object_key
     try:
-        db.add(row);db.flush();db.add(PublicMoveUpload(attachment_id=row.id,access_id=access.id,request_id=body.request_id));db.delete(pending);db.commit()
+        db.add(row);db.flush();db.add(PublicMoveUpload(attachment_id=row.id,access_id=access.id,request_id=body.request_id));db.delete(pending)
+        saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
+        if saved:
+            details = json.loads(saved.details or '{}')
+            if archive_report_for_new_media(details): saved.details = json.dumps(details)
+        db.commit()
     except Exception:
         db.rollback();_delete_s3_url(stored);raise
     try: s3.delete_object(Bucket=bucket,Key=temporary_key)

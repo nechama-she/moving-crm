@@ -23,6 +23,7 @@ type Conversation = {
   spark_extracted_weight?: number;
   report_check_timed_out?: boolean;
   notification_error?: string;
+  canGetResult?: boolean;
 };
 type SparkInventoryRow = {
   id: string;
@@ -307,7 +308,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
           shareUrl: String(nextConversation?.last_spark_share_url || ""),
           cuft: Number(nextConversation?.spark_extracted_cuft || 0) || undefined,
           weight: Number(nextConversation?.spark_extracted_weight || 0) || undefined,
-          canGetResult: Boolean(nextConversation?.report_check_timed_out),
+          canGetResult: Boolean(nextConversation?.canGetResult),
         };
       });
     }
@@ -358,6 +359,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
     if (running.current) return;
     running.current = true; setBusy(true); setNotice("");
     const pending = items.filter(item => !(item.crm && item.live) && item.status !== "Cannot upload");
+    let savedAny = false;
     try {
       for (const kind of ["images", "videos", "documents"]) {
         const group = pending.filter(item => (item.type.startsWith("image/") ? "images" : item.type.startsWith("video/") ? "videos" : "documents") === kind);
@@ -374,7 +376,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
                   await put(item, prepared.upload.url, prepared.upload.fields);
                   await request(`${base}/finish-upload`, metadata);
                 }
-                crm = true; update(item.id, { crm });
+                crm = true; savedAny = true; update(item.id, { crm });
               }
               live = true;
               update(item.id, { live, crm, progress: 100, status: "Saved to CRM", error: undefined });
@@ -382,7 +384,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
           }
         }
       }
-    } finally { running.current = false; setBusy(false); setItems(current => current.filter(item => !item.crm)); setMediaRevision(value => value + 1); onUploaded(); }
+    } finally { running.current = false; setBusy(false); setItems(current => current.filter(item => !item.crm)); setMediaRevision(value => value + 1); if(savedAny)setSparkData(null); onUploaded(); }
   }
   const completed = items.filter(item => item.crm && item.live).length;
   return createPortal(<div className="ls-backdrop" onClick={() => { if (!busy) onClose(); }}>
@@ -435,7 +437,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
           <button className="slds-button ls-primary" disabled={busy || sparkRunning || !items.some(item => !(item.crm && item.live) && item.status !== "Cannot upload")} onClick={() => void upload()}>{running.current ? "Uploading " : items.some(item => item.status === "Retry") ? "Upload / Retry failed" : "Upload to CRM"}</button>
           <button className="slds-button" disabled={busy || !items.length} onClick={() => setItems(current => current.filter(item => item.crm || item.live))}>Clear selection</button>
         </div>
-        {customerPageReady && <CustomerPageControls key={`files:${leadId}`} leadId={leadId} section="files" refreshRevision={mediaRevision} disabled={busy||sparkRunning||calculatingPrice} onSelectionChange={setSelectedFileIds} onFilesBusyChange={setBusy}/>}
+        {customerPageReady && <CustomerPageControls key={`files:${leadId}`} leadId={leadId} section="files" refreshRevision={mediaRevision} disabled={busy||sparkRunning||calculatingPrice} onSelectionChange={setSelectedFileIds} onFilesChanged={()=>setSparkData(null)} onFilesBusyChange={setBusy}/>}
         <div className="ls-actions">
           <button type="button" className="slds-button" disabled={busy||sparkRunning||calculatingPrice||!selectedFileIds.length} onClick={()=>void uploadSelectedMedia()}>Upload to LiveSwitch</button>
           <button

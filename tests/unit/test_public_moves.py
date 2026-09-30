@@ -1008,7 +1008,7 @@ def processing_api():
     from spark_processing import SparkProcessingLog
     from spark_history import remember_report, report_history, activate_report
     source = BACKEND / 'routes/liveswitch.py'
-    names = {'_safe_float', 'fetch_and_extract_spark_report', 'apply_spark_results_to_lead', 'get_spark_processing', 'select_spark_report', 'get_report_history', 'trigger_lead_spark', 'start_ready_report', 'selected_media', 'stage_selected_media', 'generate_uploaded_report'}
+    names = {'_safe_float', '_can_get_spark_result', 'fetch_and_extract_spark_report', 'apply_spark_results_to_lead', 'get_spark_processing', 'select_spark_report', 'get_report_history', 'trigger_lead_spark', 'start_ready_report', 'selected_media', 'stage_selected_media', 'generate_uploaded_report'}
     nodes = [n for n in ast.parse(source.read_text(encoding='utf-8')).body if getattr(n, 'name', '') in names]
     for node in nodes:
         node.decorator_list = []
@@ -1023,6 +1023,20 @@ def processing_api():
              'httpx': SimpleNamespace(get=MagicMock()), 'Decimal': Decimal, 'datetime': datetime, 'HTTPException': HTTPException}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
     return scope
+
+
+def test_manual_result_button_is_available_only_after_monitor_window(processing_api):
+    available = processing_api['_can_get_spark_result']
+    assert not available({'last_spark_id': 'pending-local', 'last_spark_status': 'queued',
+                          'last_spark_at': time.time() - 1000, 'pending_spark_payload': {}})
+    assert not available({'last_spark_id': 'remote', 'last_spark_status': 'running',
+                          'last_spark_at': time.time() - 100})
+    assert available({'last_spark_id': 'remote', 'last_spark_status': 'running',
+                      'last_spark_at': time.time() - 901})
+    assert available({'last_spark_id': 'remote', 'last_spark_status': 'queued',
+                      'last_spark_at': time.time(), 'report_check_timed_out': True})
+    assert not available({'last_spark_id': 'remote', 'last_spark_status': 'completed',
+                          'last_spark_at': time.time() - 901})
 
 
 @pytest.mark.parametrize('failure,failed_step', [('download', 'download'), ('extract', 'extract'), ('pricing', 'pricing'), ('no_price', 'pricing'), ('none', None)])

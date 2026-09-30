@@ -29,6 +29,29 @@ def remember_report(details):
         reports[index] = snapshot
 
 
+def archive_report_for_new_media(details):
+    """Move the active run to history before starting a new media selection."""
+    if not details.get('last_spark_id'):
+        return False
+    remember_report(details)
+    details['carried_question_state'] = details.get('carried_question_state') or {
+        key: deepcopy(details[key]) for key in
+        ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot')
+        if key in details
+    }
+    for key in REPORT_KEYS:
+        if key != 'carried_question_state':
+            details.pop(key, None)
+    for key in ('notification_report_id', 'notification_until', 'notification_error',
+                'report_check_timed_out', 'spark_start_queued_for', 'upload_error'):
+        details.pop(key, None)
+    media = details.get('media_upload') or {}
+    media.pop('report_id', None)
+    if media:
+        details['media_upload'] = media
+    return True
+
+
 def _shipping_rows(rows, excluded, *, consume=False):
     # Consume matching occurrences so identical items are not all marked by one exclusion.
     remaining = excluded if consume else deepcopy(excluded)

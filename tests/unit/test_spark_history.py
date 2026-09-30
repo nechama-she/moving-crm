@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
-from spark_history import activate_report, remember_report, report_history
+from spark_history import activate_report, archive_report_for_new_media, remember_report, report_history
 
 
 def test_history_selection_preserves_runs_and_hides_internal_logs():
@@ -32,6 +32,19 @@ def test_incomplete_or_foreign_reports_cannot_be_selected():
         with pytest.raises(ValueError):
             activate_report(details, report_id)
     assert details['last_spark_id'] == 'pending'
+
+
+def test_new_media_archives_current_report_and_opens_active_slot():
+    details = {'last_spark_id': 'completed-report', 'last_spark_status': 'completed',
+               'last_spark_at': 100, 'last_spark_share_url': 'https://example.test/report',
+               'report_files': [{'id': 'old-photo'}],
+               'media_upload': {'report_id': 'completed-report', 'files': [{'id': 'old-photo'}]}}
+    assert archive_report_for_new_media(details)
+    assert 'last_spark_id' not in details
+    assert 'report_id' not in details['media_upload']
+    reports = report_history(details)
+    assert [row['id'] for row in reports] == ['completed-report']
+    assert not any(row['current'] for row in reports)
 
 
 def test_excluded_items_remain_visible_with_zero_shipping_volume():

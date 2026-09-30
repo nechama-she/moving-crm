@@ -11,7 +11,7 @@ import time
 from datetime import datetime
 from decimal import Decimal
 from spark_processing import SparkProcessingLog
-from spark_history import remember_report, report_history, activate_report
+from spark_history import archive_report_for_new_media, remember_report, report_history, activate_report
 from urllib.parse import urlencode, urlsplit
 
 import boto3
@@ -938,6 +938,19 @@ def apply_spark_report_endpoint(
     return res
 
 
+def _can_get_spark_result(details: dict) -> bool:
+    if details.get('last_spark_status') not in ('queued', 'running'):
+        return False
+    if details.get('pending_spark_payload') or str(details.get('last_spark_id') or '').startswith('pending-'):
+        return False
+    if details.get('report_check_timed_out'):
+        return True
+    started_at = float(details.get('last_spark_at') or 0)
+    monitor_until = float(details.get('notification_until') or 0)
+    return bool(started_at and time.time() >= started_at + 900
+                and (not monitor_until or time.time() >= monitor_until))
+
+
 @router.get("/leads/{lead_id}/spark-status")
 def get_lead_spark_status(
     lead_id: str,
@@ -959,7 +972,7 @@ def get_lead_spark_status(
     return {'spark': {'id': spark_id, 'status': details.get('last_spark_status', 'queued'),
                       'shareUrl': details.get('last_spark_share_url'),
                       'error': details.get('upload_error') or details.get('notification_error'),
-                      'canGetResult': bool(details.get('report_check_timed_out'))},
+                      'canGetResult': _can_get_spark_result(details)},
             'cuft': details.get('spark_extracted_cuft'), 'weight': details.get('spark_extracted_weight')}
 
 
@@ -979,7 +992,7 @@ def get_lead_spark_result(
         raise HTTPException(409, 'There is no pending LiveSwitch report to retrieve.')
     if details.get('last_spark_status') in ('completed', 'failed', 'cancelled'):
         return get_lead_spark_status(lead_id, user, db)
-    if not details.get('report_check_timed_out'):
+    if not _can_get_spark_result(details):
         raise HTTPException(409, 'Automatic result checks are still active.')
     try:
         remote = _api_get(f"sparks/{spark_id}")
@@ -1078,7 +1091,8 @@ def ensure_conversation(lead_id: str, user: User = Depends(get_current_user), db
     lead = _get_visible_lead_or_404(lead_id, user, db)
     # Lock the parent row so simultaneous opens cannot create duplicate conversations.
     db.query(Lead).filter(Lead.id == lead.id).with_for_update().one()
-    return ensure_lead_conversation(lead, db)
+    details = ensure_lead_conversation(lead, db)
+    return {**details, 'canGetResult': _can_get_spark_result(details)}
 
 
 @router.post("/leads/{lead_id}/participant-sms")
@@ -1163,6 +1177,12 @@ def panel_upload_context(lead_id, body, user, db):
 def prepare_panel_upload(lead_id: str, body: PanelUpload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lead, existing, bucket, key, name = panel_upload_context(lead_id, body, user, db)
     if existing:
+        if not existing.liveswitch_panel_visible:
+            saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).with_for_update().first()
+            if saved:
+                details = json.loads(saved.details or '{}')
+                if archive_report_for_new_media(details):
+                    saved.details = json.dumps(details)
         existing.liveswitch_panel_visible = True
         db.commit()
         return {"completed": True, "id": existing.id}
@@ -1193,6 +1213,11 @@ def finish_panel_upload(lead_id: str, body: PanelUpload, user: User = Depends(ge
         is_external_link=True, external_source="crm_s3", uploaded_by=user.id)
     try:
         db.add(row)
+        saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).with_for_update().first()
+        if saved:
+            details = json.loads(saved.details or '{}')
+            if archive_report_for_new_media(details):
+                saved.details = json.dumps(details)
         db.commit()
     except Exception:
         db.rollback()
