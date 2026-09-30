@@ -12,6 +12,24 @@ function packingItemName(name: string) {
   if (/\((?:cp|pbo)\)\s*$/i.test(name)) return name;
   return /\bbox(?:es)?\b|\bdish\s*pack\b/i.test(name) ? `${name} (PBO)` : name;
 }
+function PackingChoice({ name, disabled, onChange }: { name: string; disabled: boolean; onChange: (checked: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const movers = /\(CP\)\s*$/i.test(name);
+  return <span className="mi-packing-choice" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }} onKeyDown={event => {
+    if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
+  }}>
+    <button ref={trigger} type="button" className="mi-packing-trigger" disabled={disabled} aria-expanded={open} aria-label={`Packing for ${name}: ${movers ? 'Movers pack' : 'You pack'}`} onClick={() => setOpen(value => !value)}>
+      {movers ? 'CP' : 'PBO'}<svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>
+    </button>
+    {open && <span className="mi-packing-menu" role="group" aria-label="Who packs this item?">
+      {[false, true].map(value => <button type="button" key={String(value)} aria-pressed={movers === value} onClick={() => { onChange(value); setOpen(false); trigger.current?.focus(); }}>
+        <span>{value ? 'CP' : 'PBO'}</span><span>{value ? 'Movers pack' : 'You pack'}</span>
+        {movers === value && <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m2 6 2.5 2.5L10 3"/></svg>}
+      </button>)}
+    </span>}
+  </span>;
+}
 function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onMoverPackChange, packingLocked = false, onSave, onRemove }: {
   name: string; cuft: number; quantity: number; busy: boolean; photo?: ReactNode; going?: boolean; onGoingChange: (going: boolean) => void;
   onMoverPackChange?: (checked: boolean) => void; packingLocked?: boolean;
@@ -35,13 +53,12 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
       <span aria-label="Total volume in cubic feet">{totalVolumeLabel}</span>
       <input aria-label="Quantity" type="number" min="1" max="999" step="1" value={draft.quantity} disabled={busy} onChange={e => setDraft({ ...draft, quantity: e.target.value })} />
     </> : <>
-      <strong>{name}</strong>
+      <div className="mi-inventory-name"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name} disabled={busy || packingLocked || !going} onChange={onMoverPackChange}/>}</div>
       <span>{cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
       <span aria-label="Total volume in cubic feet">{totalVolumeLabel}</span>
       <span aria-label={`Quantity: ${quantity}`}>{quantity}</span>
     </>}
     <input className="mi-going-checkbox" type="checkbox" aria-label={`Going: ${name}`} checked={going} disabled={busy} onChange={event => onGoingChange(event.target.checked)} />
-    <span>{onMoverPackChange && <input className="mi-going-checkbox" type="checkbox" aria-label={`Movers pack: ${name}`} title={packingLocked ? 'Included with full packing' : 'Movers pack this box'} checked={/\(CP\)\s*$/i.test(name)} disabled={busy || packingLocked || !going} onChange={event => onMoverPackChange(event.target.checked)} />}</span>
     <button type="button" className="slds-button" disabled={busy || (editing && !valid)} aria-label={editing ? `Save ${name}` : `Edit ${name}`} title={editing ? 'Save item' : 'Edit item'} onClick={() => {
       if (editing) save(); else { setDraft({ name, cuft: String(cuft), quantity: String(quantity) }); setEditing(true); }
     }}>{editing ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h10V3M7 21v-8h10v8"/></svg> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5" /></svg>}</button>
@@ -343,7 +360,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
           {!visibleRooms.some(r => count(r) > 0) && <p>{room ? 'No items in this room yet. Click Add item to get started.' : 'No items yet. Choose a room to add an item.'}</p>}
           {visibleRooms.filter(r => count(r) > 0).map(r => <details key={r.id} open>
             <summary><strong>{r.name}</strong> &middot; {count(r)} items</summary>
-            <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span>Going</span><span>Movers pack</span><span className="mi-inventory-actions-heading">Actions</span></div>
+            <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span>Going</span><span className="mi-inventory-actions-heading">Actions</span></div>
             {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <InventoryRow key={id}
               name={packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item')} cuft={items.get(id)?.cuft || 0} quantity={qty} busy={busy}
               onSave={value => setRooms(current => current.map(valueRoom => valueRoom.id === r.id ? {

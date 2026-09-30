@@ -764,7 +764,7 @@ export default function CustomerMovePage() {
                 {!editingMove ? (
                   <>
                     <h2>{data.move_date?new Date(data.move_date.slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'Date to be confirmed'}</h2>
-                    <ol>{[{address:data.pickup,type:'pickup'},...data.stops,{address:data.delivery,type:'delivery'}].map((stop,i)=><li key={i} onDoubleClick={i > 0 && i <= data.stops.length ? openExtraStops : undefined} title={i > 0 && i <= data.stops.length ? "Double-click to edit extra stops" : undefined}><small>{stop.type==='pickup'?'Pickup':stop.type==='delivery'?'Delivery':'Stop'}</small><strong>{stop.address||'—'}</strong></li>)}</ol>
+                    <ol>{[{address:data.pickup,type:'pickup'},...data.stops,{address:data.delivery,type:'delivery'}].map((stop,i)=><li key={i} className={i > 0 && i <= data.stops.length ? "cm-editable-stop" : undefined} onDoubleClick={i > 0 && i <= data.stops.length ? openExtraStops : undefined} title={i > 0 && i <= data.stops.length ? "Double-click to edit extra stops" : undefined}><small>{stop.type==='pickup'?'Pickup':stop.type==='delivery'?'Delivery':'Stop'}</small><strong>{stop.address||'—'}</strong></li>)}</ol>
                     <div className="cm-contact"><strong>{data.name}</strong><span>{data.phone}</span><span>{data.email}</span></div>
                   </>
                 ) : (
@@ -781,7 +781,7 @@ export default function CustomerMovePage() {
                     {data.stops.length > 0 && (
                       <ol aria-label="Saved extra stops">
                         {data.stops.map((stop, index) => (
-                          <li key={`${index}:${stop.address}`} onDoubleClick={openExtraStops} title="Double-click to edit extra stops" tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); openExtraStops(); } }}>
+                          <li key={`${index}:${stop.address}`} className="cm-editable-stop" onDoubleClick={openExtraStops} title="Double-click to edit extra stops" tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); openExtraStops(); } }}>
                             <small>{stop.type === 'pickup' ? 'Extra pickup stop' : stop.type === 'delivery' ? 'Extra delivery stop' : 'Extra stop'}</small>
                             <strong>{stop.address}</strong>
                           </li>
