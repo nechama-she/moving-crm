@@ -500,6 +500,33 @@ def meeting_dict(row):
             'created_at': row.created_at.isoformat()+'Z' if row.created_at else None}
 
 
+def _group_box_packing_charges(charges):
+    """Combine room-specific box packing lines for customer estimates and PDFs."""
+    result = []
+    groups = {}
+    for charge in charges:
+        match = re.fullmatch(r'Movers pack (\d+) of (\d+) boxes; labor and materials included', charge['description'])
+        if not match:
+            result.append(charge)
+            continue
+        key = charge['name']
+        if key not in groups:
+            combined = dict(charge)
+            groups[key] = (combined, 0, 0)
+            result.append(combined)
+        else:
+            combined = groups[key][0]
+            for field in ('total', 'subtotal', 'discount_amount'):
+                combined[field] = float(Decimal(str(combined[field])) + Decimal(str(charge[field])))
+        combined, packed, available = groups[key]
+        packed += int(match[1])
+        available += int(match[2])
+        groups[key] = (combined, packed, available)
+        combined['description'] = f'Movers pack {packed} of {available} boxes; labor and materials included'
+        combined['discount_percent'] = round(combined['discount_amount'] / combined['subtotal'] * 100, 2) if combined['subtotal'] else 0
+    return result
+
+
 def _customer_charge_description(name: str, desc: str) -> str:
     if not desc:
         return ''
@@ -580,6 +607,7 @@ def _move_details(access, db, *, refresh_report=True):
             (c.total_cost and float(c.total_cost) > 0) or (c.discount_amount and float(c.discount_amount) > 0)
         )
     ]
+    charges_list = _group_box_packing_charges(charges_list)
     report_import_pending = bool(spark_info and conv_details.get('spark_extracted_id') != spark_info['id'])
     if not is_spark_pending and not report_import_pending and conv_details.get('spark_pricing_ready') is not False:
         if access.published_at and access.published_price is not None:
@@ -1052,7 +1080,21 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         selection['item_ids'] = sorted(set(selection['item_ids']) | set(selection['material_item_ids']))
         if selection['mode'] != 'none' and selection['mode'] not in package['rates']:
             raise HTTPException(409, 'That packing service is not priced. Refresh your estimate.')
-        if not set(selection['item_ids']).issubset({item['id'] for item in package['items']}):
+        available_item_ids = {item['id'] for item in package['items']}
+        stale_item_ids = set(selection['item_ids']) - available_item_ids
+        # A single-item update must not be blocked by saved selections for items
+        # removed or replaced during an earlier inventory edit.
+        if change:
+            if change.kind == 'box' and change.enabled and change.item_id not in available_item_ids:
+                raise HTTPException(409, 'Your required-box items changed. Refresh your estimate.')
+            previous_selection = json.loads(job.customer_packing_package or '{}')
+            previous_ids = set(previous_selection.get('item_ids', [])) | set(previous_selection.get('material_item_ids') or [])
+            removable_ids = stale_item_ids & previous_ids
+            selection['item_ids'] = [item_id for item_id in selection['item_ids'] if item_id not in removable_ids]
+            selection['material_item_ids'] = [item_id for item_id in selection['material_item_ids'] if item_id not in removable_ids]
+            if touched is not None:
+                touched.update(f'box:{item_id}' for item_id in removable_ids)
+        if not set(selection['item_ids']).issubset(available_item_ids):
             raise HTTPException(409, 'Your required-box items changed. Refresh your estimate.')
         box_limits = {item['id']: item['quantity'] for item in package.get('box_items', [])}
         if any(item_id not in box_limits or quantity < 0 or quantity > box_limits[item_id]

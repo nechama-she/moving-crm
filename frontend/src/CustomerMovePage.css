@@ -231,3 +231,5 @@
 .cm-modal-card .cm-modal-body{flex:1 1 auto;min-height:0;max-height:none;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
 .cm-modal-card .cm-modal-footer,.cm-modal-card .cm-answer-autosave-note{flex-shrink:0}
 @media(max-height:650px){.cm-modal-card .cm-modal-header{padding-top:12px;padding-bottom:10px}.cm-modal-card .cm-modal-footer{padding-top:10px;padding-bottom:10px}}
+
+.cm-modal-card>.cm-packing-subtabs-heading{flex:0 0 auto;margin-bottom:10px}

@@ -77,10 +77,11 @@ function RoomCard({ room, selected, busy, summary, onSelect, onRename, onDelete 
     <button type="button" className="mi-remove" disabled={busy} aria-label={`Delete room ${room.name}`} onClick={onDelete}>&times;</button>
   </article>;
 }
-export default function ManualInventoryModal({ loadCatalog, submit, onClose, draftKey, initialRooms, initialRows, imageEndpoint, linkKey='', session='' }: {
+export default function ManualInventoryModal({ loadCatalog, submit, onClose, draftKey, initialRooms, initialRows, packing, imageEndpoint, linkKey='', session='' }: {
   draftKey: string;
   initialRooms?: { room_type_id: string; name: string; items: { item_id: string; quantity: number; name?:string }[]; custom_items?: CustomItem[] }[];
   initialRows?: InitialRow[];
+  packing?: { full: boolean; boxes: { label: string; room?: string; quantity: number }[] };
   imageEndpoint?: string;
   linkKey?: string;
   session?: string;
@@ -130,7 +131,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
     });
   }
   useLayoutEffect(() => {
-    if (!catalog) return;
+    if (!catalog || loadedRooms.current === rooms) return;
     try { localStorage.setItem(draftKey, JSON.stringify(rooms)); setDraftError(''); }
     catch { setDraftError('Could not save your draft on this device. Keep this page open until you submit.'); }
   }, [rooms, catalog, draftKey]);
@@ -197,7 +198,24 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
       setCatalog(value);
       let saved: Room[] | undefined;
       try { const raw = localStorage.getItem(draftKey); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed) && parsed.every(r => r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.room_type_id === 'string' && r.items && typeof r.items === 'object' && Object.values(r.items).every(q => typeof q === 'number' && Number.isInteger(q) && q >= 0 && q <= 999))) saved = parsed; } } catch { /* Start with default rooms if storage is unavailable. */ }
-      const loaded = saved || initialRooms?.map(r => ({ id: crypto.randomUUID(), room_type_id: r.room_type_id, name: r.name, custom_items: (r.custom_items || []).map(item => ({ ...item, cuft: Number(item.cuft) })), items: Object.fromEntries(r.items.map(i => [i.item_id, i.quantity])), item_names:Object.fromEntries(r.items.filter(i=>i.name).map(i=>[i.item_id,i.name!])) })) || (initialRows?.length?roomsFromRows(initialRows,value):value.rooms.filter(r => ['bedroom', 'living-room', 'dining-room', 'kitchen'].includes(r.id)).map(r => ({ id: crypto.randomUUID(), room_type_id: r.id, name: r.name, items: {} })));
+      const loaded: Room[] = saved || initialRooms?.map(r => ({ id: crypto.randomUUID(), room_type_id: r.room_type_id, name: r.name, custom_items: (r.custom_items || []).map(item => ({ ...item, cuft: Number(item.cuft) })), items: Object.fromEntries(r.items.map(i => [i.item_id, i.quantity])), item_names:Object.fromEntries(r.items.filter(i=>i.name).map(i=>[i.item_id,i.name!])) })) || (initialRows?.length?roomsFromRows(initialRows,value):value.rooms.filter(r => ['bedroom', 'living-room', 'dining-room', 'kitchen'].includes(r.id)).map(r => ({ id: crypto.randomUUID(), room_type_id: r.id, name: r.name, items: {} })));
+      if (packing) {
+        const baseName = (name: string) => name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '').trim();
+        const key = (room: string, name: string) => `${room.trim().toLowerCase()}:${baseName(name).toLowerCase()}`;
+        const remaining = new Map(packing.boxes.map(box => [key(box.room || 'Other items', box.label), box.quantity]));
+        for (const room of loaded) {
+          room.custom_items = (room.custom_items || []).flatMap(item => {
+            if (item.going === false || !/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(item.name)) return [item];
+            const id = key(room.name, item.name);
+            const cp = packing.full ? item.quantity : Math.min(item.quantity, remaining.get(id) || 0);
+            remaining.set(id, Math.max(0, (remaining.get(id) || 0) - cp));
+            return [
+              ...(cp ? [{ ...item, name: `${baseName(item.name)} (CP)`, quantity: cp }] : []),
+              ...(cp < item.quantity ? [{ ...item, id: cp ? crypto.randomUUID() : item.id, name: `${baseName(item.name)} (PBO)`, quantity: item.quantity - cp }] : []),
+            ];
+          });
+        }
+      }
       loadedRooms.current = loaded;
       setRooms(loaded);
     }).catch(err => { if (active) setError(err.message); });

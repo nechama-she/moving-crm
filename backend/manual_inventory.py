@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, ConfigDict
-from models import InventoryRoomType, InventoryCatalogItem, LeadLiveSwitch, LeadJob
+from models import InventoryRoomType, InventoryCatalogItem, LeadLiveSwitch, LeadJob, Lead
 from spark_history import remember_report, REPORT_KEYS, CONVERSATION_KEYS
 
 
@@ -161,6 +161,16 @@ def replace_current_inventory(body, access, db):
         details.pop(key, None)
     remember_report(details)
     saved.details = json.dumps(details)
+    db.flush()
+    # Inventory edits must retain the customer's packing choices, not stale name suffixes.
+    from routes.pricing import customer_packing_package, apply_box_packing_to_inventory
+    job = db.get(LeadJob, access.job_id)
+    package = customer_packing_package(db.get(Lead, access.lead_id), job, db)
+    if package:
+        selection = package['selection']
+        if selection.get('mode') == 'full':
+            selection = {**selection, 'box_quantities': {item['id']: item['quantity'] for item in package.get('box_items', [])}}
+        apply_box_packing_to_inventory(job, db, package, selection)
     db.commit()
     return apply_spark_results_to_lead(access.lead_id, details.get('last_spark_share_url') or '', db,
                                        expected_report_id=report_id, use_snapshot=True)
