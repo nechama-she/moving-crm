@@ -246,7 +246,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
           </div>
         </div>
         <div className="mi-rooms">{rooms.map(r => <RoomCard key={r.id} room={r} selected={r.id === selected} busy={busy}
-          summary={`${count(r)} items ? ${number(total(r, 'cuft'))} cu ft`}
+          summary={`${count(r)} items \u00b7 ${number(total(r, 'cuft'))} cu ft`}
           onSelect={() => { setSelected(current => current === r.id ? '' : r.id); setCustomOpen(false); }}
           onRename={name => setRooms(current => current.map(value => value.id === r.id ? { ...value, name } : value))}
           onDelete={() => { setRooms(current => current.filter(value => value.id !== r.id)); if (selected === r.id) { setSelected(''); setCustomOpen(false); } }} />)}</div>
