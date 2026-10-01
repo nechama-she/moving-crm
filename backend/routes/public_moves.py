@@ -755,6 +755,22 @@ def get_customer_inventory_catalog(access: PublicMoveAccess = Depends(verified),
     return catalog(db)
 
 
+@router.post('/api/public-moves/{access_id}/inventory.pdf')
+def download_inventory(body: ManualInventoryInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from manual_inventory import build_inventory
+    from inventory_pdf import build_inventory_pdf, inventory_photos
+    rooms, _, cuft, weight = build_inventory(body, db, allow_empty=True)
+    conversation = db.get(LeadLiveSwitch, access.lead_id)
+    details = json.loads(conversation.details or '{}') if conversation else {}
+    try:
+        photos = inventory_photos(rooms, details)
+    except Exception as exc:
+        raise HTTPException(502, 'Could not load inventory pictures. Please try downloading again.') from exc
+    return Response(build_inventory_pdf(rooms, cuft, weight, photos), media_type='application/pdf', headers={
+        'Content-Disposition': 'attachment; filename="moving-inventory.pdf"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
 @router.post('/api/public-moves/{access_id}/manual-inventory')
 def submit_customer_inventory(body: ManualInventoryInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     result = save_inventory_draft(body, access, db)

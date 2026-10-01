@@ -96,7 +96,7 @@ function RoomCard({ room, selected, busy, summary, onSelect, onRename, onDelete 
     <button type="button" className="mi-remove" disabled={busy} aria-label={`Delete room ${room.name}`} onClick={onDelete}>&times;</button>
   </article>;
 }
-export default function ManualInventoryModal({ loadCatalog, submit, onClose, draftKey, initialRooms, initialRows, packing, imageEndpoint, linkKey='', session='' }: {
+export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf, onClose, draftKey, initialRooms, initialRows, packing, imageEndpoint, linkKey='', session='' }: {
   draftKey: string;
   initialRooms?: { room_type_id: string; name: string; items: { item_id: string; quantity: number; name?:string }[]; custom_items?: CustomItem[] }[];
   initialRows?: InitialRow[];
@@ -106,6 +106,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   session?: string;
   loadCatalog: () => Promise<Catalog>;
   submit: (body: { request_id: string; rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number; name?:string }[]; custom_items?: CustomItem[] }[] }) => Promise<void>;
+  downloadPdf: (body: Parameters<typeof submit>[0]) => Promise<void>;
   onClose: () => void;
 }) {
   const [catalog, setCatalog] = useState<Catalog>();
@@ -127,6 +128,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   const validDimensions = Object.values(customDimensions).every(value => dimensionFeet(value) !== null);
   const customCuft = manualCuft !== null ? Number(manualCuft) : validDimensions ? Number((dimensionFeet(customDimensions.width)! * dimensionFeet(customDimensions.height)! * dimensionFeet(customDimensions.depth)!).toFixed(4)) : 0;
   const [busy, setBusy] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [error, setError] = useState('');
   const [draftError, setDraftError] = useState('');
   function roomsFromRows(rows:InitialRow[], value:Catalog):Room[] {
@@ -256,6 +258,19 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
   function quantity(id: string, value: number, roomId = selected) {
     setRooms(current => current.map(r => r.id === roomId ? { ...r, items: { ...r.items, [id]: Math.min(999, Math.max(0, Math.floor(value || 0))) } } : r));
   }
+  async function download() {
+    if (pdfBusy || !catalog) return;
+    setPdfBusy(true); setError('');
+    try {
+      await downloadPdf({ request_id: crypto.randomUUID(), rooms: rooms.map(r => ({
+        room_type_id: r.room_type_id, name: r.name.trim(), custom_items: r.custom_items || [],
+        items: Object.entries(r.items).filter(([, qty]) => qty > 0).map(([item_id, quantity]) => ({
+          item_id, quantity, ...(r.item_names?.[item_id] ? { name: r.item_names[item_id] } : {}),
+        })),
+      })) });
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not download inventory. Please try again.'); }
+    finally { setPdfBusy(false); }
+  }
   async function save() {
     if (busy) return;
     if (!catalog) { onClose(); return; }
@@ -278,7 +293,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, onClose, dra
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }
   }}>
-    <header><div><span className="cm-eyebrow">YOUR INVENTORY</span><h2 id="mi-title">Your home, room by room</h2></div><div style={{display: 'flex', alignItems: 'center', gap: 8}}><button type="button" className="slds-button" disabled={busy || !catalog || !rooms.length} title="Clear inventory" aria-label="Clear inventory" onClick={() => { setRooms([]); setSelected(''); setCustomOpen(false); }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button><button type="button" className="slds-button" disabled={busy} onClick={() => void save()} aria-label="Save and close inventory">&times;</button></div></header>
+    <header><div><span className="cm-eyebrow">YOUR INVENTORY</span><h2 id="mi-title">Your home, room by room</h2></div><div style={{display: 'flex', alignItems: 'center', gap: 8}}><button type="button" className="slds-button" disabled={busy || pdfBusy || !catalog || !rooms.length || rooms.some(r => !r.name.trim())} title={pdfBusy ? "Preparing PDF..." : "Download inventory PDF"} aria-label={pdfBusy ? "Preparing inventory PDF" : "Download inventory PDF"} aria-busy={pdfBusy} onClick={() => void download()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg></button><button type="button" className="slds-button" disabled={busy || !catalog || !rooms.length} title="Clear inventory" aria-label="Clear inventory" onClick={() => { setRooms([]); setSelected(''); setCustomOpen(false); }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button><button type="button" className="slds-button" disabled={busy} onClick={() => void save()} aria-label="Save and close inventory">&times;</button></div></header>
     <div className="mi-totals" aria-live="polite"><span>{rooms.length} rooms</span><span>{rooms.reduce((sum, r) => sum + count(r), 0)} items</span><strong>{number(cuft)} cu ft</strong><span>{number(weight)} lb</span></div>
     {draftError && <p className="mi-error" role="alert">{draftError}</p>}
     {error && <p className="mi-error" role="alert">{error}</p>}

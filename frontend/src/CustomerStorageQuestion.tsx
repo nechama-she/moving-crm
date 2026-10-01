@@ -1,12 +1,28 @@
+import { useState } from 'react';
 import './CustomerStorageQuestion.css';
 import DeliveryDateCalendar, { storagePeriods } from './DeliveryDateCalendar';
 export type StorageOption = { question: string; pickup_date: string; available_date: string; valid: boolean; free_days: number; period_days: number; rate_per_cuft: number; cubic_feet: number; inventory_cubic_feet: number; minimum_cubic_feet: number; paid_periods: number; billed_days: number; elapsed_days: number | null; total: number };
 const money = (value: number) => value.toLocaleString('en-US',{style:'currency',currency:'USD'});
-export default function CustomerStorageQuestion({ config, value, missing, onChange }: { config: StorageOption; value: string; missing: boolean; onChange: (date: string) => void }) {
+export default function CustomerStorageQuestion({ config, value, missing, onChange, onPickupChange, saving }: { config: StorageOption; value: string; missing: boolean; onChange: (date: string) => void; onPickupChange: (date: string) => Promise<void>; saving: boolean }) {
+  const [pickupError, setPickupError] = useState('');
+  async function savePickup(pickup: string) {
+    if (!pickup) { setPickupError('Choose a pickup date.'); return; }
+    setPickupError('');
+    try { await onPickupChange(pickup); }
+    catch (error) { setPickupError((error as Error).message); }
+  }
   const valid = Boolean(value && config.pickup_date && value >= config.pickup_date);
   const calculated = valid ? storagePeriods(config.pickup_date,value,config.free_days,config.period_days) : null;
   const total = calculated ? Math.round(calculated.periods * config.cubic_feet * config.rate_per_cuft * 100)/100 : 0;
   return <section data-customer-action="delivery-storage" aria-label="Delivery date and storage" aria-invalid={missing} style={{border:missing ? '1px solid #d32f2f' : undefined,borderRadius:12,padding:missing ? 12 : undefined}}>
+    <div className="cm-storage-pickup">
+      <label htmlFor="storage-pickup-date">Pickup date</label>
+      <input id="storage-pickup-date" type="date" value={config.pickup_date} disabled={saving} aria-invalid={!!pickupError} aria-describedby={pickupError ? 'storage-pickup-error' : undefined}
+        onClick={event => { try { event.currentTarget.showPicker?.(); } catch { /* Native date input remains available. */ } }}
+        onChange={event => { if (event.target.value !== config.pickup_date) void savePickup(event.target.value); }} />
+      {pickupError && <p id="storage-pickup-error" className="cm-field-error" role="alert">{pickupError}</p>}
+    </div>
+    <fieldset disabled={saving} className="cm-storage-delivery">
     <h4>{config.question}</h4>
     <p>Your first <strong>{config.free_days} days</strong> after pickup are free. After that, storage costs <strong>{money(config.rate_per_cuft)} per cu ft</strong> for each additional <strong>{config.period_days} days or part thereof</strong>.</p>
     {config.pickup_date ? <DeliveryDateCalendar key={config.pickup_date} value={value} minDate={config.pickup_date} freeDays={config.free_days} onChange={onChange} /> : <p>Confirm your pickup date before choosing your earliest delivery date.</p>}
@@ -26,5 +42,6 @@ export default function CustomerStorageQuestion({ config, value, missing, onChan
       </div> : <p className="cm-storage-summary-free">Your selected date is within the free storage allowance.</p>}
       <div className="cm-storage-summary-total"><span>Storage total</span><strong>{money(total)}</strong></div>
     </section>}
+    </fieldset>
   </section>;
 }

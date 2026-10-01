@@ -248,6 +248,23 @@ export default function CustomerMovePage() {
     });
     answerQueue.current = task.catch(() => {});
   }
+  async function saveStoragePickup(date: string) {
+    answerPending.current += 1;
+    answerRevision.current += 1;
+    setAnswersSaving(true);
+    const task = answerQueue.current.then(async () => {
+      const result = await call('/details', { move_date: date });
+      setData(result);
+      setStorageDate(previous => previous && previous < date ? '' : previous);
+      setStorageMissing(false);
+    });
+    answerQueue.current = task.catch(() => {});
+    try { await task; }
+    finally {
+      answerPending.current -= 1;
+      if (!answerPending.current) setAnswersSaving(false);
+    }
+  }
   const distanceRepairs = useRef(new Set<string>());
   const stopDistanceState = JSON.stringify([session, data?.pickup, data?.delivery, data?.extra_stops]);
   useEffect(() => {
@@ -1114,7 +1131,21 @@ export default function CustomerMovePage() {
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
             </div>
 
-            {showInventoryList && <ManualInventoryModal initialRooms={data.combined_inventory?.length?undefined:data.inventory_draft?.body.rooms} initialRows={data.combined_inventory} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full', boxes: (data.packing_package.box_items || []).map(box => ({ label: box.label, room: box.room, quantity: data.packing_package!.selection.box_quantities?.[box.id] || 0 })) } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}_${JSON.stringify(data.packing_package?.selection || {})}`} loadCatalog={() => call('/inventory-catalog')} onClose={() => { setShowInventoryList(false); void refreshDetails(); }} submit={async body => {
+            {showInventoryList && <ManualInventoryModal initialRooms={data.combined_inventory?.length?undefined:data.inventory_draft?.body.rooms} initialRows={data.combined_inventory} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full', boxes: (data.packing_package.box_items || []).map(box => ({ label: box.label, room: box.room, quantity: data.packing_package!.selection.box_quantities?.[box.id] || 0 })) } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}_${JSON.stringify(data.packing_package?.selection || {})}`} loadCatalog={() => call('/inventory-catalog')} downloadPdf={async body => {
+              const response = await fetch(base + '/inventory.pdf', {
+                method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+                body: JSON.stringify(body), cache: 'no-store',
+              });
+              if (!response.ok) {
+                const result = await response.json().catch(() => ({}));
+                throw new Error(typeof result.detail === 'string' ? result.detail : 'Could not download inventory. Please try again.');
+              }
+              const url = URL.createObjectURL(await response.blob());
+              const anchor = document.createElement('a');
+              anchor.href = url; anchor.download = 'moving-inventory.pdf';
+              document.body.appendChild(anchor); anchor.click(); anchor.remove();
+              window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+            }} onClose={() => { setShowInventoryList(false); void refreshDetails(); }} submit={async body => {
               await call(data.combined_inventory?.length?'/inventory':'/manual-inventory', body, data.combined_inventory?.length?'PUT':undefined);
               // Refresh the summary when the editor closes; edits save without closing it.
               setCalculationError('');
@@ -1170,7 +1201,7 @@ export default function CustomerMovePage() {
                         }} />
                       </div>}
                       </fieldset> : deliveryCarry && data.long_carry ? <CustomerLongCarryQuestion key={`delivery:${deliveryCarry.revision}`} config={data.long_carry} location={deliveryCarry} value={carryAnswers.delivery ?? null} missing={carryMissing && carryAnswers.delivery == null} onChange={carry_feet => { setCarryAnswers(prev => ({...prev,delivery:carry_feet})); setCarryMissing(false); if (carry_feet !== null) savePricingChange({kind:'long_carry',location:'delivery',revision:deliveryCarry.revision,...(carry_feet === 'unknown' ? {carry_unknown:true,carry_acknowledged:true} : {carry_feet})}); }} /> : null}
-                    </div> : packingStep === 'stairs' && data.stairs ? <div style={{display:'grid',gap:24}}>{data.stairs.locations.map(location=><CustomerStairsQuestion key={location.location} config={data.stairs!} location={location} value={stairsAnswers[location.location] ?? null} missing={stairsMissing && stairsAnswers[location.location] == null} onChange={flights => { setStairsAnswers(prev => ({ ...prev, [location.location]: flights })); setStairsMissing(false); if (flights !== null) savePricingChange({ kind: 'stairs', location: location.location, revision: location.revision, flights }); }} />)}</div> : packingStep === 'storage' && data.storage ? <CustomerStorageQuestion config={data.storage} value={storageDate} missing={storageMissing} onChange={date => { setStorageDate(date); setStorageMissing(false); savePricingChange({ kind: 'storage', available_date: date }); }} /> : packingStep === 'items' ? <CustomerItemQuestions visibleIds={visibleTermsIds} validationAttempt={termsValidationAttempt} questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={answer => {
+                    </div> : packingStep === 'stairs' && data.stairs ? <div style={{display:'grid',gap:24}}>{data.stairs.locations.map(location=><CustomerStairsQuestion key={location.location} config={data.stairs!} location={location} value={stairsAnswers[location.location] ?? null} missing={stairsMissing && stairsAnswers[location.location] == null} onChange={flights => { setStairsAnswers(prev => ({ ...prev, [location.location]: flights })); setStairsMissing(false); if (flights !== null) savePricingChange({ kind: 'stairs', location: location.location, revision: location.revision, flights }); }} />)}</div> : packingStep === 'storage' && data.storage ? <CustomerStorageQuestion saving={answersSaving} onPickupChange={saveStoragePickup} config={data.storage} value={storageDate} missing={storageMissing} onChange={date => { setStorageDate(date); setStorageMissing(false); savePricingChange({ kind: 'storage', available_date: date }); }} /> : packingStep === 'items' ? <CustomerItemQuestions visibleIds={visibleTermsIds} validationAttempt={termsValidationAttempt} questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={answer => {
                       const reportId = data.spark?.id;
                       answerPending.current += 1;
                       answerRevision.current += 1;
