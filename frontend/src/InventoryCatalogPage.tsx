@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -13,6 +13,41 @@ export default function InventoryCatalogPage() {
   const [loading, setLoading] = useState(true), [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [retry, setRetry] = useState(0);
+  const [transferring, setTransferring] = useState(false);
+  const uploadInput = useRef<HTMLInputElement>(null);
+  async function transfer(file?: File) {
+    setTransferring(true); setError(""); setNotice("");
+    try {
+      const form = new FormData();
+      if (file) form.append("file", file);
+      const headers = new Headers(authHeaders(token));
+      headers.delete("Content-Type");
+      const response = await fetch(`${API_BASE}/api/inventory-catalog/${file ? "import" : "export"}`, {
+        method: file ? "POST" : "GET", headers, ...(file ? { body: form } : {}),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(typeof body?.detail === "string" ? body.detail : "Could not transfer the catalog. Please try again.");
+      }
+      if (file) {
+        const result = await response.json();
+        setNotice(`Catalog uploaded: ${result.created} items added, ${result.updated} items updated.`);
+        setSearch(""); setRetry(value => value + 1);
+      } else {
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement("a");
+        link.href = url; link.download = "inventory-catalog.csv";
+        document.body.appendChild(link); link.click(); link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setNotice("Full catalog downloaded.");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not transfer the catalog.");
+    } finally {
+      setTransferring(false);
+      if (uploadInput.current) uploadInput.current.value = "";
+    }
+  }
   useEffect(() => {
     const abort = new AbortController(); setLoading(true); setError("");
     fetch(`${API_BASE}/api/inventory-catalog`, { headers: authHeaders(token), signal: abort.signal })
@@ -28,7 +63,14 @@ export default function InventoryCatalogPage() {
   return <main className="ic-page">
     <Link to="/settings" className="slds-button">Back to Settings</Link>
     <section className="ic-card">
-      <header className="ic-toolbar"><div><h1>Inventory catalog</h1><p>Manage shared items used in customer inventories and moving terms.</p></div><button className="slds-button slds-button_brand" onClick={() => setEditing("new")}>+ Add item</button></header>
+      <header className="ic-toolbar"><div><h1>Inventory catalog</h1><p>Manage shared items used in customer inventories and moving terms.</p></div><div className="ic-transfer-actions">
+        <button className="slds-button slds-button_neutral" disabled={transferring || loading} onClick={() => void transfer()}>Download CSV</button>
+        <button className="slds-button slds-button_neutral" disabled={transferring || loading} onClick={() => uploadInput.current?.click()}>Upload CSV</button>
+        <input ref={uploadInput} type="file" accept=".csv,text/csv" hidden aria-label="Upload inventory catalog CSV" onChange={e => { const file = e.target.files?.[0]; if (file) void transfer(file); }} />
+        <button className="slds-button slds-button_brand" disabled={transferring} onClick={() => setEditing("new")}>+ Add item</button>
+      </div></header>
+      <p>Download includes all active and inactive items, regardless of search. Edit the CSV and upload it to update matching IDs; leave ID blank to add an item. Items omitted from the file are kept. Set active to false to deactivate an item.</p>
+      {transferring && <p role="status">Transferring catalog...</p>}
       <label className="ic-search">Search catalog<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by item name or description" /></label>
       {notice && <p role="status" className="ic-notice">{notice}</p>}
       {error && <p role="alert" className="ic-error">{error} <button className="slds-button" onClick={() => setRetry(value => value + 1)}>Try again</button></p>}

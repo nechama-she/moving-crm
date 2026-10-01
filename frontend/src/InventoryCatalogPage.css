@@ -1,6 +1,7 @@
 .ic-page { padding: 20px clamp(12px, 3vw, 24px); overflow: auto; flex: 1; min-height: 0; color: #032d60; }
 .ic-card { margin-top: 16px; background: #fff; border: 1px solid #dddbda; border-radius: 8px; padding: 20px; }
 .ic-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.ic-transfer-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .ic-toolbar h1, .ic-toolbar h2 { font-size: 20px; margin: 0; }
 .ic-toolbar p, .ic-dialog p { color: #5c6b82; }
 .ic-search { display: block; max-width: 520px; margin: 20px 0; }

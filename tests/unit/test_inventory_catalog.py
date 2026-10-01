@@ -1,5 +1,8 @@
 """Shared catalog changes feed both customer inventory and moving-term selection."""
 import importlib.util
+import asyncio
+import csv
+import io
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
+from fastapi import UploadFile
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -78,6 +82,8 @@ def test_material_lists_preserve_id_and_omitted_updates(catalog_api):
     with patch.object(api, 'material_options', return_value={'items': choices}):
         row = api.create_item(api.CatalogItemInput(name='Bed', cuft=80, weight=0, packing_materials=materials), None, db)
         assert len(row['packing_materials']) == 2
+        assert upload_csv(api, db, api.export_items(None, db).body) == {'created': 0, 'updated': 1}
+        assert api.list_items(None, db)['items'] == [row]
         updated = api.update_item(row['id'], api.CatalogItemInput(name='King bed', cuft=80, weight=0), None, db)
         assert updated['id'] == row['id']
         assert updated['packing_materials'] == row['packing_materials']
@@ -92,3 +98,56 @@ def test_unknown_material_rejected(catalog_api):
     with pytest.raises(HTTPException):
         api.create_item(api.CatalogItemInput(name='Bed', cuft=80, weight=0, packing_materials=[
             {'plan_id':'missing', 'material_id':'missing', 'quantity':1, 'requirement':'required'}]), None, db)
+
+
+def upload_csv(api, db, content):
+    return asyncio.run(api.import_items(UploadFile(filename='catalog.csv', file=io.BytesIO(content)), None, db))
+
+
+def test_csv_round_trip_and_bulk_update(catalog_api):
+    api, db = catalog_api
+    row = api.create_item(api.CatalogItemInput(name='=Chair, special', description='Line one\nLine two', cuft='12.25', weight=4, active=False), None, db)
+    exported = api.export_items(None, db)
+    assert upload_csv(api, db, exported.body) == {'created': 0, 'updated': 1}
+    assert api.list_items(None, db)['items'] == [row]
+    rows = list(csv.DictReader(io.StringIO(exported.body.decode('utf-8-sig'))))
+    rows[0]['weight'] = '25'
+    rows.append({**rows[0], 'id': '', 'name': 'New chair', 'active': 'true'})
+    output = io.StringIO(newline='')
+    writer = csv.DictWriter(output, fieldnames=api.CSV_FIELDS)
+    writer.writeheader(); writer.writerows(rows)
+    assert upload_csv(api, db, output.getvalue().encode()) == {'created': 1, 'updated': 1}
+    assert db.get(models.InventoryCatalogItem, row['id']).weight == 25
+    assert len(api.list_items(None, db)['items']) == 2
+
+
+@pytest.mark.parametrize('bad_row', ['missing,Bad,5,1', ',Bad,-1,1', ',Bad,5,1,extra'])
+def test_csv_invalid_row_does_not_save_partial_changes(catalog_api, bad_row):
+    api, db = catalog_api
+    row = api.create_item(api.CatalogItemInput(name='Original', cuft=10, weight=1), None, db)
+    content = f"id,name,cuft,weight\n{row['id']},Changed,20,2\n{bad_row}\n"
+    with pytest.raises(HTTPException) as error:
+        upload_csv(api, db, content.encode())
+    assert error.value.status_code == 422
+    assert api.list_items(None, db)['items'] == [row]
+
+
+@pytest.mark.parametrize('content', [b'', b'name,cuft,weight\n', b'name,name,cuft,weight\nA,B,1,1', b'wrong\nvalue', b'\xff'])
+def test_csv_bad_files_rejected(catalog_api, content):
+    api, db = catalog_api
+    with pytest.raises(HTTPException) as error:
+        upload_csv(api, db, content)
+    assert error.value.status_code == 422
+
+
+def test_csv_duplicate_ids_rejected_and_omitted_items_kept(catalog_api):
+    api, db = catalog_api
+    row = api.create_item(api.CatalogItemInput(name='Chair', description='Keep me', cuft=10, weight=1, active=False), None, db)
+    line = f"{row['id']},Updated,20,2\n"
+    with pytest.raises(HTTPException, match='duplicate item ID'):
+        upload_csv(api, db, ('id,name,cuft,weight\n' + line + line).encode())
+    upload_csv(api, db, ('id,name,cuft,weight\n' + line).encode())
+    updated = db.get(models.InventoryCatalogItem, row['id'])
+    assert updated.description == 'Keep me' and updated.active is False
+    upload_csv(api, db, b'name,cuft,weight\nNew,5,1\n')
+    assert len(api.list_items(None, db)['items']) == 2
