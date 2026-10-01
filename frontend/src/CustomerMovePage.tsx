@@ -380,6 +380,31 @@ export default function CustomerMovePage() {
     setShowQuestions(true);
     termsBody.current?.scrollTo({top:0});
   }
+  function chargeQuestion(charge: {name: string; description: string}): {step: PricingStep; section?: 'service' | 'boxes' | 'protection'} | null {
+    const name = charge.name.toLowerCase();
+    if (data?.extra_stops && /extra (pickup|delivery) stop/.test(name)) return {step: 'stops'};
+    if (data?.elevator && name.includes('elevator')) return {step: 'elevator'};
+    if ((data?.long_carry || data?.shuttle) && /long carry|shuttle/.test(name)) return {step: 'access'};
+    if (data?.stairs && name.includes('stairs')) return {step: 'stairs'};
+    if (data?.storage && name.includes('storage')) return {step: 'storage'};
+    if (data?.packing_items.some(item => item.services.some(service => `${item.label} ${service.kind}`.toLowerCase() === name))) return {step: 'bulky'};
+    if (data?.packing_package) {
+      if (/^(full packing|partial packing|unpacking)$/.test(name)) return {step: 'package', section: 'service'};
+      if (data.packing_package.box_items?.some(item => `${item.label} Packing`.toLowerCase() === name)) return {step: 'package', section: 'boxes'};
+      if (/packing|boxing/.test(name)) return {step: 'package', section: 'protection'};
+    }
+    return null;
+  }
+  function openChargeQuestion(target: {step: PricingStep; section?: 'service' | 'boxes' | 'protection'}) {
+    openRequiredQuestions([]);
+    setElevatorAnswers(Object.fromEntries((data?.elevator?.locations || []).map(row => [row.location, row.uses_elevator])));
+    setCarryAnswers(Object.fromEntries((data?.long_carry?.locations || []).map(row => [row.location, row.unknown && row.acknowledged ? 'unknown' : row.distance_feet])));
+    setStairsAnswers(Object.fromEntries((data?.stairs?.locations || []).map(row => [row.location, row.flights])));
+    setStopsIncomplete({});
+    setTermsValidationAttempt(0);
+    setPackingStep(target.step);
+    setPackingSection(target.section || 'service');
+  }
   function openExtraStops() {
     openRequiredQuestions([]);
     setPackingStep('stops');
@@ -764,7 +789,7 @@ export default function CustomerMovePage() {
                 {!editingMove ? (
                   <>
                     <h2>{data.move_date?new Date(data.move_date.slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'Date to be confirmed'}</h2>
-                    <ol>{[{address:data.pickup,type:'pickup'},...data.stops,{address:data.delivery,type:'delivery'}].map((stop,i)=><li key={i} className={i > 0 && i <= data.stops.length ? "cm-editable-stop" : undefined} onDoubleClick={i > 0 && i <= data.stops.length ? openExtraStops : undefined} title={i > 0 && i <= data.stops.length ? "Double-click to edit extra stops" : undefined}><small>{stop.type==='pickup'?'Pickup':stop.type==='delivery'?'Delivery':'Stop'}</small><strong>{stop.address||'—'}</strong></li>)}</ol>
+                    <ol>{[{address:data.pickup,type:'pickup'},...data.stops,{address:data.delivery,type:'delivery'}].map((stop,i)=><li key={i} className={i > 0 && i <= data.stops.length ? "cm-editable-stop" : undefined} onClick={i > 0 && i <= data.stops.length ? openExtraStops : undefined} title={i > 0 && i <= data.stops.length ? "Click to edit extra stops" : undefined}><small>{stop.type==='pickup'?'Pickup':stop.type==='delivery'?'Delivery':'Stop'}</small><strong>{stop.address||'—'}</strong></li>)}</ol>
                     <div className="cm-contact"><strong>{data.name}</strong><span>{data.phone}</span><span>{data.email}</span></div>
                   </>
                 ) : (
@@ -781,7 +806,7 @@ export default function CustomerMovePage() {
                     {data.stops.length > 0 && (
                       <ol aria-label="Saved extra stops">
                         {data.stops.map((stop, index) => (
-                          <li key={`${index}:${stop.address}`} className="cm-editable-stop" onDoubleClick={openExtraStops} title="Double-click to edit extra stops" tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); openExtraStops(); } }}>
+                          <li key={`${index}:${stop.address}`} className="cm-editable-stop" onClick={openExtraStops} title="Click to edit extra stops" tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); openExtraStops(); } }}>
                             <small>{stop.type === 'pickup' ? 'Extra pickup stop' : stop.type === 'delivery' ? 'Extra delivery stop' : 'Extra stop'}</small>
                             <strong>{stop.address}</strong>
                           </li>
@@ -939,6 +964,7 @@ export default function CustomerMovePage() {
               <div className="cm-estimate-top">
                 <div className="cm-estimate-main-info" ref={estimateResult} aria-live="polite">
                   {data.estimate ? <>
+                    <span className="cm-estimate-eyebrow" style={{marginBottom: 12}}>Your estimate</span>
                     <div className="cm-estimate-summary">
                       <div className="cm-estimate-detail-item">
                         <span>Price</span>
@@ -981,10 +1007,12 @@ export default function CustomerMovePage() {
                 <div className="cm-estimate-breakdown">
                   <div className="cm-estimate-breakdown-title">Price Breakdown</div>
                   <div className="cm-estimate-charges-grid">
-                    {data.estimate.charges.map((charge, idx) => (
+                    {data.estimate.charges.map((charge, idx) => {
+                      const target = chargeQuestion(charge);
+                      return (
                       <div key={idx} className="cm-estimate-charge-row">
                         <div>
-                          <strong>{charge.name}</strong>
+                          <strong>{charge.name}{target && <button type="button" className="cm-charge-edit" aria-label={`Edit ${charge.name}`} title={`Edit ${charge.name}`} onClick={() => openChargeQuestion(target)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z M13 6l5 5"/></svg></button>}</strong>
                           {charge.description && <small>{charge.description}</small>}
                           {(charge.discount_amount || 0) > 0 && <small>Before discount: {money(charge.subtotal || 0)}; Discount ({charge.discount_percent}%): -{money(charge.discount_amount || 0)}</small>}
                         </div>
@@ -992,7 +1020,7 @@ export default function CustomerMovePage() {
                           {charge.pending ? 'Pending' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charge.total)}
                         </span>
                       </div>
-                    ))}
+                    );})}
                   </div>
                 </div>
               )}
