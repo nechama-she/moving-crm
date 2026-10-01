@@ -20,6 +20,7 @@ const money = (amount: number) => amount.toLocaleString('en-US', { style: 'curre
 export default function CustomerPackingOptions({ config, selection, onChange, disabled, stage }: {
   config: PackingPackage; selection: PackingSelection; onChange: (value: PackingSelection) => void; disabled: boolean; stage?:'service'|'boxes'|'protection';
 }) {
+  const hasRequiredItems = config.items.some(item => !config.configured_materials || (item.requirement || 'required') === 'required');
   const inventoryVolume = config.inventory_cubic_feet ?? config.cubic_feet;
   const minimumApplies = inventoryVolume < (config.minimum_cubic_feet ?? 0);
   const materials = selection.material_item_ids ?? selection.item_ids;
@@ -75,12 +76,13 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       </div>}
     </section>)}
     {stage === 'protection' && selection.mode === 'none' && <>
+    <p className="cm-packing-code-help"><strong>PBO</strong> &mdash; Packed by owner: you pack. <strong>CP</strong> &mdash; Carrier packed: the movers pack, with materials included.</p>
     {config.configured_materials ? <>
     <ConfiguredPackingItems config={config} selection={selection} onChange={onChange} disabled={disabled}/>
     <fieldset className="cm-protection-confirmation" data-customer-action="additional-protection">
-      <legend>Do you have any other fragile or fabric items?</legend>
-      <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === false} onChange={() => onChange({...selection,has_additional_protection:false})}/> No, only the required items</label>
-      <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === true} onChange={() => onChange({...selection,has_additional_protection:true})}/> Yes, I have more items</label>
+      <legend>{hasRequiredItems ? 'Do you have any other fragile or fabric items?' : 'Do you have any fragile or fabric items?'}</legend>
+      <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === false} onChange={() => onChange({...selection,has_additional_protection:false})}/> {hasRequiredItems ? 'No, only the required items' : 'No'}</label>
+      <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === true} onChange={() => onChange({...selection,has_additional_protection:true})}/> {hasRequiredItems ? 'Yes, I have more items' : 'Yes'}</label>
     </fieldset>
     {selection.has_additional_protection === true && <ConfiguredPackingItems config={config} selection={selection} onChange={onChange} disabled={disabled} showRequired={false} showOptional/>}
     </> : <>
@@ -98,9 +100,9 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       </div>
     </section>}
     <fieldset className="cm-protection-confirmation" data-customer-action="additional-protection">
-      <legend>Do you have any other fragile or fabric items?</legend>
-      <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === false} onChange={() => onChange({...selection,has_additional_protection:false})}/> No, I have no other fabric or fragile items</label>
-      <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === true} onChange={() => onChange({...selection,has_additional_protection:true})}/> Yes, I have more items</label>
+      <legend>{hasRequiredItems ? 'Do you have any other fragile or fabric items?' : 'Do you have any fragile or fabric items?'}</legend>
+      <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === false} onChange={() => onChange({...selection,has_additional_protection:false})}/> {hasRequiredItems ? 'No, I have no other fabric or fragile items' : 'No'}</label>
+      <label><input type="radio" name="additional-protection" disabled={disabled} checked={selection.has_additional_protection === true} onChange={() => onChange({...selection,has_additional_protection:true})}/> {hasRequiredItems ? 'Yes, I have more items' : 'Yes'}</label>
     </fieldset>
     {selection.has_additional_protection === true && <CustomerMaterialItems config={config} selection={selection} disabled={disabled} onChange={onChange}/>}
     </>}

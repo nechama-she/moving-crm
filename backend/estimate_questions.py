@@ -27,12 +27,7 @@ def unanswered_questions(data, package_saved=True):
     selection = package.get('selection') or {}
     if package and selection.get('mode', 'none') == 'none':
         additional = selection.get('has_additional_protection')
-        if package.get('configured_materials'):
-            optional_ids = {row['id'] for row in package.get('items', []) if row.get('requirement') == 'optional'}
-            additional_selected = bool(optional_ids.intersection(selection.get('item_ids', [])))
-        else:
-            additional_selected = bool(selection.get('additional_items'))
-        if additional is None or (additional and not additional_selected):
+        if additional is None:
             missing.append('protection')
     for question in data.get('item_questions', []):
         saved = question.get('saved') or {}

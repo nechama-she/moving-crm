@@ -329,11 +329,8 @@ export default function CustomerMovePage() {
   }
   async function nextPricingStep(currentActionSaved = false) {
     if (packingStep === 'package' && packingSection === 'protection') {
-      const configured = !!data?.packing_package?.configured_materials;
-      const optionalSelected = data?.packing_package?.items.some(item => item.requirement === 'optional' && packageSelection.item_ids.includes(item.id));
-      const missingAdditional = packageSelection.has_additional_protection == null || (packageSelection.has_additional_protection && (configured ? !optionalSelected : !Object.keys(packageSelection.additional_items || {}).length));
-      if (missingAdditional) {
-        setPackingError(configured ? 'Confirm whether you have more items, and select at least one additional item if you do.' : 'Confirm whether you have other fabric or fragile items, and select them if you do.');
+      if (packageSelection.has_additional_protection == null) {
+        setPackingError('Confirm whether you have fragile or fabric items.');
         return;
       }
     }
