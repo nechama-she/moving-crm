@@ -295,7 +295,7 @@ export default function CustomerMovePage() {
     ...(data?.item_questions?.length ? ['items'] as PricingStep[] : []),
   ];
   const nextPricing = pricingSteps[pricingSteps.indexOf(packingStep)+1];
-  const nextPricingLabels: Record<PricingStep,string> = { stops:'extra stops', elevator:'elevator', access:'truck access', stairs:'stairs', storage:'delivery date', bulky:'bulky items', package:'packing services', items:'moving terms' };
+  const nextPricingLabels: Record<PricingStep,string> = { stops:'additional stops', elevator:'elevator', access:'truck access', stairs:'stairs', storage:'delivery date', bulky:'bulky items', package:'packing services', items:'moving terms' };
   const packingSections:('service'|'boxes'|'protection')[]=['service',...(packageSelection.mode==='none'?['protection'] as const:[]),...(data?.packing_package?.box_items?.length?['boxes'] as const:[])];
   const nextPackingSection=packingSections[packingSections.indexOf(packingSection)+1];
   useEffect(() => { setElevatorAnswers(Object.fromEntries((data?.elevator?.locations || []).map(row => [row.location,row.uses_elevator]))); setElevatorMissing(false); }, [data?.elevator?.locations.map(row => row.revision).join(':')]);
@@ -380,9 +380,32 @@ export default function CustomerMovePage() {
     setShowQuestions(true);
     termsBody.current?.scrollTo({top:0});
   }
+  function groupedCharges() {
+    type Charge = NonNullable<NonNullable<Details['estimate']>['charges']>[number];
+    type Group = Charge & {children?: Charge[]; target?: NonNullable<ReturnType<typeof chargeQuestion>>};
+    const result: Group[] = [];
+    const groups = new Map<string, Group>();
+    const titles: Record<PricingStep, string> = {stops: 'Additional stops', elevator: 'Elevator', access: 'Truck access', stairs: 'Stairs', storage: 'Delivery date', bulky: 'Packing & crating', package: 'Packing services', items: 'Moving terms'};
+    for (const charge of data?.estimate?.charges || []) {
+      const target = chargeQuestion(charge);
+      if (!target) { result.push(charge); continue; }
+      const key = `${target.step}:${target.section || ''}`;
+      let group = groups.get(key);
+      if (!group) {
+        const section = target.section === 'boxes' ? 'Boxes' : target.section === 'protection' ? 'Item protection' : target.section === 'service' ? 'Service' : '';
+        group = {name: titles[target.step] + (section ? ` - ${section}` : ''), description: '', total: 0, children: [], target};
+        groups.set(key, group);
+        result.push(group);
+      }
+      group.children!.push(charge);
+      group.total += charge.pending ? 0 : charge.total;
+      group.pending ||= charge.pending;
+    }
+    return result;
+  }
   function chargeQuestion(charge: {name: string; description: string}): {step: PricingStep; section?: 'service' | 'boxes' | 'protection'} | null {
     const name = charge.name.toLowerCase();
-    if (data?.extra_stops && /extra (pickup|delivery) stop/.test(name)) return {step: 'stops'};
+    if (data?.extra_stops && (name === 'additional stops' || /(?:extra|additional) (pickup|delivery) stop/.test(name))) return {step: 'stops'};
     if (data?.elevator && name.includes('elevator')) return {step: 'elevator'};
     if ((data?.long_carry || data?.shuttle) && /long carry|shuttle/.test(name)) return {step: 'access'};
     if (data?.stairs && name.includes('stairs')) return {step: 'stairs'};
@@ -789,7 +812,7 @@ export default function CustomerMovePage() {
                 {!editingMove ? (
                   <>
                     <h2>{data.move_date?new Date(data.move_date.slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'Date to be confirmed'}</h2>
-                    <ol>{[{address:data.pickup,type:'pickup'},...data.stops,{address:data.delivery,type:'delivery'}].map((stop,i)=><li key={i} className={i > 0 && i <= data.stops.length ? "cm-editable-stop" : undefined} onClick={i > 0 && i <= data.stops.length ? openExtraStops : undefined} title={i > 0 && i <= data.stops.length ? "Click to edit extra stops" : undefined}><small>{stop.type==='pickup'?'Pickup':stop.type==='delivery'?'Delivery':'Stop'}</small><strong>{stop.address||'—'}</strong></li>)}</ol>
+                    <ol>{[{address:data.pickup,type:'pickup'},...data.stops,{address:data.delivery,type:'delivery'}].map((stop,i)=><li key={i} className={i > 0 && i <= data.stops.length ? "cm-editable-stop" : undefined} onClick={i > 0 && i <= data.stops.length ? openExtraStops : undefined} title={i > 0 && i <= data.stops.length ? "Click to edit additional stops" : undefined}><small>{stop.type==='pickup'?'Pickup':stop.type==='delivery'?'Delivery':'Stop'}</small><strong>{stop.address||'—'}</strong></li>)}</ol>
                     <div className="cm-contact"><strong>{data.name}</strong><span>{data.phone}</span><span>{data.email}</span></div>
                   </>
                 ) : (
@@ -804,10 +827,10 @@ export default function CustomerMovePage() {
                     <CustomerAddressInput label="Delivery address" error={moveErrors.delivery} apiKey={data.google_maps_browser_key || ''} initialValue={data.delivery || ''} disabled={busy}
                       onChange={(text, place) => { clearMoveError('delivery'); addressDraft.current = { ...addressDraft.current, delivery: text, delivery_place: place }; }} />
                     {data.stops.length > 0 && (
-                      <ol aria-label="Saved extra stops">
+                      <ol aria-label="Saved additional stops">
                         {data.stops.map((stop, index) => (
-                          <li key={`${index}:${stop.address}`} className="cm-editable-stop" onClick={openExtraStops} title="Click to edit extra stops" tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); openExtraStops(); } }}>
-                            <small>{stop.type === 'pickup' ? 'Extra pickup stop' : stop.type === 'delivery' ? 'Extra delivery stop' : 'Extra stop'}</small>
+                          <li key={`${index}:${stop.address}`} className="cm-editable-stop" onClick={openExtraStops} title="Click to edit additional stops" tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); openExtraStops(); } }}>
+                            <small>{stop.type === 'pickup' ? 'Additional pickup stop' : stop.type === 'delivery' ? 'Additional delivery stop' : 'Additional stop'}</small>
                             <strong>{stop.address}</strong>
                           </li>
                         ))}
@@ -1007,17 +1030,25 @@ export default function CustomerMovePage() {
                 <div className="cm-estimate-breakdown">
                   <div className="cm-estimate-breakdown-title">Price Breakdown</div>
                   <div className="cm-estimate-charges-grid">
-                    {data.estimate.charges.map((charge, idx) => {
-                      const target = chargeQuestion(charge);
+                    {groupedCharges().map((charge, idx) => {
+                      const target = charge.target;
                       return (
                       <div key={idx} className="cm-estimate-charge-row">
                         <div>
                           <strong>{charge.name}{target && <button type="button" className="cm-charge-edit" aria-label={`Edit ${charge.name}`} title={`Edit ${charge.name}`} onClick={() => openChargeQuestion(target)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z M13 6l5 5"/></svg></button>}</strong>
                           {charge.description && <small>{charge.description}</small>}
+                          {charge.children?.map((child, index) => <div key={index} className="cm-stop-charge-detail">
+                            <div>
+                              <span>{target?.step === 'stops' ? (/pickup/i.test(child.name) ? 'Pickup' : 'Delivery') : child.name}</span>
+                              {child.description && <small>{child.description}</small>}
+                              {(child.discount_amount || 0) > 0 && <small>Before discount: {money(child.subtotal || 0)}; Discount ({child.discount_percent}%): -{money(child.discount_amount || 0)}</small>}
+                            </div>
+                            <strong>{child.pending ? 'Pending' : money(child.total)}</strong>
+                          </div>)}
                           {(charge.discount_amount || 0) > 0 && <small>Before discount: {money(charge.subtotal || 0)}; Discount ({charge.discount_percent}%): -{money(charge.discount_amount || 0)}</small>}
                         </div>
                         <span>
-                          {charge.pending ? 'Pending' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charge.total)}
+                          {charge.pending && !charge.children ? 'Pending' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charge.total)}{charge.children && charge.pending && <small> + pending</small>}
                         </span>
                       </div>
                     );})}
@@ -1048,7 +1079,7 @@ export default function CustomerMovePage() {
                       setShowQuestions(true);
                     }}
                   >
-                    {data.packing_saved ? '✓ Review extra services & questions' : '+ Add extra services & details'}
+                    {data.packing_saved ? '✓ Review services & details' : '+ Add services & details'}
                   </button>
                   )}
                 {data.estimate && data.spark?.status === 'completed' && <>
@@ -1072,8 +1103,8 @@ export default function CustomerMovePage() {
                   <div className="cm-question-heading">
                   <div className="cm-modal-header">
                     <div>
-                      <span className="cm-eyebrow">{packingStep === 'items' ? 'MOVING TERMS' : 'EXTRA SERVICES'}</span>
-                      <h3 id="packing-title">{packingStep === 'stops' ? 'Extra stops' : packingStep === 'elevator' ? 'Elevator access' : packingStep === 'access' ? 'Truck access' : packingStep === 'stairs' ? 'Stairs' : packingStep === 'storage' ? 'Delivery availability & storage' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : packingSection === 'boxes' ? 'Box packing' : packingSection === 'protection' ? 'Protecting your items' : 'Packing services'}</h3>
+                      <span className="cm-eyebrow">{packingStep === 'items' ? 'MOVING TERMS' : 'ADDITIONAL SERVICES'}</span>
+                      <h3 id="packing-title">{packingStep === 'stops' ? 'Additional stops' : packingStep === 'elevator' ? 'Elevator access' : packingStep === 'access' ? 'Truck access' : packingStep === 'stairs' ? 'Stairs' : packingStep === 'storage' ? 'Delivery availability & storage' : packingStep === 'items' ? 'A few details about your move' : packingStep === 'bulky' ? 'Packing & crating for your bulky items' : packingSection === 'boxes' ? 'Box packing' : packingSection === 'protection' ? 'Protecting your items' : 'Packing services'}</h3>
                       <p>{packingStep === 'stops' ? 'Add any other pickup or delivery addresses the movers need to visit.' : packingStep === 'elevator' ? 'Tell us whether the movers will use an elevator at either address.' : packingStep === 'access' ? 'Tell us how closely the truck can access both addresses.' : packingStep === 'stairs' ? 'Outdoor and shared-building stairs at pickup and delivery.' : packingStep === 'storage' ? 'Choose when you can begin receiving your shipment.' : packingStep === 'items' ? `Question ${currentTermsStep + 1} of ${termsGroups.length}` : packingStep === 'bulky' ? 'Choose who will pack or crate each item.' : packingSection === 'boxes' ? 'Choose who will pack each box type in your inventory.' : packingSection === 'protection' ? 'Fragile items must be boxed, and fabric items must be wrapped in plastic. Moving blankets are free.' : 'Choose packing services for your move.'}</p>
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>

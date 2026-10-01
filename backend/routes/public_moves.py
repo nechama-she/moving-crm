@@ -595,7 +595,7 @@ def _move_details(access, db, *, refresh_report=True):
     saved_package = json.loads(job.customer_packing_package or '{}')
     charges_list = [
         {
-            'name': c.name,
+            'name': re.sub(r'^Extra (?=(?:pickup|delivery) stop)', 'Additional ', c.name or ''),
             'description': _customer_charge_description(c.name, c.description or ''),
             'pending': (c.description or '').startswith('Calculation pending: '),
             'total': float(c.total_cost or 0),
@@ -881,7 +881,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         if change.stop_meters is not None and (change.route_origin != origin or len(change.stop_meters) != len(addresses)):
             raise HTTPException(409, 'The route changed. Refresh and calculate the stop distances again.')
         if origin.strip().lower() in {a.lower() for a in addresses}:
-            raise HTTPException(422,'An extra stop must differ from the main address.')
+            raise HTTPException(422,'An additional stop must differ from the main address.')
         pickup,old,delivery=_read_job_route(db,job)
         typed=json.loads(job.stop_types or '[]')
         retained=[{'address':address,'type':typed[i].get('type') if i<len(typed) and typed[i].get('address')==address else None} for i,address in enumerate(old)]

@@ -457,7 +457,7 @@ export default function PricingPage() {
     return editing ? <>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={cancelServiceEdit}>Cancel changes</button>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save changes'}</button>
-    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'extraStops' ? 'Edit extra stop pricing' : section === 'elevator' ? 'Edit elevator pricing' : section === 'longCarry' ? 'Edit long carry pricing' : section === 'stairs' ? 'Edit stairs pricing' : section === 'storage' ? 'Edit storage pricing' : section === 'deliveryFees' ? 'Edit destination fees' : section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
+    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'extraStops' ? 'Edit additional stop pricing' : section === 'elevator' ? 'Edit elevator pricing' : section === 'longCarry' ? 'Edit long carry pricing' : section === 'stairs' ? 'Edit stairs pricing' : section === 'storage' ? 'Edit storage pricing' : section === 'deliveryFees' ? 'Edit destination fees' : section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
   }
 
   function patchDraft(patch: Partial<Plan>) {
@@ -946,7 +946,7 @@ export default function PricingPage() {
                 </div>
               </PricingSection>
 
-              <PricingSection title="Extra stop pricing" count={active.services.filter(isExtraStopsCard).length} open={openSections.extraStops} toggle={() => setOpenSections(s => ({ ...s, extraStops: !s.extraStops }))} onDoubleClick={() => startServiceEdit('extraStops')} actions={serviceEditActions('extraStops')}>
+              <PricingSection title="Additional stop pricing" count={active.services.filter(isExtraStopsCard).length} open={openSections.extraStops} toggle={() => setOpenSections(s => ({ ...s, extraStops: !s.extraStops }))} onDoubleClick={() => startServiceEdit('extraStops')} actions={serviceEditActions('extraStops')}>
                 <ExtraStopsPricingCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
