@@ -1379,9 +1379,18 @@ def customer_generate_inventory_report(access: PublicMoveAccess = Depends(verifi
         saved = db.get(LeadLiveSwitch, access.lead_id)
         details = json.loads(saved.details or '{}') if saved else {}
         draft = details.get('inventory_draft') or {}
-        if not draft.get('rows'):
+        rows = details.get('spark_inventory_snapshot') or []
+        if rows and details.get('last_spark_status') == 'completed':
+            from manual_inventory import submit_inventory_snapshot
+            result = submit_inventory_snapshot(
+                {'request_id': str(uuid4()), 'rooms': []}, details.get('manual_rooms') or [], rows,
+                sum(float(row.get('cuft') or 0) for row in rows if row.get('going') is not False),
+                sum(float(row.get('weight') or 0) for row in rows if row.get('going') is not False), access, db)
+        elif draft.get('rows'):
+            body = {**draft['body'], 'request_id': str(uuid4())}
+            result = submit_inventory(ManualInventoryInput.model_validate(body), access, db)
+        else:
             raise HTTPException(400, 'Add files or items to your list before generating a report.')
-        result = submit_inventory(ManualInventoryInput.model_validate(draft['body']), access, db)
         if not result.get('ok'):
             raise HTTPException(422, result.get('detail'))
         return result

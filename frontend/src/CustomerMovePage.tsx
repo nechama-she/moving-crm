@@ -927,9 +927,9 @@ export default function CustomerMovePage() {
                   </div>
                 </div>}
 
-                {((data.editable_files || data.files).length > 0 || !!data.inventory_draft?.rows.length) && (
+                {((data.editable_files || data.files).length > 0 || !!data.inventory_draft?.rows.length || !!data.combined_inventory?.length) && (
                   <div className="cm-spark-box">
-                    <p className="cm-report-includes"><strong>Next report:</strong> {(data.editable_files || data.files).length} media file{(data.editable_files || data.files).length === 1 ? '' : 's'}{data.inventory_draft?.rows.length ? ` + saved item list (${data.inventory_draft.cuft.toLocaleString()} cu ft)` : ''}</p>
+                    <p className="cm-report-includes"><strong>Next report:</strong> {(data.editable_files || data.files).length} media file{(data.editable_files || data.files).length === 1 ? '' : 's'}{data.inventory_draft?.rows.length ? ` + saved item list (${data.inventory_draft.cuft.toLocaleString()} cu ft)` : data.combined_inventory?.length ? ' + current inventory list' : ''}</p>
                     <button
                       type="button"
                       className="slds-button cm-primary cm-spark-btn"
@@ -954,7 +954,7 @@ export default function CustomerMovePage() {
                         }
                       }}
                     >
-                      {startingReport ? 'Starting report...' : data.spark?.status === 'queued' || data.spark?.status === 'running' ? 'Report running...' : data.spark ? 'Rerun report & estimate' : 'Generate report & get estimate'}
+                      {startingReport ? 'Starting report...' : data.spark?.status === 'queued' || data.spark?.status === 'running' ? 'Report running...' : data.spark ? 'Update report & estimate' : 'Generate report & get estimate'}
                     </button>
                     {reportNotice && <p ref={reportMessage} role="status" className="cm-spark-notice">{reportNotice}</p>}
                   </div>

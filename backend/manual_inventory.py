@@ -94,10 +94,15 @@ def build_inventory(body, db, allow_empty=False):
 def submit_inventory(body, access, db):
     from routes.liveswitch import apply_spark_results_to_lead
     rooms, rows, cuft, weight = build_inventory(body, db)
+    return submit_inventory_snapshot(body.model_dump(mode='json'), rooms, rows, cuft, weight, access, db)
+
+
+def submit_inventory_snapshot(list_body, rooms, rows, cuft, weight, access, db):
+    from routes.liveswitch import apply_spark_results_to_lead
     job = db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
     saved = db.get(LeadLiveSwitch, access.lead_id)
     details = json.loads(saved.details or '{}') if saved else {}
-    report_id = 'manual-' + str(body.request_id)
+    report_id = 'manual-' + str(list_body['request_id'])
     if any(row.get('last_spark_id') == report_id for row in details.get('spark_history', [])):
         if details.get('last_spark_id') != report_id:
             raise HTTPException(409, 'This list is already in your history. Select it there.')
@@ -114,7 +119,7 @@ def submit_inventory(body, access, db):
     for key in CONVERSATION_KEYS:
         details[key] = ''
     details.update(last_spark_id=report_id, last_spark_status='completed', last_spark_at=int(time.time()),
-                   report_list_body=body.model_dump(mode='json'), report_source='manual', manual_rooms=rooms, spark_inventory_snapshot=rows,
+                   report_list_body=list_body, report_source='manual', manual_rooms=rooms, spark_inventory_snapshot=rows,
                    spark_extracted_cuft=cuft, spark_extracted_weight=weight, report_files=[],
                    report_conversation={}, spark_pricing_ready=False)
     remember_report(details)
@@ -158,7 +163,13 @@ def replace_current_inventory(body, access, db):
     details['spark_extracted_weight'] = weight
     details['spark_pricing_ready'] = False
     details.pop('spark_extracted_id', None)
-    details.pop('inventory_draft', None)
+    from report_files import active_report_files
+    if not active_report_files(access, db):
+        # With no media, an explicit inventory save becomes the manual report input.
+        details['inventory_draft'] = {'body': body.model_dump(mode='json'), 'rooms': rooms,
+                                      'rows': rows, 'cuft': cuft, 'weight': weight}
+    else:
+        details.pop('inventory_draft', None)
     for key in ('question_excluded_items', 'report_question_answers'):
         details.pop(key, None)
     remember_report(details)
