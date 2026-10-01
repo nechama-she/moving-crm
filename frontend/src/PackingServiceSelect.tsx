@@ -1,3 +1,4 @@
+import {useRef, useState} from 'react';
 export type PackingMaterialService = 'self' | 'packing' | 'materials';
 
 const money = (value: number) => value.toLocaleString('en-US', {
@@ -23,15 +24,30 @@ export default function PackingServiceSelect({
   available?: boolean;
   onChange: (service: PackingMaterialService) => void;
 }) {
-  return <select
-    className="cm-material-service-select"
-    aria-label={`Packing service for ${label}`}
-    disabled={disabled || !available}
-    value={available ? value : 'self'}
-    onChange={event => onChange(event.target.value as PackingMaterialService)}
-  >
-    <option value="self">You pack it</option>
-    {available && <option value="packing">Movers pack - {money(packingPrice)}</option>}
-    {available && <option value="materials">Movers provide + pack - {money(materialsPrice)}</option>}
-  </select>;
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const options: {value: PackingMaterialService; label: string}[] = [
+    {value: 'self', label: "I'll pack"},
+    ...(available ? [
+      {value: 'packing' as const, label: `Packing only - ${money(packingPrice)}`},
+      {value: 'materials' as const, label: `Packing + materials - ${money(materialsPrice)}`},
+    ] : []),
+  ];
+  const selected = options.find(option => option.value === value) || options[0];
+  return <div className="cm-service-picker" onBlur={event => {
+    if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+  }} onKeyDown={event => {
+    if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
+  }}>
+    <button ref={trigger} type="button" className="cm-service-picker-trigger" aria-label={`Packing service for ${label}: ${selected.label}`} aria-expanded={open} disabled={disabled || !available} onClick={() => setOpen(current => !current)}>
+      {selected.label}
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="m5 6 3 3 3-3"/></svg>
+    </button>
+    {open && !disabled && available && <div className="cm-service-picker-options" role="group" aria-label={`Packing service for ${label}`}>
+      {options.map(option => <button key={option.value} type="button" aria-pressed={selected.value === option.value} onClick={() => {
+        onChange(option.value); setOpen(false); trigger.current?.focus();
+      }}>{option.label}</button>)}
+    </div>}
+    {selected.value === 'packing' && <small style={{display: 'block', fontSize: 11, color: 'var(--cm-text-muted)'}}>Packing only: you supply materials.</small>}
+  </div>;
 }

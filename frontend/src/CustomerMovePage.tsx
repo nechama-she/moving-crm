@@ -1067,7 +1067,7 @@ export default function CustomerMovePage() {
               setReportState('idle');
             }} />}
             {showQuestions && (
-              <div className="cm-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="packing-title">
+              <div className="cm-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="packing-title" onClick={event => { if (event.target === event.currentTarget) setShowQuestions(false); }}>
                 <div className="cm-modal-card">
                   <div className="cm-question-heading">
                   <div className="cm-modal-header">
