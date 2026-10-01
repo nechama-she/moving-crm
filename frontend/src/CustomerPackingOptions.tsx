@@ -61,7 +61,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       <p>Your inventory includes <strong>{allBoxCount} boxes</strong>. These quantities reserve truck space; packing is included only when selected here.</p>
       <div className="cm-box-packing-modes">
         <label><input type="radio" name="box-packing" checked={boxChoice==='self'} disabled={disabled} onChange={()=>{setBoxChoice('self');setBoxCounts({});}}/> I will pack all</label>
-        <label><input type="radio" name="box-packing" checked={boxChoice==='movers'} disabled={disabled||boxes.some(item=>!item.available)} onChange={()=>{setBoxChoice('movers');setBoxCounts(Object.fromEntries(boxes.map(item=>[item.id,item.quantity])));}}/> Movers pack all</label>
+        <label><input type="radio" name="box-packing" checked={boxChoice==='movers'} disabled={disabled||!config.rates.full} onChange={()=>{setBoxChoice('movers');onChange({...selection,mode:'full',item_ids:[],material_item_ids:[]});}}/> Movers pack all</label>
         <label><input type="radio" name="box-packing" checked={boxChoice==='custom'} disabled={disabled} onChange={()=>{setBoxChoice('custom');setBoxCounts({});}}/> Choose by box type</label>
       </div>
       {boxChoice==='custom' && <div className="cm-box-packing-list">

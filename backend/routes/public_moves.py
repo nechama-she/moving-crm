@@ -1059,6 +1059,17 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         choices = dict(body.selections)
     for item_id in body.selected_ids:
         choices.setdefault(item_id, 'packing')
+    if change:
+        # Reconcile stored bulky selections independently of the question being edited.
+        available_services = {item['id']: {service['kind'] for service in item['services']} for item in options}
+        stale_choices = {item_id for item_id, service in choices.items()
+                         if item_id not in available_services or service not in available_services[item_id]}
+        # An explicitly requested service still needs to pass the validation below.
+        if change.kind == 'bulky':
+            stale_choices.discard(change.item_id)
+        for item_id in stale_choices:
+            choices.pop(item_id)
+        touched.update(stale_choices)
     selected = set(choices)
     if not selected.issubset({item['id'] for item in options}):
         raise HTTPException(409, 'Your inventory or pricing changed. Refresh and select your items again.')

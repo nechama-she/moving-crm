@@ -267,6 +267,7 @@ export default function CustomerMovePage() {
     const previous = packageSelection;
     setPackageSelection(next);
     if (next.mode !== previous.mode) {
+      if (next.mode === 'full') { setPackingSection('service'); termsBody.current?.scrollTo({top:0}); }
       savePricingChange({ kind: 'mode', mode: next.mode });
     }
     else if (next.has_additional_protection !== previous.has_additional_protection) savePricingChange({kind:'additional_protection',enabled:next.has_additional_protection === true});
@@ -296,7 +297,7 @@ export default function CustomerMovePage() {
   ];
   const nextPricing = pricingSteps[pricingSteps.indexOf(packingStep)+1];
   const nextPricingLabels: Record<PricingStep,string> = { stops:'additional stops', elevator:'elevator', access:'truck access', stairs:'stairs', storage:'delivery date', bulky:'bulky items', package:'packing services', items:'moving terms' };
-  const packingSections:('service'|'boxes'|'protection')[]=['service',...(packageSelection.mode==='none'?['protection'] as const:[]),...(data?.packing_package?.box_items?.length?['boxes'] as const:[])];
+  const packingSections:('service'|'boxes'|'protection')[]=['service',...(packageSelection.mode==='none'?['protection'] as const:[]),...(packageSelection.mode !== 'full' && data?.packing_package?.box_items?.length?['boxes'] as const:[])];
   const nextPackingSection=packingSections[packingSections.indexOf(packingSection)+1];
   useEffect(() => { setElevatorAnswers(Object.fromEntries((data?.elevator?.locations || []).map(row => [row.location,row.uses_elevator]))); setElevatorMissing(false); }, [data?.elevator?.locations.map(row => row.revision).join(':')]);
   const pickupCarry = data?.long_carry?.locations.find(row => row.location === 'pickup');
