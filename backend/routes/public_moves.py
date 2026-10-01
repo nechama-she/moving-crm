@@ -1018,6 +1018,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                 touched.update(f'material:{item_id}' for item_id in selection.get('additional_items', {}))
                 touched.update(f'inventory-box:{item_id}' for item_id in selection.get('box_quantities', {}))
                 selection['mode'] = change.mode
+                if change.mode in ('partial', 'none'):
+                    selection['box_quantities'] = {}
                 if change.mode != 'none':
                     selection['item_ids'] = []
                     selection['material_item_ids'] = []

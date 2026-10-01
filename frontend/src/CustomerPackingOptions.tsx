@@ -51,7 +51,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
     {stage === 'service' && <><div className="cm-packing-heading"><h4>Choose your packing service</h4><div className="cm-packing-volume"><span>{inventoryVolume.toLocaleString()} cu ft</span>{minimumApplies && <small>Minimum billable: {config.minimum_cubic_feet!.toLocaleString()} cu ft</small>}</div></div>
     <div className="cm-packing-choices" data-customer-action="packing-service">
       {(['full', 'partial', 'none'] as const).filter(mode => mode === 'none' || config.rates[mode]).map(mode => <label key={mode} className={`cm-packing-choice ${selection.mode === mode ? 'selected' : ''}`}>
-        <input type="radio" name="packing-package" disabled={disabled} checked={selection.mode === mode} onChange={() => onChange({ ...selection, mode, item_ids: [], material_item_ids: [] })} />
+        <input type="radio" name="packing-package" disabled={disabled} checked={selection.mode === mode} onChange={() => { setBoxChoice(mode === 'full' ? 'movers' : 'self'); onChange({ ...selection, mode, item_ids: [], material_item_ids: [], box_quantities: {} }); }} />
         <span className="cm-packing-copy"><strong className="cm-packing-title"><span>{mode === 'full' ? 'Full packing' : mode === 'partial' ? 'Partial packing' : 'No packing'}</span><span className="cm-packing-inline-price">&middot; {mode === 'none' ? '$0' : <>{money(config.rates[mode]!.rate)} / cu ft &middot; {money(config.rates[mode]!.total)}</>}</span></strong>
         <small>{mode === 'full' ? 'All belongings, including personal-item boxes. Materials included.' : mode === 'partial' ? 'We box items that require it. Materials included; personal-item boxes excluded.' : (config.items.length ? 'Pack yourself, or choose individual items below.' : 'Pack your belongings yourself.')}</small></span>
       </label>)}
@@ -76,7 +76,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
       </div>}
     </section>)}
     {stage === 'protection' && selection.mode === 'none' && <>
-    <p className="cm-packing-code-help"><strong>PBO</strong> &mdash; Packed by owner: you pack. <strong>CP</strong> &mdash; Carrier packed: the movers pack, with materials included.</p>
+    <p className="cm-packing-code-help"><strong>PBO</strong> - Packed by owner: you pack. <strong>CP</strong> - Carrier packed: the movers pack, with materials included.</p>
     {config.configured_materials ? <>
     <ConfiguredPackingItems config={config} selection={selection} onChange={onChange} disabled={disabled}/>
     <fieldset className="cm-protection-confirmation" data-customer-action="additional-protection">
