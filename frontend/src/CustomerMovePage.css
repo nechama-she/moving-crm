@@ -251,3 +251,5 @@
 .cm-estimate-charge-row>div{flex:1;min-width:0}.cm-estimate-charge-row .cm-stop-charge-detail{display:flex;flex-direction:row;justify-content:space-between;gap:16px;font-size:11px;color:var(--cm-text-muted);margin-top:8px}.cm-stop-charge-detail>strong{white-space:nowrap}
 
 .cm-charge-subheading{display:block;margin-top:12px;font-size:12px}
+
+.cm-saved-list-clickable{cursor:pointer}.cm-saved-list-clickable:hover{background:var(--cm-tint)}.cm-saved-list-clickable:focus-visible{outline:2px solid var(--cm-primary);outline-offset:4px}

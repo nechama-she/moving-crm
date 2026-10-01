@@ -913,13 +913,12 @@ export default function CustomerMovePage() {
                     </article>
                   ))}
                 </div>
-                {data.inventory_draft?.rows.length && !data.combined_inventory?.length ? <section className="cm-saved-list-summary" aria-label="Saved item list">
+                {data.inventory_draft?.rows.length ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open saved item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
                   <div>
                     <strong>Saved item list</strong>
                     <span>{data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((roomTotal, item) => roomTotal + Number(item.amount || 0), 0), 0)} items &middot; {data.inventory_draft.cuft.toLocaleString()} cu ft</span>
                     <small>Included with your photos and videos in the next report.</small>
                   </div>
-                  <button type="button" className="slds-button" onClick={() => setShowInventoryList(true)}>View / edit list</button>
                 </section> : null}
                 <ReportFileGallery newFileIds={(data.editable_files || data.files).filter(file => !(data.report_history?.find(report => report.current)?.files || []).some(previous => previous.id === file.id)).map(file => file.id)} files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={busy || reportState === 'running'} />
                 {data.walkthrough && <div className="cm-meeting-summary">
@@ -932,7 +931,7 @@ export default function CustomerMovePage() {
 
                 {((data.editable_files || data.files).length > 0 || !!data.inventory_draft?.rows.length) && (
                   <div className="cm-spark-box">
-                    <p className="cm-report-includes"><strong>Next report:</strong> {(data.editable_files || data.files).length} media file{(data.editable_files || data.files).length === 1 ? '' : 's'}{data.inventory_draft?.rows.length&&!data.combined_inventory?.length ? ` + saved item list (${data.inventory_draft.cuft.toLocaleString()} cu ft)` : ''}</p>
+                    <p className="cm-report-includes"><strong>Next report:</strong> {(data.editable_files || data.files).length} media file{(data.editable_files || data.files).length === 1 ? '' : 's'}{data.inventory_draft?.rows.length ? ` + saved item list (${data.inventory_draft.cuft.toLocaleString()} cu ft)` : ''}</p>
                     <button
                       type="button"
                       className="slds-button cm-primary cm-spark-btn"
