@@ -382,7 +382,7 @@ export default function CustomerMovePage() {
   }
   function groupedCharges() {
     type Charge = NonNullable<NonNullable<Details['estimate']>['charges']>[number];
-    type Group = Charge & {children?: Charge[]; target?: NonNullable<ReturnType<typeof chargeQuestion>>};
+    type Group = Charge & {children?: (Charge & {heading?: string; displayName?: string})[]; target?: NonNullable<ReturnType<typeof chargeQuestion>>};
     const result: Group[] = [];
     const groups = new Map<string, Group>();
     const titles: Record<PricingStep, string> = {stops: 'Additional stops', elevator: 'Elevator', access: 'Truck access', stairs: 'Stairs', storage: 'Delivery date', bulky: 'Packing & crating', package: 'Packing services', items: 'Moving terms'};
@@ -401,7 +401,30 @@ export default function CustomerMovePage() {
       group.total += charge.pending ? 0 : charge.total;
       group.pending ||= charge.pending;
     }
-    return result;
+    for (const group of groups.values()) {
+      const target = group.target!;
+      const location = (name: string) => /pickup/i.test(name) ? 0 : /delivery/i.test(name) ? 1 : 2;
+      if (['stops', 'elevator', 'access', 'stairs'].includes(target.step)) {
+        group.children!.sort((a, b) => location(a.name) - location(b.name) ||
+          (target.step === 'access' ? Number(!/shuttle/i.test(a.name)) - Number(!/shuttle/i.test(b.name)) : 0) ||
+          a.name.localeCompare(b.name, undefined, {numeric: true}));
+        let previous = '';
+        group.children = group.children!.map(child => {
+          const heading = location(child.name) === 0 ? 'Pickup' : location(child.name) === 1 ? 'Delivery' : '';
+          const displayName = target.step === 'stops' ? child.name.replace(/^(extra|additional) (pickup|delivery) /i, '') : child.name.replace(/^(pickup|delivery) /i, '');
+          const row = {...child, heading: heading !== previous ? heading : undefined, displayName: displayName.charAt(0).toUpperCase() + displayName.slice(1)};
+          previous = heading;
+          return row;
+        });
+      }
+      if (target.step === 'package') {
+        const names = target.section === 'boxes' ? (data?.packing_package?.box_items || []).map(item => `${item.label} Packing`) : target.section === 'protection' ? (data?.packing_package?.items || []).map(item => `${item.label} Packing`) : ['Full packing', 'Partial packing', 'Unpacking'];
+        const rank = (name: string) => { const index = names.indexOf(name); return index < 0 ? names.length : index; };
+        group.children!.sort((a, b) => rank(a.name) - rank(b.name));
+      }
+    }
+    const rank = (group: Group) => group.target ? pricingSteps.indexOf(group.target.step) * 3 + (['service', 'protection', 'boxes'].indexOf(group.target.section || 'service')) : -1;
+    return result.sort((a, b) => rank(a) - rank(b));
   }
   function chargeQuestion(charge: {name: string; description: string}): {step: PricingStep; section?: 'service' | 'boxes' | 'protection'} | null {
     const name = charge.name.toLowerCase();
@@ -1037,13 +1060,16 @@ export default function CustomerMovePage() {
                         <div>
                           <strong>{charge.name}{target && <button type="button" className="cm-charge-edit" aria-label={`Edit ${charge.name}`} title={`Edit ${charge.name}`} onClick={() => openChargeQuestion(target)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z M13 6l5 5"/></svg></button>}</strong>
                           {charge.description && <small>{charge.description}</small>}
-                          {charge.children?.map((child, index) => <div key={index} className="cm-stop-charge-detail">
+                          {charge.children?.map((child, index) => <div key={index}>
+                            {child.heading && <strong className="cm-charge-subheading">{child.heading}</strong>}
+                            <div className="cm-stop-charge-detail" style={{paddingLeft: 12}}>
                             <div>
-                              <span>{target?.step === 'stops' ? (/pickup/i.test(child.name) ? 'Pickup' : 'Delivery') : child.name}</span>
+                              <span>{child.displayName || child.name}</span>
                               {child.description && <small>{child.description}</small>}
                               {(child.discount_amount || 0) > 0 && <small>Before discount: {money(child.subtotal || 0)}; Discount ({child.discount_percent}%): -{money(child.discount_amount || 0)}</small>}
                             </div>
                             <strong>{child.pending ? 'Pending' : money(child.total)}</strong>
+                            </div>
                           </div>)}
                           {(charge.discount_amount || 0) > 0 && <small>Before discount: {money(charge.subtotal || 0)}; Discount ({charge.discount_percent}%): -{money(charge.discount_amount || 0)}</small>}
                         </div>
