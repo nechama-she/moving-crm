@@ -2531,6 +2531,7 @@ def test_selected_customer_route_preserves_stops(portal, monkeypatch):
     ('item-answer', {'report_id':'missing','question_id':'q','answer_id':'yes'}, 409),
     ('question-images', {'names':['Plant']}, 200),
     ('estimate.pdf', None, 200),
+    ('inventory.pdf', {'request_id': '00000000-0000-0000-0000-000000000001', 'rooms': []}, 200),
     ('realtime-token', {}, 200),
     ('address-search', {'text':'Miami','session_token':'1234567890abcdef'}, 200),
     ('address-resolve', {'place_id':'place1','session_token':'1234567890abcdef'}, 200),
@@ -2573,7 +2574,7 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
         send = (lambda **kwargs: client.get(path, **kwargs)) if suffix == 'estimate.pdf' else (lambda **kwargs: client.post(path, json=payload, **kwargs))
         response=send(headers=headers)
         assert response.status_code==expected, response.text
-        if suffix == 'estimate.pdf':
+        if suffix in ('estimate.pdf', 'inventory.pdf'):
             assert response.content.startswith(b'%PDF-')
             assert response.headers['content-type'] == 'application/pdf'
         if suffix == 'realtime-token':
