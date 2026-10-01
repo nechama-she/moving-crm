@@ -10,7 +10,6 @@ const money = (value: number) => value.toLocaleString('en-US', {
 export default function PackingServiceSelect({
   label,
   value,
-  packingPrice,
   materialsPrice,
   disabled = false,
   available = true,
@@ -28,13 +27,12 @@ export default function PackingServiceSelect({
   const [alignRight, setAlignRight] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const options: {value: PackingMaterialService; label: string}[] = [
-    {value: 'self', label: "I'll pack"},
+    {value: 'self', label: 'PBO - You pack'},
     ...(available ? [
-      {value: 'packing' as const, label: `Packing only - ${money(packingPrice)}`},
-      {value: 'materials' as const, label: `Packing + materials - ${money(materialsPrice)}`},
+      {value: 'materials' as const, label: `CP - Movers pack - ${money(materialsPrice)}`},
     ] : []),
   ];
-  const selected = options.find(option => option.value === value) || options[0];
+  const selected = options.find(option => option.value === (value === 'self' ? 'self' : 'materials')) || options[0];
   return <div className="cm-service-picker" onBlur={event => {
     if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
   }} onKeyDown={event => {
@@ -46,7 +44,7 @@ export default function PackingServiceSelect({
       if (rect) setAlignRight(rect.left + 230 > (container?.right ?? window.innerWidth) - 16);
       setOpen(current => !current);
     }}>
-      {selected.label}
+      {selected.value === 'self' ? 'PBO' : 'CP'}
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="m5 6 3 3 3-3"/></svg>
     </button>
     {open && !disabled && available && <div className="cm-service-picker-options" style={{left: alignRight ? 'auto' : 0, right: alignRight ? 0 : 'auto'}} role="group" aria-label={`Packing service for ${label}`}>
@@ -54,6 +52,5 @@ export default function PackingServiceSelect({
         onChange(option.value); setOpen(false); trigger.current?.focus();
       }}>{option.label}</button>)}
     </div>}
-    {selected.value === 'packing' && <small style={{display: 'block', fontSize: 11, color: 'var(--cm-text-muted)'}}>Packing only: you supply materials.</small>}
   </div>;
 }
