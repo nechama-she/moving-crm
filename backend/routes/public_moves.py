@@ -760,13 +760,19 @@ def download_inventory(body: ManualInventoryInput, access: PublicMoveAccess = De
     from manual_inventory import build_inventory
     from inventory_pdf import build_inventory_pdf, inventory_photos
     rooms, _, cuft, weight = build_inventory(body, db, allow_empty=True)
+    lead = db.get(Lead, access.lead_id)
+    job = db.get(LeadJob, access.job_id) if access.job_id else None
+    company_id = (job.company_id if job else None) or lead.company_id
+    company = db.get(Company, company_id) if company_id else db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
+    company_details = {key: getattr(company, key, None) for key in ('name', 'logo', 'office_address', 'phone')}
+    client_details = {'name': lead.full_name, 'phone': lead.phone, 'email': lead.email}
     conversation = db.get(LeadLiveSwitch, access.lead_id)
     details = json.loads(conversation.details or '{}') if conversation else {}
     try:
         photos = inventory_photos(rooms, details)
     except Exception as exc:
         raise HTTPException(502, 'Could not load inventory pictures. Please try downloading again.') from exc
-    return Response(build_inventory_pdf(rooms, cuft, weight, photos), media_type='application/pdf', headers={
+    return Response(build_inventory_pdf(rooms, cuft, weight, photos, company=company_details, client=client_details), media_type='application/pdf', headers={
         'Content-Disposition': 'attachment; filename="moving-inventory.pdf"',
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 

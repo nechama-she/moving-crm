@@ -1,5 +1,7 @@
 """Printable inventory snapshot, independent of estimate readiness."""
 from io import BytesIO
+import base64
+import binascii
 from concurrent.futures import ThreadPoolExecutor
 import re
 import time
@@ -57,17 +59,47 @@ def inventory_photos(rooms, details):
             for key, urls in matches.items()}
 
 
-def build_inventory_pdf(rooms, cuft, weight, photos=None):
+def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, client=None):
     output = BytesIO()
     styles = getSampleStyleSheet()
     styles['Normal'].fontSize = 9
     styles['Normal'].leading = 12
 
     def p(value):
-        return Paragraph(escape(str(value)), styles['Normal'])
+        return Paragraph(escape(str(value)).replace('\n', '<br/>'), styles['Normal'])
+
+    story = []
+    if company or client:
+        company = company or {}
+        client = client or {}
+        company_block = []
+        logo = company.get('logo') or ''
+        if logo.startswith('data:image/png;base64,') and len(logo) <= 400000:
+            try:
+                picture = Image(BytesIO(base64.b64decode(logo.split(',', 1)[1], validate=True)))
+                scale = min(100 / picture.imageWidth, 60 / picture.imageHeight)
+                picture.drawWidth = picture.imageWidth * scale
+                picture.drawHeight = picture.imageHeight * scale
+                picture.hAlign = 'LEFT'
+                company_block.extend([picture, Spacer(1, 6)])
+            except (ValueError, OSError, binascii.Error):
+                pass
+        company_block.append(Paragraph(escape(company.get('name') or 'Your moving team'), styles['Heading3']))
+        company_block.extend(p(value) for value in [company.get('office_address'), company.get('phone')] if value)
+        client_block = [Paragraph('Client', styles['Heading3'])]
+        client_block.extend(p(value) for value in [client.get('name'), client.get('phone'), client.get('email')] if value)
+        header = Table([[company_block, client_block]], colWidths=[292, 220])
+        header.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+            ('LINEBELOW', (0, 0), (-1, -1), .5, colors.HexColor('#e5dada')),
+        ]))
+        story.extend([header, Spacer(1, 14)])
 
     count = sum(row['amount'] for room in rooms for row in room['items'])
-    story = [Paragraph('Your inventory', styles['Title']),
+    story += [Paragraph('Your inventory', styles['Title']),
              p(f'{len(rooms)} rooms | {count} items | {cuft:,.2f} cu ft going | {weight:,.2f} lb'),
              Spacer(1, 12)]
     for room in rooms:

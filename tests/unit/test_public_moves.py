@@ -51,6 +51,37 @@ def portal(monkeypatch):
     engine.dispose()
 
 
+@pytest.mark.parametrize('company_source', ['job', 'lead', 'default'])
+def test_inventory_pdf_includes_company_and_client(portal, monkeypatch, company_source):
+    import base64
+    from io import BytesIO
+    from PIL import Image
+    import pymupdf
+
+    mod, db, lead, access = portal
+    logo = BytesIO()
+    Image.new('RGB', (256, 256), '#15354b').save(logo, format='PNG')
+    company = models.Company(id='inventory-company', name='Moving & Storage',
+                             office_address='123 Main Street\nRockville, MD 20850', phone='202-555-0199',
+                             logo='data:image/png;base64,' + base64.b64encode(logo.getvalue()).decode(),
+                             is_default_company=company_source == 'default')
+    db.add(company)
+    if company_source == 'job':
+        db.get(models.LeadJob, access.job_id).company_id = company.id
+    elif company_source == 'lead':
+        lead.company_id = company.id
+    db.flush()
+    monkeypatch.setattr('inventory_pdf.inventory_photos', lambda *args: {})
+    body = mod.ManualInventoryInput(request_id='00000000-0000-0000-0000-000000000001', rooms=[])
+    response = mod.download_inventory(body, access, db)
+    with pymupdf.open(stream=response.body, filetype='pdf') as pdf:
+        text = ''.join(page.get_text() for page in pdf)
+        for value in [company.name, '123 Main Street', 'Rockville, MD 20850', company.phone,
+                      lead.full_name, lead.phone, lead.email, 'Your inventory']:
+            assert value in text
+        assert pdf[0].get_images()
+
+
 @pytest.mark.parametrize('fails', [False, True])
 def test_recalculate_current_price_does_not_import_report_or_replace_answers(portal, monkeypatch, fails):
     mod, db, lead, access = portal
