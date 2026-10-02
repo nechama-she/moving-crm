@@ -2347,6 +2347,7 @@ class LeadJobCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     company_id: str | None = None
+    dispatch_company_id: str | None = None
     smartmoving_job_id: str = ""
     pickup_zip: str = ""
     delivery_zip: str = ""
@@ -2366,6 +2367,7 @@ class LeadJobUpdate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     company_id: str | None = None
+    dispatch_company_id: str | None = None
     smartmoving_job_id: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
@@ -2488,6 +2490,9 @@ def _validate_job_route_has_one_side(pickup: str, delivery: str) -> None:
 
 def _serialize_job_with_addresses(job: LeadJob, db: Session) -> dict:
     payload = job.to_dict()
+    # Internal CRM only; keep dispatch details out of shared/customer serializers.
+    payload["dispatch_company_id"] = job.dispatch_company_id or ""
+    payload["dispatch_company_name"] = job.dispatch_company.name if job.dispatch_company else ""
     selection = json.loads(job.customer_packing_package or '{}')
     payload['pricing_error'] = selection.get('pricing_save_error', '') if selection.get('pricing_pending') else ''
     payload['pricing_error'] = job.price_refresh_error or payload['pricing_error']
@@ -2533,6 +2538,7 @@ def create_lead_job(
     _ensure_not_dispatch_write(user)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     company_ids = _get_user_company_ids(user, db)
+    dispatch_company_id = _validate_dispatch_company(body.dispatch_company_id, company_ids, db)
 
     company_id = (body.company_id or "").strip() or lead.company_id
     if company_id not in company_ids:
@@ -2560,6 +2566,7 @@ def create_lead_job(
         lead_id=lead.id,
         company_id=company_id,
         job_order=_next_lead_job_order(lead.id, db),
+        dispatch_company_id=dispatch_company_id,
         smartmoving_job_id=(body.smartmoving_job_id or "").strip() or None,
         pickup_zip="",
         delivery_zip="",
@@ -2691,6 +2698,16 @@ def save_lead_job_price(
     return _serialize_job_with_addresses(row, db)
 
 
+def _validate_dispatch_company(value: str | None, company_ids: list[str], db: Session) -> str | None:
+    company_id = (value or "").strip() or None
+    if company_id:
+        if company_id not in company_ids:
+            raise HTTPException(status_code=403, detail="Not allowed for this dispatch company")
+        if not db.get(Company, company_id):
+            raise HTTPException(status_code=404, detail="Dispatch company not found")
+    return company_id
+
+
 @router.patch("/leads/{lead_id}/jobs/{job_id}")
 def update_lead_job(
     lead_id: str,
@@ -2702,8 +2719,8 @@ def update_lead_job(
     payload = body.model_dump(exclude_unset=True, by_alias=False)
     if user.role == "foreman" and set(payload) != {"foreman_notes"}:
         raise HTTPException(status_code=403, detail="Foreman users can only update foreman notes")
-    if user.role == "dispatch" and (not payload or not set(payload).issubset({"foreman_id", "notes", "customer_notes", "foreman_notes"})):
-        raise HTTPException(status_code=403, detail="Dispatch users can only assign a foreman or update job notes")
+    if user.role == "dispatch" and (not payload or not set(payload).issubset({"dispatch_company_id", "foreman_id", "notes", "customer_notes", "foreman_notes"})):
+        raise HTTPException(status_code=403, detail="Dispatch users can only assign a dispatch company or foreman, or update job notes")
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadJob)
@@ -2730,6 +2747,9 @@ def update_lead_job(
 
     if "smartmoving_job_id" in payload:
         row.smartmoving_job_id = (payload.get("smartmoving_job_id") or "").strip() or None
+
+    if "dispatch_company_id" in payload:
+        row.dispatch_company_id = _validate_dispatch_company(payload["dispatch_company_id"], company_ids, db)
 
     if "foreman_id" in payload:
         if user.role not in ("admin", "dispatch"):

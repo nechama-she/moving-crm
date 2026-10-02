@@ -51,6 +51,24 @@ def portal(monkeypatch):
     engine.dispose()
 
 
+def test_dispatch_company_does_not_replace_customer_company(portal):
+    mod, db, lead, access = portal
+    contract = models.Company(id='contract', name='Gorilla Haulers', phone='+12025550111')
+    dispatch = models.Company(id='dispatch', name='Rapid', phone='+12025550122')
+    db.add_all([contract, dispatch])
+    job = db.get(models.LeadJob, access.job_id)
+    job.company_id = contract.id
+    job.dispatch_company_id = dispatch.id
+    db.commit()
+
+    contacts, _, company = mod.rep_contacts(access, db)
+    assert company.id == contract.id
+    assert contacts['company_sms']['phone'] == contract.phone
+    assert job.dispatch_company.id == dispatch.id
+    assert 'dispatch_company_id' not in job.to_dict()
+    assert 'dispatch_company_name' not in job.to_dict()
+
+
 @pytest.mark.parametrize('company_source', ['job', 'lead', 'default'])
 def test_inventory_pdf_includes_company_and_client(portal, monkeypatch, company_source):
     import base64

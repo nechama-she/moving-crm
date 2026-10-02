@@ -41,6 +41,8 @@ def migrate() -> None:
         connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_default_company BOOLEAN NOT NULL DEFAULT FALSE"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_companies_default ON companies(is_default_company) WHERE is_default_company = TRUE"))
         connection.execute(text("ALTER TABLE lead_jobs ALTER COLUMN company_id DROP NOT NULL"))
+        connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS dispatch_company_id VARCHAR(36) REFERENCES companies(id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_jobs_dispatch_company_id ON lead_jobs(dispatch_company_id)"))
         connection.execute(text("ALTER TABLE lead_attachments ALTER COLUMN uploaded_by DROP NOT NULL"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS stop_types TEXT"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS customer_packing TEXT"))

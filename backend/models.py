@@ -487,6 +487,7 @@ class LeadJob(Base):
     id = Column(String(36), primary_key=True, default=_uuid)
     lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
     company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
+    dispatch_company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
     job_order = Column(Integer, nullable=False, default=1)
     pickup_zip = Column(Text)
     delivery_zip = Column(Text)
@@ -510,6 +511,7 @@ class LeadJob(Base):
 
     lead = relationship("Lead", foreign_keys=[lead_id])
     company = relationship("Company", foreign_keys=[company_id])
+    dispatch_company = relationship("Company", foreign_keys=[dispatch_company_id])
     foreman = relationship("User", foreign_keys=[foreman_id])
     charges = relationship("LeadJobCharge", back_populates="job", cascade="all, delete-orphan", order_by="LeadJobCharge.sort_order.asc(), LeadJobCharge.created_at.asc()")
 

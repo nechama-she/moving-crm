@@ -59,6 +59,8 @@ type LeadJobItem = {
   lead_id: string;
   company_id: string;
   company_name: string;
+  dispatch_company_id: string;
+  dispatch_company_name: string;
   job_order: number;
   foreman_id: string;
   foreman_name: string;
@@ -616,6 +618,8 @@ export default function LeadDetail() {
         lead_id: String(item.lead_id || ""),
         company_id: String(item.company_id || ""),
         company_name: String(item.company_name || ""),
+        dispatch_company_id: String(item.dispatch_company_id || ""),
+        dispatch_company_name: String(item.dispatch_company_name || ""),
         job_order: Number(item.job_order || 0),
         foreman_id: String(item.foreman_id || ""),
         foreman_name: String(item.foreman_name || ""),
@@ -1444,6 +1448,28 @@ export default function LeadDetail() {
     event.preventDefault();
     const attachmentId = event.dataTransfer.getData("application/x-moving-crm-attachment");
     if (attachmentId) void moveAttachmentToJob(attachmentId, targetJobId);
+  }
+
+  async function saveDispatchCompany(jobId: string, companyId: string) {
+    setSavingJobId(jobId);
+    clearJobsError();
+    try {
+      const response = await fetch(`${API_BASE}/api/leads/${leadId}/jobs/${jobId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ dispatch_company_id: companyId || null }),
+      });
+      if (!response.ok) await throwApiError(response, "Failed to save dispatch company");
+      const updated = await response.json() as LeadJobItem;
+      setLeadJobs((current) => current.map((job) => job.id === jobId ? {
+        ...job, dispatch_company_id: updated.dispatch_company_id,
+        dispatch_company_name: updated.dispatch_company_name,
+      } : job));
+    } catch (reason) {
+      setJobsErrorFromReason(reason, "Failed to save dispatch company");
+    } finally {
+      setSavingJobId("");
+    }
   }
 
   async function saveJobNotes(jobId: string, field: "customer_notes" | "notes" | "foreman_notes") {
@@ -2960,12 +2986,26 @@ export default function LeadDetail() {
 
                     <div className="lead-job-summary-grid">
                       <label style={{ width: 200 }}>
-                        Company
+                        Contract company
                         <select
                           value={draft.company_id}
                           onChange={(e) => setJobDrafts((prev) => ({ ...prev, [job.id]: { ...draft, company_id: e.target.value } }))}
                           disabled={!canEditJobs}
                         >
+                          {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+                        </select>
+                      </label>
+                      <label style={{ width: 200 }}>
+                        Dispatch company (internal)
+                        <select
+                          value={job.dispatch_company_id}
+                          onChange={(event) => void saveDispatchCompany(job.id, event.target.value)}
+                          disabled={busy || !(canEditJobs || user?.role === "dispatch")}
+                        >
+                          <option value="">Same as contract company</option>
+                          {job.dispatch_company_id && !companies.some((company) => company.id === job.dispatch_company_id) ? (
+                            <option value={job.dispatch_company_id}>{job.dispatch_company_name}</option>
+                          ) : null}
                           {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
                         </select>
                       </label>
