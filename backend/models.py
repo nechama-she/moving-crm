@@ -42,6 +42,7 @@ class Company(Base):
     facebook_page_id = Column(String(100), unique=True, index=True)
     aircall_number_id = Column(String(50))
     aircall_name = Column(String(255))
+    dispatches_for_company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
     samrtmoving_branch_id = Column(String(100))
     granot_api_id = Column(String(100))
     granot_mover_ref = Column(String(100))
@@ -65,6 +66,7 @@ class Company(Base):
             "aircall_number_id": self.aircall_number_id or "",
             "aircall_name": self.aircall_name or "",
             "samrtmoving_branch_id": self.samrtmoving_branch_id or "",
+            "dispatches_for_company_id": self.dispatches_for_company_id or "",
             "granot_api_id": self.granot_api_id or "",
             "granot_mover_ref": self.granot_mover_ref or "",
             "timezone": self.timezone or "America/New_York",

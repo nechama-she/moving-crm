@@ -1,3 +1,4 @@
+from company_dispatch import resolve_company_dispatch, smartmoving_dispatch_company, apply_job_dispatch
 import hashlib
 import io
 import json
@@ -4068,6 +4069,7 @@ def _apply_lead_update(
     db: Session,
     *,
     allow_dispatch_smartmoving_refresh: bool = False,
+    incoming_smartmoving_company: Company | None = None,
 ):
     if not (allow_dispatch_smartmoving_refresh and user.role == "dispatch"):
         _ensure_not_dispatch_write(user)
@@ -4128,6 +4130,20 @@ def _apply_lead_update(
         if not company:
             raise HTTPException(status_code=404, detail=f"company_name '{requested_company_name}' not found")
         next_company_id = company.id
+
+    mapped_dispatch_id = None
+    incoming_company = incoming_smartmoving_company
+    if next_company_id is not None:
+        if next_company_id not in company_ids:
+            raise HTTPException(status_code=403, detail="Not allowed to use this company")
+        incoming_company = db.get(Company, next_company_id)
+        if not incoming_company:
+            raise HTTPException(status_code=404, detail="Company not found")
+    if incoming_company is not None:
+        contract_company, mapped_dispatch_id = resolve_company_dispatch(db, incoming_company)
+        next_company_id = contract_company.id
+        if mapped_dispatch_id and mapped_dispatch_id not in company_ids:
+            raise HTTPException(status_code=403, detail="Not allowed to use this dispatch company")
 
     if next_company_id is not None:
         if next_company_id not in company_ids:
@@ -4264,6 +4280,9 @@ def _apply_lead_update(
     primary_job = _get_or_create_primary_lead_job(lead, db)
     if next_company_id is not None:
         primary_job.company_id = lead.company_id
+    if mapped_dispatch_id:
+        for mapped_job in db.query(LeadJob).filter(LeadJob.lead_id == lead.id).all():
+            apply_job_dispatch(mapped_job, lead.company_id, mapped_dispatch_id)
 
     if body.jobs is not None:
         requested_job_orders: dict[str, int] = {}
@@ -4315,6 +4334,7 @@ def _apply_lead_update(
                         db.add(target_job)
                         db.flush()
 
+            apply_job_dispatch(target_job, lead.company_id, mapped_dispatch_id)
             if not target_job.id:
                 db.flush()
             incoming_job_ids.add(target_job.id)
@@ -4676,6 +4696,7 @@ def _refresh_lead_from_smartmoving(
         user,
         db,
         allow_dispatch_smartmoving_refresh=True,
+        incoming_smartmoving_company=smartmoving_dispatch_company(db, opportunity),
     )
     sync_result = sync_smartmoving_files(lead, user, db, opportunity)
     request.state.audit_request_payload = {
@@ -4904,6 +4925,8 @@ def create_lead(
     if not company:
         raise HTTPException(status_code=400, detail=f"Company '{body.company_name}' not found")
 
+    company, mapped_dispatch_id = resolve_company_dispatch(db, company)
+
     assigned_to_user_id = None
     assignment_mode = "manual"
     assignment_reason = "admin_available"
@@ -5062,6 +5085,7 @@ def create_lead(
             lead_id=lead.id,
             company_id=lead.company_id,
             job_order=1,
+            dispatch_company_id=mapped_dispatch_id,
             smartmoving_job_id=_clean_optional_text(body.smartmoving_job_id) or None,
             pickup_zip=lead.pickup_zip,
             delivery_zip=lead.delivery_zip,

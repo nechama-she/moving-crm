@@ -14,6 +14,7 @@ type Company = {
   facebook_page_id?: string;
   aircall_number_id?: string;
   aircall_name?: string;
+  dispatches_for_company_id?: string;
   samrtmoving_branch_id?: string;
   granot_api_id?: string;
   granot_mover_ref?: string;
@@ -31,6 +32,7 @@ type CompanyForm = {
   facebook_page_id: string;
   aircall_number_id: string;
   aircall_name: string;
+  dispatches_for_company_id: string;
   samrtmoving_branch_id: string;
   granot_api_id: string;
   granot_mover_ref: string;
@@ -47,6 +49,7 @@ const emptyForm: CompanyForm = {
   facebook_page_id: "",
   aircall_number_id: "",
   aircall_name: "",
+  dispatches_for_company_id: "",
   samrtmoving_branch_id: "",
   granot_api_id: "",
   granot_mover_ref: "",
@@ -115,6 +118,7 @@ export default function CompaniesPage() {
       facebook_page_id: company.facebook_page_id || "",
       aircall_number_id: company.aircall_number_id || "",
       aircall_name: company.aircall_name || "",
+      dispatches_for_company_id: company.dispatches_for_company_id || "",
       samrtmoving_branch_id: company.samrtmoving_branch_id || "",
       granot_api_id: company.granot_api_id || "",
       granot_mover_ref: company.granot_mover_ref || "",
@@ -145,6 +149,7 @@ export default function CompaniesPage() {
         facebook_page_id: form.facebook_page_id.trim(),
         aircall_number_id: form.aircall_number_id.trim(),
         aircall_name: form.aircall_name.trim(),
+        dispatches_for_company_id: form.dispatches_for_company_id || null,
         samrtmoving_branch_id: form.samrtmoving_branch_id.trim(),
         granot_api_id: form.granot_api_id.trim(),
         granot_mover_ref: form.granot_mover_ref.trim(),
@@ -304,6 +309,14 @@ export default function CompaniesPage() {
             <input value={form.samrtmoving_branch_id} onChange={(e) => updateField("samrtmoving_branch_id", e.target.value)} style={inputStyle} />
           </label>
           <label style={fieldLabel}>
+            Dispatches for (contract company)
+            <select value={form.dispatches_for_company_id} onChange={(e) => updateField("dispatches_for_company_id", e.target.value)} style={inputStyle}>
+              <option value="">Own contracts</option>
+              {companies.filter((c) => c.id !== editingId && !c.dispatches_for_company_id).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <small>When SmartMoving sends this company, use the selected company for the contract and this company for dispatch. Existing dispatch assignments are kept.</small>
+          </label>
+          <label style={fieldLabel}>
             Granot API ID
             <input value={form.granot_api_id} onChange={(e) => updateField("granot_api_id", e.target.value)} style={inputStyle} />
           </label>
@@ -365,6 +378,7 @@ export default function CompaniesPage() {
               <th style={th}>Aircall Number ID</th>
               <th style={th}>Aircall Name</th>
               <th style={th}>SmartMoving Branch ID</th>
+              <th style={th}>Dispatches for</th>
               <th style={th}>Granot API ID</th>
               <th style={th}>Granot Mover Ref</th>
               <th style={th}>Timezone</th>
@@ -374,13 +388,13 @@ export default function CompaniesPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={14}>Loading...</td>
+                <td style={td} colSpan={15}>Loading...</td>
               </tr>
             ) : null}
 
             {!loading && filteredCompanies.length === 0 ? (
               <tr>
-                <td style={td} colSpan={14}>No companies found.</td>
+                <td style={td} colSpan={15}>No companies found.</td>
               </tr>
             ) : null}
 
@@ -410,6 +424,7 @@ export default function CompaniesPage() {
                 <td style={td}>{company.aircall_number_id || "-"}</td>
                 <td style={td}>{company.aircall_name || "-"}</td>
                 <td style={td}>{company.samrtmoving_branch_id || "-"}</td>
+                <td style={td}>{companies.find((c) => c.id === company.dispatches_for_company_id)?.name || "Own contracts"}</td>
                 <td style={td}>{company.granot_api_id || "-"}</td>
                 <td style={td}>{company.granot_mover_ref || "-"}</td>
                 <td style={td}>{company.timezone || "-"}</td>

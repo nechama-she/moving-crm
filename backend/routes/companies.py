@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 from auth import require_admin, get_current_user
 from company_colors import normalize_company_color, resolve_company_color
 from database import get_db
-from models import Company, User, UserCompany, Lead
+from models import Company, User, UserCompany, Lead, LeadJob
+from company_dispatch import validate_dispatches_for
 
 logger = logging.getLogger("moving-crm")
 
@@ -61,6 +62,7 @@ class CompanyCreate(CompanyLogo):
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
     aircall_name: str = ""
+    dispatches_for_company_id: str | None = None
     samrtmoving_branch_id: str = ""
     granot_api_id: str = ""
     granot_mover_ref: str = ""
@@ -124,6 +126,7 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
         raise HTTPException(status_code=409, detail="Company already exists")
     page_id = (body.facebook_page_id or "").strip() or None
     company = Company(
+        dispatches_for_company_id=validate_dispatches_for(db, body.dispatches_for_company_id),
         name=company_name,
         logo=body.logo or None,
         color=resolve_company_color(company_name, body.color),
@@ -153,6 +156,7 @@ class CompanyUpdate(CompanyLogo):
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
     aircall_name: str = ""
+    dispatches_for_company_id: str | None = None
     samrtmoving_branch_id: str = ""
     granot_api_id: str = ""
     granot_mover_ref: str = ""
@@ -176,6 +180,8 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     if duplicate:
         raise HTTPException(status_code=409, detail="Company name already exists")
 
+    if "dispatches_for_company_id" in body.model_fields_set:
+        company.dispatches_for_company_id = validate_dispatches_for(db, body.dispatches_for_company_id, company.id)
     if body.logo is not None:
         company.logo = body.logo or None
     company.name = company_name
@@ -231,6 +237,11 @@ def delete_company(company_id: str, user: User = Depends(require_admin), db: Ses
     linked_leads = db.query(Lead).filter(Lead.company_id == company_id).count()
     if linked_leads:
         raise HTTPException(status_code=409, detail="Cannot delete company with existing leads")
+
+    if db.query(Company).filter(Company.dispatches_for_company_id == company_id).first():
+        raise HTTPException(status_code=409, detail="Cannot delete company used by a dispatch company")
+    if db.query(LeadJob).filter((LeadJob.company_id == company_id) | (LeadJob.dispatch_company_id == company_id)).first():
+        raise HTTPException(status_code=409, detail="Cannot delete company with existing jobs or dispatch assignments")
 
     db.delete(company)
     db.commit()
