@@ -73,6 +73,7 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
         company = company or {}
         client = client or {}
         company_block = []
+        logo_block = []
         logo = company.get('logo') or ''
         if logo.startswith('data:image/png;base64,') and len(logo) <= 400000:
             try:
@@ -81,20 +82,24 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
                 picture.drawWidth = picture.imageWidth * scale
                 picture.drawHeight = picture.imageHeight * scale
                 picture.hAlign = 'LEFT'
-                company_block.extend([picture, Spacer(1, 6)])
+                logo_block.append(picture)
             except (ValueError, OSError, binascii.Error):
                 pass
         company_block.append(Paragraph(escape(company.get('name') or 'Your moving team'), styles['Heading3']))
         company_block.extend(p(value) for value in [company.get('office_address'), company.get('phone')] if value)
-        client_block = [Paragraph('Client', styles['Heading3'])]
-        client_block.extend(p(value) for value in [client.get('name'), client.get('phone'), client.get('email')] if value)
-        header = Table([[company_block, client_block]], colWidths=[292, 220])
+        customer_block = [p(f'{label}: {client.get(key) or ""}') for label, key in [
+            ('Customer', 'name'), ('Phone number', 'phone'), ('Email', 'email')]]
+        if logo_block:
+            header = Table([[logo_block, company_block], [customer_block, '']], colWidths=[116, 396])
+        else:
+            header = Table([[company_block], [customer_block]], colWidths=[512])
         header.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('LEFTPADDING', (0, 0), (-1, -1), 0),
             ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+            ('SPAN', (0, 1), (-1, 1)),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
-            ('LINEBELOW', (0, 0), (-1, -1), .5, colors.HexColor('#e5dada')),
+            ('LINEBELOW', (0, 1), (-1, 1), .5, colors.HexColor('#e5dada')),
         ]))
         story.extend([header, Spacer(1, 14)])
 
