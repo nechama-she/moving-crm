@@ -9,7 +9,8 @@ from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
@@ -64,6 +65,8 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
     styles = getSampleStyleSheet()
     styles['Normal'].fontSize = 9
     styles['Normal'].leading = 12
+    company_name_style = ParagraphStyle('CompanyName', parent=styles['Heading3'], alignment=TA_RIGHT)
+    company_details_style = ParagraphStyle('CompanyDetails', parent=styles['Normal'], alignment=TA_RIGHT)
 
     def p(value):
         return Paragraph(escape(str(value)).replace('\n', '<br/>'), styles['Normal'])
@@ -85,8 +88,9 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
                 logo_block.append(picture)
             except (ValueError, OSError, binascii.Error):
                 pass
-        company_block.append(Paragraph(escape(company.get('name') or 'Your moving team'), styles['Heading3']))
-        company_block.extend(p(value) for value in [company.get('office_address'), company.get('phone')] if value)
+        company_block.append(Paragraph(escape(company.get('name') or 'Your moving team'), company_name_style))
+        company_block.extend(Paragraph(escape(str(value)).replace('\n', '<br/>'), company_details_style)
+                             for value in [company.get('office_address'), company.get('phone')] if value)
         customer_block = [p(f'{label}: {client.get(key) or ""}') for label, key in [
             ('Customer', 'name'), ('Phone number', 'phone'), ('Email', 'email')]]
         if logo_block:
@@ -97,6 +101,7 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('LEFTPADDING', (0, 0), (-1, -1), 0),
             ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+            ('RIGHTPADDING', (-1, 0), (-1, 0), 0),
             ('SPAN', (0, 1), (-1, 1)),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
             ('LINEBELOW', (0, 1), (-1, 1), .5, colors.HexColor('#e5dada')),
