@@ -11,14 +11,14 @@ def validate_dispatches_for(db, value, company_id=None):
     if not target_id:
         return None
     if target_id == company_id:
-        raise HTTPException(400, "A company cannot dispatch for itself")
+        raise HTTPException(400, "A company cannot be its own subcontractor")
     target = db.get(Company, target_id)
     if not target:
         raise HTTPException(400, "Contract company not found")
     if target.dispatches_for_company_id:
-        raise HTTPException(400, "Choose a contract company that does not dispatch for another company")
+        raise HTTPException(400, "Choose a contract company that is not a subcontractor for another company")
     if company_id and db.query(Company).filter(Company.dispatches_for_company_id == company_id).first():
-        raise HTTPException(400, "This company is already a contract company for another dispatch company")
+        raise HTTPException(400, "This company is already a contract company for another subcontractor")
     return target_id
 
 
@@ -27,7 +27,7 @@ def resolve_company_dispatch(db, company):
         return company, None
     contract = db.get(Company, company.dispatches_for_company_id)
     if not contract or contract.dispatches_for_company_id:
-        raise HTTPException(400, "Invalid dispatch company mapping; check company settings")
+        raise HTTPException(400, "Invalid subcontractor mapping; check company settings")
     return contract, company.id
 
 

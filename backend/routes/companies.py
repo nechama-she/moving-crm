@@ -239,9 +239,9 @@ def delete_company(company_id: str, user: User = Depends(require_admin), db: Ses
         raise HTTPException(status_code=409, detail="Cannot delete company with existing leads")
 
     if db.query(Company).filter(Company.dispatches_for_company_id == company_id).first():
-        raise HTTPException(status_code=409, detail="Cannot delete company used by a dispatch company")
+        raise HTTPException(status_code=409, detail="Cannot delete company used by a subcontractor")
     if db.query(LeadJob).filter((LeadJob.company_id == company_id) | (LeadJob.dispatch_company_id == company_id)).first():
-        raise HTTPException(status_code=409, detail="Cannot delete company with existing jobs or dispatch assignments")
+        raise HTTPException(status_code=409, detail="Cannot delete company with existing jobs or subcontractor assignments")
 
     db.delete(company)
     db.commit()

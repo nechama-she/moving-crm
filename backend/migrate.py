@@ -45,6 +45,9 @@ def migrate() -> None:
         connection.execute(text("ALTER TABLE lead_jobs ALTER COLUMN company_id DROP NOT NULL"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS dispatch_company_id VARCHAR(36) REFERENCES companies(id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_jobs_dispatch_company_id ON lead_jobs(dispatch_company_id)"))
+        from migrate_company_dispatch import backfill_company_dispatch
+        jobs_updated, leads_updated = backfill_company_dispatch(connection)
+        logger.info("Dispatch ownership backfill: corrected %s jobs and %s leads", jobs_updated, leads_updated)
         connection.execute(text("ALTER TABLE lead_attachments ALTER COLUMN uploaded_by DROP NOT NULL"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS stop_types TEXT"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS customer_packing TEXT"))

@@ -309,12 +309,12 @@ export default function CompaniesPage() {
             <input value={form.samrtmoving_branch_id} onChange={(e) => updateField("samrtmoving_branch_id", e.target.value)} style={inputStyle} />
           </label>
           <label style={fieldLabel}>
-            Dispatches for (contract company)
+            Subcontractor for (contract company)
             <select value={form.dispatches_for_company_id} onChange={(e) => updateField("dispatches_for_company_id", e.target.value)} style={inputStyle}>
               <option value="">Own contracts</option>
               {companies.filter((c) => c.id !== editingId && !c.dispatches_for_company_id).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <small>When SmartMoving sends this company, use the selected company for the contract and this company for dispatch. Existing dispatch assignments are kept.</small>
+            <small>When SmartMoving sends this company, use the selected company for the contract and this company as the subcontractor. Existing subcontractor assignments are kept.</small>
           </label>
           <label style={fieldLabel}>
             Granot API ID
@@ -378,7 +378,7 @@ export default function CompaniesPage() {
               <th style={th}>Aircall Number ID</th>
               <th style={th}>Aircall Name</th>
               <th style={th}>SmartMoving Branch ID</th>
-              <th style={th}>Dispatches for</th>
+              <th style={th}>Subcontractor for</th>
               <th style={th}>Granot API ID</th>
               <th style={th}>Granot Mover Ref</th>
               <th style={th}>Timezone</th>

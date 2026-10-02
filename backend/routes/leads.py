@@ -2707,9 +2707,9 @@ def _validate_dispatch_company(value: str | None, company_ids: list[str], db: Se
     company_id = (value or "").strip() or None
     if company_id:
         if company_id not in company_ids:
-            raise HTTPException(status_code=403, detail="Not allowed for this dispatch company")
+            raise HTTPException(status_code=403, detail="Not allowed for this subcontractor")
         if not db.get(Company, company_id):
-            raise HTTPException(status_code=404, detail="Dispatch company not found")
+            raise HTTPException(status_code=404, detail="Subcontractor not found")
     return company_id
 
 
@@ -2725,7 +2725,7 @@ def update_lead_job(
     if user.role == "foreman" and set(payload) != {"foreman_notes"}:
         raise HTTPException(status_code=403, detail="Foreman users can only update foreman notes")
     if user.role == "dispatch" and (not payload or not set(payload).issubset({"dispatch_company_id", "foreman_id", "notes", "customer_notes", "foreman_notes"})):
-        raise HTTPException(status_code=403, detail="Dispatch users can only assign a dispatch company or foreman, or update job notes")
+        raise HTTPException(status_code=403, detail="Dispatch users can only assign a subcontractor or foreman, or update job notes")
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadJob)
@@ -4143,7 +4143,7 @@ def _apply_lead_update(
         contract_company, mapped_dispatch_id = resolve_company_dispatch(db, incoming_company)
         next_company_id = contract_company.id
         if mapped_dispatch_id and mapped_dispatch_id not in company_ids:
-            raise HTTPException(status_code=403, detail="Not allowed to use this dispatch company")
+            raise HTTPException(status_code=403, detail="Not allowed to use this subcontractor")
 
     if next_company_id is not None:
         if next_company_id not in company_ids:

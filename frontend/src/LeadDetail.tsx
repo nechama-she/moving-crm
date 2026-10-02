@@ -1459,14 +1459,14 @@ export default function LeadDetail() {
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
         body: JSON.stringify({ dispatch_company_id: companyId || null }),
       });
-      if (!response.ok) await throwApiError(response, "Failed to save dispatch company");
+      if (!response.ok) await throwApiError(response, "Failed to save subcontractor");
       const updated = await response.json() as LeadJobItem;
       setLeadJobs((current) => current.map((job) => job.id === jobId ? {
         ...job, dispatch_company_id: updated.dispatch_company_id,
         dispatch_company_name: updated.dispatch_company_name,
       } : job));
     } catch (reason) {
-      setJobsErrorFromReason(reason, "Failed to save dispatch company");
+      setJobsErrorFromReason(reason, "Failed to save subcontractor");
     } finally {
       setSavingJobId("");
     }
@@ -2996,7 +2996,7 @@ export default function LeadDetail() {
                         </select>
                       </label>
                       <label style={{ width: 200 }}>
-                        Dispatch company (internal)
+                        Subcontractor (internal)
                         <select
                           value={job.dispatch_company_id}
                           onChange={(event) => void saveDispatchCompany(job.id, event.target.value)}
