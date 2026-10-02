@@ -1008,12 +1008,14 @@ def get_dispatch_calendar(
             raise HTTPException(status_code=403, detail="Not allowed for this company")
         target_company_ids = [company_id]
 
+    calendar_company_id = func.coalesce(LeadJob.dispatch_company_id, LeadJob.company_id)
+
     # Dispatch calendar groups jobs by the job-level move_date.
     rows_query = (
         db.query(LeadJob, Lead, Company.name.label("company_name"), Company.color.label("company_color"))
         .join(Lead, Lead.id == LeadJob.lead_id)
-        .join(Company, Company.id == LeadJob.company_id)
-        .filter(LeadJob.company_id.in_(target_company_ids))
+        .join(Company, Company.id == calendar_company_id)
+        .filter(calendar_company_id.in_(target_company_ids))
         .filter(Lead.status.in_(DISPATCH_STATUSES))
     )
     if user.role == "foreman":
@@ -1040,7 +1042,7 @@ def get_dispatch_calendar(
                 "foreman_id": job.foreman_id or "",
                 "foreman_name": job.foreman.name if job.foreman else "",
                 "job_order": int(job.job_order or 0),
-                "company_id": job.company_id,
+                "company_id": job.dispatch_company_id or job.company_id,
                 "company_name": company_name,
                 "company_color": resolve_company_color(company_name, company_color),
                 "full_name": lead.full_name or "",
@@ -1358,14 +1360,16 @@ def search_dispatch_jobs(
     if not allowed_company_ids:
         return {"items": []}
 
+    calendar_company_id = func.coalesce(LeadJob.dispatch_company_id, LeadJob.company_id)
+
     # Exact job-id lookup for deep-linking from lead job cards.
     exact_row = (
         db.query(LeadJob, Lead, Company.name.label("company_name"), Company.color.label("company_color"))
         .join(Lead, Lead.id == LeadJob.lead_id)
-        .join(Company, LeadJob.company_id == Company.id)
+        .join(Company, calendar_company_id == Company.id)
         .filter(
             LeadJob.id == search,
-            LeadJob.company_id.in_(allowed_company_ids),
+            calendar_company_id.in_(allowed_company_ids),
             Lead.status.in_(DISPATCH_STATUSES),
         )
         .first()
@@ -1385,7 +1389,7 @@ def search_dispatch_jobs(
                     "id": job.id,
                     "lead_id": lead.id,
                     "job_order": int(job.job_order or 0),
-                    "company_id": job.company_id,
+                    "company_id": job.dispatch_company_id or job.company_id,
                     "company_name": company_name or "",
                     "company_color": resolve_company_color(company_name, company_color),
                     "full_name": lead.full_name or "",
@@ -1404,9 +1408,9 @@ def search_dispatch_jobs(
     rows = (
         db.query(LeadJob, Lead, Company.name.label("company_name"), Company.color.label("company_color"))
         .join(Lead, Lead.id == LeadJob.lead_id)
-        .join(Company, LeadJob.company_id == Company.id)
+        .join(Company, calendar_company_id == Company.id)
         .filter(
-            LeadJob.company_id.in_(allowed_company_ids),
+            calendar_company_id.in_(allowed_company_ids),
             Lead.status.in_(DISPATCH_STATUSES),
             (
                 Lead.full_name.ilike(pattern)
@@ -1436,7 +1440,7 @@ def search_dispatch_jobs(
                 "id": job.id,
                 "lead_id": lead.id,
                 "job_order": int(job.job_order or 0),
-                "company_id": job.company_id,
+                "company_id": job.dispatch_company_id or job.company_id,
                 "company_name": company_name or "",
                 "company_color": resolve_company_color(company_name, company_color),
                 "full_name": lead.full_name or "",
