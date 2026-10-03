@@ -144,8 +144,6 @@ def migrate() -> None:
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS price_refresh_error TEXT"))
         from catalog_material_cleanup import cleanup_missing_assignments
         cleanup_missing_assignments(connection)
-        from migrate_default_material_copies import cleanup_default_material_copies
-        cleanup_default_material_copies(connection)
     logger.info("communication_associations is ready")
     logger.info("smartmoving_referral_sources is ready")
     logger.info("access_audit_logs is ready")

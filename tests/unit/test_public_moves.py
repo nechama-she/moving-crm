@@ -1142,6 +1142,45 @@ def processing_api():
     return scope
 
 
+def test_inventory_save_updates_rows_without_calculating_price(portal, processing_api, monkeypatch):
+    mod, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    job.price = 750
+    access.published_price = 750
+    rows = [{'name': 'Chair', 'room': 'Bedroom', 'amount': 2, 'cuft': 40}]
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+        'last_spark_id': 'report', 'last_spark_status': 'completed',
+        'spark_inventory_snapshot': rows, 'question_original_rows': rows,
+        'spark_extracted_cuft': 40, 'spark_extracted_weight': 0})))
+    db.commit()
+    calculate = MagicMock(side_effect=AssertionError('Saving must not calculate pricing'))
+    monkeypatch.setitem(sys.modules, 'routes.pricing', SimpleNamespace(calculate_and_save_lead_job_price=calculate))
+    result = processing_api['apply_spark_results_to_lead'](
+        lead.id, '', db, expected_report_id='report', use_snapshot=True, calculate_price=False)
+    assert result['ok'], result
+    calculate.assert_not_called()
+    processing_api['httpx'].get.assert_not_called()
+    assert float(lead.volume) == 40
+    assert db.query(models.LeadSparkInventoryItem).filter_by(job_id=job.id).one().name == 'Chair'
+    assert float(job.price) == float(access.published_price) == 750
+    details = json.loads(db.get(models.LeadLiveSwitch, lead.id).details)
+    assert details['spark_pricing_ready'] is False
+    assert next(step for step in details['spark_processing']['steps'] if step['id'] == 'pricing')['status'] == 'skipped'
+
+
+def test_calculate_after_inventory_save_uses_edited_snapshot(portal, monkeypatch):
+    mod, db, lead, access = portal
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+        'last_spark_id': 'report', 'last_spark_status': 'completed',
+        'last_spark_share_url': 'https://example.test/report',
+        'spark_extracted_id': 'report', 'spark_pricing_ready': False})))
+    db.commit()
+    apply = MagicMock(return_value={'ok': True, 'price': 800})
+    monkeypatch.setitem(sys.modules, 'routes.liveswitch', SimpleNamespace(apply_spark_results_to_lead=apply))
+    mod.calculate_report_price(access, db)
+    apply.assert_called_once_with(lead.id, 'https://example.test/report', db, use_snapshot=True)
+
+
 def test_manual_result_button_is_available_only_after_monitor_window(processing_api):
     available = processing_api['_can_get_spark_result']
     assert not available({'last_spark_id': 'pending-local', 'last_spark_status': 'queued',
@@ -2145,7 +2184,7 @@ def test_customer_can_replace_current_combined_inventory(manual_catalog, monkeyp
     assert details['spark_extracted_cuft'] == 20
     assert 'inventory_draft' not in details
     apply.assert_called_once_with(lead.id, 'https://example.test/report', db,
-                                  expected_report_id='combined-report', use_snapshot=True)
+                                  expected_report_id='combined-report', use_snapshot=True, calculate_price=False)
 
 
 def test_combined_report_uses_snapshot_once_on_recalculation(portal, processing_api, monkeypatch):
@@ -2428,7 +2467,7 @@ def test_item_answers_validate_report_choice_and_acknowledgment(portal, monkeypa
     stored=json.loads(conversation.details)['report_question_answers'][question['id']]
     assert stored['action']=='exclude' and stored['acknowledged']
     assert stored['name']=='Plant'
-    assert apply.call_args.kwargs=={'expected_report_id':'report','use_snapshot':True}
+    assert apply.call_args.kwargs=={'expected_report_id':'report','use_snapshot':True,'calculate_price':False}
     # Autosave retains an unacknowledged choice without applying its action.
     mod.save_item_answer(mod.ItemAnswerInput(**body, acknowledged=False, pending=True), access, db)
     stored=json.loads(conversation.details)['report_question_answers'][question['id']]

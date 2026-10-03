@@ -174,6 +174,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
   const [saveStatus, setSaveStatus] = useState('');
   const latest = useRef<Room[]>([]);
   const pending = useRef<Room[] | null>(null);
+  const inFlight = useRef<Room[] | null>(null);
   const saving = useRef<Promise<void> | null>(null);
   const loadedRooms = useRef<Room[] | null>(null);
   const dirty = useRef(false);
@@ -185,6 +186,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
       while (pending.current) {
         const snapshot = pending.current;
         pending.current = null;
+        inFlight.current = snapshot;
         setSaveStatus('Saving...');
         try {
           await submitRef.current({ request_id: crypto.randomUUID(), rooms: snapshot.map(r => ({ room_type_id: r.room_type_id, custom_items: r.custom_items || [], name: r.name.trim() || catalog?.rooms.find(t => t.id === r.room_type_id)?.name || 'Room', items: Object.entries(r.items).filter(([, qty]) => qty > 0).map(([item_id, quantity]) => ({ item_id, quantity, ...(r.item_names?.[item_id] ? {name:r.item_names[item_id]} : {}) })) })) });
@@ -195,6 +197,8 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
           pending.current = pending.current || snapshot;
           setSaveStatus('Not saved. Check your connection and retry.');
           throw err;
+        } finally {
+          inFlight.current = null;
         }
       }
       setError('');
@@ -214,7 +218,11 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
     }
     dirty.current = true;
     pending.current = rooms;
-    void flush().catch(err => setError(err instanceof Error ? err.message : 'Could not save your list.'));
+    setSaveStatus('Unsaved changes');
+    const timer = window.setTimeout(() => {
+      void flush().catch(err => setError(err instanceof Error ? err.message : 'Could not save your list.'));
+    }, 500);
+    return () => window.clearTimeout(timer);
   }, [rooms, catalog]);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -296,7 +304,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
     if (!dirty.current && !pending.current && !saving.current) { onClose(); return; }
     setBusy(true); setError('');
     try {
-      pending.current = rooms;
+      if (inFlight.current !== rooms) pending.current = rooms;
       await flush();
       onClose();
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save your list.'); setBusy(false); }

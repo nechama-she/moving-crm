@@ -828,7 +828,11 @@ def calculate_report_price(access: PublicMoveAccess = Depends(verified), db: Ses
     report = json.loads(conversation.details or '{}') if conversation else {}
     if report.get('last_spark_status') != 'completed' or (report.get('report_source') != 'manual' and not report.get('last_spark_share_url')):
         raise HTTPException(409, 'Your report is not ready yet.')
-    result = apply_spark_results_to_lead(access.lead_id, report.get('last_spark_share_url', ''), db)
+    if report.get('spark_extracted_id') == report.get('last_spark_id') and report.get('spark_pricing_ready') is False:
+        # Calculate the edited inventory, rather than downloading the old report.
+        result = apply_spark_results_to_lead(access.lead_id, report.get('last_spark_share_url', ''), db, use_snapshot=True)
+    else:
+        result = apply_spark_results_to_lead(access.lead_id, report.get('last_spark_share_url', ''), db)
     if not result.get('ok'):
         raise HTTPException(422, result.get('detail') or 'Could not process the report.')
     if result.get('price') is None:

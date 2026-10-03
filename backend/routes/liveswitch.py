@@ -705,7 +705,7 @@ def fetch_and_extract_spark_report(share_url: str, processing=None) -> tuple[flo
     return cuft, weight, inventory_rows
 
 
-def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expected_report_id: str | None = None, use_snapshot: bool = False) -> dict:
+def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expected_report_id: str | None = None, use_snapshot: bool = False, calculate_price: bool = True) -> dict:
     lead = db.get(Lead, lead_id)
     if not lead:
         raise HTTPException(404, "Lead not found")
@@ -777,11 +777,14 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
 
             db.flush()
             processing.mark('inventory', 'success', f'{len(inventory_rows)} rows prepared for job {job.job_order}')
-            processing.mark('pricing', 'running')
-            from routes.pricing import calculate_and_save_lead_job_price
-            price = calculate_and_save_lead_job_price(lead, job, db) if cuft > 0 else None
-            if cuft <= 0: job.price = None
-            if price is None:
+            if calculate_price:
+                processing.mark('pricing', 'running')
+                from routes.pricing import calculate_and_save_lead_job_price
+                price = calculate_and_save_lead_job_price(lead, job, db) if cuft > 0 else None
+                if cuft <= 0: job.price = None
+            if not calculate_price:
+                processing.mark('pricing', 'skipped', 'Inventory saved; calculate the updated estimate separately')
+            elif price is None:
                 processing.mark('pricing', 'error', 'No price returned - click to view details',
                                 'The pricing calculator returned no price. Check move volume, company, active pricing book, pickup/delivery matching, and configured rates.')
             else:
@@ -792,7 +795,7 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
         access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
         if access:
             access.published_cuft = lead.volume
-            if cuft <= 0: access.published_price = None
+            if calculate_price and cuft <= 0: access.published_price = None
             if price is not None:
                 access.published_price = job.price
                 access.published_at = datetime.utcnow()

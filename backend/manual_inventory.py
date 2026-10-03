@@ -218,4 +218,4 @@ def replace_current_inventory(body, access, db):
         apply_box_packing_to_inventory(job, db, package, selection)
     db.commit()
     return apply_spark_results_to_lead(access.lead_id, details.get('last_spark_share_url') or '', db,
-                                       expected_report_id=report_id, use_snapshot=True)
+                                       expected_report_id=report_id, use_snapshot=True, calculate_price=False)
