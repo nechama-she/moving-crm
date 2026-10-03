@@ -29,7 +29,7 @@ export default function ConfiguredPackingItems({config,selection,onChange,disabl
       return <section key={requirement} className="cm-packing-items">
         <h4>{requirement==='required'?'Required packing':'Additional packing options'}</h4>
         <div className="cm-packing-room-tabs" role="tablist" aria-label={`${requirement==='required'?'Required packing':'Additional packing'} rooms`}>
-          {rooms.map(([room,items])=><button type="button" role="tab" key={room} aria-selected={room===selectedRoom} disabled={disabled} onClick={()=>setSelectedRooms(current=>({...current,[requirement]:room}))}>{room}<span>{items.length}</span></button>)}
+          {rooms.map(([room,items])=>{const count=new Set(items.map(item=>item.group_id||item.id)).size;return <button type="button" role="tab" key={room} aria-selected={room===selectedRoom} disabled={disabled} onClick={()=>setSelectedRooms(current=>({...current,[requirement]:room}))}>{room}<span title={`${count} inventory items`}>{count} items</span></button>;})}
         </div>
         <section role="tabpanel" aria-label={selectedRoom}>
           {[...roomItems.reduce((map,item)=>{

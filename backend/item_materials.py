@@ -144,7 +144,7 @@ def customer_item_materials(plan, inventory, db):
         if not isinstance(row, dict) or row.get('going') is False:
             continue
         item_id = row.get('item_id')
-        if not item_id:
+        if item_id not in catalog_by_id and not row.get('name_override'):
             candidates = by_name[key(row.get('name', ''))]
             item_id = candidates[0] if len(candidates) == 1 else None
         item_assignments = by_item.get(item_id)
@@ -154,22 +154,21 @@ def customer_item_materials(plan, inventory, db):
                 continue
             item_assignments = defaults
         count = max(1, int(row.get('amount') or row.get('quantity') or 1))
-        try:
-            volume = row.get('unit_cuft')
-            if volume is None and row.get('cuft') is not None:
-                volume = Decimal(str(row['cuft'])) / count
-            if volume is None:
-                volume = getattr(catalog_by_id.get(item_id), 'cuft', None)
-            volume = Decimal(str(volume)) if volume is not None else None
-        except (ValueError, TypeError, ArithmeticError):
-            volume = None
         if using_defaults:
-            item_assignments = sized_optional_defaults(item_assignments, rates, volume)
+            try:
+                volume = row.get('unit_cuft')
+                if volume is None and row.get('cuft') is not None:
+                    volume = Decimal(str(row['cuft'])) / count
+                if volume is None:
+                    volume = getattr(catalog_by_id.get(item_id), 'cuft', None)
+                volume = Decimal(str(volume)) if volume is not None else None
+            except (ValueError, TypeError, ArithmeticError):
+                volume = None
+            item_assignments = sized_optional_defaults(defaults, rates, volume)
         if not item_assignments:
             continue
         matched.add(key(row.get('name', '')))
         room = str(row.get('room') or '')
-        count = max(1, int(row.get('amount') or row.get('quantity') or 1))
         for _ in range(count):
             occurrences[(item_id, room)] += 1
             unit = occurrences[(item_id, room)]

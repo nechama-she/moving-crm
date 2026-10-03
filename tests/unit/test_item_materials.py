@@ -20,6 +20,24 @@ def setup():
     return plan, db
 
 
+def test_legacy_custom_id_uses_unique_catalog_assignment_instead_of_defaults():
+    plan, db = setup()
+    db.query.return_value.all.return_value = [SimpleNamespace(id='tv', name='TV Flat Screen - 33 - 59', cuft=10, deleted=False)]
+    plan.item_materials = json.dumps({'rows':[dict(item_id='tv',material_id='cover',requirement='required',quantity=1)],
+                                     'defaults':[dict(material_id='cover',requirement='optional',quantity=1)]})
+    rows, _ = customer_item_materials(plan,[dict(item_id='custom-old',name='TV Flat Screen - 33 - 59',cuft=12,amount=1,room='Bedroom')],db)
+    assert len(rows) == 1
+    assert rows[0]['requirement'] == 'required'
+
+
+def test_legacy_name_match_does_not_guess_between_catalog_duplicates():
+    plan, db = setup()
+    db.query.return_value.all.return_value = [SimpleNamespace(id=id, name='TV', cuft=10, deleted=False) for id in ['a','b']]
+    plan.item_materials = json.dumps({'rows':[dict(item_id='a',material_id='cover',requirement='required',quantity=1)],'defaults':[]})
+    rows, _ = customer_item_materials(plan,[dict(item_id='custom-old',name='TV',cuft=12,amount=1)],db)
+    assert rows == []
+
+
 def test_book_setup_starts_empty_and_saves_only_this_book():
     plan, db = setup()
     other = SimpleNamespace(item_materials=None)
