@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { piecesPerItem } from './inventoryPieces';
 import type {PackingPackage, PackingSelection} from './CustomerPackingOptions';
 import PackingServiceSelect, {type PackingMaterialService} from './PackingServiceSelect';
 
@@ -29,7 +30,7 @@ export default function ConfiguredPackingItems({config,selection,onChange,disabl
       return <section key={requirement} className="cm-packing-items">
         <h4>{requirement==='required'?'Required packing':'Additional packing options'}</h4>
         <div className="cm-packing-room-tabs" role="tablist" aria-label={`${requirement==='required'?'Required packing':'Additional packing'} rooms`}>
-          {rooms.map(([room,items])=>{const count=new Set(items.map(item=>item.group_id||item.id)).size;return <button type="button" role="tab" key={room} aria-selected={room===selectedRoom} disabled={disabled} onClick={()=>setSelectedRooms(current=>({...current,[requirement]:room}))}>{room}<span title={`${count} inventory items`}>{count} items</span></button>;})}
+          {rooms.map(([room,items])=>{const groups=new Map(items.map(item=>[item.group_id||item.id,item]));const count=groups.size;const pieces=[...groups.values()].reduce((sum,item)=>sum+piecesPerItem(item.label),0);return <button type="button" role="tab" key={room} aria-selected={room===selectedRoom} disabled={disabled} onClick={()=>setSelectedRooms(current=>({...current,[requirement]:room}))}>{room}<span title={`${count} inventory items · ${pieces} pieces`}>{count} items &middot; {pieces} pieces</span></button>;})}
         </div>
         <section role="tabpanel" aria-label={selectedRoom}>
           {[...roomItems.reduce((map,item)=>{
@@ -40,7 +41,7 @@ export default function ConfiguredPackingItems({config,selection,onChange,disabl
           <strong>{group[0].label}</strong>
           {group.map(item=>{const materialLabel=`${item.material_name || (item.packing_material==='plastic'?'Plastic':'Cardboard')}${item.quantity!=null?` - ${item.quantity} per item`:''}`;return <div key={item.id} data-customer-action={`configured:${item.id}`} className="cm-material-service-row" style={{paddingTop:group.length>1?8:0,borderTop:group.length>1?'1px solid #eee5e2':'none'}}>
             <span>{materialLabel}</span>
-            <PackingServiceSelect label={`${group[0].label}, ${materialLabel}`} value={serviceFor(item.id)} packingPrice={item.labor_price??item.price} materialsPrice={(item.labor_price??item.price)+(item.material_price||0)} available={item.available!==false} disabled={disabled} onChange={service=>selectService(item.id,service)}/>
+            <PackingServiceSelect label={`${group[0].label}, ${materialLabel}`} value={serviceFor(item.id)} packingPrice={item.labor_price??item.price} materialsPrice={(item.labor_price??item.price)+(item.material_price||0)} quantity={item.quantity} available={item.available!==false} disabled={disabled} onChange={service=>selectService(item.id,service)}/>
             {item.available===false && <p role="status">Material pricing needs confirmation.</p>}
           </div>})}
         </section>)}

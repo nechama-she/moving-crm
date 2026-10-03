@@ -1,4 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
+import { piecesPerItem } from './inventoryPieces';
 import {API_BASE} from './apiConfig';
 import {authHeaders, useAuth} from './AuthContext';
 import './ItemMaterialsCard.css';
@@ -54,7 +55,7 @@ export default function ItemMaterialsCard({planId,blocked}:{planId:string;blocke
     </div>
     {open && <div className="pricing-section-body">
       {error && <p role="alert">{error}</p>}
-      {!!data?.protection_review?.length && <details><summary>{data.protection_review.length} items need packing material review</summary><ul>{data.protection_review.map(item=><li key={item.item_id}><strong>{item.name}</strong>: {item.reason}</li>)}</ul></details>}
+      {!!data?.protection_review?.length && <details><summary>{data.protection_review.length} items &middot; {data.protection_review.reduce((sum, item) => sum + piecesPerItem(item.name), 0)} pieces need packing material review</summary><ul>{data.protection_review.map(item=><li key={item.item_id}><strong>{item.name}</strong>: {item.reason}</li>)}</ul></details>}
       {!data && !error && <p role="status">Loading...</p>}
       {data && <form ref={form} onSubmit={e=>{e.preventDefault();void save();}}>
         <fieldset disabled={busy || blocked} style={{border:0,padding:0,minWidth:0}}>

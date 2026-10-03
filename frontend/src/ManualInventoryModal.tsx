@@ -1,4 +1,5 @@
 import { dimensionFeet } from './dimensions';
+import { piecesPerItem } from './inventoryPieces';
 import QuestionReferenceImages from './QuestionReferenceImages';
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './ManualInventoryModal.css';
@@ -262,6 +263,8 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
   const items = new Map((catalog?.items || []).map(item => [item.id, item]));
   const total = (room: Room, field: 'cuft' | 'weight') => Object.entries(room.items).reduce((sum, [id, qty]) => sum + (items.get(id)?.[field] || 0) * qty, 0) + (field === 'cuft' ? (room.custom_items || []).reduce((sum, item) => sum + (item.going === false ? 0 : item.cuft * item.quantity), 0) : 0);
   const count = (room: Room) => Object.values(room.items).reduce((sum, qty) => sum + qty, 0) + (room.custom_items || []).reduce((sum, item) => sum + item.quantity, 0);
+  const pieces = (room: Room) => Object.entries(room.items).reduce((sum, [id, qty]) => sum + qty * piecesPerItem(room.item_names?.[id] || items.get(id)?.name || ''), 0)
+    + (room.custom_items || []).reduce((sum, item) => sum + item.quantity * piecesPerItem(item.name), 0);
   const cuft = rooms.reduce((sum, room) => sum + total(room, 'cuft'), 0);
   const weight = rooms.reduce((sum, room) => sum + total(room, 'weight'), 0);
   const room = rooms.find(r => r.id === selected);
@@ -309,7 +312,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
     }
   }}>
     <header><div><span className="cm-eyebrow">YOUR INVENTORY</span><h2 id="mi-title">Your home, room by room</h2></div><div style={{display: 'flex', alignItems: 'center', gap: 8}}><button type="button" className="slds-button" disabled={busy || pdfBusy || !catalog || !rooms.length || rooms.some(r => !r.name.trim())} title={pdfBusy ? "Preparing PDF..." : "Download inventory PDF"} aria-label={pdfBusy ? "Preparing inventory PDF" : "Download inventory PDF"} aria-busy={pdfBusy} onClick={() => void download()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg></button><button type="button" className="slds-button" disabled={busy || !catalog || !rooms.length} title="Clear inventory" aria-label="Clear inventory" onClick={() => { setRooms([]); setSelected(''); setCustomOpen(false); }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button><button type="button" className="slds-button" disabled={busy} onClick={() => void save()} aria-label="Save and close inventory">&times;</button></div></header>
-    <div className="mi-totals" aria-live="polite"><span>{rooms.length} rooms</span><span>{rooms.reduce((sum, r) => sum + count(r), 0)} items</span><strong>{number(cuft)} cu ft</strong><span>{number(weight)} lb</span></div>
+    <div className="mi-totals" aria-live="polite"><span>{rooms.length} rooms</span><span>{rooms.reduce((sum, r) => sum + count(r), 0)} items &middot; {rooms.reduce((sum, r) => sum + pieces(r), 0)} pieces</span><strong>{number(cuft)} cu ft</strong><span>{number(weight)} lb</span></div>
     {draftError && <p className="mi-error" role="alert">{draftError}</p>}
     {error && <p className="mi-error" role="alert">{error}</p>}
     <div className="mi-body">
@@ -331,7 +334,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
           </div>
         </div>
         <div className="mi-rooms">{rooms.map(r => <RoomCard key={r.id} room={r} selected={r.id === selected} busy={busy}
-          summary={`${count(r)} items \u00b7 ${number(total(r, 'cuft'))} cu ft`}
+          summary={`${count(r)} items \u00b7 ${pieces(r)} pieces \u00b7 ${number(total(r, 'cuft'))} cu ft`}
           onSelect={() => { setSelected(current => current === r.id ? '' : r.id); setCustomOpen(false); }}
           onRename={name => setRooms(current => current.map(value => value.id === r.id ? { ...value, name } : value))}
           onDelete={() => { setRooms(current => current.filter(value => value.id !== r.id)); if (selected === r.id) { setSelected(''); setCustomOpen(false); } }} />)}</div>
@@ -389,7 +392,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
           <h3>Your inventory</h3>
           {!visibleRooms.some(r => count(r) > 0) && <p>{room ? 'No items in this room yet. Click Add item to get started.' : 'No items yet. Choose a room to add an item.'}</p>}
           {visibleRooms.filter(r => count(r) > 0).map(r => <details key={r.id} open>
-            <summary><strong>{r.name}</strong> &middot; {count(r)} items</summary>
+            <summary><strong>{r.name}</strong> &middot; {count(r)} items &middot; {pieces(r)} pieces</summary>
             <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span>Going</span><span className="mi-inventory-actions-heading">Actions</span></div>
             {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <InventoryRow key={id}
               name={packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item')} cuft={items.get(id)?.cuft || 0} quantity={qty} busy={busy}

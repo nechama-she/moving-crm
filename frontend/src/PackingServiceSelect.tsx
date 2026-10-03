@@ -11,6 +11,7 @@ export default function PackingServiceSelect({
   label,
   value,
   materialsPrice,
+  quantity,
   disabled = false,
   available = true,
   onChange,
@@ -19,6 +20,7 @@ export default function PackingServiceSelect({
   value: PackingMaterialService;
   packingPrice: number;
   materialsPrice: number;
+  quantity?: number;
   disabled?: boolean;
   available?: boolean;
   onChange: (service: PackingMaterialService) => void;
@@ -26,10 +28,13 @@ export default function PackingServiceSelect({
   const [open, setOpen] = useState(false);
   const [alignRight, setAlignRight] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const priceLabel = quantity != null && Number.isFinite(quantity) && quantity > 0
+    ? `${money(materialsPrice / quantity)} × ${quantity.toLocaleString('en-US')} = ${money(materialsPrice)}`
+    : money(materialsPrice);
   const options: {value: PackingMaterialService; label: string}[] = [
     {value: 'self', label: 'PBO - You pack'},
     ...(available ? [
-      {value: 'materials' as const, label: `CP - Movers pack - ${money(materialsPrice)}`},
+      {value: 'materials' as const, label: `CP - Movers pack - ${priceLabel}`},
     ] : []),
   ];
   const selected = options.find(option => option.value === (value === 'self' ? 'self' : 'materials')) || options[0];

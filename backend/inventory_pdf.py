@@ -14,6 +14,12 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
+def pieces_per_item(name):
+    match = re.search(r'\b([0-9]+)\s*[-–—]?\s*pieces?\b', name, re.I)
+    pieces = int(match[1]) if match else 1
+    return pieces if 0 < pieces <= 9007199254740991 else 1
+
+
 def inventory_photos(rooms, details):
     """Resolve selected-report photos and embed bounded thumbnails, never arbitrary URLs."""
     import httpx
@@ -125,8 +131,9 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
         story.extend([header, Spacer(1, 14)])
 
     count = sum(row['amount'] for room in rooms for row in room['items'])
+    pieces = sum(row['amount'] * pieces_per_item(row['name']) for room in rooms for row in room['items'])
     story += [Paragraph('Your inventory', styles['Title']),
-             p(f'{len(rooms)} rooms | {count} items | {cuft:,.2f} cu ft going | {weight:,.2f} lb'),
+             p(f'{len(rooms)} rooms | {count} items | {pieces} pieces | {cuft:,.2f} cu ft going | {weight:,.2f} lb'),
              Spacer(1, 12)]
     for room in rooms:
         story.append(Paragraph(escape(room['name']), styles['Heading2']))

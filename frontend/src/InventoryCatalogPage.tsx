@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { piecesPerItem } from './inventoryPieces';
 import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -90,7 +91,7 @@ export default function InventoryCatalogPage() {
       {notice && <p role="status" className="ic-notice">{notice}</p>}
       {error && <p role="alert" className="ic-error">{error} <button className="slds-button" onClick={() => setRetry(value => value + 1)}>Try again</button></p>}
       {loading ? <p role="status">Loading catalog...</p> : <>
-        <p>{shown.length} items</p>
+        <p>{shown.length} items &middot; {shown.reduce((sum, item) => sum + piecesPerItem(item.name), 0)} pieces</p>
         <div className="ic-table-wrap"><table><thead><tr><th>Item</th><th>Cu ft / item</th><th>Lb / item</th><th>Status</th><th><span className="slds-assistive-text">Actions</span></th></tr></thead><tbody>{shown.map(item => <tr key={item.id}><td><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</td><td>{item.cuft.toLocaleString()}</td><td>{item.weight.toLocaleString()}</td><td>{item.active ? "Active" : "Inactive"}</td><td><button className="slds-button slds-button_neutral" disabled={transferring} aria-label={`Edit ${item.name}`} onClick={() => setEditing(item)}>Edit</button><button className="slds-button slds-button_destructive" disabled={transferring} aria-label={`Delete ${item.name}`} onClick={() => void remove(item)}>Delete</button></td></tr>)}</tbody></table></div>
         {!shown.length && !error && <p>No items match your search. Use Add item to create one.</p>}
       </>}
