@@ -9,7 +9,7 @@ from sqlalchemy import select
 from long_distance_packing import packing_card
 from models import InventoryCatalogItem, PricingPlan, PricingService
 
-VERSION = 'item_material_sizes_v2'
+VERSION = 'item_material_sizes_v3'
 logger = logging.getLogger('migrate')
 
 

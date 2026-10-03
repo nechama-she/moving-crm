@@ -105,6 +105,25 @@ def upload_csv(api, db, content):
     return asyncio.run(api.import_items(UploadFile(filename='catalog.csv', file=io.BytesIO(content)), None, db))
 
 
+@pytest.mark.parametrize('override,expected', [(False, 'L Shaped Sofa - 2 Piece'), (True, 'My sofa')])
+def test_inventory_catalog_link_follows_rename_and_preserves_overrides(catalog_api, override, expected):
+    api, db = catalog_api
+    item = api.create_item(api.CatalogItemInput(name='L Shaped Sofa', cuft=100, weight=700), None, db)
+    db.add(models.InventoryRoomType(id='room', name='Room', sort_order=0))
+    db.commit()
+    body = ManualInventoryInput(request_id='00000000-0000-0000-0000-000000000001', rooms=[{
+        'room_type_id':'room', 'name':'Living Room', 'items':[], 'custom_items':[{
+            'id':'00000000-0000-0000-0000-000000000002','catalog_item_id':item['id'],
+            'name':'My sofa' if override else 'L Shaped Sofa','name_override':override,
+            'cuft':100,'quantity':1,'reference_name':'L Shaped Sofa'}]}])
+    api.update_item(item['id'], api.CatalogItemInput(name='L Shaped Sofa - 2 Piece', cuft=100, weight=700), None, db)
+    rows = build_inventory(body, db)[1]
+    assert rows[0]['name'] == expected
+    assert rows[0]['item_id'] == item['id']
+    assert rows[0]['catalog_item_id'] == item['id']
+    assert rows[0]['reference_name'] == 'L Shaped Sofa'
+
+
 @pytest.mark.parametrize('action', ['delete', 'deduplicate', 'migration'])
 def test_removed_items_leave_no_packing_assignments(catalog_api, action):
     from catalog_material_cleanup import cleanup_missing_assignments

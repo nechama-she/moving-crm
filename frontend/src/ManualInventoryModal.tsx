@@ -4,10 +4,23 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 're
 import './ManualInventoryModal.css';
 type CatalogItem = { id: string; name: string; description: string; cuft: number; weight: number };
 type RoomType = { id: string; name: string };
-type CustomItem = { id: string; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean; mover_pack?: boolean };
+type CustomItem = { id: string; catalog_item_id?: string; name_override?: boolean; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean; mover_pack?: boolean };
 type Room = { id: string; room_type_id: string; name: string; items: Record<string, number>; item_names?: Record<string,string>; custom_items?: CustomItem[] };
 type Catalog = { rooms: RoomType[]; items: CatalogItem[] };
-type InitialRow = { name:string; room?:string; amount?:number; quantity?:number; cuft?:number; unit_cuft?:number; reference_name?:string; going?:boolean };
+type InitialRow = { item_id?:string; catalog_item_id?:string; name_override?:boolean; name:string; room?:string; amount?:number; quantity?:number; cuft?:number; unit_cuft?:number; reference_name?:string; going?:boolean };
+function linkCatalogItem(item: CustomItem, catalog: Catalog): CustomItem {
+  if (item.name_override) return item;
+  const normalize = (name: string) => name.toLowerCase().replace(/\s*\((?:cp|pbo)\)\s*$/i, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const name = normalize(item.name);
+  const matches = item.catalog_item_id ? catalog.items.filter(row => row.id === item.catalog_item_id) : catalog.items.filter(row => {
+    const candidate = normalize(row.name);
+    return Math.abs(row.cuft - item.cuft) < 0.001 && (candidate === name || candidate.replace(/ \d+ pieces?$/, '') === name);
+  });
+  if (matches.length !== 1) return item;
+  const matched = matches[0];
+  const packing = item.name.match(/\s*\((?:CP|PBO)\)\s*$/i)?.[0] || '';
+  return {...item, catalog_item_id: matched.id, reference_name: item.reference_name || item.name, name: matched.name + packing};
+}
 function packingItemName(name: string) {
   if (/\((?:cp|pbo)\)\s*$/i.test(name)) return name;
   return /\bbox(?:es)?\b|\bdish\s*pack\b/i.test(name) ? `${name} (PBO)` : name;
@@ -142,11 +155,12 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
       contents.forEach(row=>{
         const quantity=Math.max(1,Math.floor(Number(row.amount??row.quantity??1)||1));
         const total=Math.max(0.01,row.unit_cuft != null ? Number(row.unit_cuft) * quantity : Number(row.cuft||0));
-        const itemName=packingItemName(String(row.name||'Item'));
+        const linked=linkCatalogItem({id:crypto.randomUUID(),catalog_item_id:row.catalog_item_id || (row.item_id?.startsWith('custom-') ? undefined : row.item_id),name_override:row.name_override,name:row.name,cuft:Number(row.unit_cuft||total/quantity)||0.01,quantity,reference_name:row.reference_name},value);
+        const itemName=packingItemName(linked.name);
         const itemKey=itemName.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim() + (row.going === false ? ':not-going' : ':going');
         const existing=merged.get(itemKey);
         if(existing){const combined=existing.cuft*existing.quantity+total;existing.quantity+=quantity;existing.cuft=combined/existing.quantity;}
-        else merged.set(itemKey,{id:crypto.randomUUID(),name:itemName,quantity,going:row.going !== false,cuft:Number(row.unit_cuft||total/quantity)||0.01,reference_name:row.reference_name||row.name});
+        else merged.set(itemKey,{...linked,name:itemName,quantity,going:row.going !== false,cuft:Number(row.unit_cuft||total/quantity)||0.01,reference_name:row.reference_name||row.name});
       });
       return {id:crypto.randomUUID(),room_type_id:type?.id||'',name,items:{},custom_items:[...merged.values()]};
     });
@@ -220,6 +234,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
       let saved: Room[] | undefined;
       try { const raw = localStorage.getItem(draftKey); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed) && parsed.every(r => r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.room_type_id === 'string' && r.items && typeof r.items === 'object' && Object.values(r.items).every(q => typeof q === 'number' && Number.isInteger(q) && q >= 0 && q <= 999))) saved = parsed; } } catch { /* Start with default rooms if storage is unavailable. */ }
       const loaded: Room[] = saved || initialRooms?.map(r => ({ id: crypto.randomUUID(), room_type_id: r.room_type_id, name: r.name, custom_items: (r.custom_items || []).map(item => ({ ...item, cuft: Number(item.cuft) })), items: Object.fromEntries(r.items.map(i => [i.item_id, i.quantity])), item_names:Object.fromEntries(r.items.filter(i=>i.name).map(i=>[i.item_id,i.name!])) })) || (initialRows?.length?roomsFromRows(initialRows,value):value.rooms.filter(r => ['bedroom', 'living-room', 'dining-room', 'kitchen'].includes(r.id)).map(r => ({ id: crypto.randomUUID(), room_type_id: r.id, name: r.name, items: {} })));
+      loaded.forEach(room => { room.custom_items = (room.custom_items || []).map(item => linkCatalogItem(item, value)); });
       if (packing) {
         const baseName = (name: string) => name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '').trim();
         const key = (room: string, name: string) => `${room.trim().toLowerCase()}:${baseName(name).toLowerCase()}`;
@@ -381,18 +396,18 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
               photo={imageEndpoint ? <QuestionReferenceImages compact name={items.get(id)?.name || r.item_names?.[id] || 'Item'} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
               onSave={value => setRooms(current => current.map(valueRoom => valueRoom.id === r.id ? {
                 ...valueRoom, items: { ...valueRoom.items, [id]: 0 },
-                custom_items: [...(valueRoom.custom_items || []), { id: crypto.randomUUID(), ...value, reference_name: items.get(id)?.name }],
+                custom_items: [...(valueRoom.custom_items || []), { id: crypto.randomUUID(), catalog_item_id: id, name_override: value.name !== (r.item_names?.[id] || items.get(id)?.name), ...value, reference_name: items.get(id)?.name }],
               } : valueRoom))}
-              onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, items: { ...value.items, [id]: 0 }, custom_items: [...(value.custom_items || []), { id: crypto.randomUUID(), name: r.item_names?.[id] || items.get(id)?.name || 'Item', cuft: items.get(id)?.cuft || 0.01, quantity: qty, going, reference_name: items.get(id)?.name }] } : value))}
+              onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, items: { ...value.items, [id]: 0 }, custom_items: [...(value.custom_items || []), { id: crypto.randomUUID(), catalog_item_id: id, name: r.item_names?.[id] || items.get(id)?.name || 'Item', cuft: items.get(id)?.cuft || 0.01, quantity: qty, going, reference_name: items.get(id)?.name }] } : value))}
               packingLocked={packing?.full}
-              onMoverPackChange={/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(items.get(id)?.name || '') ? checked => setRooms(current => current.map(value => value.id === r.id ? { ...value, items: { ...value.items, [id]: 0 }, custom_items: [...(value.custom_items || []), { id: crypto.randomUUID(), name: (r.item_names?.[id] || items.get(id)?.name || 'Box').replace(/\s*\((?:CP|PBO)\)\s*$/i, '') + (checked ? ' (CP)' : ' (PBO)'), cuft: items.get(id)?.cuft || 0.01, quantity: qty, mover_pack: checked, reference_name: items.get(id)?.name }] } : value)) : undefined}
+              onMoverPackChange={/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(items.get(id)?.name || '') ? checked => setRooms(current => current.map(value => value.id === r.id ? { ...value, items: { ...value.items, [id]: 0 }, custom_items: [...(value.custom_items || []), { id: crypto.randomUUID(), catalog_item_id: id, name: (r.item_names?.[id] || items.get(id)?.name || 'Box').replace(/\s*\((?:CP|PBO)\)\s*$/i, '') + (checked ? ' (CP)' : ' (PBO)'), cuft: items.get(id)?.cuft || 0.01, quantity: qty, mover_pack: checked, reference_name: items.get(id)?.name }] } : value)) : undefined}
               onRemove={() => quantity(id, 0, r.id)} />)}
             {(r.custom_items || []).map(item => <InventoryRow key={item.id} name={packingItemName(item.name)} cuft={item.cuft} quantity={item.quantity} busy={busy}
               going={item.going} onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, going } : entry) } : value))}
               packingLocked={packing?.full}
               onMoverPackChange={/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(item.name) ? checked => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, reference_name: entry.reference_name || entry.name, mover_pack: checked, name: entry.name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') + (checked ? ' (CP)' : ' (PBO)') } : entry) } : value)) : undefined}
               photo={imageEndpoint ? <QuestionReferenceImages compact name={item.reference_name || item.name} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
-              onSave={changes => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, reference_name: entry.reference_name || entry.name, ...changes } : entry) } : value))}
+              onSave={changes => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, name_override: entry.name_override || changes.name !== entry.name, reference_name: entry.reference_name || entry.name, ...changes } : entry) } : value))}
               onRemove={() => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.filter(entry => entry.id !== item.id) } : value))} />)}
           </details>)}
           <p><strong>{room ? 'Room total' : 'List total'}: {number(visibleCuft)} cu ft</strong></p>

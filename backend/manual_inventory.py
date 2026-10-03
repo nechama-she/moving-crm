@@ -20,6 +20,8 @@ class InventoryItemInput(BaseModel):
 class CustomInventoryItemInput(BaseModel):
     model_config = ConfigDict(extra='forbid')
     id: UUID
+    catalog_item_id: str | None = None
+    name_override: bool = False
     name: str = Field(min_length=1, max_length=200)
     cuft: Decimal = Field(gt=0, le=10000, allow_inf_nan=False)
     quantity: int = Field(ge=1, le=999, strict=True)
@@ -51,6 +53,8 @@ def build_inventory(body, db, allow_empty=False):
     room_types = {r.id for r in db.query(InventoryRoomType).all()}
     ids = {item.item_id for room in body.rooms for item in room.items}
     items = {r.id: r for r in db.query(InventoryCatalogItem).filter(InventoryCatalogItem.id.in_(ids), InventoryCatalogItem.active.is_(True)).all()}
+    linked_ids = {item.catalog_item_id for room in body.rooms for item in room.custom_items if item.catalog_item_id}
+    linked = {item.id: item for item in db.query(InventoryCatalogItem).filter(InventoryCatalogItem.id.in_(linked_ids)).all()} if linked_ids else {}
     if (not ids and not any(room.custom_items for room in body.rooms) and not allow_empty) or set(items) != ids:
         raise HTTPException(400, 'Choose available items from the inventory list.')
     rows = []
@@ -81,7 +85,13 @@ def build_inventory(body, db, allow_empty=False):
                 raise HTTPException(400, 'Enter a name for each custom item.')
             volume = entry.cuft * entry.quantity if entry.going else Decimal(0)
             cuft += volume
-            row = {'item_id': 'custom-' + str(entry.id), 'room': room.name.strip(), 'name': entry.name.strip(),
+            catalog_item = linked.get(entry.catalog_item_id)
+            display_name = entry.name.strip()
+            if catalog_item and not entry.name_override:
+                suffix = re.search(r'\s*\((?:CP|PBO)\)\s*$', display_name, re.I)
+                display_name = catalog_item.name + (suffix.group(0) if suffix else '')
+            row = {'item_id': catalog_item.id if catalog_item else 'custom-' + str(entry.id), 'room': room.name.strip(), 'name': display_name,
+                   'catalog_item_id': catalog_item.id if catalog_item else None, 'name_override': entry.name_override,
                    'amount': entry.quantity, 'cuft': float(volume), 'weight': 0,
                    'unit_cuft': float(entry.cuft), 'unit_weight': 0, 'custom': True, 'going': entry.going, 'mover_pack': entry.mover_pack,
                    'reference_name': entry.reference_name or entry.name.strip()}
