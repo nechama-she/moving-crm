@@ -91,6 +91,8 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
         company_block.append(Paragraph(escape(company.get('name') or 'Your moving team'), company_name_style))
         company_block.extend(Paragraph(escape(str(value)).replace('\n', '<br/>'), company_details_style)
                              for value in [company.get('office_address'), company.get('phone')] if value)
+        if company.get('dot_number'):
+            company_block.append(Paragraph(escape(f"USDOT: {company['dot_number']}"), company_details_style))
         customer_block = [p(f'{label}: {client.get(key) or ""}') for label, key in [
             ('Customer', 'name'), ('Phone number', 'phone'), ('Email', 'email')]]
         if logo_block:
