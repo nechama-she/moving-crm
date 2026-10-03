@@ -17,6 +17,18 @@ def resolve_catalog_names(rows, db=None, catalog=None):
             continue
         row = dict(source)
         item = by_id.get(row.get('catalog_item_id') or row.get('item_id'))
+        if item is not None and getattr(item, 'deleted', False):
+            # Duplicate cleanup keeps old records for saved inventories. Reconnect
+            # those references only when exactly one surviving name matches.
+            surviving = [candidate for candidate in catalog if not getattr(candidate, 'deleted', False)
+                         and normalize(candidate.name) == normalize(item.name)]
+            if len(surviving) == 1:
+                item = surviving[0]
+        if item is None and not row.get('name_override'):
+            exact = [candidate for candidate in catalog if not getattr(candidate, 'deleted', False)
+                     and normalize(candidate.name) == normalize(row.get('name', ''))]
+            if len(exact) == 1:
+                item = exact[0]
         if item is None and not row.get('name_override'):
             try:
                 count = max(1, int(row.get('amount') or row.get('quantity') or 1))

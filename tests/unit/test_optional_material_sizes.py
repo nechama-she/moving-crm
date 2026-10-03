@@ -31,6 +31,29 @@ def test_required_defaults_are_not_filtered():
     assert sized_optional_defaults(defaults,{'crate':rate},Decimal(50)) == defaults
 
 
+@pytest.mark.parametrize('inventory_id', ['deleted-tv', 'custom-tv', 'current-tv'])
+def test_required_tv_box_wins_over_optional_defaults(inventory_id):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from item_materials import customer_item_materials
+    name = 'TV Flat Screen - 33 - 59'
+    db = Mock()
+    db.query.return_value.all.return_value = [
+        SimpleNamespace(id='deleted-tv',name=name,cuft=10,deleted=True),
+        SimpleNamespace(id='current-tv',name=name,cuft=15,deleted=False)]
+    plan = SimpleNamespace(id='book',item_materials=json.dumps({
+        'rows':[dict(item_id='current-tv',material_id='tv-box',requirement='required',quantity='1')],
+        'defaults':[dict(material_id='crate',requirement='optional',quantity='1')]}),
+        services=[SimpleNamespace(comments='__ld_packing__:'+json.dumps({'materials':[
+            dict(id=id,name=label,material_price=10,packing_price=5,unpacking_price=0)
+            for id,label in [('tv-box','TV Box up to 59 inches'),('crate','Carton Crate Large')]]}))])
+    rows,_ = customer_item_materials(plan,[dict(item_id=inventory_id,name=name,cuft=10,quantity=1)],db)
+    assert len(rows) == 1
+    assert rows[0]['requirement'] == 'required'
+    assert rows[0]['material_name'] == 'TV Box up to 59 inches'
+
+
 def test_wizard_questions_use_current_name_and_per_item_volume():
     import json
     from types import SimpleNamespace
