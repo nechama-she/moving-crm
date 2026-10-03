@@ -44,7 +44,7 @@ def catalog(db):
     return {'rooms': [{'id': r.id, 'name': r.name} for r in db.query(InventoryRoomType).order_by(InventoryRoomType.sort_order).all()],
             'items': [{'id': r.id, 'name': r.name, 'description': r.description,
                        'cuft': float(r.cuft), 'weight': float(r.weight)}
-                      for r in db.query(InventoryCatalogItem).filter_by(active=True).order_by(InventoryCatalogItem.name, InventoryCatalogItem.cuft).all()]}
+                      for r in db.query(InventoryCatalogItem).filter_by(active=True, deleted=False).order_by(InventoryCatalogItem.name, InventoryCatalogItem.cuft).all()]}
 
 
 def build_inventory(body, db, allow_empty=False):

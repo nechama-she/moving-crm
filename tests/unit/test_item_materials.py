@@ -13,6 +13,7 @@ from long_distance_packing import PACKING_CARD_PREFIX
 
 def setup():
     db = Mock()
+    db.query.return_value.filter_by.return_value = db.query.return_value
     db.query.return_value.order_by.return_value.all.return_value = [SimpleNamespace(id='bed', name='King bed', active=True)]
     card = {'materials':[{'id':'cover','name':'King cover','material_price':26,'packing_price':12,'unpacking_price':0}]}
     plan = SimpleNamespace(id='east', item_materials=None, services=[SimpleNamespace(comments=PACKING_CARD_PREFIX+json.dumps(card))])

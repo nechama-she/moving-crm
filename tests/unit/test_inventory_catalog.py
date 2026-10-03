@@ -104,6 +104,64 @@ def upload_csv(api, db, content):
     return asyncio.run(api.import_items(UploadFile(filename='catalog.csv', file=io.BytesIO(content)), None, db))
 
 
+def test_import_matches_names_and_volume_and_deduplicates_repeated_rows(catalog_api):
+    api, db = catalog_api
+    item = api.create_item(api.CatalogItemInput(name='Air Compressor / tank', cuft=20, weight=0, description='Keep this'), None, db)
+    content = b'name,cuft,weight\nAir Compressor/Tank,20,140\nair compressor / tank,20,140\nAccordion,8,56\nACCORDION,8,56\nAccordion,10,70\n'
+    assert upload_csv(api, db, content) == {'created': 2, 'updated': 1}
+    assert upload_csv(api, db, content) == {'created': 0, 'updated': 3}
+    assert len(api.list_items(None, db)['items']) == 3
+    assert db.get(models.InventoryCatalogItem, item['id']).weight == 140
+    assert db.get(models.InventoryCatalogItem, item['id']).description == 'Keep this'
+
+
+def test_conflicting_duplicate_upload_does_not_save(catalog_api):
+    api, db = catalog_api
+    with pytest.raises(HTTPException, match='conflicting values'):
+        upload_csv(api, db, b'name,cuft,weight\nChair,20,140\nCHAIR,20,150\n')
+    assert api.list_items(None, db)['items'] == []
+
+
+def test_manual_duplicate_add_and_rename_rejected(catalog_api):
+    api, db = catalog_api
+    api.create_item(api.CatalogItemInput(name='Air Compressor / tank', cuft=20, weight=0), None, db)
+    duplicate = api.CatalogItemInput(name='AIR COMPRESSOR/tank', cuft=20, weight=10)
+    with pytest.raises(HTTPException, match='already exists'):
+        api.create_item(duplicate, None, db)
+    other = api.create_item(api.CatalogItemInput(name='Chair', cuft=20, weight=0), None, db)
+    with pytest.raises(HTTPException, match='already exists'):
+        api.update_item(other['id'], duplicate, None, db)
+
+
+def test_delete_hides_item_but_preserves_saved_inventory_reference(catalog_api):
+    api, db = catalog_api
+    item = api.create_item(api.CatalogItemInput(name='Chair', cuft=20, weight=10), None, db)
+    db.add(models.InventoryRoomType(id='room', name='Room', sort_order=0))
+    db.commit()
+    api.delete_item(item['id'], None, db)
+    assert api.list_items(None, db)['items'] == []
+    assert catalog(db)['items'] == []
+    assert 'Chair' not in api.export_items(None, db).body.decode('utf-8-sig')
+    assert db.get(models.InventoryCatalogItem, item['id']) is not None
+    body = ManualInventoryInput(request_id='00000000-0000-0000-0000-000000000001', rooms=[{'room_type_id':'room', 'name':'Room', 'items':[{'item_id':item['id'], 'quantity':1}]}])
+    assert build_inventory(body, db)[2:] == (20, 10)
+    with pytest.raises(HTTPException):
+        api.update_item(item['id'], api.CatalogItemInput(name='Chair', cuft=20, weight=10), None, db)
+
+
+def test_cleanup_keeps_largest_per_name_and_is_repeatable(catalog_api):
+    api, db = catalog_api
+    for item_id, name, cuft, weight, description in [('a', 'Air Compressor / tank', 20, 140, ''), ('b', 'Air Compressor/Tank', 30, 140, ''), ('c', 'Air Compressor/Tank', 40, 150, 'Largest'), ('d', 'Air Compressor/Tank', 40, 140, 'Special'), ('e', 'Chair', 10, 70, '')]:
+        db.add(models.InventoryCatalogItem(id=item_id, name=name, cuft=cuft, weight=weight, description=description))
+    db.commit()
+    assert api.deduplicate_items(None, db) == {'removed': 3}
+    assert api.deduplicate_items(None, db) == {'removed': 0}
+    assert {item['id'] for item in api.list_items(None, db)['items']} == {'c', 'e'}
+    retained = db.get(models.InventoryCatalogItem, 'c')
+    assert retained.cuft == 40 and retained.weight == 150 and retained.description == 'Largest'
+    assert db.get(models.InventoryCatalogItem, 'b').deleted
+
+
 def test_csv_round_trip_and_bulk_update(catalog_api):
     api, db = catalog_api
     row = api.create_item(api.CatalogItemInput(name='=Chair, special', description='Line one\nLine two', cuft='12.25', weight=4, active=False), None, db)

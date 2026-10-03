@@ -4,6 +4,8 @@ from uuid import uuid4
 import json
 import csv
 import io
+import re
+import unicodedata
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
@@ -22,6 +24,23 @@ router = APIRouter(prefix='/api/inventory-catalog', tags=['Inventory catalog'])
 def strip_hidden_csv_characters(value):
     # Keep language-significant joiners and visible Unicode characters intact.
     return value.translate(dict.fromkeys(map(ord, '\u200b\ufeff\u2060')))
+
+
+def duplicate_key(name, cuft):
+    name = unicodedata.normalize('NFKC', strip_hidden_csv_characters(name)).casefold()
+    name = re.sub(r'\s*([^\w\s])\s*', r'\1', ' '.join(name.split()))
+    return name, Decimal(cuft)
+
+
+def available_items(db):
+    return db.query(InventoryCatalogItem).filter_by(deleted=False)
+
+
+def reject_duplicate(db, body, item_id=None):
+    key = duplicate_key(body.name, body.cuft)
+    if any(item.id != item_id and duplicate_key(item.name, item.cuft) == key
+           for item in available_items(db).all()):
+        raise HTTPException(409, 'This item already exists with the same volume. Edit the existing item instead.')
 
 
 class CatalogMaterial(BaseModel):
@@ -86,12 +105,13 @@ def item_values(body, db, existing=None):
 
 @router.get('')
 def list_items(user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    return {'items': [item_dict(item) for item in db.query(InventoryCatalogItem)
+    return {'items': [item_dict(item) for item in available_items(db)
                      .order_by(InventoryCatalogItem.name, InventoryCatalogItem.cuft).all()]}
 
 
 @router.post('', status_code=201)
 def create_item(body: CatalogItemInput, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    reject_duplicate(db, body)
     item = InventoryCatalogItem(id=str(uuid4()), **item_values(body, db))
     db.add(item)
     db.commit()
@@ -108,7 +128,7 @@ def export_items(user: User = Depends(require_admin), db: Session = Depends(get_
     output = io.StringIO(newline='')
     writer = csv.DictWriter(output, fieldnames=CSV_FIELDS)
     writer.writeheader()
-    for item in db.query(InventoryCatalogItem).order_by(InventoryCatalogItem.name, InventoryCatalogItem.cuft).all():
+    for item in available_items(db).order_by(InventoryCatalogItem.name, InventoryCatalogItem.cuft).all():
         row = item_dict(item)
         row['packing_materials'] = json.dumps(row['packing_materials'])
         # Escape spreadsheet formulas while preserving text on re-import.
@@ -138,8 +158,11 @@ async def import_items(file: UploadFile = File(...), user: User = Depends(requir
         reader.fieldnames = fields
         if len(fields) != len(set(fields)) or not {'name', 'cuft', 'weight'}.issubset(fields) or set(fields) - set(CSV_FIELDS):
             raise HTTPException(422, 'CSV needs name, cuft, weight columns. Optional columns: id, description, active, packing_materials.')
-        existing = {item.id: item for item in db.query(InventoryCatalogItem).with_for_update().all()}
-        pending, seen = [], set()
+        existing = {item.id: item for item in available_items(db).order_by(InventoryCatalogItem.active.desc(), InventoryCatalogItem.id).with_for_update().all()}
+        by_name = {}
+        for item in existing.values():
+            by_name.setdefault(duplicate_key(item.name, item.cuft), item)
+        pending, seen, staged = [], set(), {}
         for line, row in enumerate(reader, start=2):
             if None in row or any(value is None for value in row.values()):
                 raise HTTPException(422, f'Row {line}: column count does not match the header')
@@ -148,10 +171,6 @@ async def import_items(file: UploadFile = File(...), user: User = Depends(requir
                 raise HTTPException(422, f'Row {line}: unknown or duplicate item ID. Leave ID blank for new items.')
             seen.add(item_id)
             item = existing.get(item_id)
-            if item is not None:
-                for key in ('description', 'active'):
-                    if key not in row:
-                        row[key] = getattr(item, key)
             for key in ('name', 'description'):
                 if row.get(key, '').startswith(("'=", "'+", "'-", "'@", "'\t", "'\r", "'\n", "''")):
                     row[key] = row[key][1:]
@@ -162,7 +181,23 @@ async def import_items(file: UploadFile = File(...), user: User = Depends(requir
                     raise HTTPException(422, f'Row {line}: packing_materials must be a JSON list')
             try:
                 body = CatalogItemInput(**row)
+                key = duplicate_key(body.name, body.cuft)
+                if not item_id:
+                    item = by_name.get(key)
+                elif key in by_name and by_name[key].id != item_id and duplicate_key(item.name, item.cuft) != key:
+                    raise HTTPException(409, 'This name and volume already belong to another catalog item.')
+                if item is not None:
+                    for field in ('description', 'active'):
+                        if field not in row:
+                            row[field] = getattr(item, field)
+                    body = CatalogItemInput(**row)
                 values = item_values(body, db, item)
+                if key in staged:
+                    previous = staged[key]
+                    if {k: v for k, v in values.items() if k != 'name'} != {k: v for k, v in previous.items() if k != 'name'}:
+                        raise HTTPException(422, 'Duplicate item has conflicting values. Keep one row for each item and volume.')
+                    continue
+                staged[key] = values
             except ValidationError as exc:
                 error = exc.errors()[0]
                 raise HTTPException(422, f"Row {line}: {'.'.join(map(str, error['loc']))}: {error['msg']}")
@@ -188,11 +223,38 @@ async def import_items(file: UploadFile = File(...), user: User = Depends(requir
 
 @router.put('/{item_id}')
 def update_item(item_id: str, body: CatalogItemInput, user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    item = db.query(InventoryCatalogItem).filter_by(id=item_id).with_for_update().first()
+    item = available_items(db).filter_by(id=item_id).with_for_update().first()
     if not item:
         raise HTTPException(404, 'Catalog item not found')
+    if duplicate_key(item.name, item.cuft) != duplicate_key(body.name, body.cuft):
+        reject_duplicate(db, body, item_id)
     for key, value in item_values(body, db, item).items():
         setattr(item, key, value)
     db.commit()
     db.refresh(item)
     return item_dict(item)
+
+
+@router.delete('/{item_id}')
+def delete_item(item_id: str, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    item = available_items(db).filter_by(id=item_id).with_for_update().first()
+    if not item:
+        raise HTTPException(404, 'Catalog item not found')
+    # Retain the record for saved inventory and moving-term references.
+    item.deleted = True
+    db.commit()
+    return {'deleted': True}
+
+
+@router.post('/deduplicate')
+def deduplicate_items(user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    seen, removed = set(), 0
+    for item in available_items(db).order_by(InventoryCatalogItem.cuft.desc(), InventoryCatalogItem.active.desc(), InventoryCatalogItem.id).with_for_update().all():
+        key = duplicate_key(item.name, item.cuft)[0]
+        if key in seen:
+            item.deleted = True
+            removed += 1
+        else:
+            seen.add(key)
+    db.commit()
+    return {'removed': removed}

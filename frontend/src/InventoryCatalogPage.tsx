@@ -15,6 +15,20 @@ export default function InventoryCatalogPage() {
   const [retry, setRetry] = useState(0);
   const [transferring, setTransferring] = useState(false);
   const uploadInput = useRef<HTMLInputElement>(null);
+  async function remove(item?: CatalogItem) {
+    if (!window.confirm(item ? `Delete "${item.name}" from the catalog? Saved inventory records will be kept.` : 'Keep only the largest-volume item for each matching name and remove the other entries? The retained item keeps its own weight and settings. Saved records will be kept.')) return;
+    setTransferring(true); setError(''); setNotice('');
+    try {
+      const response = await fetch(`${API_BASE}/api/inventory-catalog/${item ? encodeURIComponent(item.id) : 'deduplicate'}`, {
+        method: item ? 'DELETE' : 'POST', headers: authHeaders(token),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : 'Could not update the catalog.');
+      setNotice(item ? `${item.name} deleted.` : `${result.removed} duplicate items removed.`);
+      setRetry(value => value + 1);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not update the catalog.'); }
+    finally { setTransferring(false); }
+  }
   async function transfer(file?: File) {
     setTransferring(true); setError(""); setNotice("");
     try {
@@ -66,17 +80,18 @@ export default function InventoryCatalogPage() {
       <header className="ic-toolbar"><div><h1>Inventory catalog</h1><p>Manage shared items used in customer inventories and moving terms.</p></div><div className="ic-transfer-actions">
         <button className="slds-button slds-button_neutral" disabled={transferring || loading} onClick={() => void transfer()}>Download CSV</button>
         <button className="slds-button slds-button_neutral" disabled={transferring || loading} onClick={() => uploadInput.current?.click()}>Upload CSV</button>
+        <button className="slds-button slds-button_neutral" disabled={transferring || loading} onClick={() => void remove()}>Remove duplicates</button>
         <input ref={uploadInput} type="file" accept=".csv,text/csv" hidden aria-label="Upload inventory catalog CSV" onChange={e => { const file = e.target.files?.[0]; if (file) void transfer(file); }} />
         <button className="slds-button slds-button_brand" disabled={transferring} onClick={() => setEditing("new")}>+ Add item</button>
       </div></header>
-      <p>Download includes all active and inactive items, regardless of search. Edit the CSV and upload it to update matching IDs; leave ID blank to add an item. Items omitted from the file are kept. Set active to false to deactivate an item.</p>
-      {transferring && <p role="status">Transferring catalog...</p>}
+      <p>Upload updates matching IDs, or matches by item name and volume when IDs are blank. Capitalization and spacing around punctuation are ignored. New items are added; repeated identical rows are imported once. Items omitted from the file are kept.</p>
+      {transferring && <p role="status">Updating catalog...</p>}
       <label className="ic-search">Search catalog<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by item name or description" /></label>
       {notice && <p role="status" className="ic-notice">{notice}</p>}
       {error && <p role="alert" className="ic-error">{error} <button className="slds-button" onClick={() => setRetry(value => value + 1)}>Try again</button></p>}
       {loading ? <p role="status">Loading catalog...</p> : <>
         <p>{shown.length} items</p>
-        <div className="ic-table-wrap"><table><thead><tr><th>Item</th><th>Cu ft / item</th><th>Lb / item</th><th>Status</th><th><span className="slds-assistive-text">Actions</span></th></tr></thead><tbody>{shown.map(item => <tr key={item.id}><td><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</td><td>{item.cuft.toLocaleString()}</td><td>{item.weight.toLocaleString()}</td><td>{item.active ? "Active" : "Inactive"}</td><td><button className="slds-button slds-button_neutral" aria-label={`Edit ${item.name}`} onClick={() => setEditing(item)}>Edit</button></td></tr>)}</tbody></table></div>
+        <div className="ic-table-wrap"><table><thead><tr><th>Item</th><th>Cu ft / item</th><th>Lb / item</th><th>Status</th><th><span className="slds-assistive-text">Actions</span></th></tr></thead><tbody>{shown.map(item => <tr key={item.id}><td><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</td><td>{item.cuft.toLocaleString()}</td><td>{item.weight.toLocaleString()}</td><td>{item.active ? "Active" : "Inactive"}</td><td><button className="slds-button slds-button_neutral" disabled={transferring} aria-label={`Edit ${item.name}`} onClick={() => setEditing(item)}>Edit</button><button className="slds-button slds-button_destructive" disabled={transferring} aria-label={`Delete ${item.name}`} onClick={() => void remove(item)}>Delete</button></td></tr>)}</tbody></table></div>
         {!shown.length && !error && <p>No items match your search. Use Add item to create one.</p>}
       </>}
     </section>

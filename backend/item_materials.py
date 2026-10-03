@@ -57,7 +57,7 @@ def material_setup(plan, db):
     card = packing_card(plan.services)
     return {'rows': material_assignments(plan, db), 'defaults': default_materials(plan, db),
             'items': [{'id': item.id, 'name': item.name, 'active': item.active}
-                      for item in db.query(InventoryCatalogItem).order_by(InventoryCatalogItem.name).all()],
+                      for item in db.query(InventoryCatalogItem).filter_by(deleted=False).order_by(InventoryCatalogItem.name).all()],
             'materials': [{'id': row.id, 'name': row.name} for row in card.materials] if card else []}
 
 

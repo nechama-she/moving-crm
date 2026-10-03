@@ -1156,4 +1156,5 @@ class InventoryCatalogItem(Base):
     cuft = Column(Numeric(12, 2), nullable=False)
     weight = Column(Numeric(12, 2), nullable=False)
     active = Column(Boolean, nullable=False, default=True)
+    deleted = Column(Boolean, nullable=False, default=False, server_default='false')
     packing_materials = Column(Text, nullable=False, default='[]')
