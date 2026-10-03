@@ -3,6 +3,7 @@ import importlib.util
 import asyncio
 import csv
 import io
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -102,6 +103,37 @@ def test_unknown_material_rejected(catalog_api):
 
 def upload_csv(api, db, content):
     return asyncio.run(api.import_items(UploadFile(filename='catalog.csv', file=io.BytesIO(content)), None, db))
+
+
+@pytest.mark.parametrize('action', ['delete', 'deduplicate', 'migration'])
+def test_removed_items_leave_no_packing_assignments(catalog_api, action):
+    from catalog_material_cleanup import cleanup_missing_assignments
+    from item_materials import material_setup
+    api, db = catalog_api
+    for id, size in [('keep', 30), ('remove', 20)]:
+        db.add(models.InventoryCatalogItem(id=id, name='Chair', cuft=size, weight=10))
+    config = {'rows': [{'item_id': id, 'material_id': 'cover', 'quantity': '1', 'requirement': 'required'} for id in ['keep', 'remove']],
+              'defaults': [{'material_id': 'wrap', 'quantity': '1', 'requirement': 'optional'}],
+              'protection_review': [{'item_id': 'remove', 'reason': 'Missing size'}], 'catalog_protection_v1': True}
+    plan = models.PricingPlan(id='book', name='Book', company_name='Test', source_key='test', item_materials=json.dumps(config))
+    db.add(plan)
+    db.commit()
+    if action == 'delete':
+        api.delete_item('remove', None, db)
+    elif action == 'deduplicate':
+        api.deduplicate_items(None, db)
+    else:
+        db.get(models.InventoryCatalogItem, 'remove').deleted = True
+        db.flush()
+        assert len(material_setup(plan, db)['rows']) == 1
+        cleanup_missing_assignments(db.connection())
+        db.commit()
+        db.refresh(plan)
+    saved = json.loads(plan.item_materials)
+    assert [row['item_id'] for row in saved['rows']] == ['keep']
+    assert saved['protection_review'] == []
+    assert saved['defaults'] == config['defaults']
+    assert saved['catalog_protection_v1'] is True
 
 
 def test_import_matches_names_and_volume_and_deduplicates_repeated_rows(catalog_api):

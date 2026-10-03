@@ -55,9 +55,13 @@ def default_materials(plan, db):
 
 def material_setup(plan, db):
     card = packing_card(plan.services)
-    return {'rows': material_assignments(plan, db), 'defaults': default_materials(plan, db),
-            'items': [{'id': item.id, 'name': item.name, 'active': item.active}
-                      for item in db.query(InventoryCatalogItem).filter_by(deleted=False).order_by(InventoryCatalogItem.name).all()],
+    items = [{'id': item.id, 'name': item.name, 'active': item.active}
+             for item in db.query(InventoryCatalogItem).filter_by(deleted=False).order_by(InventoryCatalogItem.name).all()]
+    valid = {item['id'] for item in items}
+    configured = {row['item_id'] for row in material_assignments(plan, db)}
+    return {'rows': [row for row in material_assignments(plan, db) if row['item_id'] in valid], 'defaults': default_materials(plan, db),
+            'protection_review': [row for row in material_configuration(plan).get('protection_review', []) if row['item_id'] not in configured and row['item_id'] in valid],
+            'items': items,
             'materials': [{'id': row.id, 'name': row.name} for row in card.materials] if card else []}
 
 
@@ -74,6 +78,7 @@ def save_material_assignments(plan, body, db):
         if row.material_id not in materials and row.material_id not in old_defaults:
             raise HTTPException(422, 'Choose a default material from this pricing book')
     plan.item_materials = json.dumps({
+        **material_configuration(plan),
         'rows': [row.model_dump(mode='json') for row in body.rows],
         'defaults': [row.model_dump(mode='json') for row in body.defaults],
     })
@@ -93,14 +98,15 @@ def customer_item_materials(plan, inventory, db):
         return ' '.join(sorted(re.findall(r'\w+', str(name).casefold())))
     by_name = defaultdict(list)
     for item in catalog:
-        by_name[key(item.name)].append(item.id)
+        if not getattr(item, 'deleted', False):
+            by_name[key(item.name)].append(item.id)
     by_item = defaultdict(list)
     for assignment in assignments:
         by_item[assignment['item_id']].append(assignment)
     result, matched = [], set()
     occurrences = Counter()
     for row in inventory:
-        if not isinstance(row, dict):
+        if not isinstance(row, dict) or row.get('going') is False:
             continue
         item_id = row.get('item_id')
         if not item_id:

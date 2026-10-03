@@ -142,6 +142,10 @@ def migrate() -> None:
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS price_calculated_at TIMESTAMP"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS price_refresh_attempted_at TIMESTAMP"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS price_refresh_error TEXT"))
+        from seed_item_protection import seed_item_protection
+        seed_item_protection(connection)
+        from catalog_material_cleanup import cleanup_missing_assignments
+        cleanup_missing_assignments(connection)
     logger.info("communication_associations is ready")
     logger.info("smartmoving_referral_sources is ready")
     logger.info("access_audit_logs is ready")

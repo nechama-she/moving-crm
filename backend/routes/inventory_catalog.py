@@ -17,6 +17,7 @@ from auth import require_admin
 from database import get_db
 from models import InventoryCatalogItem, User, PricingPlan
 from long_distance_packing import packing_card
+from catalog_material_cleanup import remove_item_assignments
 
 router = APIRouter(prefix='/api/inventory-catalog', tags=['Inventory catalog'])
 
@@ -242,6 +243,7 @@ def delete_item(item_id: str, user: User = Depends(require_admin), db: Session =
         raise HTTPException(404, 'Catalog item not found')
     # Retain the record for saved inventory and moving-term references.
     item.deleted = True
+    remove_item_assignments(db, {item_id})
     db.commit()
     return {'deleted': True}
 
@@ -249,12 +251,15 @@ def delete_item(item_id: str, user: User = Depends(require_admin), db: Session =
 @router.post('/deduplicate')
 def deduplicate_items(user: User = Depends(require_admin), db: Session = Depends(get_db)):
     seen, removed = set(), 0
+    removed_ids = set()
     for item in available_items(db).order_by(InventoryCatalogItem.cuft.desc(), InventoryCatalogItem.active.desc(), InventoryCatalogItem.id).with_for_update().all():
         key = duplicate_key(item.name, item.cuft)[0]
         if key in seen:
             item.deleted = True
+            removed_ids.add(item.id)
             removed += 1
         else:
             seen.add(key)
+    remove_item_assignments(db, removed_ids)
     db.commit()
     return {'removed': removed}
