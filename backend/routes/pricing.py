@@ -587,6 +587,8 @@ def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
     report = db.get(LeadLiveSwitch, job.lead_id) if job else None
     snapshot = json.loads(report.details or '{}').get('spark_inventory_snapshot', []) if report else []
     if snapshot:
+        from catalog_names import resolve_catalog_names
+        snapshot = resolve_catalog_names(snapshot, db)
         result = []
         for row in snapshot:
             if not isinstance(row, dict) or not row.get('name') or row.get('going') is False:
@@ -599,7 +601,8 @@ def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
                 cuft = float(row['cuft']) if row.get('cuft') is not None else None
             except (TypeError, ValueError):
                 cuft = None
-            result.append({'item_id': row.get('item_id'), 'name': str(row['name']),
+            result.append({'item_id': row.get('item_id'), 'catalog_item_id': row.get('catalog_item_id'),
+                           'name_override': row.get('name_override', False), 'unit_cuft': row.get('unit_cuft'), 'name': str(row['name']),
                            'quantity': quantity, 'room': str(row.get('room') or ''), 'cuft': cuft})
         return result
     items = db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job_id).all()
@@ -614,7 +617,8 @@ def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
         room = source.get('room') or '' if source.get('name') == item.name else ''
         res.append({"id": item.id, "name": item.name or "", "quantity": qty, "room": room,
                     "cuft": float(item.cuft) if item.cuft is not None else None})
-    return res
+    from catalog_names import resolve_catalog_names
+    return resolve_catalog_names(res, db)
 
 
 def _rule_charges(rule: PricingRule) -> list[dict]:
@@ -1090,7 +1094,8 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
         rate = getattr(card, kind)
         if rate is not None:
             rates[kind] = {'rate': float(rate), 'total': float((rate * volume).quantize(Decimal('0.01')))}
-    inventory = job._estimated_materials_data() + _job_spark_inventory_items(job.id, db)
+    from catalog_names import resolve_catalog_names
+    inventory = resolve_catalog_names(job._estimated_materials_data() + _job_spark_inventory_items(job.id, db), db)
     from item_materials import customer_item_materials
     configured_items, configured_names = customer_item_materials(plan, inventory, db)
     ignored_box_words = {'box', 'cp', 'pbo', 'cu', 'cuft', 'cf', 'cubic', 'foot', 'feet', 'pack', 'packing', 'item'}

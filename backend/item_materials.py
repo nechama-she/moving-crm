@@ -139,7 +139,8 @@ def customer_item_materials(plan, inventory, db):
         by_item[assignment['item_id']].append(assignment)
     result, matched = [], set()
     occurrences = Counter()
-    for row in inventory:
+    from catalog_names import resolve_catalog_names
+    for row in resolve_catalog_names(inventory, catalog=catalog):
         if not isinstance(row, dict) or row.get('going') is False:
             continue
         item_id = row.get('item_id')

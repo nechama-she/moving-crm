@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import QuestionReferenceImages from "./QuestionReferenceImages";
-export type ItemQuestion = { id: string; rule_id?: string; all_items?: boolean; items?: { id: string; label: string; room: string }[]; name: string; label?: string; room: string; quantity: number; question: string; photo: boolean; answers: { id: string; label: string; action: string; notice: string; acknowledge: boolean }[]; saved?: { answer_id: string; acknowledged: boolean; pending?: boolean; selected_items?: string[] } };
+export type ItemQuestion = { id: string; rule_id?: string; all_items?: boolean; items?: { id: string; label: string; room: string }[]; name: string; reference_name?: string; label?: string; room: string; quantity: number; question: string; photo: boolean; answers: { id: string; label: string; action: string; notice: string; acknowledge: boolean }[]; saved?: { answer_id: string; acknowledged: boolean; pending?: boolean; selected_items?: string[] } };
 type Props = { active?: boolean; visibleIds?: Set<string>; validationAttempt?: number; disabled?: boolean; questions: ItemQuestion[]; endpoint: string; linkKey: string; session: string; onSave: (answer: { question_id: string; answer_id: string; acknowledged: boolean; pending: boolean; selected_items?: string[] }) => Promise<void> };
 export default function CustomerItemQuestions(props: Props) {
  const list = useRef<HTMLDivElement>(null);
@@ -36,7 +36,7 @@ function Question({ question, endpoint, linkKey, session, onSave, disabled, vali
  }
  return <fieldset data-customer-action={`term:${question.id}`} disabled={disabled} className={`cm-item-question${missingChoice || missingAck || (validationAttempt > 0 && missingItems) ? ' cm-item-question-invalid' : ''}`}>
   <legend><strong>{question.label || question.name}</strong>{question.room && <span>{question.room}</span>}{!question.all_items && <span>Qty {question.quantity}</span>}</legend>
-  {question.photo && <QuestionReferenceImages active={active} name={question.name} room={question.room} endpoint={`${endpoint}/question-images`} linkKey={linkKey} session={session} />}
+  {question.photo && <QuestionReferenceImages active={active} name={question.reference_name || question.name} room={question.room} endpoint={`${endpoint}/question-images`} linkKey={linkKey} session={session} />}
   <p><strong>{question.question}</strong></p>
   <div className="cm-item-answers" role="group" aria-invalid={missingChoice || undefined} aria-describedby={missingChoice ? errorId : undefined}>{question.answers.map(answer => <label className="cm-check-item" key={answer.id}><input type="radio" name={question.id} checked={choice === answer.id} onChange={() => { setChoice(answer.id); setAck(false); setSelectedItems([]); void save(answer.id, false, []); }} />{answer.label}</label>)}</div>
   {missingChoice && <small id={errorId} className="cm-field-error" role="alert">Choose an answer to continue.</small>}

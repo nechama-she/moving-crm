@@ -73,7 +73,7 @@ def build_inventory(body, db, allow_empty=False):
             cuft += volume
             weight += mass
             display_name = entry.name.strip() if entry.name else item.name
-            row = {'item_id': item.id, 'room': room.name.strip(), 'name': display_name,
+            row = {'item_id': item.id, 'room': room.name.strip(), 'name': display_name, 'name_override': bool(entry.name),
                    'amount': entry.quantity, 'cuft': float(volume), 'weight': float(mass),
                    'unit_cuft': float(item.cuft), 'unit_weight': float(item.weight)}
             if display_name != item.name:
@@ -98,7 +98,14 @@ def build_inventory(body, db, allow_empty=False):
             rows.append(row)
             contents.append(row)
         rooms.append({'room_type_id': room.room_type_id, 'name': room.name.strip(), 'items': contents})
-    return rooms, rows, float(cuft), float(weight)
+    from catalog_names import resolve_catalog_names
+    resolved = resolve_catalog_names(rows, db)
+    index = 0
+    for room in rooms:
+        count = len(room['items'])
+        room['items'] = resolved[index:index + count]
+        index += count
+    return rooms, resolved, float(cuft), float(weight)
 
 
 def submit_inventory(body, access, db):

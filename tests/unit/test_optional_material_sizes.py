@@ -31,6 +31,25 @@ def test_required_defaults_are_not_filtered():
     assert sized_optional_defaults(defaults,{'crate':rate},Decimal(50)) == defaults
 
 
+def test_wizard_questions_use_current_name_and_per_item_volume():
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from item_materials import customer_item_materials
+    materials = [dict(id=id,name=id,material_price=10,packing_price=5,unpacking_price=0,
+                      rule={'measure':'cubic_feet',**limits}) for id,limits in [
+                          ('small',{'maximum':25}),('big',{'minimum':25,'minimum_inclusive':False})]]
+    plan = SimpleNamespace(id='book', item_materials=json.dumps({'rows':[], 'defaults':[
+        {'material_id':id,'requirement':'optional','quantity':'1'} for id in ['small','big']]}),
+        services=[SimpleNamespace(comments='__ld_packing__:'+json.dumps({'materials':materials}))])
+    db = Mock()
+    db.query.return_value.all.return_value = [SimpleNamespace(id='sofa',name='L Shaped Sofa - 2 Piece',cuft=100,deleted=False)]
+    rows,_ = customer_item_materials(plan,[{'item_id':'custom-old','name':'L Shaped Sofa','amount':2,'cuft':200,'unit_cuft':100,'room':'Dining Room'}],db)
+    assert len(rows) == 2
+    assert all(row['material_name']=='big' for row in rows)
+    assert all(row['label'].startswith('L Shaped Sofa - 2 Piece') for row in rows)
+
+
 @pytest.mark.parametrize('volume,expected', [(20,{'under','crate'}),(25,{'under','crate'}),(30,{'over','crate'}),(70,{'over'})])
 def test_legacy_rule_limits_filter_defaults(volume, expected):
     rates = {}

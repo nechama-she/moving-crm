@@ -1,3 +1,4 @@
+from catalog_names import resolve_catalog_names
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
 from manual_inventory import ManualInventoryInput, catalog, submit_inventory, save_inventory_draft, replace_current_inventory
 from spark_history import archive_report_for_new_media, report_history
@@ -695,7 +696,7 @@ def _move_details(access, db, *, refresh_report=True):
             'report_history': report_history(conv_details),
             'editable_files': file_list(files),
             'inventory_draft': conv_details.get('inventory_draft'),
-            'combined_inventory': conv_details.get('spark_inventory_snapshot', []) if spark_info and spark_info.get('status') == 'completed' else [],
+            'combined_inventory': resolve_catalog_names(conv_details.get('spark_inventory_snapshot', []), db) if spark_info and spark_info.get('status') == 'completed' else [],
             'list_changed': conv_details.get('inventory_draft', {}).get('body') != conv_details.get('report_list_body'),
             'files_changed': {f.id for f in files} != {row['id'] for row in conv_details.get('report_files', [])},
             'new_file_count': sum(f.id not in {row['id'] for row in conv_details.get('report_files', [])} for f in files) if 'report_files' in conv_details else 0,
@@ -734,7 +735,7 @@ def download_estimate(access: PublicMoveAccess = Depends(verified), db: Session 
         raise HTTPException(409, 'Your inventory and estimate must be ready before downloading.')
     conversation = db.get(LeadLiveSwitch, access.lead_id)
     state = json.loads(conversation.details) if conversation else {}
-    rows = state.get('question_original_rows', state.get('spark_inventory_snapshot', []))
+    rows = resolve_catalog_names(state.get('question_original_rows', state.get('spark_inventory_snapshot', [])), db)
     if not rows:
         raise HTTPException(409, 'There is no inventory to include in this estimate.')
     return Response(build_estimate_pdf(data, rows), media_type='application/pdf', headers={

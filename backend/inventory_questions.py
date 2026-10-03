@@ -73,6 +73,9 @@ def questions(company, details, db):
     ids = {i for rule in rules for i in rule.get('item_ids', [])}
     names = {item.id: item.name for item in db.query(InventoryCatalogItem).filter(InventoryCatalogItem.id.in_(ids)).all()} if ids else {}
     rows = details.get('question_original_rows', details.get('spark_inventory_snapshot', []))
+    original_rows = rows
+    from catalog_names import resolve_catalog_names
+    rows = resolve_catalog_names(rows, db)
     answers = details.get('report_question_answers', {})
     result = []
     for rule in rules:
@@ -86,15 +89,15 @@ def questions(company, details, db):
             continue
         for index, row in enumerate(rows):
             if not matches(rule, row, names): continue
-            key = hashlib.sha256((rule_revision(rule) + ':' + str(index) + ':' + revision(row)).encode()).hexdigest()
+            key = hashlib.sha256((rule_revision(rule) + ':' + str(index) + ':' + revision(original_rows[index])).encode()).hexdigest()
             count = max(1, int(row.get('amount') or 1))
             for unit in range(count):
                 unit_key = key if count == 1 else f'{key}:{unit}'
                 saved = answers.get(unit_key, answers.get(key))
                 result.append({'id': unit_key, 'rule_id': rule['id'], 'item_index': index, 'unit_index': unit,
-                    'name': row.get('name', 'Item'), 'label': f"{row.get('name', 'Item')} ({unit + 1} of {count})" if count > 1 else row.get('name', 'Item'),
+                    'reference_name': row.get('reference_name') or row.get('name'), 'name': row.get('name', 'Item'), 'label': f"{row.get('name', 'Item')} ({unit + 1} of {count})" if count > 1 else row.get('name', 'Item'),
                     'room': row.get('room', ''), 'quantity': 1, 'question': rule['question'],
-                    'photo': rule.get('photo', True) and not row.get('item_id'), 'answers': rule['answers'], 'saved': saved})
+                    'photo': rule.get('photo', True) and (not row.get('item_id') or bool(row.get('reference_name'))), 'answers': rule['answers'], 'saved': saved})
     return result
 
 
