@@ -138,6 +138,13 @@ def test_csv_duplicate_normalized_headers_rejected(catalog_api):
     assert api.list_items(None, db)['items'] == []
 
 
+def test_csv_hidden_markers_are_removed_without_losing_unicode(catalog_api):
+    api, db = catalog_api
+    content = '\ufeffName\u200b,cuft,\u2060weight\n\u200bCafé\u00a0 chair\ufeff,15,105\n'
+    assert upload_csv(api, db, content.encode('utf-8')) == {'created': 1, 'updated': 0}
+    assert api.list_items(None, db)['items'][0]['name'] == 'Café chair'
+
+
 @pytest.mark.parametrize('bad_row', ['missing,Bad,5,1', ',Bad,-1,1', ',Bad,5,1,extra'])
 def test_csv_invalid_row_does_not_save_partial_changes(catalog_api, bad_row):
     api, db = catalog_api

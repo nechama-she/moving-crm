@@ -19,6 +19,11 @@ from long_distance_packing import packing_card
 router = APIRouter(prefix='/api/inventory-catalog', tags=['Inventory catalog'])
 
 
+def strip_hidden_csv_characters(value):
+    # Keep language-significant joiners and visible Unicode characters intact.
+    return value.translate(dict.fromkeys(map(ord, '\u200b\ufeff\u2060')))
+
+
 class CatalogMaterial(BaseModel):
     plan_id: str = Field(min_length=1, max_length=36)
     material_id: str = Field(min_length=1, max_length=100)
@@ -37,7 +42,7 @@ class CatalogItemInput(BaseModel):
     @field_validator('name')
     @classmethod
     def clean_name(cls, value):
-        value = ' '.join(value.split())
+        value = ' '.join(strip_hidden_csv_characters(value).split())
         if not value:
             raise ValueError('Enter an item name')
         return value
@@ -129,7 +134,7 @@ async def import_items(file: UploadFile = File(...), user: User = Depends(requir
             except UnicodeDecodeError:
                 content = data.decode('cp1252')
         reader = csv.DictReader(io.StringIO(content, newline=''), strict=True)
-        fields = [field.strip().lower() for field in (reader.fieldnames or [])]
+        fields = [strip_hidden_csv_characters(field).strip().lower() for field in (reader.fieldnames or [])]
         reader.fieldnames = fields
         if len(fields) != len(set(fields)) or not {'name', 'cuft', 'weight'}.issubset(fields) or set(fields) - set(CSV_FIELDS):
             raise HTTPException(422, 'CSV needs name, cuft, weight columns. Optional columns: id, description, active, packing_materials.')
