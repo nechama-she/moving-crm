@@ -30,7 +30,18 @@ def _clean_sender_email(value: str | None) -> str | None:
 
 
 class CompanyLogo(BaseModel):
+    dot_number: str | None = Field(default=None, max_length=30)
     logo: Optional[str] = Field(default=None, max_length=400000)
+
+    @field_validator('dot_number')
+    @classmethod
+    def validate_dot_number(cls, value):
+        if value is None:
+            return None
+        value = value.strip()
+        if value and not re.fullmatch(r'[0-9]+', value):
+            raise ValueError('USDOT number must contain digits only.')
+        return value
 
     @field_validator('logo')
     @classmethod
@@ -132,6 +143,7 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
         color=resolve_company_color(company_name, body.color),
         phone=(body.phone or "").strip(),
         office_address=body.office_address.strip(),
+        dot_number=body.dot_number or "",
         sender_email=_clean_sender_email(body.sender_email),
         facebook_page_id=page_id,
         aircall_number_id=(body.aircall_number_id or "").strip(),
@@ -189,6 +201,8 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     company.phone = (body.phone or "").strip()
     if body.office_address is not None:
         company.office_address = body.office_address.strip()
+    if body.dot_number is not None:
+        company.dot_number = body.dot_number
     if body.sender_email is not None:
         company.sender_email = _clean_sender_email(body.sender_email)
     company.facebook_page_id = (body.facebook_page_id or "").strip() or None

@@ -10,6 +10,7 @@ type Company = {
   logo?: string;
   phone?: string;
   office_address?: string;
+  dot_number?: string;
   sender_email?: string;
   facebook_page_id?: string;
   aircall_number_id?: string;
@@ -28,6 +29,7 @@ type CompanyForm = {
   logo: string;
   phone: string;
   office_address: string;
+  dot_number: string;
   sender_email: string;
   facebook_page_id: string;
   aircall_number_id: string;
@@ -45,6 +47,7 @@ const emptyForm: CompanyForm = {
   logo: "",
   phone: "",
   office_address: "",
+  dot_number: "",
   sender_email: "",
   facebook_page_id: "",
   aircall_number_id: "",
@@ -114,6 +117,7 @@ export default function CompaniesPage() {
       logo: company.logo || "",
       phone: company.phone || "",
       office_address: company.office_address || "",
+      dot_number: company.dot_number || "",
       sender_email: company.sender_email || "",
       facebook_page_id: company.facebook_page_id || "",
       aircall_number_id: company.aircall_number_id || "",
@@ -145,6 +149,7 @@ export default function CompaniesPage() {
         logo: form.logo,
         phone: form.phone.trim(),
         office_address: form.office_address.trim(),
+        dot_number: form.dot_number.trim(),
         sender_email: form.sender_email.trim(),
         facebook_page_id: form.facebook_page_id.trim(),
         aircall_number_id: form.aircall_number_id.trim(),
@@ -234,6 +239,7 @@ export default function CompaniesPage() {
         c.color || "",
         c.phone || "",
         c.office_address || "",
+        c.dot_number || "",
         c.sender_email || "",
         c.facebook_page_id || "",
         c.aircall_number_id || "",
@@ -281,6 +287,10 @@ export default function CompaniesPage() {
           <label style={fieldLabel}>
             Phone
             <input value={form.phone} onChange={(e) => updateField("phone", e.target.value)} style={inputStyle} />
+          </label>
+          <label style={{ ...fieldLabel, gridColumn: "1 / -1" }}>
+            USDOT number
+            <input value={form.dot_number} onChange={(e) => updateField("dot_number", e.target.value)} style={inputStyle} inputMode="numeric" placeholder="Enter USDOT number" maxLength={30} />
           </label>
           <label style={{ ...fieldLabel, gridColumn: "1 / -1" }}>
             Office address

@@ -37,6 +37,7 @@ class Company(Base):
     customer_questions = Column(Text, nullable=True)
     phone = Column(String(30))
     office_address = Column(Text, nullable=False, default="", server_default="")
+    dot_number = Column(String(30), nullable=False, default="", server_default="")
     # Customer emails (e.g. portal codes) are sent from this address via SES; its domain must be verified in SES.
     sender_email = Column(String(255))
     facebook_page_id = Column(String(100), unique=True, index=True)
@@ -61,6 +62,7 @@ class Company(Base):
             "logo": self.logo or "",
             "phone": self.phone or "",
             "office_address": self.office_address or "",
+            "dot_number": self.dot_number or "",
             "sender_email": self.sender_email or "",
             "facebook_page_id": self.facebook_page_id or "",
             "aircall_number_id": self.aircall_number_id or "",
