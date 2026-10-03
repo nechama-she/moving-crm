@@ -14,6 +14,7 @@ from decimal import Decimal
 from typing import Literal
 from types import SimpleNamespace
 from uuid import uuid4
+from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import boto3
@@ -772,8 +773,10 @@ def download_inventory(body: ManualInventoryInput, access: PublicMoveAccess = De
         photos = inventory_photos(rooms, details)
     except Exception as exc:
         raise HTTPException(502, 'Could not load inventory pictures. Please try downloading again.') from exc
+    client_name = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', '', lead.full_name or '').strip().rstrip('.')
+    filename = f'inventory - {client_name}.pdf' if client_name else 'inventory.pdf'
     return Response(build_inventory_pdf(rooms, cuft, weight, photos, company=company_details, client=client_details), media_type='application/pdf', headers={
-        'Content-Disposition': 'attachment; filename="moving-inventory.pdf"',
+        'Content-Disposition': f"attachment; filename=\"inventory.pdf\"; filename*=UTF-8''{quote(filename, safe='')}",
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 

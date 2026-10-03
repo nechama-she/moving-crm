@@ -1142,7 +1142,8 @@ export default function CustomerMovePage() {
               }
               const url = URL.createObjectURL(await response.blob());
               const anchor = document.createElement('a');
-              anchor.href = url; anchor.download = 'moving-inventory.pdf';
+              const clientName = (data.name || '').replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '').trim().replace(/\.+$/, '');
+              anchor.href = url; anchor.download = clientName ? `inventory - ${clientName}.pdf` : 'inventory.pdf';
               document.body.appendChild(anchor); anchor.click(); anchor.remove();
               window.setTimeout(() => URL.revokeObjectURL(url), 60000);
             }} onClose={() => { setShowInventoryList(false); void refreshDetails(); }} submit={async body => {

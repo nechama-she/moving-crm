@@ -39,8 +39,8 @@ def question_images(details, names, now=None, fetch=None):
         return {}
     report_key = str(details.get('last_spark_id')) + ':' + details['last_spark_share_url']
     cache = details.get('question_image_cache') or {}
-    if cache.get('report') != report_key:
-        cache = {'report': report_key, 'items': {}}
+    if cache.get('report') != report_key or cache.get('version') != 2:
+        cache = {'report': report_key, 'version': 2, 'items': {}}
     keys = {normalized(name) for name in names if normalized(name)}
     missing = {key for key in keys if cache['items'].get(key, {}).get('expires_at', 0) <= now}
     if missing:
@@ -53,7 +53,7 @@ def question_images(details, names, now=None, fetch=None):
         found = {key: [] for key in missing}
         for row in rows:
             key = normalized(row.get('item_name') or row.get('name') or row.get('item'))
-            if key not in missing or not row.get('going', True): continue
+            if key not in missing: continue
             for image in row.get('max_of_two_images') or []:
                 url = image.get('reference', '') if isinstance(image, dict) else ''
                 expires = image_expiry(url, now)

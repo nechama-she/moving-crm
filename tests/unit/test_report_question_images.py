@@ -45,6 +45,21 @@ def test_unknown_item_does_not_receive_another_items_photo():
     now, fetch, details = fixture()
     assert question_images(details, ['Piano'], now=now, fetch=fetch) == {'Piano': []}
 
+
+def test_not_going_items_keep_photos_and_refresh_legacy_cache():
+    now, fetch, details = fixture()
+    rows = fetch.return_value.json()['structuredResult']['sections'][0]['rows']
+    rows[0]['going'] = False
+    details['question_image_cache'] = {
+        'report': details['last_spark_id'] + ':' + details['last_spark_share_url'],
+        'items': {'plant': {'images': [], 'expires_at': now + 3600}},
+    }
+    images = question_images(details, ['Plant'], now=now, fetch=fetch)
+    assert images['Plant'][0]['url'] == URL
+    assert images['Plant'][0]['room'] == 'Living room'
+    question_images(details, ['Plant'], now=now + 10, fetch=fetch)
+    assert fetch.call_count == 1
+
 @pytest.mark.parametrize('url', ['http://127.0.0.1/reports/abc', 'https://evil.test/reports/abc', 'https://app.scribe.liveswitch.com/public/reports/../../secret'])
 def test_report_urls_are_restricted(url):
     with pytest.raises(ValueError): report_api_url(url)
