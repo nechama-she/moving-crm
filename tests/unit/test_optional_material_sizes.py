@@ -8,7 +8,7 @@ from item_materials import sized_optional_defaults
 from long_distance_packing import MaterialRate
 
 
-@pytest.mark.parametrize('volume,expected', [(20, {'cm','cl','cx','ws','wl'}),(25, {'cl','cx','ws','wl'}),(26, {'cl','cx','wl'}),(100, {'cx','wl'}),(501,set()),(None,set())])
+@pytest.mark.parametrize('volume,expected', [(20, {'cm','ws'}),(25, {'cl','ws'}),(26, {'cl','wl'}),(100, {'cx','wl'}),(501,set()),(None,set())])
 def test_optional_sizes_respect_each_configured_limit(volume, expected):
     specs = [('cm','Carton Crate Medium',24),('cl','Carton Crate Large',90),('cx','Carton Crate Extra Large',500),('ws','Shrink Wrap small',25),('wl','Shrink Wrap large',500)]
     rates = {id:MaterialRate(id=id,name=name,capacity=capacity,material_price=10,packing_price=5,unpacking_price=0) for id,name,capacity in specs}
@@ -96,5 +96,20 @@ def test_inventory_filters_saved_item_options_and_defaults(explicit):
     db = Mock()
     db.query.return_value.all.return_value = [SimpleNamespace(id='chair',name='Accent Chair',cuft=30,deleted=False)]
     rows,_ = customer_item_materials(plan,[dict(item_id='chair',name='Accent Chair',amount=2,cuft=60)],db)
-    assert len(rows)==(10 if explicit else 6)
-    assert {row['materials'][0]['id'] for row in rows} == ({'small','large','xl','under','over'} if explicit else {'large','xl','over'})
+    assert len(rows)==(10 if explicit else 4)
+    assert {row['materials'][0]['id'] for row in rows} == ({'small','large','xl','under','over'} if explicit else {'large','over'})
+
+
+@pytest.mark.parametrize('kind', ['up_to', 'over'])
+@pytest.mark.parametrize('volume,expected', [(25, {'large', 'under'}), (50, {'large', 'over'}), (90, {'large', 'over'}), (91, {'xl', 'over'}), (501, set())])
+def test_breakfront_and_armchair_default_sizes(kind, volume, expected):
+    specs = [('medium', 'Carton Crate Medium', 24, 'up_to'),
+             ('large', 'Carton Crate Large', 90, 'up_to'),
+             ('xl', 'Carton Crate Extra Large', 500, 'up_to'),
+             ('under', 'Shrink Wrap (per item) under 25 cubic foot', 25, 'up_to'),
+             ('over', 'Shrink Wrap (per item) Over 25 cubic foot', 500, kind)]
+    rates = {id: MaterialRate(id=id, name=name, capacity=capacity, capacity_kind=capacity_kind,
+                             material_price=10, packing_price=5, unpacking_price=0)
+             for id, name, capacity, capacity_kind in specs}
+    defaults = [dict(material_id=id, requirement='optional', quantity='1') for id in rates]
+    assert {row['material_id'] for row in sized_optional_defaults(defaults, rates, Decimal(volume))} == expected

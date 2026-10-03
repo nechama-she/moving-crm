@@ -54,8 +54,10 @@ def default_materials(plan, db):
 
 
 def sized_optional_defaults(defaults, rates, volume):
-    """Filter optional defaults using current capacities or legacy size rules."""
+    """Choose the smallest fitting optional size within each material family."""
     result = []
+    ranked = {}
+    families = ('carton crate', 'shrink wrap', 'mirror box', 'picture box', 'bubble corrugated wrap')
     for assignment in defaults:
         rate = rates.get(assignment['material_id'])
         if assignment['requirement'] != 'optional' or rate is None:
@@ -73,6 +75,11 @@ def sized_optional_defaults(defaults, rates, volume):
             min_inclusive, max_inclusive = rate.rule.minimum_inclusive, rate.rule.maximum_inclusive
         elif rate.box_capacity_cuft is not None:
             maximum = rate.box_capacity_cuft
+        # Legacy over-25 wrap stored 500 as its capacity, sometimes marked
+        # "over" as well. 500 is its ceiling, not the lower threshold.
+        name = ' '.join(rate.name.casefold().split())
+        if re.search(r'\bshrink wrap\b.*\bover\s+25\b', name) and rate.capacity == 500 and rate.capacity_unit == 'cuft':
+            minimum, maximum, min_inclusive = Decimal(25), Decimal(500), False
         if minimum is None and maximum is None:
             result.append(assignment)
             continue
@@ -83,7 +90,15 @@ def sized_optional_defaults(defaults, rates, volume):
         if maximum is not None and (volume > maximum or (volume == maximum and not max_inclusive)):
             continue
         result.append(assignment)
-    return result
+        family = next((family for family in families if name.startswith(family)), None)
+        if family:
+            rank = (maximum if maximum is not None else Decimal('Infinity'), -(minimum or Decimal(0)))
+            ranked[assignment['material_id']] = (family, rank)
+    best = {}
+    for family, rank in ranked.values():
+        best[family] = min(best.get(family, rank), rank)
+    return [row for row in result if row['material_id'] not in ranked
+            or ranked[row['material_id']][1] == best[ranked[row['material_id']][0]]]
 
 
 def material_setup(plan, db):
