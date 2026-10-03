@@ -121,8 +121,16 @@ async def import_items(file: UploadFile = File(...), user: User = Depends(requir
     if len(data) > MAX_CSV_BYTES:
         raise HTTPException(413, 'CSV file must be 10 MB or smaller')
     try:
-        reader = csv.DictReader(io.StringIO(data.decode('utf-8-sig'), newline=''), strict=True)
-        fields = reader.fieldnames or []
+        if data.startswith((b'\xff\xfe', b'\xfe\xff')):
+            content = data.decode('utf-16')
+        else:
+            try:
+                content = data.decode('utf-8-sig')
+            except UnicodeDecodeError:
+                content = data.decode('cp1252')
+        reader = csv.DictReader(io.StringIO(content, newline=''), strict=True)
+        fields = [field.strip().lower() for field in (reader.fieldnames or [])]
+        reader.fieldnames = fields
         if len(fields) != len(set(fields)) or not {'name', 'cuft', 'weight'}.issubset(fields) or set(fields) - set(CSV_FIELDS):
             raise HTTPException(422, 'CSV needs name, cuft, weight columns. Optional columns: id, description, active, packing_materials.')
         existing = {item.id: item for item in db.query(InventoryCatalogItem).with_for_update().all()}
@@ -156,8 +164,10 @@ async def import_items(file: UploadFile = File(...), user: User = Depends(requir
             except HTTPException as exc:
                 raise HTTPException(422, f'Row {line}: {exc.detail}')
             pending.append((item, values))
-    except (UnicodeDecodeError, csv.Error):
-        raise HTTPException(422, 'Upload a valid UTF-8 CSV file')
+    except UnicodeDecodeError:
+        raise HTTPException(422, 'Could not read this file. Upload a CSV saved from your spreadsheet.')
+    except csv.Error:
+        raise HTTPException(422, 'The CSV has malformed quotes or rows. Save it again as CSV from your spreadsheet and retry.')
     if not pending:
         raise HTTPException(422, 'CSV has no items to import')
     created = sum(item is None for item, _ in pending)

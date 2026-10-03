@@ -121,6 +121,23 @@ def test_csv_round_trip_and_bulk_update(catalog_api):
     assert len(api.list_items(None, db)['items']) == 2
 
 
+@pytest.mark.parametrize('encoding', ['utf-8', 'utf-8-sig', 'cp1252', 'utf-16'])
+def test_csv_spreadsheet_encodings_and_header_whitespace(catalog_api, encoding):
+    api, db = catalog_api
+    content = ' Name , CUFT ,weight\u00a0\r\nCaf\u00e9 chair,15,105\r\n'
+    assert upload_csv(api, db, content.encode(encoding)) == {'created': 1, 'updated': 0}
+    item = api.list_items(None, db)['items'][0]
+    assert item['name'] == 'Caf\u00e9 chair'
+    assert item['weight'] == 105
+
+
+def test_csv_duplicate_normalized_headers_rejected(catalog_api):
+    api, db = catalog_api
+    with pytest.raises(HTTPException):
+        upload_csv(api, db, b'name, Name ,cuft,weight\nA,B,1,1\n')
+    assert api.list_items(None, db)['items'] == []
+
+
 @pytest.mark.parametrize('bad_row', ['missing,Bad,5,1', ',Bad,-1,1', ',Bad,5,1,extra'])
 def test_csv_invalid_row_does_not_save_partial_changes(catalog_api, bad_row):
     api, db = catalog_api
