@@ -566,7 +566,10 @@ def _bulky_item_charges(services: list[PricingService], item_names: list[str], r
     return charges
 
 
-def _material_item_names(materials: list[dict]) -> list[str]:
+def _material_item_names(materials: list[dict], db=None) -> list[str]:
+    if db is not None:
+        from catalog_names import resolve_catalog_names
+        materials = resolve_catalog_names(materials, db)
     names: list[str] = []
     for item in materials:
         if not isinstance(item, dict) or not item.get("name"):
@@ -1042,7 +1045,7 @@ def customer_packing_options(lead, job, db, plan=None, move_type=None):
         move_type, plan = infer_job_move_type(lead, job, db)
     if not plan or not move_type:
         return []
-    names = (_material_item_names(job._estimated_materials_data())
+    names = (_material_item_names(job._estimated_materials_data(), db)
              + _material_item_names(_job_spark_inventory_items(job.id, db)))
     saved = json.loads(job.customer_packing or '{}')
     selected = {item_id: 'packing' for item_id in saved} if isinstance(saved, list) else saved
@@ -1165,7 +1168,8 @@ def apply_box_packing_to_inventory(job, db, package, selection):
     if not saved:
         return
     details = json.loads(saved.details or '{}')
-    rows = details.get('spark_inventory_snapshot') or []
+    from catalog_names import resolve_catalog_names
+    rows = resolve_catalog_names(details.get('spark_inventory_snapshot') or [], db)
     quantities = selection.get('box_quantities', {})
     changed = False
     for box in package.get('box_items', []):
@@ -1623,7 +1627,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             return None
 
         all_materials = (
-            _material_item_names(job._estimated_materials_data())
+            _material_item_names(job._estimated_materials_data(), db)
             + _material_item_names(_job_spark_inventory_items(job.id, db))
         )
         bulky_charges = []
@@ -1690,7 +1694,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             return None
 
         all_materials = (
-            _material_item_names(job._estimated_materials_data())
+            _material_item_names(job._estimated_materials_data(), db)
             + _material_item_names(_job_spark_inventory_items(job.id, db))
         )
         calc_body = CalculationInput(

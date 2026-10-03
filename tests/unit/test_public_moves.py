@@ -806,6 +806,15 @@ def test_wizard_uses_item_required_and_optional_materials_only(portal, packing_p
     assert service.comments == stored
 
 
+def test_pricing_inventory_names_follow_catalog_ids(portal, packing_pricing):
+    _, db, _, _ = portal
+    db.add(models.InventoryCatalogItem(id='rename-item', name='New Chair', cuft=20, weight=50))
+    db.flush()
+    rows = [{'item_id':'rename-item','name':'Old Chair','quantity':2}]
+    assert packing_pricing._material_item_names(rows, db) == ['New Chair', 'New Chair']
+    assert rows[0]['name'] == 'Old Chair'
+
+
 def test_inventory_boxes_group_by_type_and_price_split_quantity(portal, packing_pricing):
     _, db, lead, access = portal
     job = db.get(models.LeadJob, access.job_id)
