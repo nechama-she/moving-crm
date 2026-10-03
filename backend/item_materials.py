@@ -54,31 +54,41 @@ def default_materials(plan, db):
 
 
 def sized_optional_defaults(defaults, rates, volume):
-    """Offer the smallest fitting optional size within each material family."""
+    """Filter optional defaults using current capacities or legacy size rules."""
     result = []
-    selected = {}
     for assignment in defaults:
         rate = rates.get(assignment['material_id'])
-        capacity = (rate.capacity or rate.box_capacity_cuft) if rate else None
-        if assignment['requirement'] != 'optional' or not rate or rate.capacity_unit != 'cuft' or capacity is None:
+        if assignment['requirement'] != 'optional' or rate is None:
+            result.append(assignment)
+            continue
+        minimum = maximum = None
+        min_inclusive = max_inclusive = True
+        if rate.capacity is not None and rate.capacity_unit == 'cuft':
+            if rate.capacity_kind == 'over':
+                minimum, min_inclusive = rate.capacity, False
+            else:
+                maximum = rate.capacity
+        elif rate.rule and rate.rule.measure == 'cubic_feet':
+            minimum, maximum = rate.rule.minimum, rate.rule.maximum
+            min_inclusive, max_inclusive = rate.rule.minimum_inclusive, rate.rule.maximum_inclusive
+        elif rate.box_capacity_cuft is not None:
+            maximum = rate.box_capacity_cuft
+        if minimum is None and maximum is None:
             result.append(assignment)
             continue
         if volume is None or not volume.is_finite() or volume <= 0:
             continue
-        if (volume > capacity if rate.capacity_kind == 'over' else volume <= capacity):
-            name = ' '.join(rate.name.casefold().split())
-            family = next((family for family in ('carton crate', 'shrink wrap', 'mirror box', 'picture box', 'bubble corrugated wrap')
-                           if re.search(r'\b' + family + r'\b', name)), name)
-            rank = (Decimal('Infinity'), -capacity) if rate.capacity_kind == 'over' else (capacity, Decimal(0))
-            if family not in selected or rank < selected[family][0]:
-                selected[family] = (rank, assignment)
-    chosen = {id(assignment) for _, assignment in selected.values()} | {id(assignment) for assignment in result}
-    return [assignment for assignment in defaults if id(assignment) in chosen]
+        if minimum is not None and (volume < minimum or (volume == minimum and not min_inclusive)):
+            continue
+        if maximum is not None and (volume > maximum or (volume == maximum and not max_inclusive)):
+            continue
+        result.append(assignment)
+    return result
 
 
 def material_setup(plan, db):
     card = packing_card(plan.services)
-    items = [{'id': item.id, 'name': item.name, 'active': item.active}
+    items = [{'id': item.id, 'name': item.name, 'active': item.active, 'cuft': float(item.cuft)}
              for item in db.query(InventoryCatalogItem).filter_by(deleted=False).order_by(InventoryCatalogItem.name).all()]
     valid = {item['id'] for item in items}
     configured = {row['item_id'] for row in material_assignments(plan, db)}
@@ -137,20 +147,23 @@ def customer_item_materials(plan, inventory, db):
             candidates = by_name[key(row.get('name', ''))]
             item_id = candidates[0] if len(candidates) == 1 else None
         item_assignments = by_item.get(item_id)
+        using_defaults = not item_assignments
         if not item_assignments:
             if re.search(r'\bbox(?:es)?\b', str(row.get('name') or ''), re.IGNORECASE):
                 continue
-            count = max(1, int(row.get('amount') or row.get('quantity') or 1))
-            try:
-                volume = row.get('unit_cuft')
-                if volume is None and row.get('cuft') is not None:
-                    volume = Decimal(str(row['cuft'])) / count
-                if volume is None:
-                    volume = getattr(catalog_by_id.get(item_id), 'cuft', None)
-                volume = Decimal(str(volume)) if volume is not None else None
-            except (ValueError, TypeError, ArithmeticError):
-                volume = None
-            item_assignments = sized_optional_defaults(defaults, rates, volume)
+            item_assignments = defaults
+        count = max(1, int(row.get('amount') or row.get('quantity') or 1))
+        try:
+            volume = row.get('unit_cuft')
+            if volume is None and row.get('cuft') is not None:
+                volume = Decimal(str(row['cuft'])) / count
+            if volume is None:
+                volume = getattr(catalog_by_id.get(item_id), 'cuft', None)
+            volume = Decimal(str(volume)) if volume is not None else None
+        except (ValueError, TypeError, ArithmeticError):
+            volume = None
+        if using_defaults:
+            item_assignments = sized_optional_defaults(item_assignments, rates, volume)
         if not item_assignments:
             continue
         matched.add(key(row.get('name', '')))

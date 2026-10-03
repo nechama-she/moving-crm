@@ -14,7 +14,7 @@ from long_distance_packing import PACKING_CARD_PREFIX
 def setup():
     db = Mock()
     db.query.return_value.filter_by.return_value = db.query.return_value
-    db.query.return_value.order_by.return_value.all.return_value = [SimpleNamespace(id='bed', name='King bed', active=True)]
+    db.query.return_value.order_by.return_value.all.return_value = [SimpleNamespace(id='bed', name='King bed', active=True, cuft=80)]
     card = {'materials':[{'id':'cover','name':'King cover','material_price':26,'packing_price':12,'unpacking_price':0}]}
     plan = SimpleNamespace(id='east', item_materials=None, services=[SimpleNamespace(comments=PACKING_CARD_PREFIX+json.dumps(card))])
     return plan, db
@@ -148,8 +148,8 @@ def test_multiple_default_materials_have_separate_choices_in_one_item_group():
 def test_defaults_do_not_apply_to_boxes_but_explicit_box_materials_do():
     plan, db = setup()
     db.query.return_value.all.return_value = [
-        SimpleNamespace(id='small-box', name='Small Box (CP)', active=True),
-        SimpleNamespace(id='vase', name='Vase', active=True),
+        SimpleNamespace(id='small-box', name='Small Box (CP)', active=True, cuft=2),
+        SimpleNamespace(id='vase', name='Vase', active=True, cuft=3),
     ]
     db.query.return_value.order_by.return_value.all.return_value = db.query.return_value.all.return_value
     save_material_assignments(plan, ItemMaterialsInput(rows=[], defaults=[

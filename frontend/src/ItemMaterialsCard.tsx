@@ -4,7 +4,8 @@ import {authHeaders, useAuth} from './AuthContext';
 import './ItemMaterialsCard.css';
 type Row={item_id:string;material_id:string;requirement:'required'|'optional';quantity:string|number};
 type DefaultRow={material_id:string;requirement:'required'|'optional';quantity:string|number};
-type Setup={rows:Row[];defaults:DefaultRow[];items:{id:string;name:string}[];materials:{id:string;name:string}[];protection_review?:{item_id:string;name:string;reason:string}[]};
+type Setup={rows:Row[];defaults:DefaultRow[];items:{id:string;name:string;cuft?:number}[];materials:{id:string;name:string}[];protection_review?:{item_id:string;name:string;reason:string}[]};
+const volumeLabel = (cuft?:number) => cuft == null ? '' : ` · ${cuft.toLocaleString(undefined,{maximumFractionDigits:2})} cu ft / item`;
 
 export default function ItemMaterialsCard({planId,blocked}:{planId:string;blocked:boolean}) {
   const {token,user}=useAuth();
@@ -90,14 +91,14 @@ export default function ItemMaterialsCard({planId,blocked}:{planId:string;blocke
           <div className={editing?'pricing-catalog-browser':undefined}>
           {editing && <nav className="pricing-catalog-list" aria-label="Catalog items">
             {matches.map(item=><button type="button" key={item.id} aria-current={current?.id===item.id?'true':undefined} onClick={()=>setSelected(item.id)}>
-              <span>{item.name}</span><small>{rows.filter(row=>row.item_id===item.id).length || ''}</small>
+              <span>{item.name}{volumeLabel(item.cuft)}</span><small>{rows.filter(row=>row.item_id===item.id).length || ''}</small>
             </button>)}
             {!matches.length && <p>No matching items.</p>}
           </nav>}
           <div style={{minWidth:0}}>
           {!ids.length && !editing && <p>No item materials configured.</p>}
           {ids.map(id=><div key={id} style={{borderTop:'1px solid #dddbda',padding:'16px 0'}}>
-            <strong>{data.items.find(item=>item.id===id)?.name || 'Unavailable catalog item'}</strong>
+            <strong>{data.items.find(item=>item.id===id)?.name || 'Unavailable catalog item'}{volumeLabel(data.items.find(item=>item.id===id)?.cuft)}</strong>
             <div className="pricing-item-material-groups">
               {(['required','optional'] as const).map(requirement=><div key={requirement}>
                 <div className="pricing-item-material-heading"><span>{requirement==='required'?'Required materials':'Optional materials'}</span>
