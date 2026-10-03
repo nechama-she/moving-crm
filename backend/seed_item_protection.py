@@ -10,8 +10,24 @@ from sqlalchemy import select
 from long_distance_packing import packing_card
 from models import InventoryCatalogItem, PricingPlan, PricingService
 
-VERSION = 'catalog_protection_v1'
+VERSION = 'catalog_protection_v3'
 logger = logging.getLogger('migrate')
+
+
+def sized_family(material):
+    return next((family for family in ('carton crate', 'shrink wrap')
+                 if family in material.name.casefold()), None)
+
+
+def fit_assignment(material, materials, volume):
+    candidates = [m for m in materials if sized_family(m) == sized_family(material)
+                  and m.capacity_unit == 'cuft' and m.capacity_kind == 'up_to'
+                  and (m.capacity or m.box_capacity_cuft or 0) >= Decimal(volume)]
+    if not candidates:
+        return None
+    capacity = min(m.capacity or m.box_capacity_cuft for m in candidates)
+    matches = [m for m in candidates if (m.capacity or m.box_capacity_cuft) == capacity]
+    return matches[0] if len(matches) == 1 else None
 
 
 def protection_assignment(item, materials):
@@ -90,6 +106,30 @@ def seed_item_protection(connection):
             if reason:
                 review.append({'item_id': item['id'], 'name': item['name'], 'reason': reason})
         saved['rows'] = current + additions
+        configured = {row['item_id'] for row in saved['rows']}
+        defaults = saved.get('defaults', [])
+        sized_defaults = [row for row in defaults if row['material_id'] in rates and sized_family(rates[row['material_id']])]
+        if sized_defaults:
+            # Defaults previously applied only to items without any assignments.
+            # Persist that same behavior as visible, individually sized rows.
+            for item in items:
+                if item['id'] not in configured and not re.search(r'\bbox(?:es)?\b', item['name'], re.I):
+                    saved['rows'].extend({**row, 'item_id': item['id']} for row in defaults)
+            saved['defaults'] = [row for row in defaults if row not in sized_defaults]
+        by_id = {item['id']: item for item in items}
+        fitted_rows = {}
+        for row in saved['rows']:
+            item, material = by_id.get(row['item_id']), rates.get(row['material_id'])
+            if item and material and sized_family(material):
+                fitted = fit_assignment(material, card.materials, item['cuft'])
+                if fitted:
+                    row = {**row, 'material_id': fitted.id}
+                else:
+                    review.append({'item_id': item['id'], 'name': item['name'], 'reason': 'No unique material size fits the item cubic feet'})
+            key = row['item_id'], row['material_id']
+            if key not in fitted_rows or row['requirement'] == 'required':
+                fitted_rows[key] = row
+        saved['rows'] = list(fitted_rows.values())
         saved[VERSION] = True
         saved['protection_review'] = review
         connection.execute(plans.update().where(plans.c.id == plan['id']).values(item_materials=json.dumps(saved)))

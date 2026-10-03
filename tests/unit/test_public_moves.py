@@ -561,6 +561,8 @@ def packing_pricing(monkeypatch):
              'BULKY_ITEM_MARKER': '__bulky_item__', 'BULKY_ITEM_PREFIX': '__bulky_item__:',
              '_number': lambda value: Decimal(value) if value else None,
              '_job_spark_inventory_items': lambda *args: []}
+    from charge_errors import isolated_charge, pending_line
+    scope.update(isolated_charge=isolated_charge, pending_line=pending_line)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), '<packing-pricing>', 'exec'), scope)
     module = ModuleType('routes.pricing')
     module.__dict__.update(scope)
@@ -765,10 +767,11 @@ def test_long_distance_package_inventory_volume_and_materials(portal, packing_pr
     package = packing_pricing.customer_packing_package(lead, job, db, plan, 'Long Distance')
     assert package['cubic_feet'] == 501
     assert package['rates']['full']['total'] == 1002
-    assert len(package['items']) == 2
+    assert package['items'] == []
+    assert package['configured_materials'] is True
+    assert len(json.loads(service.comments[len('__ld_packing__:'):])['items']) == 2
     lines = packing_pricing.customer_package_lines(package, {'mode': 'none', 'unpacking': True, 'item_ids': ['mirror:2']})
-    assert [line['name'] for line in lines] == ['Mirror (2 of 2) Boxing']
-    assert sum(line['amount'] for line in lines) == 30
+    assert lines == []
     lines = packing_pricing.customer_package_lines(package, {'mode': 'partial', 'unpacking': True, 'item_ids': ['mirror:2']})
     assert [line['name'] for line in lines] == ['Partial packing']
     assert sum(line['amount'] for line in lines) == 501
@@ -777,6 +780,30 @@ def test_long_distance_package_inventory_volume_and_materials(portal, packing_pr
     assert packing_pricing.add_customer_package_charges(lead, job, db, plan, 'Long Distance') == 501
     db.flush()
     assert db.query(models.LeadJobCharge).count() == 1
+
+
+def test_wizard_uses_item_required_and_optional_materials_only(portal, packing_pricing):
+    _, db, lead, access = portal
+    job = db.get(models.LeadJob, access.job_id)
+    lead.volume = 100
+    db.add(models.InventoryCatalogItem(id='mattress', name='Mattress King', cuft=40, weight=100))
+    db.flush()
+    job.estimated_materials = json.dumps([{'item_id':'mattress','name':'Mattress King','quantity':2}, {'name':'Old mirror'}])
+    card = {'items':[{'id':'old','name':'Old mirror','price':'99'}], 'materials':[
+        {'id':id,'name':name,'material_price':10,'packing_price':5,'unpacking_price':0}
+        for id,name in [('bag','Mattress Bag King'),('wrap','Shrink Wrap')]]}
+    service = SimpleNamespace(comments='__ld_packing__:' + json.dumps(card))
+    stored = service.comments
+    plan = SimpleNamespace(id='book',services=[service],rates=[],item_materials=json.dumps({'rows':[
+        {'item_id':'mattress','material_id':'bag','requirement':'required','quantity':'1'},
+        {'item_id':'mattress','material_id':'wrap','requirement':'optional','quantity':'1'}]}))
+    package = packing_pricing.customer_packing_package(lead, job, db, plan, 'Long Distance')
+    assert package['configured_materials'] is True
+    assert len(package['items']) == 4
+    assert [r['material_name'] for r in package['items'] if r['requirement']=='required'] == ['Mattress Bag King'] * 2
+    assert [r['material_name'] for r in package['items'] if r['requirement']=='optional'] == ['Shrink Wrap'] * 2
+    assert not any(r['label']=='Old mirror' for r in package['items'])
+    assert service.comments == stored
 
 
 def test_inventory_boxes_group_by_type_and_price_split_quantity(portal, packing_pricing):

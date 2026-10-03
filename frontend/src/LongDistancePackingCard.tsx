@@ -42,8 +42,9 @@ export default function LongDistancePackingCard({ services, editing, onChange }:
       </article>)}
       <article><div><strong>No packing</strong><small>Customer packs their own items, with optional packing for individual items below.</small></div><b>No package charge</b></article>
     </div>
-    <h4>Items requiring protection</h4>
-    <p>Fabric items require plastic covers. Fragile items require cardboard boxes.</p>
+    <details>
+    <summary>Items requiring protection (legacy)</summary>
+    <p>This saved list is no longer used by the question wizard. Configure Required materials and Optional materials under Item packing materials.</p>
     <div className="ld-box-table-wrap">
       <table className="slds-table slds-table_bordered ld-box-table" aria-label="Items that must be boxed">
         <thead><tr>
@@ -64,5 +65,6 @@ export default function LongDistancePackingCard({ services, editing, onChange }:
         </tbody>
       </table>
     </div>
+    </details>
   </div>;
 }

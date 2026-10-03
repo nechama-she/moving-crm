@@ -53,6 +53,29 @@ def default_materials(plan, db):
     return material_configuration(plan).get('defaults', [])
 
 
+def sized_optional_defaults(defaults, rates, volume):
+    """Offer the smallest fitting optional size within each material family."""
+    result = []
+    selected = {}
+    for assignment in defaults:
+        rate = rates.get(assignment['material_id'])
+        capacity = (rate.capacity or rate.box_capacity_cuft) if rate else None
+        if assignment['requirement'] != 'optional' or not rate or rate.capacity_unit != 'cuft' or capacity is None:
+            result.append(assignment)
+            continue
+        if volume is None or not volume.is_finite() or volume <= 0:
+            continue
+        if (volume > capacity if rate.capacity_kind == 'over' else volume <= capacity):
+            name = ' '.join(rate.name.casefold().split())
+            family = next((family for family in ('carton crate', 'shrink wrap', 'mirror box', 'picture box', 'bubble corrugated wrap')
+                           if re.search(r'\b' + family + r'\b', name)), name)
+            rank = (Decimal('Infinity'), -capacity) if rate.capacity_kind == 'over' else (capacity, Decimal(0))
+            if family not in selected or rank < selected[family][0]:
+                selected[family] = (rank, assignment)
+    chosen = {id(assignment) for _, assignment in selected.values()} | {id(assignment) for assignment in result}
+    return [assignment for assignment in defaults if id(assignment) in chosen]
+
+
 def material_setup(plan, db):
     card = packing_card(plan.services)
     items = [{'id': item.id, 'name': item.name, 'active': item.active}
@@ -94,6 +117,7 @@ def customer_item_materials(plan, inventory, db):
     card = packing_card(plan.services)
     rates = {row.id: row for row in card.materials} if card else {}
     catalog = db.query(InventoryCatalogItem).all()
+    catalog_by_id = {item.id: item for item in catalog}
     def key(name):
         return ' '.join(sorted(re.findall(r'\w+', str(name).casefold())))
     by_name = defaultdict(list)
@@ -116,7 +140,17 @@ def customer_item_materials(plan, inventory, db):
         if not item_assignments:
             if re.search(r'\bbox(?:es)?\b', str(row.get('name') or ''), re.IGNORECASE):
                 continue
-            item_assignments = defaults
+            count = max(1, int(row.get('amount') or row.get('quantity') or 1))
+            try:
+                volume = row.get('unit_cuft')
+                if volume is None and row.get('cuft') is not None:
+                    volume = Decimal(str(row['cuft'])) / count
+                if volume is None:
+                    volume = getattr(catalog_by_id.get(item_id), 'cuft', None)
+                volume = Decimal(str(volume)) if volume is not None else None
+            except (ValueError, TypeError, ArithmeticError):
+                volume = None
+            item_assignments = sized_optional_defaults(defaults, rates, volume)
         if not item_assignments:
             continue
         matched.add(key(row.get('name', '')))

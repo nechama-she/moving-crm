@@ -1091,9 +1091,8 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
         if rate is not None:
             rates[kind] = {'rate': float(rate), 'total': float((rate * volume).quantize(Decimal('0.01')))}
     inventory = job._estimated_materials_data() + _job_spark_inventory_items(job.id, db)
-    from item_materials import customer_item_materials, material_assignments, default_materials
+    from item_materials import customer_item_materials
     configured_items, configured_names = customer_item_materials(plan, inventory, db)
-    configured_materials = bool(material_assignments(plan, db) or default_materials(plan, db))
     ignored_box_words = {'box', 'cp', 'pbo', 'cu', 'cuft', 'cf', 'cubic', 'foot', 'feet', 'pack', 'packing', 'item'}
     def box_words(value):
         words = []
@@ -1131,20 +1130,6 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
                           'material_name': rate.name, 'available': True,
                           'labor_price': float(rate.packing_price),
                           'material_price': float(rate.material_price)})
-    occurrences = [(name, str(row.get('room') or '')) for row in inventory if isinstance(row, dict)
-                   for name in _material_item_names([row])]
-    items = []
-    for item in card.items:
-        if ' '.join(sorted(re.findall(r'\w+', item.name.casefold()))) in configured_names:
-            continue
-        rooms = [room for name, room in occurrences if _normalize_item_name(name) == _normalize_item_name(item.name)]
-        count = len(rooms)
-        for index, room in enumerate(rooms):
-            items.append({'id': f'{item.id}:{index + 1}',
-                          'room': room,
-                          'packing_material': item.packing_material,
-                          'label': f'{item.name} ({index + 1} of {count})' if count > 1 else item.name,
-                          'price': float(item.price), 'labor_price': float(item.labor_price), 'material_price': float(item.material_price)})
     selection = selection_override if selection_override is not None else json.loads(job.customer_packing_package or '{}')
     if selection_override is None:
         box_limits = {item['id']: item['quantity'] for item in box_items}
@@ -1157,11 +1142,11 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
             if item_id in box_limits and quantity > 0:
                 saved_box_quantities[item_id] = min(quantity, box_limits[item_id])
         selection = {**selection, 'box_quantities': saved_box_quantities}
-    known = {_normalize_item_name(row.name) for row in card.items}
-    other_inventory = inventory_material_options([row for row in inventory if isinstance(row, dict) and _normalize_item_name(str(row.get('name') or '')) not in known])
-    return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': items + configured_items,
+    # Legacy card.items stays stored, but no longer supplies wizard requirements.
+    other_inventory = inventory_material_options([row for row in inventory if isinstance(row, dict) and ' '.join(sorted(re.findall(r'\w+', str(row.get('name') or '').casefold()))) not in configured_names])
+    return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': configured_items,
             'box_items': box_items,
-            'configured_materials': configured_materials,
+            'configured_materials': True,
             'other_inventory': other_inventory,
             'material_rates': [row.model_dump(mode='json') for row in card.materials],
             'material_quotes': customer_material_quotes(card.materials, selection.get('additional_items', {}), other_inventory),

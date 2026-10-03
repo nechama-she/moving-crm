@@ -71,3 +71,26 @@ def test_pipeline_seed_corrects_existing_and_runs_once():
         assert data['protection_review'][0]['item_id'] == 'review'
         seed_item_protection(connection)
         assert connection.execute(select(PricingPlan.item_materials)).scalar_one() == saved
+
+
+def test_migration_persists_sizes_and_expands_defaults_after_previous_migration():
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    rates = materials() + [MaterialRate(id=id, name=name, material_price=10, packing_price=5, unpacking_price=0, capacity=capacity)
+                          for id, name, capacity in [('wrap-small', 'Shrink Wrap under 25', 25), ('wrap-large', 'Shrink Wrap Over 25', 500)]]
+    with engine.begin() as connection:
+        defaults = [dict(material_id=id, requirement='optional', quantity='1') for id in ['crate-lg', 'wrap-large']]
+        config = {'catalog_protection_v1': True, 'catalog_protection_v2': True, 'rows': [dict(item_id='explicit', material_id='crate-lg', requirement='required', quantity='2')], 'defaults': defaults}
+        connection.execute(PricingPlan.__table__.insert().values(id='book', company_name='Test', name='Book', source_key='test', item_materials=json.dumps(config)))
+        connection.execute(PricingService.__table__.insert().values(id='service', plan_id='book', name='Packing', comments=PACKING_CARD_PREFIX+json.dumps({'materials':[m.model_dump(mode='json') for m in rates]})))
+        for id, volume in [('small', 20), ('large', 40), ('explicit', 10)]:
+            connection.execute(InventoryCatalogItem.__table__.insert().values(id=id, name='Chair '+id, cuft=volume, weight=100))
+        seed_item_protection(connection)
+        saved = json.loads(connection.execute(select(PricingPlan.item_materials)).scalar_one())
+        assert saved['defaults'] == []
+        assert {row['material_id'] for row in saved['rows'] if row['item_id']=='small'} == {'crate', 'wrap-small'}
+        assert {row['material_id'] for row in saved['rows'] if row['item_id']=='large'} == {'crate-lg', 'wrap-large'}
+        explicit = [row for row in saved['rows'] if row['item_id']=='explicit']
+        assert explicit == [dict(item_id='explicit', material_id='crate', requirement='required', quantity='2')]
+        seed_item_protection(connection)
+        assert json.loads(connection.execute(select(PricingPlan.item_materials)).scalar_one()) == saved

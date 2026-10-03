@@ -27,7 +27,7 @@ def test_saved_assignments_defaults_and_repeat_pipeline():
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
-        config = {'catalog_protection_v1':True,'rows':[{'item_id':'large','material_id':'cm','quantity':'2','requirement':'required'}],
+        config = {'catalog_protection_v1':True,'item_material_sizes_v1':True,'rows':[{'item_id':'large','material_id':'cm','quantity':'2','requirement':'required'}],
                   'defaults':[{'material_id':'wl','quantity':'1','requirement':'optional'},{'material_id':'cl','quantity':'1','requirement':'optional'}]}
         connection.execute(PricingPlan.__table__.insert().values(id='book',company_name='Test',name='Book',source_key='test',item_materials=json.dumps(config)))
         connection.execute(PricingService.__table__.insert().values(id='svc',plan_id='book',name='Packing',comments=PACKING_CARD_PREFIX+json.dumps({'materials':[m.model_dump(mode='json') for m in materials()]})))
