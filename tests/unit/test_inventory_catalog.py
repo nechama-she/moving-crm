@@ -162,6 +162,24 @@ def test_cleanup_keeps_largest_per_name_and_is_repeatable(catalog_api):
     assert db.get(models.InventoryCatalogItem, 'b').deleted
 
 
+def test_cleanup_matches_missing_spaces_and_keeps_largest(catalog_api):
+    api, db = catalog_api
+    for item_id, name, cuft, weight in [('large', 'Artificial Plant', 12, 84), ('small', 'ArtificialPlant', 10, 70), ('other', 'Artificial Plant Stand', 5, 35)]:
+        db.add(models.InventoryCatalogItem(id=item_id, name=name, cuft=cuft, weight=weight))
+    db.commit()
+    assert api.deduplicate_items(None, db) == {'removed': 1}
+    assert {item['id'] for item in api.list_items(None, db)['items']} == {'large', 'other'}
+    assert db.get(models.InventoryCatalogItem, 'small').deleted
+    assert api.deduplicate_items(None, db) == {'removed': 0}
+
+
+def test_import_matches_missing_spaces(catalog_api):
+    api, db = catalog_api
+    item = api.create_item(api.CatalogItemInput(name='Artificial Plant', cuft=12, weight=84), None, db)
+    assert upload_csv(api, db, b'name,cuft,weight\nArtificialPlant,12,84\n') == {'created': 0, 'updated': 1}
+    assert [row['id'] for row in api.list_items(None, db)['items']] == [item['id']]
+
+
 def test_csv_round_trip_and_bulk_update(catalog_api):
     api, db = catalog_api
     row = api.create_item(api.CatalogItemInput(name='=Chair, special', description='Line one\nLine two', cuft='12.25', weight=4, active=False), None, db)

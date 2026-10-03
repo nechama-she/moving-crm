@@ -84,7 +84,7 @@ export default function InventoryCatalogPage() {
         <input ref={uploadInput} type="file" accept=".csv,text/csv" hidden aria-label="Upload inventory catalog CSV" onChange={e => { const file = e.target.files?.[0]; if (file) void transfer(file); }} />
         <button className="slds-button slds-button_brand" disabled={transferring} onClick={() => setEditing("new")}>+ Add item</button>
       </div></header>
-      <p>Upload updates matching IDs, or matches by item name and volume when IDs are blank. Capitalization and spacing around punctuation are ignored. New items are added; repeated identical rows are imported once. Items omitted from the file are kept.</p>
+      <p>Upload updates matching IDs, or matches by item name and volume when IDs are blank. Capitalization and spaces are ignored. New items are added; repeated identical rows are imported once. Items omitted from the file are kept.</p>
       {transferring && <p role="status">Updating catalog...</p>}
       <label className="ic-search">Search catalog<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by item name or description" /></label>
       {notice && <p role="status" className="ic-notice">{notice}</p>}

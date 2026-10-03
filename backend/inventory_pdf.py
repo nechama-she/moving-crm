@@ -80,8 +80,22 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
         logo = company.get('logo') or ''
         if logo.startswith('data:image/png;base64,') and len(logo) <= 400000:
             try:
-                picture = Image(BytesIO(base64.b64decode(logo.split(',', 1)[1], validate=True)))
-                scale = min(100 / picture.imageWidth, 60 / picture.imageHeight)
+                from PIL import Image as PillowImage, ImageChops
+                with PillowImage.open(BytesIO(base64.b64decode(logo.split(',', 1)[1], validate=True))) as source:
+                    rgba = source.convert('RGBA')
+                    # The editor saves a square canvas. Size the visible logo,
+                    # rather than its transparent or white outer padding.
+                    background = PillowImage.new('RGBA', rgba.size, 'white')
+                    flattened = PillowImage.alpha_composite(background, rgba).convert('RGB')
+                    difference = ImageChops.difference(flattened, PillowImage.new('RGB', rgba.size, 'white'))
+                    bounds = difference.point(lambda value: 255 if value > 12 else 0).getbbox()
+                    if bounds:
+                        rgba = rgba.crop(bounds)
+                    prepared = BytesIO()
+                    rgba.save(prepared, format='PNG')
+                prepared.seek(0)
+                picture = Image(prepared, mask='auto')
+                scale = min(150 / picture.imageWidth, 64 / picture.imageHeight)
                 picture.drawWidth = picture.imageWidth * scale
                 picture.drawHeight = picture.imageHeight * scale
                 picture.hAlign = 'LEFT'
@@ -96,7 +110,7 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
         customer_block = [p(f'{label}: {client.get(key) or ""}') for label, key in [
             ('Customer', 'name'), ('Phone number', 'phone'), ('Email', 'email')]]
         if logo_block:
-            header = Table([[logo_block, company_block], [customer_block, '']], colWidths=[116, 396])
+            header = Table([[logo_block, company_block], [customer_block, '']], colWidths=[166, 346])
         else:
             header = Table([[company_block], [customer_block]], colWidths=[512])
         header.setStyle(TableStyle([

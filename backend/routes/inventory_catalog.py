@@ -28,7 +28,7 @@ def strip_hidden_csv_characters(value):
 
 def duplicate_key(name, cuft):
     name = unicodedata.normalize('NFKC', strip_hidden_csv_characters(name)).casefold()
-    name = re.sub(r'\s*([^\w\s])\s*', r'\1', ' '.join(name.split()))
+    name = re.sub(r'\s+', '', name)
     return name, Decimal(cuft)
 
 
