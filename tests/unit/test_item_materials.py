@@ -11,6 +11,22 @@ from item_materials import ItemMaterialsInput, material_setup, save_material_ass
 from long_distance_packing import PACKING_CARD_PREFIX
 
 
+@pytest.mark.parametrize('name', ['27 Gallon Plastic Bin', '40 Gallon Plastic Bin', 'Storage Bins'])
+@pytest.mark.parametrize('explicit', [False, True])
+def test_bins_never_offer_customer_packing(name, explicit):
+    from material_calculation import inventory_material_options
+    plan, db = setup()
+    assignment = dict(material_id='cover', requirement='optional', quantity=1)
+    plan.item_materials = json.dumps({'rows': [dict(assignment, item_id='bin')] if explicit else [],
+                                     'defaults': [assignment]})
+    db.query.return_value.all.return_value = [SimpleNamespace(id='bin', name=name, cuft=6, deleted=False)]
+    inventory = [dict(item_id='bin', name=name, amount=2, cuft=12)]
+    assert customer_item_materials(plan, inventory, db)[0] == []
+    assert inventory_material_options(inventory) == []
+    assert len(inventory_material_options([dict(name='Cabinet', amount=1, cuft=20)])) == 1
+    assert inventory[0]['amount'] == 2
+
+
 def setup():
     db = Mock()
     db.query.return_value.filter_by.return_value = db.query.return_value

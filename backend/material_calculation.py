@@ -27,7 +27,7 @@ def inventory_material_options(inventory):
     occurrences = {}
     for row in inventory:
         name = str(row.get('name') or '').strip()
-        if not name:
+        if not name or re.search(r'\bbins?\b', name, re.IGNORECASE):
             continue
         room = str(row.get('room') or '')
         text = name.casefold()

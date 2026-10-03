@@ -1099,6 +1099,9 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
             rates[kind] = {'rate': float(rate), 'total': float((rate * volume).quantize(Decimal('0.01')))}
     from catalog_names import resolve_catalog_names
     inventory = resolve_catalog_names(job._estimated_materials_data() + _job_spark_inventory_items(job.id, db), db)
+    # Bins are already containers; do not offer packing or wrapping for them.
+    inventory = [row for row in inventory if not isinstance(row, dict)
+                 or not re.search(r'\bbins?\b', str(row.get('name') or ''), re.IGNORECASE)]
     from item_materials import customer_item_materials
     configured_items, configured_names = customer_item_materials(plan, inventory, db)
     ignored_box_words = {'box', 'cp', 'pbo', 'cu', 'cuft', 'cf', 'cubic', 'foot', 'feet', 'pack', 'packing', 'item'}

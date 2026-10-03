@@ -158,6 +158,8 @@ def customer_item_materials(plan, inventory, db):
     for row in resolve_catalog_names(inventory, catalog=catalog):
         if not isinstance(row, dict) or row.get('going') is False:
             continue
+        if re.search(r'\bbins?\b', str(row.get('name') or ''), re.IGNORECASE):
+            continue
         item_id = row.get('item_id')
         if item_id not in catalog_by_id and not row.get('name_override'):
             candidates = by_name[key(row.get('name', ''))]

@@ -1,4 +1,5 @@
 import { dimensionFeet } from './dimensions';
+import { catalogQuantity, setCatalogQuantity } from './inventoryCatalogQuantities';
 import { piecesPerItem } from './inventoryPieces';
 import QuestionReferenceImages from './QuestionReferenceImages';
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -384,11 +385,11 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
               <div><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</div>
               <span>{number(item.cuft)} cu ft</span>
               <div className="mi-catalog-count" role="group" aria-label={`Quantity of ${item.name}`}>
-                <button type="button" disabled={busy || !room.items[item.id]} aria-label={`Remove ${item.name} from ${room.name}`} title="Remove item" onClick={() => quantity(item.id, 0, room.id)}>
+                <button type="button" disabled={busy || !catalogQuantity(room, item.id)} aria-label={`Remove ${item.name} from ${room.name}`} title="Remove item" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setCatalogQuantity(r, item.id, 0) : r))}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>
                 </button>
-                <input type="number" min="0" max="999" step="1" aria-label={`Count of ${item.name}`} disabled={busy} value={room.items[item.id] || ''} placeholder="0" onChange={event => quantity(item.id, Number(event.target.value), room.id)} />
-                <button type="button" disabled={busy || (room.items[item.id] || 0) >= 999} aria-label={`Add one ${item.name} to ${room.name}`} title="Add one" onClick={() => quantity(item.id, (room.items[item.id] || 0) + 1, room.id)}>+</button>
+                <input type="number" min="0" max="999" step="1" aria-label={`Count of ${item.name}`} disabled={busy} value={catalogQuantity(room, item.id) || ''} placeholder="0" onChange={event => {const value = Number(event.target.value); setRooms(current => current.map(r => r.id === room.id ? setCatalogQuantity(r, item.id, value) : r));}} />
+                <button type="button" disabled={busy || catalogQuantity(room, item.id) >= 999} aria-label={`Add one ${item.name} to ${room.name}`} title="Add one" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setCatalogQuantity(r, item.id, catalogQuantity(r, item.id) + 1) : r))}>+</button>
               </div>
             </div>)}
             {!catalogMatches.length && <p>No matching items. You can add a custom item above.</p>}
