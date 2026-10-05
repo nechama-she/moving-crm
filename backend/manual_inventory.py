@@ -3,7 +3,7 @@ import json
 import re
 import time
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, ConfigDict
 from models import InventoryRoomType, InventoryCatalogItem, LeadLiveSwitch, LeadJob, Lead
@@ -40,6 +40,156 @@ class InventoryRoomInput(BaseModel):
 class ManualInventoryInput(BaseModel):
     request_id: UUID
     rooms: list[InventoryRoomInput] = Field(max_length=100)
+
+
+class InventoryRowValues(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    name: str = Field(min_length=1, max_length=200)
+    cuft: Decimal = Field(gt=0, le=10000, allow_inf_nan=False)
+    quantity: int = Field(ge=1, le=999, strict=True)
+    going: bool = True
+
+
+class InventoryRowChanges(InventoryRowValues):
+    name_override: bool = False
+
+
+class InventoryRowPatch(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    report_id: str | None = Field(default=None, max_length=100)
+    room: str = Field(min_length=1, max_length=100)
+    expected: InventoryRowValues
+    changes: InventoryRowChanges
+
+
+def update_inventory_row(body, access, db):
+    """Optimistically update one inventory item, without replacing sibling rows."""
+    from models import LeadSparkInventoryItem
+    from catalog_names import resolve_catalog_names
+    job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
+    details = json.loads(saved.details or '{}') if saved else {}
+    active = body.report_id is not None
+    if active and (details.get('last_spark_id') != body.report_id or details.get('last_spark_status') != 'completed'):
+        raise HTTPException(409, 'The report changed. Reopen the inventory before editing.')
+    draft = details.get('inventory_draft')
+    if not active and details.get('last_spark_status') == 'completed' and details.get('spark_inventory_snapshot'):
+        raise HTTPException(409, 'The report changed. Reopen the inventory before editing.')
+    rows = details.get('spark_inventory_snapshot', []) if active else (draft or {}).get('rows', [])
+
+    def base_name(name):
+        return re.sub(r'\s*\((?:CP|PBO)\)\s*$', '', name, flags=re.I).strip()
+
+    def matches(row):
+        count = int(row.get('amount') or row.get('quantity') or 1)
+        unit = Decimal(str(row.get('unit_cuft') if row.get('unit_cuft') is not None else float(row.get('cuft') or 0) / count))
+        return (row.get('room') == body.room and base_name(row.get('name', '')) == base_name(body.expected.name)
+                and count == body.expected.quantity and abs(unit - body.expected.cuft) < Decimal('0.000001')
+                and (row.get('going') is not False) == body.expected.going)
+
+    resolved = resolve_catalog_names(rows, db)
+    indexes = [index for index, row in enumerate(resolved) if matches(row)]
+    if len(indexes) != 1:
+        raise HTTPException(409, 'This item changed or is ambiguous. Reopen the inventory before editing.')
+    index = indexes[0]
+    old = rows[index]
+    changes = body.changes
+    if not changes.name.strip():
+        raise HTTPException(422, 'Enter an item name.')
+    unit_weight = Decimal(str(old.get('unit_weight') or 0))
+    updated = {**resolved[index], 'name': changes.name.strip(), 'name_override': changes.name_override,
+               'unit_cuft': float(changes.cuft), 'amount': changes.quantity, 'going': changes.going,
+               'cuft': float(changes.cuft * changes.quantity) if changes.going else 0,
+               'weight': float(unit_weight * changes.quantity) if changes.going else 0,
+               'reference_name': old.get('reference_name') or old.get('name')}
+    rows[index] = updated
+
+    def replace_in_rooms(rooms):
+        # Locate by the old values; repeated room labels are not assumed unique.
+        for room in rooms:
+            for position, row in enumerate(room.get('items', [])):
+                if row == old:
+                    room['items'][position] = dict(updated)
+                    return
+
+    if active:
+        target = db.query(LeadSparkInventoryItem).filter_by(job_id=job.id, sort_order=index).one_or_none()
+        if old.get('going') is not False and (target is None or target.name != old.get('name')
+                or Decimal(str(target.amount)) != Decimal(str(old.get('amount') or 0))):
+            raise HTTPException(409, 'The stored inventory changed. Reopen it before editing.')
+        if changes.going:
+            if target is None:
+                target = LeadSparkInventoryItem(job_id=job.id, sort_order=index)
+                db.add(target)
+            target.name, target.amount, target.cuft = updated['name'], changes.quantity, Decimal(str(updated['cuft']))
+        elif target is not None:
+            db.delete(target)
+        if any(re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b', row['name'], re.I) for row in (old, updated)):
+            selection = json.loads(job.customer_packing_package or '{}')
+            if selection.get('mode') != 'full':
+                def box_key(row):
+                    normalize = lambda value: re.sub(r'\s+', ' ', value.strip().lower())
+                    return f"{normalize(row.get('room') or 'Other items')}:{normalize(base_name(row['name']))}"
+                quantities = dict(selection.get('box_quantities', {}))
+                for key in {box_key(old), box_key(updated)}:
+                    box_id = str(uuid5(NAMESPACE_URL, f'inventory-box:{job.id}:{key}'))
+                    quantities[box_id] = sum(int(row['amount']) for row in rows
+                        if row.get('going') is not False and box_key(row) == key
+                        and (row.get('mover_pack') is True or re.search(r'\(CP\)\s*$', row['name'], re.I)))
+                selection['box_quantities'] = quantities
+                job.customer_packing_package = json.dumps(selection)
+        replace_in_rooms(details.get('manual_rooms', []))
+        details['question_original_rows'] = [dict(row) for row in rows]
+        details.pop('report_question_answers', None)
+        details.pop('question_excluded_items', None)
+        volume = sum(Decimal(str(row.get('cuft') or 0)) for row in rows if row.get('going') is not False)
+        weight = sum(Decimal(str(row.get('weight') or 0)) for row in rows if row.get('going') is not False)
+        lead = db.get(Lead, access.lead_id)
+        lead.volume, lead.weight = volume, weight
+        access.published_cuft = volume
+        details.update(spark_extracted_cuft=float(volume), spark_extracted_weight=float(weight), spark_pricing_ready=False)
+
+    if draft:
+        # Preserve the manual report input alongside the snapshot, without
+        # rebuilding it from the catalog or dropping other saved custom rows.
+        draft_indexes = [i for i, row in enumerate(draft['rows']) if row == old]
+        if len(draft_indexes) != 1:
+            # In draft-only mode rows above and draft.rows are the same list.
+            draft_indexes = [index] if not active else []
+        if draft_indexes:
+            draft_index = draft_indexes[0]
+            move_to = None
+            offset = 0
+            for room in draft['body']['rooms']:
+                entries = room.get('items', []) + room.get('custom_items', [])
+                if offset <= draft_index < offset + len(entries):
+                    position = draft_index - offset
+                    if position < len(room.get('items', [])):
+                        original = room['items'].pop(position)
+                        custom = {'id': str(uuid4()), 'catalog_item_id': original['item_id']}
+                        room.setdefault('custom_items', []).append(custom)
+                        move_to = offset + len(entries) - 1
+                    else:
+                        custom = room['custom_items'][position - len(room.get('items', []))]
+                    custom.update(changes.model_dump(mode='json'), reference_name=updated['reference_name'])
+                    break
+                offset += len(entries)
+            draft['rows'][draft_index] = dict(updated)
+            replace_in_rooms(draft.get('rooms', []))
+            if move_to is not None:
+                draft['rows'].insert(move_to, draft['rows'].pop(draft_index))
+                for room in draft.get('rooms', []):
+                    positions = [i for i, row in enumerate(room.get('items', [])) if row == updated]
+                    if positions:
+                        room['items'].append(room['items'].pop(positions[0]))
+                        break
+            draft['cuft'] = sum(float(row.get('cuft') or 0) for row in draft['rows'] if row.get('going') is not False)
+            draft['weight'] = sum(float(row.get('weight') or 0) for row in draft['rows'] if row.get('going') is not False)
+    if active:
+        remember_report(details)
+    saved.details = json.dumps(details)
+    db.commit()
+    return {'ok': True}
 
 
 def catalog(db):
@@ -166,7 +316,7 @@ def save_inventory_draft(body, access, db):
 
 def replace_current_inventory(body, access, db):
     """Replace the active report's editable inventory without replacing its media report."""
-    from routes.liveswitch import apply_spark_results_to_lead
+    from models import LeadSparkInventoryItem
     rooms, rows, cuft, weight = build_inventory(body, db, allow_empty=True)
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
     details = json.loads(saved.details or '{}') if saved else {}
@@ -193,9 +343,12 @@ def replace_current_inventory(body, access, db):
     saved.details = json.dumps(details)
     db.flush()
     # Inventory edits must retain the customer's packing choices, not stale name suffixes.
-    from routes.pricing import customer_packing_package, apply_box_packing_to_inventory
     job = db.get(LeadJob, access.job_id)
-    package = customer_packing_package(db.get(Lead, access.lead_id), job, db)
+    lead = db.get(Lead, access.lead_id)
+    package = None
+    if any(re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b', row['name'], re.I) for row in rows):
+        from routes.pricing import customer_packing_package, apply_box_packing_to_inventory
+        package = customer_packing_package(lead, job, db)
     if package:
         selection = package['selection']
         def box_key(room, name):
@@ -216,6 +369,22 @@ def replace_current_inventory(body, access, db):
         if selection.get('mode') == 'full':
             selection = {**selection, 'box_quantities': {item['id']: item['quantity'] for item in package.get('box_items', [])}}
         apply_box_packing_to_inventory(job, db, package, selection)
+    # Save the compact inventory rows directly. Report processing includes
+    # progress publications and extraction work that autosaves do not need.
+    details = json.loads(saved.details or '{}')
+    rows = details['spark_inventory_snapshot']
+    lead.volume = Decimal(str(cuft))
+    lead.weight = Decimal(str(weight))
+    access.published_cuft = lead.volume
+    details['spark_extracted_id'] = report_id
+    details['spark_pricing_ready'] = False
+    remember_report(details)
+    saved.details = json.dumps(details)
+    db.query(LeadSparkInventoryItem).filter_by(job_id=job.id).delete(synchronize_session=False)
+    for index, row in enumerate(rows):
+        if row.get('going') is False:
+            continue
+        db.add(LeadSparkInventoryItem(job_id=job.id, name=str(row.get('name') or 'Item'),
+            cuft=Decimal(str(row.get('cuft') or 0)), amount=Decimal(str(row.get('amount') or 0)), sort_order=index))
     db.commit()
-    return apply_spark_results_to_lead(access.lead_id, details.get('last_spark_share_url') or '', db,
-                                       expected_report_id=report_id, use_snapshot=True, calculate_price=False)
+    return {'ok': True, 'cuft': cuft, 'weight': weight, 'inventory_count': len(rows), 'job_id': job.id}

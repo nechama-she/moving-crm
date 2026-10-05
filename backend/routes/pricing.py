@@ -1223,12 +1223,8 @@ def apply_box_packing_to_inventory(job, db, package, selection):
     from spark_history import remember_report
     remember_report(details)
     saved.details = json.dumps(details)
-    db.query(LeadSparkInventoryItem).filter_by(job_id=job.id).delete(synchronize_session=False)
-    for index, row in enumerate(rows):
-        if row.get('going') is False:
-            continue
-        db.add(LeadSparkInventoryItem(job_id=job.id, name=str(row.get('name') or 'Item'),
-            cuft=Decimal(str(row.get('cuft') or 0)), amount=Decimal(str(row.get('amount') or 0)), sort_order=index))
+    from inventory_record_sync import sync_inventory_records
+    sync_inventory_records(job.id, rows, db)
 
 
 def customer_package_lines(package, selection):

@@ -1,4 +1,5 @@
 import { dimensionFeet } from './dimensions';
+import { inventoryActions, type InventoryAction } from './inventoryActions';
 import { catalogQuantity, setCatalogQuantity } from './inventoryCatalogQuantities';
 import { piecesPerItem } from './inventoryPieces';
 import QuestionReferenceImages from './QuestionReferenceImages';
@@ -111,7 +112,8 @@ function RoomCard({ room, selected, busy, summary, onSelect, onRename, onDelete 
     <button type="button" className="mi-remove" disabled={busy} aria-label={`Delete room ${room.name}`} onClick={onDelete}>&times;</button>
   </article>;
 }
-export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf, onClose, draftKey, initialRooms, initialRows, packing, imageEndpoint, linkKey='', session='' }: {
+export default function ManualInventoryModal({ loadCatalog, submitActions, downloadPdf, onClose, draftKey, initialRooms, initialRows, packing, imageEndpoint, linkKey='', session='' }: {
+  submitActions: (requestId: string, actions: InventoryAction[]) => Promise<void>;
   draftKey: string;
   initialRooms?: { room_type_id: string; name: string; items: { item_id: string; quantity: number; name?:string }[]; custom_items?: CustomItem[] }[];
   initialRows?: InitialRow[];
@@ -120,8 +122,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
   linkKey?: string;
   session?: string;
   loadCatalog: () => Promise<Catalog>;
-  submit: (body: { request_id: string; rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number; name?:string }[]; custom_items?: CustomItem[] }[] }) => Promise<void>;
-  downloadPdf: (body: Parameters<typeof submit>[0]) => Promise<void>;
+  downloadPdf: (body: { request_id: string; rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number; name?:string }[]; custom_items?: CustomItem[] }[] }) => Promise<void>;
   onClose: () => void;
 }) {
   const [catalog, setCatalog] = useState<Catalog>();
@@ -179,22 +180,33 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
   const saving = useRef<Promise<void> | null>(null);
   const loadedRooms = useRef<Room[] | null>(null);
   const dirty = useRef(false);
-  const submitRef = useRef(submit);
-  submitRef.current = submit;
+  const savedRooms = useRef<Room[] | null>(null);
+  const submitActionsRef = useRef(submitActions);
+  submitActionsRef.current = submitActions;
+  const requestIds = useRef(new WeakMap<Room[], string>());
+  const retrySnapshot = useRef<Room[] | null>(null);
   function flush(): Promise<void> {
     if (saving.current) return saving.current;
     const operation = (async () => {
-      while (pending.current) {
-        const snapshot = pending.current;
-        pending.current = null;
+      while (retrySnapshot.current || pending.current) {
+        const snapshot = retrySnapshot.current || pending.current!;
+        if (pending.current === snapshot) pending.current = null;
         inFlight.current = snapshot;
         setSaveStatus('Saving...');
         try {
-          await submitRef.current({ request_id: crypto.randomUUID(), rooms: snapshot.map(r => ({ room_type_id: r.room_type_id, custom_items: r.custom_items || [], name: r.name.trim() || catalog?.rooms.find(t => t.id === r.room_type_id)?.name || 'Room', items: Object.entries(r.items).filter(([, qty]) => qty > 0).map(([item_id, quantity]) => ({ item_id, quantity, ...(r.item_names?.[item_id] ? {name:r.item_names[item_id]} : {}) })) })) });
+          const actions = inventoryActions(savedRooms.current || [], snapshot, catalog?.items || []);
+          if (actions.length) {
+            const requestId = requestIds.current.get(snapshot) || crypto.randomUUID();
+            requestIds.current.set(snapshot, requestId);
+            await submitActionsRef.current(requestId, actions);
+          }
+          savedRooms.current = snapshot;
+          retrySnapshot.current = null;
           if (latest.current === snapshot) {
             try { localStorage.removeItem(draftKey); } catch { /* The database copy is saved. */ }
           }
         } catch (err) {
+          retrySnapshot.current = snapshot;
           pending.current = pending.current || snapshot;
           setSaveStatus('Not saved. Check your connection and retry.');
           throw err;
@@ -243,7 +255,8 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
       setCatalog(value);
       let saved: Room[] | undefined;
       try { const raw = localStorage.getItem(draftKey); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed) && parsed.every(r => r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.room_type_id === 'string' && r.items && typeof r.items === 'object' && Object.values(r.items).every(q => typeof q === 'number' && Number.isInteger(q) && q >= 0 && q <= 999))) saved = parsed; } } catch { /* Start with default rooms if storage is unavailable. */ }
-      const loaded: Room[] = saved || initialRooms?.map(r => ({ id: crypto.randomUUID(), room_type_id: r.room_type_id, name: r.name, custom_items: (r.custom_items || []).map(item => ({ ...item, cuft: Number(item.cuft) })), items: Object.fromEntries(r.items.map(i => [i.item_id, i.quantity])), item_names:Object.fromEntries(r.items.filter(i=>i.name).map(i=>[i.item_id,i.name!])) })) || (initialRows?.length?roomsFromRows(initialRows,value):value.rooms.filter(r => ['bedroom', 'living-room', 'dining-room', 'kitchen'].includes(r.id)).map(r => ({ id: crypto.randomUUID(), room_type_id: r.id, name: r.name, items: {} })));
+      const serverRooms: Room[] = initialRooms?.map(r => ({ id: crypto.randomUUID(), room_type_id: r.room_type_id, name: r.name, custom_items: (r.custom_items || []).map(item => ({ ...item, cuft: Number(item.cuft) })), items: Object.fromEntries(r.items.map(i => [i.item_id, i.quantity])), item_names:Object.fromEntries(r.items.filter(i=>i.name).map(i=>[i.item_id,i.name!])) })) || (initialRows?.length?roomsFromRows(initialRows,value):value.rooms.filter(r => ['bedroom', 'living-room', 'dining-room', 'kitchen'].includes(r.id)).map(r => ({ id: crypto.randomUUID(), room_type_id: r.id, name: r.name, items: {} })));
+      const loaded = saved || serverRooms;
       loaded.forEach(room => { room.custom_items = (room.custom_items || []).map(item => linkCatalogItem(item, value)); });
       if (packing) {
         const baseName = (name: string) => name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '').trim();
@@ -263,6 +276,7 @@ export default function ManualInventoryModal({ loadCatalog, submit, downloadPdf,
         }
       }
       loadedRooms.current = loaded;
+      savedRooms.current = initialRooms?.length || initialRows?.length ? serverRooms : [];
       setRooms(loaded);
     }).catch(err => { if (active) setError(err.message); });
     const overflow = document.body.style.overflow;

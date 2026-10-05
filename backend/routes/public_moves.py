@@ -1,6 +1,7 @@
 from catalog_names import resolve_catalog_names
+from inventory_actions import InventoryActionsInput, save_inventory_actions
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
-from manual_inventory import ManualInventoryInput, catalog, submit_inventory, save_inventory_draft, replace_current_inventory
+from manual_inventory import ManualInventoryInput, InventoryRowPatch, update_inventory_row, catalog, submit_inventory, save_inventory_draft, replace_current_inventory
 from spark_history import archive_report_for_new_media, report_history
 from pricing_addresses import with_job_locations
 from report_files import active_report_files, move_files, file_list, remove_report_file, preview_report_file
@@ -800,6 +801,16 @@ def update_customer_inventory(body: ManualInventoryInput, access: PublicMoveAcce
     return result
 
 
+@router.patch('/api/public-moves/{access_id}/inventory/row')
+def patch_customer_inventory_row(body: InventoryRowPatch, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    return update_inventory_row(body, access, db)
+
+
+@router.patch('/api/public-moves/{access_id}/inventory/actions')
+def patch_customer_inventory_actions(body: InventoryActionsInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    return save_inventory_actions(body, access, db)
+
+
 @router.post('/api/public-moves/{access_id}/recalculate-price')
 def recalculate_current_price(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from routes.pricing import calculate_and_save_lead_job_price
@@ -864,7 +875,14 @@ class CustomerPackageSelection(BaseModel):
     box_quantities: dict[str, int] = Field(default_factory=dict, max_length=500)
 
 
+class CustomerStopChange(BaseModel):
+    previous: str | None = Field(default=None, min_length=1, max_length=500)
+    address: str | None = Field(default=None, min_length=1, max_length=500)
+    meters: int | None = Field(default=None, ge=0, le=20000000, strict=True)
+
+
 class CustomerPackingChange(BaseModel):
+    stop_change: CustomerStopChange | None = None
     kind: Literal['additional_protection', 'material', 'inventory_boxes', 'mode', 'unpacking', 'box', 'bulky', 'shuttle', 'storage', 'stairs', 'long_carry', 'elevator', 'extra_stops']
     material_item: CustomerMaterialItem | None = None
     location: Literal['pickup', 'delivery'] | None = None
@@ -915,7 +933,26 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         change=body.change
         if change.location is None or change.has_stops is None:
             raise HTTPException(422,'Choose pickup or delivery and answer Yes or No.')
-        addresses=[address.strip() for address in change.stops] if change.has_stops else []
+        pickup,old,delivery=_read_job_route(db,job)
+        typed=json.loads(job.stop_types or '[]')
+        current_addresses=[address for i,address in enumerate(old) if i<len(typed) and typed[i].get('address')==address and typed[i].get('type')==change.location]
+        if change.stop_change:
+            edit=change.stop_change
+            addresses=list(current_addresses)
+            if edit.previous:
+                if edit.previous not in addresses:
+                    raise HTTPException(409, 'This stop changed. Refresh before editing it.')
+                index=addresses.index(edit.previous)
+                if edit.address: addresses[index]=edit.address.strip()
+                else: addresses.pop(index)
+            elif edit.address:
+                addresses.append(edit.address.strip())
+            else:
+                raise HTTPException(422, 'Choose a stop to add, update, or remove.')
+            if edit.address and (change.route_origin != (getattr(job,change.location+'_zip') or '') or edit.meters is None):
+                raise HTTPException(409, 'The route changed. Select the stop address again.')
+        else:
+            addresses=([address.strip() for address in change.stops] if 'stops' in change.model_fields_set else current_addresses) if change.has_stops else []
         if any(not address or len(address)>500 for address in addresses) or len(set(a.lower() for a in addresses)) != len(addresses):
             raise HTTPException(422,'Enter a different complete address for each stop.')
         origin=getattr(job,change.location+'_zip') or ''
@@ -934,6 +971,16 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         selection=json.loads(job.customer_packing_package or '{}')
         group=selection.setdefault('extra_stops',{}).setdefault(change.location,{})
         group['answer']=change.has_stops
+        if change.stop_change:
+            from extra_stops import route_revision
+            from uuid import uuid5, NAMESPACE_URL
+            existing={row['address']:row for row in group.get('stops', [])}
+            edit=change.stop_change
+            if edit.address:
+                address=edit.address.strip()
+                existing[address]={'id':str(uuid5(NAMESPACE_URL,f'extra-stop:{job.id}:{change.location}:{address}')),
+                    'address':address,'meters':edit.meters,'revision':route_revision(origin,address),'distance_source':'google_browser'}
+            group['stops']=[existing[address] for address in addresses if address in existing]
         if change.stop_meters is not None:
             from extra_stops import route_revision
             from uuid import uuid5, NAMESPACE_URL
@@ -943,15 +990,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                               for address, meters in zip(addresses, change.stop_meters)]
         job.customer_packing_package=json.dumps(selection)
         from pricing_save import attempt_pricing
-        if selection.get('pricing_pending'):
-            from routes.pricing import calculate_and_save_lead_job_price
-            def rebuild_price():
-                # Missing browser distances must not trigger server routing on a stop edit.
-                options = stops_option(lead,job,db,refresh=False)
-                return calculate_and_save_lead_job_price(lead,job,db)
-            attempt_pricing(lead,job,db,rebuild_price,require_price=True)
-        else:
-            attempt_pricing(lead,job,db,lambda: sync_charges(lead,job,db,refresh=False))
+        attempt_pricing(lead,job,db,lambda: sync_charges(lead,job,db,refresh=False))
         db.commit()
         return saved_response()
     if body.change and body.change.kind == 'elevator':
@@ -1079,9 +1118,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                         raise HTTPException(422, 'Inventory item ID must match the selected item.')
                     additional[change.item_id] = change.material_item.model_dump(mode='json')
             elif change.kind == 'inventory_boxes':
-                touched.update(f'inventory-box:{item_id}' for item_id in selection.get('box_quantities', {}))
                 touched.update(f'inventory-box:{item_id}' for item_id in change.box_quantities)
-                selection['box_quantities'] = change.box_quantities
+                selection['box_quantities'] = {**selection.get('box_quantities', {}), **change.box_quantities}
             elif change.kind == 'unpacking':
                 touched.add('package:unpacking')
                 selection['unpacking'] = change.enabled
@@ -1189,7 +1227,10 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
                 inventory_selection = {**selection, 'box_quantities': {
                     item['id']: item['quantity'] for item in package.get('box_items', [])
                 }}
-            apply_box_packing_to_inventory(job, db, package, inventory_selection)
+            inventory_package = package
+            if change.kind == 'inventory_boxes':
+                inventory_package = {**package, 'box_items': [item for item in package.get('box_items', []) if item['id'] in change.box_quantities]}
+            apply_box_packing_to_inventory(job, db, inventory_package, inventory_selection)
     if job.price is None:
         # Keep customer choices while the base estimate is still being prepared.
         # Repricing applies these selections when a complete price is available.
@@ -1396,7 +1437,7 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
         locations.update(incoming)
         selection['pricing_locations'] = list(locations.values())[-6:]
         job.customer_packing_package = json.dumps(selection)
-    if (pricing_changed or selection.get('pricing_pending')) and (job.price is not None or float(lead.volume or 0) > 0):
+    if pricing_changed and (job.price is not None or float(lead.volume or 0) > 0):
         from routes.pricing import calculate_and_save_lead_job_price
         from pricing_save import attempt_pricing
         attempt_pricing(lead,job,db,lambda: calculate_and_save_lead_job_price(lead,job,db),require_price=True)

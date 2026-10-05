@@ -4,6 +4,9 @@ import vm from 'node:vm';
 import ts from 'typescript';
 
 const source = readFileSync(new URL('../src/ManualInventoryModal.tsx', import.meta.url), 'utf8');
+const actionExports = {};
+vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/inventoryActions.ts', import.meta.url), 'utf8'),
+  {compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText, {exports:actionExports});
 const flush = source.slice(source.indexOf('  function flush()'), source.indexOf('  useEffect(() => {', source.indexOf('  function flush()')));
 const save = source.slice(source.indexOf('  async function save()'), source.indexOf('  return <div className="cm-modal-overlay"', source.indexOf('  async function save()')));
 function setup() {
@@ -12,9 +15,10 @@ function setup() {
   const state = {
     rooms:snapshot, latest:{current:snapshot}, pending:{current:snapshot}, inFlight:{current:null},
     saving:{current:null}, dirty:{current:true}, catalog:{rooms:[]}, busy:false,
+    savedRooms:{current:null},requestIds:{current:new WeakMap()},retrySnapshot:{current:null},inventoryActions:actionExports.inventoryActions,
     crypto:{randomUUID:()=>String(calls.length)}, draftKey:'test', localStorage:{removeItem(){}},
     setSaveStatus(){},setError(){},setBusy(){},closed:false,
-    submitRef:{current:body=>{calls.push(body);return new Promise((resolve,reject)=>releases.push({resolve,reject}));}},
+    submitActionsRef:{current:(request_id,actions)=>{calls.push({request_id,actions});return new Promise((resolve,reject)=>releases.push({resolve,reject}));}},
   };
   state.onClose = () => {state.closed = true;};
   vm.createContext(state);
@@ -45,7 +49,7 @@ function setup() {
   releases[0].resolve();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls.length,2);
-  assert.equal(calls[1].rooms[0].items[0].quantity,2);
+  assert.equal(calls[1].actions[0].value.quantity,2);
   assert.equal(state.closed,false);
   releases[1].resolve();
   await done;
@@ -61,6 +65,7 @@ function setup() {
   assert.equal(state.pending.current,state.rooms);
   const retry = state.save();
   assert.equal(calls.length,2);
+  assert.equal(calls[0].request_id,calls[1].request_id);
   releases[1].resolve();
   await retry;
   assert.equal(state.closed,true);

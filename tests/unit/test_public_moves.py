@@ -2095,6 +2095,10 @@ def test_manual_inventory_endpoints_require_verification(manual_catalog, monkeyp
     replace = MagicMock(return_value={'ok': True, 'price': 400})
     monkeypatch.setattr(mod, 'save_inventory_draft', save)
     monkeypatch.setattr(mod, 'replace_current_inventory', replace)
+    patch_row = MagicMock(return_value={'ok': True})
+    monkeypatch.setattr(mod, 'update_inventory_row', patch_row)
+    actions_save = MagicMock(return_value={'ok': True})
+    monkeypatch.setattr(mod, 'save_inventory_actions', actions_save)
     source = ast.parse((BACKEND / 'main.py').read_text(encoding='utf-8'))
     node = next(node for node in source.body if getattr(node, 'name', '') == 'enforce_authentication')
     scope = {'Request': Request, 're': re, 'HTTPException': HTTPException, 'PUBLIC_PATHS': set()}
@@ -2117,6 +2121,15 @@ def test_manual_inventory_endpoints_require_verification(manual_catalog, monkeyp
         assert response.status_code == (200 if authenticated else 401), response.text
         response = client.put(base + '/inventory', headers=headers, json=body)
         assert response.status_code == (200 if authenticated else 401), response.text
+        values = {'name':'Chair','cuft':10,'quantity':2,'going':True}
+        response = client.patch(base + '/inventory/row', headers=headers,
+                                json={'room':'Bedroom','expected':values,'changes':values})
+        assert response.status_code == (200 if authenticated else 401), response.text
+        response = client.patch(base + '/inventory/actions', headers=headers,
+                                json={'request_id':str(uuid4()),'actions':[{'kind':'room_add','room':'Office','room_type_id':'bedroom'}]})
+        assert response.status_code == (200 if authenticated else 401), response.text
+    assert actions_save.call_count == (1 if authenticated else 0)
+    assert patch_row.call_count == (1 if authenticated else 0)
     assert save.call_count == (1 if authenticated else 0)
     assert replace.call_count == (1 if authenticated else 0)
 
@@ -2152,6 +2165,120 @@ def test_gallery_preview_is_scoped_and_hides_deleted_files(portal, monkeypatch):
     assert exc.value.status_code == 404
 
 
+@pytest.mark.parametrize('active', [True, False])
+def test_row_patch_updates_only_target_and_rejects_stale_edits(manual_catalog, active):
+    from manual_inventory import ManualInventoryInput, InventoryRowPatch, save_inventory_draft, update_inventory_row
+    from sqlalchemy import event
+    from uuid import uuid4
+    _, db, lead, access = manual_catalog
+    body = ManualInventoryInput(request_id=uuid4(), rooms=[dict(room_type_id='bedroom', name='Bedroom',
+        items=[dict(item_id='chair',quantity=1),dict(item_id='table',quantity=2)])])
+    save_inventory_draft(body, access, db)
+    saved = db.get(models.LeadLiveSwitch, lead.id)
+    details = json.loads(saved.details)
+    if active:
+        details.update(last_spark_id='report',last_spark_status='completed',spark_inventory_snapshot=details['inventory_draft']['rows'],
+                       manual_rooms=details['inventory_draft']['rooms'])
+        saved.details = json.dumps(details)
+        for index, row in enumerate(details['spark_inventory_snapshot']):
+            db.add(models.LeadSparkInventoryItem(id=f'row-{index}',job_id=access.job_id,name=row['name'],amount=row['amount'],cuft=row['cuft'],sort_order=index))
+        db.commit()
+    statements = []
+    def capture(conn, cursor, statement, parameters, context, many):
+        if 'lead_spark_inventory_items' in statement.lower() and statement.lstrip().lower().startswith(('update','delete','insert')):
+            statements.append(statement)
+    event.listen(db.bind, 'before_cursor_execute', capture)
+    patch_body = InventoryRowPatch(report_id='report' if active else None,room='Bedroom',
+        expected=dict(name='Chair',cuft=10,quantity=1,going=True),changes=dict(name='Chair',cuft=10,quantity=10,going=True))
+    try:
+        assert update_inventory_row(patch_body, access, db)['ok']
+        if active:
+            assert len(statements) == 1 and statements[0].lstrip().upper().startswith('UPDATE')
+            assert db.get(models.LeadSparkInventoryItem,'row-0').amount == 10
+            assert db.get(models.LeadSparkInventoryItem,'row-1').amount == 2
+            assert float(lead.volume) == 140
+        else:
+            assert statements == []
+        with pytest.raises(HTTPException) as exc:
+            update_inventory_row(patch_body, access, db)
+        assert exc.value.status_code == 409
+        db.rollback()
+        draft = json.loads(saved.details)['inventory_draft']
+        assert draft['cuft'] == 140
+        # A second edit still finds the right input after catalog-to-custom conversion.
+        patch_body.expected.quantity = 10
+        patch_body.changes.quantity = 11
+        update_inventory_row(patch_body, access, db)
+        draft = json.loads(saved.details)['inventory_draft']
+        assert draft['body']['rooms'][0]['custom_items'][0]['quantity'] == 11
+        assert draft['body']['rooms'][0]['items'][0]['item_id'] == 'table'
+    finally:
+        event.remove(db.bind, 'before_cursor_execute', capture)
+
+
+def test_inventory_actions_are_atomic_targeted_and_retry_safe(manual_catalog):
+    from inventory_actions import InventoryActionsInput, save_inventory_actions
+    from sqlalchemy import event
+    from uuid import uuid4
+    _,db,lead,access=manual_catalog
+    rows=[dict(name='Chair',room='Bedroom',amount=1,unit_cuft=10,cuft=10,weight=0),
+          dict(name='Table',room='Bedroom',amount=2,unit_cuft=20,cuft=40,weight=0)]
+    saved=models.LeadLiveSwitch(lead_id=lead.id,details=json.dumps(dict(last_spark_id='report',last_spark_status='completed',
+        spark_inventory_snapshot=rows,manual_rooms=[dict(name='Bedroom',room_type_id='bedroom',items=rows)])))
+    db.add(saved)
+    for i,row in enumerate(rows):db.add(models.LeadSparkInventoryItem(id=f'item-{i}',job_id=access.job_id,name=row['name'],amount=row['amount'],cuft=row['cuft'],sort_order=i))
+    db.commit()
+    writes=[]
+    def capture(conn,cursor,statement,parameters,context,many):
+        if 'lead_spark_inventory_items' in statement.lower() and statement.lstrip().lower().startswith(('update','delete','insert')):writes.append(statement)
+    event.listen(db.bind,'before_cursor_execute',capture)
+    def values(name='Chair',quantity=1,cuft=10):return dict(name=name,quantity=quantity,cuft=cuft)
+    def request(actions):return InventoryActionsInput(request_id=uuid4(),report_id='report',actions=actions)
+    try:
+        body=request([dict(kind='row_update',room='Bedroom',expected=values(),value=values(quantity=10))])
+        save_inventory_actions(body,access,db)
+        assert len(writes)==1 and writes[0].startswith('UPDATE')
+        assert db.get(models.LeadSparkInventoryItem,'item-0').amount==10
+        assert db.get(models.LeadSparkInventoryItem,'item-1').amount==2
+        writes.clear()
+        save_inventory_actions(body,access,db)
+        assert writes==[]
+        save_inventory_actions(request([dict(kind='room_rename',room='Bedroom',name='Office')]),access,db)
+        assert writes==[]
+        save_inventory_actions(request([dict(kind='row_remove',room='Office',expected=values(quantity=10))]),access,db)
+        assert len(writes)==1 and writes[0].startswith('DELETE')
+        writes.clear()
+        # The surviving item has a stable record identity after its neighbor is removed.
+        save_inventory_actions(request([dict(kind='row_update',room='Office',expected=values('Table',2,20),value=values('Table',3,20))]),access,db)
+        assert len(writes)==1 and writes[0].startswith('UPDATE')
+        assert db.get(models.LeadSparkInventoryItem,'item-1').amount==3
+        writes.clear()
+        save_inventory_actions(request([dict(kind='row_add',room='Office',value=values())]),access,db)
+        assert len(writes)==1 and writes[0].startswith('INSERT')
+        before=json.loads(saved.details)
+        with pytest.raises(HTTPException):
+            save_inventory_actions(request([dict(kind='row_update',room='Office',expected=values(),value=values(quantity=4)),
+                dict(kind='row_remove',room='Office',expected=values('Missing'))]),access,db)
+        db.rollback()
+        assert json.loads(saved.details)==before
+    finally:event.remove(db.bind,'before_cursor_execute',capture)
+
+
+def test_inventory_actions_create_and_edit_draft_without_inventory_writes(manual_catalog):
+    from inventory_actions import InventoryActionsInput, save_inventory_actions
+    from manual_inventory import ManualInventoryInput, build_inventory
+    from uuid import uuid4
+    _,db,lead,access=manual_catalog
+    def save(actions):return save_inventory_actions(InventoryActionsInput(request_id=uuid4(),actions=actions),access,db)
+    save([dict(kind='room_add',room='Bedroom',room_type_id='bedroom'),dict(kind='row_add',room='Bedroom',value=dict(name='Chair',cuft=10,quantity=1,catalog_item_id='chair'))])
+    save([dict(kind='row_update',room='Bedroom',expected=dict(name='Chair',cuft=10,quantity=1),value=dict(name='Chair',cuft=10,quantity=10,catalog_item_id='chair'))])
+    draft=json.loads(db.get(models.LeadLiveSwitch,lead.id).details)['inventory_draft']
+    assert build_inventory(ManualInventoryInput.model_validate(draft['body']),db)[2]==100
+    assert db.query(models.LeadSparkInventoryItem).count()==0
+    save([dict(kind='room_remove',room='Bedroom')])
+    assert json.loads(db.get(models.LeadLiveSwitch,lead.id).details)['inventory_draft']['rows']==[]
+
+
 def test_saving_list_does_not_generate_report(manual_catalog):
     from manual_inventory import ManualInventoryInput
     from uuid import uuid4
@@ -2168,7 +2295,8 @@ def test_saving_list_does_not_generate_report(manual_catalog):
     assert json.loads(db.get(models.LeadLiveSwitch, lead.id).details)['inventory_draft']['rows'] == []
 
 
-def test_customer_can_replace_current_combined_inventory(manual_catalog, monkeypatch):
+@pytest.mark.parametrize('quantity', [2, 999])
+def test_customer_can_replace_current_combined_inventory(manual_catalog, monkeypatch, quantity):
     from manual_inventory import ManualInventoryInput, replace_current_inventory
     from uuid import uuid4
     _, db, lead, access = manual_catalog
@@ -2181,18 +2309,29 @@ def test_customer_can_replace_current_combined_inventory(manual_catalog, monkeyp
     db.commit()
     apply = MagicMock(return_value={'ok': True, 'price': 200})
     monkeypatch.setitem(sys.modules, 'routes.liveswitch', SimpleNamespace(apply_spark_results_to_lead=apply))
+    packing = MagicMock(side_effect=AssertionError('Non-box saves must not build packing options'))
+    monkeypatch.setitem(sys.modules, 'routes.pricing', SimpleNamespace(customer_packing_package=packing))
+    job = db.get(models.LeadJob, access.job_id)
+    job.price = 200
     body = ManualInventoryInput(request_id=uuid4(), rooms=[{'room_type_id': 'bedroom', 'name': 'Bedroom',
-        'items': [{'item_id': 'chair', 'quantity': 2}]}])
+        'items': [{'item_id': 'chair', 'quantity': quantity}]}])
 
     assert replace_current_inventory(body, access, db)['ok']
 
     details = json.loads(db.get(models.LeadLiveSwitch, lead.id).details)
     assert [(row['room'], row['name'], row['amount']) for row in details['spark_inventory_snapshot']] == [
-        ('Bedroom', 'Chair', 2)]
-    assert details['spark_extracted_cuft'] == 20
-    assert 'inventory_draft' not in details
-    apply.assert_called_once_with(lead.id, 'https://example.test/report', db,
-                                  expected_report_id='combined-report', use_snapshot=True, calculate_price=False)
+        ('Bedroom', 'Chair', quantity)]
+    assert details['spark_extracted_cuft'] == 10 * quantity
+    assert details['spark_extracted_id'] == 'combined-report'
+    assert details['spark_pricing_ready'] is False
+    assert details['inventory_draft']['cuft'] == 10 * quantity
+    apply.assert_not_called()
+    packing.assert_not_called()
+    assert float(job.price) == 200
+    assert float(lead.volume) == 10 * quantity
+    inventory = db.query(models.LeadSparkInventoryItem).filter_by(job_id=job.id).all()
+    assert len(inventory) == 1
+    assert inventory[0].amount == quantity
 
 
 def test_combined_report_uses_snapshot_once_on_recalculation(portal, processing_api, monkeypatch):
@@ -3004,6 +3143,45 @@ def test_elevator_autosave_keeps_waived_line_and_only_updates_current_address(po
     assert json.loads(job.customer_packing_package)['mode']=='full'
     with pytest.raises(HTTPException) as exc: save('pickup',True,'stale')
     assert exc.value.status_code==409
+
+
+def test_box_quantity_delta_keeps_other_box_choices(portal,packing_pricing,monkeypatch):
+    mod,db,lead,access=portal
+    job=db.get(models.LeadJob,access.job_id)
+    job.customer_packing_package=json.dumps({'mode':'none','item_ids':[],'box_quantities':{'a':1,'b':2}})
+    package={'cubic_feet':100,'rates':{},'items':[],'box_items':[
+        dict(id=id,label=id,quantity=10,available=True,labor_price=1,material_price=1) for id in ['a','b']]}
+    monkeypatch.setattr(packing_pricing,'customer_packing_options',lambda *args:[])
+    monkeypatch.setattr(packing_pricing,'customer_packing_package',lambda *args,**kwargs:package)
+    apply=MagicMock()
+    monkeypatch.setattr(packing_pricing,'apply_box_packing_to_inventory',apply)
+    monkeypatch.setitem(sys.modules,'routes.leads',MagicMock())
+    db.commit()
+    mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'inventory_boxes','box_quantities':{'a':3}}),access,db,compact=True)
+    assert json.loads(job.customer_packing_package)['box_quantities']=={'a':3,'b':2}
+    assert [row['id'] for row in apply.call_args.args[2]['box_items']]==['a']
+
+
+def test_stop_delta_preserves_other_stops_and_cached_distances(portal,monkeypatch):
+    mod,db,lead,access=portal
+    job=db.get(models.LeadJob,access.job_id)
+    addresses=['Old stop','Untouched stop']
+    job.stop_types=json.dumps([dict(address=address,type='pickup') for address in addresses])
+    untouched=dict(address='Untouched stop',meters=500,id='keep',revision='keep')
+    job.customer_packing_package=json.dumps({'extra_stops':{'pickup':{'answer':True,'stops':[untouched]}}})
+    monkeypatch.setattr(mod,'_read_job_route',lambda *args:('Origin',list(addresses),'Destination'))
+    monkeypatch.setattr(mod,'_persist_job_route',lambda db,id,pickup,stops,delivery:addresses.__setitem__(slice(None),stops))
+    pricing=SimpleNamespace(customer_packing_options=MagicMock(),customer_packing_charge_id=MagicMock())
+    monkeypatch.setitem(sys.modules,'routes.pricing',pricing)
+    monkeypatch.setitem(sys.modules,'routes.leads',MagicMock())
+    monkeypatch.setitem(sys.modules,'extra_stops',SimpleNamespace(option=MagicMock(),sync_charges=MagicMock(),route_revision=lambda *args:'new'))
+    monkeypatch.setitem(sys.modules,'pricing_save',SimpleNamespace(attempt_pricing=lambda lead,job,db,callback,**kwargs:callback()))
+    db.commit()
+    mod.save_customer_packing(mod.CustomerPackingPatch(change={'kind':'extra_stops','location':'pickup','has_stops':True,
+        'route_origin':'Origin','stop_change':{'previous':'Old stop','address':'New stop','meters':100}}),access,db,compact=True)
+    assert addresses==['New stop','Untouched stop']
+    saved=json.loads(job.customer_packing_package)['extra_stops']['pickup']['stops']
+    assert saved[1]==untouched
 
 
 def test_box_materials_include_labor_and_autosave_only_current_item(portal,packing_pricing,monkeypatch):

@@ -129,6 +129,7 @@ export default function CustomerMovePage() {
   const [editingMove,setEditingMove]=useState(false);
   const addressDraft = useRef<{ pickup: string; delivery: string; pickup_place: SelectedAddress | null; delivery_place: SelectedAddress | null }>({ pickup: '', delivery: '', pickup_place: null, delivery_place: null });
   const [moveDraft,setMoveDraft]=useState({name:'',phone:'',email:'',move_date:'',pickup:'',delivery:''});
+  const moveBaseline = useRef(moveDraft);
   const [reportState,setReportState]=useState<'idle'|'running'|'done'>('idle');
   const [startingReport, setStartingReport] = useState(false);
   const reportStartPending = useRef(false);
@@ -211,29 +212,22 @@ export default function CustomerMovePage() {
       setReportState('idle');
     } finally { setBusy(false); }
   }
-  type PricingChange = { kind: 'additional_protection' | 'material' | 'inventory_boxes' | 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; material_item?:import('./CustomerPackingOptions').AdditionalMaterialItem|null; box_quantities?:Record<string,number>; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
+  type PricingChange = { kind: 'additional_protection' | 'material' | 'inventory_boxes' | 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; material_item?:import('./CustomerPackingOptions').AdditionalMaterialItem|null; box_quantities?:Record<string,number>; stop_change?:import('./CustomerExtraStopsQuestion').ExtraStopChange; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
   const failedPricing = useRef(new Map<string, PricingChange>());
   function savePricingChange(change: PricingChange) {
-    const id = `pricing:${change.kind}:${change.location || change.item_id || ''}`;
+    const id = `pricing:${change.kind}:${change.location || change.item_id || ''}:${change.stop_change?.previous || change.stop_change?.address || ''}`;
     answerPending.current += 1;
     answerRevision.current += 1;
     setAnswersSaving(true);
     setAnswerSaveStarted(true);
     const task = answerQueue.current.then(async () => {
       try {
-        let payload: PricingChange & {route_origin?:string;stop_meters?:number[]} = change;
-        if(change.kind === 'extra_stops' && change.has_stops && change.stops?.length) {
-          const origin = (change.location === 'pickup' ? data?.pickup : data?.delivery) || '';
-          const distances: number[] = [];
-          const savedStops=data?.extra_stops?.locations.find(group=>group.location===change.location)?.stops || [];
-          const removingOnly=change.stops.every(address=>savedStops.some(stop=>stop.address===address && stop.miles != null));
-          if(!removingOnly) {
-            for(const address of change.stops) {
-              const saved = savedStops.find(stop => stop.address === address && stop.miles != null && stop.meters != null);
-              distances.push(saved?.meters ?? await browserDrivingMeters(data?.google_maps_browser_key || '',origin,address));
-            }
-            payload={...change,route_origin:origin,stop_meters:distances};
-          }
+        let payload: PricingChange & {route_origin?:string} = change;
+        if(change.kind === 'extra_stops' && change.stop_change?.address) {
+          const origin=(change.location==='pickup'?data?.pickup:data?.delivery)||'';
+          const address=change.stop_change.address;
+          const saved=data?.extra_stops?.locations.find(group=>group.location===change.location)?.stops.find(stop=>stop.address===address);
+          payload={...change,route_origin:origin,stop_change:{...change.stop_change,meters:saved?.meters??await browserDrivingMeters(data?.google_maps_browser_key||'',origin,address)}};
         }
         await call('/packing?compact=true', { change: payload });
         failedPricing.current.delete(id);
@@ -279,7 +273,7 @@ export default function CustomerMovePage() {
       }
       if (distanceRepairs.current.has(routeKey)) continue;
       distanceRepairs.current.add(routeKey);
-      savePricingChange({ kind: 'extra_stops', location: group.location, has_stops: true, stops: group.stops.map(stop => stop.address) });
+      for(const stop of group.stops.filter(stop=>stop.miles==null))savePricingChange({kind:'extra_stops',location:group.location,has_stops:true,stop_change:{previous:stop.address,address:stop.address}});
     }
   }, [stopDistanceState]);
   function changePackage(next: PackingSelection) {
@@ -291,7 +285,11 @@ export default function CustomerMovePage() {
     }
     else if (next.has_additional_protection !== previous.has_additional_protection) savePricingChange({kind:'additional_protection',enabled:next.has_additional_protection === true});
     else if (next.unpacking !== previous.unpacking) savePricingChange({ kind: 'unpacking', enabled: next.unpacking });
-    else if(JSON.stringify(next.box_quantities||{})!==JSON.stringify(previous.box_quantities||{})) savePricingChange({kind:'inventory_boxes',box_quantities:next.box_quantities||{}});
+    else if(JSON.stringify(next.box_quantities||{})!==JSON.stringify(previous.box_quantities||{})) {
+      const changed=Object.fromEntries([...new Set([...Object.keys(next.box_quantities||{}),...Object.keys(previous.box_quantities||{})])]
+        .filter(id=>(next.box_quantities?.[id]||0)!==(previous.box_quantities?.[id]||0)).map(id=>[id,next.box_quantities?.[id]||0]));
+      for(const [item_id,quantity] of Object.entries(changed))savePricingChange({kind:'inventory_boxes',item_id,box_quantities:{[item_id]:quantity}});
+    }
     else if(JSON.stringify(next.additional_items||{})!==JSON.stringify(previous.additional_items||{})) {
       const id=[...new Set([...Object.keys(next.additional_items||{}),...Object.keys(previous.additional_items||{})])].find(id=>JSON.stringify(next.additional_items?.[id])!==JSON.stringify(previous.additional_items?.[id]));
       if(id)savePricingChange({kind:'material',item_id:id,material_item:next.additional_items?.[id]||null});
@@ -618,14 +616,16 @@ export default function CustomerMovePage() {
 
   function startEditMove(){
     if(!data)return;
-    setMoveDraft({
+    const baseline = {
       name:data.name||'',
       phone:data.phone||'',
       email:data.email||'',
       move_date:data.move_date?data.move_date.slice(0,10):'',
       pickup:data.pickup||'',
       delivery:data.delivery||'',
-    });
+    };
+    moveBaseline.current = baseline;
+    setMoveDraft(baseline);
     addressDraft.current = { pickup: data.pickup || '', delivery: data.delivery || '', pickup_place: null, delivery_place: null };
     setMoveErrors({});
     setEditingMove(true);
@@ -644,9 +644,21 @@ export default function CustomerMovePage() {
     setError('');
     setMoveErrors({});
     try{
-      const locationInputs=[submittedAddresses.pickup,submittedAddresses.delivery,data?.company_details?.office_address || ''].filter(Boolean);
+      const changes:Record<string,unknown>={};
+      for(const field of ['name','phone','email','move_date'] as const){
+        const previous=moveBaseline.current[field];
+        if(moveDraft[field]!==previous)changes[field]=moveDraft[field];
+      }
+      const locationInputs:string[]=[];
+      for(const field of ['pickup','delivery'] as const){
+        if(submittedAddresses[field] !== moveBaseline.current[field]){
+          changes[field]=submittedAddresses[field];changes[`${field}_place`]=submittedAddresses[`${field}_place`];
+          if(submittedAddresses[field])locationInputs.push(submittedAddresses[field]);
+        }
+      }
+      if(!Object.keys(changes).length){setEditingMove(false);return;}
       const locations=await Promise.all(locationInputs.map(address=>browserPricingLocation(data?.google_maps_browser_key || '',address).catch(()=>null)));
-      const result=await call('/details', { ...moveDraft, ...submittedAddresses, pricing_locations:locations.filter(location=>location!==null) });
+      const result=await call('/details', { ...changes, ...(locations.some(Boolean)?{pricing_locations:locations.filter(location=>location!==null)}:{}) });
       setData(result);
       if (latestMoveDraft.current === moveDraft && addressDraft.current === submittedAddresses) setEditingMove(false);
     }catch(err){
@@ -1155,12 +1167,10 @@ export default function CustomerMovePage() {
               anchor.href = url; anchor.download = clientName ? `inventory - ${clientName}.pdf` : 'inventory.pdf';
               document.body.appendChild(anchor); anchor.click(); anchor.remove();
               window.setTimeout(() => URL.revokeObjectURL(url), 60000);
-            }} onClose={() => { setShowInventoryList(false); void refreshDetails(); }} submit={async body => {
-              await call(data.combined_inventory?.length?'/inventory':'/manual-inventory', body, data.combined_inventory?.length?'PUT':undefined);
-              // Refresh the summary when the editor closes; edits save without closing it.
-              setCalculationError('');
-              setReportState('idle');
-            }} />}
+            }} submitActions={async (requestId, actions) => {
+              await call('/inventory/actions', {request_id:requestId, actions, report_id:data.spark?.status === 'completed' ? data.spark.id : null}, 'PATCH');
+              setCalculationError(''); setReportState('idle');
+            }} onClose={() => { setShowInventoryList(false); void refreshDetails(); }} />}
             {showQuestions && (
               <div className="cm-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="packing-title" onClick={event => { if (event.target === event.currentTarget) setShowQuestions(false); }}>
                 <div className="cm-modal-card">
@@ -1188,7 +1198,7 @@ export default function CustomerMovePage() {
                   </div>
                   {packingStep==='package'&&<nav className="cm-packing-subtabs cm-packing-subtabs-heading" aria-label="Packing services sections">{packingSections.map(section=><button type="button" key={section} aria-current={packingSection===section?'page':undefined} onClick={()=>{setPackingSection(section);setPackingError('');termsBody.current?.scrollTo({top:0});}}>{section==='service'?'Service':section==='boxes'?'Boxes':'Item protection'}</button>)}</nav>}
                   <div className="cm-modal-body" ref={termsBody} onChangeCapture={event=>{const action=(event.target as HTMLElement).closest<HTMLElement>('[data-customer-action]');if(action)lastCustomerAction.current=action.dataset.customerAction||null;}} onClickCapture={event=>{const action=(event.target as HTMLElement).closest<HTMLElement>('[data-customer-action]');if(action)lastCustomerAction.current=action.dataset.customerAction||null;}}>
-                    {packingStep === 'stops' && data.extra_stops ? <div style={{display:'grid',gap:24}}>{data.extra_stops.locations.map(group=><CustomerExtraStopsQuestion key={group.location} group={group} apiKey={data.google_maps_browser_key || ''} missing={stopsMissing && (stopsIncomplete[group.location] || group.answer==null || (group.answer && !group.stops.length))} onIncomplete={value=>{setStopsIncomplete(old=>({...old,[group.location]:value}));setStopsMissing(false);}} onChange={(has_stops,stops)=>savePricingChange({kind:'extra_stops',location:group.location,has_stops,stops})}/>)}</div> : packingStep === 'elevator' && data.elevator ? <div style={{display:'grid',gap:24}}>{data.elevator.locations.map(location=><CustomerElevatorQuestion key={location.location} config={data.elevator!} location={location} value={elevatorAnswers[location.location] ?? null} missing={elevatorMissing && elevatorAnswers[location.location] == null} onChange={elevator => { setElevatorAnswers(prev => ({ ...prev, [location.location]: elevator })); setElevatorMissing(false); savePricingChange({kind:'elevator',location:location.location,revision:location.revision,elevator}); }} />)}</div> : packingStep === 'access' ? <div style={{display:'grid',gap:24}}>
+                    {packingStep === 'stops' && data.extra_stops ? <div style={{display:'grid',gap:24}}>{data.extra_stops.locations.map(group=><CustomerExtraStopsQuestion key={group.location} group={group} apiKey={data.google_maps_browser_key || ''} missing={stopsMissing && (stopsIncomplete[group.location] || group.answer==null || (group.answer && !group.stops.length))} onIncomplete={value=>{setStopsIncomplete(old=>({...old,[group.location]:value}));setStopsMissing(false);}} onChange={(has_stops,stop_change)=>savePricingChange({kind:'extra_stops',location:group.location,has_stops,stop_change})}/>)}</div> : packingStep === 'elevator' && data.elevator ? <div style={{display:'grid',gap:24}}>{data.elevator.locations.map(location=><CustomerElevatorQuestion key={location.location} config={data.elevator!} location={location} value={elevatorAnswers[location.location] ?? null} missing={elevatorMissing && elevatorAnswers[location.location] == null} onChange={elevator => { setElevatorAnswers(prev => ({ ...prev, [location.location]: elevator })); setElevatorMissing(false); savePricingChange({kind:'elevator',location:location.location,revision:location.revision,elevator}); }} />)}</div> : packingStep === 'access' ? <div style={{display:'grid',gap:24}}>
                       {pickupCarry && data.long_carry && <CustomerLongCarryQuestion key={`pickup:${pickupCarry.revision}`} config={data.long_carry} location={pickupCarry} value={carryAnswers.pickup ?? null} missing={carryMissing && carryAnswers.pickup == null} onChange={carry_feet => { setCarryAnswers(prev => ({...prev,pickup:carry_feet})); setCarryMissing(false); if (carry_feet !== null) savePricingChange({kind:'long_carry',location:'pickup',revision:pickupCarry.revision,...(carry_feet === 'unknown' ? {carry_unknown:true,carry_acknowledged:true} : {carry_feet})}); }} />}
                       {data.shuttle ? <fieldset data-customer-action="delivery-shuttle" style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
                       <legend>Delivery shuttle</legend>
