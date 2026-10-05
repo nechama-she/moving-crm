@@ -835,6 +835,16 @@ def _service_billable_volume(plan, destination, cubic_feet):
     return max(cubic_feet, minimum)
 
 
+def customer_minimum_volume(lead, job, db):
+    """Destination-specific volume floor, independent of packing availability."""
+    move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or not move_type or move_type.lower() == 'local':
+        return None
+    state, zip_code = delivery_location(job.delivery_zip or '')
+    destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', state or '', zip_code or '')
+    return float(_service_billable_volume(plan, destination, 0))
+
+
 def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
     cubic_feet = _rounded_cubic_feet(body.cubic_feet)
     failures = []

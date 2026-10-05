@@ -11,7 +11,7 @@ import pytest
 @pytest.fixture
 def pricing():
     source = Path(__file__).resolve().parents[2] / "backend/routes/pricing.py"
-    names = {"_service_billable_volume", "_charge_amount", "_transportation_price", "_rounded_cubic_feet", "compute_plan_calculation", "lookup_pricing"}
+    names = {"customer_minimum_volume", "_service_billable_volume", "_charge_amount", "_transportation_price", "_rounded_cubic_feet", "compute_plan_calculation", "lookup_pricing"}
     nodes = [node for node in ast.parse(source.read_text(encoding="utf-8")).body
              if isinstance(node, ast.FunctionDef) and node.name in names]
     for node in nodes:
@@ -25,6 +25,15 @@ def pricing():
              "_packing_service_charges": lambda *args: [], "_bulky_item_charges": lambda *args: []}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), scope)
     return scope
+
+
+@pytest.mark.parametrize('move_type,expected', [('Long Distance', 286), ('Local', None)])
+def test_customer_minimum_uses_destination_without_packing(pricing, move_type, expected):
+    plan = SimpleNamespace(rates=[rate(801, None), rate(286, 800)])
+    pricing['infer_job_move_type'] = lambda *args: (move_type, plan)
+    pricing['delivery_location'] = lambda value: ('NY', '10001')
+    pricing['_plan_destination_for_delivery'] = lambda *args: 'NY'
+    assert pricing['customer_minimum_volume'](SimpleNamespace(), SimpleNamespace(delivery_zip='10001'), None) == expected
 
 
 def rate(low, high, price="4.25", minimum="1692.80"):

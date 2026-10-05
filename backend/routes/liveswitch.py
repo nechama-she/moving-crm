@@ -785,9 +785,15 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
             if not calculate_price:
                 processing.mark('pricing', 'skipped', 'Inventory saved; calculate the updated estimate separately')
             elif price is None:
+                job.price_refresh_error = 'Your inventory is saved, but no estimate could be calculated. Your moving team needs to check the move volume, route, and pricing settings.'
                 processing.mark('pricing', 'error', 'No price returned - click to view details',
                                 'The pricing calculator returned no price. Check move volume, company, active pricing book, pickup/delivery matching, and configured rates.')
             else:
+                selection = json.loads(job.customer_packing_package or '{}')
+                selection.pop('pricing_pending', None)
+                selection.pop('pricing_save_error', None)
+                job.customer_packing_package = json.dumps(selection)
+                job.price_refresh_error = None
                 processing.mark('pricing', 'success', f'Calculated ${price:,.2f}')
             processing.mark('publish', 'running')
 

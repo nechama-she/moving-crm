@@ -108,6 +108,11 @@ def test_recalculate_current_price_does_not_import_report_or_replace_answers(por
     job.customer_packing_package = '{"mode":"none","elevator":{"pickup":true}}'
     job.estimated_materials = '[{"name":"Sofa","quantity":1}]'
     job.price = 100
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+        'last_spark_id': 'manual-report', 'last_spark_status': 'completed',
+        'spark_extracted_id': 'manual-report', 'spark_pricing_ready': False,
+        'spark_inventory_snapshot': [{'name': 'Sofa', 'amount': 1, 'cuft': 50}],
+    })))
     db.commit()
     before = (job.customer_packing, job.customer_packing_package, job.estimated_materials)
     pricing = ModuleType('routes.pricing')
@@ -131,6 +136,9 @@ def test_recalculate_current_price_does_not_import_report_or_replace_answers(por
     assert (job.customer_packing, json.loads(job.customer_packing_package), job.estimated_materials) == (before[0], json.loads(before[1]), before[2])
     liveswitch.apply_spark_results_to_lead.assert_not_called()
     pricing.calculate_and_save_lead_job_price.assert_called_once()
+    details = json.loads(db.get(models.LeadLiveSwitch, lead.id).details)
+    assert details['spark_pricing_ready'] is (not fails)
+    assert details['spark_inventory_snapshot'] == [{'name': 'Sofa', 'amount': 1, 'cuft': 50}]
 
 
 @pytest.mark.parametrize('rep', [False, True])

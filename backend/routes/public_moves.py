@@ -666,6 +666,8 @@ def _move_details(access, db, *, refresh_report=True):
     if not is_spark_pending and not report_import_pending and (job.company_id or lead.company_id):
         try:
             pricing_options = _customer_pricing_options(lead, job, db)
+            if estimate is not None:
+                estimate['minimum_cuft'] = pricing_options.get('minimum_cuft')
             packing_package = pricing_options['packing_package']
             packing_items = pricing_options['packing_items']
             shuttle = pricing_options['shuttle']
@@ -709,9 +711,10 @@ def _move_details(access, db, *, refresh_report=True):
 def _customer_pricing_options(lead, job, db):
     from routes.pricing import (customer_packing_options, customer_packing_package,
                                 customer_shuttle, customer_storage, customer_elevator,
-                                customer_long_carry, customer_stairs)
+                                customer_long_carry, customer_stairs, customer_minimum_volume)
     from extra_stops import option as extra_stops_option
     return {
+        'minimum_cuft': customer_minimum_volume(lead, job, db),
         'packing_package': customer_packing_package(lead, job, db),
         'packing_items': customer_packing_options(lead, job, db),
         'shuttle': customer_shuttle(lead, job, db),
@@ -817,6 +820,14 @@ def recalculate_current_price(access: PublicMoveAccess = Depends(verified), db: 
         job.customer_packing_package = json.dumps(selection)
         job.price_calculated_at = NOW()
         job.price_refresh_error = None
+        saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).with_for_update().first()
+        if saved:
+            details = json.loads(saved.details or '{}')
+            if (details.get('last_spark_status') == 'completed'
+                    and details.get('last_spark_id')
+                    and details.get('spark_extracted_id') == details['last_spark_id']):
+                details['spark_pricing_ready'] = True
+                saved.details = json.dumps(details)
     db.commit()
     return {'ok': True, 'price': price}
 
@@ -1425,6 +1436,8 @@ def customer_generate_inventory_report(access: PublicMoveAccess = Depends(verifi
             raise HTTPException(400, 'Add files or items to your list before generating a report.')
         if not result.get('ok'):
             raise HTTPException(422, result.get('detail'))
+        if result.get('price') is None:
+            raise HTTPException(422, 'Your inventory is saved, but no estimate could be calculated. Your moving team needs to check the move volume, route, and pricing settings.')
         return result
 
     from routes.liveswitch import trigger_lead_spark

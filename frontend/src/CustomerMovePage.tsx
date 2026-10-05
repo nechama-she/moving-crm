@@ -65,6 +65,7 @@ type Details = {
   };
   stops: { address: string; type: string | null }[];
   estimate: {
+    minimum_cuft?: number | null;
     price: string;
     cuft: string;
     charges?: { pending?: boolean; name: string; description: string; total: number; subtotal?: number; discount_amount?: number; discount_percent?: number }[];
@@ -1032,10 +1033,17 @@ export default function CustomerMovePage() {
                         <strong>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(data.estimate.price))}</strong>
                       </div>
                       <div className="cm-estimate-detail-item">
-                        <span>Volume</span>
+                        <span>Inventory volume</span>
                         <strong>{Math.ceil(Number(data.estimate.cuft)).toLocaleString()} cu ft</strong>
                       </div>
+                      {!!data.estimate.minimum_cuft && <div className="cm-estimate-detail-item">
+                        <span>Minimum billable volume</span>
+                        <strong>{data.estimate.minimum_cuft.toLocaleString()} cu ft</strong>
+                      </div>}
                     </div>
+                    {!!data.estimate.minimum_cuft && Number(data.estimate.cuft) <= data.estimate.minimum_cuft && <p className="cm-minimum-volume-note">
+                      Your estimate includes transportation for up to <strong>{data.estimate.minimum_cuft.toLocaleString()} cu ft</strong>, the minimum billable volume for this move. A smaller inventory does not reduce the minimum transportation charge. Additional volume or services may change the total.
+                    </p>}
                     {data.estimate.charges?.some(charge => charge.pending) && <p role="status">Partial estimate: pending charges are not included in this total. See the errors beside those charges below.</p>}
                   </> : <>
                     <span className="cm-estimate-eyebrow">Your estimate</span>
