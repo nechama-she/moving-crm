@@ -1170,6 +1170,14 @@ export default function CustomerMovePage() {
             }} submitActions={async (requestId, actions) => {
               await call('/inventory/actions', {request_id:requestId, actions, report_id:data.spark?.status === 'completed' ? data.spark.id : null}, 'PATCH');
               setCalculationError(''); setReportState('idle');
+            }} onDone={async () => {
+              await answerQueue.current;
+              if (failedAnswers.current.size || failedPricing.current.size) {
+                throw new Error('Your list is saved. Please retry saving your service answers before calculating the price.');
+              }
+              await call(data.spark?.status === 'completed' ? '/recalculate-price' : '/generate-inventory-report', {});
+              setData(await call('/details'));
+              setCalculationError('');
             }} onClose={() => { setShowInventoryList(false); void refreshDetails(); }} />}
             {showQuestions && (
               <div className="cm-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="packing-title" onClick={event => { if (event.target === event.currentTarget) setShowQuestions(false); }}>
