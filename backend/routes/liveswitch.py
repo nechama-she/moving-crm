@@ -856,7 +856,7 @@ def select_spark_report(lead_id: str, report_id: str, db: Session):
         # Route and access services belong to the job, not an inventory report.
         # Keep their current answers and cached distances when changing reports.
         for key in ('extra_stops', 'elevator', 'long_carry', 'stairs', 'storage_date', 'shuttle',
-                    'delivery_route', 'pricing_locations', 'pricing_pending', 'pricing_save_error'):
+                    'delivery_route', 'origin_route', 'pricing_locations', 'pricing_pending', 'pricing_save_error'):
             if key in current_package:
                 selected_package[key] = current_package[key]
             else:

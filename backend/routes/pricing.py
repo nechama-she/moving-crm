@@ -22,7 +22,7 @@ from database import get_db
 from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, MaterialRate, packing_card
 from material_calculation import MaterialItem, calculate_materials, customer_material_quotes
 from shuttle import SHUTTLE_PREFIX, ShuttleCard, shuttle_card, shuttle_option
-from delivery_fees import DELIVERY_FEE_PREFIX, DeliveryFeeCard, delivery_fee, delivery_fee_card
+from delivery_fees import ORIGIN_FEE_PREFIX, origin_fee, origin_fee_card, DELIVERY_FEE_PREFIX, DeliveryFeeCard, delivery_fee, delivery_fee_card
 from storage_pricing import STORAGE_PREFIX, StorageCard, storage_card, storage_quote
 from extra_stops import EXTRA_STOPS_PREFIX, ExtraStopsCard, stops_card
 from elevator_pricing import ELEVATOR_PREFIX, ElevatorCard, elevator_card, elevator_quote
@@ -231,6 +231,8 @@ class ServiceInput(BaseModel):
             PackingCard.model_validate_json(value[len(PACKING_CARD_PREFIX):])
         if value.startswith(SHUTTLE_PREFIX):
             ShuttleCard.model_validate_json(value[len(SHUTTLE_PREFIX):])
+        if value.startswith(ORIGIN_FEE_PREFIX):
+            DeliveryFeeCard.model_validate_json(value[len(ORIGIN_FEE_PREFIX):])
         if value.startswith(DELIVERY_FEE_PREFIX):
             DeliveryFeeCard.model_validate_json(value[len(DELIVERY_FEE_PREFIX):])
         if value.startswith(STORAGE_PREFIX):
@@ -261,6 +263,7 @@ class PlanUpdate(BaseModel):
 class CalculationInput(BaseModel):
     source_job_id: str | None = Field(default=None, max_length=100)
     destination: str
+    pickup_address: str = ""
     delivery_address: str = ''
     shuttle_access: bool | None = None
     available_date: str = ''
@@ -422,7 +425,7 @@ def _packing_service_charges(
     carry_config = long_carry_card(services)
     stairs_config = stairs_card(services)
     for service in services:
-        if service.comments.startswith((PACKING_CARD_PREFIX, SHUTTLE_PREFIX, DELIVERY_FEE_PREFIX, STORAGE_PREFIX, STAIRS_PREFIX, LONG_CARRY_PREFIX, ELEVATOR_PREFIX, EXTRA_STOPS_PREFIX)):
+        if service.comments.startswith((PACKING_CARD_PREFIX, SHUTTLE_PREFIX, ORIGIN_FEE_PREFIX, DELIVERY_FEE_PREFIX, STORAGE_PREFIX, STAIRS_PREFIX, LONG_CARRY_PREFIX, ELEVATOR_PREFIX, EXTRA_STOPS_PREFIX)):
             continue
         if extra_stops_config and re.search(r'\b(extra|additional)\b.*\bstops?\b', service.name, re.IGNORECASE):
             continue
@@ -1013,6 +1016,18 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
     except Exception as error:
         failures.append(pending_line('storage', 'Storage', error))
     try:
+        if body.pickup_address:
+            fee = origin_fee(plan.services, body.pickup_address)
+            if fee:
+                calculated.append({'id': 'origin-mileage', 'name': 'Origin fees',
+                                   'description': fee['description'], 'calculation_type': 'fixed',
+                                   'rate': float(fee['amount']), 'default_selected': True, 'automatic': True,
+                                   'applies': True, 'required': True, 'quantity_label': '', 'selected': True,
+                                   'amount': float(fee['amount'])})
+                total += fee['amount']
+    except Exception as error:
+        failures.append(pending_line('origin-fees', 'Origin fees', error))
+    try:
         if body.delivery_address:
             fee = delivery_fee(plan.services, body.delivery_address)
             if fee:
@@ -1564,6 +1579,48 @@ def sync_delivery_fee(lead, job, db):
     _refresh_lead_estimated_total(lead.id, db)
 
 
+def job_origin_fee(job, plan):
+    selection = json.loads(job.customer_packing_package or '{}')
+    fee = origin_fee(plan.services, job.pickup_zip or '', selection.get('origin_route')) if plan else None
+    if fee:
+        selection['origin_route'] = {key: fee[key] for key in ('revision', 'meters')}
+    else:
+        selection.pop('origin_route', None)
+    job.customer_packing_package = json.dumps(selection)
+    return fee
+
+
+@isolated_charge('Origin fees')
+def add_origin_fee_charge(job, db, fee):
+    if callable(fee):
+        fee = fee()
+    if not fee:
+        return Decimal(0)
+    db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'origin-mileage'), job_id=job.id,
+                        name='Origin fees', description=fee['description'], sort_order=2590,
+                        subtotal=fee['amount'], discount_amount=0, total_cost=fee['amount']))
+    return fee['amount']
+
+
+def sync_origin_fee(lead, job, db):
+    if job.price is None:
+        return
+    move_type, plan = infer_job_move_type(lead, job, db)
+    fee = lambda: job_origin_fee(job, plan if (move_type or '').lower() != 'local' else None)
+    old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'origin-mileage'))
+    old_total = old.total_cost if old else Decimal(0)
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, [old] if old else [])
+    delta = add_origin_fee_charge(job, updates, fee) - old_total
+    updates.finish()
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    from routes.leads import _refresh_lead_estimated_total
+    _refresh_lead_estimated_total(lead.id, db)
+
+
 @isolated_charge('Item packing')
 def add_customer_packing_charges(lead, job, db, plan, move_type):
     total = Decimal(0)
@@ -1758,6 +1815,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
                 total_cost=line["total_cost"],
             ))
         job.price = sum(l["total_cost"] for l in lines)
+        job.price += add_origin_fee_charge(job, db, lambda: job_origin_fee(job, matched_plan))
         job.price += add_delivery_fee_charge(job, db, lambda: job_delivery_fee(job, matched_plan))
         job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
         job.price += add_customer_package_charges(lead, job, db, matched_plan, move_type)
@@ -1793,6 +1851,12 @@ def calculate_pricing(
 ):
     plan = _plan_or_404(db, user, plan_id)
     input_failures = []
+    try:
+        card = origin_fee_card(plan.services)
+        if not body.pickup_address and card and card.enabled and card.rules:
+            raise HTTPException(422, 'Enter the pickup address or ZIP to calculate origin fees.')
+    except Exception as error:
+        input_failures.append(pending_line('origin-fees', 'Origin fees', error))
     try:
         card = delivery_fee_card(plan.services)
         if not body.delivery_address and card and card.enabled and card.rules:

@@ -1198,6 +1198,8 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         previous_package = json.loads(job.customer_packing_package or '{}')
         if 'shuttle' in previous_package:
             selection['shuttle'] = previous_package['shuttle']
+        if 'origin_route' in previous_package:
+            selection['origin_route'] = previous_package['origin_route']
         if 'delivery_route' in previous_package:
             selection['delivery_route'] = previous_package['delivery_route']
         if 'storage_date' in previous_package:

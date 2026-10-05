@@ -4,7 +4,7 @@ import LongCarryPricingCard, { isLongCarryCard } from './LongCarryPricingCard';
 import StairsPricingCard, { isStairsCard } from './StairsPricingCard';
 import JobDatePicker from './JobDatePicker';
 import StoragePricingCard, { isStorageCard } from './StoragePricingCard';
-import DeliveryFeesCard, { isDeliveryFeesCard } from './DeliveryFeesCard';
+import DeliveryFeesCard, { isDeliveryFeesCard, isOriginFeesCard } from './DeliveryFeesCard';
 import ShuttleCard, { isShuttleCard } from './ShuttleCard';
 import PickupAreasCard, { type PickupArea } from './PickupAreasCard';
 import BulkyCatalogPicker from './BulkyCatalogPicker';
@@ -187,8 +187,9 @@ export default function PricingPage() {
   const [carryFeet, setCarryFeet] = useState<Partial<Record<'pickup' | 'delivery', string>>>({});
   const [stairsFlights, setStairsFlights] = useState<Partial<Record<'pickup' | 'delivery', string>>>({});
   const [availableDate, setAvailableDate] = useState('');
+  const [pickupAddress, setPickupAddress] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
-  const [openSections, setOpenSections] = useState({ materials: false, extraStops: false, elevator: false, longCarry: false, stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
+  const [openSections, setOpenSections] = useState({ materials: false, extraStops: false, elevator: false, longCarry: false, stairs: false, storage: false, originFees: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
   const [pendingRateGroups, setPendingRateGroups] = useState<string[][]>([]);
 
   useEffect(() => {
@@ -265,7 +266,7 @@ export default function PricingPage() {
     setElevatorAnswers({});
     setCarryFeet({});
     setStairsFlights({});
-    setOpenSections({ materials: false, extraStops: false, elevator: false, longCarry: false, stairs: false, storage: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
+    setOpenSections({ materials: false, extraStops: false, elevator: false, longCarry: false, stairs: false, storage: false, originFees: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
     calculationId.current++;
     setCalculating(false);
     setQuote(null);
@@ -413,7 +414,7 @@ export default function PricingPage() {
   const originalService = (service: Service) => editing
     ? plan?.services.find(original => !!service.id && original.id === service.id) || service : service;
   const bulkyItems = (active?.services || []).filter(service => isBulkyItem(originalService(service)));
-  const pricingServices = (active?.services || []).filter(service => !isBulkyItem(originalService(service)) && !isPackingCard(originalService(service)) && !isShuttleCard(originalService(service)) && !isDeliveryFeesCard(originalService(service)) && !isStorageCard(originalService(service)) && !isExtraStopsCard(originalService(service)) && !(active?.services.some(isExtraStopsCard) && /\b(extra|additional)\b.*\bstops?\b/i.test(service.name)) && !isElevatorCard(originalService(service)) && !(active?.services.some(isElevatorCard) && /\belevators?\b/i.test(service.name)) && !isLongCarryCard(originalService(service)) && !(active?.services.some(isLongCarryCard) && /\blong[ -]+carry\b/i.test(service.name)) && !isStairsCard(originalService(service)) && !(active?.services.some(isStairsCard) && /\bstairs?\b|\bstaircases?\b/i.test(service.name)) && !(active?.services.some(isStorageCard) && /^\s*(?:long\s+term\s+)?storage\b/i.test(service.name)));
+  const pricingServices = (active?.services || []).filter(service => !isBulkyItem(originalService(service)) && !isPackingCard(originalService(service)) && !isShuttleCard(originalService(service)) && !isOriginFeesCard(originalService(service)) && !isDeliveryFeesCard(originalService(service)) && !isStorageCard(originalService(service)) && !isExtraStopsCard(originalService(service)) && !(active?.services.some(isExtraStopsCard) && /\b(extra|additional)\b.*\bstops?\b/i.test(service.name)) && !isElevatorCard(originalService(service)) && !(active?.services.some(isElevatorCard) && /\belevators?\b/i.test(service.name)) && !isLongCarryCard(originalService(service)) && !(active?.services.some(isLongCarryCard) && /\blong[ -]+carry\b/i.test(service.name)) && !isStairsCard(originalService(service)) && !(active?.services.some(isStairsCard) && /\bstairs?\b|\bstaircases?\b/i.test(service.name)) && !(active?.services.some(isStorageCard) && /^\s*(?:long\s+term\s+)?storage\b/i.test(service.name)));
   const customChargeTotal = useMemo(
     () => customCharges.reduce((sum, charge) => sum + Math.max(0, Number(charge.amount) || 0), 0),
     [customCharges],
@@ -440,7 +441,7 @@ export default function PricingPage() {
   const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
   const detailedTotal = Math.max(0, discountBase - discountTotal);
 
-  function startServiceEdit(section: 'materials' | 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
+  function startServiceEdit(section: 'materials' | 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'originFees' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin' || saving) return;
     setOpenSections(current => ({ ...current, [section]: true }));
     setEditing(true);
@@ -451,13 +452,13 @@ export default function PricingPage() {
     setEditing(false);
     setError('');
   }
-  function serviceEditActions(section: 'materials' | 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'deliveryFees' | 'shuttle' | 'pickup' | 'packing' | 'bulkyItems') {
+  function serviceEditActions(section: 'materials' | 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'originFees' | 'deliveryFees' | 'shuttle' | 'pickup' | 'packing' | 'bulkyItems') {
     if (user?.role !== 'admin') return null;
     if (section === 'materials' && !editing) return <button type="button" className="slds-button pricing-section-action" aria-label="Edit materials rates" title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
     return editing ? <>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={cancelServiceEdit}>Cancel changes</button>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save changes'}</button>
-    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'extraStops' ? 'Edit additional stop pricing' : section === 'elevator' ? 'Edit elevator pricing' : section === 'longCarry' ? 'Edit long carry pricing' : section === 'stairs' ? 'Edit stairs pricing' : section === 'storage' ? 'Edit storage pricing' : section === 'deliveryFees' ? 'Edit destination fees' : section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
+    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'extraStops' ? 'Edit additional stop pricing' : section === 'elevator' ? 'Edit elevator pricing' : section === 'longCarry' ? 'Edit long carry pricing' : section === 'stairs' ? 'Edit stairs pricing' : section === 'storage' ? 'Edit storage pricing' : section === 'originFees' ? 'Edit origin fees' : section === 'deliveryFees' ? 'Edit destination fees' : section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
   }
 
   function patchDraft(patch: Partial<Plan>) {
@@ -626,6 +627,7 @@ export default function PricingPage() {
       body: JSON.stringify({
         source_job_id: jobContext?.job.id,
         destination,
+        pickup_address: jobContext?.job.pickup_zip || pickupAddress,
         delivery_address: jobContext?.job.delivery_zip || deliveryAddress,
         shuttle_access: jobContext?.shuttle?.answer ?? null,
         pickup_elevator: elevatorValue('pickup'),
@@ -770,6 +772,7 @@ export default function PricingPage() {
                 ) : null}
                 <div className="pricing-calc-fields">
                   <label>Destination<select value={destination} onChange={(e) => { setDestination(e.target.value); calculationId.current++; setCalculating(false); setQuote(null); }}><option value="">Select a supported destination</option>{destinations.map((name) => <option key={name}>{name}</option>)}</select></label>
+                  {!jobContext && active.services.some(isOriginFeesCard) && <label>Pickup address or ZIP<input value={pickupAddress} placeholder="Full address preferred" onChange={e => { setPickupAddress(e.target.value); calculationId.current++; setCalculating(false); setQuote(null); }} /></label>}
                   {!jobContext && active.services.some(isDeliveryFeesCard) && <label>Delivery address or ZIP<input value={deliveryAddress} placeholder="Full address preferred" onChange={e => { setDeliveryAddress(e.target.value); calculationId.current++; setCalculating(false); setQuote(null); }} /></label>}
                   {!jobContext?.job.move_date && active.services.some(isStorageCard) && <label>Pickup date<JobDatePicker value={storagePickupDate} onChange={value => { setStoragePickupDate(value); calculationId.current++; setCalculating(false); setQuote(null); }} /></label>}
                   {active.services.some(isStorageCard) && <label>Earliest delivery date<JobDatePicker value={availableDate || jobContext?.storage?.available_date || ''} onChange={value => { setAvailableDate(value); calculationId.current++; setCalculating(false); setQuote(null); }} /></label>}
@@ -966,6 +969,9 @@ export default function PricingPage() {
                 <StoragePricingCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
+              <PricingSection title="Origin fees" count={active.services.filter(isOriginFeesCard).length} open={openSections.originFees} toggle={() => setOpenSections(s => ({ ...s, originFees: !s.originFees }))} onDoubleClick={() => startServiceEdit('originFees')} actions={serviceEditActions('originFees')}>
+                <DeliveryFeesCard origin services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
+              </PricingSection>
               <PricingSection title="Destination fees" count={active.services.filter(isDeliveryFeesCard).length} open={openSections.deliveryFees} toggle={() => setOpenSections(s => ({ ...s, deliveryFees: !s.deliveryFees }))} onDoubleClick={() => startServiceEdit('deliveryFees')} actions={serviceEditActions('deliveryFees')}>
                 <DeliveryFeesCard services={active.services} editing={editing} onChange={services => patchDraft({ services })} />
               </PricingSection>
