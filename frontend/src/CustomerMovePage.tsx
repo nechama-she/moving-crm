@@ -696,6 +696,11 @@ export default function CustomerMovePage() {
     }
   }
 
+  const savedInventoryRows = data?.combined_inventory?.length ? data.combined_inventory : data?.inventory_draft?.rooms.flatMap(room => room.items) || [];
+  const savedInventoryCuft = data?.combined_inventory?.length
+    ? data.combined_inventory.reduce((sum, item) => sum + Number(item.cuft || 0), 0)
+    : data?.inventory_draft?.cuft || 0;
+
   const updatesUnavailable = useCustomerUpdates(base, key, session, () => refreshDetails(true));
   const estimateResult = useRef<HTMLDivElement>(null);
   const reportMessage = useRef<HTMLParagraphElement>(null);
@@ -943,10 +948,10 @@ export default function CustomerMovePage() {
                     </article>
                   ))}
                 </div>
-                {data.inventory_draft?.rows.length ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open saved item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
+                {savedInventoryRows.length ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open saved item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
                   <div>
                     <strong>Saved item list</strong>
-                    <span>{data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((roomTotal, item) => roomTotal + Number(item.amount || 0), 0), 0)} items &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + Number(item.amount || 0) * piecesPerItem(item.name), 0), 0)} pieces &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + (isInventoryBox(item.name) ? Number(item.amount || 0) : 0), 0), 0)} boxes &middot; {data.inventory_draft.cuft.toLocaleString()} cu ft</span>
+                    <span>{savedInventoryRows.reduce((sum, item) => sum + Number(item.amount || 0), 0)} items &middot; {savedInventoryRows.reduce((sum, item) => sum + Number(item.amount || 0) * piecesPerItem(item.name), 0)} pieces &middot; {savedInventoryRows.reduce((sum, item) => sum + (isInventoryBox(item.name) ? Number(item.amount || 0) : 0), 0)} boxes &middot; {savedInventoryCuft.toLocaleString()} cu ft</span>
                     <small>Included with your photos and videos in the next report.</small>
                   </div>
                 </section> : null}

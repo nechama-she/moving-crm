@@ -157,18 +157,15 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     return [...grouped].map(([name,contents])=>{
       const key=normalized(name);
       const type=value.rooms.find(candidate=>normalized(candidate.name)===key || key.includes(normalized(candidate.name)) || normalized(candidate.name).includes(key)) || value.rooms[0];
-      const merged=new Map<string,CustomItem>();
+      const customItems: CustomItem[] = [];
       contents.forEach(row=>{
         const quantity=Math.max(1,Math.floor(Number(row.amount??row.quantity??1)||1));
         const total=Math.max(0.01,row.unit_cuft != null ? Number(row.unit_cuft) * quantity : Number(row.cuft||0));
         const linked=linkCatalogItem({id:crypto.randomUUID(),catalog_item_id:row.catalog_item_id || (row.item_id?.startsWith('custom-') ? undefined : row.item_id),name_override:row.name_override,name:row.name,cuft:Number(row.unit_cuft||total/quantity)||0.01,quantity,reference_name:row.reference_name},value);
         const itemName=packingItemName(linked.name);
-        const itemKey=itemName.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim() + (row.going === false ? ':not-going' : ':going');
-        const existing=merged.get(itemKey);
-        if(existing){const combined=existing.cuft*existing.quantity+total;existing.quantity+=quantity;existing.cuft=combined/existing.quantity;}
-        else merged.set(itemKey,{...linked,name:itemName,quantity,going:row.going !== false,cuft:Number(row.unit_cuft||total/quantity)||0.01,reference_name:row.reference_name||row.name});
+        customItems.push({...linked,name:itemName,quantity,going:row.going !== false,cuft:Number(row.unit_cuft||total/quantity)||0.01,reference_name:row.reference_name||row.name});
       });
-      return {id:crypto.randomUUID(),room_type_id:type?.id||'',name,items:{},custom_items:[...merged.values()]};
+      return {id:crypto.randomUUID(),room_type_id:type?.id||'',name,items:{},custom_items:customItems};
     });
   }
   useLayoutEffect(() => {
@@ -211,7 +208,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
         } catch (err) {
           retrySnapshot.current = snapshot;
           pending.current = pending.current || snapshot;
-          setSaveStatus('Not saved. Check your connection and retry.');
+          setSaveStatus('Changes not saved. See the message above.');
           throw err;
         } finally {
           inFlight.current = null;
@@ -230,7 +227,8 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     latest.current = rooms;
     if (loadedRooms.current === rooms) {
       loadedRooms.current = null;
-      return;
+      // A restored local draft may contain edits the server never received.
+      if (!inventoryActions(savedRooms.current || [], rooms, catalog.items).length) return;
     }
     dirty.current = true;
     pending.current = rooms;
@@ -259,7 +257,8 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
       let saved: Room[] | undefined;
       try { const raw = localStorage.getItem(draftKey); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed) && parsed.every(r => r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.room_type_id === 'string' && r.items && typeof r.items === 'object' && Object.values(r.items).every(q => typeof q === 'number' && Number.isInteger(q) && q >= 0 && q <= 999))) saved = parsed; } } catch { /* Start with default rooms if storage is unavailable. */ }
       const serverRooms: Room[] = initialRooms?.map(r => ({ id: crypto.randomUUID(), room_type_id: r.room_type_id, name: r.name, custom_items: (r.custom_items || []).map(item => ({ ...item, cuft: Number(item.cuft) })), items: Object.fromEntries(r.items.map(i => [i.item_id, i.quantity])), item_names:Object.fromEntries(r.items.filter(i=>i.name).map(i=>[i.item_id,i.name!])) })) || (initialRows?.length?roomsFromRows(initialRows,value):value.rooms.filter(r => ['bedroom', 'living-room', 'dining-room', 'kitchen'].includes(r.id)).map(r => ({ id: crypto.randomUUID(), room_type_id: r.id, name: r.name, items: {} })));
-      const loaded = saved || serverRooms;
+      // Keep the server baseline independent of display/packing transformations.
+      const loaded: Room[] = structuredClone(saved || serverRooms);
       loaded.forEach(room => { room.custom_items = (room.custom_items || []).map(item => linkCatalogItem(item, value)); });
       if (packing) {
         const baseName = (name: string) => name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '').trim();
