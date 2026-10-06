@@ -98,11 +98,11 @@ def test_actual_recalculation_keeps_charge_ids_and_answers(monkeypatch, move_typ
     local_quote = {'total':100, 'charges':[{'name':'Local moving','description':'Labor','subtotal':100,'totalCost':100}]}
     scope.update(Decimal=Decimal, uuid4=uuid4, datetime=datetime, json=json,
                  _rounded_cubic_feet=lambda v:v, delivery_location=lambda a:('MD','20850'),
-                 _material_item_names=lambda x:[], _job_spark_inventory_items=lambda *a:[],
+                 _material_item_names=lambda x, db=None:[], _job_spark_inventory_items=lambda *a:[],
                  _bulky_item_charges=lambda *a,**kw:[], _plan_destination_for_delivery=lambda *a:'GA',
                  CalculationInput=lambda **kw:Row(**kw), job_delivery_fee=lambda *a:None,
                  compute_plan_calculation=lambda *a:quote)
-    for name in ('add_delivery_fee_charge','add_customer_packing_charges','add_customer_package_charges',
+    for name in ('add_origin_fee_charge', 'add_delivery_fee_charge','add_customer_packing_charges','add_customer_package_charges',
                  'add_customer_shuttle_charge','add_storage_charge','add_stairs_charges',
                  'add_long_carry_charges','add_elevator_charges'):
         scope[name] = lambda *args,**kw:Decimal(0)
@@ -133,4 +133,39 @@ def test_actual_recalculation_keeps_charge_ids_and_answers(monkeypatch, move_typ
             assert original.total_cost == 100
             assert (job.customer_packing,json.loads(job.customer_packing_package),job.estimated_materials) == before
         assert not any(sql.lstrip().upper().startswith(('DELETE ', 'INSERT ')) for sql in statements)
+    engine.dispose()
+
+
+@pytest.mark.parametrize('volume', [0, None])
+def test_empty_inventory_calculation_clears_previous_estimate(volume):
+    path = Path(__file__).resolve().parents[2] / 'backend/routes/pricing.py'
+    node = next(n for n in ast.parse(path.read_text()).body if getattr(n, 'name', '') == 'calculate_and_save_lead_job_price')
+    node.decorator_list = []
+    for arg in node.args.args:
+        arg.annotation = None
+    scope = {name: getattr(models, name) for name in ('LeadJobCharge', 'PublicMoveAccess')}
+    scope.update(json=json, datetime=datetime, _rounded_cubic_feet=lambda value: value or 0)
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec'), scope)
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        lead = Lead(id='lead', full_name='Customer', volume=volume, estimated_total='{"finalTotal":500}')
+        job = LeadJob(id='job', lead_id='lead', price=500, price_refresh_error='Old error',
+                      customer_packing_package='{"mode":"full","pricing_pending":true}')
+        link = models.PublicMoveAccess(id='access', lead_id='lead', job_id='job', key_hash='key',
+            request_hash='request', token_hash='token', expires_at=datetime.utcnow(),
+            published_price=500, published_cuft=100, published_at=datetime.utcnow())
+        db.add_all([lead, job, link, charge('old', 'Transportation charge', 500)])
+        db.commit()
+        for _ in range(2):
+            assert scope['calculate_and_save_lead_job_price'](lead, job, db) == 0.0
+            db.commit()
+            assert job.price is None
+            assert lead.estimated_total is None
+            assert db.query(LeadJobCharge).filter_by(job_id=job.id).count() == 0
+            assert link.published_price is None
+            assert link.published_cuft is None
+            assert link.published_at is None
+            assert job.price_refresh_error is None
+            assert json.loads(job.customer_packing_package) == {'mode': 'full'}
     engine.dispose()
