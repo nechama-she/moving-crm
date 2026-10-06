@@ -2,7 +2,6 @@ import { dimensionFeet } from './dimensions';
 import { inventoryActions, type InventoryAction } from './inventoryActions';
 import { catalogQuantity, setCatalogQuantity } from './inventoryCatalogQuantities';
 import { piecesPerItem } from './inventoryPieces';
-import { isInventoryBox } from './inventoryBoxes';
 import QuestionReferenceImages from './QuestionReferenceImages';
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './ManualInventoryModal.css';
@@ -157,15 +156,18 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     return [...grouped].map(([name,contents])=>{
       const key=normalized(name);
       const type=value.rooms.find(candidate=>normalized(candidate.name)===key || key.includes(normalized(candidate.name)) || normalized(candidate.name).includes(key)) || value.rooms[0];
-      const customItems: CustomItem[] = [];
+      const merged=new Map<string,CustomItem>();
       contents.forEach(row=>{
         const quantity=Math.max(1,Math.floor(Number(row.amount??row.quantity??1)||1));
         const total=Math.max(0.01,row.unit_cuft != null ? Number(row.unit_cuft) * quantity : Number(row.cuft||0));
         const linked=linkCatalogItem({id:crypto.randomUUID(),catalog_item_id:row.catalog_item_id || (row.item_id?.startsWith('custom-') ? undefined : row.item_id),name_override:row.name_override,name:row.name,cuft:Number(row.unit_cuft||total/quantity)||0.01,quantity,reference_name:row.reference_name},value);
         const itemName=packingItemName(linked.name);
-        customItems.push({...linked,name:itemName,quantity,going:row.going !== false,cuft:Number(row.unit_cuft||total/quantity)||0.01,reference_name:row.reference_name||row.name});
+        const itemKey=itemName.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim() + (row.going === false ? ':not-going' : ':going');
+        const existing=merged.get(itemKey);
+        if(existing){const combined=existing.cuft*existing.quantity+total;existing.quantity+=quantity;existing.cuft=combined/existing.quantity;}
+        else merged.set(itemKey,{...linked,name:itemName,quantity,going:row.going !== false,cuft:Number(row.unit_cuft||total/quantity)||0.01,reference_name:row.reference_name||row.name});
       });
-      return {id:crypto.randomUUID(),room_type_id:type?.id||'',name,items:{},custom_items:customItems};
+      return {id:crypto.randomUUID(),room_type_id:type?.id||'',name,items:{},custom_items:[...merged.values()]};
     });
   }
   useLayoutEffect(() => {
@@ -208,7 +210,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
         } catch (err) {
           retrySnapshot.current = snapshot;
           pending.current = pending.current || snapshot;
-          setSaveStatus('Changes not saved. See the message above.');
+          setSaveStatus('Not saved. Check your connection and retry.');
           throw err;
         } finally {
           inFlight.current = null;
@@ -227,8 +229,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     latest.current = rooms;
     if (loadedRooms.current === rooms) {
       loadedRooms.current = null;
-      // A restored local draft may contain edits the server never received.
-      if (!inventoryActions(savedRooms.current || [], rooms, catalog.items).length) return;
+      return;
     }
     dirty.current = true;
     pending.current = rooms;
@@ -257,8 +258,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
       let saved: Room[] | undefined;
       try { const raw = localStorage.getItem(draftKey); if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed) && parsed.every(r => r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.room_type_id === 'string' && r.items && typeof r.items === 'object' && Object.values(r.items).every(q => typeof q === 'number' && Number.isInteger(q) && q >= 0 && q <= 999))) saved = parsed; } } catch { /* Start with default rooms if storage is unavailable. */ }
       const serverRooms: Room[] = initialRooms?.map(r => ({ id: crypto.randomUUID(), room_type_id: r.room_type_id, name: r.name, custom_items: (r.custom_items || []).map(item => ({ ...item, cuft: Number(item.cuft) })), items: Object.fromEntries(r.items.map(i => [i.item_id, i.quantity])), item_names:Object.fromEntries(r.items.filter(i=>i.name).map(i=>[i.item_id,i.name!])) })) || (initialRows?.length?roomsFromRows(initialRows,value):value.rooms.filter(r => ['bedroom', 'living-room', 'dining-room', 'kitchen'].includes(r.id)).map(r => ({ id: crypto.randomUUID(), room_type_id: r.id, name: r.name, items: {} })));
-      // Keep the server baseline independent of display/packing transformations.
-      const loaded: Room[] = structuredClone(saved || serverRooms);
+      const loaded = saved || serverRooms;
       loaded.forEach(room => { room.custom_items = (room.custom_items || []).map(item => linkCatalogItem(item, value)); });
       if (packing) {
         const baseName = (name: string) => name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '').trim();
@@ -290,8 +290,6 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   const count = (room: Room) => Object.values(room.items).reduce((sum, qty) => sum + qty, 0) + (room.custom_items || []).reduce((sum, item) => sum + item.quantity, 0);
   const pieces = (room: Room) => Object.entries(room.items).reduce((sum, [id, qty]) => sum + qty * piecesPerItem(room.item_names?.[id] || items.get(id)?.name || ''), 0)
     + (room.custom_items || []).reduce((sum, item) => sum + item.quantity * piecesPerItem(item.name), 0);
-  const boxes = (room: Room) => Object.entries(room.items).reduce((sum, [id, qty]) => sum + (isInventoryBox(room.item_names?.[id] || items.get(id)?.name || '') ? qty : 0), 0)
-    + (room.custom_items || []).reduce((sum, item) => sum + (isInventoryBox(item.name) ? item.quantity : 0), 0);
   const cuft = rooms.reduce((sum, room) => sum + total(room, 'cuft'), 0);
   const weight = rooms.reduce((sum, room) => sum + total(room, 'weight'), 0);
   const room = rooms.find(r => r.id === selected);
@@ -343,7 +341,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     }
   }}>
     <header><div><span className="cm-eyebrow">YOUR INVENTORY</span><h2 id="mi-title">Your home, room by room</h2></div><div style={{display: 'flex', alignItems: 'center', gap: 8}}><button type="button" className="slds-button" disabled={busy || pdfBusy || !catalog || !rooms.length || rooms.some(r => !r.name.trim())} title={pdfBusy ? "Preparing PDF..." : "Download inventory PDF"} aria-label={pdfBusy ? "Preparing inventory PDF" : "Download inventory PDF"} aria-busy={pdfBusy} onClick={() => void download()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg></button><button type="button" className="slds-button" disabled={busy || !catalog || !rooms.length} title="Clear inventory" aria-label="Clear inventory" onClick={() => { setRooms([]); setSelected(''); setCustomOpen(false); }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button><button type="button" className="slds-button" disabled={busy} onClick={() => void save(false)} aria-label="Save and close inventory">&times;</button></div></header>
-    <div className="mi-totals" aria-live="polite"><span>{rooms.length} rooms</span><span>{rooms.reduce((sum, r) => sum + count(r), 0)} items &middot; {rooms.reduce((sum, r) => sum + pieces(r), 0)} pieces &middot; {rooms.reduce((sum, r) => sum + boxes(r), 0)} boxes</span><strong>{number(cuft)} cu ft</strong><span>{number(weight)} lb</span></div>
+    <div className="mi-totals" aria-live="polite"><span>{rooms.length} rooms</span><span>{rooms.reduce((sum, r) => sum + count(r), 0)} items &middot; {rooms.reduce((sum, r) => sum + pieces(r), 0)} pieces</span><strong>{number(cuft)} cu ft</strong><span>{number(weight)} lb</span></div>
     {draftError && <p className="mi-error" role="alert">{draftError}</p>}
     {error && <p className="mi-error" role="alert">{error}</p>}
     <div className="mi-body">
@@ -365,7 +363,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
           </div>
         </div>
         <div className="mi-rooms">{rooms.map(r => <RoomCard key={r.id} room={r} selected={r.id === selected} busy={busy}
-          summary={`${count(r)} items \u00b7 ${pieces(r)} pieces \u00b7 ${boxes(r)} boxes \u00b7 ${number(total(r, 'cuft'))} cu ft`}
+          summary={`${count(r)} items \u00b7 ${pieces(r)} pieces \u00b7 ${number(total(r, 'cuft'))} cu ft`}
           onSelect={() => { setSelected(current => current === r.id ? '' : r.id); setCustomOpen(false); }}
           onRename={name => setRooms(current => current.map(value => value.id === r.id ? { ...value, name } : value))}
           onDelete={() => { setRooms(current => current.filter(value => value.id !== r.id)); if (selected === r.id) { setSelected(''); setCustomOpen(false); } }} />)}</div>
@@ -423,7 +421,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
           <h3>Your inventory</h3>
           {!visibleRooms.some(r => count(r) > 0) && <p>{room ? 'No items in this room yet. Click Add item to get started.' : 'No items yet. Choose a room to add an item.'}</p>}
           {visibleRooms.filter(r => count(r) > 0).map(r => <details key={r.id} open>
-            <summary><strong>{r.name}</strong> &middot; {count(r)} items &middot; {pieces(r)} pieces &middot; {boxes(r)} boxes</summary>
+            <summary><strong>{r.name}</strong> &middot; {count(r)} items &middot; {pieces(r)} pieces</summary>
             <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span>Going</span><span className="mi-inventory-actions-heading">Actions</span></div>
             {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <InventoryRow key={id}
               name={packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item')} cuft={items.get(id)?.cuft || 0} quantity={qty} busy={busy}

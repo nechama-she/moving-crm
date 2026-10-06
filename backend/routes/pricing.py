@@ -1643,23 +1643,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         return float(job.price) if job.price is not None else None
     vol = _rounded_cubic_feet(lead.volume)
     if vol <= 0:
-        # Empty inventory is a successful calculation with no estimate.
-        # Keep it in the normal calculation path so all callers clear stale prices.
-        for charge in db.query(LeadJobCharge).filter_by(job_id=job.id).all():
-            db.delete(charge)
-        job.price = None
-        lead.estimated_total = None
-        for access in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
-            access.published_price = None
-            access.published_cuft = None
-            access.published_at = None
-        selection = json.loads(job.customer_packing_package or '{}')
-        selection.pop('pricing_pending', None)
-        selection.pop('pricing_save_error', None)
-        job.customer_packing_package = json.dumps(selection)
-        job.price_calculated_at = datetime.utcnow()
-        job.price_refresh_error = None
-        return 0.0
+        return None
 
     company_id = job.company_id or lead.company_id
     if not company_id:
