@@ -179,6 +179,42 @@ def test_recalculate_price_accepts_verified_portal_session_through_global_auth(p
         pricing.calculate_and_save_lead_job_price.assert_called_once()
 
 
+@pytest.mark.parametrize('rep', [False, True])
+def test_inventory_editor_accepts_verified_portal_session_through_global_auth(portal, monkeypatch, rep):
+    import ast
+    import re
+    from uuid import uuid4
+    from fastapi import Depends, FastAPI, Request
+    from fastapi.testclient import TestClient
+    mod, db, lead, access = portal
+    access.id = str(uuid4())
+    access.token_hash = digest(link_token(access.id))
+    link = mod.rep_link_token(access) if rep else link_token(access.id)
+    fingerprint = mod.verification_fingerprint(access, db, request(link))
+    token = 'verified-inventory-editor-session'
+    db.add(models.PublicMoveSession(token_hash=digest(token), access_id=access.id,
+        expires_at=datetime.utcnow() + timedelta(hours=1), contact_hash=fingerprint))
+    db.commit()
+    source = ast.parse((BACKEND / 'main.py').read_text(encoding='utf-8'))
+    auth = next(node for node in source.body if getattr(node, 'name', '') == 'enforce_authentication')
+    scope = {'Request': Request, 're': re, 'HTTPException': HTTPException, 'PUBLIC_PATHS': set()}
+    exec(compile(ast.Module(body=[auth], type_ignores=[]), '<global-auth>', 'exec'), scope)
+    app = FastAPI(dependencies=[Depends(scope['enforce_authentication'])])
+    app.include_router(mod.router)
+    app.dependency_overrides[mod.get_db] = lambda: db
+    with TestClient(app) as client:
+        path = f'/api/public-moves/{access.id}/inventory/editor'
+        headers = {'x-public-link': link}
+        assert client.get(path, headers=headers).status_code == 401
+        headers['x-public-session'] = token
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.json()['revision']
+        assert response.json()['rooms'] == []
+        headers['x-public-session'] = 'invalid-session'
+        assert client.get(path, headers=headers).status_code == 401
+
+
 def test_packing_totals_ignore_saved_unpacking_for_now(packing_pricing):
     package = {'cubic_feet': 100, 'rates': {'full': {'rate': 2, 'total': 200},
                                          'unpacking': {'rate': 1, 'total': 100}}, 'items': []}
