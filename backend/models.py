@@ -1158,3 +1158,38 @@ class InventoryCatalogItem(Base):
     active = Column(Boolean, nullable=False, default=True)
     deleted = Column(Boolean, nullable=False, default=False, server_default='false')
     packing_materials = Column(Text, nullable=False, default='[]')
+
+
+class InventoryEditState(Base):
+    __tablename__ = 'inventory_edit_states'
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), primary_key=True)
+    source_hash = Column(String(64), nullable=False)
+    revision = Column(String(36), nullable=False)
+    report_id = Column(String(100))
+    receipts = Column(Text, nullable=False, default='{}')
+
+
+class InventoryEditRoom(Base):
+    __tablename__ = 'inventory_edit_rooms'
+    id = Column(String(36), primary_key=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), nullable=False, index=True)
+    room_type_id = Column(String(100), ForeignKey('inventory_room_types.id'))
+    name = Column(String(100), nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class InventoryEditItem(Base):
+    __tablename__ = 'inventory_edit_items'
+    id = Column(String(36), primary_key=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), nullable=False, index=True)
+    room_id = Column(String(36), ForeignKey('inventory_edit_rooms.id', ondelete='CASCADE'), nullable=False, index=True)
+    catalog_item_id = Column(String(100), ForeignKey('inventory_catalog_items.id'))
+    # Only custom names or explicit overrides; default catalog names come from a JOIN.
+    name = Column(String(200))
+    quantity = Column(Integer, nullable=False)
+    unit_cuft = Column(Numeric(18, 8), nullable=False)
+    unit_weight = Column(Numeric(18, 8), nullable=False, default=0)
+    going = Column(Boolean, nullable=False, default=True)
+    mover_pack = Column(Boolean)
+    sort_order = Column(Integer, nullable=False, default=0)
+    inventory_record_id = Column(String(36))

@@ -1,5 +1,6 @@
 from catalog_names import resolve_catalog_names
 from inventory_actions import InventoryActionsInput, save_inventory_actions
+from inventory_edits import InventoryEdits, load_inventory_editor, save_inventory_edits
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
 from manual_inventory import ManualInventoryInput, InventoryRowPatch, update_inventory_row, catalog, submit_inventory, save_inventory_draft, replace_current_inventory
 from spark_history import archive_report_for_new_media, report_history
@@ -806,8 +807,15 @@ def patch_customer_inventory_row(body: InventoryRowPatch, access: PublicMoveAcce
     return update_inventory_row(body, access, db)
 
 
+@router.get('/api/public-moves/{access_id}/inventory/editor')
+def get_inventory_editor(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    return load_inventory_editor(access, db)
+
+
 @router.patch('/api/public-moves/{access_id}/inventory/actions')
-def patch_customer_inventory_actions(body: InventoryActionsInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def patch_customer_inventory_actions(body: InventoryEdits | InventoryActionsInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    if isinstance(body, InventoryEdits):
+        return save_inventory_edits(body, access, db)
     return save_inventory_actions(body, access, db)
 
 

@@ -1152,7 +1152,7 @@ export default function CustomerMovePage() {
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
             </div>
 
-            {showInventoryList && <ManualInventoryModal initialRooms={data.combined_inventory?.length?undefined:data.inventory_draft?.body.rooms} initialRows={data.combined_inventory} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full', boxes: (data.packing_package.box_items || []).map(box => ({ label: box.label, room: box.room, quantity: data.packing_package!.selection.box_quantities?.[box.id] || 0 })) } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}_${JSON.stringify(data.packing_package?.selection || {})}`} loadCatalog={() => call('/inventory-catalog')} downloadPdf={async body => {
+            {showInventoryList && <ManualInventoryModal loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full', boxes: (data.packing_package.box_items || []).map(box => ({ label: box.label, room: box.room, quantity: data.packing_package!.selection.box_quantities?.[box.id] || 0 })) } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}_${JSON.stringify(data.packing_package?.selection || {})}`} loadCatalog={() => call('/inventory-catalog')} downloadPdf={async body => {
               const response = await fetch(base + '/inventory.pdf', {
                 method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
                 body: JSON.stringify(body), cache: 'no-store',
@@ -1167,9 +1167,10 @@ export default function CustomerMovePage() {
               anchor.href = url; anchor.download = clientName ? `inventory - ${clientName}.pdf` : 'inventory.pdf';
               document.body.appendChild(anchor); anchor.click(); anchor.remove();
               window.setTimeout(() => URL.revokeObjectURL(url), 60000);
-            }} submitActions={async (requestId, actions) => {
-              await call('/inventory/actions', {request_id:requestId, actions, report_id:data.spark?.status === 'completed' ? data.spark.id : null}, 'PATCH');
+            }} submitActions={async (requestId, edits, revision, reportId) => {
+              const result = await call('/inventory/actions', {request_id:requestId, revision, report_id:reportId, ...edits}, 'PATCH');
               setCalculationError(''); setReportState('idle');
+              return result;
             }} onDone={async () => {
               await answerQueue.current;
               if (failedAnswers.current.size || failedPricing.current.size) {

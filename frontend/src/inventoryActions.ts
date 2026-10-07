@@ -1,37 +1,49 @@
-type Item = {id:string;catalog_item_id?:string;name_override?:boolean;name:string;cuft:number;quantity:number;going?:boolean;mover_pack?:boolean;reference_name?:string};
+﻿type Item = {id:string;catalog_item_id?:string|null;name_override?:boolean;name:string;cuft:number;quantity:number;going?:boolean;mover_pack?:boolean|null;unit_weight?:number};
 type Room = {id:string;room_type_id:string;name:string;items:Record<string,number>;item_names?:Record<string,string>;custom_items?:Item[]};
 type CatalogItem = {id:string;name:string;cuft:number;weight?:number};
-type Row = {name:string;cuft:number;quantity:number;going:boolean;name_override:boolean;catalog_item_id?:string;mover_pack?:boolean;reference_name?:string;unit_weight:number};
-export type InventoryAction = {kind:'room_add'|'room_remove'|'room_rename'|'row_add'|'row_remove'|'row_update';room:string;room_type_id?:string;name?:string;expected?:Row;value?:Row};
-export function inventoryActions(before:Room[], after:Room[], catalog:CatalogItem[]):InventoryAction[] {
-  const lookup=new Map(catalog.map(item=>[item.id,item]));
-  const rows=(room:Room):Row[]=>[
-    ...Object.entries(room.items).filter(([,n])=>n>0).map(([id,quantity])=>({name:room.item_names?.[id]||lookup.get(id)?.name||'Item',
-      cuft:lookup.get(id)?.cuft||0,quantity,going:true,name_override:!!room.item_names?.[id],catalog_item_id:id,unit_weight:lookup.get(id)?.weight||0})),
-    ...(room.custom_items||[]).map(item=>({name:item.name,cuft:item.cuft,quantity:item.quantity,going:item.going!==false,
-      name_override:!!item.name_override,catalog_item_id:item.catalog_item_id,mover_pack:item.mover_pack,reference_name:item.reference_name,unit_weight:0})),
-  ];
-  const signature=(row:Row)=>JSON.stringify([row.name,row.cuft,row.quantity,row.going,row.name_override,row.catalog_item_id,row.mover_pack]);
-  const actions:InventoryAction[]=[];
-  const used=new Set<string>();
-  for(const old of before){
-    const next=after.find(room=>room.id===old.id)||after.find(room=>room.name===old.name&&!used.has(room.id));
-    if(!next){actions.push({kind:'room_remove',room:old.name});continue;}
-    used.add(next.id);
-    if(old.name!==next.name)actions.push({kind:'room_rename',room:old.name,name:next.name,room_type_id:next.room_type_id});
-    const remaining=rows(next);
-    const removed=rows(old).filter(row=>{const index=remaining.findIndex(other=>signature(other)===signature(row));if(index<0)return true;remaining.splice(index,1);return false;});
-    for(const expected of removed){
-      let index=remaining.findIndex(value=>value.catalog_item_id===expected.catalog_item_id&&value.name===expected.name);
-      if(index<0&&removed.length===1&&remaining.length===1)index=0;
-      if(index<0)actions.push({kind:'row_remove',room:next.name,expected});
-      else actions.push({kind:'row_update',room:next.name,expected,value:remaining.splice(index,1)[0]});
-    }
-    for(const value of remaining)actions.push({kind:'row_add',room:next.name,value});
-  }
-  for(const room of after.filter(room=>!used.has(room.id))){
-    actions.push({kind:'room_add',room:room.name,room_type_id:room.room_type_id});
-    for(const value of rows(room))actions.push({kind:'row_add',room:room.name,value});
-  }
-  return actions;
+type Values = {room_id:string;name:string|null;quantity:number;cuft:number;going:boolean;mover_pack:boolean|null};
+type Add = Omit<Values,'name'> & {id:string;name?:string;catalog_item_id?:string;unit_weight?:number};
+export type InventoryEdits = {update:{id:string;fields:Partial<Values>}[];delete:string[];add:Add[];rooms:{update:{id:string;name:string}[];delete:string[];add:{id:string;name:string;room_type_id:string}[]}};
+const catalogIds = new Map<string,string>();
+export function catalogInventoryId(room:Room,id:string):string {
+  const key = `${room.id}:${id}`;
+  if (!catalogIds.has(key)) catalogIds.set(key,crypto.randomUUID());
+  return catalogIds.get(key)!;
 }
+const baseName = (name:string) => name.replace(/\s*\((?:CP|PBO)\)\s*$/i,'').trim();
+export function inventoryActions(before:Room[],after:Room[],catalog:CatalogItem[]):InventoryEdits {
+  const lookup = new Map(catalog.map(item=>[item.id,item]));
+  const flatten = (rooms:Room[]) => new Map(rooms.flatMap(room=>[
+    ...Object.entries(room.items).filter(([,qty])=>qty>0).map(([id,quantity])=>({id:catalogInventoryId(room,id),catalog_item_id:id,
+      name:room.item_names?.[id]||lookup.get(id)?.name||'Item',name_override:!!room.item_names?.[id],quantity,cuft:lookup.get(id)?.cuft||0,
+      unit_weight:lookup.get(id)?.weight||0,room_id:room.id})),
+    ...(room.custom_items||[]).map(item=>({...item,room_id:room.id})),
+  ].map(item=>[item.id,item] as const)));
+  const previous=flatten(before), current=flatten(after);
+  const edits:InventoryEdits={update:[],delete:[],add:[],rooms:{update:[],delete:[],add:[]}};
+  const oldRooms=new Map(before.map(room=>[room.id,room])), newRooms=new Map(after.map(room=>[room.id,room]));
+  for(const room of before) {
+    const next=newRooms.get(room.id);
+    if(!next) edits.rooms.delete.push(room.id);
+    else if(next.name!==room.name) edits.rooms.update.push({id:room.id,name:next.name});
+  }
+  for(const room of after) if(!oldRooms.has(room.id)) edits.rooms.add.push({id:room.id,name:room.name,room_type_id:room.room_type_id});
+  const values=(item:Item & {room_id:string}):Values=>({room_id:item.room_id,
+    name:!item.catalog_item_id||item.name_override?baseName(item.name):null,
+    quantity:item.quantity,cuft:item.cuft,going:item.going!==false,
+    mover_pack:item.mover_pack??(/\((?:CP|PBO)\)\s*$/i.test(item.name)?/\(CP\)\s*$/i.test(item.name):null)});
+  for(const [id,item] of previous) {
+    if(edits.rooms.delete.includes(item.room_id)) continue;
+    const next=current.get(id);
+    if(!next) {edits.delete.push(id);continue;}
+    const oldValue=values(item), newValue=values(next), fields:Partial<Values>={};
+    for(const field of Object.keys(newValue) as (keyof Values)[]) if(oldValue[field]!==newValue[field]) Object.assign(fields,{[field]:newValue[field]});
+    if(Object.keys(fields).length) edits.update.push({id,fields});
+  }
+  for(const [id,item] of current) if(!previous.has(id)) {
+    const {name,...value}=values(item);
+    edits.add.push({id,...value,...(name!==null?{name}:{}),...(item.catalog_item_id?{catalog_item_id:item.catalog_item_id}:{}),unit_weight:item.unit_weight||0});
+  }
+  return edits;
+}
+export const hasInventoryEdits=(edits:InventoryEdits)=>Object.values(edits.rooms).some(list=>list.length>0)||edits.update.length>0||edits.delete.length>0||edits.add.length>0;

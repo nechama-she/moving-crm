@@ -28,6 +28,9 @@ def migrate() -> None:
         from inventory_catalog_seed import seed_inventory_catalog
         from models import InventoryCatalogItem
         InventoryCatalogItem.__table__.create(connection, checkfirst=True)
+        from models import InventoryRoomType, InventoryEditState, InventoryEditRoom, InventoryEditItem
+        for table in (InventoryRoomType, InventoryEditState, InventoryEditRoom, InventoryEditItem):
+            table.__table__.create(connection, checkfirst=True)
         connection.execute(text("ALTER TABLE inventory_catalog_items ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE"))
         connection.execute(text("ALTER TABLE inventory_catalog_items ADD COLUMN IF NOT EXISTS packing_materials TEXT NOT NULL DEFAULT '[]'"))
         seed_inventory_catalog(connection)

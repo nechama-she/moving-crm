@@ -2,20 +2,21 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import {randomUUID} from 'node:crypto';
 
 const source = readFileSync(new URL('../src/ManualInventoryModal.tsx', import.meta.url), 'utf8');
 const actionExports = {};
 vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/inventoryActions.ts', import.meta.url), 'utf8'),
-  {compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText, {exports:actionExports});
+  {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText, {exports:actionExports,crypto:{randomUUID}});
 const flush = source.slice(source.indexOf('  function flush()'), source.indexOf('  useEffect(() => {', source.indexOf('  function flush()')));
 const save = source.slice(source.indexOf('  async function save('), source.indexOf('  return <div className="cm-modal-overlay"', source.indexOf('  async function save(')));
 function setup() {
-  const snapshot = [{name:'Bedroom',room_type_id:'bedroom',items:{chair:1}}];
+  const snapshot = [{id:'bedroom',name:'Bedroom',room_type_id:'bedroom',items:{chair:1}}];
   const calls = [], releases = [];
   const state = {
     Error, rooms:snapshot, latest:{current:snapshot}, pending:{current:snapshot}, inFlight:{current:null},
     saving:{current:null}, dirty:{current:true}, catalog:{rooms:[]}, busy:false,
-    savedRooms:{current:null},requestIds:{current:new WeakMap()},retrySnapshot:{current:null},inventoryActions:actionExports.inventoryActions,
+    savedRooms:{current:null},requestIds:{current:new WeakMap()},retrySnapshot:{current:null},inventoryActions:actionExports.inventoryActions,hasInventoryEdits:actionExports.hasInventoryEdits,revision:{current:randomUUID()},reportId:{current:null},
     crypto:{randomUUID:()=>String(calls.length)}, draftKey:'test', localStorage:{removeItem(){}},
     setSaveRunning(value){state.saveRunning=value;},setSaveStatus(){},setError(error){state.error=error;},setBusy(){},setFinishing(){},closed:false,calculations:0,
     onDone:async()=>{state.calculations++;},
@@ -23,7 +24,7 @@ function setup() {
   };
   state.onClose = () => {state.closed = true;};
   vm.createContext(state);
-  vm.runInContext(ts.transpile(flush + save), state);
+  vm.runInContext(ts.transpile(flush + save, {target:ts.ScriptTarget.ES2022}), state);
   return {state,calls,releases};
 }
 
@@ -35,7 +36,7 @@ function setup() {
   assert.equal(calls.length,1);
   assert.equal(state.closed,false);
   assert.equal(state.calculations,0);
-  releases[0].resolve();
+  releases[0].resolve({revision:randomUUID()});
   await Promise.all([saving,done]);
   assert.equal(calls.length,1);
   assert.equal(state.closed,true);
@@ -45,16 +46,16 @@ function setup() {
 {
   const {state,calls,releases} = setup();
   state.flush();
-  state.rooms = [{name:'Bedroom',room_type_id:'bedroom',items:{chair:2}}];
+  state.rooms = [{id:'bedroom',name:'Bedroom',room_type_id:'bedroom',items:{chair:2}}];
   state.latest.current = state.rooms;
   state.pending.current = state.rooms;
   const done = state.save();
-  releases[0].resolve();
+  releases[0].resolve({revision:randomUUID()});
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls.length,2);
-  assert.equal(calls[1].actions[0].value.quantity,2);
+  assert.equal(calls[1].actions.update[0].fields.quantity,2);
   assert.equal(state.closed,false);
-  releases[1].resolve();
+  releases[1].resolve({revision:randomUUID()});
   await done;
   assert.equal(state.closed,true);
 }
@@ -69,7 +70,7 @@ function setup() {
   const retry = state.save();
   assert.equal(calls.length,2);
   assert.equal(calls[0].request_id,calls[1].request_id);
-  releases[1].resolve();
+  releases[1].resolve({revision:randomUUID()});
   await retry;
   assert.equal(state.closed,true);
 }
@@ -106,7 +107,7 @@ for (const fails of [false, true]) {
   const operation = state.flush();
   assert.equal(state.saveRunning, true);
   if (fails) releases[0].reject(new Error('Save rejected'));
-  else releases[0].resolve();
+  else releases[0].resolve({revision:randomUUID()});
   await operation.catch(() => {});
   assert.equal(state.saveRunning, false);
   assert.equal(state.saving.current, null);
