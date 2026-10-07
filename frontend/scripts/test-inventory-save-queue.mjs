@@ -17,7 +17,7 @@ function setup() {
     saving:{current:null}, dirty:{current:true}, catalog:{rooms:[]}, busy:false,
     savedRooms:{current:null},requestIds:{current:new WeakMap()},retrySnapshot:{current:null},inventoryActions:actionExports.inventoryActions,
     crypto:{randomUUID:()=>String(calls.length)}, draftKey:'test', localStorage:{removeItem(){}},
-    setSaveStatus(){},setError(error){state.error=error;},setBusy(){},setFinishing(){},closed:false,calculations:0,
+    setSaveRunning(value){state.saveRunning=value;},setSaveStatus(){},setError(error){state.error=error;},setBusy(){},setFinishing(){},closed:false,calculations:0,
     onDone:async()=>{state.calculations++;},
     submitActionsRef:{current:(request_id,actions)=>{calls.push({request_id,actions});return new Promise((resolve,reject)=>releases.push({resolve,reject}));}},
   };
@@ -99,3 +99,16 @@ console.log('Inventory saves avoid duplicates, retain new edits, and retry failu
   assert.equal(state.calculations,0);
   assert.equal(state.closed,true);
 }
+
+// Editing stays locked for the full save, then unlocks on success or failure.
+for (const fails of [false, true]) {
+  const {state, releases} = setup();
+  const operation = state.flush();
+  assert.equal(state.saveRunning, true);
+  if (fails) releases[0].reject(new Error('Save rejected'));
+  else releases[0].resolve();
+  await operation.catch(() => {});
+  assert.equal(state.saveRunning, false);
+  assert.equal(state.saving.current, null);
+}
+console.log('Save lock releases after success and failure.');

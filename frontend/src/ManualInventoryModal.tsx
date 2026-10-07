@@ -56,7 +56,7 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
   const valid = draft.name.trim() && Number(draft.cuft) > 0 && Number(draft.cuft) <= 10000 && Number.isInteger(Number(draft.quantity)) && Number(draft.quantity) >= 1 && Number(draft.quantity) <= 999;
   const totalVolume = editing ? Number(draft.cuft) * Number(draft.quantity) : cuft * quantity;
   const totalVolumeLabel = Number.isFinite(totalVolume) ? totalVolume.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '';
-  const save = () => { if (!valid) return; onSave({ name: draft.name.trim(), cuft: Number(draft.cuft), quantity: Number(draft.quantity) }); setEditing(false); };
+  const save = () => { if (busy || !valid) return; onSave({ name: draft.name.trim(), cuft: Number(draft.cuft), quantity: Number(draft.quantity) }); setEditing(false); };
   return <div className="mi-inventory-row" onKeyDown={event => {
     if (!editing) return;
     if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); save(); }
@@ -90,6 +90,7 @@ function RoomCard({ room, selected, busy, summary, onSelect, onRename, onDelete 
   const cancelled = useRef(false);
   const pencil = useRef<HTMLButtonElement>(null);
   const commit = () => {
+    if (busy) return;
     if (!cancelled.current && draft.trim() && draft.trim() !== room.name) onRename(draft.trim());
     setEditing(false);
   };
@@ -144,7 +145,9 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   const [manualCuft, setManualCuft] = useState<string | null>(null);
   const validDimensions = Object.values(customDimensions).every(value => dimensionFeet(value) !== null);
   const customCuft = manualCuft !== null ? Number(manualCuft) : validDimensions ? Number((dimensionFeet(customDimensions.width)! * dimensionFeet(customDimensions.height)! * dimensionFeet(customDimensions.depth)!).toFixed(4)) : 0;
-  const [busy, setBusy] = useState(false);
+  const [closingBusy, setBusy] = useState(false);
+  const [saveRunning, setSaveRunning] = useState(false);
+  const busy = closingBusy || saveRunning;
   const [pdfBusy, setPdfBusy] = useState(false);
   const [error, setError] = useState('');
   const [finishing, setFinishing] = useState(false);
@@ -189,6 +192,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   const retrySnapshot = useRef<Room[] | null>(null);
   function flush(): Promise<void> {
     if (saving.current) return saving.current;
+    setSaveRunning(true);
     const operation = (async () => {
       while (retrySnapshot.current || pending.current) {
         const snapshot = retrySnapshot.current || pending.current!;
@@ -221,7 +225,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
       dirty.current = false;
     })();
     saving.current = operation;
-    void operation.finally(() => { saving.current = null; }).catch(() => {});
+    void operation.finally(() => { saving.current = null; setSaveRunning(false); }).catch(() => {});
     return operation;
   }
   useEffect(() => {
@@ -330,7 +334,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not finish updating your estimate. Please try Done again.'); setBusy(false); }
     finally { setFinishing(false); }
   }
-  return <div className="cm-modal-overlay"><div className="mi-modal" ref={modal} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="mi-title" onKeyDown={event => {
+  return <div className="cm-modal-overlay"><div className="mi-modal" ref={modal} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={busy} aria-labelledby="mi-title" onKeyDown={event => {
     if (event.key === 'Escape' && !busy) { event.preventDefault(); void save(false); }
     if (event.key === 'Tab') {
       const nodes = modal.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)');
