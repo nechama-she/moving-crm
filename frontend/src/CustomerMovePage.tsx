@@ -1,3 +1,4 @@
+import { boxQuantity } from './inventoryBoxes';
 import CustomerExtraStopsQuestion, {type ExtraStopsOption} from './CustomerExtraStopsQuestion';
 import { piecesPerItem } from './inventoryPieces';
 import CustomerElevatorQuestion, { type ElevatorOption } from './CustomerElevatorQuestion';
@@ -945,7 +946,7 @@ export default function CustomerMovePage() {
                 {data.inventory_draft?.rows.length ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open saved item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
                   <div>
                     <strong>Saved item list</strong>
-                    <span>{data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((roomTotal, item) => roomTotal + Number(item.amount || 0), 0), 0)} items &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + Number(item.amount || 0) * piecesPerItem(item.name), 0), 0)} pieces &middot; {data.inventory_draft.cuft.toLocaleString()} cu ft</span>
+                    <span>{data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((roomTotal, item) => roomTotal + Number(item.amount || 0), 0), 0)} items &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + Number(item.amount || 0) * piecesPerItem(item.name), 0), 0)} pieces &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + boxQuantity(item.name, Number(item.amount || 0)), 0), 0)} boxes &middot; {data.inventory_draft.cuft.toLocaleString()} cu ft</span>
                     <small>Included with your photos and videos in the next report.</small>
                   </div>
                 </section> : null}
