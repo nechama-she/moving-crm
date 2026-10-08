@@ -196,8 +196,15 @@ def save_inventory_edits(body, access, db):
     if receipt:
         if receipt['digest'] != digest: raise HTTPException(409, 'Request ID already used for a different edit.')
         return dict(ok=True, revision=receipt['revision'])
-    if str(body.revision) != state.revision or body.report_id != state.report_id or source_hash(details) != state.source_hash:
-        raise HTTPException(409, 'Inventory changed since it was opened. Reopen it before editing.')
+    conflicts = []
+    if str(body.revision) != state.revision:
+        conflicts.append(f'editor revision mismatch (sent {body.revision}, current {state.revision})')
+    if body.report_id != state.report_id:
+        conflicts.append(f'report mismatch (sent {body.report_id}, current {state.report_id})')
+    if source_hash(details) != state.source_hash:
+        conflicts.append('report/draft inventory snapshot changed outside this editor revision')
+    if conflicts:
+        raise HTTPException(409, 'Inventory conflict: ' + '; '.join(conflicts) + '. Reopen it before editing.')
     for group in (body, body.rooms):
         ids = [str(x.id) for x in group.update] + [str(x) for x in group.delete] + [str(x.id) for x in group.add]
         if len(ids) != len(set(ids)): raise HTTPException(422, 'Each ID must appear only once per batch.')

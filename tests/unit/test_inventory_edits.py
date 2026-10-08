@@ -85,6 +85,8 @@ def test_stale_revision_and_foreign_ids_do_not_modify_inventory(manual_catalog):
     with pytest.raises(HTTPException) as error:
         save_inventory_edits(body(editor,update=[dict(id=item['id'],fields={'quantity':3})]),access,db)
     assert error.value.status_code==409
+    assert 'editor revision mismatch' in error.value.detail
+    assert editor['revision'] in error.value.detail
     db.rollback()
     current=load_inventory_editor(access,db)
     with pytest.raises(HTTPException):
@@ -119,7 +121,21 @@ def test_external_report_edit_invalidates_editor(manual_catalog):
     details=json.loads(saved.details)
     details['spark_inventory_snapshot'][0]['amount']=8
     saved.details=json.dumps(details);db.commit()
-    with pytest.raises(HTTPException): save_inventory_edits(body(editor,delete=[editor['rooms'][0]['custom_items'][0]['id']]),access,db)
+    with pytest.raises(HTTPException) as error: save_inventory_edits(body(editor,delete=[editor['rooms'][0]['custom_items'][0]['id']]),access,db)
+    assert 'snapshot changed outside this editor revision' in error.value.detail
+    assert 'editor revision mismatch' not in error.value.detail
+    db.rollback()
+
+
+def test_report_conflict_identifies_report_ids(manual_catalog):
+    db,lead,access,saved,editor=setup_inventory(manual_catalog)
+    request=body(editor)
+    request.report_id='different-report'
+    with pytest.raises(HTTPException) as error:
+        save_inventory_edits(request,access,db)
+    assert error.value.status_code==409
+    assert 'report mismatch (sent different-report, current report)' in error.value.detail
+    assert 'editor revision mismatch' not in error.value.detail
     db.rollback()
 
 
