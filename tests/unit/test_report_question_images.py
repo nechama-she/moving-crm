@@ -25,7 +25,7 @@ def test_fetches_only_requested_items_and_reuses_until_expiry():
     images = question_images(details, ['Plant'], now=now, fetch=fetch)
     assert set(images) == {'Plant'}
     assert images['Plant'][0]['room'] == 'Living room'
-    assert set(details['question_image_cache']['items']) == {'plant'}
+    assert set(details['question_image_cache']['items']) == {'plant', 'chair'}
     question_images(details, ['Plant'], now=now + 100, fetch=fetch)
     assert fetch.call_count == 1
     question_images(details, ['Plant'], now=now + 14400 - 59, fetch=fetch)
@@ -63,3 +63,13 @@ def test_not_going_items_keep_photos_and_refresh_legacy_cache():
 @pytest.mark.parametrize('url', ['http://127.0.0.1/reports/abc', 'https://evil.test/reports/abc', 'https://app.scribe.liveswitch.com/public/reports/../../secret'])
 def test_report_urls_are_restricted(url):
     with pytest.raises(ValueError): report_api_url(url)
+
+
+def test_different_items_share_one_report_fetch():
+    now, fetch, details = fixture()
+    question_images(details, ['Plant'], now=now, fetch=fetch)
+    assert question_images(details, ['Chair'], now=now+1, fetch=fetch)['Chair']
+    for index in range(100):
+        name = f'No photo {index}'
+        assert question_images(details, [name], now=now+2, fetch=fetch) == {name: []}
+    assert fetch.call_count == 1

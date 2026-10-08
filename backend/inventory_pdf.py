@@ -68,7 +68,16 @@ def inventory_photos(rooms, details):
 
 def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, client=None):
     output = BytesIO()
+    from company_colors import resolve_company_color
+    brand = colors.HexColor(resolve_company_color((company or {}).get('name'), (company or {}).get('color')))
+    def tint(strength):
+        return colors.Color(*(1 - (1 - channel) * strength for channel in (brand.red, brand.green, brand.blue)))
+    border_color = tint(.25)
+    header_color = tint(.08)
+    heading_color = colors.Color(*(channel * .65 for channel in (brand.red, brand.green, brand.blue)))
     styles = getSampleStyleSheet()
+    for name in ('Title', 'Heading2', 'Heading3'):
+        styles[name].textColor = heading_color
     styles['Normal'].fontSize = 9
     styles['Normal'].leading = 12
     company_name_style = ParagraphStyle('CompanyName', parent=styles['Heading3'], alignment=TA_RIGHT)
@@ -126,7 +135,7 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
             ('RIGHTPADDING', (-1, 0), (-1, 0), 0),
             ('SPAN', (0, 1), (-1, 1)),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
-            ('LINEBELOW', (0, 1), (-1, 1), .5, colors.HexColor('#e5dada')),
+            ('LINEBELOW', (0, 1), (-1, 1), .5, border_color),
         ]))
         story.extend([header, Spacer(1, 14)])
 
@@ -157,11 +166,11 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
             continue
         table = Table(body, colWidths=[66, 201, 75, 75, 40, 55], repeatRows=1)
         table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f7f1f1')),
+            ('BACKGROUND', (0, 0), (-1, 0), header_color),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('TOPPADDING', (0, 0), (-1, -1), 7),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
-            ('LINEBELOW', (0, 0), (-1, -1), .4, colors.HexColor('#e5dada')),
+            ('LINEBELOW', (0, 0), (-1, -1), .4, border_color),
         ]))
         story.extend([table, Spacer(1, 10)])
     story.extend([Spacer(1, 8), p('CP: movers pack. PBO: you pack. Volume going excludes items marked No.')])

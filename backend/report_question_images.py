@@ -43,6 +43,11 @@ def question_images(details, names, now=None, fetch=None):
         cache = {'report': report_key, 'version': 2, 'items': {}}
     keys = {normalized(name) for name in names if normalized(name)}
     missing = {key for key in keys if cache['items'].get(key, {}).get('expires_at', 0) <= now}
+    if missing and cache.get('fetched_until', 0) > now:
+        for key in list(missing):
+            if key not in cache['items']:
+                cache['items'][key] = {'images': [], 'expires_at': cache['fetched_until']}
+                missing.remove(key)
     if missing:
         url = report_api_url(details['last_spark_share_url'])
         response = (fetch or httpx.get)(url, timeout=15)
@@ -53,13 +58,15 @@ def question_images(details, names, now=None, fetch=None):
         found = {key: [] for key in missing}
         for row in rows:
             key = normalized(row.get('item_name') or row.get('name') or row.get('item'))
-            if key not in missing: continue
+            if not key: continue
+            found.setdefault(key, [])
             for image in row.get('max_of_two_images') or []:
                 url = image.get('reference', '') if isinstance(image, dict) else ''
                 expires = image_expiry(url, now)
                 if expires:
                     found[key].append({'url': url, 'room': str(row.get('room') or ''),
                         'name': str(row.get('item_name') or row.get('name') or ''), 'expires_at': expires})
+        cache['fetched_until'] = now + 60
         for key, images in found.items():
             unique = list({(image['room'], image['url']): image for image in images}.values())
             cache['items'][key] = {'images': unique, 'expires_at': min((image['expires_at'] for image in unique), default=now + 60)}

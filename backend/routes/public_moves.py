@@ -771,7 +771,7 @@ def download_inventory(body: ManualInventoryInput, access: PublicMoveAccess = De
     job = db.get(LeadJob, access.job_id) if access.job_id else None
     company_id = (job.company_id if job else None) or lead.company_id
     company = db.get(Company, company_id) if company_id else db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
-    company_details = {key: getattr(company, key, None) for key in ('name', 'logo', 'office_address', 'phone', 'dot_number')}
+    company_details = {key: getattr(company, key, None) for key in ('name', 'logo', 'office_address', 'phone', 'dot_number', 'color')}
     client_details = {'name': lead.full_name, 'phone': lead.phone, 'email': lead.email}
     conversation = db.get(LeadLiveSwitch, access.lead_id)
     details = json.loads(conversation.details or '{}') if conversation else {}
@@ -2113,7 +2113,8 @@ def finish_upload(body: FinishUpload, background_tasks: BackgroundTasks, access:
 
 
 class QuestionImagesRequest(BaseModel):
-    names: list[str] = Field(max_length=20)
+    # Match the inventory row limit so opening a large list needs one lookup.
+    names: list[str] = Field(max_length=60000)
 
 
 @router.post('/api/public-moves/{access_id}/question-images')
