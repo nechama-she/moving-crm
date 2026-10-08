@@ -1518,6 +1518,9 @@ def get_leads(
             | Lead.email.ilike(q)
         )
 
+    from lead_overview import overview
+    summary = overview(query, db) if offset == 0 else None
+
     def displayed_location(column, fallback):
         primary = (db.query(column).filter(LeadJob.lead_id == Lead.id)
                    .order_by(LeadJob.job_order, LeadJob.created_at, LeadJob.id)
@@ -1545,6 +1548,7 @@ def get_leads(
     has_more = offset + limit < total
 
     return {
+        "summary": summary,
         "items": [{**lead.to_dict(), "pickup_zip": origin or "", "delivery_zip": destination or ""}
                   for lead, origin, destination in items],
         "total": total,

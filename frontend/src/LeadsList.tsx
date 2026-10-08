@@ -1,3 +1,4 @@
+import "./LeadsList.css";
 ﻿import { useEffect, useState, useRef, useCallback } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
@@ -22,9 +23,9 @@ const HIDDEN_FROM_TABLE = new Set([
 
 const TABLE_FIELDS = [
   "full_name",
+  "status",
   "company_name",
   "assigned_to_name",
-  "leadgen_id",
   "pickup_zip",
   "delivery_zip",
   "when_is_the_move?",
@@ -33,6 +34,7 @@ const TABLE_FIELDS = [
   "email",
   "are_you_moving_within_the_state_or_out_of_state?",
   "created_time",
+  "leadgen_id",
 ];
 
 const COL_WIDTHS: Record<string, number> = {
@@ -66,6 +68,8 @@ export default function LeadsList() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { token, user } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<{new_today: number; quotes: number; quote_value: number; booked_value: number} | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
@@ -121,6 +125,7 @@ export default function LeadsList() {
     const requestVersion = isFirst ? ++requestVersionRef.current : requestVersionRef.current;
     if (isFirst) {
       setError("");
+      setSummary(null);
       setHasMore(false);
       setLoading(true);
       setLoadingMore(false);
@@ -150,6 +155,8 @@ export default function LeadsList() {
         return [...merged.values()];
       });
       setHasMore(data.has_more);
+      setTotal(data.total);
+      if (isFirst) setSummary(data.summary || null);
       hasLoadedRef.current = true;
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -207,9 +214,19 @@ export default function LeadsList() {
   const columns = getColumns(leads);
 
   return (
-    <div style={{ padding: "20px 24px", fontFamily: "inherit", display: "flex", flexDirection: "column", height: "calc(100vh - 52px)", boxSizing: "border-box", overflow: "hidden" }}>
+    <div className="leads-workspace" style={{ padding: "20px 24px", fontFamily: "inherit", display: "flex", flexDirection: "column", height: "calc(100vh - 52px)", boxSizing: "border-box", overflow: "hidden" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-        <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700 }}>Leads</h1>
+        <div className="leads-heading"><span className="leads-icon" aria-hidden="true">?</span><div><span className="leads-eyebrow">SALES WORKSPACE</span><h1>Leads</h1><p>{loading ? "Updating records?" : `${total.toLocaleString()} records`} ? {companyNameFilter || companies.find(c => c.id === companyFilter)?.name || "All accessible companies"}</p></div></div>
+      </div>
+      <div className="leads-metrics" aria-label="Sales overview">
+        {([
+          ['New leads today', summary?.new_today, false, 'Created today ? Eastern time'],
+          ['Quotes this month', summary?.quotes, false, 'Priority 1 leads ? Month to date'],
+          ['Quote value this month', summary?.quote_value, true, 'Current quote totals ? Month to date'],
+          ['Booked value this month', summary?.booked_value, true, 'Booked sales ? Month to date'],
+        ] as const).map(([label, value, money, caption], index) => <section className={`leads-metric metric-${index}`} key={label}>
+          <span className="leads-metric-label">{label}</span><strong>{value == null ? '?' : money ? new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',maximumFractionDigits:0}).format(value) : value.toLocaleString()}</strong><small>{caption}</small>
+        </section>)}
       </div>
       {error && (
         <div style={{ marginBottom: 10, padding: "8px 12px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, color: "#b91c1c", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -236,8 +253,9 @@ export default function LeadsList() {
           </button>
         </div>
       ) : null}
-      <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+      <div className="leads-filters" style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
         <input
+          aria-label="Search leads"
           type="text"
           placeholder="Search by name, ID, phone, or email..."
           value={searchInput}
@@ -253,7 +271,7 @@ export default function LeadsList() {
           }}
         />
         <select
-          value={statusFilter}
+          aria-label="Status" value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
           style={{ padding: "8px 12px", border: "1px solid #dddbda", borderRadius: 4, fontSize: 14, background: "#fff", cursor: "pointer" }}
         >
@@ -264,7 +282,7 @@ export default function LeadsList() {
         </select>
         {!companyIdFilter && (companies.length > 1 || user?.role === "admin") && (
           <select
-            value={companyFilter}
+            aria-label="Company" value={companyFilter}
             onChange={(e) => setCompanyFilter(e.target.value)}
             style={{ padding: "8px 12px", border: "1px solid #dddbda", borderRadius: 4, fontSize: 14, background: "#fff", cursor: "pointer" }}
           >
@@ -277,7 +295,7 @@ export default function LeadsList() {
         )}
         {reps.length > 0 && (
           <select
-            value={assignedToFilter}
+            aria-label="Sales representative" value={assignedToFilter}
             onChange={(e) => setAssignedToFilter(e.target.value)}
             style={{ padding: "8px 12px", border: "1px solid #dddbda", borderRadius: 4, fontSize: 14, background: "#fff", cursor: "pointer" }}
           >
@@ -289,10 +307,11 @@ export default function LeadsList() {
           </select>
         )}
       </div>
+      <div className="leads-list-caption"><strong>Lead directory</strong><span>{leads.length.toLocaleString()} of {total.toLocaleString()} records ? Overview follows filters</span><button type="button" className="slds-button" onClick={() => { if (debounceRef.current) clearTimeout(debounceRef.current); setSearchInput(""); setSearch(""); setStatusFilter(""); setCompanyFilter(""); setAssignedToFilter(""); setSearchParams({}); }}>Clear filters</button></div>
       {leads.length === 0 ? (
         <p>No leads found.</p>
       ) : (
-        <div style={{ flex: 1, overflow: "auto", background: "#fff", border: "1px solid #dddbda", borderRadius: 4, boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
+        <div className="leads-table-scroll" style={{ flex: 1, overflow: "auto", background: "#fff", border: "1px solid #dddbda", borderRadius: 4, boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
         <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -302,6 +321,8 @@ export default function LeadsList() {
                 return (
                 <th
                   key={col}
+                  className={col === "full_name" ? "leads-frozen" : undefined}
+                  aria-sort={isActive ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
                   onClick={() => handleSort(col)}
                   style={{
                     ...cellStyle(col),
@@ -346,6 +367,8 @@ export default function LeadsList() {
                   return (
                     <td
                       key={col}
+                      className={col === "full_name" ? "leads-frozen" : undefined}
+                      title={text}
                       style={{
                         ...cellStyle(col),
                         borderBottom: "1px solid #eee",
@@ -363,11 +386,11 @@ export default function LeadsList() {
                         setTooltip(null);
                       }}
                     >
-                      {isCompanyCell ? (
+                      {col === "status" ? <span className={`lead-status status-${String(lead.status || "new").toLowerCase()}`}>{text}</span> : col === "full_name" ? <Link to={`/leads/${lead.id}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>{text || "Unnamed lead"}</Link> : isCompanyCell ? (
                         <Link
                           to={`/?company_id=${encodeURIComponent(String(lead.company_id))}&company_name=${encodeURIComponent(String(lead.company_name || ""))}`}
                           onClick={(e) => e.stopPropagation()}
-                          style={{ color: "#2563eb", textDecoration: "underline" }}
+                          style={{ color: "#2563eb", textDecoration: "none" }}
                         >
                           {text}
                         </Link>
