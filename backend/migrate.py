@@ -147,6 +147,13 @@ def migrate() -> None:
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS price_refresh_error TEXT"))
         from catalog_material_cleanup import cleanup_missing_assignments
         cleanup_missing_assignments(connection)
+        from sqlalchemy.orm import Session
+        from migrate_movers95_pricing import copy_pricing
+        with Session(bind=connection) as pricing_session:
+            result = copy_pricing(pricing_session)
+            pricing_session.commit()
+            logger.info("Movers 95 pricing migration: %s", result)
+
     logger.info("communication_associations is ready")
     logger.info("smartmoving_referral_sources is ready")
     logger.info("access_audit_logs is ready")

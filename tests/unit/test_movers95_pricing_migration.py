@@ -63,8 +63,54 @@ def test_dry_run_rolls_back_and_defaults_are_copied(db):
     assert db.query(LocalPricingRoute).filter_by(company_id='target').count() == 0
 
 
-def test_existing_book_is_not_overwritten(db):
-    db.add(PricingPlan(company_id='target', company_name='Movers 95', name='East', source_key='existing'))
+def test_existing_book_updated_in_place(db):
+    db.add(PricingPlan(id='existing', company_id='target', company_name='Movers 95',
+        name='MD , VA , DC , DE', source_key='existing-import',
+        services=[PricingService(name='Old service', rate_text='99')]))
+    db.add(AppSetting(key='local_pricing:existing', value='{}'))
+    db.add(LocalPricingRoute(company_id='target', pickup='MD', delivery='VA'))
     db.commit()
-    with pytest.raises(ValueError, match='already has an East book'):
-        copy_pricing(db)
+    result = copy_pricing(db)
+    db.commit()
+    assert result['target_plan_id'] == 'existing'
+    target = db.get(PricingPlan, 'existing')
+    assert target.source_key == 'existing-import'
+    assert target.name == 'MD, VA, DC, DE, PA'
+    assert [area['state'] for area in pickup_areas(target.pickup_regions)] == PICKUP_STATES
+    assert [service.name for service in target.services] == ['Packing']
+    assert db.query(PricingPlan).filter_by(company_id='target').count() == 1
+    assert db.query(LocalPricingRoute).filter_by(company_id='target').count() == 1
+
+
+def test_deployment_transaction_can_rollback_copy(db):
+    with db.bind.connect() as connection:
+        transaction = connection.begin()
+        with Session(bind=connection) as session:
+            copy_pricing(session)
+            session.commit()
+        transaction.rollback()
+    db.expire_all()
+    assert db.get(AppSetting, MARKER) is None
+    assert db.query(PricingPlan).filter_by(company_id='target').count() == 0
+
+
+def test_every_pricing_card_configuration_is_copied(db):
+    import json
+    source = db.get(PricingPlan, 'east')
+    prefixes = ['__extra_stops__:', '__elevator_pricing__:', '__long_carry_pricing__:',
+        '__stairs_pricing__:', '__storage_periods__:', '__origin_mileage__:',
+        '__delivery_mileage__:', '__delivery_shuttle__:', '__ld_packing__:']
+    for index, prefix in enumerate(prefixes):
+        source.services.append(PricingService(name=prefix, rate_text=str(index),
+            comments=prefix + json.dumps({'enabled': True, 'rate': index,
+                'materials': [{'item_id': 'material', 'price': 12}], 'items': []}), sort_order=index))
+    source.item_materials = json.dumps({'rows': [{'item_id': 'chair', 'materials': ['material']}],
+        'protection_review': [{'item_id': 'glass', 'reason': 'Fragile'}]})
+    db.commit()
+    result = copy_pricing(db)
+    db.commit()
+    target = db.get(PricingPlan, result['target_plan_id'])
+    assert sorted((s.name, s.rate_text, s.comments, s.sort_order) for s in target.services) == sorted(
+        (s.name, s.rate_text, s.comments, s.sort_order) for s in source.services)
+    assert target.item_materials == source.item_materials
+    assert all(any(s.comments.startswith(prefix) for s in target.services) for prefix in prefixes)

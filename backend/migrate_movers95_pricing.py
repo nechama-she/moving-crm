@@ -12,26 +12,30 @@ MARKER = 'migration:movers95-gorilla-east-v1'
 
 
 def copy_pricing(db):
-    """Caller owns the transaction; never overwrite an existing destination book."""
+    """Caller owns the transaction; update the existing Movers 95 book once."""
     if db.get(AppSetting, MARKER):
         return {'status': 'already applied'}
-    source_company = db.query(Company).filter(func.lower(func.trim(Company.name)) == 'gorilla haulers').one()
-    target_company = db.query(Company).filter(func.lower(func.trim(Company.name)) == 'movers 95').with_for_update().one()
+    source_company = db.query(Company).filter(func.lower(func.trim(Company.name)) == 'gorilla haulers').one_or_none()
+    target_company = db.query(Company).filter(func.lower(func.trim(Company.name)) == 'movers 95').with_for_update().one_or_none()
+    if source_company is None or target_company is None:
+        return {'status': 'skipped: companies not present'}
+    if db.get(AppSetting, MARKER):
+        return {'status': 'already applied'}
     source = db.query(PricingPlan).filter(
         PricingPlan.company_id == source_company.id,
         func.lower(func.trim(PricingPlan.name)) == 'east').with_for_update().one()
-    if db.query(PricingPlan).filter(PricingPlan.company_id == target_company.id,
-            func.lower(func.trim(PricingPlan.name)) == 'east').first():
-        raise ValueError('Movers 95 already has an East book; refusing to overwrite it.')
-    if db.query(LocalPricingRoute).filter_by(company_id=target_company.id).first():
-        raise ValueError('Movers 95 already has local routes; review before copying company-wide routes.')
-
-    excluded = {'id', 'company_id', 'company_name', 'source_key', 'pickup_regions', 'created_at', 'updated_at'}
+    targets = db.query(PricingPlan).filter_by(company_id=target_company.id).with_for_update().all()
+    if len(targets) > 1:
+        raise ValueError('Movers 95 has multiple pricing books; cannot choose a destination safely.')
+    excluded = {'id', 'company_id', 'company_name', 'source_key', 'name', 'pickup_regions', 'created_at', 'updated_at'}
     values = {column.name: getattr(source, column.name) for column in PricingPlan.__table__.columns
               if column.name not in excluded}
-    target = PricingPlan(**values, id=str(uuid4()), company_id=target_company.id,
-        company_name=target_company.name, source_key=MARKER,
-        pickup_regions=json.dumps([{'state': state, 'zip_codes': []} for state in PICKUP_STATES]))
+    target = targets[0] if targets else PricingPlan(id=str(uuid4()), company_id=target_company.id,
+        company_name=target_company.name, source_key=MARKER)
+    for key, value in values.items():
+        setattr(target, key, value)
+    target.name = 'MD, VA, DC, DE, PA'
+    target.pickup_regions = json.dumps([{'state': state, 'zip_codes': []} for state in PICKUP_STATES])
     db.add(target)
     counts = {}
     for relation in ('rules', 'rates', 'services'):
@@ -46,8 +50,12 @@ def copy_pricing(db):
     # East has effective local defaults even when no settings row was saved.
     from local_pricing import LocalSettings
     local = db.get(AppSetting, f'local_pricing:{source.id}')
-    db.add(AppSetting(key=f'local_pricing:{target.id}',
-        value=local.value if local else LocalSettings().model_dump_json()))
+    local_key = f'local_pricing:{target.id}'
+    target_local = db.get(AppSetting, local_key) or AppSetting(key=local_key)
+    target_local.value = local.value if local else LocalSettings().model_dump_json()
+    db.add(target_local)
+    db.query(LocalPricingRoute).filter_by(company_id=target_company.id).delete(synchronize_session=False)
+    db.flush()
     routes = db.query(LocalPricingRoute).filter_by(company_id=source_company.id).all()
     for route in routes:
         db.add(LocalPricingRoute(company_id=target_company.id, pickup=route.pickup,
