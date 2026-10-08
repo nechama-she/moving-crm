@@ -23,3 +23,6 @@
 .lead-status {display:inline-block;padding:4px 10px;border-radius:20px;background:#edf2f7;color:#52647a;font-size:11px;font-weight:600;text-transform:capitalize;}
 .status-new {background:#eaf5ff;color:#0166ad;}.status-quoted {background:#f0ebff;color:#6750a4;}.status-booked,.status-completed {background:#e7f5ec;color:#24743e;}.status-contacted,.status-scheduled {background:#e4f5f7;color:#14717d;}.status-lost,.status-cancelled {background:#fceeee;color:#a44747;}
 @media(max-width:800px) {.leads-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}.leads-metric{padding:10px;}.leads-metric strong{font-size:23px;}.leads-workspace{height:auto!important;min-height:calc(100vh - 52px);overflow:auto!important;}.leads-table-scroll{max-height:65vh;}.leads-list-caption{flex-wrap:wrap;}}
+
+.leads-month-controls {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:13px;margin:6px 0;}
+.leads-month-controls>div {display:flex;align-items:center;gap:8px;}.leads-month-controls span {min-width:125px;text-align:center;font-weight:600;color:#032d60;}.leads-month-controls button:disabled {opacity:.45;cursor:default;}

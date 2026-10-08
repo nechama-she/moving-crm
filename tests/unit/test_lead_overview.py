@@ -30,4 +30,10 @@ def test_overview_counts_full_scope_and_eastern_dates_without_duplicate_jobs():
         db.commit()
         result = overview(db.query(Lead).filter(Lead.company_id=='a'), db,
             datetime(2026,10,8,16,tzinfo=timezone.utc))
-        assert result == dict(new_today=55, quotes=56, quote_value=5700, booked_value=2500)
+        assert result == dict(new_today=55, new_month=56, quotes=56, quote_value=5700, booked_value=2500)
+
+        historical = overview(db.query(Lead).filter(Lead.company_id=='a'), db,
+            datetime(2026,10,8,16,tzinfo=timezone.utc), month='2026-09')
+        assert historical['new_month'] == 1
+        assert historical['quotes'] == 0
+        assert historical['booked_value'] == 0

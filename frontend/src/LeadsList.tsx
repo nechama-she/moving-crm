@@ -68,8 +68,18 @@ export default function LeadsList() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { token, user } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
+  const easternParts = new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York',year:'numeric',month:'2-digit'}).formatToParts(new Date());
+  const currentMonth = `${easternParts.find(p => p.type === 'year')!.value}-${easternParts.find(p => p.type === 'month')!.value}`;
+  const [overviewMonth, setOverviewMonth] = useState(currentMonth);
+  const isCurrentMonth = overviewMonth === currentMonth;
+  const monthLabel = new Date(`${overviewMonth}-01T12:00:00`).toLocaleDateString('en-US', {month:'long',year:'numeric'});
+  function moveMonth(delta: number) {
+    const [year, month] = overviewMonth.split('-').map(Number);
+    const date = new Date(year, month - 1 + delta, 1);
+    setOverviewMonth(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+  }
   const [total, setTotal] = useState(0);
-  const [summary, setSummary] = useState<{new_today: number; quotes: number; quote_value: number; booked_value: number} | null>(null);
+  const [summary, setSummary] = useState<{new_today: number; new_month: number; quotes: number; quote_value: number; booked_value: number} | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
@@ -134,6 +144,7 @@ export default function LeadsList() {
     }
     try {
       const params = new URLSearchParams({ limit: "50", offset: String(offset) });
+      params.set("overview_month", overviewMonth);
       if (query) params.set("search", query);
       const effectiveCompanyId = companyIdFilter || companyFilter;
       if (effectiveCompanyId) params.set("company_id", effectiveCompanyId);
@@ -168,7 +179,7 @@ export default function LeadsList() {
         setLoadingMore(false);
       }
     }
-  }, [token, companyIdFilter, companyFilter, assignedToFilter, statusFilter, sortBy, sortDir]);
+  }, [token, companyIdFilter, companyFilter, assignedToFilter, statusFilter, sortBy, sortDir, overviewMonth]);
 
   useEffect(() => {
     fetchLeads(0, search);
@@ -216,16 +227,17 @@ export default function LeadsList() {
   return (
     <div className="leads-workspace" style={{ padding: "20px 24px", fontFamily: "inherit", display: "flex", flexDirection: "column", height: "calc(100vh - 52px)", boxSizing: "border-box", overflow: "hidden" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-        <div className="leads-heading"><span className="leads-icon" aria-hidden="true">?</span><div><span className="leads-eyebrow">SALES WORKSPACE</span><h1>Leads</h1><p>{loading ? "Updating records?" : `${total.toLocaleString()} records`} ? {companyNameFilter || companies.find(c => c.id === companyFilter)?.name || "All accessible companies"}</p></div></div>
+        <div className="leads-heading"><span className="leads-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M6.5 15a2.5 2.5 0 0 1 5 0M14 8h3M14 12h3M8 18h9"/></svg></span><div><span className="leads-eyebrow">SALES WORKSPACE</span><h1>Leads</h1><p>{loading ? "Updating records..." : `${total.toLocaleString()} records`} &middot; {companyNameFilter || companies.find(c => c.id === companyFilter)?.name || "All accessible companies"}</p></div></div>
       </div>
+      <div className="leads-month-controls"><strong>Sales overview</strong><div role="group" aria-label="Statistics month"><button type="button" className="slds-button" aria-label="Previous month" onClick={() => moveMonth(-1)}>&lsaquo;</button><span aria-live="polite">{monthLabel}</span><button type="button" className="slds-button" aria-label="Next month" disabled={overviewMonth >= currentMonth} onClick={() => moveMonth(1)}>&rsaquo;</button><button type="button" className="slds-button" disabled={isCurrentMonth} onClick={() => setOverviewMonth(currentMonth)}>This month</button></div></div>
       <div className="leads-metrics" aria-label="Sales overview">
         {([
-          ['New leads today', summary?.new_today, false, 'Created today ? Eastern time'],
-          ['Quotes this month', summary?.quotes, false, 'Priority 1 leads ? Month to date'],
-          ['Quote value this month', summary?.quote_value, true, 'Current quote totals ? Month to date'],
-          ['Booked value this month', summary?.booked_value, true, 'Booked sales ? Month to date'],
+          [isCurrentMonth ? 'New leads today' : 'New leads', isCurrentMonth ? summary?.new_today : summary?.new_month, false, isCurrentMonth ? 'Created today \u00b7 Eastern time' : monthLabel],
+          [isCurrentMonth ? 'Quotes this month' : 'Quotes', summary?.quotes, false, `Priority 1 leads \u00b7 ${isCurrentMonth ? 'Month to date' : monthLabel}`],
+          [isCurrentMonth ? 'Quote value this month' : 'Quote value', summary?.quote_value, true, `Current quote totals \u00b7 ${isCurrentMonth ? 'Month to date' : monthLabel}`],
+          [isCurrentMonth ? 'Booked value this month' : 'Booked value', summary?.booked_value, true, `Booked sales \u00b7 ${isCurrentMonth ? 'Month to date' : monthLabel}`],
         ] as const).map(([label, value, money, caption], index) => <section className={`leads-metric metric-${index}`} key={label}>
-          <span className="leads-metric-label">{label}</span><strong>{value == null ? '?' : money ? new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',maximumFractionDigits:0}).format(value) : value.toLocaleString()}</strong><small>{caption}</small>
+          <span className="leads-metric-label">{label}</span><strong>{value == null ? '\u2014' : money ? new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',maximumFractionDigits:0}).format(value) : value.toLocaleString()}</strong><small>{caption}</small>
         </section>)}
       </div>
       {error && (
@@ -307,7 +319,7 @@ export default function LeadsList() {
           </select>
         )}
       </div>
-      <div className="leads-list-caption"><strong>Lead directory</strong><span>{leads.length.toLocaleString()} of {total.toLocaleString()} records ? Overview follows filters</span><button type="button" className="slds-button" onClick={() => { if (debounceRef.current) clearTimeout(debounceRef.current); setSearchInput(""); setSearch(""); setStatusFilter(""); setCompanyFilter(""); setAssignedToFilter(""); setSearchParams({}); }}>Clear filters</button></div>
+      <div className="leads-list-caption"><strong>Lead directory</strong><span>{leads.length.toLocaleString()} of {total.toLocaleString()} records &middot; Overview follows filters</span><button type="button" className="slds-button" onClick={() => { if (debounceRef.current) clearTimeout(debounceRef.current); setSearchInput(""); setSearch(""); setStatusFilter(""); setCompanyFilter(""); setAssignedToFilter(""); setSearchParams({}); }}>Clear filters</button></div>
       {leads.length === 0 ? (
         <p>No leads found.</p>
       ) : (

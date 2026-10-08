@@ -1,6 +1,6 @@
 """Lead-list overview, using the same Priority 1 quote definition as Stats."""
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
@@ -31,21 +31,25 @@ def created_date(row, zone):
     return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).astimezone(zone).date()
 
 
-def overview(query, db, now=None):
+def overview(query, db, now=None, month=None):
     zone = ZoneInfo('America/New_York')
     today = (now or datetime.now(zone)).astimezone(zone).date()
-    start = today.replace(day=1)
-    result = dict(new_today=0, quotes=0, quote_value=Decimal(0), booked_value=Decimal(0))
+    start = date.fromisoformat(month + "-01") if month else today.replace(day=1)
+    next_month = date(start.year + (start.month == 12), start.month % 12 + 1, 1)
+    end = min(today, next_month - timedelta(days=1))
+    result = dict(new_today=0, new_month=0, quotes=0, quote_value=Decimal(0), booked_value=Decimal(0))
     for row in query.with_entities(Lead.created_time, Lead.created_at, Lead.priority, Lead.estimated_total).yield_per(1000):
         created = created_date(row, zone)
         if created == today:
             result['new_today'] += 1
-        if created and start <= created <= today and row.priority == 1:
-            result['quotes'] += 1
-            result['quote_value'] += amount(row.estimated_total)
+        if created and start <= created <= end:
+            result['new_month'] += 1
+            if row.priority == 1:
+                result['quotes'] += 1
+                result['quote_value'] += amount(row.estimated_total)
     booked = query.join(LeadJob, LeadJob.lead_id == Lead.id).filter(
         LeadJob.job_order == 1, LeadJob.booked_move_date >= start,
-        LeadJob.booked_move_date <= today,
+        LeadJob.booked_move_date <= end,
         Lead.status.in_(['booked', 'scheduled', 'completed']))
     for row in booked.with_entities(Lead.estimated_total).yield_per(1000):
         result['booked_value'] += amount(row.estimated_total)

@@ -1462,6 +1462,7 @@ def search_dispatch_jobs(
 
 @router.get("/leads")
 def get_leads(
+    overview_month: str = Query(default="", pattern=r"^(?:[1-9][0-9]{3}-(?:0[1-9]|1[0-2]))?$"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     search: str = Query(default=""),
@@ -1519,7 +1520,7 @@ def get_leads(
         )
 
     from lead_overview import overview
-    summary = overview(query, db) if offset == 0 else None
+    summary = overview(query, db, month=overview_month or None) if offset == 0 else None
 
     def displayed_location(column, fallback):
         primary = (db.query(column).filter(LeadJob.lead_id == Lead.id)
