@@ -44,7 +44,7 @@ from models import (
 )
 from uuid import uuid4
 from item_materials import ItemMaterialsInput, material_setup, save_material_assignments
-from item_selectors import ItemSelectorsInput, selector_setup, save_selectors
+from item_selectors import ItemSelectorsInput, selector_setup, save_selectors, add_service_charges
 from pricing_addresses import pricing_location as delivery_location
 from pricing_addresses import with_job_locations, job_location
 from local_pricing import local_route_matches, match_region_from_address
@@ -1754,6 +1754,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         job.price += add_elevator_charges(lead, job, db, matched_plan, move_type)
         from extra_stops import add_charges as add_extra_stop_charges
         job.price += add_extra_stop_charges(lead,job,db,matched_plan)
+        job.price += add_service_charges(lead, job, db, matched_plan)
         db.finish()
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)
@@ -1841,6 +1842,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         job.price += add_elevator_charges(lead, job, db, matched_plan, move_type)
         from extra_stops import add_charges as add_extra_stop_charges
         job.price += add_extra_stop_charges(lead,job,db,matched_plan)
+        job.price += add_service_charges(lead, job, db, matched_plan)
         db.finish()
         from routes.leads import _refresh_lead_estimated_total
         _refresh_lead_estimated_total(lead.id, db)

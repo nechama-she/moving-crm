@@ -15,5 +15,20 @@
 .pricing-catalog-list button { display:flex; justify-content:space-between; gap:8px; width:100%; border:0; border-bottom:1px solid #eee; padding:10px 12px; background:white; text-align:left; color:inherit; font:inherit; cursor:pointer; }
 .pricing-catalog-list button span { overflow-wrap:anywhere; }
 .pricing-catalog-list button[aria-current=true] { background:#eef6ff; box-shadow:inset 3px 0 #0176d3; }
+.pricing-item-service-form { display:grid; gap:16px; margin:16px 0; padding:16px; border:1px solid #dddbda; border-radius:6px; background:#fafbfc; }
+.pricing-item-service-form label { display:flex; flex-direction:column; gap:6px; min-width:0; font-weight:600; }
+.pricing-item-services .pricing-item-service-form input[type=text] { display:block; box-sizing:border-box; width:100%; max-width:none; min-width:0; padding:10px 12px; border:1px solid #c9c9c9; border-radius:4px; font:inherit; font-weight:400; background:#fff; }
+.pricing-service-option-heading,.pricing-service-option-row { display:grid; grid-template-columns:minmax(0,1fr) 105px 60px 32px; align-items:center; gap:10px; }
+.pricing-service-option-heading small { display:block; font-weight:400; }
+.pricing-item-services .pricing-service-option-row input[type=number] { width:100%; min-width:0; box-sizing:border-box; padding:10px 8px; }
+.pricing-service-option-heading>span { text-align:center; font-size:12px; color:#54698d; }
+.pricing-service-options { display:grid; gap:10px; }
+.pricing-item-service-form .pricing-service-default { display:flex; align-items:center; justify-content:center; margin:0; min-height:36px; cursor:pointer; }
+.pricing-item-services .pricing-service-default input[type=radio] { width:16px; height:16px; margin:0; padding:0; accent-color:#0176d3; cursor:pointer; }
+.pricing-service-option-summary { display:grid; gap:10px; list-style:none; margin:0; padding:0; }
+.pricing-service-option-summary li { display:flex; align-items:center; justify-content:space-between; gap:12px; overflow-wrap:anywhere; }
+.pricing-service-option-summary small { flex-shrink:0; border-radius:12px; padding:3px 9px; background:#eef6ff; color:#014486; }
+.pricing-item-service-form > button { justify-self:start; }
 @media(max-width:700px) { .pricing-catalog-browser { grid-template-columns:minmax(0,1fr); }.pricing-catalog-list { max-height:180px; } }
 @media(max-width:800px) { .pricing-item-material-groups { grid-template-columns:minmax(0,1fr); gap:12px; } }
+.pricing-service-attachments{max-height:300px;overflow:auto;border:1px solid #dddbda;border-radius:4px}.pricing-service-attachments label{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #eee;cursor:pointer}.pricing-service-attachments input[type=checkbox]{width:16px;height:16px;flex-shrink:0}.pricing-service-attach-actions{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0}

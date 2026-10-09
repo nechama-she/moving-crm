@@ -33,6 +33,97 @@ def body(editor, **edits):
 
 
 @pytest.mark.parametrize('active', [True, False])
+def test_service_prices_use_configured_rate_quantity_and_default(manual_catalog, active):
+    from types import SimpleNamespace
+    from item_selectors import ItemSelectorsInput, add_service_charges
+    from charge_updates import ChargeUpdates
+    db, lead, access, saved, _ = setup_inventory(manual_catalog, active)
+    job = db.get(models.LeadJob, access.job_id)
+    config = ItemSelectorsInput(rows=[dict(id='service', item_id='chair', options=['Owner', 'Movers'],
+                                         default='Owner', prices=[0, '73.25'])])
+    plan = SimpleNamespace(item_selectors=json.dumps(config.model_dump(mode='json')['rows']))
+    details = json.loads(saved.details)
+    rows = details['spark_inventory_snapshot'] if active else details['inventory_draft']['rows']
+    rows[0].update(amount=2, selections={'service': 'Movers'})
+    rows[1].update(amount=3)  # Unselected items use the free default.
+
+    def calculate():
+        saved.details = json.dumps(details)
+        db.flush()
+        updates = ChargeUpdates(db, db.query(models.LeadJobCharge).filter_by(job_id=job.id).all())
+        total = add_service_charges(lead, job, updates, plan)
+        updates.finish()
+        return total
+
+    assert calculate() == Decimal('146.50')
+    charge = db.query(models.LeadJobCharge).filter_by(job_id=job.id).one()
+    charge_id = charge.id
+    assert '73.25 per item' in charge.description
+    assert calculate() == Decimal('146.50')
+    assert db.query(models.LeadJobCharge).filter_by(job_id=job.id).one().id == charge_id
+    rows[0]['amount'] = 4
+    assert calculate() == Decimal('293.00')
+    rows[0]['going'] = False
+    assert calculate() == 0
+    assert db.query(models.LeadJobCharge).filter_by(job_id=job.id).count() == 0
+    rows[0].update(going=True, selections={'service': 'Owner'})
+    assert calculate() == 0
+    config.rows[0].default = 'Movers'
+    plan.item_selectors = json.dumps(config.model_dump(mode='json')['rows'])
+    assert calculate() == Decimal('219.75')  # Only the three defaulted units.
+    plan.item_selectors = '[]'
+    assert calculate() == 0
+
+
+def test_service_option_prices_are_optional_and_validated():
+    from item_selectors import ItemSelectorsInput
+    row = dict(id='service', item_id='tv', options=['Owner', 'Movers'], default='Owner')
+    assert ItemSelectorsInput(rows=[row]).rows[0].prices == [None, None]
+    for prices in ([-1, 0], ['1.001', 0], [0]):
+        with pytest.raises(ValueError):
+            ItemSelectorsInput(rows=[dict(row, prices=prices)])
+
+
+def test_reusable_service_attachments_share_options_and_prices(manual_catalog, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from item_selectors import ItemSelectorsInput, save_selectors, inventory_selectors, add_service_charges
+    from charge_updates import ChargeUpdates
+    db, lead, access, saved, _ = setup_inventory(manual_catalog)
+    db.add(models.InventoryCatalogItem(id='tv', name='TV', cuft=10, weight=0))
+    db.add(models.Company(id='services-company', name='Services'))
+    plan = models.PricingPlan(id='shared', company_name='Services', name='Shared', source_key='shared')
+    db.add(plan)
+    job = db.get(models.LeadJob, access.job_id)
+    job.company_id = 'services-company'
+    db.commit()
+    monkeypatch.setitem(sys.modules, 'routes.pricing', SimpleNamespace(infer_job_move_type=lambda *args: ('Local', plan)))
+    config = ItemSelectorsInput(rows=[dict(id='shared-service', item_ids=['chair','tv'], label='Handling',
+                                        options=['Owner','Movers'], default='Movers', prices=[0, '12.50'])])
+    result = save_selectors(plan, config, db)
+    assert len(result['rows']) == 1
+    assert result['rows'][0]['item_ids'] == ['chair','tv']
+    assert inventory_selectors(access, db)['chair'] == inventory_selectors(access, db)['tv']
+    details = json.loads(saved.details)
+    details['spark_inventory_snapshot'][1].update(catalog_item_id='tv', name='TV', amount=2)
+    saved.details = json.dumps(details)
+    db.flush()
+    def total():
+        updates = ChargeUpdates(db, db.query(models.LeadJobCharge).filter_by(job_id=job.id).all())
+        amount = add_service_charges(lead, job, updates, plan)
+        updates.finish()
+        return amount
+    assert total() == Decimal('37.50')
+    config.rows[0].prices[1] = Decimal('20')
+    save_selectors(plan, config, db)
+    assert total() == Decimal('60')
+    config.rows[0].item_ids = ['tv']
+    save_selectors(plan, config, db)
+    assert 'chair' not in inventory_selectors(access, db)
+    assert total() == Decimal('40')
+
+
+@pytest.mark.parametrize('active', [True, False])
 def test_item_selectors_persist_per_row(manual_catalog, active, monkeypatch):
     import sys
     from types import SimpleNamespace

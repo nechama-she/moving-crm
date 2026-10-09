@@ -34,6 +34,23 @@ function PackingChoice({ name, disabled, onChange }: { name: string; disabled: b
     </span>}
   </span>;
 }
+function ServiceChoice({selector, value, name, disabled, onChange}: {selector:ItemSelector; value:string; name:string; disabled:boolean; onChange:(value:string)=>void}) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  return <span className="mi-packing-choice mi-service-choice" onBlur={event => {if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);}} onKeyDown={event => {
+    if (event.key === 'Escape' && open) {event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus();}
+  }}>
+    <button ref={trigger} type="button" className="mi-packing-trigger" disabled={disabled} aria-expanded={open} aria-label={`Service for ${name}: ${value}`} onClick={() => setOpen(current => !current)}>
+      {value}<svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>
+    </button>
+    {open && <span className="mi-packing-menu" role="group" aria-label={selector.label}>
+      {selector.options.map(option => <button key={option} type="button" aria-pressed={value === option} onClick={() => {onChange(option); setOpen(false); trigger.current?.focus();}}>
+        <span>{option}</span>{value === option && <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m2 6 2.5 2.5L10 3"/></svg>}
+      </button>)}
+      {value !== (selector.default || selector.options[0]) && <button type="button" onClick={() => {onChange(''); setOpen(false); trigger.current?.focus();}}>Reset to default</button>}
+    </span>}
+  </span>;
+}
 function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onMoverPackChange, packingLocked = false, selectors = [], selections = {}, onSelectionChange, onSave, onRemove }: {
   name: string; cuft: number; quantity: number; busy: boolean; photo?: ReactNode; going?: boolean; onGoingChange: (going: boolean) => void;
   onMoverPackChange?: (checked: boolean) => void; packingLocked?: boolean;
@@ -59,13 +76,7 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
       <input aria-label="Quantity" type="number" min="1" max="999" step="1" value={draft.quantity} disabled={busy} onChange={e => setDraft({ ...draft, quantity: e.target.value })} />
     </> : <>
       <div className="mi-inventory-name"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name} disabled={busy || packingLocked || !going} onChange={onMoverPackChange}/>}
-        {selectors.map(selector => <label key={selector.id} style={{display:'block', marginTop:6, maxWidth:'100%'}}>{selector.label}
-          <select aria-label={`${selector.label} for ${name}`} style={{display:'block', maxWidth:'100%'}} disabled={busy || !going} value={selections[selector.id] || ''} onChange={e => onSelectionChange?.(selector.id, e.target.value)}>
-            <option value="">Choose an option</option>
-            {selections[selector.id] && !selector.options.includes(selections[selector.id]) && <option value={selections[selector.id]}>{selections[selector.id]} (previous option)</option>}
-            {selector.options.map(option => <option key={option} value={option}>{option}</option>)}
-          </select>
-        </label>)}
+        {selectors.map(selector => <ServiceChoice key={selector.id} selector={selector} name={name} value={selections[selector.id] || selector.default || selector.options[0]} disabled={busy || !going} onChange={value => onSelectionChange?.(selector.id, value)}/>)}
       </div>
       <span>{cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
       <span aria-label="Total volume in cubic feet">{totalVolumeLabel}</span>
