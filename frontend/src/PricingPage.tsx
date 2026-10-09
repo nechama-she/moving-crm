@@ -14,6 +14,7 @@ import LocalPricing from "./LocalPricing";
 import LongDistancePackingCard, { isPackingCard } from "./LongDistancePackingCard";
 import LongDistanceMaterialsCard, { materialRows, withMaterials } from './LongDistanceMaterialsCard';
 import ItemMaterialsCard from './ItemMaterialsCard';
+import ItemSelectorsCard from './ItemSelectorsCard';
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 
@@ -989,6 +990,7 @@ export default function PricingPage() {
               </PricingSection>
 
               <ItemMaterialsCard key={active.id} planId={active.id} blocked={editing || saving} />
+              <ItemSelectorsCard key={`selectors-${active.id}`} planId={active.id} blocked={editing || saving} />
 
               <PricingSection title="Bulky items rates" count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))} onDoubleClick={() => startServiceEdit('bulkyItems')} actions={serviceEditActions('bulkyItems')}>
                 <div className="pricing-services pricing-bulky-rates">

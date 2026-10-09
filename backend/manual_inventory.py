@@ -26,6 +26,7 @@ class CustomInventoryItemInput(BaseModel):
     cuft: Decimal = Field(gt=0, le=10000, allow_inf_nan=False)
     quantity: int = Field(ge=1, le=999, strict=True)
     mover_pack: bool | None = None
+    selections: dict[str, str] = Field(default_factory=dict, max_length=30)
     going: bool = True
     reference_name: str | None = Field(default=None, max_length=200)
 
@@ -192,10 +193,12 @@ def update_inventory_row(body, access, db):
     return {'ok': True}
 
 
-def catalog(db):
+def catalog(db, access=None):
+    from item_selectors import inventory_selectors
+    selectors = inventory_selectors(access, db) if access else {}
     return {'rooms': [{'id': r.id, 'name': r.name} for r in db.query(InventoryRoomType).order_by(InventoryRoomType.sort_order).all()],
             'items': [{'id': r.id, 'name': r.name, 'description': r.description,
-                       'cuft': float(r.cuft), 'weight': float(r.weight)}
+                       'cuft': float(r.cuft), 'weight': float(r.weight), 'selectors': selectors.get(r.id, [])}
                       for r in db.query(InventoryCatalogItem).filter_by(active=True, deleted=False).order_by(InventoryCatalogItem.name, InventoryCatalogItem.cuft).all()]}
 
 
@@ -244,7 +247,7 @@ def build_inventory(body, db, allow_empty=False):
                    'catalog_item_id': catalog_item.id if catalog_item else None, 'name_override': entry.name_override,
                    'amount': entry.quantity, 'cuft': float(volume), 'weight': 0,
                    'unit_cuft': float(entry.cuft), 'unit_weight': 0, 'custom': True, 'going': entry.going, 'mover_pack': entry.mover_pack,
-                   'reference_name': entry.reference_name or entry.name.strip()}
+                   'reference_name': entry.reference_name or entry.name.strip(), 'selections': entry.selections}
             rows.append(row)
             contents.append(row)
         rooms.append({'room_type_id': room.room_type_id, 'name': room.name.strip(), 'items': contents})

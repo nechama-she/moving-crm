@@ -30,6 +30,11 @@ after=structuredClone(before);after[0].items.chair=2;
 const added=diff(after).add[0];assert.equal(added.catalog_item_id,'chair');assert.equal(added.quantity,2);assert.equal('name' in added,false);
 assert.equal(added.id,catalogInventoryId(after[0],'chair'));
 assert.equal(hasInventoryEdits(inventoryActions(before,before,catalog)),false);
+after=structuredClone(before);after[0].custom_items[0].selections={unmount:'Movers Unmount'};
+assert.deepEqual(diff(after).update,[{id:'row-1',fields:{selections:{unmount:'Movers Unmount'}}}]);
+assert.equal(hasInventoryEdits(inventoryActions(after,structuredClone(after),catalog)),false);
+const cleared=structuredClone(after);cleared[0].custom_items[0].selections={};
+assert.deepEqual(JSON.parse(JSON.stringify(inventoryActions(after,cleared,catalog))).update,[{id:'row-1',fields:{selections:{}}}]);
 console.log('ID-based sparse updates, duplicate items, packing, deletes, rooms and catalog additions passed.');
 
 after=structuredClone(before);after[0].custom_items[0].going=false;

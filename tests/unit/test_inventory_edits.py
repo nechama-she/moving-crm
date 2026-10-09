@@ -32,6 +32,46 @@ def body(editor, **edits):
     return InventoryEdits(request_id=uuid4(),revision=editor['revision'],report_id=editor['report_id'],**edits)
 
 
+@pytest.mark.parametrize('active', [True, False])
+def test_item_selectors_persist_per_row(manual_catalog, active, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from item_selectors import ItemSelectorsInput, save_selectors, selector_setup
+    from manual_inventory import catalog as inventory_catalog
+    db, _, access, saved, editor = setup_inventory(manual_catalog, active)
+    plan = models.PricingPlan(id='sheet', company_name='Test', name='Sheet', source_key='sheet')
+    other = models.PricingPlan(id='other', company_name='Test', name='Other sheet', source_key='other')
+    db.add_all([plan, other, models.Company(id='selector-company', name='Test')])
+    db.get(models.LeadJob, access.job_id).company_id = 'selector-company'
+    db.commit()
+    monkeypatch.setitem(sys.modules, 'routes.pricing', SimpleNamespace(infer_job_move_type=lambda *args: ('Local', plan)))
+    save_selectors(plan, ItemSelectorsInput(rows=[dict(id='service', item_id='chair', label='Service', options=['Owner', 'Movers'])]), db)
+    assert selector_setup(other, db)['rows'] == []
+    assert next(row for row in inventory_catalog(db, access)['items'] if row['id'] == 'chair')['selectors'][0]['label'] == 'Service'
+    editor = load_inventory_editor(access, db)
+    first, second = editor['rooms'][0]['custom_items']
+    assert first['selectors'][0]['label'] == 'Service'
+    save_inventory_edits(body(editor, update=[dict(id=first['id'], fields={'selections': {'service': 'Movers'}})]), access, db)
+    # Rebuild from the report/draft snapshot as well as reopening persisted rows.
+    db.get(models.InventoryEditState, access.job_id).source_hash = 'changed'
+    db.commit()
+    editor = load_inventory_editor(access, db)
+    rows = {row['id']: row for row in editor['rooms'][0]['custom_items']}
+    assert rows[first['id']]['selections'] == {'service': 'Movers'}
+    assert rows[second['id']]['selections'] == {}
+    plan.item_selectors = json.dumps([dict(id='service', item_id='chair', label='Service', options=['Owner'])])
+    db.commit()
+    with pytest.raises(HTTPException) as error:
+        save_inventory_edits(body(editor, update=[dict(id=second['id'], fields={'selections': {'service': 'Movers'}})]), access, db)
+    assert error.value.status_code == 422
+    db.rollback()
+    save_inventory_edits(body(editor, update=[dict(id=first['id'], fields={'quantity': 2})]), access, db)
+    assert json.loads(db.get(models.InventoryEditItem, first['id']).selections) == {'service': 'Movers'}
+    monkeypatch.setitem(sys.modules, 'routes.pricing', SimpleNamespace(infer_job_move_type=lambda *args: ('Local', other)))
+    assert all(not row['selectors'] for row in inventory_catalog(db, access)['items'])
+    assert all(not row['selectors'] for row in load_inventory_editor(access, db)['rooms'][0]['custom_items'])
+
+
 @pytest.mark.parametrize('active',[True,False])
 def test_id_edit_targets_one_of_identical_items_and_joins_names(manual_catalog,active):
     db,lead,access,saved,editor = setup_inventory(manual_catalog,active)

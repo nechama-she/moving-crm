@@ -1,4 +1,5 @@
 import { boxQuantity } from './inventoryBoxes';
+import type { ItemSelector } from './ItemSelectorsCard';
 import { dimensionFeet } from './dimensions';
 import { inventoryActions, hasInventoryEdits, catalogInventoryId, type InventoryEdits } from './inventoryActions';
 import { catalogQuantity, setCatalogQuantity } from './inventoryCatalogQuantities';
@@ -6,9 +7,9 @@ import { piecesPerItem } from './inventoryPieces';
 import QuestionReferenceImages from './QuestionReferenceImages';
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './ManualInventoryModal.css';
-type CatalogItem = { id: string; name: string; description: string; cuft: number; weight: number };
+type CatalogItem = { id: string; name: string; description: string; cuft: number; weight: number; selectors?: ItemSelector[] };
 type RoomType = { id: string; name: string };
-type CustomItem = { id: string; catalog_item_id?: string; name_override?: boolean; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean; mover_pack?: boolean | null; unit_weight?: number };
+type CustomItem = { id: string; catalog_item_id?: string; name_override?: boolean; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean; mover_pack?: boolean | null; unit_weight?: number; selectors?: ItemSelector[]; selections?: Record<string,string> };
 type Room = { id: string; room_type_id: string; name: string; items: Record<string, number>; item_names?: Record<string,string>; custom_items?: CustomItem[] };
 type Catalog = { rooms: RoomType[]; items: CatalogItem[] };
 function packingItemName(name: string) {
@@ -33,9 +34,10 @@ function PackingChoice({ name, disabled, onChange }: { name: string; disabled: b
     </span>}
   </span>;
 }
-function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onMoverPackChange, packingLocked = false, onSave, onRemove }: {
+function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onMoverPackChange, packingLocked = false, selectors = [], selections = {}, onSelectionChange, onSave, onRemove }: {
   name: string; cuft: number; quantity: number; busy: boolean; photo?: ReactNode; going?: boolean; onGoingChange: (going: boolean) => void;
   onMoverPackChange?: (checked: boolean) => void; packingLocked?: boolean;
+  selectors?: ItemSelector[]; selections?: Record<string,string>; onSelectionChange?: (id: string, value: string) => void;
   onSave: (value: { name: string; cuft: number; quantity: number }) => void; onRemove: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -56,7 +58,15 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
       <span aria-label="Total volume in cubic feet">{totalVolumeLabel}</span>
       <input aria-label="Quantity" type="number" min="1" max="999" step="1" value={draft.quantity} disabled={busy} onChange={e => setDraft({ ...draft, quantity: e.target.value })} />
     </> : <>
-      <div className="mi-inventory-name"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name} disabled={busy || packingLocked || !going} onChange={onMoverPackChange}/>}</div>
+      <div className="mi-inventory-name"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name} disabled={busy || packingLocked || !going} onChange={onMoverPackChange}/>}
+        {selectors.map(selector => <label key={selector.id} style={{display:'block', marginTop:6, maxWidth:'100%'}}>{selector.label}
+          <select aria-label={`${selector.label} for ${name}`} style={{display:'block', maxWidth:'100%'}} disabled={busy || !going} value={selections[selector.id] || ''} onChange={e => onSelectionChange?.(selector.id, e.target.value)}>
+            <option value="">Choose an option</option>
+            {selections[selector.id] && !selector.options.includes(selections[selector.id]) && <option value={selections[selector.id]}>{selections[selector.id]} (previous option)</option>}
+            {selector.options.map(option => <option key={option} value={option}>{option}</option>)}
+          </select>
+        </label>)}
+      </div>
       <span>{cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
       <span aria-label="Total volume in cubic feet">{totalVolumeLabel}</span>
       <span aria-label={`Quantity: ${quantity}`}>{quantity}</span>
@@ -288,7 +298,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     setPdfBusy(true); setError('');
     try {
       await downloadPdf({ request_id: crypto.randomUUID(), rooms: rooms.map(r => ({
-        room_type_id: r.room_type_id, name: r.name.trim(), custom_items: (r.custom_items || []).map(({unit_weight: _weight, ...item}) => item),
+        room_type_id: r.room_type_id, name: r.name.trim(), custom_items: (r.custom_items || []).map(({unit_weight: _weight, selectors: _selectors, ...item}) => item),
         items: Object.entries(r.items).filter(([, qty]) => qty > 0).map(([item_id, quantity]) => ({
           item_id, quantity, ...(r.item_names?.[item_id] ? { name: r.item_names[item_id] } : {}),
         })),
@@ -415,8 +425,17 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
               onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, items: { ...value.items, [id]: 0 }, custom_items: [...(value.custom_items || []), { id: catalogInventoryId(r, id), catalog_item_id: id, name: r.item_names?.[id] || items.get(id)?.name || 'Item', cuft: items.get(id)?.cuft || 0.01, quantity: qty, going, reference_name: items.get(id)?.name }] } : value))}
               packingLocked={packing?.full}
               onMoverPackChange={/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(items.get(id)?.name || '') ? checked => setRooms(current => current.map(value => value.id === r.id ? { ...value, items: { ...value.items, [id]: 0 }, custom_items: [...(value.custom_items || []), { id: catalogInventoryId(r, id), catalog_item_id: id, name: (r.item_names?.[id] || items.get(id)?.name || 'Box').replace(/\s*\((?:CP|PBO)\)\s*$/i, '') + (checked ? ' (CP)' : ' (PBO)'), cuft: items.get(id)?.cuft || 0.01, quantity: qty, mover_pack: checked, reference_name: items.get(id)?.name }] } : value)) : undefined}
+              selectors={items.get(id)?.selectors}
+              onSelectionChange={(selectorId, choice) => setRooms(current => current.map(value => value.id === r.id ? {...value, items: {...value.items, [id]: 0}, custom_items: [...(value.custom_items || []), {id: catalogInventoryId(r, id), catalog_item_id: id, name: packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item'), name_override: !!r.item_names?.[id], cuft: items.get(id)?.cuft || 0.01, quantity: qty, selections: choice ? {[selectorId]: choice} : {}}]} : value))}
               onRemove={() => quantity(id, 0, r.id)} />)}
             {(r.custom_items || []).map(item => <InventoryRow key={item.id} name={packingItemName(item.name)} cuft={item.cuft} quantity={item.quantity} busy={busy}
+              selectors={items.get(item.catalog_item_id || '')?.selectors || item.selectors} selections={item.selections}
+              onSelectionChange={(selectorId, choice) => setRooms(current => current.map(value => value.id === r.id ? {...value, custom_items: value.custom_items?.map(entry => {
+                if (entry.id !== item.id) return entry;
+                const selections = {...entry.selections};
+                if (choice) selections[selectorId] = choice; else delete selections[selectorId];
+                return {...entry, selections};
+              })} : value))}
               going={item.going} onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, going } : entry) } : value))}
               packingLocked={packing?.full}
               onMoverPackChange={/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(item.name) ? checked => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, reference_name: entry.reference_name || entry.name, mover_pack: checked, name: entry.name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') + (checked ? ' (CP)' : ' (PBO)') } : entry) } : value)) : undefined}

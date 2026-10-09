@@ -44,6 +44,7 @@ from models import (
 )
 from uuid import uuid4
 from item_materials import ItemMaterialsInput, material_setup, save_material_assignments
+from item_selectors import ItemSelectorsInput, selector_setup, save_selectors
 from pricing_addresses import pricing_location as delivery_location
 from pricing_addresses import with_job_locations, job_location
 from local_pricing import local_route_matches, match_region_from_address
@@ -2040,3 +2041,13 @@ def get_item_materials(plan_id: str, user: User = Depends(get_current_user), db:
 def put_item_materials(plan_id: str, body: ItemMaterialsInput, user: User = Depends(require_admin), db: Session = Depends(get_db)):
     plan = _plan_or_404(db, user, plan_id)
     return save_material_assignments(plan, body, db)
+
+
+@router.get('/{plan_id}/item-selectors')
+def get_item_selectors(plan_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return selector_setup(_plan_or_404(db, user, plan_id), db)
+
+
+@router.put('/{plan_id}/item-selectors')
+def put_item_selectors(plan_id: str, body: ItemSelectorsInput, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return save_selectors(_plan_or_404(db, user, plan_id), body, db)

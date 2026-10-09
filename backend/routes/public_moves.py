@@ -759,7 +759,7 @@ def select_customer_report(report_id: str, access: PublicMoveAccess = Depends(ve
 
 @router.get('/api/public-moves/{access_id}/inventory-catalog')
 def get_customer_inventory_catalog(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    return catalog(db)
+    return catalog(db, access)
 
 
 @router.post('/api/public-moves/{access_id}/inventory.pdf')
