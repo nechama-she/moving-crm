@@ -14,7 +14,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, PageBreak
 
 
-def inventory_entries(rows, questions):
+def inventory_entries(rows, questions, services=None):
     by_item = defaultdict(list)
     for question in questions:
         if question.get('all_items'):
@@ -27,6 +27,15 @@ def inventory_entries(rows, questions):
     for index, row in enumerate(rows):
         count = max(1, int(row.get('amount') or 1))
         related = by_item[index]
+        service_notes = []
+        from item_selectors import option_counts
+        definitions = (services or {}).get(row.get('catalog_item_id') or row.get('item_id'), [])
+        for definition in definitions:
+            counts = option_counts(definition, (row.get('selections') or {}).get(definition['id']), count)
+            service_notes.extend(f"{option}: {quantity}" for option, quantity in counts.items() if quantity)
+        # Service counts describe the entire saved row, not a particular question's unit.
+        if related and count > 1 and service_notes:
+            service_notes.insert(0, f'Services for these {count} items:')
         for unit in range(count if related else 1):
             answers = [q for q in related if q.get('unit_index', 0) == unit]
             excluded = row.get('going') is False or any((q.get('saved') or {}).get('action') == 'exclude'
@@ -34,6 +43,7 @@ def inventory_entries(rows, questions):
             yield dict(name=row.get('name') or 'Item', room=row.get('room') or 'Inventory',
                        label=f"{row.get('name', 'Item')} ({unit + 1} of {count})" if related and count > 1 else row.get('name', 'Item'),
                        quantity=1 if related else count, excluded=excluded, questions=answers,
+                       service_notes=service_notes if unit == 0 else [], service_row=index if service_notes else None,
                        cuft=0 if excluded else float(row.get('cuft') or 0) / (count if related else 1),
                        weight=0 if excluded else (float(row['weight']) / (count if related else 1) if row.get('weight') is not None else None))
 
@@ -47,6 +57,7 @@ def compact_inventory_entries(entries):
             notes.append((saved.get('question') or question['question'], saved.get('answer'),
                           saved.get('notice'), saved.get('action'), saved.get('pending'), saved.get('acknowledged')))
         key = (entry['room'], entry['name'], entry['excluded'], json.dumps(notes),
+               entry.get('service_row'), tuple(entry.get('service_notes', [])),
                entry['cuft'] / entry['quantity'],
                entry['weight'] / entry['quantity'] if entry['weight'] is not None else None)
         if key not in grouped:
@@ -115,7 +126,7 @@ def build_estimate_pdf(data, rows):
     story.append(p('Declared inventory', 'SectionEstimate'))
     story.append(p('Volume and weight reflect items going. Item answers and instructions appear directly below the relevant item. A dash means the weight was not recorded.', 'NoteEstimate'))
     rooms = defaultdict(list)
-    entries_all = compact_inventory_entries(inventory_entries(rows, data.get('item_questions') or []))
+    entries_all = compact_inventory_entries(inventory_entries(rows, data.get('item_questions') or [], data.get('item_services')))
     for entry in entries_all:
         rooms[entry['room']].append(entry)
     def totals(entries):
@@ -130,7 +141,8 @@ def build_estimate_pdf(data, rows):
         commands = [('SPAN', (0, 0), (-1, 0)), ('BACKGROUND', (0, 0), (-1, 1), colors.HexColor('#edf2f5'))]
         for entry in entries:
             item_row = len(body)
-            body.append([p(entry['label']), p(str(0 if entry['excluded'] else entry['quantity']), 'RightEstimate'),
+            item_text = [p(entry['label'])] + [p(note, 'NoteEstimate') for note in entry.get('service_notes', [])]
+            body.append([item_text, p(str(0 if entry['excluded'] else entry['quantity']), 'RightEstimate'),
                          p(str(entry['quantity'] if entry['excluded'] else 0), 'RightEstimate'),
                          p(f"{entry['cuft']:,.2f}", 'RightEstimate'),
                          p(f"{entry['weight']:,.2f}" if entry['weight'] is not None else '-', 'RightEstimate')])

@@ -63,6 +63,13 @@ def test_service_prices_use_configured_rate_quantity_and_default(manual_catalog,
     assert db.query(models.LeadJobCharge).filter_by(job_id=job.id).one().id == charge_id
     rows[0]['amount'] = 4
     assert calculate() == Decimal('293.00')
+    rows[0]['selections'] = {'service': {'Owner': 3, 'Movers': 1}}
+    assert calculate() == Decimal('73.25')
+    rows[0]['amount'] = 10
+    rows[0]['selections'] = {'service': {'Owner': 3, 'Movers': 7}}
+    assert calculate() == Decimal('512.75')
+    rows[0]['amount'] = 2
+    assert calculate() == Decimal('146.50')
     rows[0]['going'] = False
     assert calculate() == 0
     assert db.query(models.LeadJobCharge).filter_by(job_id=job.id).count() == 0

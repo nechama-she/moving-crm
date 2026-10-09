@@ -7,6 +7,19 @@ const exports={};
 vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/inventoryActions.ts',import.meta.url),'utf8'),
  {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,crypto:{randomUUID}});
 const {inventoryActions,catalogInventoryId,hasInventoryEdits}=exports;
+const quantities={};
+vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/serviceQuantities.ts',import.meta.url),'utf8'),
+ {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:quantities});
+const service={options:['Owner','Movers'],default:'Owner'};
+const plain=value=>JSON.parse(JSON.stringify(value));
+let counts=quantities.serviceCounts(service,undefined,10);
+assert.deepEqual(plain(counts),{Owner:10});
+counts=quantities.setServiceCount(service,counts,'Movers',7,10);
+assert.deepEqual(plain(counts),{Owner:3,Movers:7});
+counts=quantities.setServiceCount(service,counts,'Movers',1,10);
+assert.deepEqual(plain(counts),{Owner:9,Movers:1});
+assert.deepEqual(plain(quantities.serviceCounts(service,'Movers',2)),{Movers:2});
+assert.deepEqual(plain(quantities.serviceCounts(service,{Owner:3,Movers:7},2)),{Movers:2,Owner:0});
 const catalog=[{id:'chair',name:'Chair',cuft:30},{id:'box',name:'Small Box',cuft:2}];
 const before=[{id:'room',room_type_id:'bedroom',name:'Bedroom',items:{},custom_items:[
  {id:'row-1',catalog_item_id:'chair',name:'Chair',quantity:1,cuft:30},

@@ -32,6 +32,24 @@ def sample():
                      'saved': {'answer': 'No', 'action': 'exclude', 'notice': 'Remove everything inside.', 'acknowledged': True}}])
 
 
+def test_declared_inventory_includes_service_counts_and_defaults():
+    import pymupdf
+    data = sample()
+    data['item_questions'] = []
+    data['item_services'] = {'tv': [dict(id='unmount', options=['Owner Unmounts', 'Movers Unmount'], default='Owner Unmounts')]}
+    rows = [dict(name='TV Flat Screen (80 - 100)', catalog_item_id='tv', room='Bedroom', amount=2,
+                 cuft=40, weight=280, selections={'unmount': {'Owner Unmounts': 1, 'Movers Unmount': 1}}),
+            dict(name='TV Flat Screen (80 - 100)', catalog_item_id='tv', room='Bedroom', amount=3, cuft=60, weight=420)]
+    entries = compact_inventory_entries(inventory_entries(rows, [], data['item_services']))
+    assert len(entries) == 2
+    assert entries[0]['service_notes'] == ['Movers Unmount: 1', 'Owner Unmounts: 1']
+    assert entries[1]['service_notes'] == ['Owner Unmounts: 3']
+    doc = pymupdf.open(stream=build_estimate_pdf(data, rows), filetype='pdf')
+    text = ''.join(page.get_text() for page in doc)
+    assert 'Movers Unmount: 1' in text and 'Owner Unmounts: 3' in text
+    assert sum(entry['cuft'] for entry in entries) == 100
+
+
 def test_individual_answers_and_volume_are_not_combined():
     rows = [{'name': 'Gun Safe', 'room': 'Bedroom', 'amount': 2, 'cuft': 200, 'weight': 1400}]
     entries = list(inventory_entries(rows, sample()['item_questions']))

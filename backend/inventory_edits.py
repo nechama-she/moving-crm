@@ -10,7 +10,7 @@ from sqlalchemy import select, func
 from models import (Lead, LeadJob, LeadLiveSwitch, LeadSparkInventoryItem, InventoryRoomType,
                     InventoryCatalogItem, InventoryEditState, InventoryEditRoom, InventoryEditItem)
 from spark_history import remember_report
-from item_selectors import inventory_selectors
+from item_selectors import inventory_selectors, ServiceSelections
 
 
 class Fields(BaseModel):
@@ -21,7 +21,7 @@ class Fields(BaseModel):
     going: bool | None = None
     mover_pack: bool | None = None
     room_id: UUID | None = None
-    selections: dict[str, str] = Field(default_factory=dict, max_length=30)
+    selections: ServiceSelections = Field(default_factory=dict)
 
 
 class Patch(BaseModel):
@@ -74,7 +74,8 @@ def validated_selections(values, definitions, previous=None):
     for key, value in values.items():
         if previous and previous.get(key) == value:
             continue  # Preserve previously saved choices when catalog options change.
-        if value not in options.get(key, []):
+        selected_options = [value] if isinstance(value, str) else list(value)
+        if any(option not in options.get(key, []) for option in selected_options):
             raise HTTPException(422, 'This item option is unavailable. Reopen the inventory to refresh its selectors.')
     return json.dumps(values)
 

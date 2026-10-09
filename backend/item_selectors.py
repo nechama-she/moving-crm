@@ -8,6 +8,24 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 from models import InventoryCatalogItem, Lead, LeadJob
 
+OptionCounts = Annotated[dict[str, Annotated[int, Field(ge=0, le=999, strict=True)]], Field(max_length=50)]
+ServiceSelections = Annotated[dict[str, str | OptionCounts], Field(max_length=30)]
+
+
+def option_counts(definition, value, quantity):
+    """Keep explicit non-default counts; assign remaining units to the default."""
+    default = definition.get('default') or definition['options'][0]
+    if isinstance(value, str):
+        return {value: quantity}
+    remaining, result = quantity, {}
+    for option, count in (value or {}).items():
+        if option == default:
+            continue
+        result[option] = min(count, remaining)
+        remaining -= result[option]
+    result[default] = remaining
+    return result
+
 
 class ItemSelector(BaseModel):
     id: str = Field(min_length=1, max_length=100)
@@ -126,18 +144,21 @@ def add_service_charges(lead, job, db, plan):
             continue
         for definition in definitions.get(item_id, []):
             options = definition['options']
-            selected = (row.get('selections') or {}).get(definition['id']) or definition.get('default') or options[0]
-            if selected not in options:
-                raise ValueError(f"Review the saved service option for {row['name']}: {selected}")
-            prices = definition.get('prices') or []
-            index = options.index(selected)
-            price = Decimal(str(prices[index] or 0)) if index < len(prices) else Decimal(0)
-            if price <= 0:
-                continue
-            key = (item_id, definition['id'], selected)
-            if key not in charges:
-                charges[key] = {'name': row['name'], 'quantity': Decimal(0), 'price': price}
-            charges[key]['quantity'] += quantity
+            counts = option_counts(definition, (row.get('selections') or {}).get(definition['id']), quantity)
+            for selected, count in counts.items():
+                if not count:
+                    continue
+                if selected not in options:
+                    raise ValueError(f"Review the saved service option for {row['name']}: {selected}")
+                prices = definition.get('prices') or []
+                index = options.index(selected)
+                price = Decimal(str(prices[index] or 0)) if index < len(prices) else Decimal(0)
+                if price <= 0:
+                    continue
+                key = (item_id, definition['id'], selected)
+                if key not in charges:
+                    charges[key] = {'name': row['name'], 'quantity': Decimal(0), 'price': price}
+                charges[key]['quantity'] += count
     total = Decimal(0)
     for index, (key, charge) in enumerate(charges.items()):
         amount = (charge['quantity'] * charge['price']).quantize(Decimal('.01'))

@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field, ConfigDict
 from models import InventoryRoomType, InventoryCatalogItem, LeadLiveSwitch, LeadJob, Lead
 from spark_history import remember_report, REPORT_KEYS, CONVERSATION_KEYS
+from item_selectors import ServiceSelections
 
 
 class InventoryItemInput(BaseModel):
@@ -26,7 +27,7 @@ class CustomInventoryItemInput(BaseModel):
     cuft: Decimal = Field(gt=0, le=10000, allow_inf_nan=False)
     quantity: int = Field(ge=1, le=999, strict=True)
     mover_pack: bool | None = None
-    selections: dict[str, str] = Field(default_factory=dict, max_length=30)
+    selections: ServiceSelections = Field(default_factory=dict)
     going: bool = True
     reference_name: str | None = Field(default=None, max_length=200)
 

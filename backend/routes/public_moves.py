@@ -743,6 +743,8 @@ def download_estimate(access: PublicMoveAccess = Depends(verified), db: Session 
     rows = resolve_catalog_names(state.get('question_original_rows', state.get('spark_inventory_snapshot', [])), db)
     if not rows:
         raise HTTPException(409, 'There is no inventory to include in this estimate.')
+    from item_selectors import inventory_selectors
+    data['item_services'] = inventory_selectors(access, db)
     return Response(build_estimate_pdf(data, rows), media_type='application/pdf', headers={
         'Content-Disposition': 'attachment; filename="moving-estimate.pdf"',
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
