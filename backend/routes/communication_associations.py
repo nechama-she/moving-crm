@@ -19,6 +19,7 @@ class ConnectRequest(BaseModel):
     client_identifier: str
     company_identifier: str
     lead_id: str
+    only_if_unconnected: bool = False
 
 
 class CreateAndConnectRequest(BaseModel):
@@ -115,6 +116,10 @@ def connect(body: ConnectRequest, admin: User = Depends(require_admin), db: Sess
     lead = lead_query.first()
     if not lead:
         raise HTTPException(status_code=400, detail="The selected lead does not match the communication destination")
+    if body.only_if_unconnected:
+        legacy = db.query(Lead).filter(Lead.facebook_user_id == key[1], Lead.company_id.in_(company_ids)).first()
+        if legacy:
+            raise HTTPException(409, 'This chat is already connected to a lead')
     statement = insert(CommunicationAssociation).values(
         channel=key[0], client_identifier=key[1], company_identifier=key[2],
         lead_id=lead.id, company_id=lead.company_id, created_by=admin.id,
@@ -123,7 +128,17 @@ def connect(body: ConnectRequest, admin: User = Depends(require_admin), db: Sess
         index_elements=[CommunicationAssociation.channel, CommunicationAssociation.client_identifier, CommunicationAssociation.company_identifier],
         set_={"lead_id": lead.id, "company_id": lead.company_id, "created_by": admin.id, "updated_at": datetime.now(timezone.utc)},
     )
-    db.execute(statement)
+    if body.only_if_unconnected:
+        statement = insert(CommunicationAssociation).values(
+            channel=key[0], client_identifier=key[1], company_identifier=key[2],
+            lead_id=lead.id, company_id=lead.company_id, created_by=admin.id,
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        ).on_conflict_do_nothing().returning(CommunicationAssociation.lead_id)
+        if db.execute(statement).scalar_one_or_none() is None:
+            db.rollback()
+            raise HTTPException(409, 'This chat is already connected to a lead')
+    else:
+        db.execute(statement)
     # Existing work-queue rows immediately inherit the manual association.
     from models import MessageState, MissedCallState
     if key[0] == "phone":
@@ -179,3 +194,90 @@ def create_and_connect(body: CreateAndConnectRequest, admin: User = Depends(requ
     )
     result["creation"] = creation
     return result
+
+
+@router.get('/unconnected-meta')
+def unconnected_meta(lead_id: str, channel: str = Query(..., pattern='^(messenger|instagram)$'),
+                     search: str = Query('', max_length=300), cursor: str = '',
+                     admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from routes.leads import _get_visible_lead_or_404
+    from routes.chats import _query_meta_page, _decode_cursor, _encode_cursor, _timestamp
+    lead = _get_visible_lead_or_404(lead_id, admin, db)
+    company = db.get(Company, lead.company_id) if lead.company_id else None
+    page_id = str(company.facebook_page_id or '') if company else ''
+    if not page_id:
+        return {'items': [], 'next_cursor': '', 'has_more': False}
+    start, _ = _decode_cursor(cursor)
+    messages, next_key = _query_meta_page(start, 100)
+    linked = {row[0] for row in db.query(CommunicationAssociation.client_identifier).filter(
+        CommunicationAssociation.channel == channel, CommunicationAssociation.company_identifier == page_id).all()}
+    linked.update(row[0] for row in db.query(Lead.facebook_user_id).join(Company, Company.id == Lead.company_id).filter(
+        Company.facebook_page_id == page_id, Lead.facebook_user_id.isnot(None)).all())
+    items = {}
+    needle = search.strip().casefold()
+    for message in messages:
+        client = str(message.get('user_id') or '')
+        if not client or client in linked or message.get('platform') != channel or str(message.get('page_id') or '') != page_id:
+            continue
+        searchable = ' '.join(str(message.get(k) or '') for k in ('text', 'user_id', 'name', 'sender_name'))
+        if needle and needle not in searchable.casefold():
+            continue
+        stamp = _timestamp(message.get('timestamp'))
+        if client not in items or stamp > items[client]['timestamp']:
+            items[client] = {'client_identifier': client, 'company_identifier': page_id,
+                'name': str(message.get('sender_name') or message.get('name') or client),
+                'timestamp': stamp, 'preview': str(message.get('text') or '')}
+    return {'items': sorted(items.values(), key=lambda row: row['timestamp'], reverse=True),
+            'next_cursor': _encode_cursor(next_key, None) if next_key else '', 'has_more': bool(next_key)}
+
+
+@router.get('/meta-preview')
+def meta_preview(lead_id: str, client_identifier: str,
+                 channel: str = Query(..., pattern='^(messenger|instagram)$'), cursor: str = '',
+                 admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from routes.leads import _get_visible_lead_or_404
+    from routes.chats import _decode_cursor, _encode_cursor
+    from db import conversations_table
+    from boto3.dynamodb.conditions import Key, Attr
+    lead = _get_visible_lead_or_404(lead_id, admin, db)
+    company = db.get(Company, lead.company_id) if lead.company_id else None
+    if not company or not company.facebook_page_id:
+        raise HTTPException(400, 'The lead company has no Meta page')
+    start, _ = _decode_cursor(cursor)
+    args = dict(KeyConditionExpression=Key('user_id').eq(client_identifier),
+        FilterExpression=Attr('platform').eq(channel) & Attr('page_id').eq(company.facebook_page_id), Limit=100)
+    if start: args['ExclusiveStartKey'] = start
+    result = conversations_table.query(**args)
+    next_key = result.get('LastEvaluatedKey')
+    return {'messages': result.get('Items', []), 'next_cursor': _encode_cursor(next_key, None) if next_key else ''}
+
+
+@router.get('/lead-meta-links')
+def lead_meta_links(lead_id: str, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from routes.leads import _get_visible_lead_or_404
+    lead = _get_visible_lead_or_404(lead_id, admin, db)
+    return {'items': [{'channel': row.channel, 'client_identifier': row.client_identifier, 'company_identifier': row.company_identifier}
+        for row in db.query(CommunicationAssociation).filter(CommunicationAssociation.lead_id == lead.id,
+            CommunicationAssociation.channel.in_(['messenger', 'instagram'])).all()]}
+
+
+@router.delete('')
+def disconnect(body: ConnectRequest, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from routes.leads import _get_visible_lead_or_404
+    from models import MessageState
+    lead = _get_visible_lead_or_404(body.lead_id, admin, db)
+    key = normalized_key(body.channel, body.client_identifier, body.company_identifier)
+    if key[0] not in ('messenger', 'instagram') or not all(key):
+        raise HTTPException(400, 'A Messenger or Instagram connection is required')
+    row = db.query(CommunicationAssociation).filter(
+        CommunicationAssociation.channel == key[0], CommunicationAssociation.client_identifier == key[1],
+        CommunicationAssociation.company_identifier == key[2], CommunicationAssociation.lead_id == lead.id,
+    ).with_for_update().first()
+    if not row:
+        raise HTTPException(404, 'This chat connection no longer exists')
+    db.delete(row)
+    db.query(MessageState).filter(MessageState.channel == key[0], MessageState.client_identifier == key[1],
+        MessageState.company_identifier == key[2], MessageState.lead_id == lead.id).update(
+        {MessageState.lead_id: None}, synchronize_session=False)
+    db.commit()
+    return {'ok': True}

@@ -3441,8 +3441,9 @@ export default function LeadDetail() {
           </div>
           <div style={{ padding: 16 }}>
             {activeTab === "conversations" ? (
-              chatUserId || lead.phone_number ? (
+              user?.role === "admin" || chatUserId || lead.phone_number ? (
                 <ChatMessages
+                  key={leadId}
                   leadId={leadId!}
                   userId={chatUserId}
                   userName={String(lead.full_name || "Client")}
