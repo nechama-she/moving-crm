@@ -37,7 +37,10 @@ function PackingChoice({ name, disabled, onChange }: { name: string; disabled: b
 }
 function ServiceChoice({selector, value, quantity, name, disabled, open, setOpen, onChange}: {selector:ItemSelector; value:ServiceSelection|undefined; quantity:number; name:string; disabled:boolean; open:boolean; setOpen:(open:boolean)=>void; onChange:(value:ServiceSelection)=>void}) {
   const counts = serviceCounts(selector, value, quantity);
-  const summary = Object.entries(counts).filter(([, count]) => count > 0).map(([option, count]) => quantity > 1 ? `${option} (${count})` : option).join(", ");
+  const summaryLines = quantity > 1
+    ? Array.from(new Set([...selector.options, ...Object.keys(counts)])).map(option => `${option} (${counts[option] || 0})`)
+    : Object.entries(counts).filter(([, count]) => count > 0).map(([option]) => option);
+  const summary = summaryLines.join(', ');
   const container = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -50,7 +53,7 @@ function ServiceChoice({selector, value, quantity, name, disabled, open, setOpen
     if (event.key === 'Escape' && open) {event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus();}
   }}>
     <button ref={trigger} type="button" className="mi-packing-trigger" disabled={disabled} aria-expanded={open} aria-label={`Service for ${name}: ${summary}`} onClick={() => setOpen(!open)}>
-      {summary}<svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>
+      <span className="mi-service-summary">{summaryLines.map((line, index) => <span key={index}>{line}</span>)}</span><svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>
     </button>
     {open && <span className="mi-packing-menu" role="group" aria-label={selector.label}>
       <span className="mi-service-count-heading">{quantity} {quantity === 1 ? 'item' : 'items'} total</span>
@@ -90,8 +93,8 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
       <span aria-label="Total volume in cubic feet">{totalVolumeLabel}</span>
       <input aria-label="Quantity" type="number" min="1" max="999" step="1" value={draft.quantity} disabled={busy} onChange={e => setDraft({ ...draft, quantity: e.target.value })} />
     </> : <>
-      <div className="mi-inventory-name"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name} disabled={busy || packingLocked || !going} onChange={onMoverPackChange}/>}
-        {selectors.map(selector => <ServiceChoice key={selector.id} selector={selector} name={name} value={selections[selector.id]} quantity={quantity} disabled={serviceBusy || !going} open={openService === `${serviceRowId}:${selector.id}`} setOpen={open => setOpenService(open ? `${serviceRowId}:${selector.id}` : '')} onChange={value => onSelectionChange?.(selector.id, value)}/>)}
+      <div className={`mi-inventory-name${selectors.length ? ' mi-name-with-services' : ''}`}><span className="mi-item-name-label"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name} disabled={busy || packingLocked || !going} onChange={onMoverPackChange}/>}</span>
+        {!!selectors.length && <span className="mi-item-services">{selectors.map(selector => <ServiceChoice key={selector.id} selector={selector} name={name} value={selections[selector.id]} quantity={quantity} disabled={serviceBusy || !going} open={openService === `${serviceRowId}:${selector.id}`} setOpen={open => setOpenService(open ? `${serviceRowId}:${selector.id}` : '')} onChange={value => onSelectionChange?.(selector.id, value)}/>)}</span>}
       </div>
       <span>{cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
       <span aria-label="Total volume in cubic feet">{totalVolumeLabel}</span>
