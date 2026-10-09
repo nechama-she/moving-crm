@@ -35,15 +35,21 @@ function PackingChoice({ name, disabled, onChange }: { name: string; disabled: b
     </span>}
   </span>;
 }
-function ServiceChoice({selector, value, quantity, name, disabled, onChange}: {selector:ItemSelector; value:ServiceSelection|undefined; quantity:number; name:string; disabled:boolean; onChange:(value:ServiceSelection)=>void}) {
+function ServiceChoice({selector, value, quantity, name, disabled, open, setOpen, onChange}: {selector:ItemSelector; value:ServiceSelection|undefined; quantity:number; name:string; disabled:boolean; open:boolean; setOpen:(open:boolean)=>void; onChange:(value:ServiceSelection)=>void}) {
   const counts = serviceCounts(selector, value, quantity);
   const summary = Object.entries(counts).filter(([, count]) => count > 0).map(([option, count]) => quantity > 1 ? `${option} (${count})` : option).join(", ");
-  const [open, setOpen] = useState(false);
+  const container = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {if (!container.current?.contains(event.target as Node)) setOpen(false);};
+    document.addEventListener('pointerdown', outside);
+    return () => document.removeEventListener('pointerdown', outside);
+  }, [open, setOpen]);
   const trigger = useRef<HTMLButtonElement>(null);
-  return <span className="mi-packing-choice mi-service-choice" onBlur={event => {if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);}} onKeyDown={event => {
+  return <span ref={container} className="mi-packing-choice mi-service-choice" onBlur={event => {if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false);}} onKeyDown={event => {
     if (event.key === 'Escape' && open) {event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus();}
   }}>
-    <button ref={trigger} type="button" className="mi-packing-trigger" disabled={disabled} aria-expanded={open} aria-label={`Service for ${name}: ${summary}`} onClick={() => setOpen(current => !current)}>
+    <button ref={trigger} type="button" className="mi-packing-trigger" disabled={disabled} aria-expanded={open} aria-label={`Service for ${name}: ${summary}`} onClick={() => setOpen(!open)}>
       {summary}<svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>
     </button>
     {open && <span className="mi-packing-menu" role="group" aria-label={selector.label}>
@@ -51,17 +57,18 @@ function ServiceChoice({selector, value, quantity, name, disabled, onChange}: {s
       {selector.options.map(option => <span className="mi-service-count-row" key={option}>
         <span>{option}</span>
         <span className="mi-service-counter">
-          <button type="button" aria-label={`Decrease ${option}`} disabled={disabled || !counts[option] || selector.options.length < 2} onClick={() => onChange(setServiceCount(selector, counts, option, (counts[option] || 0) - 1, quantity))}>?</button>
+          <button type="button" aria-label={`Decrease ${option}`} disabled={disabled || !counts[option] || selector.options.length < 2} onClick={() => onChange(setServiceCount(selector, counts, option, (counts[option] || 0) - 1, quantity))}><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M2 6h8"/></svg></button>
           <input type="number" min="0" max={quantity} step="1" aria-label={`Quantity for ${option}`} disabled={disabled || selector.options.length < 2} value={counts[option] || 0} onChange={event => {const count = event.target.valueAsNumber; if (Number.isFinite(count)) onChange(setServiceCount(selector, counts, option, count, quantity));}}/>
-          <button type="button" aria-label={`Increase ${option}`} disabled={disabled || counts[option] === quantity || selector.options.length < 2} onClick={() => onChange(setServiceCount(selector, counts, option, (counts[option] || 0) + 1, quantity))}>+</button>
+          <button type="button" aria-label={`Increase ${option}`} disabled={disabled || counts[option] === quantity || selector.options.length < 2} onClick={() => onChange(setServiceCount(selector, counts, option, (counts[option] || 0) + 1, quantity))}><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M2 6h8M6 2v8"/></svg></button>
         </span>
       </span>)}
     </span>}
   </span>;
 }
-function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onMoverPackChange, packingLocked = false, selectors = [], selections = {}, onSelectionChange, onSave, onRemove }: {
+function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onMoverPackChange, packingLocked = false, serviceBusy, serviceRowId, openService, setOpenService, selectors = [], selections = {}, onSelectionChange, onSave, onRemove }: {
   name: string; cuft: number; quantity: number; busy: boolean; photo?: ReactNode; going?: boolean; onGoingChange: (going: boolean) => void;
   onMoverPackChange?: (checked: boolean) => void; packingLocked?: boolean;
+  serviceBusy:boolean; serviceRowId:string; openService:string; setOpenService:(id:string)=>void;
   selectors?: ItemSelector[]; selections?: Record<string,ServiceSelection>; onSelectionChange?: (id: string, value: ServiceSelection) => void;
   onSave: (value: { name: string; cuft: number; quantity: number }) => void; onRemove: () => void;
 }) {
@@ -84,7 +91,7 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
       <input aria-label="Quantity" type="number" min="1" max="999" step="1" value={draft.quantity} disabled={busy} onChange={e => setDraft({ ...draft, quantity: e.target.value })} />
     </> : <>
       <div className="mi-inventory-name"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name} disabled={busy || packingLocked || !going} onChange={onMoverPackChange}/>}
-        {selectors.map(selector => <ServiceChoice key={selector.id} selector={selector} name={name} value={selections[selector.id]} quantity={quantity} disabled={busy || !going} onChange={value => onSelectionChange?.(selector.id, value)}/>)}
+        {selectors.map(selector => <ServiceChoice key={selector.id} selector={selector} name={name} value={selections[selector.id]} quantity={quantity} disabled={serviceBusy || !going} open={openService === `${serviceRowId}:${selector.id}`} setOpen={open => setOpenService(open ? `${serviceRowId}:${selector.id}` : '')} onChange={value => onSelectionChange?.(selector.id, value)}/>)}
       </div>
       <span>{cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
       <span aria-label="Total volume in cubic feet">{totalVolumeLabel}</span>
@@ -163,6 +170,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   const [closingBusy, setBusy] = useState(false);
   const [saveRunning, setSaveRunning] = useState(false);
   const busy = closingBusy || saveRunning;
+  const [openService, setOpenService] = useState('');
   const [pdfBusy, setPdfBusy] = useState(false);
   const [error, setError] = useState('');
   const [finishing, setFinishing] = useState(false);
@@ -218,8 +226,8 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
         }
       }
       setError('');
-      setSaveStatus('All changes saved');
-      dirty.current = false;
+      dirty.current = latest.current !== savedRooms.current;
+      setSaveStatus(dirty.current ? 'Unsaved changes' : 'All changes saved');
     })();
     saving.current = operation;
     void operation.finally(() => { saving.current = null; setSaveRunning(false); }).catch(() => {});
@@ -232,6 +240,12 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
       loadedRooms.current = null;
       if (!hasInventoryEdits(inventoryActions(savedRooms.current || [], rooms, catalog.items))) return;
     }
+    // Counter edits stay local until the service picker closes.
+    if (openService) {
+      dirty.current = hasInventoryEdits(inventoryActions(savedRooms.current || [], rooms, catalog.items));
+      if (dirty.current) setSaveStatus('Unsaved changes');
+      return;
+    }
     dirty.current = true;
     pending.current = rooms;
     setSaveStatus('Unsaved changes');
@@ -239,10 +253,10 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
       void flush().catch(err => setError(err instanceof Error ? err.message : 'Could not save your list.'));
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [rooms, catalog]);
+  }, [rooms, catalog, openService]);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
-      if (pending.current || saving.current) { event.preventDefault(); event.returnValue = ''; }
+      if (dirty.current || pending.current || saving.current) { event.preventDefault(); event.returnValue = ''; }
     };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
@@ -435,6 +449,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
             <summary><strong>{r.name}</strong> &middot; {count(r)} items &middot; {pieces(r)} pieces &middot; {boxes(r)} boxes</summary>
             <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span>Going</span><span className="mi-inventory-actions-heading">Actions</span></div>
             {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <InventoryRow key={id}
+              serviceBusy={closingBusy} serviceRowId={catalogInventoryId(r, id)} openService={openService} setOpenService={setOpenService}
               name={packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item')} cuft={items.get(id)?.cuft || 0} quantity={qty} busy={busy}
               photo={imageEndpoint ? <QuestionReferenceImages compact name={items.get(id)?.name || r.item_names?.[id] || 'Item'} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
               onSave={value => setRooms(current => current.map(valueRoom => valueRoom.id === r.id ? {
@@ -448,6 +463,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
               onSelectionChange={(selectorId, choice) => setRooms(current => current.map(value => value.id === r.id ? {...value, items: {...value.items, [id]: 0}, custom_items: [...(value.custom_items || []), {id: catalogInventoryId(r, id), catalog_item_id: id, name: packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item'), name_override: !!r.item_names?.[id], cuft: items.get(id)?.cuft || 0.01, quantity: qty, selections: choice ? {[selectorId]: choice} : {}}]} : value))}
               onRemove={() => quantity(id, 0, r.id)} />)}
             {(r.custom_items || []).map(item => <InventoryRow key={item.id} name={packingItemName(item.name)} cuft={item.cuft} quantity={item.quantity} busy={busy}
+              serviceBusy={closingBusy} serviceRowId={item.id} openService={openService} setOpenService={setOpenService}
               selectors={items.get(item.catalog_item_id || '')?.selectors || item.selectors} selections={item.selections}
               onSelectionChange={(selectorId, choice) => setRooms(current => current.map(value => value.id === r.id ? {...value, custom_items: value.custom_items?.map(entry => {
                 if (entry.id !== item.id) return entry;
