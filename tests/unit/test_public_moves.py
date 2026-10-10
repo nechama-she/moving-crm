@@ -3005,6 +3005,38 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
 
 
 
+@pytest.mark.parametrize('rep', [False, True])
+@pytest.mark.parametrize('suffix', ['summary', 'sections/move', 'sections/inventory', 'sections/media', 'sections/volume', 'sections/pricing'])
+def test_page_section_global_auth_accepts_scoped_sessions(portal, monkeypatch, rep, suffix):
+    import ast
+    import re
+    from fastapi import FastAPI, Depends
+    from fastapi.testclient import TestClient
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod, '_read_job_route', lambda *args: ('Origin', [], 'Destination'))
+    access.id = '11111111-1111-1111-1111-111111111111'
+    access.token_hash = digest(link_token(access.id))
+    db.flush()
+    fingerprint = mod.rep_contacts(access, db)[1] if rep else contact_fingerprint(lead)
+    db.add(models.PublicMoveSession(token_hash=digest('section-session'), access_id=access.id,
+        expires_at=datetime.utcnow()+timedelta(hours=1), contact_hash=fingerprint))
+    db.commit()
+    tree = ast.parse((BACKEND/'main.py').read_text(encoding='utf-8'))
+    guard = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == 'enforce_authentication')
+    scope = {'Request': Request, 'HTTPException': HTTPException, 're': re, 'PUBLIC_PATHS': set()}
+    exec(compile(ast.Module(body=[guard], type_ignores=[]), 'main-auth-guard', 'exec'), scope)
+    app = FastAPI(dependencies=[Depends(scope['enforce_authentication'])])
+    app.include_router(mod.router)
+    app.dependency_overrides[mod.get_db] = lambda: db
+    key = mod.rep_link_token(access) if rep else link_token(access.id)
+    with TestClient(app) as client:
+        path = f'/api/public-moves/{access.id}/{suffix}'
+        response = client.get(path, headers={'x-public-link': key, 'x-public-session': 'section-session'})
+        assert response.status_code == 200, response.text
+        assert client.get(path, headers={'x-public-link': key}).status_code == 401
+        assert client.get(path).status_code == 404
+
+
 def test_plain_address_saves_without_selection_or_google(portal):
     mod, db, lead, access = portal
     assert mod.selected_customer_address('  1182 Main St  ', 'Old', None, 'Pickup', access.id) == '1182 Main St'

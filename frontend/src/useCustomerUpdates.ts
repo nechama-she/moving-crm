@@ -47,7 +47,7 @@ export function useCustomerUpdates(base: string, key: string, session: string, r
       try {
         const response = await fetch(`${base}/realtime-token`, {method: 'POST',
           headers: {'x-public-link': key, 'x-public-session': session}, signal: controller.signal});
-        if (response.status === 401 || response.status === 404) { expireCustomerSession(session); stop(); return; }
+        if (response.status === 401) { expireCustomerSession(session); stop(); return; }
         if (!response.ok) throw new Error('Connection unavailable');
         const {token} = await response.json();
         if (!valid()) return;

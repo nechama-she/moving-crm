@@ -26,6 +26,7 @@ normal.expire();assert.ok(normal.sockets[0].closed);assert.equal(normal.timers.s
 normal.sockets[0].onmessage({data:JSON.stringify({type:'customer_move_updated'})});await settle();assert.equal(normal.refreshes,2);assert.equal(normal.requests,1);normal.cleanup();
 const expired=harness({active:false});await settle();assert.equal(expired.requests,0);assert.equal(expired.refreshes,0);expired.cleanup();
 const rejected=harness({status:401});await settle();assert.equal(rejected.requests,1);assert.equal(rejected.sockets.length,0);assert.equal(rejected.timers.size,0);rejected.cleanup();
+const unavailable=harness({status:404});await settle();assert.equal(unavailable.refreshes,1);assert.equal(unavailable.sockets.length,0);assert.equal(unavailable.timers.size,1);unavailable.cleanup();
 const fallback=harness({ws:false});await settle();assert.equal(fallback.refreshes,1);assert.equal(fallback.requests,0);assert.equal(fallback.timers.size,0);fallback.cleanup();
 const broken=harness();await settle();broken.sockets[0].onopen();await settle();broken.sockets[0].close();
 for(let i=0;i<3;i++){const [id,timer]=[...broken.timers][0];broken.timers.delete(id);timer.fn();await settle();broken.sockets.at(-1).close();}
