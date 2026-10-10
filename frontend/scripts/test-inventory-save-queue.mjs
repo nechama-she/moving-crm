@@ -15,14 +15,14 @@ function setup() {
   const calls = [], releases = [];
   const state = {
     Error, rooms:snapshot, latest:{current:snapshot}, pending:{current:snapshot}, inFlight:{current:null},
-    saving:{current:null}, dirty:{current:true}, catalog:{rooms:[]}, busy:false,
+    saving:{current:null}, dirty:{current:true}, savedChanges:{current:false}, catalog:{rooms:[]}, busy:false,
     savedRooms:{current:null},requestIds:{current:new WeakMap()},retrySnapshot:{current:null},inventoryActions:actionExports.inventoryActions,hasInventoryEdits:actionExports.hasInventoryEdits,revision:{current:randomUUID()},reportId:{current:null},
     crypto:{randomUUID:()=>String(calls.length)}, draftKey:'test', localStorage:{removeItem(){}},
     setSaveRunning(value){state.saveRunning=value;},setSaveStatus(){},setError(error){state.error=error;},setBusy(){},setFinishing(){},closed:false,calculations:0,
     onDone:async()=>{state.calculations++;},
     submitActionsRef:{current:(request_id,actions)=>{calls.push({request_id,actions});return new Promise((resolve,reject)=>releases.push({resolve,reject}));}},
   };
-  state.onClose = () => {state.closed = true;};
+  state.onClose = changed => {state.closed = true; state.changedOnClose = changed;};
   vm.createContext(state);
   vm.runInContext(ts.transpile(flush + save, {target:ts.ScriptTarget.ES2022}), state);
   return {state,calls,releases};
@@ -79,6 +79,7 @@ console.log('Inventory saves avoid duplicates, retain new edits, and retry failu
 // Done calculates even when autosave has already finished; failures stay open.
 {
   const {state,calls} = setup();
+  state.savedChanges.current = true;
   state.dirty.current = false;
   state.pending.current = null;
   state.onDone = async () => { throw new Error('Pricing unavailable'); };
@@ -90,6 +91,18 @@ console.log('Inventory saves avoid duplicates, retain new edits, and retry failu
   await state.save();
   assert.equal(state.calculations,1);
   assert.equal(state.closed,true);
+  assert.equal(state.changedOnClose,false);
+}
+// Opening and closing an unchanged inventory does not save or calculate.
+for (const calculate of [true, false]) {
+  const {state,calls} = setup();
+  state.dirty.current = false;
+  state.pending.current = null;
+  await state.save(calculate);
+  assert.equal(calls.length,0);
+  assert.equal(state.calculations,0);
+  assert.equal(state.closed,true);
+  assert.equal(state.changedOnClose,false);
 }
 // Closing with X/Escape does not calculate.
 {

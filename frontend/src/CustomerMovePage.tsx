@@ -177,6 +177,8 @@ export default function CustomerMovePage() {
   const [answersSaving, setAnswersSaving] = useState(false);
   const [answerSaveStarted, setAnswerSaveStarted] = useState(false);
   const [showInventoryList, setShowInventoryList] = useState(false);
+  const [inventoryOpened, setInventoryOpened] = useState(false);
+  useEffect(() => { if (showInventoryList) setInventoryOpened(true); }, [showInventoryList]);
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
   const [packingStep, setPackingStep] = useState<'stops' | 'elevator' | 'access' | 'stairs' | 'storage' | 'bulky' | 'package' | 'items'>('bulky');
   const [packingSection,setPackingSection]=useState<'service'|'boxes'|'protection'>('service');
@@ -1204,7 +1206,7 @@ export default function CustomerMovePage() {
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
             </div>
 
-            {showInventoryList && <ManualInventoryModal loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full', boxes: (data.packing_package.box_items || []).map(box => ({ label: box.label, room: box.room, quantity: data.packing_package!.selection.box_quantities?.[box.id] || 0 })) } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}_${JSON.stringify(data.packing_package?.selection || {})}`} loadCatalog={() => call('/inventory-catalog')} downloadPdf={async body => {
+            {(showInventoryList || inventoryOpened) && <ManualInventoryModal visible={showInventoryList} key={`${accessId}:${data.spark?.id || 'draft'}:${JSON.stringify(data.packing_package?.selection || {})}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full', boxes: (data.packing_package.box_items || []).map(box => ({ label: box.label, room: box.room, quantity: data.packing_package!.selection.box_quantities?.[box.id] || 0 })) } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}_${JSON.stringify(data.packing_package?.selection || {})}`} loadCatalog={() => call('/inventory-catalog')} downloadPdf={async body => {
               const response = await fetch(base + '/inventory.pdf', {
                 method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
                 body: JSON.stringify(body), cache: 'no-store',
@@ -1231,7 +1233,7 @@ export default function CustomerMovePage() {
               await call(data.spark?.status === 'completed' ? '/recalculate-price' : '/generate-inventory-report', {});
               await refreshDetails();
               setCalculationError('');
-            }} onClose={() => { setShowInventoryList(false); void refreshDetails(); }} />}
+            }} onClose={changed => { setShowInventoryList(false); if (changed) void refreshDetails(); }} />}
             {showQuestions && (
               <div className="cm-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="packing-title" onClick={event => { if (event.target === event.currentTarget) setShowQuestions(false); }}>
                 <div className="cm-modal-card">

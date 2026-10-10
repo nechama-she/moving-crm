@@ -139,7 +139,8 @@ function RoomCard({ room, selected, busy, summary, onSelect, onRename, onDelete 
     <button type="button" className="mi-remove" disabled={busy} aria-label={`Delete room ${room.name}`} onClick={onDelete}>&times;</button>
   </article>;
 }
-export default function ManualInventoryModal({ loadCatalog, submitActions, downloadPdf, onDone, onClose, draftKey, loadInventory, packing, imageEndpoint, linkKey='', session='' }: {
+export default function ManualInventoryModal({ loadCatalog, submitActions, downloadPdf, onDone, onClose, draftKey, loadInventory, packing, imageEndpoint, linkKey='', session='', visible=true }: {
+  visible?: boolean;
   submitActions: (requestId: string, edits: InventoryEdits, revision: string, reportId: string | null) => Promise<{revision:string}>;
   loadInventory: () => Promise<{revision:string; report_id:string|null; rooms:Room[]}>;
   draftKey: string;
@@ -149,7 +150,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   session?: string;
   loadCatalog: () => Promise<Catalog>;
   downloadPdf: (body: { request_id: string; rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number; name?:string }[]; custom_items?: CustomItem[] }[] }) => Promise<void>;
-  onClose: () => void;
+  onClose: (changed?: boolean) => void;
   onDone: () => Promise<void>;
 }) {
   const [catalog, setCatalog] = useState<Catalog>();
@@ -190,6 +191,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   const saving = useRef<Promise<void> | null>(null);
   const loadedRooms = useRef<Room[] | null>(null);
   const dirty = useRef(false);
+  const savedChanges = useRef(false);
   const savedRooms = useRef<Room[] | null>(null);
   const submitActionsRef = useRef(submitActions);
   submitActionsRef.current = submitActions;
@@ -213,6 +215,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
             requestIds.current.set(snapshot, requestId);
             const result = await submitActionsRef.current(requestId, actions, revision.current, reportId.current);
             revision.current = result.revision;
+            savedChanges.current = true;
           }
           savedRooms.current = snapshot;
           retrySnapshot.current = null;
@@ -269,8 +272,6 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   const inventoryLoader = useRef(loadInventory);
   useEffect(() => {
     let active = true;
-    const previous = document.activeElement as HTMLElement | null;
-    modal.current?.focus();
     Promise.all([loader.current(), inventoryLoader.current()]).then(([value, editor]) => {
       if (!active) return;
       setCatalog(value);
@@ -307,10 +308,16 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
       savedRooms.current = serverRooms;
       setRooms(loaded);
     }).catch(err => { if (active) setError(err.message); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    if (!visible) return;
+    const previous = document.activeElement as HTMLElement | null;
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    return () => { active = false; document.body.style.overflow = overflow; previous?.focus(); };
-  }, []);
+    modal.current?.focus();
+    return () => { document.body.style.overflow = overflow; previous?.focus(); };
+  }, [visible]);
   const items = new Map((catalog?.items || []).map(item => [item.id, item]));
   const total = (room: Room, field: 'cuft' | 'weight') => Object.entries(room.items).reduce((sum, [id, qty]) => sum + (items.get(id)?.[field] || 0) * qty, 0) + (room.custom_items || []).reduce((sum, item) => sum + (item.going === false ? 0 : (field === 'cuft' ? item.cuft : item.unit_weight || 0) * item.quantity), 0);
   const count = (room: Room) => Object.values(room.items).reduce((sum, qty) => sum + qty, 0) + (room.custom_items || []).reduce((sum, item) => sum + item.quantity, 0);
@@ -346,19 +353,23 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     if (busy) return;
     if (!catalog) { onClose(); return; }
     if (rooms.some(r => !r.name.trim())) { setError('Enter a name for each room before closing.'); return; }
-    if (!calculate && !dirty.current && !pending.current && !saving.current) { onClose(); return; }
+    if (!dirty.current && !pending.current && !saving.current && !savedChanges.current) { onClose(false); return; }
     setBusy(true); setError('');
     try {
       if (dirty.current || pending.current || saving.current) {
         if (inFlight.current !== rooms) pending.current = rooms;
         await flush();
       }
-      if (calculate) { setFinishing(true); await onDone(); }
-      onClose();
+      if (calculate && savedChanges.current) {
+        setFinishing(true);
+        await onDone();
+        savedChanges.current = false;
+      }
+      onClose(savedChanges.current);
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not finish updating your estimate. Please try Done again.'); setBusy(false); }
-    finally { setFinishing(false); }
+    finally { setFinishing(false); setBusy(false); }
   }
-  return <div className="cm-modal-overlay"><div className="mi-modal" ref={modal} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={busy} aria-labelledby="mi-title" onKeyDown={event => {
+  return <div className="cm-modal-overlay" style={visible ? undefined : {display: 'none'}} aria-hidden={!visible}><div className="mi-modal" ref={modal} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={busy} aria-labelledby="mi-title" onKeyDown={event => {
     if (event.key === 'Escape' && !busy) { event.preventDefault(); void save(false); }
     if (event.key === 'Tab') {
       const nodes = modal.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)');
@@ -454,7 +465,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
             {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <InventoryRow key={id}
               serviceBusy={closingBusy} serviceRowId={catalogInventoryId(r, id)} openService={openService} setOpenService={setOpenService}
               name={packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item')} cuft={items.get(id)?.cuft || 0} quantity={qty} busy={busy}
-              photo={imageEndpoint ? <QuestionReferenceImages compact name={items.get(id)?.name || r.item_names?.[id] || 'Item'} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
+              photo={imageEndpoint ? <QuestionReferenceImages active={visible} compact name={items.get(id)?.name || r.item_names?.[id] || 'Item'} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
               onSave={value => setRooms(current => current.map(valueRoom => valueRoom.id === r.id ? {
                 ...valueRoom, items: { ...valueRoom.items, [id]: 0 },
                 custom_items: [...(valueRoom.custom_items || []), { id: catalogInventoryId(r, id), catalog_item_id: id, name_override: value.name !== (r.item_names?.[id] || items.get(id)?.name), ...value, reference_name: items.get(id)?.name }],
@@ -477,7 +488,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
               going={item.going} onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, going } : entry) } : value))}
               packingLocked={packing?.full}
               onMoverPackChange={/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(item.name) ? checked => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, reference_name: entry.reference_name || entry.name, mover_pack: checked, name: entry.name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') + (checked ? ' (CP)' : ' (PBO)') } : entry) } : value)) : undefined}
-              photo={imageEndpoint ? <QuestionReferenceImages compact name={item.reference_name || item.name} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
+              photo={imageEndpoint ? <QuestionReferenceImages active={visible} compact name={item.reference_name || item.name} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
               onSave={changes => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, name_override: entry.name_override || changes.name !== entry.name, reference_name: entry.reference_name || entry.name, ...changes } : entry) } : value))}
               onRemove={() => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.filter(entry => entry.id !== item.id) } : value))} />)}
           </details>)}
