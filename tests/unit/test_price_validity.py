@@ -37,6 +37,20 @@ def quote(monkeypatch):
     engine.dispose()
 
 
+def test_zero_placeholder_price_does_not_refresh_or_lock(quote, monkeypatch):
+    db, lead, job, plan, pricing, now = quote
+    job.price = 0
+    job.price_calculated_at = None
+    db.commit()
+    # Load attributes before spying on explicit row-lock refreshes.
+    assert job.price == 0
+    refresh = MagicMock(side_effect=AssertionError('Empty move must not lock for pricing'))
+    monkeypatch.setattr(db, 'refresh', refresh)
+    assert not refresh_expired_price(lead, job, db, now)
+    refresh.assert_not_called()
+    pricing.calculate_and_save_lead_job_price.assert_not_called()
+
+
 def test_default_seven_days_refreshes_once_and_preserves_answers(quote):
     db,lead,job,plan,pricing,now = quote
     assert plan.price_valid_days == 7

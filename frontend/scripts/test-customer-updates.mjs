@@ -18,7 +18,7 @@ function harness({active=true,status=200,ws=true}={}) {
   const cleanup=effect();
   return {sockets,timers,expire,cleanup,get requests(){return requests;},get refreshes(){return refreshes;}};
 }
-const normal=harness();await settle();assert.equal(normal.requests,1);assert.equal(normal.refreshes,0);
+const normal=harness();await settle();assert.equal(normal.requests,1);assert.equal(normal.refreshes,1);
 normal.sockets[0].onopen();await settle();assert.equal(normal.refreshes,1);assert.equal(normal.timers.size,0);
 normal.sockets[0].onmessage({data:JSON.stringify({type:'staff_event'})});assert.equal(normal.refreshes,1);
 normal.sockets[0].onmessage({data:JSON.stringify({type:'customer_move_updated'})});await settle();assert.equal(normal.refreshes,2);

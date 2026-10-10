@@ -16,6 +16,7 @@ export function useCustomerUpdates(base: string, key: string, session: string, r
     let pending = false;
     const controller = new AbortController();
     let initialized = false;
+    let connectedOnce = false;
     let connectionTimer: ReturnType<typeof setTimeout> | undefined;
     const valid = () => !stopped && customerSessionActive(session);
     const stop = () => {
@@ -58,7 +59,8 @@ export function useCustomerUpdates(base: string, key: string, session: string, r
           if (!valid()) return;
           failures = 0; setUnavailable(false);
           // Close the gap between the initial load and subscription (also on reconnect).
-          void update();
+          if (connectedOnce || !initialized) void update();
+          connectedOnce = true;
         };
         socket.onmessage = ({data}) => {
           if (!valid()) return;
@@ -69,6 +71,7 @@ export function useCustomerUpdates(base: string, key: string, session: string, r
       } catch { if (valid()) retry(); }
     };
     setUnavailable(false);
+    fallback(); // Load the page without waiting for the realtime connection.
     if (!window.__WS_URL__) { setUnavailable(true); fallback(); }
     else void connect();
     return () => { stop(); window.removeEventListener(CUSTOMER_SESSION_EXPIRED, expired); };

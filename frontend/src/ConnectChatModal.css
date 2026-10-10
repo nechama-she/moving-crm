@@ -36,7 +36,10 @@
 .crm-chat-connections { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 8px 0; }
 .crm-chat-connection { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 10px; border: 1px solid #d8dde6; border-radius: 6px; background: #f8fafc; font-size: 12px; }
 .crm-chat-connection-label { max-width: 220px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.crm-chat-connections button { min-height: 36px; }
+.crm-chat-connections button { min-height: 36px; padding: 7px 14px; border: 1px solid #d8dde6; border-radius: 4px; background: #fff; color: #0070d2; font: inherit; font-size: 13px; cursor: pointer; }
+.crm-chat-connections button:hover:not(:disabled) { background: #f4f6f9; border-color: #0070d2; }
+.crm-chat-connections button:focus-visible { outline: 2px solid #0070d2; outline-offset: 2px; }
+.crm-chat-connections button:disabled { opacity: .5; cursor: default; }
 @media (max-width: 640px) {
  .crm-chat-picker { width: calc(100vw - 16px); height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); border-radius: 8px; }
  .crm-chat-picker-header { padding: 14px 16px; gap: 8px; }

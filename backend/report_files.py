@@ -1,12 +1,13 @@
 """Editable report file set; historical snapshots retain their original files."""
 from datetime import datetime
 from fastapi import HTTPException
+from sqlalchemy.orm import defer
 from models import LeadAttachment
 
 
 def active_report_files(access, db):
     """Return the one active media collection shared by staff and customer pages."""
-    return db.query(LeadAttachment).filter(
+    return db.query(LeadAttachment).options(defer(LeadAttachment.file_blob)).filter(
         LeadAttachment.lead_id == access.lead_id,
         LeadAttachment.liveswitch_panel_visible.is_(True),
         LeadAttachment.report_deleted_at.is_(None),
@@ -14,7 +15,7 @@ def active_report_files(access, db):
 
 
 def move_files(access, db, all_lead=False, include_removed=False):
-    return db.query(LeadAttachment).filter(
+    return db.query(LeadAttachment).options(defer(LeadAttachment.file_blob)).filter(
         LeadAttachment.lead_id == access.lead_id,
         True if all_lead else ((LeadAttachment.job_id == access.job_id) | LeadAttachment.job_id.is_(None)),
         True if include_removed else LeadAttachment.report_deleted_at.is_(None),

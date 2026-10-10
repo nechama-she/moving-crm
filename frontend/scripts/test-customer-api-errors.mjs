@@ -9,7 +9,7 @@ function visit(node){if(ts.isFunctionDeclaration(node)&&node.name?.text==='call'
 visit(tree);
 assert.ok(declaration);
 let response;
-const context=vm.createContext({base:'/api/public-moves/test',headers:{},session:'',fetch:async()=>response});
+const context=vm.createContext({base:'/api/public-moves/test',headers:{},session:'',fetch:async()=>response,AbortController,window:{setTimeout,clearTimeout}});
 vm.runInContext(ts.transpileModule(declaration.getText(tree),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context);
 response={ok:false,status:500,json:async()=>{throw new SyntaxError('Unexpected token I');}};
 await assert.rejects(context.call('/packing',{}),/server could not finish saving/);

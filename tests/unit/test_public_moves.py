@@ -51,6 +51,111 @@ def portal(monkeypatch):
     engine.dispose()
 
 
+def test_file_listing_does_not_load_attachment_bytes(portal):
+    from sqlalchemy import inspect
+    from report_files import active_report_files, file_list
+    mod, db, lead, access = portal
+    row = models.LeadAttachment(id='large-photo', lead_id=lead.id,
+        file_name='photo.jpg', content_type='image/jpeg', file_size=1000000,
+        file_blob=b'x' * 1000000, liveswitch_panel_visible=True)
+    db.add(row)
+    db.commit()
+    db.expunge(row)
+    files = active_report_files(access, db)
+    assert 'file_blob' in inspect(files[0]).unloaded
+    assert file_list(files)[0]['size'] == 1000000
+    assert 'file_blob' in inspect(files[0]).unloaded
+
+
+def test_photo_fetch_releases_transaction_and_preserves_concurrent_edits(portal, monkeypatch):
+    mod, db, lead, access = portal
+    lead_id = lead.id
+    original = {'last_spark_status': 'completed', 'last_spark_id': 'report'}
+    db.add(models.LeadLiveSwitch(lead_id=lead_id, details=json.dumps(original)))
+    db.commit()
+    def fetch_images(details, names):
+        assert not db.in_transaction()
+        latest = db.get(models.LeadLiveSwitch, lead_id)
+        latest.details = json.dumps({**original, 'customer_answer': 'new answer'})
+        db.commit()
+        details['question_image_cache'] = {'items': {}}
+        return {'Sofa': []}
+    monkeypatch.setattr('report_question_images.question_images', fetch_images)
+    result = mod.customer_question_images(mod.QuestionImagesRequest(names=['Sofa']), access, db)
+    assert result == {'images': {'Sofa': []}}
+    assert json.loads(db.get(models.LeadLiveSwitch, lead_id).details)['customer_answer'] == 'new answer'
+
+
+@pytest.mark.parametrize('section', ['move', 'inventory', 'media', 'volume'])
+def test_sections_do_not_run_pricing_or_full_details(portal, monkeypatch, section):
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod, '_read_job_route', lambda *args: ('Origin', [], 'Destination'))
+    monkeypatch.setattr(mod, '_move_details', MagicMock(side_effect=AssertionError('Must not load the full page')))
+    monkeypatch.setattr('price_validity.refresh_expired_price', MagicMock(side_effect=AssertionError('Must not price')))
+    result = mod.move_section(section, access, db)
+    expected = {'move': 'pickup', 'inventory': 'combined_inventory', 'media': 'editable_files', 'volume': 'spark'}
+    assert expected[section] in result
+    assert 'estimate' not in result
+    if section != 'media':
+        assert 'editable_files' not in result
+
+
+def test_pricing_section_does_not_load_media_or_inventory_response(portal, monkeypatch):
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod, 'active_report_files', MagicMock(side_effect=AssertionError('Must not load media')))
+    monkeypatch.setattr(mod, '_read_job_route', MagicMock(side_effect=AssertionError('Must not load route')))
+    result = mod.move_section('pricing', access, db)
+    assert result['pricing_required'] is False
+    assert result['estimate'] is None
+    assert 'combined_inventory' not in result
+    assert 'files' not in result
+    assert 'pickup' not in result
+
+
+def test_no_list_skips_pricing_even_with_saved_price_and_volume(portal, monkeypatch):
+    mod, db, lead, access = portal
+    lead.volume = 900
+    job = db.get(models.LeadJob, access.job_id)
+    job.price = 5000
+    job.price_refresh_error = 'Expired price'
+    db.commit()
+    monkeypatch.setattr(mod, '_read_job_route', lambda *args: ('Origin', [], 'Destination'))
+    refresh = MagicMock(side_effect=AssertionError('No list, no repricing'))
+    monkeypatch.setattr('price_validity.refresh_expired_price', refresh)
+    result = mod.details(access, db)
+    assert result['pricing_required'] is False
+    assert result['estimate'] is None
+    assert result['pricing_error'] == ''
+    refresh.assert_not_called()
+    assert mod._has_inventory_list({'spark_inventory_snapshot': [{'name': 'Sofa'}]})
+    assert not mod._has_inventory_list({'spark_inventory_snapshot': [{'name': 'Sofa'}], 'inventory_draft': {'rows': []}})
+
+
+def test_summary_opens_without_pricing_or_price_refresh(portal, monkeypatch):
+    mod, db, lead, access = portal
+    company = models.Company(id='summary-company', name='Moving team')
+    db.add(company)
+    lead.company_id = company.id
+    db.commit()
+    monkeypatch.setattr(mod, '_read_job_route', lambda *args: ('Origin', [], 'Destination'))
+    pricing = MagicMock(side_effect=AssertionError('Summary must not calculate pricing'))
+    monkeypatch.setattr(mod, '_customer_pricing_options', pricing)
+    refresh = MagicMock(side_effect=AssertionError('Summary must not refresh a price'))
+    monkeypatch.setattr('price_validity.refresh_expired_price', refresh)
+    result = mod.move_summary(access, db)
+    assert result['name'] == 'Jane Smith'
+    assert result['pickup'] == 'Origin'
+    assert result['company_details']['name'] == 'Moving team'
+    assert result['pricing_required'] is False
+    job = db.get(models.LeadJob, access.job_id)
+    job.price_refresh_error = 'Could not refresh the expired price.'
+    db.commit()
+    empty = mod._move_details(access, db)
+    assert empty['pricing_error'] == ''
+    pricing.assert_not_called()
+    refresh.assert_not_called()
+
+
 def test_dispatch_company_does_not_replace_customer_company(portal):
     mod, db, lead, access = portal
     contract = models.Company(id='contract', name='Gorilla Haulers', phone='+12025550111')

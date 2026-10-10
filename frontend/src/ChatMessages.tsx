@@ -273,6 +273,12 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
   }
 
   // Count per platform for badge
+  const messengerInboxLinks = [...new Set([
+    inboxUrl,
+    ...chatLinks.filter(link => link.channel === "messenger")
+      .map(link => `https://www.facebook.com/latest/${encodeURIComponent(link.client_identifier)}`),
+  ].filter(Boolean))];
+
   const counts: Record<string, number> = {};
   for (const m of allMessages) {
     const p = m.platform?.toLowerCase() || "";
@@ -442,11 +448,11 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
       )}
 
       {/* External link bar — sticky above messages */}
-      {activeTab === "messenger" && inboxUrl && (
-        <div style={{ padding: "8px 12px", background: "#e3f2fd", border: "1px solid #e0e0e0", borderTop: "none", fontSize: 13 }}>
-          <a href={inboxUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#1976d2", fontWeight: 600 }}>
-            Open in Facebook Inbox →
-          </a>
+      {activeTab === "messenger" && messengerInboxLinks.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 16, padding: "8px 12px", background: "#e3f2fd", border: "1px solid #e0e0e0", borderTop: "none", fontSize: 13 }}>
+          {messengerInboxLinks.map((url, index) => <a key={url} href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#1976d2", fontWeight: 600 }}>
+            Open in Facebook Inbox{messengerInboxLinks.length > 1 ? ` (${index + 1})` : ""} →
+          </a>)}
         </div>
       )}
 

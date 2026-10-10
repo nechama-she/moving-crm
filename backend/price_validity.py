@@ -17,12 +17,12 @@ def utc_naive(value):
 
 def refresh_expired_price(lead, job, db, now=None):
     now = now or datetime.utcnow()
-    if job.price is None or price_is_locked(lead, job):
+    if job.price is None or (job.price <= 0 and not job.price_calculated_at) or price_is_locked(lead, job):
         return False
     # Serialize concurrent page opens and recheck the saved calculation time.
     db.refresh(lead, with_for_update=True)
     db.refresh(job, with_for_update=True)
-    if job.price is None or price_is_locked(lead, job):
+    if job.price is None or (job.price <= 0 and not job.price_calculated_at) or price_is_locked(lead, job):
         return False
     calculated = job.price_calculated_at
     if calculated is None:
