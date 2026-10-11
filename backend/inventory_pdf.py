@@ -66,7 +66,7 @@ def inventory_photos(rooms, details):
             for key, urls in matches.items()}
 
 
-def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, client=None):
+def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, client=None, box_total=None):
     output = BytesIO()
     from company_colors import resolve_company_color
     brand = colors.HexColor(resolve_company_color((company or {}).get('name'), (company or {}).get('color')))
@@ -141,8 +141,9 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
 
     count = sum(row['amount'] for room in rooms for row in room['items'])
     pieces = sum(row['amount'] * pieces_per_item(row['name']) for room in rooms for row in room['items'])
+    boxes_summary = f' | {box_total} boxes' if box_total is not None else ''
     story += [Paragraph('Your Inventory', styles['Title']),
-             p(f'{len(rooms)} rooms | {count} items | {pieces} pieces | {cuft:,.2f} cu ft going | {weight:,.2f} lb'),
+             p(f'{len(rooms)} rooms | {count} items | {pieces} pieces{boxes_summary} | {cuft:,.2f} cu ft going | {weight:,.2f} lb'),
              Spacer(1, 12)]
     for room in rooms:
         story.append(Paragraph(escape(room['name']), styles['Heading2']))

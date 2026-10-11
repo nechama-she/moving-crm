@@ -819,8 +819,12 @@ def get_customer_inventory_catalog(access: PublicMoveAccess = Depends(verified),
     return catalog(db, access)
 
 
+class InventoryPdfInput(ManualInventoryInput):
+    box_total: int | None = Field(default=None, ge=0, strict=True)
+
+
 @router.post('/api/public-moves/{access_id}/inventory.pdf')
-def download_inventory(body: ManualInventoryInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def download_inventory(body: InventoryPdfInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from manual_inventory import build_inventory
     from inventory_pdf import build_inventory_pdf, inventory_photos
     rooms, _, cuft, weight = build_inventory(body, db, allow_empty=True)
@@ -839,7 +843,7 @@ def download_inventory(body: ManualInventoryInput, access: PublicMoveAccess = De
     client_name = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', '', lead.full_name or '').strip().rstrip('.')
     company_name = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', '', company_details.get('name') or '').strip().rstrip('.')
     filename = ' - '.join(part for part in [company_name, 'Inventory', client_name] if part) + '.pdf'
-    return Response(build_inventory_pdf(rooms, cuft, weight, photos, company=company_details, client=client_details), media_type='application/pdf', headers={
+    return Response(build_inventory_pdf(rooms, cuft, weight, photos, company=company_details, client=client_details, box_total=getattr(body, 'box_total', None)), media_type='application/pdf', headers={
         'Content-Disposition': f"attachment; filename=\"Inventory.pdf\"; filename*=UTF-8''{quote(filename, safe='')}",
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
