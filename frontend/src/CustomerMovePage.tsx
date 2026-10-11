@@ -1218,7 +1218,9 @@ export default function CustomerMovePage() {
               const url = URL.createObjectURL(await response.blob());
               const anchor = document.createElement('a');
               const clientName = (data.name || '').replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '').trim().replace(/\.+$/, '');
-              anchor.href = url; anchor.download = clientName ? `inventory - ${clientName}.pdf` : 'inventory.pdf';
+              const companyName = (data.company_details?.name || data.company || '').replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '').trim().replace(/\.+$/, '');
+              const serverFilename = response.headers.get('Content-Disposition')?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+              anchor.href = url; anchor.download = serverFilename ? decodeURIComponent(serverFilename) : [companyName, 'Inventory', clientName].filter(Boolean).join(' - ') + '.pdf';
               document.body.appendChild(anchor); anchor.click(); anchor.remove();
               window.setTimeout(() => URL.revokeObjectURL(url), 60000);
             }} submitActions={async (requestId, edits, revision, reportId) => {

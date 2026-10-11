@@ -123,7 +123,7 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
         if company.get('dot_number'):
             company_block.append(Paragraph(escape(f"USDOT: {company['dot_number']}"), company_details_style))
         customer_block = [p(f'{label}: {client.get(key) or ""}') for label, key in [
-            ('Customer', 'name'), ('Phone number', 'phone'), ('Email', 'email')]]
+            ('Customer', 'name'), ('Phone Number', 'phone'), ('Email', 'email')]]
         if logo_block:
             header = Table([[logo_block, company_block], [customer_block, '']], colWidths=[166, 346])
         else:
@@ -141,12 +141,12 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
 
     count = sum(row['amount'] for room in rooms for row in room['items'])
     pieces = sum(row['amount'] * pieces_per_item(row['name']) for room in rooms for row in room['items'])
-    story += [Paragraph('Your inventory', styles['Title']),
+    story += [Paragraph('Your Inventory', styles['Title']),
              p(f'{len(rooms)} rooms | {count} items | {pieces} pieces | {cuft:,.2f} cu ft going | {weight:,.2f} lb'),
              Spacer(1, 12)]
     for room in rooms:
         story.append(Paragraph(escape(room['name']), styles['Heading2']))
-        body = [[p(value) for value in ['Photo', 'Item name', 'Unit volume\n(cu ft)', 'Total volume\n(cu ft)', 'Qty', 'Going']]]
+        body = [[p(value) for value in ['Photo', 'Item Name', 'Unit Volume\n(cu ft)', 'Total Volume\n(cu ft)', 'Qty', 'Going']]]
         for row in room['items']:
             name = row['name']
             if re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b', name, re.I) and not re.search(r'\((CP|PBO)\)\s*$', name, re.I):
@@ -180,6 +180,6 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
         canvas.drawRightString(562, 22, f'Page {doc.page}')
 
     SimpleDocTemplate(output, pagesize=letter, rightMargin=50, leftMargin=50,
-                      topMargin=36, bottomMargin=36, title='Your inventory').build(
+                      topMargin=36, bottomMargin=36, title='Your Inventory').build(
                           story, onFirstPage=footer, onLaterPages=footer)
     return output.getvalue()

@@ -837,9 +837,10 @@ def download_inventory(body: ManualInventoryInput, access: PublicMoveAccess = De
     except Exception as exc:
         raise HTTPException(502, 'Could not load inventory pictures. Please try downloading again.') from exc
     client_name = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', '', lead.full_name or '').strip().rstrip('.')
-    filename = f'inventory - {client_name}.pdf' if client_name else 'inventory.pdf'
+    company_name = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', '', company_details.get('name') or '').strip().rstrip('.')
+    filename = ' - '.join(part for part in [company_name, 'Inventory', client_name] if part) + '.pdf'
     return Response(build_inventory_pdf(rooms, cuft, weight, photos, company=company_details, client=client_details), media_type='application/pdf', headers={
-        'Content-Disposition': f"attachment; filename=\"inventory.pdf\"; filename*=UTF-8''{quote(filename, safe='')}",
+        'Content-Disposition': f"attachment; filename=\"Inventory.pdf\"; filename*=UTF-8''{quote(filename, safe='')}",
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 

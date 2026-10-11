@@ -200,7 +200,7 @@ def test_inventory_pdf_includes_company_and_client(portal, monkeypatch, company_
     with pymupdf.open(stream=response.body, filetype='pdf') as pdf:
         text = ''.join(page.get_text() for page in pdf)
         for value in [company.name, '123 Main Street', 'Rockville, MD 20850', company.phone,
-                      lead.full_name, lead.phone, lead.email, 'Your inventory']:
+                      lead.full_name, lead.phone, lead.email, 'Your Inventory']:
             assert value in text
         assert pdf[0].get_images()
 
