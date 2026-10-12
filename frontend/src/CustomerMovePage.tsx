@@ -1113,6 +1113,13 @@ export default function CustomerMovePage() {
                   <strong>{data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'?'Your report is ready. Pricing is pending.':'Start by adding your inventory.'}</strong>
                   <p className="cm-estimate-desc">{data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
                   </>}
+                  {(data.estimate || data.spark?.status === 'completed') && <button
+                    type="button"
+                    className="cm-secondary-btn cm-rerate-btn"
+                    aria-busy={calculatingPrice}
+                    disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running' || data.spark?.status === 'running' || data.spark?.status === 'queued'}
+                    onClick={() => void recalculatePrice()}
+                  >{calculatingPrice ? 'Re-rating...' : 'Re-rate'}</button>}
                 </div>
                 {data.spark && (
                   <div className="cm-spark-card cm-spark-estimate-card">
@@ -1121,9 +1128,7 @@ export default function CustomerMovePage() {
                         <span className={`cm-spark-dot ${data.spark.status === 'completed' ? 'dot-complete' : data.spark.status === 'failed' ? 'dot-failed' : 'dot-pulse'}`} />
                         {data.spark.status === 'completed' ? (data.spark.source === 'manual' ? 'Inventory list ready' : 'Report ready') : data.spark.status === 'running' ? 'Analyzing media...' : data.spark.status === 'failed' ? 'Report failed' : 'Queued'}
                       </span>
-                      {data.spark.status === 'completed' && <button type="button" className="cm-calculate-icon" title={calculatingPrice ? 'Calculating price...' : 'Calculate price'} aria-label={calculatingPrice ? 'Calculating price...' : 'Calculate price'} aria-busy={calculatingPrice} disabled={calculatingPrice || answersSaving || busy || reportState === 'running'} onClick={() => void recalculatePrice()}>
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M8 5h8v4H8zM8 13h1M12 13h1M16 13h.01M8 17h1M12 17h1M16 17h.01"/></svg>
-                      </button>}
+
                       {!data.estimate && data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{Math.ceil(data.spark.cuft)} cu ft</strong> : null}
                     </div>
                     {data.report_history?.find(report => report.current) && <ReportLinks report={data.report_history.find(report => report.current)!} onEditInventory={()=>setShowInventoryList(true)} />}
