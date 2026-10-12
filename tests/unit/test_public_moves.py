@@ -131,6 +131,27 @@ def test_no_list_skips_pricing_even_with_saved_price_and_volume(portal, monkeypa
     assert not mod._has_inventory_list({'spark_inventory_snapshot': [{'name': 'Sofa'}], 'inventory_draft': {'rows': []}})
 
 
+def test_completed_media_inventory_exposes_saved_price_with_empty_draft(portal):
+    mod, db, lead, access = portal
+    lead.volume = 129
+    job = db.get(models.LeadJob, access.job_id)
+    job.price = 1871.4
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({
+        'last_spark_id': 'media-report', 'last_spark_status': 'completed',
+        'spark_extracted_id': 'media-report', 'spark_pricing_ready': True,
+        'report_source': 'liveswitch', 'spark_extracted_cuft': 129,
+        'spark_inventory_snapshot': [{'name': 'Sofa', 'cuft': 129}],
+        'inventory_draft': {'rows': []},
+    })))
+    db.commit()
+    inventory = mod.move_section('inventory', access, db)
+    assert inventory['pricing_required'] is True
+    pricing = mod.move_section('pricing', access, db)
+    assert pricing['pricing_required'] is True
+    assert float(pricing['estimate']['price']) == 1871.4
+    assert float(pricing['estimate']['cuft']) == 129
+
+
 def test_summary_opens_without_pricing_or_price_refresh(portal, monkeypatch):
     mod, db, lead, access = portal
     company = models.Company(id='summary-company', name='Moving team')

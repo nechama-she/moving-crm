@@ -555,6 +555,10 @@ def _customer_charge_description(name: str, desc: str) -> str:
 
 
 def _has_inventory_list(state):
+    # A completed report is the active inventory. Its media-derived rows must
+    # not be hidden by an empty manual draft used as input to that report.
+    if state.get('last_spark_status') == 'completed' and state.get('spark_inventory_snapshot'):
+        return True
     draft = state.get('inventory_draft')
     rows = draft.get('rows', []) if isinstance(draft, dict) else state.get('spark_inventory_snapshot', [])
     return bool(rows)
