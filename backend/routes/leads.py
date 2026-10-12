@@ -1510,12 +1510,14 @@ def get_leads(
             query = query.filter(Lead.assigned_to == assigned_to)
 
     # Search
+    from phone_search import phone_search_condition
     if search.strip():
         q = f"%{search.strip().lower()}%"
         query = query.filter(
             Lead.full_name.ilike(q)
             | Lead.leadgen_id.ilike(q)
             | Lead.phone.ilike(q)
+            | phone_search_condition(Lead.phone, search)
             | Lead.email.ilike(q)
         )
 

@@ -78,10 +78,11 @@ def candidates(
     query = db.query(Lead).filter(Lead.company_id.in_(company_ids))
     if rep_ids:
         query = query.filter(Lead.assigned_to.in_(rep_ids))
+    from phone_search import phone_search_condition
     needle = search.strip()
     if needle:
         pattern = f"%{needle}%"
-        query = query.filter(or_(Lead.full_name.ilike(pattern), Lead.phone.ilike(pattern), Lead.email.ilike(pattern), Lead.smartmoving_id.ilike(pattern)))
+        query = query.filter(or_(Lead.full_name.ilike(pattern), Lead.phone.ilike(pattern), phone_search_condition(Lead.phone, needle), Lead.email.ilike(pattern), Lead.smartmoving_id.ilike(pattern)))
     leads = query.order_by(Lead.created_at.desc()).limit(limit).all()
     return {
         "scope_label": scope_label,
