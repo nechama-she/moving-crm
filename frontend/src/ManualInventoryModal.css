@@ -35,3 +35,41 @@
 .mi-service-choice{max-width:100%;flex-shrink:1}.mi-service-choice .mi-packing-trigger{text-align:left;overflow-wrap:anywhere}.mi-service-choice .mi-packing-trigger>svg{flex-shrink:0}.mi-service-choice .mi-packing-menu{width:max-content;min-width:175px;max-width:min(280px,75vw)}.mi-service-choice .mi-packing-menu button>span:first-child{width:auto;font-size:12px;color:inherit;overflow-wrap:anywhere}
 .mi-service-choice .mi-packing-menu{min-width:280px;max-width:min(380px,80vw)}.mi-service-count-heading{display:block;padding:6px 8px;color:var(--cm-text-muted);font-size:11px}.mi-service-count-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px}.mi-service-count-row>span:first-child{min-width:0;overflow-wrap:anywhere}.mi-service-counter{display:flex;align-items:center;gap:4px;flex-shrink:0}.mi-service-choice .mi-service-counter button{width:26px;height:28px;justify-content:center;padding:0}.mi-service-choice .mi-service-counter input{width:44px;min-width:0;padding:4px;text-align:center;border:1px solid var(--cm-border-soft);border-radius:4px}.mi-service-counter button:disabled{opacity:.4;cursor:default}
 .mi-item-name-label{display:flex;align-items:center;gap:7px;min-width:0}.mi-item-name-label>strong{overflow-wrap:anywhere}.mi-name-with-services{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:7px}.mi-item-services{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}.mi-service-choice .mi-packing-trigger{max-width:100%;align-items:flex-start}.mi-service-summary{display:flex;flex-direction:column;gap:3px;min-width:0;text-align:left}.mi-service-summary>span{white-space:normal;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.mi-service-choice .mi-packing-trigger>svg{margin-top:3px}
+
+.mi-header-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.mi-header-actions>.slds-button{display:inline-flex;align-items:center;justify-content:center;flex:0 0 44px;width:44px;height:44px;padding:0}
+.mi-header-actions svg{flex-shrink:0}
+.mi-modal>header,.mi-modal>footer,.mi-totals{flex-shrink:0}
+.mi-modal>.mi-body{min-height:0;overscroll-behavior:contain}
+.mi-modal header h2{font-size:22px;margin:5px 0 0}
+.mi-mobile-label{display:none}
+.mi-going-control{display:flex;align-items:center}
+@media(max-width:700px){
+  .mi-modal{max-height:calc(100dvh - 32px)}
+  .mi-modal>header{flex-wrap:wrap;gap:12px;padding:16px}
+  .mi-modal header h2{font-size:20px}
+  .mi-header-actions{margin-left:auto}
+  .mi-totals{padding:12px 16px;gap:8px 12px}
+  .mi-modal>.mi-body{padding:16px}
+  .mi-inventory-row{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:start;padding:16px 0;border-bottom:1px solid var(--cm-border-soft);font-size:13px}
+  .mi-inventory-row.mi-inventory-headings{display:none}
+  .mi-inventory-row>.mi-inventory-photo{grid-column:1;grid-row:1}
+  .mi-inventory-photo .cm-reference-images a,.mi-inventory-photo .cm-reference-images img{width:44px;height:44px}
+  .mi-inventory-row>:nth-child(2){grid-column:2 / 4;grid-row:1;min-width:0}
+  .mi-inventory-row>.mi-inventory-name{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+  .mi-item-name-label{flex-wrap:wrap}
+  .mi-inventory-row>:nth-child(3){grid-column:1;grid-row:2}
+  .mi-inventory-row>:nth-child(4){grid-column:2;grid-row:2}
+  .mi-inventory-row>:nth-child(5){grid-column:3;grid-row:2}
+  .mi-inventory-row>span,.mi-inventory-row>label{min-width:0;overflow-wrap:anywhere}
+  .mi-mobile-label{display:block;font-size:11px;line-height:1.4;color:var(--cm-text-muted);margin-bottom:6px}
+  .mi-inventory-row input{box-sizing:border-box;min-height:44px}
+  .mi-inventory-row>.mi-going-control{gap:8px;min-height:44px;align-items:center}
+  .mi-going-control .mi-mobile-label{margin:0}
+  .mi-inventory-row input.mi-going-checkbox{width:22px;height:22px;flex-shrink:0}
+  .mi-inventory-row>button,.mi-inventory-row>button:nth-last-child(2){width:44px;height:44px;justify-self:end}
+  .mi-service-choice .mi-packing-menu{min-width:0;width:100%;max-width:none;position:static;display:block;box-sizing:border-box;margin-top:6px}
+  .mi-item-services,.mi-service-choice{width:100%}
+  .mi-service-count-row{flex-wrap:wrap;gap:6px}
+  .mi-modal>footer{padding:12px 16px;gap:10px}
+}
