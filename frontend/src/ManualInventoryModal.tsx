@@ -89,16 +89,16 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
     <div className="mi-inventory-photo">{photo}</div>
     {editing ? <>
       <input autoFocus aria-label="Item name" maxLength={200} value={draft.name} disabled={busy} onChange={e => setDraft({ ...draft, name: e.target.value })} />
-      <label className="mi-inventory-volume"><span className="mi-mobile-label">Each (cu ft)</span><input aria-label="Cubic feet per item" type="number" min="0.0001" max="10000" step="any" value={draft.cuft} disabled={busy} onChange={e => setDraft({ ...draft, cuft: e.target.value })} /></label>
-      <span aria-label="Total volume in cubic feet"><span className="mi-mobile-label">Total (cu ft)</span>{totalVolumeLabel}</span>
-      <label><span className="mi-mobile-label">Qty</span><input aria-label="Quantity" type="number" min="1" max="999" step="1" value={draft.quantity} disabled={busy} onChange={e => setDraft({ ...draft, quantity: e.target.value })} /></label>
+      <label className="mi-inventory-volume"><span className="mi-mobile-label">Unit volume</span><input aria-label="Cubic feet per item" type="number" min="0.0001" max="10000" step="any" value={draft.cuft} disabled={busy} onChange={e => setDraft({ ...draft, cuft: e.target.value })} /><span className="mi-mobile-unit"> cu ft</span></label>
+      <span aria-label="Total volume in cubic feet"><span className="mi-mobile-label">Total volume</span>{totalVolumeLabel}<span className="mi-mobile-unit"> cu ft</span></span>
+      <label><span className="mi-mobile-label">Quantity</span><input aria-label="Quantity" type="number" min="1" max="999" step="1" value={draft.quantity} disabled={busy} onChange={e => setDraft({ ...draft, quantity: e.target.value })} /></label>
     </> : <>
       <div className={`mi-inventory-name${selectors.length ? ' mi-name-with-services' : ''}`}><span className="mi-item-name-label"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name} disabled={busy || packingLocked || !going} onChange={onMoverPackChange}/>}</span>
         {!!selectors.length && <span className="mi-item-services">{selectors.map(selector => <ServiceChoice key={selector.id} selector={selector} name={name} value={selections[selector.id]} quantity={quantity} disabled={serviceBusy || !going} open={openService === `${serviceRowId}:${selector.id}`} setOpen={open => setOpenService(open ? `${serviceRowId}:${selector.id}` : '')} onChange={value => onSelectionChange?.(selector.id, value)}/>)}</span>}
       </div>
-      <span><span className="mi-mobile-label">Each (cu ft)</span>{cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
-      <span aria-label="Total volume in cubic feet"><span className="mi-mobile-label">Total (cu ft)</span>{totalVolumeLabel}</span>
-      <span aria-label={`Quantity: ${quantity}`}><span className="mi-mobile-label">Qty</span>{quantity}</span>
+      <span><span className="mi-mobile-label">Unit volume</span>{cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })}<span className="mi-mobile-unit"> cu ft</span></span>
+      <span aria-label="Total volume in cubic feet"><span className="mi-mobile-label">Total volume</span>{totalVolumeLabel}<span className="mi-mobile-unit"> cu ft</span></span>
+      <span aria-label={`Quantity: ${quantity}`}><span className="mi-mobile-label">Quantity</span>{quantity}</span>
     </>}
     <label className="mi-going-control"><span className="mi-mobile-label">Going</span><input className="mi-going-checkbox" type="checkbox" aria-label={`Going: ${name}`} checked={going} disabled={busy} onChange={event => onGoingChange(event.target.checked)} /></label>
     <button type="button" className="slds-button" disabled={busy || (editing && !valid)} aria-label={editing ? `Save ${name}` : `Edit ${name}`} title={editing ? 'Save item' : 'Edit item'} onClick={() => {

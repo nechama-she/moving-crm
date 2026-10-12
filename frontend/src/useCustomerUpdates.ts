@@ -16,7 +16,6 @@ export function useCustomerUpdates(base: string, key: string, session: string, r
     let pending = false;
     const controller = new AbortController();
     let initialized = false;
-    let connectedOnce = false;
     let connectionTimer: ReturnType<typeof setTimeout> | undefined;
     const valid = () => !stopped && customerSessionActive(session);
     const stop = () => {
@@ -39,7 +38,8 @@ export function useCustomerUpdates(base: string, key: string, session: string, r
       if (!valid()) return;
       setUnavailable(true);
       fallback();
-      // Bounded reconnects after a broken connection, not repeated data requests.
+      // Bound retries for this page session, including connections that open
+      // successfully and are later closed by the server's idle timeout.
       if (++failures <= 3) timer = setTimeout(() => void connect(), 1000 * 2 ** failures);
     };
     const connect = async () => {
@@ -57,10 +57,9 @@ export function useCustomerUpdates(base: string, key: string, session: string, r
         socket.onopen = () => {
           clearTimeout(connectionTimer);
           if (!valid()) return;
-          failures = 0; setUnavailable(false);
-          // Close the gap between the initial load and subscription (also on reconnect).
-          if (connectedOnce || !initialized) void update();
-          connectedOnce = true;
+          setUnavailable(false);
+          // Opening a transport is not a data change. Only a pushed update
+          // should reload sections after the initial page load.
         };
         socket.onmessage = ({data}) => {
           if (!valid()) return;

@@ -31,4 +31,17 @@ const fallback=harness({ws:false});await settle();assert.equal(fallback.refreshe
 const broken=harness();await settle();broken.sockets[0].onopen();await settle();broken.sockets[0].close();
 for(let i=0;i<3;i++){const [id,timer]=[...broken.timers][0];broken.timers.delete(id);timer.fn();await settle();broken.sockets.at(-1).close();}
 assert.equal(broken.requests,4);assert.equal(broken.timers.size,0);broken.cleanup();
+// Idle disconnects may happen after successful opens. They must neither reset
+// the retry budget nor reload every customer section on each reconnection.
+const idle=harness();await settle();idle.sockets[0].onopen();await settle();
+for(let i=0;i<3;i++){
+  idle.sockets.at(-1).close();
+  const [id,timer]=[...idle.timers][0];idle.timers.delete(id);timer.fn();await settle();
+  idle.sockets.at(-1).onopen();await settle();
+  assert.equal(idle.refreshes,1);
+}
+idle.sockets.at(-1).onmessage({data:JSON.stringify({type:'customer_move_updated'})});await settle();
+assert.equal(idle.refreshes,2);
+idle.sockets.at(-1).close();
+assert.equal(idle.requests,4);assert.equal(idle.timers.size,0);idle.cleanup();
 console.log('Customer live updates: one initial load, pushed updates, expiry shutdown, 401 shutdown, fallback and bounded reconnects passed.');

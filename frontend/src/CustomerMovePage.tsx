@@ -75,7 +75,7 @@ type Details = {
   spark?: { id: string; status: string; source?: string; shareUrl?: string; cuft?: number; update_error?: string } | null;
   walkthrough: { status: string; availability: string; scheduled_at: string | null; timezone: string } | null;
   participant_url: string;
-  files: { id: string; name: string; size: number }[];
+  files: { id: string; name: string; size: number; content_type?: string }[];
 };
 const emptyDetails = (): Details => ({name:'', phone:'', email:'', move_date:'', pickup:'', delivery:'', company:'', stops:[], estimate:null, packing_package:null, packing_items:[], packing_saved:false, walkthrough:null, participant_url:'', files:[]});
 const pageSections = ['move', 'inventory', 'media', 'volume', 'pricing'] as const;
@@ -1024,7 +1024,9 @@ export default function CustomerMovePage() {
                         try {
                           await call('/generate-inventory-report', {});
                           setReportState('done');
-                          setReportNotice("Your report combines your files and saved list into one inventory and estimate.");
+                          setReportNotice((data.editable_files || data.files).some(file => file.content_type?.startsWith('video/'))
+                            ? "Your video inventory report usually takes 5?15 minutes. You can leave this page. We'll text you a link when your inventory is ready."
+                            : "Your report combines your files and saved list into one inventory and estimate.");
                           void refreshDetails();
                         } catch (err) {
                           setReportState('idle');
@@ -1038,6 +1040,7 @@ export default function CustomerMovePage() {
                       {startingReport ? 'Starting report...' : data.spark?.status === 'queued' || data.spark?.status === 'running' ? 'Report running...' : data.spark ? 'Update report & estimate' : 'Generate report & get estimate'}
                     </button>
                     {reportNotice && <p ref={reportMessage} role="status" className="cm-spark-notice">{reportNotice}</p>}
+                    {!reportNotice && (data.spark?.status === 'queued' || data.spark?.status === 'running') && data.files.some(file => file.content_type?.startsWith('video/')) && <p role="status" className="cm-spark-notice">Your video inventory report usually takes 5?15 minutes. You can leave this page. We'll text you a link when your inventory is ready.</p>}
                   </div>
                 )}
               </section>

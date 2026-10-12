@@ -20,9 +20,9 @@ export default function MainNavigation({ role, mobile = false }: { role?: string
   const groups: Group[] = foreman ? [] : [
     ...(!dispatch ? [{ label: 'Sales', items: [
       ...(admin ? [item('Communications', '/chats'), item('Sales Work Queue', '/sales-work-queue')] : []),
-      item('Outreach', '/outreach'), item('Pricing', '/pricing'),
+      item('Outreach', '/outreach'),
     ] }] : []),
-    { label: 'Scheduling', items: [
+    { label: 'Calendars', items: [
       item('Sales Calendar', '/sales-calendar'),
       ...(admin ? [item('Meetings Calendar', '/walkthrough-requests')] : []),
       ...(admin || dispatch ? [item('Dispatch Calendar', '/dispatch')] : []),
@@ -33,15 +33,17 @@ export default function MainNavigation({ role, mobile = false }: { role?: string
     ] },
   ];
   const active = (to: string) => pathname === to || (to !== '/' && pathname.startsWith(to + '/'));
-  const link = (entry: Item) => <NavLink key={entry.to} to={entry.to} end={entry.to === '/'} onClick={() => setOpen(null)}>{entry.label}</NavLink>;
+  const settingsActive = pathname.startsWith('/settings') || ['/admin-users', '/system-users', '/sales-reps', '/dispatch-users', '/foremen', '/assign-period', '/auto-assign-tracker', '/change-password'].includes(pathname);
+  const link = (entry: Item) => <NavLink key={entry.to} to={entry.to} end={entry.to === '/'} className={entry.to === '/settings' ? (settingsActive ? 'active' : '') : undefined} onClick={() => setOpen(null)}>{entry.label}</NavLink>;
   return <div ref={root} className={`grouped-navigation ${mobile ? 'grouped-navigation-mobile' : ''}`} onKeyDown={event => {
     if (event.key === 'Escape') { root.current?.querySelector<HTMLButtonElement>('[aria-expanded="true"]')?.focus(); setOpen(null); }
   }}>
     {!dispatch && link(foreman ? item('My Jobs', '/dispatch') : item('Leads', '/'))}
     {groups.map(group => <div className="navigation-group" key={group.label}>
-      {mobile ? <h3>{group.label}</h3> : <button type="button" className={["slds-button", group.items.some(entry => active(entry.to)) ? 'active' : ''].filter(Boolean).join(" ")} aria-expanded={open === group.label} aria-controls={`navigation-${group.label}`} onClick={() => setOpen(open === group.label ? null : group.label)}>{group.label}<span aria-hidden="true">⌄</span></button>}
+      {mobile ? <h3>{group.label}</h3> : <button type="button" className={["slds-button", group.items.some(entry => active(entry.to)) ? 'active' : ''].filter(Boolean).join(" ")} aria-expanded={open === group.label} aria-controls={`navigation-${group.label}`} onClick={() => setOpen(open === group.label ? null : group.label)}>{group.label}<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg></button>}
       {(mobile || open === group.label) && <div id={mobile ? undefined : `navigation-${group.label}`} className="navigation-group-links">{group.items.map(link)}</div>}
     </div>)}
+    {!dispatch && !foreman && link(item('Pricing', '/pricing'))}
     {link(item('Settings', '/settings'))}
   </div>;
 }

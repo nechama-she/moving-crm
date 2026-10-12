@@ -1,178 +1,79 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 import LiveSwitchSettings from "./LiveSwitchSettings";
+import "./SettingsPage.css";
+
+type Setting = { label: string; to: string; description: string };
+type Group = { title: string; items: Setting[] };
+const entry = (label: string, to: string, description: string): Setting => ({ label, to, description });
 
 export default function SettingsPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
-  const isDispatch = user?.role === "dispatch";
-  const canViewPricing = isAdmin || user?.role === "sales_rep";
-  const canManageForemen = user?.role === "admin" || user?.role === "dispatch";
-
-  return (
-    <div className="user-setup-page" style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
-      <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Settings</h1>
-      <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
-        Central setup for users, assignment rules, and account preferences.
-      </p>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
-        {isAdmin ? <LiveSwitchSettings /> : null}
-        {canManageForemen ? <section style={card}>
-          <h2 style={sectionHeader}>User Management</h2>
-          <p style={desc}>{isDispatch ? "Create foremen and manage their company access." : "Create and maintain users who work in the CRM."}</p>
-          <div style={actionsRow}>
-            {isAdmin ? <Link to="/admin-users" style={primaryLink}>Manage Admin Users</Link> : null}
-            {isAdmin ? <Link to="/system-users" style={primaryLink}>Manage System Users</Link> : null}
-            {isAdmin ? <Link to="/sales-reps" style={primaryLink}>Manage Sales Reps</Link> : null}
-            {isAdmin ? <Link to="/dispatch-users" style={ghostLink}>Manage Dispatch</Link> : null}
-            {canManageForemen ? <Link to="/foremen" style={ghostLink}>Manage Foremen</Link> : null}
-          </div>
-        </section> : null}
-
-        {isAdmin ? <section style={card}>
-          <h2 style={sectionHeader}>Company Management</h2>
-          <p style={desc}>Add, edit, and delete companies with communication and SmartMoving settings.</p>
-          <div style={actionsRow}>
-            <Link to="/settings/companies" style={primaryLink}>Manage Companies</Link>
-          </div>
-        </section> : null}
-
-        {isDispatch ? <section style={card}>
-          <h2 style={sectionHeader}>View as Foreman</h2>
-          <p style={desc}>Open the CRM as a foreman assigned to one of your companies.</p>
-          <div style={actionsRow}><Link to="/settings/impersonate" style={primaryLink}>Choose a Foreman</Link></div>
-        </section> : null}
-
-        {isAdmin ? <section style={card}>
-          <h2 style={sectionHeader}>Impersonate User</h2>
-          <p style={desc}>Open the CRM as another user to verify their access without signing out.</p>
-          <div style={actionsRow}><Link to="/settings/impersonate" style={primaryLink}>Choose a User</Link></div>
-        </section> : null}
-
-        {isAdmin ? <section style={card}>
-          <h2 style={sectionHeader}>SMS Templates</h2>
-          <p style={desc}>Edit the welcome, rep-assignment, and day 2/3 followup SMS bodies per company.</p>
-          <div style={actionsRow}>
-            <Link to="/settings/templates" style={primaryLink}>Manage Templates</Link>
-          </div>
-        </section> : null}
-
-        {isAdmin ? <section style={card}>
-          <h2 style={sectionHeader}>Moving terms</h2>
-          <p style={desc}>Manage item restrictions, preparation requirements, and customer acknowledgments by company.</p>
-          <div style={actionsRow}>
-            <Link to="/settings/moving-terms" style={primaryLink}>Manage Moving Terms</Link>
-          </div>
-        </section> : null}
-
-        {isAdmin ? <section style={card}>
-          <h2 style={sectionHeader}>Inventory catalog</h2>
-          <p style={desc}>Add and edit shared inventory items, including volume and weight.</p>
-          <div style={actionsRow}>
-            <Link to="/settings/inventory-catalog" style={primaryLink}>Manage Inventory Catalog</Link>
-          </div>
-        </section> : null}
-
-        {canViewPricing ? <section style={card}>
-          <h2 style={sectionHeader}>Pricing Books</h2>
-          <p style={desc}>Review company rates, pricing exceptions, and additional services in one place.</p>
-          <div style={actionsRow}>
-            <Link to="/pricing" style={primaryLink}>Open Pricing</Link>
-          </div>
-        </section> : null}
-
-        {isAdmin ? <section style={card}>
-          <h2 style={sectionHeader}>Lead Assignment</h2>
-          <p style={desc}>Configure admin unavailability windows and which reps are available during those windows.</p>
-          <div style={actionsRow}>
-            <Link to="/assign-period" style={primaryLink}>Open Assignment Rules</Link>
-            <Link to="/auto-assign-tracker" style={ghostLink}>Open Assignment Tracker</Link>
-          </div>
-        </section> : null}
-
-        {isAdmin ? (
-          <section style={card}>
-            <h2 style={sectionHeader}>Lead Duplication</h2>
-            <p style={desc}>Review leads waiting to be duplicated and cancel pending schedules.</p>
-            <div style={actionsRow}>
-              <Link to="/settings/duplication-rules" style={primaryLink}>Manage Duplication Rules</Link>
-              <Link to="/settings/pending-duplications" style={primaryLink}>Pending Duplications</Link>
-            </div>
-          </section>
-        ) : null}
-
-        {isAdmin ? <section style={card}>
-          <h2 style={sectionHeader}>Ignored Communication Numbers</h2>
-          <p style={desc}>Manage client or destination numbers whose messages and missed calls should not enter the Sales Work Queue.</p>
-          <div style={actionsRow}><Link to="/settings/ignored-call-numbers" style={primaryLink}>Manage Ignored Numbers</Link></div>
-        </section> : null}
-
-        {isAdmin ? <section style={card}>
-          <h2 style={sectionHeader}>Access History & Audit Logs</h2>
-          <p style={desc}>Monitor all system activity, user logins, IP addresses, and requests to detect unauthorized access.</p>
-          <div style={actionsRow}><Link to="/settings/access-history" style={primaryLink}>View Access Logs</Link></div>
-        </section> : null}
-
-        <section style={card}>
-          <h2 style={sectionHeader}>Profile & Security</h2>
-          <p style={desc}>Manage password and account-level security settings.</p>
-          <div style={actionsRow}>
-            <Link to="/change-password" style={ghostLink}>Change Password</Link>
-          </div>
-        </section>
-      </div>
-
+  const admin = user?.role === "admin";
+  const dispatch = user?.role === "dispatch";
+  const [search, setSearch] = useState("");
+  const groups: Group[] = [
+    { title: "Company & pricing", items: [
+      ...(admin ? [entry("Companies", "/settings/companies", "Company profiles, communication and SmartMoving settings.")] : []),
+      ...(admin || user?.role === "sales_rep" ? [entry("Pricing books", "/pricing", "Rates, exceptions and additional services.")] : []),
+      ...(admin ? [
+        entry("Inventory catalog", "/settings/inventory-catalog", "Shared items, volume and weight."),
+        entry("Moving terms", "/settings/moving-terms", "Restrictions, preparation and customer acknowledgments."),
+      ] : []),
+    ] },
+    { title: "Team & access", items: [
+      ...(admin ? [
+        entry("Admin users", "/admin-users", "Manage administrators."),
+        entry("System users", "/system-users", "Manage system accounts."),
+        entry("Sales reps", "/sales-reps", "Manage your sales team."),
+        entry("Dispatch users", "/dispatch-users", "Manage dispatch access."),
+      ] : []),
+      ...(admin || dispatch ? [
+        entry("Foremen", "/foremen", "Manage foremen and company access."),
+        entry(dispatch ? "View as foreman" : "View as user", "/settings/impersonate", "Check another user's CRM experience."),
+      ] : []),
+      ...(admin ? [entry("Access history", "/settings/access-history", "Review logins and activity logs.")] : []),
+    ] },
+    { title: "Lead rules & assignment", items: admin ? [
+      entry("Assignment rules", "/assign-period", "Rep availability and admin unavailability windows."),
+      entry("Assignment tracker", "/auto-assign-tracker", "Review automatic lead assignments."),
+      entry("Duplication rules", "/settings/duplication-rules", "Configure lead duplication."),
+      entry("Pending duplications", "/settings/pending-duplications", "Review or cancel scheduled duplications."),
+    ] : [] },
+    { title: "Communication", items: admin ? [
+      entry("SMS templates", "/settings/templates", "Welcome, assignment and follow-up messages."),
+      entry("Ignored numbers", "/settings/ignored-call-numbers", "Exclude numbers from the sales work queue."),
+    ] : [] },
+    { title: "My account", items: [
+      entry("Change password", "/change-password", "Update your account password."),
+    ] },
+  ];
+  const query = search.trim().toLowerCase();
+  const filtered = groups.map(group => ({ ...group, items: group.items.filter(item =>
+    [group.title, item.label, item.description].join(" ").toLowerCase().includes(query)
+  ) })).filter(group => group.items.length);
+  const showIntegrations = admin && "integrations liveswitch virtual estimates video spark".includes(query);
+  return <div className="settings-hub">
+    <header className="settings-hub-header">
+      <div><h1>Settings</h1><p>Manage your business, team and account.</p></div>
+      <label className="settings-search">Find a setting
+        <input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search settings?" />
+      </label>
+    </header>
+    <div className="settings-groups">
+      {filtered.map(group => <section className="settings-group" key={group.title}>
+        <h2>{group.title}</h2>
+        {group.items.map(item => <Link to={item.to} key={item.to} className="settings-entry">
+          <span><strong>{item.label}</strong><small>{item.description}</small></span>
+          <span aria-hidden="true">?</span>
+        </Link>)}
+      </section>)}
     </div>
-  );
+    {showIntegrations && <section className="settings-integrations">
+      <h2>Integrations</h2>
+      <details><summary>LiveSwitch ? Virtual estimates</summary><LiveSwitchSettings /></details>
+    </section>}
+    {!filtered.length && !showIntegrations && <p role="status">No settings match ?{search}?. Try another search.</p>}
+  </div>;
 }
-
-const card: React.CSSProperties = {
-  border: "1px solid #dddbda",
-  borderRadius: 4,
-  background: "#fff",
-  padding: 14,
-  boxShadow: "0 1px 2px rgba(0,0,0,.06)",
-};
-
-const sectionHeader: React.CSSProperties = {
-  margin: "0 0 8px",
-  fontSize: 13,
-  fontWeight: 700,
-  textTransform: "uppercase",
-  letterSpacing: "0.05em",
-  color: "#3e3e3c",
-};
-
-const desc: React.CSSProperties = {
-  margin: "0 0 12px",
-  fontSize: 13,
-  color: "#706e6b",
-};
-
-const actionsRow: React.CSSProperties = {
-  display: "flex",
-  gap: 8,
-  flexWrap: "wrap",
-};
-
-const primaryLink: React.CSSProperties = {
-  background: "#0176d3",
-  color: "#fff",
-  borderRadius: 4,
-  padding: "8px 12px",
-  textDecoration: "none",
-  fontSize: 13,
-  fontWeight: 600,
-};
-
-const ghostLink: React.CSSProperties = {
-  border: "1px solid #0176d3",
-  color: "#0176d3",
-  borderRadius: 4,
-  padding: "7px 11px",
-  textDecoration: "none",
-  fontSize: 13,
-  fontWeight: 600,
-  background: "#fff",
-};

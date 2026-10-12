@@ -818,6 +818,9 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
         db.commit()
         from realtime import publish_customer_update
         publish_customer_update(lead_id)
+        if not use_snapshot:
+            from inventory_ready_sms import try_notify_inventory_ready
+            try_notify_inventory_ready(lead_id, details.get("last_spark_id"), db)
         return {
             "ok": True,
             "cuft": cuft,
