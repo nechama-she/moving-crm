@@ -72,7 +72,10 @@ def run(mode, engine, s3, account):
             connection.exec_driver_sql('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
             bundle = export_settings(connection)
         snapshot = {'release_id': release_id, 'source_account': account,
-                    'source_revision': os.environ['CODEBUILD_RESOLVED_SOURCE_VERSION'],
+                    # Deploy consumes BuildOutput; a resolved Git revision may
+                    # not be supplied. It is audit metadata, not release identity.
+                    'source_revision': os.environ.get('CODEBUILD_RESOLVED_SOURCE_VERSION') or None,
+                    'source_build_id': os.environ.get('CODEBUILD_BUILD_ID') or None,
                     'bundle': bundle, 'sha256': hashlib.sha256(serialize(bundle)).hexdigest()}
         body = serialize(snapshot)
         decode_snapshot(body, release_id, account)

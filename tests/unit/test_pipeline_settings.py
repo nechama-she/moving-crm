@@ -84,12 +84,17 @@ def test_preflight_does_not_connect_to_database(monkeypatch, promotion):
         pipeline.run('check', None, S3(), 'wrong-account')
 
 
-def test_dev_publish_preserves_frozen_release(monkeypatch, promotion):
+@pytest.mark.parametrize('revision', ['new-commit', None, ''])
+@pytest.mark.parametrize('already_published', [False, True])
+def test_dev_publish_with_optional_revision(monkeypatch, promotion, revision, already_published):
     from botocore.exceptions import ClientError
     _, snapshot = promotion
     monkeypatch.setenv('ENVIRONMENT', 'dev')
     monkeypatch.setenv('SETTINGS_SOURCE_ACCOUNT_ID', '123')
-    monkeypatch.setenv('CODEBUILD_RESOLVED_SOURCE_VERSION', 'new-commit')
+    monkeypatch.delenv('CODEBUILD_RESOLVED_SOURCE_VERSION', raising=False)
+    if revision is not None:
+        monkeypatch.setenv('CODEBUILD_RESOLVED_SOURCE_VERSION', revision)
+    monkeypatch.setenv('CODEBUILD_BUILD_ID', 'deploy-dev:test-build')
     monkeypatch.setattr(pipeline, 'read_release', lambda: {'enabled': True, 'release_id': 'test'})
 
     class Connection:
@@ -110,10 +115,15 @@ def test_dev_publish_preserves_frozen_release(monkeypatch, promotion):
         def put_object(self, **kwargs):
             assert kwargs['IfNoneMatch'] == '*'
             assert kwargs['ServerSideEncryption'] == 'AES256'
-            pipeline.decode_snapshot(kwargs['Body'], 'test', '123')
-            raise ClientError({'Error': {'Code': 'PreconditionFailed'}}, 'PutObject')
+            published = pipeline.decode_snapshot(kwargs['Body'], 'test', '123')
+            assert published['source_revision'] == (revision or None)
+            assert published['source_build_id'] == 'deploy-dev:test-build'
+            if already_published:
+                raise ClientError({'Error': {'Code': 'PreconditionFailed'}}, 'PutObject')
+            return {}
 
         def get_object(self, **kwargs):
+            assert already_published
             return {'Body': io.BytesIO(pipeline.serialize(snapshot))}
 
     monkeypatch.setattr(pipeline, 'export_settings', lambda connection: snapshot['bundle'])
