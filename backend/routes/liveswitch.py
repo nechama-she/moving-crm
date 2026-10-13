@@ -535,7 +535,12 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     for key in ('tasks', 'shareWith'):
         if body and key in body:
             payload[key] = body[key]
-    conversation = ensure_lead_conversation(lead, db, fresh=bool(files))
+    from report_conversation import prepare_upload_conversation
+    saved = db.get(LeadLiveSwitch, lead_id)
+    current = json.loads(saved.details or '{}') if saved else {}
+    if current.get('pending_spark_payload') or current.get('last_spark_status') in ('queued', 'running'):
+        return {'id': current['last_spark_id'], 'status': current.get('last_spark_status', 'queued')}
+    conversation = prepare_upload_conversation(access, db)
     if explicit_files:
         for file in files:
             file.report_deleted_at = None
@@ -559,7 +564,7 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     details.update(last_spark_id='pending-' + str(uuid4()), last_spark_status='queued',
                    last_spark_at=int(time.time()), spark_pricing_ready=False,
                    report_conversation=conversation, pending_spark_payload=payload,
-                   report_files=[{'id': f.id, 'name': f.file_name, 'size': f.file_size} for f in files])
+                   report_files=[{'id': f.id, 'name': f.file_name, 'size': f.file_size, 'content_type': f.content_type} for f in files])
     details.pop('upload_error', None)
     remember_report(details)
     if not saved:
@@ -572,11 +577,10 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
             row = PublicMoveUpload(attachment_id=attachment.id, access_id=access.id, request_id='report-' + attachment.id)
             db.add(row)
         row.access_id = access.id
-        row.synced_at = None
-        row.sync_status = 'pending'
-        row.sync_token = None
-        row.sync_upload_url = None
-        row.sync_error = None
+        # Preserve completed and in-flight transfers into this conversation.
+        if row.sync_status not in ('synced', 'queued', 'syncing'):
+            row.sync_status = 'pending'
+            row.sync_error = None
     access.published_price = access.published_cuft = access.published_at = None
     db.commit()
     queue_files(access.id, db)
