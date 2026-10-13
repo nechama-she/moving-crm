@@ -2,6 +2,14 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Moving CRM — Full stack (VPC, RDS, S3, CodePipeline, CodeBuild)
 
 Parameters:
+  SettingsSourceAccountId:
+    Type: String
+    Default: "381492064416"
+    AllowedPattern: "[0-9]{12}"
+  SettingsProductionAccountId:
+    Type: String
+    Default: "669880792736"
+    AllowedPattern: "[0-9]{12}"
   # Compatibility with deployed pipelines that still pass the former SES settings.
   # Keep these accepted while the Infrastructure action updates itself.
   CustomerPortalEmailIdentityArn:
@@ -95,6 +103,52 @@ Conditions:
   HasCert: !Not [!Equals [!Ref AcmCertificateArn, ""]]
 
 Resources:
+  SettingsTransferBucket:
+    Type: AWS::S3::Bucket
+    Condition: IsDevEnvironment
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub moving-crm-settings-dev-${AWS::AccountId}
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  SettingsTransferBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: IsDevEnvironment
+    Properties:
+      Bucket: !Ref SettingsTransferBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt SettingsTransferBucket.Arn
+              - !Sub "${SettingsTransferBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${SettingsProductionAccountId}:root"
+            Action: s3:GetObject
+            Resource: !Sub "${SettingsTransferBucket.Arn}/releases/*"
+            Condition:
+              ArnEquals:
+                aws:PrincipalArn: !Sub "arn:aws:iam::${SettingsProductionAccountId}:role/moving-crm-codebuild-prod"
   # ===========================================================================
   # NETWORKING
   # ===========================================================================
@@ -732,6 +786,18 @@ Resources:
             Version: "2012-10-17"
             Statement:
               # CloudWatch Logs
+              - !If
+                - IsDevEnvironment
+                - Effect: Allow
+                  Action: [s3:GetObject, s3:PutObject]
+                  Resource: !Sub "arn:aws:s3:::moving-crm-settings-dev-${AWS::AccountId}/releases/*"
+                - !Ref AWS::NoValue
+              - !If
+                - IsProd
+                - Effect: Allow
+                  Action: s3:GetObject
+                  Resource: !Sub "arn:aws:s3:::moving-crm-settings-dev-${SettingsSourceAccountId}/releases/*"
+                - !Ref AWS::NoValue
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -1246,6 +1312,10 @@ Resources:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
         EnvironmentVariables:
+          - Name: SETTINGS_SOURCE_ACCOUNT_ID
+            Value: !Ref SettingsSourceAccountId
+          - Name: SETTINGS_PRODUCTION_ACCOUNT_ID
+            Value: !Ref SettingsProductionAccountId
           - Name: ENVIRONMENT
             Value: !Ref Environment
           - Name: SSM_PREFIX

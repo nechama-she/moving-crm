@@ -1,4 +1,7 @@
-"""Idempotent database migrations run by the deployment pipeline."""
+"""Schema and configuration migrations run by the deployment pipeline.
+
+Do not import or backfill existing client, lead or job data here.
+"""
 
 import logging
 
@@ -10,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("migrate")
 
 
-def migrate() -> None:
+def migrate(*, skip_pricing_seeds: bool = False) -> None:
     statement = """
     CREATE TABLE IF NOT EXISTS communication_associations (
         channel VARCHAR(20) NOT NULL,
@@ -41,8 +44,6 @@ def migrate() -> None:
         connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS dispatches_for_company_id VARCHAR(36) REFERENCES companies(id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_companies_dispatches_for_company_id ON companies(dispatches_for_company_id)"))
         connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS customer_questions TEXT"))
-        connection.execute(text("ALTER TABLE public_move_access ADD COLUMN IF NOT EXISTS link_sms_sent_at TIMESTAMP"))
-        connection.execute(text("ALTER TABLE public_move_access ADD COLUMN IF NOT EXISTS link_sms_phone_last4 VARCHAR(4)"))
         connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS office_address TEXT NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS dot_number VARCHAR(30) NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE companies ADD COLUMN IF NOT EXISTS sender_email VARCHAR(255)"))
@@ -51,9 +52,6 @@ def migrate() -> None:
         connection.execute(text("ALTER TABLE lead_jobs ALTER COLUMN company_id DROP NOT NULL"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS dispatch_company_id VARCHAR(36) REFERENCES companies(id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lead_jobs_dispatch_company_id ON lead_jobs(dispatch_company_id)"))
-        from migrate_company_dispatch import backfill_company_dispatch
-        jobs_updated, leads_updated = backfill_company_dispatch(connection)
-        logger.info("Dispatch ownership backfill: corrected %s jobs and %s leads", jobs_updated, leads_updated)
         connection.execute(text("ALTER TABLE lead_attachments ALTER COLUMN uploaded_by DROP NOT NULL"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS stop_types TEXT"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS customer_packing TEXT"))
@@ -61,6 +59,8 @@ def migrate() -> None:
         from models import PublicMoveAccess, PublicMoveSession, PublicMoveRepVerification, WalkthroughRequest, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload
         for model in (PublicMoveAccess, PublicMoveSession, PublicMoveRepVerification, WalkthroughRequest, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload):
             model.__table__.create(connection, checkfirst=True)
+        connection.execute(text("ALTER TABLE public_move_access ADD COLUMN IF NOT EXISTS link_sms_sent_at TIMESTAMP"))
+        connection.execute(text("ALTER TABLE public_move_access ADD COLUMN IF NOT EXISTS link_sms_phone_last4 VARCHAR(4)"))
         connection.execute(text("ALTER TABLE lead_attachments ALTER COLUMN file_size TYPE BIGINT"))
         connection.execute(text("ALTER TABLE public_move_pending_uploads ALTER COLUMN file_size TYPE BIGINT"))
         connection.execute(text("ALTER TABLE public_move_uploads ADD COLUMN IF NOT EXISTS sync_status VARCHAR(20) NOT NULL DEFAULT 'pending'"))
@@ -147,14 +147,15 @@ def migrate() -> None:
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS price_calculated_at TIMESTAMP"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS price_refresh_attempted_at TIMESTAMP"))
         connection.execute(text("ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS price_refresh_error TEXT"))
-        from catalog_material_cleanup import cleanup_missing_assignments
-        cleanup_missing_assignments(connection)
-        from sqlalchemy.orm import Session
-        from migrate_movers95_pricing import copy_pricing
-        with Session(bind=connection) as pricing_session:
-            result = copy_pricing(pricing_session)
-            pricing_session.commit()
-            logger.info("Movers 95 pricing migration: %s", result)
+        if not skip_pricing_seeds:
+            from catalog_material_cleanup import cleanup_missing_assignments
+            cleanup_missing_assignments(connection)
+            from sqlalchemy.orm import Session
+            from migrate_movers95_pricing import copy_pricing
+            with Session(bind=connection) as pricing_session:
+                result = copy_pricing(pricing_session)
+                pricing_session.commit()
+                logger.info("Movers 95 pricing migration: %s", result)
 
     logger.info("communication_associations is ready")
     logger.info("smartmoving_referral_sources is ready")
@@ -165,4 +166,7 @@ def migrate() -> None:
 
 
 if __name__ == "__main__":
-    migrate()
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--skip-pricing-seeds', action='store_true')
+    migrate(skip_pricing_seeds=parser.parse_args().skip_pricing_seeds)

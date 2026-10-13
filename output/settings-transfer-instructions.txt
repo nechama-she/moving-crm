@@ -1,0 +1,51 @@
+﻿RELEASE THROUGH THE EXISTING PIPELINE
+
+1. Commit these changes and push main. Wait for the dev pipeline to succeed.
+   Its deployment freezes the allowed dev settings in a private bucket.
+2. Merge main into prod and push prod. This starts the existing prod pipeline.
+3. Wait for moving-crm-prod to finish. Check pricing, catalog and one customer page.
+
+No CloudShell exports, database passwords or manual import commands are needed.
+No release has been pushed or deployed by this local preparation.
+
+WHAT THE PIPELINE DOES
+- Build runs settings-transfer regression tests and builds the application.
+- Infrastructure creates private, encrypted settings storage in dev. Only the
+  production CodeBuild role may read the release prefix across accounts.
+- Prod verifies the frozen release before running its database migrations.
+- Schema migrations add structures without reassigning clients.
+- Prod imports settings in one transaction before publishing app code.
+- A transaction marker makes retries skip the import and preserve later prod edits.
+- A failed import rolls back settings. Earlier schema/infrastructure changes are
+  not rolled back automatically by this step.
+
+INCLUDED
+All company configuration, including integration identifiers and routing; inventory items and room types;
+pricing books, rules, rates and services; local pricing.
+Companies match by name and keep production IDs. Pricing books match company/name.
+Missing or ambiguous company matches stop the import rather than guessing.
+Production-only pricing books and catalog entries remain.
+
+PRESERVED IN PRODUCTION
+Clients, jobs, assignments, reports, uploads and users.
+Existing production company IDs and creation timestamps remain unchanged.
+Company integration fields are copied; credentials outside companies are not copied.
+Lead duplication rules are operational and remain unchanged in production.
+Company SMS templates and system SMS defaults remain unchanged in production.
+Ignored call and SMS number lists remain unchanged in production.
+User-specific commission, availability and referral-assignment settings are not
+copied by this version: their dev user IDs cannot be used directly in production.
+Other app_settings values are excluded by an allowlist; client/job values are
+never exported. This is not a blanket copy of every settings row.
+
+RELEASE SNAPSHOT
+settings-release.json selects the one-time release ID, 2026-10-settings.
+The first successful dev deployment freezes it. Later dev runs do not replace it.
+To intentionally select a new snapshot, use a new release ID before deploying
+main, then merge that same change into prod. A new ID causes another import.
+Set enabled to false after this rollout to disable future checks/imports.
+
+LOCAL VERIFICATION ONLY
+Database behavior is tested with SQLite fixtures. AWS permissions, PostgreSQL
+schema upgrades and the full production deployment still need their pipeline run.
+Existing backup: moving-crm-prod-before-release-2026-10-13.

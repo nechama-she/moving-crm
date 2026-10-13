@@ -7,11 +7,13 @@ phases:
       python: 3.11
       nodejs: 20
     commands:
+      - cd $CODEBUILD_SRC_DIR && pip install -r backend/deploy-requirements.txt 'pytest>=8,<9' --quiet
       - echo "Installing frontend dependencies"
       - cd $CODEBUILD_SRC_DIR/frontend && npm ci
 
   build:
     commands:
+      - cd $CODEBUILD_SRC_DIR && python -m pytest tests/unit/test_settings_transfer.py tests/unit/test_pipeline_settings.py -q
       - echo "Building frontend"
       - cd $CODEBUILD_SRC_DIR/frontend && npm run build
 
