@@ -58,7 +58,7 @@ export default function SettingsPage() {
     <header className="settings-hub-header">
       <div><h1>Settings</h1><p>Manage your business, team and account.</p></div>
       <label className="settings-search">Find a setting
-        <input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search settings?" />
+        <input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search settings" />
       </label>
     </header>
     <div className="settings-groups">
@@ -66,14 +66,14 @@ export default function SettingsPage() {
         <h2>{group.title}</h2>
         {group.items.map(item => <Link to={item.to} key={item.to} className="settings-entry">
           <span><strong>{item.label}</strong><small>{item.description}</small></span>
-          <span aria-hidden="true">?</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" style={{ flexShrink: 0 }}><path d="m9 5 7 7-7 7" /></svg>
         </Link>)}
       </section>)}
     </div>
     {showIntegrations && <section className="settings-integrations">
       <h2>Integrations</h2>
-      <details><summary>LiveSwitch ? Virtual estimates</summary><LiveSwitchSettings /></details>
+      <details><summary>LiveSwitch: Virtual estimates</summary><LiveSwitchSettings /></details>
     </section>}
-    {!filtered.length && !showIntegrations && <p role="status">No settings match ?{search}?. Try another search.</p>}
+    {!filtered.length && !showIntegrations && <p role="status">No settings match &quot;{search}&quot;. Try another search.</p>}
   </div>;
 }
