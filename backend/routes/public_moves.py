@@ -1631,7 +1631,7 @@ def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...), x_up
         db.commit()
     except Exception:
         db.rollback(); _delete_s3_url(stored); raise
-    queue_uploaded_file(access, row.id, db)
+    # Stage in CRM; report generation queues these files into its own session.
     return {'id': row.id}
 
 
@@ -2063,22 +2063,6 @@ def list_missing_liveswitch_files(lead_id: str, user: User = Depends(get_current
 
 
 
-def queue_uploaded_file(access, attachment_id, db):
-    conversation = db.get(LeadLiveSwitch, access.lead_id)
-    if not conversation or json.loads(conversation.details or '{}').get('last_spark_id'):
-        # Stage new files in CRM; never append them to a previous report's conversation.
-        return
-    try:
-        queue_files(access.id, db, attachment_id=attachment_id)
-    except Exception:
-        db.rollback()
-        # Saving a customer file succeeded even if queue submission is unavailable.
-        row = db.get(PublicMoveUpload, attachment_id)
-        if row and not row.synced_at and row.sync_status not in ('queued', 'syncing'):
-            row.sync_status = 'failed'
-            row.sync_error = 'File saved in CRM, but sync could not be queued. Please retry.'
-            db.commit()
-
 @router.get('/api/leads/{lead_id}/jobs/{job_id}/stop-types')
 def get_stop_types(lead_id: str, job_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     from routes.leads import _get_job_or_404
@@ -2174,7 +2158,7 @@ def finish_upload(body: FinishUpload, background_tasks: BackgroundTasks, access:
         db.rollback();_delete_s3_url(stored);raise
     try: s3.delete_object(Bucket=bucket,Key=temporary_key)
     except Exception: pass  # Bucket lifecycle removes abandoned staging objects.
-    queue_uploaded_file(access,row.id,db)
+    # Stage in CRM; report generation queues these files into its own session.
     return {'id':row.id}
 
 

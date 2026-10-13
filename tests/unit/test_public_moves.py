@@ -3590,3 +3590,26 @@ def test_inventory_room_uses_report_snapshot_not_missing_model_field(portal):
     assert scope['_job_spark_inventory_items'](access.job_id, db) == [
         {'item_id': None, 'name':'TV', 'quantity':1, 'room':'Living Room', 'cuft': None}
     ]
+
+
+@pytest.mark.parametrize("direct", [False, True])
+def test_customer_upload_does_not_copy_into_existing_conversation(portal, monkeypatch, direct):
+    from fastapi import BackgroundTasks, UploadFile
+    from io import BytesIO
+    mod, db, lead, access = portal
+    db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({"id": "existing-session"})))
+    db.commit()
+    queue = MagicMock(side_effect=AssertionError("Uploads must wait for report generation"))
+    monkeypatch.setattr(mod, "queue_files", queue)
+    if direct:
+        s3 = MagicMock()
+        s3.head_object.return_value = {"ContentLength": 100}
+        with patch.object(mod.boto3, "client", return_value=s3), patch.dict(os.environ, {"ATTACHMENTS_BUCKET": "test-bucket"}):
+            mod.prepare_upload(mod.PrepareUpload(request_id="photo-upload", name="photo.jpg", size=100, content_type="image/jpeg"), access, db)
+            result = mod.finish_upload(mod.FinishUpload(request_id="photo-upload"), BackgroundTasks(), access, db)
+    else:
+        monkeypatch.setattr(mod, "_upload_attachment_bytes_to_s3", lambda *args: "s3://test/photo.jpg")
+        result = mod.upload(BackgroundTasks(), UploadFile(filename="photo.jpg", file=BytesIO(b"\xff\xd8\xffphoto")), "photo-upload", access, db)
+    assert db.get(models.LeadAttachment, result["id"]) is not None
+    queue.assert_not_called()
+    assert json.loads(db.get(models.LeadLiveSwitch, lead.id).details)["id"] == "existing-session"
