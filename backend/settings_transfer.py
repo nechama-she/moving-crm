@@ -160,7 +160,10 @@ def apply_settings(connection, bundle):
         for row in source[name]:
             row = dict(row)
             existing = connection.execute(select(table(name)).where(table(name).c.id == row['id'])).mappings().first()
-            if existing and normalize(existing['name']) != normalize(row['name']):
+            # Catalog names are editable settings; the stable ID identifies
+            # the item across environments even after a rename. Preserve that
+            # ID so existing inventory and pricing references remain valid.
+            if name == 'inventory_room_types' and existing and normalize(existing['name']) != normalize(row['name']):
                 raise ValueError('Catalog ID collision: ' + row['id'])
             if not existing and name == 'inventory_room_types':
                 matches = [item for item in connection.execute(select(table(name))).mappings()
