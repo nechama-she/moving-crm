@@ -2,29 +2,181 @@
 
 from __future__ import annotations
 
-from datetime import date
+from charge_errors import isolated_charge, pending_line
+
+from pickup_areas import PickupArea, pickup_areas, pickup_summary, pickup_match_score, select_pickup_plan
+
+from datetime import date, datetime
 from decimal import Decimal
+import json
+import math
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import get_current_user, require_admin
 from database import get_db
+from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, MaterialRate, packing_card
+from material_calculation import MaterialItem, calculate_materials, customer_material_quotes
+from shuttle import SHUTTLE_PREFIX, ShuttleCard, shuttle_card, shuttle_option
+from delivery_fees import ORIGIN_FEE_PREFIX, origin_fee, origin_fee_card, DELIVERY_FEE_PREFIX, DeliveryFeeCard, delivery_fee, delivery_fee_card
+from storage_pricing import STORAGE_PREFIX, StorageCard, storage_card, storage_quote
+from extra_stops import EXTRA_STOPS_PREFIX, ExtraStopsCard, stops_card
+from elevator_pricing import ELEVATOR_PREFIX, ElevatorCard, elevator_card, elevator_quote
+from long_carry_pricing import LONG_CARRY_PREFIX, LongCarryCard, long_carry_card, long_carry_quote
+from stairs_pricing import STAIRS_PREFIX, StairsCard, stairs_card, stairs_quote
 from models import (
+    LocalPricingRoute,
     PricingPlan,
     PricingRate,
     PricingRule,
     PricingService,
     Lead,
     LeadJob,
+    LeadJobCharge,
+    LeadSparkInventoryItem,
+    PublicMoveAccess,
     User,
     UserCompany,
 )
-from zip_state import delivery_location
+from uuid import uuid4
+from item_materials import ItemMaterialsInput, material_setup, save_material_assignments
+from item_selectors import ItemSelectorsInput, selector_setup, save_selectors, add_service_charges
+from pricing_addresses import pricing_location as delivery_location
+from pricing_addresses import with_job_locations, job_location
+from local_pricing import local_route_matches, match_region_from_address
 
 router = APIRouter(prefix="/api/pricing", tags=["Pricing"])
+
+
+class MaterialPreview(BaseModel):
+    materials: list[MaterialRate] = Field(max_length=500)
+    item: MaterialItem
+
+
+@router.post('/materials/preview')
+def preview_materials(body: MaterialPreview, user: User = Depends(get_current_user)):
+    if len({row.id for row in body.materials}) != len(body.materials):
+        raise HTTPException(422, 'Material IDs must be unique')
+    return calculate_materials(body.materials, body.item)
+
+
+def _plan_counts_by_id(db: Session, plan_ids: list[str]) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
+    if not plan_ids:
+        return {}, {}, {}
+    rate_counts = {
+        str(plan_id): int(count or 0)
+        for plan_id, count in (
+            db.query(PricingRate.plan_id, func.count(PricingRate.id))
+            .filter(PricingRate.plan_id.in_(plan_ids))
+            .group_by(PricingRate.plan_id)
+            .all()
+        )
+    }
+    rule_counts = {
+        str(plan_id): int(count or 0)
+        for plan_id, count in (
+            db.query(PricingRule.plan_id, func.count(PricingRule.id))
+            .filter(PricingRule.plan_id.in_(plan_ids))
+            .group_by(PricingRule.plan_id)
+            .all()
+        )
+    }
+    service_counts = {
+        str(plan_id): int(count or 0)
+        for plan_id, count in (
+            db.query(PricingService.plan_id, func.count(PricingService.id))
+            .filter(PricingService.plan_id.in_(plan_ids))
+            .group_by(PricingService.plan_id)
+            .all()
+        )
+    }
+    return rate_counts, rule_counts, service_counts
+
+
+def _plan_summary_rows(plans: list[PricingPlan], db: Session) -> list[dict]:
+    rows: list[dict] = []
+    for plan in plans:
+        rows.append({
+            "id": plan.id,
+            "company_id": plan.company_id or "",
+            "company_name": plan.company_name,
+            "name": plan.name,
+            "source_file": plan.source_file,
+            "source_sheet": plan.source_sheet,
+            "pickup_regions": pickup_summary(plan.pickup_regions),
+            "pickup_areas": pickup_areas(plan.pickup_regions),
+            "fuel_percent": float(plan.fuel_percent) if plan.fuel_percent is not None else None,
+            "active": bool(plan.active),
+            "rate_count": 0,
+            "rule_count": 0,
+            "service_count": 0,
+            "updated_at": plan.updated_at.isoformat() if plan.updated_at else "",
+        })
+    return rows
+
+
+def _plan_matches_pickup(plan: PricingPlan, pickup_state: str, pickup_zip: str = "") -> bool:
+    return bool(pickup_match_score(plan.pickup_regions or plan.name, pickup_state, pickup_zip))
+
+
+def _plan_destination_for_delivery(
+    plan: PricingPlan,
+    delivery_address: str,
+    delivery_state: str,
+    delivery_zip: str,
+) -> str:
+    options = list({row.destination for row in plan.rates if row.destination})
+    if not options:
+        return ""
+    destination = match_region_from_address(delivery_address, options, delivery_state or "", delivery_zip or "")
+    return destination
+
+
+@with_job_locations
+def infer_job_move_type(
+    lead: Lead,
+    job: LeadJob,
+    db: Session,
+    plans: list[PricingPlan] | None = None,
+) -> tuple[str | None, PricingPlan | None]:
+    pickup_address = (job.pickup_zip or "").strip()
+    delivery_address = (job.delivery_zip or "").strip()
+    pickup_state, pickup_zip = delivery_location(pickup_address)
+    delivery_state, delivery_zip = delivery_location(delivery_address)
+    company_id = job.company_id or lead.company_id
+    if not company_id:
+        return None, None
+
+    if plans is None and company_id:
+        plans = (
+            db.query(PricingPlan)
+            .filter(PricingPlan.company_id == company_id, PricingPlan.active.is_(True))
+            .order_by(PricingPlan.sort_order, PricingPlan.name)
+            .all()
+        )
+    plans = [plan for plan in (plans or []) if plan.company_id == company_id]
+    # Prefer exact ZIP coverage over statewide coverage; retain book order for ties.
+    matched_plan = select_pickup_plan(plans, pickup_state, pickup_zip)
+
+    routes = (
+        db.query(LocalPricingRoute)
+        .filter(LocalPricingRoute.company_id == company_id)
+        .order_by(LocalPricingRoute.sort_order, LocalPricingRoute.created_at)
+        .all()
+    )
+    for route in routes:
+        if local_route_matches(pickup_address, delivery_address, route.pickup, route.delivery):
+            return "Local", matched_plan
+
+    if pickup_state and delivery_state:
+        supported = [plan for plan in plans if _plan_destination_for_delivery(plan, delivery_address, delivery_state, delivery_zip)]
+        matched_plan = select_pickup_plan(supported, pickup_state, pickup_zip) or matched_plan
+        return "Long Distance", matched_plan
+    return (getattr(lead, "move_type", None) or "").strip() or None, matched_plan
 
 
 def _accessible_query(db: Session, user: User):
@@ -48,12 +200,14 @@ def _plan_or_404(db: Session, user: User, plan_id: str) -> PricingPlan:
 
 
 class RuleInput(BaseModel):
+    id: str | None = Field(default=None, max_length=100)
     category: str = "general"
     title: str = "Pricing rule"
     description: str
 
 
 class RateInput(BaseModel):
+    id: str | None = Field(default=None, max_length=100)
     destination: str
     destination_group: str = ""
     minimum_price: float | None = None
@@ -66,14 +220,40 @@ class RateInput(BaseModel):
 
 
 class ServiceInput(BaseModel):
+    id: str | None = Field(default=None, max_length=100)
     name: str
     rate_text: str = ""
     comments: str = ""
 
+    @field_validator('comments')
+    @classmethod
+    def validate_packing_card(cls, value):
+        if value.startswith(PACKING_CARD_PREFIX):
+            PackingCard.model_validate_json(value[len(PACKING_CARD_PREFIX):])
+        if value.startswith(SHUTTLE_PREFIX):
+            ShuttleCard.model_validate_json(value[len(SHUTTLE_PREFIX):])
+        if value.startswith(ORIGIN_FEE_PREFIX):
+            DeliveryFeeCard.model_validate_json(value[len(ORIGIN_FEE_PREFIX):])
+        if value.startswith(DELIVERY_FEE_PREFIX):
+            DeliveryFeeCard.model_validate_json(value[len(DELIVERY_FEE_PREFIX):])
+        if value.startswith(STORAGE_PREFIX):
+            StorageCard.model_validate_json(value[len(STORAGE_PREFIX):])
+        if value.startswith(EXTRA_STOPS_PREFIX):
+            ExtraStopsCard.model_validate_json(value[len(EXTRA_STOPS_PREFIX):])
+        if value.startswith(ELEVATOR_PREFIX):
+            ElevatorCard.model_validate_json(value[len(ELEVATOR_PREFIX):])
+        if value.startswith(LONG_CARRY_PREFIX):
+            LongCarryCard.model_validate_json(value[len(LONG_CARRY_PREFIX):])
+        if value.startswith(STAIRS_PREFIX):
+            StairsCard.model_validate_json(value[len(STAIRS_PREFIX):])
+        return value
+
 
 class PlanUpdate(BaseModel):
     name: str
+    price_valid_days: int = Field(default=7, ge=1, le=3650)
     pickup_regions: str = ""
+    pickup_areas: list[PickupArea] | None = Field(default=None, max_length=51)
     fuel_percent: float | None = Field(default=None, ge=0, le=100)
     active: bool = True
     rules: list[RuleInput]
@@ -82,12 +262,40 @@ class PlanUpdate(BaseModel):
 
 
 class CalculationInput(BaseModel):
+    source_job_id: str | None = Field(default=None, max_length=100)
     destination: str
+    pickup_address: str = ""
+    delivery_address: str = ''
+    shuttle_access: bool | None = None
+    available_date: str = ''
+    pickup_elevator: bool | None = Field(default=None, strict=True)
+    delivery_elevator: bool | None = Field(default=None, strict=True)
+    pickup_carry_feet: int | None = Field(default=None, ge=0, le=100000, strict=True)
+    delivery_carry_feet: int | None = Field(default=None, ge=0, le=100000, strict=True)
+    pickup_flights: int | None = Field(default=None, ge=0, le=1000, strict=True)
+    delivery_flights: int | None = Field(default=None, ge=0, le=1000, strict=True)
     cubic_feet: int = Field(ge=0)
     move_date: str = ""
+    bulky_items: list[str] = Field(default_factory=list)
     selected_charges: dict[str, bool] = Field(default_factory=dict)
     quantities: dict[str, float] = Field(default_factory=dict)
     manual_amounts: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("cubic_feet", mode="before")
+    @classmethod
+    def round_up_cubic_feet(cls, value: object) -> int:
+        if value is None or value == "":
+            return 0
+        parsed = float(value)
+        if parsed < 0:
+            return parsed
+        return math.ceil(parsed)
+
+
+def _rounded_cubic_feet(value: float | int | Decimal | None) -> int:
+    if value is None:
+        return 0
+    return max(0, math.ceil(float(value)))
 
 
 def _number(value: str) -> Decimal | None:
@@ -100,6 +308,37 @@ def _parsed_move_date(value: str) -> date | None:
         return date.fromisoformat((value or "").strip()[:10])
     except ValueError:
         return None
+
+
+BULKY_ITEM_MARKER = "__bulky_item__"
+BULKY_ITEM_PREFIX = f"{BULKY_ITEM_MARKER}:"
+
+
+def _normalize_item_name(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def _box_base_name(value: str) -> str:
+    return re.sub(r'\s*\((?:cp|pbo)\)\s*$', '', str(value or ''), flags=re.IGNORECASE).strip()
+
+
+def _is_bulky_service(service: PricingService) -> bool:
+    return service.comments == BULKY_ITEM_MARKER or service.comments.startswith(BULKY_ITEM_PREFIX)
+
+
+def _bulky_item_prices(service: PricingService) -> dict[str, str]:
+    if service.comments.startswith(BULKY_ITEM_PREFIX):
+        try:
+            data = json.loads(service.comments[len(BULKY_ITEM_PREFIX):])
+            if isinstance(data, dict):
+                return {
+                    "handling": str(data.get("handling") or service.rate_text or ""),
+                    "packing": str(data.get("packing") or ""),
+                    "crating": str(data.get("crating") or ""),
+                }
+        except (TypeError, ValueError):
+            pass
+    return {"handling": service.rate_text or "", "packing": "", "crating": ""}
 
 
 def _seasonal_charge(plan: PricingPlan, move_date: date | None) -> dict | None:
@@ -180,7 +419,33 @@ def _packing_service_charges(
     """Collapse imported rate tiers into simple job-level packing and storage choices."""
     packing_groups: dict[str, list[PricingService]] = {"full": [], "partial": []}
     remaining: list[PricingService] = []
+    card = packing_card(services)
+    storage_config = storage_card(services)
+    extra_stops_config = stops_card(services)
+    elevator_config = elevator_card(services)
+    carry_config = long_carry_card(services)
+    stairs_config = stairs_card(services)
     for service in services:
+        if service.comments.startswith((PACKING_CARD_PREFIX, SHUTTLE_PREFIX, ORIGIN_FEE_PREFIX, DELIVERY_FEE_PREFIX, STORAGE_PREFIX, STAIRS_PREFIX, LONG_CARRY_PREFIX, ELEVATOR_PREFIX, EXTRA_STOPS_PREFIX)):
+            continue
+        if extra_stops_config and re.search(r'\b(extra|additional)\b.*\bstops?\b', service.name, re.IGNORECASE):
+            continue
+        if elevator_config and re.search(r'\belevators?\b', service.name, re.IGNORECASE):
+            continue
+        if carry_config and re.search(r'\blong[ -]+carry\b', service.name, re.IGNORECASE):
+            continue
+        if stairs_config and re.search(r'\bstairs?\b|\bstaircases?\b|\bflights?\s+of\s+stairs\b', service.name, re.IGNORECASE):
+            continue
+        if storage_config and re.match(r'\s*(?:long\s+term\s+)?storage\b', service.name, re.IGNORECASE):
+            continue
+        if card:
+            category = re.match(r"\s*(full\s+packing|partial\s+packing|unpacking)\b", service.name, re.IGNORECASE)
+            if category:
+                key = category.group(1).lower().split()[0]
+                if getattr(card, key) is not None:
+                    continue
+        if _is_bulky_service(service):
+            continue
         match = re.match(r"\s*(full|partial)\s+packing\b", service.name, re.IGNORECASE)
         if match and re.search(r"(?:up\s+to|\d+\s*-\s*\d+|&\s*up)", service.name, re.IGNORECASE):
             packing_groups[match.group(1).lower()].append(service)
@@ -195,6 +460,16 @@ def _packing_service_charges(
         remaining = [service for service in remaining if service not in storage_services]
 
     charges = [_service_charge(service) for service in remaining]
+    if card:
+        for key, label in (('full', 'Full packing'), ('partial', 'Partial packing'), ('unpacking', 'Unpacking')):
+            rate = getattr(card, key)
+            if rate is not None:
+                charges.append({
+                    'id': f'packing:{key}', 'name': label,
+                    'description': f'${rate:g} / CF' + (' - Required-box items and materials included; excludes boxes of personal belongings' if key == 'partial' else ''),
+                    'calculation_type': 'per_cf', 'rate': float(rate),
+                    'default_selected': False, 'automatic': False, 'applies': True, 'quantity_label': '',
+                })
     for packing_type, tiers in packing_groups.items():
         if not tiers:
             continue
@@ -254,6 +529,103 @@ def _packing_service_charges(
         })
         charges.append(charge)
     return charges
+
+
+def _bulky_item_charges(services: list[PricingService], item_names: list[str], rate_multiplier: float = 1.0) -> list[dict]:
+    matched_counts: dict[str, int] = {}
+    for name in item_names:
+        normalized = _normalize_item_name(name)
+        if normalized:
+            matched_counts[normalized] = matched_counts.get(normalized, 0) + 1
+    if not matched_counts:
+        return []
+    charges: list[dict] = []
+    for service in services:
+        if not _is_bulky_service(service):
+            continue
+        matched_count = matched_counts.get(_normalize_item_name(service.name), 0)
+        if matched_count <= 0:
+            continue
+        prices = _bulky_item_prices(service)
+        for key, label, default_selected, required in (
+            ("handling", "Handling", True, True),
+            ("packing", "Packing", False, False),
+            ("crating", "Crating", False, False),
+        ):
+            parsed = _number(prices.get(key, ""))
+            if parsed is None:
+                continue
+            charges.append({
+                "id": f"bulky:{service.id}:{key}",
+                "name": f"{service.name} {label}",
+                "description": f"Qty: {matched_count:g}" if matched_count > 1 else "",
+                "calculation_type": "fixed",
+                "rate": float(parsed * matched_count) * rate_multiplier,
+                "default_selected": default_selected,
+                "automatic": required,
+                "required": required,
+                "applies": True,
+                "quantity_label": "",
+            })
+    return charges
+
+
+def _material_item_names(materials: list[dict], db=None) -> list[str]:
+    if db is not None:
+        from catalog_names import resolve_catalog_names
+        materials = resolve_catalog_names(materials, db)
+    names: list[str] = []
+    for item in materials:
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        try:
+            quantity = max(1, int(float(item.get("quantity") or 1)))
+        except (TypeError, ValueError):
+            quantity = 1
+        names.extend(str(item["name"]) for _ in range(quantity))
+    return names
+
+
+def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
+    from models import LeadJob, LeadLiveSwitch
+    if not job_id:
+        return []
+    job = db.get(LeadJob, job_id)
+    report = db.get(LeadLiveSwitch, job.lead_id) if job else None
+    snapshot = json.loads(report.details or '{}').get('spark_inventory_snapshot', []) if report else []
+    if snapshot:
+        from catalog_names import resolve_catalog_names
+        snapshot = resolve_catalog_names(snapshot, db)
+        result = []
+        for row in snapshot:
+            if not isinstance(row, dict) or not row.get('name') or row.get('going') is False:
+                continue
+            try:
+                quantity = max(1, int(float(row.get('amount') or row.get('quantity') or 1)))
+            except (TypeError, ValueError):
+                quantity = 1
+            try:
+                cuft = float(row['cuft']) if row.get('cuft') is not None else None
+            except (TypeError, ValueError):
+                cuft = None
+            result.append({'item_id': row.get('item_id'), 'catalog_item_id': row.get('catalog_item_id'),
+                           'name_override': row.get('name_override', False), 'unit_cuft': row.get('unit_cuft'), 'name': str(row['name']),
+                           'quantity': quantity, 'room': str(row.get('room') or ''), 'cuft': cuft})
+        return result
+    items = db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job_id).all()
+    res = []
+    for item in items:
+        try:
+            qty = max(1, int(float(item.amount or 1)))
+        except (TypeError, ValueError):
+            qty = 1
+        index = item.sort_order or 0
+        source = snapshot[index] if 0 <= index < len(snapshot) else {}
+        room = source.get('room') or '' if source.get('name') == item.name else ''
+        res.append({"id": item.id, "name": item.name or "", "quantity": qty, "room": room,
+                    "cuft": float(item.cuft) if item.cuft is not None else None})
+    from catalog_names import resolve_catalog_names
+    return resolve_catalog_names(res, db)
 
 
 def _rule_charges(rule: PricingRule) -> list[dict]:
@@ -358,15 +730,19 @@ def _charge_amount(charge: dict, cubic_feet: int, quantity: float, manual: float
 
 @router.get("")
 def list_pricing_plans(
+    company_id: str | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    query = _accessible_query(db, user)
+    if company_id:
+        query = query.filter(PricingPlan.company_id == company_id)
     plans = (
-        _accessible_query(db, user)
+        query
         .order_by(PricingPlan.company_name, PricingPlan.sort_order, PricingPlan.name)
         .all()
     )
-    return [plan.summary_dict() for plan in plans]
+    return _plan_summary_rows(plans, db)
 
 
 @router.get("/context")
@@ -376,38 +752,34 @@ def get_job_pricing_context(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    job = (
-        db.query(LeadJob)
-        .filter(LeadJob.id == job_id, LeadJob.lead_id == lead_id)
-        .first()
-    )
-    if not lead or not job:
-        raise HTTPException(status_code=404, detail="Lead job not found")
-    plans = (
+    from routes.leads import _get_job_or_404
+    job = _get_job_or_404(lead_id, job_id, user, db)
+    lead = db.get(Lead, job.lead_id)
+    all_plans = (
         _accessible_query(db, user)
-        .filter(PricingPlan.company_id == job.company_id, PricingPlan.active.is_(True))
-        .order_by(PricingPlan.sort_order, PricingPlan.name)
+        .filter(PricingPlan.active.is_(True))
+        .order_by(PricingPlan.company_name, PricingPlan.sort_order, PricingPlan.name)
         .all()
     )
-    if not plans:
-        raise HTTPException(status_code=404, detail="No pricing book is configured for this job company")
-    pickup_state, pickup_zip_code = delivery_location(job.pickup_zip)
-    delivery_state, delivery_zip_code = delivery_location(job.delivery_zip)
+    company_plans = [plan for plan in all_plans if plan.company_id == job.company_id]
+    pickup_state, pickup_zip_code = job_location(lead, job, db, job.pickup_zip)
+    delivery_state, delivery_zip_code = job_location(lead, job, db, job.delivery_zip)
 
-    def plan_matches_pickup(plan: PricingPlan) -> bool:
-        if not pickup_state:
-            return False
-        coverage = f"{plan.pickup_regions} {plan.name}".upper()
-        return re.search(rf"\b{re.escape(pickup_state)}\b", coverage) is not None
-
-    recommended = next((plan for plan in plans if plan_matches_pickup(plan)), None)
+    inferred_move_type, recommended = infer_job_move_type(lead, job, db, company_plans)
+    selected_plan = recommended or (company_plans[0] if company_plans else (all_plans[0] if all_plans else None))
     if not pickup_state:
         serviceability = "unknown_pickup"
     elif recommended is None:
         serviceability = "unsupported_pickup"
     else:
         serviceability = "supported"
+
+    job_dict = job.to_dict()
+    spark_items = _job_spark_inventory_items(job.id, db)
+    if spark_items:
+        existing_mat = job_dict.get("estimated_materials") or []
+        job_dict["estimated_materials"] = existing_mat + spark_items
+
     return {
         "lead": {
             "id": lead.id,
@@ -416,52 +788,86 @@ def get_job_pricing_context(
             "weight": float(lead.weight) if lead.weight is not None else None,
         },
         "job": {
-            **job.to_dict(),
+            **job_dict,
             "pickup_state": pickup_state,
             "pickup_zip_code": pickup_zip_code,
             "delivery_state": delivery_state,
             "delivery_zip_code": delivery_zip_code,
         },
-        "plans": [plan.summary_dict() for plan in plans],
-        "recommended_plan_id": recommended.id if recommended else "",
+        "plans": _plan_summary_rows(all_plans, db),
+        "shuttle": customer_shuttle(lead, job, db, recommended, inferred_move_type) if recommended else None,
+        "storage": customer_storage(lead, job, db, recommended, inferred_move_type) if recommended else None,
+        "elevator": customer_elevator(lead, job, db, recommended, inferred_move_type) if recommended else None,
+        "long_carry": customer_long_carry(lead, job, db, recommended, inferred_move_type) if recommended else None,
+        "stairs": customer_stairs(lead, job, db, recommended, inferred_move_type) if recommended else None,
+        "recommended_plan_id": selected_plan.id if selected_plan else "",
+        "destination_by_plan": {plan.id: _plan_destination_for_delivery(plan, job.delivery_zip or '', delivery_state, delivery_zip_code) for plan in all_plans},
         "serviceability": serviceability,
+        "move_type": inferred_move_type,
     }
 
 
-@router.post("/{plan_id}/calculate")
-def calculate_pricing(
-    plan_id: str,
-    body: CalculationInput,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    plan = _plan_or_404(db, user, plan_id)
-    normalized = body.destination.strip().lower()
-    candidates = [
-        row
-        for row in plan.rates
-        if row.destination.strip().lower() == normalized
-        and (row.cubic_feet_min is None or body.cubic_feet >= row.cubic_feet_min)
-        and (row.cubic_feet_max is None or body.cubic_feet <= row.cubic_feet_max)
-    ]
-    matched = candidates[0] if candidates else None
-    transport = (
-        Decimal(body.cubic_feet) * matched.rate
-        if matched and matched.rate is not None
-        else None
-    )
+def _transportation_price(plan, destination, cubic_feet):
+    normalized = destination.strip().lower()
+    rates = [row for row in plan.rates if row.destination.strip().lower() == normalized]
+    matched = next((row for row in rates
+                    if (row.cubic_feet_min is None or cubic_feet >= row.cubic_feet_min)
+                    and (row.cubic_feet_max is None or cubic_feet <= row.cubic_feet_max)), None)
+    below_first_band = False
+    if matched is None and rates:
+        first = min(rates, key=lambda row: row.cubic_feet_min or 0)
+        if (first.cubic_feet_min is not None and cubic_feet < first.cubic_feet_min
+                and first.minimum_price is not None):
+            matched = first
+            below_first_band = True
+    transport = Decimal(cubic_feet) * matched.rate if matched and matched.rate is not None else None
     minimum = matched.minimum_price if matched else None
-    if transport is not None and minimum is not None:
+    if below_first_band:
+        base = minimum
+    elif transport is not None and minimum is not None:
         base = max(transport, minimum)
     else:
         base = transport if transport is not None else minimum
+    return matched, transport, minimum, base
+
+
+def _service_billable_volume(plan, destination, cubic_feet):
+    """Use the destination's first stored transportation band as the volume floor."""
+    rates = [row for row in plan.rates
+             if row.destination.strip().lower() == destination.strip().lower()]
+    minimum = min((row.cubic_feet_min or 0 for row in rates), default=0)
+    return max(cubic_feet, minimum)
+
+
+def customer_minimum_volume(lead, job, db):
+    """Destination-specific volume floor, independent of packing availability."""
+    move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or not move_type or move_type.lower() == 'local':
+        return None
+    state, zip_code = delivery_location(job.delivery_zip or '')
+    destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', state or '', zip_code or '')
+    return float(_service_billable_volume(plan, destination, 0))
+
+
+def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
+    cubic_feet = _rounded_cubic_feet(body.cubic_feet)
+    failures = []
+    try:
+        matched, transport, minimum, base = _transportation_price(plan, body.destination, cubic_feet)
+        if base is None:
+            raise ValueError('No transportation rate is configured for this route.')
+    except Exception as error:
+        matched = transport = minimum = None
+        base = Decimal(0)
+        failures.append(pending_line('transportation', 'Transportation charge', error))
+    service_volume = _service_billable_volume(plan, body.destination, cubic_feet)
 
     charges: list[dict] = []
     if plan.fuel_percent is not None:
         charges.append({
             "id": "fuel",
             "name": "Fuel surcharge",
-            "description": f"{float(plan.fuel_percent):g}% of transportation/minimum",
+            "description": f"{float(plan.fuel_percent):g}% fuel surcharge",
             "calculation_type": "percent",
             "rate": float(plan.fuel_percent),
             "default_selected": True,
@@ -469,14 +875,18 @@ def calculate_pricing(
             "applies": True,
             "quantity_label": "",
         })
-    seasonal = _seasonal_charge(plan, _parsed_move_date(body.move_date))
-    if seasonal:
-        charges.append(seasonal)
-    charges.extend(_packing_service_charges(list(plan.services), body.cubic_feet, body.quantities))
-    charges.extend(charge for rule in plan.rules for charge in _rule_charges(rule))
+    def collect(key, name, calculate):
+        try:
+            charges.extend(calculate())
+        except Exception as error:
+            failures.append(pending_line(key, name, error))
+    collect('seasonal', 'Seasonal charge', lambda: [row for row in [_seasonal_charge(plan, _parsed_move_date(body.move_date))] if row])
+    for service in plan.services:
+        collect(f'packing:{service.id}', service.name, lambda service=service: _packing_service_charges([service], service_volume, body.quantities))
+        collect(f'bulky:{service.id}', service.name, lambda service=service: _bulky_item_charges([service], body.bulky_items))
+    for rule in plan.rules:
+        collect(f'rule:{rule.id}', getattr(rule, 'name', None) or 'Pricing rule', lambda rule=rule: _rule_charges(rule))
 
-    # The same all-jobs fee can appear in both the notes and additional services.
-    # Keep the structured service entry and suppress repeated normalized descriptions.
     deduped: list[dict] = []
     seen = set()
     for charge in charges:
@@ -497,17 +907,26 @@ def calculate_pricing(
             charge["id"],
             bool(charge["default_selected"] and charge["applies"]),
         )
+        if charge.get("required"):
+            selected = True
         if charge["automatic"] and not charge["applies"]:
             selected = False
-        if charge["calculation_type"] == "percent":
-            amount = (base or Decimal(0)) * Decimal(str(charge["rate"])) / Decimal(100)
-        else:
-            amount = _charge_amount(
-                charge,
-                body.cubic_feet,
-                quantity,
-                body.manual_amounts.get(charge["id"], 0),
-            )
+        try:
+            if charge["calculation_type"] == "percent":
+                if any(line['id'] == 'transportation' for line in failures):
+                    raise ValueError('Waiting for the transportation charge to calculate.')
+                amount = (base or Decimal(0)) * Decimal(str(charge["rate"])) / Decimal(100)
+            else:
+                amount = _charge_amount(
+                    charge,
+                    service_volume,
+                    quantity,
+                    body.manual_amounts.get(charge["id"], 0),
+                )
+        except Exception as error:
+            if selected:
+                calculated.append(pending_line(charge['id'], charge['name'], error))
+            continue
         if selected:
             total += amount
         description = charge["description"]
@@ -535,6 +954,103 @@ def calculate_pricing(
             "amount": float(amount),
         })
 
+    try:
+        config = elevator_card(plan.services)
+        elevator = elevator_quote(config, {}, {}, cubic_feet)
+        if elevator:
+            saved = {row['location']: {'revision': row['revision'], 'uses_elevator': getattr(body, row['location'] + '_elevator')} for row in elevator['locations']}
+            elevator = elevator_quote(config, {}, saved, cubic_feet)
+            for row in elevator['locations']:
+                if row['uses_elevator'] is None:
+                    continue
+                calculated.append({'id': f"elevator:{row['location']}", 'name': row['location'].title() + ' elevator',
+                                   'description': row['description'], 'calculation_type': 'fixed', 'rate': row['total'],
+                                   'default_selected': True, 'automatic': True, 'applies': True, 'required': True,
+                                   'quantity_label': '', 'selected': True, 'amount': row['total'],
+                                   'subtotal': row['subtotal'], 'discount_amount': row['discount_amount'], 'discount_percent': row['discount_percent']})
+                total += Decimal(str(row['total']))
+    except Exception as error:
+        failures.append(pending_line('elevator', 'Elevator', error))
+    try:
+        config = long_carry_card(plan.services)
+        long_carry = long_carry_quote(config, {}, {}, cubic_feet, _service_billable_volume(plan, body.destination, 0))
+        if long_carry:
+            saved = {row['location']: {'revision': row['revision'], 'distance_feet': getattr(body, row['location'] + '_carry_feet')} for row in long_carry['locations']}
+            long_carry = long_carry_quote(config, {}, saved, cubic_feet, _service_billable_volume(plan, body.destination, 0))
+            for row in long_carry['locations']:
+                if row['distance_feet'] is None:
+                    continue
+                calculated.append({'id': f"long_carry:{row['location']}", 'name': row['location'].title() + ' long carry',
+                                   'description': row['description'], 'calculation_type': 'fixed', 'rate': row['total'],
+                                   'default_selected': True, 'automatic': True, 'applies': True, 'required': True,
+                                   'quantity_label': '', 'selected': True, 'amount': row['total'],
+                                   'subtotal': row['subtotal'], 'discount_amount': row['discount_amount'], 'discount_percent': row['discount_percent']})
+                total += Decimal(str(row['total']))
+    except Exception as error:
+        failures.append(pending_line('long-carry', 'Long carry', error))
+    try:
+        config = stairs_card(plan.services)
+        stairs = stairs_quote(config, {}, {}, cubic_feet, _service_billable_volume(plan, body.destination, 0))
+        if stairs:
+            saved = {row['location']: {'revision': row['revision'], 'flights': getattr(body, row['location'] + '_flights')} for row in stairs['locations']}
+            stairs = stairs_quote(config, {}, saved, cubic_feet, _service_billable_volume(plan, body.destination, 0))
+            for row in stairs['locations']:
+                if row['flights'] is None:
+                    continue
+                calculated.append({'id': f"stairs:{row['location']}", 'name': row['location'].title() + ' stairs',
+                                   'description': row['description'], 'calculation_type': 'fixed', 'rate': row['total'],
+                                   'default_selected': True, 'automatic': True, 'applies': True, 'required': True,
+                                   'quantity_label': '', 'selected': True, 'amount': row['total'],
+                                   'subtotal': row['subtotal'], 'discount_amount': row['discount_amount'], 'discount_percent': row['discount_percent']})
+                total += Decimal(str(row['total']))
+    except Exception as error:
+        failures.append(pending_line('stairs', 'Stairs', error))
+    try:
+        storage = storage_quote(storage_card(plan.services), _parsed_move_date(body.move_date), body.available_date,
+                                cubic_feet, _service_billable_volume(plan, body.destination, 0))
+        if storage and storage['valid']:
+            calculated.append({'id': 'storage-periods', 'name': 'Storage', 'description': storage['description'],
+                               'calculation_type': 'fixed', 'rate': storage['total'], 'default_selected': True,
+                               'automatic': True, 'applies': True, 'required': True, 'quantity_label': '',
+                               'selected': True, 'amount': storage['total']})
+            total += Decimal(str(storage['total']))
+    except Exception as error:
+        failures.append(pending_line('storage', 'Storage', error))
+    try:
+        if body.pickup_address:
+            fee = origin_fee(plan.services, body.pickup_address)
+            if fee:
+                calculated.append({'id': 'origin-mileage', 'name': 'Origin fees',
+                                   'description': fee['description'], 'calculation_type': 'fixed',
+                                   'rate': float(fee['amount']), 'default_selected': True, 'automatic': True,
+                                   'applies': True, 'required': True, 'quantity_label': '', 'selected': True,
+                                   'amount': float(fee['amount'])})
+                total += fee['amount']
+    except Exception as error:
+        failures.append(pending_line('origin-fees', 'Origin fees', error))
+    try:
+        if body.delivery_address:
+            fee = delivery_fee(plan.services, body.delivery_address)
+            if fee:
+                calculated.append({'id': 'delivery-mileage', 'name': 'Destination fees',
+                                   'description': fee['description'], 'calculation_type': 'fixed',
+                                   'rate': float(fee['amount']), 'default_selected': True, 'automatic': True,
+                                   'applies': True, 'required': True, 'quantity_label': '', 'selected': True,
+                                   'amount': float(fee['amount'])})
+                total += fee['amount']
+            state, zip_code = delivery_location(body.delivery_address)
+            card = shuttle_card(plan.services)
+            option = shuttle_option(card, body.delivery_address, state, zip_code, cubic_feet,
+                                    _service_billable_volume(plan, body.destination, 0), {})
+            if option and (option['automatic'] or body.shuttle_access is False):
+                calculated.append({'id': 'delivery-shuttle', 'name': 'Delivery shuttle',
+                                   'description': f"{option['cubic_feet']} cu ft at ${option['rate']:g} / cu ft",
+                                   'calculation_type': 'fixed', 'rate': option['total'],
+                                   'default_selected': True, 'automatic': True, 'applies': True,
+                                   'required': True, 'quantity_label': '', 'selected': True, 'amount': option['total']})
+                total += Decimal(str(option['total']))
+    except Exception as error:
+        failures.append(pending_line('destination-services', 'Destination services', error))
     return {
         "match": matched.to_dict() if matched else None,
         "transport": float(transport) if transport is not None else None,
@@ -543,10 +1059,875 @@ def calculate_pricing(
             transport is not None and minimum is not None and minimum > transport
         ),
         "base_price": float(base) if base is not None else None,
-        "charges": calculated,
+        "charges": calculated + failures,
+        "incomplete": bool(failures or any(row.get("pending") for row in calculated)),
         "total": float(total),
         "warning": "" if matched and matched.rate is not None else "No numeric transportation rate matched. Select another destination or enter manual pricing.",
     }
+
+
+def customer_packing_options(lead, job, db, plan=None, move_type=None):
+    if plan is None:
+        move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or not move_type:
+        return []
+    names = (_material_item_names(job._estimated_materials_data(), db)
+             + _material_item_names(_job_spark_inventory_items(job.id, db)))
+    saved = json.loads(job.customer_packing or '{}')
+    selected = {item_id: 'packing' for item_id in saved} if isinstance(saved, list) else saved
+    multiplier = Decimal('0.5') if move_type.lower() == 'local' else Decimal(1)
+    options = []
+    for service in plan.services:
+        if not _is_bulky_service(service):
+            continue
+        count = sum(_normalize_item_name(n) == _normalize_item_name(service.name) for n in names)
+        prices = _bulky_item_prices(service)
+        services = []
+        for kind in ('packing', 'crating'):
+            parsed = _number(prices.get(kind, ''))
+            if parsed is not None and parsed >= 0:
+                price = (Decimal(str(parsed)) * multiplier).quantize(Decimal('0.01'))
+                services.append({'kind': kind, 'price': float(price)})
+        if not services:
+            continue
+        for index in range(count):
+            item_id = f'{service.id}:{index + 1}'
+            chosen = next((option for option in services if option['kind'] == selected.get(item_id)), None)
+            options.append({'id': item_id, 'name': service.name,
+                            'label': f'{service.name} ({index + 1} of {count})' if count > 1 else service.name,
+                            'services': services, 'selected_service': chosen['kind'] if chosen else None,
+                            'price': chosen['price'] if chosen else services[0]['price'], 'selected': chosen is not None})
+    return options
+
+
+def customer_packing_package(lead, job, db, plan=None, move_type=None, selection_override=None):
+    from material_calculation import customer_material_quotes, inventory_material_options
+    from uuid import NAMESPACE_URL, uuid5
+    if plan is None:
+        move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or not move_type or move_type.lower() == 'local':
+        return None
+    card = packing_card(plan.services)
+    if card is None:
+        return None
+    volume = _rounded_cubic_feet(lead.volume)
+    if volume <= 0:
+        return None
+    delivery_state, delivery_zip = delivery_location(job.delivery_zip or '')
+    destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', delivery_state or '', delivery_zip or '')
+    inventory_volume = volume
+    minimum_volume = _service_billable_volume(plan, destination, 0)
+    volume = max(volume, minimum_volume)
+    rates = {}
+    for kind in ('full', 'partial'):
+        rate = getattr(card, kind)
+        if rate is not None:
+            rates[kind] = {'rate': float(rate), 'total': float((rate * volume).quantize(Decimal('0.01')))}
+    from catalog_names import resolve_catalog_names
+    inventory = resolve_catalog_names(job._estimated_materials_data() + _job_spark_inventory_items(job.id, db), db)
+    # Bins are already containers; do not offer packing or wrapping for them.
+    inventory = [row for row in inventory if not isinstance(row, dict)
+                 or not re.search(r'\bbins?\b', str(row.get('name') or ''), re.IGNORECASE)]
+    from item_materials import customer_item_materials
+    configured_items, configured_names = customer_item_materials(plan, inventory, db)
+    ignored_box_words = {'box', 'cp', 'pbo', 'cu', 'cuft', 'cf', 'cubic', 'foot', 'feet', 'pack', 'packing', 'item'}
+    def box_words(value):
+        words = []
+        for word in re.findall(r'[a-z]+', str(value).casefold()):
+            word = 'box' if word == 'boxes' else word[:-1] if len(word) > 3 and word.endswith('s') else word
+            if word not in ignored_box_words:
+                words.append(word)
+        return frozenset(words)
+    box_rates = [row for row in card.materials if row.box_capacity_cuft is not None or re.search(r'\bbox(?:es)?\b', row.name, re.IGNORECASE)]
+    inventory_boxes = {}
+    for row in inventory:
+        if not isinstance(row, dict) or not re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b', str(row.get('name') or ''), re.IGNORECASE):
+            continue
+        name = _box_base_name(row.get('name') or 'Boxes')
+        room = str(row.get('room') or 'Other items').strip() or 'Other items'
+        group_key = f'{_normalize_item_name(room)}:{_normalize_item_name(name)}'
+        try:
+            quantity = max(1, int(float(row.get('amount') or row.get('quantity') or 1)))
+        except (TypeError, ValueError):
+            quantity = 1
+        group = inventory_boxes.setdefault(group_key, {'label': name, 'room': room, 'quantity': 0})
+        group['quantity'] += quantity
+    box_items = []
+    for group_key, group in inventory_boxes.items():
+        words = box_words(group['label'])
+        matches = sorted(box_rates, key=lambda rate: (
+            box_words(rate.name) == words,
+            len(box_words(rate.name) & words) / max(1, len(box_words(rate.name) | words)),
+        ), reverse=True)
+        rate = matches[0] if matches and (box_words(matches[0].name) == words or box_words(matches[0].name) & words) else None
+        if rate is None:
+            continue
+        box_items.append({'id': str(uuid5(NAMESPACE_URL, f'inventory-box:{job.id}:{group_key}')),
+                          'label': group['label'], 'room': group['room'], 'quantity': group['quantity'],
+                          'material_name': rate.name, 'available': True,
+                          'labor_price': float(rate.packing_price),
+                          'material_price': float(rate.material_price)})
+    selection = selection_override if selection_override is not None else json.loads(job.customer_packing_package or '{}')
+    if selection_override is None:
+        box_limits = {item['id']: item['quantity'] for item in box_items}
+        saved_box_quantities = {}
+        for item_id, quantity in selection.get('box_quantities', {}).items():
+            try:
+                quantity = int(quantity)
+            except (TypeError, ValueError):
+                continue
+            if item_id in box_limits and quantity > 0:
+                saved_box_quantities[item_id] = min(quantity, box_limits[item_id])
+        selection = {**selection, 'box_quantities': saved_box_quantities}
+    # Legacy card.items stays stored, but no longer supplies wizard requirements.
+    other_inventory = inventory_material_options([row for row in inventory if isinstance(row, dict) and ' '.join(sorted(re.findall(r'\w+', str(row.get('name') or '').casefold()))) not in configured_names])
+    return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': configured_items,
+            'box_items': box_items,
+            'configured_materials': True,
+            'other_inventory': other_inventory,
+            'material_rates': [row.model_dump(mode='json') for row in card.materials],
+            'material_quotes': customer_material_quotes(card.materials, selection.get('additional_items', {}), other_inventory),
+            'selection': {'mode': 'none', 'unpacking': False, 'item_ids': [], **selection}}
+
+
+def apply_box_packing_to_inventory(job, db, package, selection):
+    """Persist CP/PBO as inventory metadata while keeping one box inventory."""
+    from models import LeadLiveSwitch, LeadSparkInventoryItem
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=job.lead_id).with_for_update().first()
+    if not saved:
+        return
+    details = json.loads(saved.details or '{}')
+    from catalog_names import resolve_catalog_names
+    rows = resolve_catalog_names(details.get('spark_inventory_snapshot') or [], db)
+    quantities = selection.get('box_quantities', {})
+    changed = False
+    for box in package.get('box_items', []):
+        room_key = _normalize_item_name(box.get('room') or 'Other items')
+        name_key = _normalize_item_name(_box_base_name(box.get('label') or ''))
+        indexes = [index for index, row in enumerate(rows) if isinstance(row, dict)
+                   and row.get('going') is not False
+                   and _normalize_item_name(row.get('room') or 'Other items') == room_key
+                   and _normalize_item_name(_box_base_name(row.get('name') or '')) == name_key]
+        if not indexes:
+            continue
+        source = [rows[index] for index in indexes]
+        total_qty = sum(max(1, int(float(row.get('amount') or row.get('quantity') or 1))) for row in source)
+        cp_qty = max(0, min(total_qty, int(quantities.get(box['id'], 0) or 0)))
+        totals = {field: sum(float(row.get(field) or 0) for row in source) for field in ('cuft', 'weight')}
+        template = dict(source[0])
+        base_name = _box_base_name(template.get('name') or box['label'])
+        replacements = []
+        for suffix, quantity in (('PBO', total_qty - cp_qty), ('CP', cp_qty)):
+            if quantity <= 0:
+                continue
+            row = dict(template)
+            row['name'] = f'{base_name} ({suffix})'
+            row['amount'] = quantity
+            row['quantity'] = quantity
+            row['cuft'] = round(totals['cuft'] * quantity / total_qty, 4)
+            row['weight'] = round(totals['weight'] * quantity / total_qty, 4)
+            replacements.append(row)
+        first = indexes[0]
+        rows = [row for index, row in enumerate(rows) if index not in set(indexes)]
+        rows[first:first] = replacements
+        changed = True
+    if not changed:
+        return
+    details['spark_inventory_snapshot'] = rows
+    if details.get('question_original_rows'):
+        details['question_original_rows'] = [dict(row) for row in rows]
+    from spark_history import remember_report
+    remember_report(details)
+    saved.details = json.dumps(details)
+    from inventory_record_sync import sync_inventory_records
+    sync_inventory_records(job.id, rows, db)
+
+
+def customer_package_lines(package, selection):
+    if not package:
+        return []
+    lines = []
+    mode = selection.get('mode', 'none')
+    for kind in (mode,):
+        if kind in package['rates']:
+            rate = package['rates'][kind]
+            name = {'full': 'Full packing', 'partial': 'Partial packing', 'unpacking': 'Unpacking'}[kind]
+            lines.append({'id': f'package:{kind}', 'name': name,
+                          'description': f"{package['cubic_feet']} cu ft at ${rate['rate']:g} / cu ft",
+                          'amount': Decimal(str(rate['total']))})
+    if mode == 'none':
+        for item in package.get('material_quotes', []) if selection.get('has_additional_protection') is not False else []:
+            service = selection.get('additional_items', {}).get(item['id'], {}).get('service', 'self')
+            if service == 'self':
+                continue
+            if item['status'] != 'priced':
+                lines.append(pending_line(f"material:{item['id']}", f"{item['label']} Packing", ValueError('Material pricing needs review.')))
+                continue
+            lines.append({'id': f"material:{item['id']}", 'name': f"{item['label']} Packing",
+                          'description': '; '.join(f"{line['quantity']} {line['unit']} {line['name']}" for line in item['lines']),
+                          'amount': Decimal(str(item['packing_and_material'] if service == 'materials' else item['packing_only']))})
+        for item in package['items']:
+            if item['id'] in selection.get('item_ids', []):
+                if item.get('available') is False:
+                    lines.append(pending_line(f"box:{item['id']}", f"{item['label']} Boxing", ValueError('Material pricing needs review.')))
+                    continue
+                lines.append({'id': f"box:{item['id']}", 'name': f"{item['label']} Boxing",
+                              'description': ((f"{item['quantity']:g} x " if item.get('quantity') is not None else '') + f"{item['material_name']}. " if item.get('material_name') else '') + ('Packing labor and materials' if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else 'Packing labor only; customer supplies materials'),
+                              'amount': Decimal(str(item.get('labor_price', item['price']))) + (Decimal(str(item.get('material_price', 0))) if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else Decimal(0))})
+    if mode != 'full':
+        quantities = selection.get('box_quantities', {})
+        for item in package.get('box_items', []):
+            quantity = int(quantities.get(item['id'], 0) or 0)
+            if quantity <= 0:
+                continue
+            if item.get('available') is False:
+                lines.append(pending_line(f"inventory-box:{item['id']}", f"{item['label']} Packing", ValueError('Box packing pricing needs review.')))
+                continue
+            unit_price = Decimal(str(item.get('labor_price', 0))) + Decimal(str(item.get('material_price', 0)))
+            lines.append({'id': f"inventory-box:{item['id']}", 'name': f"{item['label']} Packing",
+                          'description': f"Movers pack {quantity} of {item['quantity']} boxes; labor and materials included",
+                          'amount': unit_price * quantity})
+    return lines
+
+
+@isolated_charge('Packing services')
+def add_customer_package_charges(lead, job, db, plan, move_type):
+    package = customer_packing_package(lead, job, db, plan, move_type)
+    total = Decimal(0)
+    for index, line in enumerate(customer_package_lines(package, package['selection'] if package else {})):
+        db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, line['id']), job_id=job.id,
+                            name=line['name'], description=line['description'], sort_order=2000 + index,
+                            subtotal=line['amount'], discount_amount=0, total_cost=line['amount']))
+        total += line['amount']
+    return total
+
+
+def customer_packing_charge_id(job_id, item_id):
+    from uuid import uuid5, NAMESPACE_URL
+    return str(uuid5(NAMESPACE_URL, f'customer-packing:{job_id}:{item_id}'))
+
+
+def customer_shuttle(lead, job, db, plan=None, move_type=None):
+    if plan is None:
+        move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or (move_type or '').lower() == 'local':
+        return None
+    state, zip_code = delivery_location(job.delivery_zip or '')
+    destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', state, zip_code)
+    saved = json.loads(job.customer_packing_package or '{}').get('shuttle', {})
+    return shuttle_option(shuttle_card(plan.services), job.delivery_zip or '', state, zip_code,
+                          _rounded_cubic_feet(lead.volume), _service_billable_volume(plan, destination, 0), saved)
+
+
+def customer_storage(lead, job, db, plan=None, move_type=None):
+    if plan is None:
+        move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or (move_type or '').lower() == 'local':
+        return None
+    state, zip_code = delivery_location(job.delivery_zip or '')
+    destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', state, zip_code)
+    available = json.loads(job.customer_packing_package or '{}').get('storage_date', '')
+    return storage_quote(storage_card(plan.services), _parsed_move_date(job.move_date or ''), available,
+                         _rounded_cubic_feet(lead.volume), _service_billable_volume(plan, destination, 0))
+
+
+def customer_elevator(lead, job, db, plan=None, move_type=None):
+    if plan is None:
+        move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or (move_type or '').lower() == 'local':
+        return None
+    state, zip_code = delivery_location(job.delivery_zip or '')
+    destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', state, zip_code)
+    saved = json.loads(job.customer_packing_package or '{}').get('elevator', {})
+    return elevator_quote(elevator_card(plan.services), {'pickup': job.pickup_zip or '', 'delivery': job.delivery_zip or ''},
+                        saved, _rounded_cubic_feet(lead.volume))
+
+
+@isolated_charge('Elevator')
+def add_elevator_charges(lead, job, db, plan=None, move_type=None, location=None):
+    option = customer_elevator(lead, job, db, plan, move_type)
+    total = Decimal(0)
+    for row in option['locations'] if option else []:
+        if (location and row['location'] != location) or not row['uses_elevator']:
+            continue
+        amount = Decimal(str(row['total']))
+        db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'elevator:' + row['location']), job_id=job.id,
+                            name=row['location'].title() + ' elevator', description=row['description'],
+                            sort_order=2870 if row['location'] == 'pickup' else 2871,
+                            subtotal=Decimal(str(row['subtotal'])), discount_amount=Decimal(str(row['discount_amount'])), total_cost=amount))
+        total += amount
+    return total
+
+
+def sync_elevator_charges(lead, job, db, location=None):
+    if job.price is None:
+        return
+    ids = [customer_packing_charge_id(job.id, 'elevator:' + place) for place in ('pickup', 'delivery') if not location or place == location]
+    old = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id, LeadJobCharge.id.in_(ids)).all()
+    old_total = sum((row.total_cost for row in old), Decimal(0))
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, old)
+    delta = add_elevator_charges(lead, job, updates, location=location) - old_total
+    updates.finish()
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    from routes.leads import _refresh_lead_estimated_total
+    _refresh_lead_estimated_total(lead.id, db)
+
+
+def customer_long_carry(lead, job, db, plan=None, move_type=None):
+    if plan is None:
+        move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or (move_type or '').lower() == 'local':
+        return None
+    state, zip_code = delivery_location(job.delivery_zip or '')
+    destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', state, zip_code)
+    saved = json.loads(job.customer_packing_package or '{}').get('long_carry', {})
+    card = long_carry_card(plan.services)
+    addresses = {'pickup': job.pickup_zip or '', 'delivery': job.delivery_zip or ''}
+    volume = _rounded_cubic_feet(lead.volume)
+    minimum = _service_billable_volume(plan, destination, 0)
+    option = long_carry_quote(card, addresses, saved, volume, minimum)
+    shuttle = customer_shuttle(lead, job, db, plan, move_type)
+    if option and shuttle and not shuttle['automatic'] and shuttle['answer'] is True:
+        delivery = next(row for row in option['locations'] if row['location'] == 'delivery')
+        saved = {**saved, 'delivery': {'revision': delivery['revision'], 'distance_feet': 0}}
+        option = long_carry_quote(card, addresses, saved, volume, minimum)
+    return option
+
+
+@isolated_charge('Long carry')
+def add_long_carry_charges(lead, job, db, plan=None, move_type=None, location=None):
+    option = customer_long_carry(lead, job, db, plan, move_type)
+    total = Decimal(0)
+    for row in option['locations'] if option else []:
+        if (location and row['location'] != location) or not row['paid_increments']:
+            continue
+        amount = Decimal(str(row['total']))
+        db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'long_carry:' + row['location']), job_id=job.id,
+                            name=row['location'].title() + ' long carry', description=row['description'],
+                            sort_order=2850 if row['location'] == 'pickup' else 2851,
+                            subtotal=Decimal(str(row['subtotal'])), discount_amount=Decimal(str(row['discount_amount'])), total_cost=amount))
+        total += amount
+    return total
+
+
+def sync_long_carry_charges(lead, job, db, location=None):
+    if job.price is None:
+        return
+    ids = [customer_packing_charge_id(job.id, 'long_carry:' + place) for place in ('pickup', 'delivery') if not location or place == location]
+    old = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id, LeadJobCharge.id.in_(ids)).all()
+    old_total = sum((row.total_cost for row in old), Decimal(0))
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, old)
+    delta = add_long_carry_charges(lead, job, updates, location=location) - old_total
+    updates.finish()
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    from routes.leads import _refresh_lead_estimated_total
+    _refresh_lead_estimated_total(lead.id, db)
+
+
+def customer_stairs(lead, job, db, plan=None, move_type=None):
+    if plan is None:
+        move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or (move_type or '').lower() == 'local':
+        return None
+    state, zip_code = delivery_location(job.delivery_zip or '')
+    destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', state, zip_code)
+    saved = json.loads(job.customer_packing_package or '{}').get('stairs', {})
+    return stairs_quote(stairs_card(plan.services), {'pickup': job.pickup_zip or '', 'delivery': job.delivery_zip or ''},
+                        saved, _rounded_cubic_feet(lead.volume), _service_billable_volume(plan, destination, 0))
+
+
+@isolated_charge('Stairs')
+def add_stairs_charges(lead, job, db, plan=None, move_type=None, location=None):
+    option = customer_stairs(lead, job, db, plan, move_type)
+    total = Decimal(0)
+    for row in option['locations'] if option else []:
+        if (location and row['location'] != location) or not row['paid_flights']:
+            continue
+        amount = Decimal(str(row['total']))
+        db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'stairs:' + row['location']), job_id=job.id,
+                            name=row['location'].title() + ' stairs', description=row['description'],
+                            sort_order=2800 if row['location'] == 'pickup' else 2801,
+                            subtotal=Decimal(str(row['subtotal'])), discount_amount=Decimal(str(row['discount_amount'])), total_cost=amount))
+        total += amount
+    return total
+
+
+def sync_stairs_charges(lead, job, db, location=None):
+    if job.price is None:
+        return
+    ids = [customer_packing_charge_id(job.id, 'stairs:' + place) for place in ('pickup', 'delivery') if not location or place == location]
+    old = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id, LeadJobCharge.id.in_(ids)).all()
+    old_total = sum((row.total_cost for row in old), Decimal(0))
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, old)
+    delta = add_stairs_charges(lead, job, updates, location=location) - old_total
+    updates.finish()
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    from routes.leads import _refresh_lead_estimated_total
+    _refresh_lead_estimated_total(lead.id, db)
+
+
+@isolated_charge('Storage')
+def add_storage_charge(lead, job, db, plan=None, move_type=None):
+    option = customer_storage(lead, job, db, plan, move_type)
+    if not option or not option['valid'] or not option['paid_periods']:
+        return Decimal(0)
+    amount = Decimal(str(option['total']))
+    db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'storage-periods'), job_id=job.id,
+                        name='Storage', description=option['description'], sort_order=2700,
+                        subtotal=amount, discount_amount=0, total_cost=amount))
+    return amount
+
+
+def sync_storage_charge(lead, job, db):
+    if job.price is None:
+        return
+    old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'storage-periods'))
+    old_total = old.total_cost if old else Decimal(0)
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, [old] if old else [])
+    delta = add_storage_charge(lead, job, updates) - old_total
+    updates.finish()
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    from routes.leads import _refresh_lead_estimated_total
+    _refresh_lead_estimated_total(lead.id, db)
+
+
+@isolated_charge('Shuttle')
+def add_customer_shuttle_charge(lead, job, db, plan=None, move_type=None):
+    option = customer_shuttle(lead, job, db, plan, move_type)
+    if not option or not option['required']:
+        return Decimal(0)
+    amount = Decimal(str(option['total']))
+    reason = 'Required for delivery area' if option['automatic'] else 'Customer confirmed no semi-trailer access'
+    db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'shuttle'), job_id=job.id,
+                        name='Delivery shuttle', description=f"{option['cubic_feet']} cu ft at ${option['rate']:g} / cu ft. {reason}.",
+                        sort_order=2500, subtotal=amount, discount_amount=0, total_cost=amount))
+    return amount
+
+
+def sync_customer_shuttle_charge(lead, job, db):
+    """Update only the shuttle line and published totals; leave all other charges intact."""
+    if job.price is None:
+        return
+    old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'shuttle'))
+    old_total = old.total_cost if old else Decimal(0)
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, [old] if old else [])
+    delta = add_customer_shuttle_charge(lead, job, updates) - old_total
+    updates.finish()
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    from routes.leads import _refresh_lead_estimated_total
+    _refresh_lead_estimated_total(lead.id, db)
+
+
+def job_delivery_fee(job, plan):
+    selection = json.loads(job.customer_packing_package or '{}')
+    fee = delivery_fee(plan.services, job.delivery_zip or '', selection.get('delivery_route')) if plan else None
+    if fee:
+        selection['delivery_route'] = {key: fee[key] for key in ('revision', 'meters')}
+    else:
+        selection.pop('delivery_route', None)
+    job.customer_packing_package = json.dumps(selection)
+    return fee
+
+
+@isolated_charge('Destination fees')
+def add_delivery_fee_charge(job, db, fee):
+    if callable(fee):
+        fee = fee()
+    if not fee:
+        return Decimal(0)
+    db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'delivery-mileage'), job_id=job.id,
+                        name='Destination fees', description=fee['description'], sort_order=2600,
+                        subtotal=fee['amount'], discount_amount=0, total_cost=fee['amount']))
+    return fee['amount']
+
+
+def sync_delivery_fee(lead, job, db):
+    if job.price is None:
+        return
+    move_type, plan = infer_job_move_type(lead, job, db)
+    fee = lambda: job_delivery_fee(job, plan if (move_type or '').lower() != 'local' else None)
+    old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'delivery-mileage'))
+    old_total = old.total_cost if old else Decimal(0)
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, [old] if old else [])
+    delta = add_delivery_fee_charge(job, updates, fee) - old_total
+    updates.finish()
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    from routes.leads import _refresh_lead_estimated_total
+    _refresh_lead_estimated_total(lead.id, db)
+
+
+def job_origin_fee(job, plan):
+    selection = json.loads(job.customer_packing_package or '{}')
+    fee = origin_fee(plan.services, job.pickup_zip or '', selection.get('origin_route')) if plan else None
+    if fee:
+        selection['origin_route'] = {key: fee[key] for key in ('revision', 'meters')}
+    else:
+        selection.pop('origin_route', None)
+    job.customer_packing_package = json.dumps(selection)
+    return fee
+
+
+@isolated_charge('Origin fees')
+def add_origin_fee_charge(job, db, fee):
+    if callable(fee):
+        fee = fee()
+    if not fee:
+        return Decimal(0)
+    db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'origin-mileage'), job_id=job.id,
+                        name='Origin fees', description=fee['description'], sort_order=2590,
+                        subtotal=fee['amount'], discount_amount=0, total_cost=fee['amount']))
+    return fee['amount']
+
+
+def sync_origin_fee(lead, job, db):
+    if job.price is None:
+        return
+    move_type, plan = infer_job_move_type(lead, job, db)
+    fee = lambda: job_origin_fee(job, plan if (move_type or '').lower() != 'local' else None)
+    old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'origin-mileage'))
+    old_total = old.total_cost if old else Decimal(0)
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, [old] if old else [])
+    delta = add_origin_fee_charge(job, updates, fee) - old_total
+    updates.finish()
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    from routes.leads import _refresh_lead_estimated_total
+    _refresh_lead_estimated_total(lead.id, db)
+
+
+@isolated_charge('Item packing')
+def add_customer_packing_charges(lead, job, db, plan, move_type):
+    total = Decimal(0)
+    for index, item in enumerate(customer_packing_options(lead, job, db, plan, move_type)):
+        if item['selected']:
+            amount = Decimal(str(item['price']))
+            db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, item['id']), job_id=job.id,
+                                name=f"{item['label']} {item['selected_service'].title()}", description='', sort_order=1000 + index,
+                                subtotal=amount, discount_amount=0, total_cost=amount))
+            total += amount
+    return total
+
+
+@with_job_locations
+def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> float | None:
+    if not lead or not job:
+        return None
+    from price_validity import price_is_locked
+    if price_is_locked(lead, job):
+        return float(job.price) if job.price is not None else None
+    vol = _rounded_cubic_feet(lead.volume)
+    if vol <= 0:
+        # An empty inventory clears the estimate; it is not a pricing failure.
+        for charge in db.query(LeadJobCharge).filter_by(job_id=job.id).all():
+            db.delete(charge)
+        db.query(LeadJob).filter_by(id=job.id).update({
+            LeadJob.price: None, LeadJob.price_calculated_at: datetime.utcnow(),
+            LeadJob.price_refresh_error: None,
+        }, synchronize_session="fetch")
+        db.query(Lead).filter_by(id=lead.id).update({
+            Lead.estimated_total: None,
+        }, synchronize_session="fetch")
+        db.query(PublicMoveAccess).filter_by(job_id=job.id).update({
+            PublicMoveAccess.published_price: None, PublicMoveAccess.published_cuft: None,
+            PublicMoveAccess.published_at: None,
+        }, synchronize_session="fetch")
+        return 0.0
+
+    company_id = job.company_id or lead.company_id
+    if not company_id:
+        from models import Company
+        default_co = db.query(Company).filter(Company.is_default_company.is_(True)).first()
+        if default_co:
+            company_id = default_co.id
+            if not job.company_id:
+                job.company_id = default_co.id
+    if not company_id:
+        return None
+
+    pickup_addr = (job.pickup_zip or "").strip()
+    delivery_addr = (job.delivery_zip or "").strip()
+
+    pickup_state, pickup_zip = delivery_location(pickup_addr)
+    delivery_state, delivery_zip = delivery_location(delivery_addr)
+
+    plans = (
+        db.query(PricingPlan)
+        .filter(PricingPlan.company_id == company_id, PricingPlan.active.is_(True))
+        .order_by(PricingPlan.sort_order, PricingPlan.name)
+        .all()
+    )
+    if not plans:
+        return None
+
+    move_type, matched_plan = infer_job_move_type(lead, job, db, plans)
+    if move_type:
+        lead.move_type = move_type
+    if not move_type or not matched_plan:
+        return None
+
+    if move_type.lower() == "local":
+        from routes.local_pricing import calculate_book_price
+        from local_pricing import LocalCalculation
+        try:
+            quote = calculate_book_price(matched_plan, LocalCalculation(cubic_feet=Decimal(vol)),
+                                         db, pickup_addr, delivery_addr)
+        except Exception as error:
+            quote = {'total': 0, 'incomplete': True, 'charges': [pending_line('local-moving', 'Local moving', error)]}
+        total = quote.get("total")
+        if total is None:
+            quote['charges'].append(pending_line('local-moving', 'Local moving', ValueError(quote.get('warning') or 'Hourly rate is not configured.')))
+            quote['incomplete'] = True
+        if (total is None or total <= 0) and not quote.get('incomplete'):
+            return None
+
+        all_materials = (
+            _material_item_names(job._estimated_materials_data(), db)
+            + _material_item_names(_job_spark_inventory_items(job.id, db))
+        )
+        bulky_charges = []
+        for service in matched_plan.services:
+            try:
+                bulky_charges.extend(_bulky_item_charges([service], all_materials, rate_multiplier=0.5))
+            except Exception as error:
+                quote['charges'].append(pending_line(f'bulky:{service.id}', service.name, error))
+
+        from charge_updates import ChargeUpdates
+        db = ChargeUpdates(db, db.query(LeadJobCharge).filter_by(job_id=job.id).all(), match_legacy_base=True, remove_missing=False)
+        all_lines = list(quote.get("charges", []))
+        for b_charge in bulky_charges:
+            if b_charge.get("default_selected", False) and b_charge.get("rate", 0) > 0:
+                amt = Decimal(str(b_charge["rate"]))
+                all_lines.append({
+                    "name": b_charge["name"],
+                    "description": b_charge.get("description", ""),
+                    "subtotal": amt,
+                    "discountAmount": Decimal(0),
+                    "totalCost": amt,
+                })
+
+        for idx, line in enumerate(all_lines):
+            if line.get("totalCost", 0) > 0 or line.get("pending"):
+                db.add(LeadJobCharge(
+                    id=str(uuid4()),
+                    job_id=job.id,
+                    name=line["name"],
+                    description=line.get("description", ""),
+                    sort_order=idx,
+                    subtotal=line["subtotal"],
+                    discount_amount=line.get("discountAmount", Decimal(0)),
+                    total_cost=line["totalCost"],
+                ))
+        job.price = sum((l["totalCost"] for l in all_lines if l.get("totalCost", 0) > 0), Decimal(0))
+        job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
+        job.price += add_customer_package_charges(lead, job, db, matched_plan, move_type)
+        job.price += add_customer_shuttle_charge(lead, job, db, matched_plan, move_type)
+        job.price += add_storage_charge(lead, job, db, matched_plan, move_type)
+        job.price += add_stairs_charges(lead, job, db, matched_plan, move_type)
+        job.price += add_long_carry_charges(lead, job, db, matched_plan, move_type)
+        job.price += add_elevator_charges(lead, job, db, matched_plan, move_type)
+        from extra_stops import add_charges as add_extra_stop_charges
+        job.price += add_extra_stop_charges(lead,job,db,matched_plan)
+        job.price += add_service_charges(lead, job, db, matched_plan)
+        db.finish()
+        from routes.leads import _refresh_lead_estimated_total
+        _refresh_lead_estimated_total(lead.id, db)
+        access = db.query(PublicMoveAccess).filter_by(job_id=job.id).first()
+        if access:
+            access.published_price = job.price
+            access.published_cuft = lead.volume
+            access.published_at = datetime.utcnow()
+        selection = json.loads(job.customer_packing_package or '{}')
+        selection.pop('pricing_pending', None)
+        job.customer_packing_package = json.dumps(selection)
+        job.price_calculated_at = datetime.utcnow()
+        job.price_refresh_error = None
+        return float(job.price)
+
+    else:
+        destination = _plan_destination_for_delivery(matched_plan, delivery_addr, delivery_state or "", delivery_zip or "")
+        if not destination:
+            return None
+
+        all_materials = (
+            _material_item_names(job._estimated_materials_data(), db)
+            + _material_item_names(_job_spark_inventory_items(job.id, db))
+        )
+        calc_body = CalculationInput(
+            destination=destination,
+            cubic_feet=vol,
+            move_date=job.move_date or "",
+            bulky_items=all_materials,
+        )
+        quote = compute_plan_calculation(matched_plan, calc_body)
+        total = quote.get("total", 0.0)
+        if total <= 0 and not quote.get("incomplete"):
+            return None
+
+        lines = []
+        if quote.get("base_price", 0) > 0:
+            lines.append({
+                "name": "Transportation charge",
+                "description": (
+                    f"${float(quote['match']['rate']):,.2f} per cu ft"
+                    + (f" (minimum charge ${quote['minimum']:,.2f})" if quote.get('minimum_applied') else '')
+                    if (quote.get('match') or {}).get('rate') is not None
+                    else 'Minimum transportation charge'
+                ),
+                "subtotal": Decimal(str(quote["base_price"])),
+                "discount_amount": Decimal(0),
+                "total_cost": Decimal(str(quote["base_price"])),
+            })
+        for c in quote.get("charges", []):
+            if c.get("selected") and (c.get("amount", 0) > 0 or c.get("pending")):
+                amt = Decimal(str(c["amount"]))
+                lines.append({
+                    "name": c["name"],
+                    "description": c.get("description", ""),
+                    "subtotal": amt,
+                    "discount_amount": Decimal(0),
+                    "total_cost": amt,
+                })
+        if not lines:
+            return None
+
+        from charge_updates import ChargeUpdates
+        db = ChargeUpdates(db, db.query(LeadJobCharge).filter_by(job_id=job.id).all(), match_legacy_base=True, remove_missing=False)
+        for idx, line in enumerate(lines):
+            db.add(LeadJobCharge(
+                id=str(uuid4()),
+                job_id=job.id,
+                name=line["name"],
+                description=line["description"],
+                sort_order=idx,
+                subtotal=line["subtotal"],
+                discount_amount=line["discount_amount"],
+                total_cost=line["total_cost"],
+            ))
+        job.price = sum(l["total_cost"] for l in lines)
+        job.price += add_origin_fee_charge(job, db, lambda: job_origin_fee(job, matched_plan))
+        job.price += add_delivery_fee_charge(job, db, lambda: job_delivery_fee(job, matched_plan))
+        job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
+        job.price += add_customer_package_charges(lead, job, db, matched_plan, move_type)
+        job.price += add_customer_shuttle_charge(lead, job, db, matched_plan, move_type)
+        job.price += add_storage_charge(lead, job, db, matched_plan, move_type)
+        job.price += add_stairs_charges(lead, job, db, matched_plan, move_type)
+        job.price += add_long_carry_charges(lead, job, db, matched_plan, move_type)
+        job.price += add_elevator_charges(lead, job, db, matched_plan, move_type)
+        from extra_stops import add_charges as add_extra_stop_charges
+        job.price += add_extra_stop_charges(lead,job,db,matched_plan)
+        job.price += add_service_charges(lead, job, db, matched_plan)
+        db.finish()
+        from routes.leads import _refresh_lead_estimated_total
+        _refresh_lead_estimated_total(lead.id, db)
+        access = db.query(PublicMoveAccess).filter_by(job_id=job.id).first()
+        if access:
+            access.published_price = job.price
+            access.published_cuft = lead.volume
+            access.published_at = datetime.utcnow()
+        selection = json.loads(job.customer_packing_package or '{}')
+        selection.pop('pricing_pending', None)
+        job.customer_packing_package = json.dumps(selection)
+        job.price_calculated_at = datetime.utcnow()
+        job.price_refresh_error = None
+        return float(job.price)
+
+
+@router.post("/{plan_id}/calculate")
+def calculate_pricing(
+    plan_id: str,
+    body: CalculationInput,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    plan = _plan_or_404(db, user, plan_id)
+    input_failures = []
+    try:
+        card = origin_fee_card(plan.services)
+        if not body.pickup_address and card and card.enabled and card.rules:
+            raise HTTPException(422, 'Enter the pickup address or ZIP to calculate origin fees.')
+    except Exception as error:
+        input_failures.append(pending_line('origin-fees', 'Origin fees', error))
+    try:
+        card = delivery_fee_card(plan.services)
+        if not body.delivery_address and card and card.enabled and card.rules:
+            raise HTTPException(422, 'Enter the delivery address or ZIP to calculate destination fees.')
+    except Exception as error:
+        input_failures.append(pending_line('destination-fees', 'Destination fees', error))
+    try:
+        storage = storage_quote(storage_card(plan.services), _parsed_move_date(body.move_date), body.available_date, body.cubic_feet, 0)
+        if storage and not storage['valid']:
+            raise HTTPException(422, 'Choose a pickup date and an earliest delivery date on or after pickup to calculate storage.')
+    except Exception as error:
+        input_failures.append(pending_line('storage', 'Storage', error))
+    try:
+        stairs = stairs_card(plan.services)
+        if stairs and stairs.enabled and (body.pickup_flights is None or body.delivery_flights is None):
+            raise HTTPException(422, 'Enter the outdoor/building flights at pickup and delivery, including zero when there are no stairs.')
+    except Exception as error:
+        input_failures.append(pending_line('stairs', 'Stairs', error))
+    try:
+        carry = long_carry_card(plan.services)
+        if carry and carry.enabled and (body.pickup_carry_feet is None or body.delivery_carry_feet is None):
+            raise HTTPException(422, 'Enter the carrying distance at pickup and delivery in feet.')
+    except Exception as error:
+        input_failures.append(pending_line('long-carry', 'Long carry', error))
+    try:
+        elevator = elevator_card(plan.services)
+        if elevator and elevator.enabled and (body.pickup_elevator is None or body.delivery_elevator is None):
+            raise HTTPException(422, 'Answer whether an elevator is needed at pickup and delivery.')
+    except Exception as error:
+        input_failures.append(pending_line('elevator', 'Elevator', error))
+    result = compute_plan_calculation(plan, body)
+    result['charges'].extend(input_failures)
+    result['incomplete'] = result.get('incomplete', False) or bool(input_failures)
+    if body.source_job_id:
+        from routes.leads import _get_job_or_404
+        from extra_stops import option as extra_stops_option
+        job = db.get(LeadJob, body.source_job_id)
+        if job is None: raise HTTPException(404, 'Job not found')
+        job = _get_job_or_404(job.lead_id, job.id, user, db)
+        lead = db.get(Lead,job.lead_id)
+        extra = extra_stops_option(lead,job,db,plan,refresh=True)
+        for group in extra['locations'] if extra else []:
+            for i,row in enumerate(group['stops']):
+                if row['total'] is None:
+                    result['charges'].append(pending_line('extra-stop:' + row['id'], f"Extra {group['location']} stop {i+1}", ValueError('Driving distance is not available.')))
+                    result['incomplete'] = True
+                    continue
+                result['charges'].append({'id':'extra-stop:'+row['id'], 'name':f"Extra {group['location']} stop {i+1}",
+                    'description':f"{row['address']}; {row['miles']} driving miles from {group['origin']}; {group['free_miles']} free miles, ${group['stop_fee']:.2f} per chargeable stop plus ${group['per_mile']:.2f} per mile beyond the allowance.",
+                    'calculation_type':'fixed','rate':row['total'],'amount':row['total'],'selected':True,
+                    'default_selected':True,'automatic':True,'applies':True,'required':True,'quantity_label':''})
+                result['total']=float(Decimal(str(result['total']))+Decimal(str(row['total'] or 0)))
+        db.commit()
+    return result
 
 
 @router.get("/{plan_id}")
@@ -562,25 +1943,13 @@ def get_pricing_plan(
 def lookup_pricing(
     plan_id: str,
     destination: str = Query(min_length=1),
-    cubic_feet: int = Query(ge=0),
+    cubic_feet: float = Query(ge=0),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     plan = _plan_or_404(db, user, plan_id)
-    normalized = destination.strip().lower()
-    candidates = [
-        row
-        for row in plan.rates
-        if row.destination.strip().lower() == normalized
-        and (row.cubic_feet_min is None or cubic_feet >= row.cubic_feet_min)
-        and (row.cubic_feet_max is None or cubic_feet <= row.cubic_feet_max)
-    ]
-    rate = candidates[0] if candidates else None
-    transport = (
-        Decimal(cubic_feet) * rate.rate if rate and rate.rate is not None else None
-    )
-    minimum = rate.minimum_price if rate else None
-    base = max(transport, minimum) if transport is not None and minimum is not None else transport or minimum
+    rounded_cubic_feet = _rounded_cubic_feet(cubic_feet)
+    rate, transport, minimum, base = _transportation_price(plan, destination, rounded_cubic_feet)
     fuel = (
         base * plan.fuel_percent / Decimal(100)
         if base is not None and plan.fuel_percent is not None
@@ -614,50 +1983,73 @@ def update_pricing_plan(
     if not body.rates:
         raise HTTPException(status_code=400, detail="At least one pricing rate is required")
 
+    from pricing_service_updates import prepare_service_updates
+    service_updates = prepare_service_updates(list(plan.services), body.services)
+    from pricing_row_updates import prepare_row_updates
+    rule_updates = prepare_row_updates(list(plan.rules), body.rules, ('category', 'title'), ('description',))
+    rate_updates = prepare_row_updates(list(plan.rates), body.rates,
+                                       ('destination', 'band_label'), ('destination', 'band_label'))
+
     plan.name = body.name.strip()
-    plan.pickup_regions = body.pickup_regions.strip()
+    if body.pickup_areas is not None:
+        states = [area.state for area in body.pickup_areas]
+        if len(states) != len(set(states)):
+            raise HTTPException(400, 'Add each state once and enter its ZIP codes in the same row')
+        plan.pickup_regions = json.dumps([area.model_dump() for area in body.pickup_areas])
+    else:
+        plan.pickup_regions = body.pickup_regions.strip()
     plan.fuel_percent = body.fuel_percent
+    plan.price_valid_days = getattr(body, 'price_valid_days', 7)
     plan.active = body.active
-    plan.rules.clear()
-    plan.rates.clear()
-    plan.services.clear()
-    db.flush()
-    plan.rules.extend(
-        PricingRule(
-            category=row.category.strip() or "general",
-            title=row.title.strip() or "Pricing rule",
-            description=row.description.strip(),
-            sort_order=index,
-        )
-        for index, row in enumerate(body.rules)
-        if row.description.strip()
-    )
-    plan.rates.extend(
-        PricingRate(
-            destination=row.destination.strip(),
-            destination_group=row.destination_group.strip(),
-            minimum_price=row.minimum_price,
-            minimum_text=row.minimum_text.strip(),
-            band_label=row.band_label.strip(),
-            cubic_feet_min=row.cubic_feet_min,
-            cubic_feet_max=row.cubic_feet_max,
-            rate=row.rate,
-            rate_text=row.rate_text.strip(),
-            sort_order=index,
-        )
-        for index, row in enumerate(body.rates)
-        if row.destination.strip() and row.band_label.strip()
-    )
-    plan.services.extend(
-        PricingService(
-            name=row.name.strip(),
-            rate_text=row.rate_text.strip(),
-            comments=row.comments.strip(),
-            sort_order=index,
-        )
-        for index, row in enumerate(body.services)
-        if row.name.strip()
-    )
+    retained_rules = []
+    for index, (existing, row) in enumerate(rule_updates):
+        rule = existing if existing is not None else PricingRule()
+        rule.category = row.category.strip() or 'general'
+        rule.title = row.title.strip() or 'Pricing rule'
+        rule.description = row.description.strip()
+        rule.sort_order = index
+        retained_rules.append(rule)
+    plan.rules[:] = retained_rules
+    retained_rates = []
+    for index, (existing, row) in enumerate(rate_updates):
+        rate = existing if existing is not None else PricingRate()
+        for key in ('destination', 'destination_group', 'minimum_text', 'band_label', 'rate_text'):
+            setattr(rate, key, getattr(row, key).strip())
+        for key in ('minimum_price', 'cubic_feet_min', 'cubic_feet_max', 'rate'):
+            setattr(rate, key, getattr(row, key))
+        rate.sort_order = index
+        retained_rates.append(rate)
+    plan.rates[:] = retained_rates
+    retained_services = []
+    for index, (existing, row) in enumerate(service_updates):
+        service = existing if existing is not None else PricingService()
+        service.name = row.name.strip()
+        service.rate_text = row.rate_text.strip()
+        service.comments = row.comments.strip()
+        service.sort_order = index
+        retained_services.append(service)
+    plan.services[:] = retained_services
     db.commit()
     db.refresh(plan)
     return plan.to_dict()
+
+
+@router.get('/{plan_id}/item-materials')
+def get_item_materials(plan_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return material_setup(_plan_or_404(db, user, plan_id), db)
+
+
+@router.put('/{plan_id}/item-materials')
+def put_item_materials(plan_id: str, body: ItemMaterialsInput, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    plan = _plan_or_404(db, user, plan_id)
+    return save_material_assignments(plan, body, db)
+
+
+@router.get('/{plan_id}/item-selectors')
+def get_item_selectors(plan_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return selector_setup(_plan_or_404(db, user, plan_id), db)
+
+
+@router.put('/{plan_id}/item-selectors')
+def put_item_selectors(plan_id: str, body: ItemSelectorsInput, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return save_selectors(_plan_or_404(db, user, plan_id), body, db)

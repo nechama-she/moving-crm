@@ -1,0 +1,70 @@
+import { Component, ReactNode } from "react";
+
+interface Props {
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+interface State {
+  hasError: boolean;
+  error: Error | null;
+}
+
+function isDynamicImportError(error: Error) {
+  return /Failed to fetch dynamically imported module|Importing a module script failed|Loading chunk \d+ failed/i.test(error.message);
+}
+
+export default class ErrorBoundary extends Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+    if (isDynamicImportError(error)) {
+      const reloadKey = `dynamic-import-reload:${import.meta.url}`;
+      if (sessionStorage.getItem(reloadKey) !== "true") {
+        sessionStorage.setItem(reloadKey, "true");
+        window.location.reload();
+      }
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+      return (
+        <div style={{ padding: 32, maxWidth: 640, margin: "40px auto", background: "#fff", borderRadius: 8, border: "1px solid #cbd5e1", boxShadow: "0 4px 12px rgba(0,0,0,0.08)" }}>
+          <h2 style={{ color: "#032d60", marginTop: 0 }}>{this.state.error && isDynamicImportError(this.state.error) ? "This page needs to be reopened" : "We couldn't open this page"}</h2>
+          <p style={{ color: "#475569", fontSize: 14 }}>
+            Please reopen the page to continue.
+          </p>
+          <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+            <button className="slds-button"
+              type="button"
+              onClick={() => window.location.reload()}
+              style={{ background: "#0176d3", color: "#fff", border: 0, borderRadius: 4, padding: "8px 16px", fontWeight: 600, cursor: "pointer" }}
+            >
+              Reopen page
+            </button>
+            <a
+              href="/login"
+              style={{ display: "inline-flex", alignItems: "center", textDecoration: "none", color: "#0176d3", padding: "8px 16px", fontWeight: 600 }}
+            >
+              Go to login
+            </a>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}

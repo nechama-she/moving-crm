@@ -1,10 +1,14 @@
 import hmac
 import json
+import logging
 import os
 import re
+import time
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.routing import Match
 
@@ -12,16 +16,19 @@ from auth import decode_access_token, get_current_user, is_token_valid, require_
 from config import get_config
 from database import SessionLocal
 from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
-from models import Lead, User
+from models import AccessAuditLog, Lead, User
+from access_errors import capture_response_error, exception_message, audit_body
 from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
+from routes import public_moves, local_pricing, inventory_questions, inventory_catalog
 from routes.meta import messenger, instagram
 
+logger = logging.getLogger("moving-crm.access")
 cfg = get_config()
 
 # Fail fast: never run the API with an unconfigured/insecure JWT signing key.
 if not os.getenv("JWT_SECRET"):
     raise RuntimeError(
-        "JWT_SECRET is not set — refusing to start the API without a signing key."
+        "JWT_SECRET is not set - refusing to start the API without a signing key."
     )
 
 # ---------------------------------------------------------------------------
@@ -29,7 +36,7 @@ if not os.getenv("JWT_SECRET"):
 # ---------------------------------------------------------------------------
 # Every route requires a valid Bearer JWT UNLESS it is explicitly public
 # (login / health) or presents a valid service-to-service x-api-secret (lead
-# intake, auto-assign — those endpoints re-validate the secret themselves).
+# intake, auto-assign - those endpoints re-validate the secret themselves).
 # This makes "forgetting to add auth to a new route" fail closed, not open.
 PUBLIC_PATHS = {"/api/health", "/api/auth/login", "/api/liveswitch/oauth/callback"}
 
@@ -93,7 +100,11 @@ def _check_system_user_permission(actor: User, request: Request) -> bool:
 
 async def enforce_authentication(request: Request) -> None:
     if request.method == "OPTIONS":
-        return  # CORS preflight — handled by CORSMiddleware
+        return  # CORS preflight - handled by CORSMiddleware
+    if request.url.path == "/api/inventory" and request.method == "POST":
+        return  # Middleware validates the inventory key before body parsing.
+    if re.fullmatch(r"/api/public-moves/[0-9a-f-]{36}/(verify-options|send-code|verify|details|summary|sections/(?:move|inventory|media|volume|pricing)|estimate\.pdf|inventory\.pdf|generate-inventory-report|walkthrough|reschedule|availability|files|prepare-upload|finish-upload|packing|item-answer|question-images|realtime-token|address-search|address-resolve|file-preview/[^/]+|inventory-catalog|manual-inventory|inventory|inventory/row|inventory/editor|inventory/actions|files/[^/]+|calculate-price|recalculate-price|reports/[^/]+/select)", request.url.path):
+        return  # Each endpoint requires a scoped link and, where needed, verified session.
     if request.url.path in PUBLIC_PATHS:
         return
 
@@ -176,6 +187,127 @@ def _audit_request_context(request: Request) -> tuple[str, str, str]:
         db.close()
 
     return lead_id, actor_user_id, actor_name
+
+
+def _extract_client_ip(request: Request) -> str:
+    # 1. CloudFront custom header
+    cf_ip = request.headers.get("cloudfront-viewer-address") or request.headers.get("x-forwarded-for")
+    if cf_ip:
+        # x-forwarded-for can be a comma-separated list of IPs (client, proxy1, proxy2...)
+        parts = [p.strip() for p in cf_ip.split(",")]
+        # remove port if present like 1.2.3.4:5678
+        first = parts[0].split(":")[0] if ":" in parts[0] and not parts[0].count(":") > 1 else parts[0]
+        if first:
+            return first
+    if request.client and request.client.host:
+        return request.client.host
+    return "0.0.0.0"
+
+
+def _extract_request_user(request: Request) -> tuple[str | None, str, str | None, str]:
+    auth_header = request.headers.get("Authorization") or ""
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() == "bearer" and token.strip():
+        try:
+            payload = decode_access_token(token.strip())
+            sub = str(payload.get("sub") or "")
+            if sub:
+                db = SessionLocal()
+                try:
+                    user = db.query(User).filter(User.id == sub).first()
+                    if user:
+                        return user.id, user.name, user.email, user.role
+                finally:
+                    db.close()
+        except Exception:
+            pass
+    # Service secret?
+    if request.headers.get("x-api-secret"):
+        return None, "System Service", None, "system"
+    return None, "Anonymous / Public", None, "anonymous"
+
+
+@app.middleware("http")
+async def track_access_history(request: Request, call_next):
+    # Skip preflight OPTIONS and frequent internal healthchecks to keep logs meaningful
+    if request.method == "OPTIONS" or request.url.path in {"/api/health"}:
+        return await call_next(request)
+
+    start_time = time.time()
+    user_id, user_name, user_email, user_role = _extract_request_user(request)
+    ip_address = _extract_client_ip(request)
+    user_agent = request.headers.get("user-agent") or ""
+    referer = request.headers.get("referer") or ""
+    query_params = str(request.url.query) if request.url.query else None
+    path = request.url.path
+
+    status_code = 500
+    error_message = None
+    request_body = None
+    response_body = None
+    capture_bodies = request.method == 'POST' and path.rstrip('/') == '/api/leads'
+    try:
+        if capture_bodies:
+            length = request.headers.get('content-length', '')
+            if length.isdigit() and int(length) <= 8000:
+                request_body = audit_body(await request.body(), request.headers.get('content-type', ''))
+            else:
+                request_body = '[Body omitted: unknown size or exceeds 8000 bytes]'
+        response = await call_next(request)
+        status_code = response.status_code
+        error_message = await capture_response_error(response, capture_body=capture_bodies)
+        response_body = getattr(response, 'audit_body', None)
+        return response
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", 500)
+        error_message = exception_message(exc)
+        raise
+    finally:
+        duration_ms = int((time.time() - start_time) * 1000)
+        try:
+            db = SessionLocal()
+            log_row = AccessAuditLog(
+                id=str(uuid4()),
+                user_id=user_id,
+                user_name=user_name,
+                user_email=user_email,
+                user_role=user_role,
+                ip_address=ip_address[:100],
+                method=request.method,
+                path=path[:1000],
+                query_params=query_params[:2000] if query_params else None,
+                status_code=status_code,
+                error_message=error_message,
+                request_body=request_body,
+                response_body=response_body,
+                duration_ms=duration_ms,
+                user_agent=user_agent[:1000] if user_agent else None,
+                referer=referer[:1000] if referer else None,
+            )
+            db.add(log_row)
+            db.commit()
+            db.close()
+        except Exception as log_err:
+            logger.warning("Could not persist access audit log: %s", log_err)
+
+
+@app.middleware("http")
+async def protect_public_move_responses(request: Request, call_next):
+    if request.url.path == "/api/inventory" and request.method == "POST":
+        expected = public_moves.setting("PUBLIC_MOVE_API_KEY")
+        provided = request.headers.get("x-api-secret", "")
+        # Reject before FastAPI parses JSON or validates the request schema.
+        if not expected or not hmac.compare_digest(expected.encode("utf-8"), provided.encode("utf-8")):
+            response = JSONResponse(status_code=401, content={"detail": "Not authorized"})
+        else:
+            response = await call_next(request)
+    else:
+        response = await call_next(request)
+    if request.url.path == "/api/inventory" or request.url.path.startswith("/api/public-move") or request.url.path.endswith("/customer-page"):
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @app.middleware("http")
@@ -306,12 +438,16 @@ app.include_router(stats.router)
 app.include_router(duplication_rules.router)
 app.include_router(referral_assignment_rules.router)
 app.include_router(liveswitch.router)
-# Triggers backend Lambda processing — admin only.
+app.include_router(public_moves.router)
+app.include_router(inventory_questions.router)
+app.include_router(inventory_catalog.router)
+# Triggers backend Lambda processing - admin only.
 app.include_router(smartmoving.router, dependencies=[Depends(require_admin)])
 app.include_router(followups.router)
 app.include_router(outreach.router)
 app.include_router(assignment.router)
 app.include_router(tasks.router)
 app.include_router(templates.router)
+app.include_router(local_pricing.router)
 app.include_router(pricing.router)
 app.include_router(system.router)

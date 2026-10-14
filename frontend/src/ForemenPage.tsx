@@ -143,9 +143,9 @@ export default function ForemenPage() {
         {user.role === "admin" ? <label style={label}>Dispatcher<select style={input} value={dispatcherId} onChange={(e) => { setDispatcherId(e.target.value); setCompanyIds([]); }}><option value="">Select dispatcher</option>{dispatchers.map((dispatcher) => <option key={dispatcher.id} value={dispatcher.id}>{dispatcher.name}</option>)}</select></label> : null}
       </div>
       <div style={{ marginTop: 12 }}><strong style={{ fontSize: 12, color: "#3e3e3c" }}>Companies</strong><div style={chips}>
-        {createCompanies.map((company) => <button type="button" key={company.id} onClick={() => toggleCompany(company.id)} style={companyIds.includes(company.id) ? selectedChip : chip}>{company.name}</button>)}
+        {createCompanies.map((company) => <button className="slds-button" type="button" key={company.id} onClick={() => toggleCompany(company.id)} style={companyIds.includes(company.id) ? selectedChip : chip}>{company.name}</button>)}
       </div></div>
-      <button type="button" disabled={busy || !name.trim() || !email.trim() || !password || companyIds.length === 0 || (user.role === "admin" && !dispatcherId)} onClick={() => void createForeman()} style={primary}>{busy ? "Saving…" : "Create Foreman"}</button>
+      <button className="slds-button" type="button" disabled={busy || !name.trim() || !email.trim() || !password || companyIds.length === 0 || (user.role === "admin" && !dispatcherId)} onClick={() => void createForeman()} style={primary}>{busy ? "Saving…" : "Create Foreman"}</button>
     </section>
     <section style={{ display: "grid", gap: 10 }}>
       {foremen.map((foreman) => {
@@ -154,11 +154,11 @@ export default function ForemenPage() {
         const editing = editingForemanId === foreman.id;
         return <article key={foreman.id} style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}><div>{editing ? <div style={formGrid}><label style={label}>Name<input style={input} value={editName} onChange={(event) => setEditName(event.target.value)} /></label><label style={label}>Email<input style={input} value={editEmail} onChange={(event) => setEditEmail(event.target.value)} /></label><label style={label}>Phone<input style={input} value={editPhone} onChange={(event) => setEditPhone(event.target.value)} /></label></div> : <><h2 style={{ ...sectionTitle, marginBottom: 2 }}>{foreman.name}</h2><span style={{ color: "#706e6b", fontSize: 12 }}>{foreman.email}{foreman.phone ? ` · ${foreman.phone}` : ""}</span></>}</div><span style={badge}>READ ONLY</span></div>
-          <div className="user-row-actions" style={{ marginTop: 10 }}>{editing ? <><button type="button" disabled={busy} onClick={() => void saveForeman(foreman)}>Save</button><button type="button" onClick={() => setEditingForemanId("")}>Cancel</button></> : <button type="button" onClick={() => { setEditingForemanId(foreman.id); setEditName(foreman.name); setEditEmail(foreman.email); setEditPhone(foreman.phone || ""); }}>Edit</button>}<button type="button" className="danger" disabled={busy} onClick={() => void deleteForeman(foreman)}>Delete</button></div>
+          <div className="user-row-actions" style={{ marginTop: 10 }}>{editing ? <><button className="slds-button" type="button" disabled={busy} onClick={() => void saveForeman(foreman)}>Save</button><button className="slds-button" type="button" onClick={() => setEditingForemanId("")}>Cancel</button></> : <button className="slds-button" type="button" onClick={() => { setEditingForemanId(foreman.id); setEditName(foreman.name); setEditEmail(foreman.email); setEditPhone(foreman.phone || ""); }}>Edit</button>}<button type="button" className="slds-button danger" disabled={busy} onClick={() => void deleteForeman(foreman)}>Delete</button></div>
           {user.role === "admin" ? <label style={{ ...label, maxWidth: 360, marginTop: 12 }}>Dispatcher<select style={input} value={foreman.manager_dispatch_id || ""} disabled={busy} onChange={(event) => void saveDispatcher(foreman, event.target.value)}><option value="">Unassigned</option>{dispatchers.map((dispatcher) => <option key={dispatcher.id} value={dispatcher.id}>{dispatcher.name}</option>)}</select></label> : null}
           <div style={chips}>{availableCompanies.map((company) => {
             const checked = assigned.has(company.id);
-            return <button type="button" disabled={busy} key={company.id} style={checked ? selectedChip : chip} onClick={() => {
+            return <button className="slds-button" type="button" disabled={busy} key={company.id} style={checked ? selectedChip : chip} onClick={() => {
               const next = checked ? [...assigned].filter((id) => id !== company.id) : [...assigned, company.id];
               if (next.length > 0) void saveCompanies(foreman, next);
             }}>{company.name}</button>;

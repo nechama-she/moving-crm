@@ -940,7 +940,7 @@ export default function SalesCalendarPage() {
 
           <div className="mobile-filter-rail" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             <button
-              className="mobile-filter-pill"
+              className="slds-button mobile-filter-pill"
               type="button"
               onClick={() => {
                 const allKeys = assigneeOptions.map((a) => a.key);
@@ -982,7 +982,7 @@ export default function SalesCalendarPage() {
               const repTone = toneForRepName(assignee.name);
               return (
                 <button
-                  className="mobile-filter-pill"
+                  className="slds-button mobile-filter-pill"
                   key={assignee.key}
                   type="button"
                   onClick={() => {
@@ -1082,7 +1082,7 @@ export default function SalesCalendarPage() {
 
           <button
             type="button"
-            className="mobile-totals-toggle"
+            className="slds-button mobile-totals-toggle"
             aria-expanded={mobileSummaryExpanded}
             onClick={() => setMobileSummaryExpanded((expanded) => !expanded)}
           >
@@ -1140,7 +1140,7 @@ export default function SalesCalendarPage() {
           </div>
 
           <div style={{ border: "1px solid #dbe4ef", borderRadius: 14, background: "#fff", overflow: "hidden" }}>
-            <button
+            <button className="slds-button"
               type="button"
               onClick={() => setTotalsExpanded((prev) => !prev)}
               style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "none", background: "#f8fafc", padding: "12px 14px", cursor: "pointer", textAlign: "left" }}
@@ -1230,10 +1230,10 @@ export default function SalesCalendarPage() {
             <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>Filtered by first booked move date</p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button type="button" onClick={() => setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))} style={calendarNavBtn}>◀</button>
+            <button className="slds-button" type="button" onClick={() => setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))} style={calendarNavBtn}>◀</button>
             <button
               type="button"
-              className="calendar-month-toggle"
+              className="slds-button calendar-month-toggle"
               aria-expanded={mobileMonthExpanded}
               title={mobileMonthExpanded ? "Show day agenda" : "Show full month"}
               onClick={() => setMobileMonthExpanded((expanded) => !expanded)}
@@ -1242,7 +1242,7 @@ export default function SalesCalendarPage() {
               {monthLabel}
               <span className="calendar-view-caret" aria-hidden="true">{mobileMonthExpanded ? " ▴" : " ▾"}</span>
             </button>
-            <button type="button" onClick={() => setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))} style={calendarNavBtn}>▶</button>
+            <button className="slds-button" type="button" onClick={() => setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))} style={calendarNavBtn}>▶</button>
           </div>
         </div>
 
@@ -1330,7 +1330,7 @@ export default function SalesCalendarPage() {
                         );
                       })}
                       {overflowCount > 0 ? (
-                        <button
+                        <button className="slds-button"
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1357,7 +1357,7 @@ export default function SalesCalendarPage() {
               const selected = day === mobileSelectedDay;
               const count = (jobsByDay.get(day) || []).length;
               return (
-                <button
+                <button className="slds-button"
                   key={day}
                   data-mobile-day={day}
                   type="button"
@@ -1473,18 +1473,18 @@ export default function SalesCalendarPage() {
           >
             <div style={{ padding: 14, borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button type="button" onClick={() => shiftSalesDayPanel(-1)} style={calendarNavBtn} aria-label="Previous day">
+                <button className="slds-button" type="button" onClick={() => shiftSalesDayPanel(-1)} style={calendarNavBtn} aria-label="Previous day">
                   ◀
                 </button>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Day Panel • {`${year}-${String(month + 1).padStart(2, "0")}-${String(dayPanelDay).padStart(2, "0")}`}</div>
                   <div style={{ fontSize: 12, color: "#64748b" }}>{panelDayJobs.length} lead{panelDayJobs.length === 1 ? "" : "s"} • Total {formatMoney(panelDayTotal)} • Payments {formatMoney(panelDayPayments)}</div>
                 </div>
-                <button type="button" onClick={() => shiftSalesDayPanel(1)} style={calendarNavBtn} aria-label="Next day">
+                <button className="slds-button" type="button" onClick={() => shiftSalesDayPanel(1)} style={calendarNavBtn} aria-label="Next day">
                   ▶
                 </button>
               </div>
-              <button type="button" onClick={() => setDayPanelDay(null)} style={calendarNavBtn} aria-label="Close day panel">
+              <button className="slds-button" type="button" onClick={() => setDayPanelDay(null)} style={calendarNavBtn} aria-label="Close day panel">
                 ✕
               </button>
             </div>

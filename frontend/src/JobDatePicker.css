@@ -1,0 +1,318 @@
+.job-date-picker {
+  position: relative;
+  width: 100%;
+}
+
+.job-date-picker-trigger {
+  width: 100%;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.job-date-picker-trigger:hover:not(:disabled) {
+  border-color: #94a3b8;
+}
+
+.job-date-picker-trigger:focus,
+.job-date-picker-trigger.is-open {
+  outline: none;
+  border-color: #0176d3;
+  box-shadow: 0 0 0 2px rgba(1, 118, 211, 0.2);
+}
+
+.job-date-picker-trigger:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+.job-date-value {
+  color: #0f172a;
+  font-weight: 500;
+}
+
+.job-date-placeholder {
+  color: #94a3b8;
+}
+
+.job-date-trigger-icon {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: #64748b;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+
+/* Popover dialog */
+.job-date-calendar-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 200;
+  display: flex;
+  width: 440px;
+  max-width: calc(100vw - 32px);
+  background: #ffffff;
+  border: 1px solid #ccd5df;
+  border-radius: 8px;
+  box-shadow: 0 8px 30px rgba(3, 45, 96, 0.18);
+  padding: 14px;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.job-date-calendar-popover.align-right {
+  left: auto;
+  right: 0;
+}
+
+/* Sidebar presets */
+.job-date-presets {
+  width: 125px;
+  flex-shrink: 0;
+  border-right: 1px solid #e2e8f0;
+  padding-right: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.job-date-presets-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 8px 6px;
+}
+
+.job-date-preset-btn {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: #334155;
+  font-size: 12px;
+  padding: 7px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.job-date-preset-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.job-date-preset-btn.selected {
+  color: #0176d3;
+  background: #eef6ff;
+  font-weight: 700;
+}
+
+.job-date-preset-btn.clear-btn {
+  margin-top: auto;
+  color: #94a3b8;
+  border-top: 1px solid #f1f5f9;
+  padding-top: 8px;
+}
+
+.job-date-preset-btn.clear-btn:hover {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+/* Main calendar area */
+.job-date-main {
+  flex: 1;
+  padding-left: 14px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Month navigation */
+.job-date-month-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.job-date-nav-arrow {
+  border: 0;
+  background: transparent;
+  color: #0176d3;
+  font-size: 22px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.job-date-nav-arrow:hover {
+  background: #eef6ff;
+}
+
+.job-date-month-display {
+  position: relative;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #032d60;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.job-date-month-display:hover {
+  border-color: #0176d3;
+}
+
+.job-date-month-native-picker {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+
+/* Grid */
+.job-date-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  text-align: center;
+  gap: 2px;
+}
+
+.job-date-col-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  padding: 6px 0;
+}
+
+.job-date-empty-cell {
+  height: 30px;
+}
+
+.job-date-day-btn {
+  width: 30px;
+  height: 30px;
+  margin: 0 auto;
+  border: 0;
+  background: transparent;
+  color: #1e293b;
+  font-size: 12px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.job-date-day-btn:hover {
+  background: #f1f5f9;
+  color: #0176d3;
+}
+
+.job-date-day-btn.today {
+  border: 1px solid #00a9e8;
+  font-weight: 700;
+  color: #008cc0;
+}
+
+.job-date-day-btn.selected {
+  background: #00a9e8;
+  color: #ffffff !important;
+  font-weight: 700;
+  border-radius: 50%;
+}
+
+.job-date-day-btn.selected:hover {
+  background: #0176d3;
+}
+
+.job-date-hint {
+  font-size: 11px;
+  color: #64748b;
+  margin: 10px 0 6px;
+  line-height: 1.4;
+}
+
+/* Footer */
+.job-date-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.job-date-footer-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.job-date-footer-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.job-date-btn-secondary {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.job-date-btn-secondary:hover {
+  background: #f8fafc;
+}
+
+.job-date-btn-primary {
+  border: 1px solid #0176d3;
+  background: #0176d3;
+  color: #ffffff;
+  border-radius: 4px;
+  padding: 5px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.job-date-btn-primary:hover {
+  background: #015ba5;
+  border-color: #015ba5;
+}

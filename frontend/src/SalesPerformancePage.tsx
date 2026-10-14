@@ -141,7 +141,7 @@ function SalesChart({ rep, visibleMonths, onToggleMonth }: { rep: RepPerformance
         {[...rep.series].reverse().map((series, reverseIndex) => {
           const colorIndex = rep.series.length - 1 - reverseIndex;
           return (
-            <button type="button" key={series.month} className={visibleMonths.has(series.month) ? "active" : ""} onClick={() => onToggleMonth(series.month)} title={`${visibleMonths.has(series.month) ? "Hide" : "Show"} ${series.label}`}>
+            <button type="button" key={series.month} className={["slds-button", visibleMonths.has(series.month) ? "active" : ""].filter(Boolean).join(" ")} onClick={() => onToggleMonth(series.month)} title={`${visibleMonths.has(series.month) ? "Hide" : "Show"} ${series.label}`}>
               <i style={{ background: COLORS[colorIndex] }} />
               <span>{series.label}</span>
               <strong>{money.format(series.total)}</strong>
@@ -209,7 +209,7 @@ export default function SalesPerformancePage() {
           <p>Compare cumulative booked sales from the beginning of each month through the same calendar day.</p>
         </div>
         <div className="performance-heading-actions">
-          {visibleMonths.size < data.months.length ? <button type="button" className="performance-show-all" onClick={() => setVisibleMonths(new Set(data.months.map((month) => month.month)))}>Show all months</button> : null}
+          {visibleMonths.size < data.months.length ? <button type="button" className="slds-button performance-show-all" onClick={() => setVisibleMonths(new Set(data.months.map((month) => month.month)))}>Show all months</button> : null}
           <div className="performance-summary">
             <span>Current month</span>
             <strong>{money.format(total)}</strong>

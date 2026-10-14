@@ -2,7 +2,7 @@ import ConnectChatModal from "./ConnectChatModal";
 import { useEffect, useState, useRef } from "react";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
-import MessageAttachments, { MessageAttachment } from "./MessageAttachments";
+import MessageAttachments, { MessageAttachment, attachmentUrl } from "./MessageAttachments";
 
 interface Message {
   user_id?: string;
@@ -63,6 +63,8 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
   const [activeTab, setActiveTab] = useState<string>("messenger");
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadNotice, setDownloadNotice] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const tabPickedRef = useRef(false);
@@ -219,6 +221,41 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
   if (error)
     return <p style={{ padding: 16, color: "red" }}>Error: {error}</p>;
 
+  const attachments = Array.from(new Map(filtered.flatMap(message => message.attachments || [])
+    .filter(attachment => /^https?:\/\//i.test(attachmentUrl(attachment)))
+    .map(attachment => [attachmentUrl(attachment), attachment])).values());
+
+  async function downloadAllAttachments() {
+    if (downloading) return;
+    setDownloading(true);
+    setDownloadNotice("");
+    let failed = 0;
+    for (const [index, attachment] of attachments.entries()) {
+      setDownloadNotice(`Preparing attachment ${index + 1} of ${attachments.length}...`);
+      try {
+        const response = await fetch(attachmentUrl(attachment));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        const extension = ({ "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "video/mp4": "mp4", "video/quicktime": "mov", "application/pdf": "pdf" } as Record<string, string>)[blob.type.split(";")[0]];
+        const filename = new URL(attachmentUrl(attachment)).pathname.split("/").pop() || "attachment";
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = `${activeTab}-${index + 1}-${extension ? `attachment.${extension}` : filename}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+      } catch {
+        failed += 1;
+      }
+    }
+    setDownloadNotice(failed
+      ? `${failed} of ${attachments.length} attachments could not be downloaded. The source may have expired or blocked downloads.`
+      : `Downloads started for ${attachments.length} attachments. Allow multiple downloads if your browser asks.`);
+    setDownloading(false);
+  }
+
   async function disconnectChat(link: typeof chatLinks[number]) {
     setDisconnecting(true); setConnectionError("");
     try {
@@ -236,6 +273,12 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
   }
 
   // Count per platform for badge
+  const messengerInboxLinks = [...new Set([
+    inboxUrl,
+    ...chatLinks.filter(link => link.channel === "messenger")
+      .map(link => `https://www.facebook.com/latest/${encodeURIComponent(link.client_identifier)}`),
+  ].filter(Boolean))];
+
   const counts: Record<string, number> = {};
   for (const m of allMessages) {
     const p = m.platform?.toLowerCase() || "";
@@ -330,7 +373,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
           const count = counts[tab.key] || 0;
           const isActive = activeTab === tab.key;
           return (
-            <button
+            <button className="slds-button"
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
               style={{
@@ -367,7 +410,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
 
       {activeTab === "messages" && (
         <div style={{ display: "flex", gap: 8, padding: "10px 12px", border: "1px solid #e0e0e0", borderTop: "none", background: "#fff" }}>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => setSmsNumberTab("company")}
             style={{
@@ -380,7 +423,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
           >
             Company Number ({companySmsMessages.length})
           </button>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => setSmsNumberTab("rep")}
             disabled={!repAircallNumberId}
@@ -400,17 +443,26 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
 
       {activeTab === "calls" && (
         <div style={{ display: "flex", gap: 8, padding: "10px 12px", border: "1px solid #e0e0e0", borderTop: "none", background: "#fff" }}>
-          <button type="button" onClick={() => setCallNumberTab("company")} style={{ padding: "7px 14px", borderRadius: 6, border: callNumberTab === "company" ? "1px solid #1976d2" : "1px solid #ccc", background: callNumberTab === "company" ? "#e3f2fd" : "#fff", color: callNumberTab === "company" ? "#1976d2" : "#555", fontWeight: callNumberTab === "company" ? 600 : 400, cursor: "pointer" }}>Company Number ({companyCalls.length})</button>
-          <button type="button" onClick={() => setCallNumberTab("rep")} disabled={!repPhone} style={{ padding: "7px 14px", borderRadius: 6, border: callNumberTab === "rep" ? "1px solid #1976d2" : "1px solid #ccc", background: callNumberTab === "rep" ? "#e3f2fd" : "#fff", color: !repPhone ? "#aaa" : callNumberTab === "rep" ? "#1976d2" : "#555", fontWeight: callNumberTab === "rep" ? 600 : 400, cursor: repPhone ? "pointer" : "default" }}>Assigned Rep Number ({repCalls.length})</button>
+          <button className="slds-button" type="button" onClick={() => setCallNumberTab("company")} style={{ padding: "7px 14px", borderRadius: 6, border: callNumberTab === "company" ? "1px solid #1976d2" : "1px solid #ccc", background: callNumberTab === "company" ? "#e3f2fd" : "#fff", color: callNumberTab === "company" ? "#1976d2" : "#555", fontWeight: callNumberTab === "company" ? 600 : 400, cursor: "pointer" }}>Company Number ({companyCalls.length})</button>
+          <button className="slds-button" type="button" onClick={() => setCallNumberTab("rep")} disabled={!repPhone} style={{ padding: "7px 14px", borderRadius: 6, border: callNumberTab === "rep" ? "1px solid #1976d2" : "1px solid #ccc", background: callNumberTab === "rep" ? "#e3f2fd" : "#fff", color: !repPhone ? "#aaa" : callNumberTab === "rep" ? "#1976d2" : "#555", fontWeight: callNumberTab === "rep" ? 600 : 400, cursor: repPhone ? "pointer" : "default" }}>Assigned Rep Number ({repCalls.length})</button>
         </div>
       )}
 
       {/* External link bar — sticky above messages */}
-      {activeTab === "messenger" && inboxUrl && (
-        <div style={{ padding: "8px 12px", background: "#e3f2fd", border: "1px solid #e0e0e0", borderTop: "none", fontSize: 13 }}>
-          <a href={inboxUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#1976d2", fontWeight: 600 }}>
-            Open in Facebook Inbox →
-          </a>
+      {activeTab === "messenger" && messengerInboxLinks.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 16, padding: "8px 12px", background: "#e3f2fd", border: "1px solid #e0e0e0", borderTop: "none", fontSize: 13 }}>
+          {messengerInboxLinks.map((url, index) => <a key={url} href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#1976d2", fontWeight: 600 }}>
+            Open in Facebook Inbox{messengerInboxLinks.length > 1 ? ` (${index + 1})` : ""} →
+          </a>)}
+        </div>
+      )}
+
+      {attachments.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "8px 12px", border: "1px solid #e0e0e0", borderTop: "none" }}>
+          <button type="button" className="slds-button slds-button_neutral" disabled={downloading} onClick={() => void downloadAllAttachments()}>
+            {downloading ? "Downloading..." : `Download all attachments (${attachments.length})`}
+          </button>
+          {downloadNotice && <span role="status" style={{ fontSize: 12 }}>{downloadNotice}</span>}
         </div>
       )}
 
@@ -508,7 +560,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
               outline: "none",
             }}
           />
-          <button
+          <button className="slds-button"
             onClick={handleSendReply}
             disabled={sending || !replyText.trim()}
             style={{

@@ -1,28 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { API_BASE } from "./apiConfig";
 
 export default function LiveSwitchCallbackPage() {
-  const [message, setMessage] = useState("Connecting LiveSwitch...");
-
   useEffect(() => {
-    let cancelled = false;
-    void fetch(`/api/liveswitch/oauth/callback${window.location.search}`)
-      .then(async (response) => {
-        const body = await response.text();
-        if (!response.ok) {
-          try {
-            const detail = JSON.parse(body)?.detail;
-            throw new Error(detail || "LiveSwitch authorization failed.");
-          } catch (error) {
-            throw error instanceof Error ? error : new Error("LiveSwitch authorization failed.");
-          }
-        }
-        if (!cancelled) setMessage("LiveSwitch connected. You can close this window and return to the CRM.");
-      })
-      .catch((error) => {
-        if (!cancelled) setMessage(error instanceof Error ? error.message : "LiveSwitch authorization failed.");
-      });
-    return () => { cancelled = true; };
+    // Navigate once; an effect fetch can exchange the same one-use code twice in StrictMode.
+    window.location.replace(`${API_BASE}/api/liveswitch/oauth/callback${window.location.search}`);
   }, []);
 
-  return <main style={{ padding: 32, color: "#032d60" }}>{message}</main>;
+  return <main style={{ padding: 32, color: "#032d60" }}>Connecting LiveSwitch...</main>;
 }

@@ -1,0 +1,5392 @@
+[
+  {
+    "id": "c9ab02fb-b9f0-5460-a470-4cc44fbd08ae",
+    "name": "ATV",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "9b1f5756-efe3-5e70-8ebd-4155a229956d",
+    "name": "Accent Chair",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "9f587ed6-3866-50e2-8303-a913b8b550c3",
+    "name": "Accordion",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "d41a5607-2fc8-5f0e-90cf-853cb92ed47d",
+    "name": "Air Compressor/Tank",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "6f50426f-ba1b-5d88-b84c-1cfbb11ba6d5",
+    "name": "Air Conditioner (portable)",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "6473d013-2745-5ad8-9ccd-5509507a3d22",
+    "name": "Air Conditioner (window)",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "2a3d3b00-659f-5197-8042-91ddf8e65242",
+    "name": "Air Mattress",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "77bf9061-c1b5-5ae0-8802-8ef43d3f2b78",
+    "name": "Air Purifier",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "d4ce16fa-8d73-54a9-88cf-770c95142b1f",
+    "name": "Amplifier",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "8915277c-87f9-5dc4-a8d4-619b92dd873b",
+    "name": "Aquarium, Large",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "b13ad7ea-1e8a-5c89-ae52-aa69a1a1c173",
+    "name": "Aquarium, Medium",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "45edbcd9-c2a1-5c86-aeb9-35b4edd61c7b",
+    "name": "Aquarium, Small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "c0269562-2339-568f-b70e-4bc206b3d825",
+    "name": "Arcade Machine",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "9e766fc2-e2c1-5ad7-93e8-2127363498c9",
+    "name": "Area Rug",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "b486c7a8-07dc-56fb-b2da-634356970f17",
+    "name": "Arm Chair",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "5f5d161e-ffb1-52e7-8079-46cb353953ee",
+    "name": "Arm Chair Regular",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "a336b500-1442-5dcc-bde0-17ee9d7d5f5c",
+    "name": "Armoire",
+    "cuft": "45",
+    "weight": "315",
+    "description": ""
+  },
+  {
+    "id": "3368f36e-032d-5846-a70e-844a819a3397",
+    "name": "Armoire Large",
+    "cuft": "80",
+    "weight": "560",
+    "description": ""
+  },
+  {
+    "id": "76f285f4-faea-5bbe-9825-d473eed20f69",
+    "name": "Art Statue Wooden",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "cc1f818e-8ad3-5753-97c3-160a75983f9c",
+    "name": "Artificial Plant",
+    "cuft": "12",
+    "weight": "84",
+    "description": ""
+  },
+  {
+    "id": "67396736-9167-5ef4-8141-21b70fbff138",
+    "name": "ArtificialPlant",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "630e69c9-5f37-58c1-825c-d50f1a066985",
+    "name": "BBQ Cart",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "de882057-2beb-5269-b5c1-a1bfd0334fc6",
+    "name": "Baby Bath",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "fe7b089b-9357-555a-b249-0761e67b3360",
+    "name": "Baby Crib Large",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "8b78d479-1479-52b1-bceb-d721eb371944",
+    "name": "Baby Crib Medium",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "5a5d3cea-55c8-5257-ac46-165affc5c01f",
+    "name": "Baby High Chair",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "2782fd4e-4167-50d6-8d0c-caf0c7925db8",
+    "name": "Baby Jumper",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "cc49839a-7c98-53c1-80af-cbfb761e9602",
+    "name": "Baby Potty Seat",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "a82ca5a4-6e7a-59ca-a8fb-8208e7d9d3cf",
+    "name": "Baby Swing",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "048eb95e-3079-56a0-9793-94e48e4b3772",
+    "name": "Baby Walker",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "26302410-c2eb-58c3-8201-47d518593d74",
+    "name": "Backpack",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "53dcc92e-ca49-592f-b463-3167edf77de0",
+    "name": "Baker's Rack",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "085c181a-1ba7-5f23-8eba-4544a3633ec4",
+    "name": "Bar",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "ab3352f6-3add-5576-bf5e-6372c8c2bf62",
+    "name": "Bar Cart",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "61503e24-efec-5be8-9b18-00892e110f6e",
+    "name": "Bar Portable",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "1b260ff7-ff73-5d75-aa7b-aa67dd37044a",
+    "name": "Bar Portable",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "717a3d20-fe8c-533d-8890-73aba240979f",
+    "name": "Bar Stool",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "9ace3e04-51af-5926-95e9-97ace9392ac1",
+    "name": "Bar table",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "68d2531b-5a9f-584e-b297-3577d8ad6a5a",
+    "name": "Barbecue Grill Large",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "56161dc5-cd75-57bf-b6b8-10659cfca583",
+    "name": "Barbecue Grill Small",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "90abf2a5-cbbb-5ce0-9a87-d1fcd8b8f6dc",
+    "name": "Barbecue Grill medium",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "c3a67ebd-aa4a-5778-a843-7cd5bb1796ac",
+    "name": "Barrel",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "b4b722a0-7e46-5a1c-a940-72f14cab8d27",
+    "name": "Basket",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "e9d14b72-bb4e-5d9f-82ca-3aee8b0d415d",
+    "name": "Basketball Hoop",
+    "cuft": "150",
+    "weight": "1050",
+    "description": ""
+  },
+  {
+    "id": "822a8838-8694-5e46-b8e2-ab5249ba8b37",
+    "name": "Bassinet",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "855feb0d-d444-5418-8470-f0d9ca27dcd9",
+    "name": "Bathroom Cabinet",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "c0b5d753-e609-5085-9dbe-642ca2cb370c",
+    "name": "Bean Bags",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "114822b9-85f7-56bc-9f18-ebb8a4031b07",
+    "name": "Bed Bunk (frame only)",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "b6dc6ba3-e187-5159-835d-c318f38e3aec",
+    "name": "Bed Bunks 2bd/set",
+    "cuft": "70",
+    "weight": "490",
+    "description": ""
+  },
+  {
+    "id": "3f7bc2b5-8010-51c1-a093-16a6a9d08e9e",
+    "name": "Bed Captains",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "56a15b45-2c04-58e3-9e04-e206c2fc10e8",
+    "name": "Bed Child's",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "c220908b-fb03-5685-b587-3a36bf04a524",
+    "name": "Bed Day",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "b5aa088a-3609-5914-b641-48a0dfb485c9",
+    "name": "Bed Double",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "22bf317d-cb7d-5ac5-94bb-32eeface490b",
+    "name": "Bed Fold Up",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "6f3dbbb8-bcd3-5f32-9ff9-0324c1204d69",
+    "name": "Bed Footboard",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "03a43af8-432e-58c8-8146-43a4953f29b3",
+    "name": "Bed Frame",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "6b903b8d-240e-5727-b99b-f07bfa93016c",
+    "name": "Bed Frame Metal",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "8d13ff9f-af07-5c27-af17-b22aee939faf",
+    "name": "Bed Frame Small",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "cb0889d9-3180-5be3-8dcc-b4cba91e1e0b",
+    "name": "Bed Full",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "9708475a-92a7-5695-a774-f627cf249576",
+    "name": "Bed Headboard",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "dbc477aa-fe53-53a4-8756-7327dafbd1bb",
+    "name": "Bed King",
+    "cuft": "80",
+    "weight": "560",
+    "description": ""
+  },
+  {
+    "id": "ea8d7c33-2a01-5a45-8a58-70112a58706d",
+    "name": "Bed Murphy",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "2940f71d-2b94-5ac7-9198-a23f7aeb25c6",
+    "name": "Bed Platform",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "5cfdf138-1042-57f1-aeac-319e42e9c14b",
+    "name": "Bed Platform",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "4ce275be-3c08-5d57-a7b1-04e61a6a66a0",
+    "name": "Bed Post",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "fc4ccaad-f574-5e11-9c2d-cd12a3eff772",
+    "name": "Bed Queen",
+    "cuft": "65",
+    "weight": "455",
+    "description": ""
+  },
+  {
+    "id": "447231f1-38da-5859-8443-a693e2bbe663",
+    "name": "Bed Rail",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "ada057d2-d521-5b66-95d3-9a530f7506a5",
+    "name": "Bed Roll-a-way",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "4f6df688-d56e-5d75-858c-bf51579b2559",
+    "name": "Bed Single",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "d179c89c-080c-59a8-a672-4ab0ad8bfbfa",
+    "name": "Bed Trundle",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "4949f4f3-0b3f-51ba-956d-4bb7175977d7",
+    "name": "Bed Twin",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "9019f95f-3d31-501f-8154-be7baa6e181a",
+    "name": "Bed with storage drawers",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "52d74677-95e1-5196-b2a6-6830015638f9",
+    "name": "Bed, trundle",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "0345326f-deb8-53fe-9a16-c5a17cf2543f",
+    "name": "Bench",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "655e3aef-5131-59f4-ac86-53aff6f729aa",
+    "name": "Bench Large",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "f401b594-fd76-57ad-91ee-562559883e00",
+    "name": "Bicycle",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "3da7db80-c5cf-57e5-855d-b8eeade750d3",
+    "name": "Bicycle Kids",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "1ca5ec18-42fa-5986-9c7e-95d6a0477fb8",
+    "name": "Bicycle Light",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "3f53576a-282d-545b-ae16-a3c41138d220",
+    "name": "Bicycle Rack",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "74627a37-eb16-5f46-a987-e66ded575be8",
+    "name": "Bird Cage",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "101347f4-43ac-5754-91aa-aab03384304d",
+    "name": "Bird Cage Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "817b5b62-55a5-52e1-8346-36d249bda872",
+    "name": "Blender",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "2a637993-3b50-5ac4-91b3-22687e02d114",
+    "name": "Board",
+    "cuft": "4",
+    "weight": "28",
+    "description": ""
+  },
+  {
+    "id": "3266f759-403a-51dc-b918-b3e23530b848",
+    "name": "Boogie Board",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "e253bd71-9853-5720-9eaf-08cf5d5dbfc7",
+    "name": "Bookcase Metal",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "786c585d-1c04-5862-8ff3-268a854f9a13",
+    "name": "Bookcase large",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "1757c286-c9ae-5d96-bb47-e92f03caabeb",
+    "name": "Bookcase medium",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "e1b874f5-8207-5cbb-8b68-1efa0366a2af",
+    "name": "Bookcase regular",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "412a5fe9-76ef-5399-ad06-b6794623e305",
+    "name": "Bookcase small",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "f3011aa3-56d8-5b15-99b8-50c4be1210f6",
+    "name": "Bookshelf Large",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "d58a1a16-d476-5361-a44c-596d4b97aad6",
+    "name": "Bookshelf Medium",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "8922f11c-3530-5745-ae7e-48183531a80d",
+    "name": "Bookshelf Metal",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "2abb0248-ddc9-58f2-a191-e465a0f8fb27",
+    "name": "Bookshelf Small",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "6639365c-fed7-5e55-85bc-ec7b44de64c7",
+    "name": "Bowflex",
+    "cuft": "80",
+    "weight": "560",
+    "description": ""
+  },
+  {
+    "id": "ecadfa53-31c8-535a-b2c8-f0fefbfcd705",
+    "name": "Box Mattress",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "7e0a2596-831f-53d7-a263-92e9f3b24a63",
+    "name": "Box Plasma TV - up to 42\"",
+    "cuft": "7",
+    "weight": "49",
+    "description": ""
+  },
+  {
+    "id": "40e84db0-8781-59ea-ae77-711b50bf99ae",
+    "name": "Box Plasma TV - up to 42\" - Carrier Pack",
+    "cuft": "7",
+    "weight": "49",
+    "description": ""
+  },
+  {
+    "id": "69b31858-5298-5ffa-904e-5df002f2e701",
+    "name": "Box Plasma TV - up to 55\"",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "42cfcd49-a561-5b37-bf97-7273a7c9050c",
+    "name": "Box Plasma TV - up to 65\"",
+    "cuft": "9",
+    "weight": "63",
+    "description": ""
+  },
+  {
+    "id": "2ba0c92f-f85c-5242-a8ee-3a1e63981651",
+    "name": "Box Spring Full",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "a2125588-4fa0-5498-939b-4c3827a7fc4d",
+    "name": "Box Spring King/Split",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "bcd5e70d-1552-5f4d-9e7b-f63acd81cefa",
+    "name": "Box Spring Queen",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "8ef69eb2-f44b-5f1b-ba26-a1026d714bcc",
+    "name": "Box Spring Twin",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "1ed7d07d-6d9d-59ac-b8d6-01ff1923dde1",
+    "name": "Box Wardrobe",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "04f746d0-7323-5a5d-9d82-ea6653005402",
+    "name": "Box Wardrobe",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "b8fa6439-ac59-5199-bbd8-38a359ebb014",
+    "name": "Box Wardrobe Rental",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "8db7d130-77e3-5a9f-9897-1dfb40190f83",
+    "name": "Breakfast Chair",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "23046fc0-f08f-5824-bb3c-018b26a0f4f8",
+    "name": "Breakfast Table",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "6178b860-f3aa-52a0-919b-177889eb99e2",
+    "name": "Breakfront",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "102dcb90-e5a1-5655-ad12-0383d2eff6e8",
+    "name": "Bridge Headboard",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "64a9b397-cdd4-5d43-9560-d1d821e9f8b8",
+    "name": "Bucket",
+    "cuft": "1.5",
+    "weight": "10.5",
+    "description": ""
+  },
+  {
+    "id": "719cc797-79a6-5257-a146-d8c44177ef5a",
+    "name": "Buffet",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "74a11fd9-10cb-5041-8116-b915cd84734e",
+    "name": "Buffet Marble Top",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "cb5130e6-452e-5a26-9b25-61ce6f01fec2",
+    "name": "Buffet Sideboard",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "8fff914e-e2a4-5265-83fc-0c7f1d82576e",
+    "name": "Buffet Top",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "6af718ee-1f54-59a0-89f4-a933dcf66220",
+    "name": "Buffet and Hutch Large",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "9fd561eb-1c74-5d2b-a02e-a0a9227a55a2",
+    "name": "Buffet and Hutch Top",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "a4f56bdb-bc75-595a-9d1c-c00d42647e86",
+    "name": "Butcher Block",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "7a4dd431-047f-5a2e-8048-9d6f5c67ba96",
+    "name": "CD Rack",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "38f8d7d0-746a-5be6-af79-1a5d5ce1b53b",
+    "name": "Cabinet Corner",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "5427213f-fb6c-5ba8-94ce-d2dc2f2839bc",
+    "name": "Cabinet Curio",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "89d045a2-c0ba-5d5b-b0b9-c8319e75934a",
+    "name": "Cabinet CurioLarge",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "1a669aa7-f175-5caa-9c78-80f502143297",
+    "name": "Cabinet Large",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "1bbb192b-fe3e-5fd2-9caf-482fd6bee94a",
+    "name": "Cabinet Marble Top",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "1ac89ef4-9309-5771-949b-13c3841f169e",
+    "name": "Cabinet Marble Top",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "421628ea-8d49-54b1-96ac-c802efb7263a",
+    "name": "Cabinet Medium",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "899910fe-5e33-5134-a618-f34185bbf139",
+    "name": "Cabinet Small",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "2903eaab-572d-5a70-8353-1c0489b8a011",
+    "name": "Cabinet Utility",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "301d3006-180e-5bf1-b663-f0cfbe0cec96",
+    "name": "Canoe 14'",
+    "cuft": "150",
+    "weight": "1050",
+    "description": ""
+  },
+  {
+    "id": "73e1433e-3eba-5a60-889b-2eb9aabcb557",
+    "name": "Car Rims",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "50d6e452-c7db-5bff-8b9c-dfde7741d730",
+    "name": "Car Seat",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "22855f5d-d585-5b95-a996-4919c8b12267",
+    "name": "Card Table",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "33271480-570d-5939-803e-f5354f9b255a",
+    "name": "Carpet",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "767d955e-54d0-5d47-9365-aa4316ce8318",
+    "name": "Carpet Small",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "ee2a6f66-4cca-599a-8839-d148292500b9",
+    "name": "Cart",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "17547c8f-4cb3-5b49-a3fe-dfb00588dbf4",
+    "name": "Cat Litter Box",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "8e8c3d3b-de9f-5816-8b95-fef26429a2f3",
+    "name": "Cat Post",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "bb28f871-0c44-5dde-8c20-240293c094fb",
+    "name": "Cat tree large",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "b5eab9f9-24f1-5cf1-a436-5f4e77c4e554",
+    "name": "Cat tree medium",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "45510364-b02c-51ec-bf2a-196581a8cd8a",
+    "name": "Cat tree small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "5bf5a3d9-6d09-54fe-a1b2-36d32693f730",
+    "name": "Caulk Board",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "9576899b-ae5f-5989-892f-d8896cd1af15",
+    "name": "Ceiling Fan",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "07708191-e18f-5824-b95e-317c1bed306a",
+    "name": "Cello",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "1aa0e29b-39d7-5e85-8310-de070e4c9bd7",
+    "name": "Chainsaw",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "f64f6db8-df73-5aaa-b89b-d4543d3b5835",
+    "name": "Chair",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "2332ba29-6df2-5855-8679-33cdd4910979",
+    "name": "Chair Arm",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "535e6b37-e10c-5bf2-8b74-41130c3d1735",
+    "name": "Chair Arm/Swivel",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "36f9b8c8-f212-5002-9f05-c25889784413",
+    "name": "Chair Beach",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "bd7fe41d-16ae-59bf-9970-4b98737b5368",
+    "name": "Chair Children's",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "cbe68541-88f1-5330-8613-83195b465779",
+    "name": "Chair Conference",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "7b559d7b-cee1-597b-ba73-f94d329cb900",
+    "name": "Chair Dining",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "52c72af6-9a9c-5574-afa3-6eefcaec7372",
+    "name": "Chair Executive",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "064955dc-81e4-5b7a-b973-d2b230c70c30",
+    "name": "Chair Executive",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "3394dcbc-a5ed-522e-bdf7-e94753277c09",
+    "name": "Chair Folding",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "fc248158-afe3-536e-8f2f-2f64cfdacc87",
+    "name": "Chair Folding",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "fd637d4c-3209-5a12-a9bb-d9907c82b25e",
+    "name": "Chair Lounge",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "f5de33bd-f14d-5c13-a511-fe493fc321f9",
+    "name": "Chair Lounge",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "74fa34df-5c89-5e2b-b06e-37603dd3bf89",
+    "name": "Chair Massage",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "887004e9-21e4-53b7-a3ad-fa612b84c14d",
+    "name": "Chair Metal",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "9cd0a39a-a3ae-56b7-8325-5c26ba2215f4",
+    "name": "Chair Occasional",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "b68a3d04-6431-5958-9469-516d2aaefa55",
+    "name": "Chair Office",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "a36dac03-d8fd-5e8b-a6e3-90e246a75852",
+    "name": "Chair Overstuffed",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "bb7cdcc1-7470-5c32-b133-01572ef3d4f5",
+    "name": "Chair Papasan",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "02c3d023-f779-5be5-9f2c-00e6e6ede864",
+    "name": "Chair Plastic",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "02d2dfda-bc9c-5fce-a349-948acbb8ad69",
+    "name": "Chair Porch",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "399095bd-9593-5349-9fe2-66ce8010a575",
+    "name": "Chair Rocking",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "5b040e86-0a03-5975-ab9e-c06f419fe539",
+    "name": "Chair Rocking",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "a15e722c-d71a-5964-9cae-6a553e5f135d",
+    "name": "Chair Secretary",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "600c0119-1683-55b0-80dd-01d4df55da30",
+    "name": "Chair Straight",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "09c47b8f-6603-5092-aa9a-747508f280db",
+    "name": "Chair Wooden",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "c1686fbc-2038-56f7-a6f1-2079ee20e559",
+    "name": "Chair Wooden Armless",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "f9bd5ef3-2906-5ba2-b954-60d44174af67",
+    "name": "Chair and a half",
+    "cuft": "45",
+    "weight": "315",
+    "description": ""
+  },
+  {
+    "id": "d6f634f0-d5a1-54e8-9611-36ecc3bb9826",
+    "name": "Chaise Lounge",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "d7f56be7-c5d0-5c58-8704-2b35e190c3a2",
+    "name": "Chandelier",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "0f6cbe94-3870-523c-b0c8-ef14ac1c2aea",
+    "name": "Chandelier, Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "32c64ca3-ee81-5f1e-9861-2115f9377c27",
+    "name": "Changing Table",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "2d1ac3c3-18f8-5987-8054-7d45db2e2bcd",
+    "name": "Chest Cedar",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "143f89f8-ab8a-546f-b7a6-0c1d32963fdd",
+    "name": "Chest Hope",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "63ff2e3a-9cb2-521a-88c5-38ee79ddcf38",
+    "name": "Chest Large",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "f1a040f9-44b4-5376-b292-524ad7350561",
+    "name": "Chest Marble Top",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "4d0206ae-0fc0-5b5f-835e-2f58593aa51f",
+    "name": "Chest Of Drawers",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "a9403598-c9ad-57ca-b9be-0d59589b1322",
+    "name": "Chest Of Drawers Highboy Large",
+    "cuft": "55",
+    "weight": "385",
+    "description": ""
+  },
+  {
+    "id": "be2d1fc7-cd28-5230-99ea-e7a1f330ed5b",
+    "name": "Chest Of Drawers Small",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "d445dbe9-bbe9-5da8-b469-8c26bbb82fab",
+    "name": "Chest Small",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "23c0ba5c-2c24-519f-b8ab-1c7af138ceef",
+    "name": "Chest Toy",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "568c3a3a-18b9-5af8-88dc-556b59e3a5ef",
+    "name": "Chest Wooden",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "55f152bc-4007-5e13-897d-2a8fe914fb7c",
+    "name": "Chest of Drawers Highboy",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "02212858-d595-5bcc-a865-251a8dbd4ec6",
+    "name": "Child's Slide",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "767aa7ed-1e40-56f3-978f-65a533d77ae6",
+    "name": "Child's Swing",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "04c0b8fd-5408-57d0-abac-f435502237df",
+    "name": "Chimney",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "c754da16-f14c-518d-a978-2aa6e040b398",
+    "name": "China Cabinet",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "dfbd8729-a8f0-5536-aa20-ef8d31ea802b",
+    "name": "China Cabinet Large",
+    "cuft": "80",
+    "weight": "560",
+    "description": ""
+  },
+  {
+    "id": "2df1d554-a2a7-58e9-aac3-e89b7c806d26",
+    "name": "Christmas Tree",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "fd9a92e8-d409-5057-ac65-555a33f77b2e",
+    "name": "Clock Grandfather",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "cba18c60-3da1-59dd-8c4d-eb9cc6fc4c7e",
+    "name": "Clock Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "4ca41562-3e80-5386-94f0-541d5cce9021",
+    "name": "Closet",
+    "cuft": "45",
+    "weight": "315",
+    "description": ""
+  },
+  {
+    "id": "c8277897-45ea-570b-8ee8-2fdc3a4a4c66",
+    "name": "Closet Ikea",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "5f6c751b-9fde-5b5b-92b1-bf5dcc317989",
+    "name": "Clothing Rack",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "4b5274b6-8e60-5e0a-a3aa-6f452944daf2",
+    "name": "Club Chair",
+    "cuft": "20",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "a3ce86c1-f84a-5670-878f-71f4fe6d13e8",
+    "name": "Coat Rack",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "a90203f1-c718-5dca-94f6-73d2ca92f151",
+    "name": "Cocktail Cabinet",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "a5a8a5c1-8345-50a6-a36a-8a803faaff7e",
+    "name": "Cocktail Table",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "22b46c0c-30da-5653-b92f-2507e5295575",
+    "name": "Coffee Table",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "d40703c3-256b-5b0a-aabd-f89863b497b2",
+    "name": "Coffee Table Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "be0c3b9f-99b4-5ba5-8f5b-58dc571063df",
+    "name": "Coffee Table Marble Top",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "87958ec8-dccb-5f0e-ae0d-8af08d3ff91a",
+    "name": "Coffee maker",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "1f6337d8-47c0-5211-9ae6-2794e2b997bb",
+    "name": "Commercial Bin",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "27d82dbc-d527-5701-aa8e-4c0ca2284497",
+    "name": "Compressor/Tank",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "28e4360c-1208-5677-ae3c-65fbd6b05561",
+    "name": "Computer",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "a01bc989-c3c9-5d5d-9906-138b0e9cf590",
+    "name": "Computer Monitor",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "89c31767-8509-5fc3-b51e-f0b1b3e22c19",
+    "name": "Computer Monitor Large",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "8c00697d-7833-5a59-918e-301fbff8f492",
+    "name": "Computer Tower & Monitor",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "bfb14d09-9758-5991-9ed0-190dc24c0c80",
+    "name": "Console Table",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "d78299bd-5e3d-5b24-8a4e-cd3ff72b5e46",
+    "name": "Console Table Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "1c790bdb-baf1-51b4-83a8-5d9258abb3ea",
+    "name": "Console Table Marble Top",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "8988d6b7-6b3b-5f75-9216-ca6469308fdc",
+    "name": "Console Table Med",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "97e85bd5-3195-5ebe-bbbd-3c0da496817d",
+    "name": "Cooler",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "207bbefe-a332-5417-a9f5-ed9e0e810242",
+    "name": "Cooler Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "c3c39968-4a19-5264-911f-f6223b909413",
+    "name": "Copier",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "ec34d929-0adc-5a42-a1c6-b849b85f85c6",
+    "name": "Copier Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "b3300408-a3da-5cb6-91e4-ba0e4d601590",
+    "name": "Copier Small",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "60625c1b-7007-54f4-8561-a1b96b220d01",
+    "name": "Corner Cabinet",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "ac93873c-2859-5a96-8d91-59a9b8eb00e4",
+    "name": "Corner Cabinet Large",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "ad608473-12ba-5f77-91d7-2cbaad6f2b08",
+    "name": "Cot Folding",
+    "cuft": "12",
+    "weight": "84",
+    "description": ""
+  },
+  {
+    "id": "87bc079a-b052-502f-8aca-4581c21024f3",
+    "name": "CotFolding",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "26ba7df1-447e-5a44-87f0-3bef674ca1d7",
+    "name": "Couch",
+    "cuft": "70",
+    "weight": "490",
+    "description": ""
+  },
+  {
+    "id": "62842231-e89d-5621-95df-1b1b9c9e7bfd",
+    "name": "Credenza",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "0b270d85-2ae4-5593-a50f-7cc49358670a",
+    "name": "Credenza Large",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "53d83095-c961-508d-980c-9af515448801",
+    "name": "Credenza Large Marble Top",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "61a23a2b-b53e-5802-b1b3-fde90d5bb427",
+    "name": "Credenza Large Marble Top",
+    "cuft": "80",
+    "weight": "560",
+    "description": ""
+  },
+  {
+    "id": "635da84b-b24c-5339-9cfa-81a59eed0966",
+    "name": "Cube",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "7dbdfc16-f0d2-56e0-a66a-7c6db44be996",
+    "name": "Curtain Rod",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "f35a67fb-e865-5f27-be9c-80a091ca1de8",
+    "name": "Dehumidifier",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "d877c734-0d97-5cac-bbf0-2ed378f29bfa",
+    "name": "Desk",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "6a63220c-d578-5592-9264-78a60102c383",
+    "name": "Desk Chair",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "59483a01-f79a-5c9d-b2de-db82db5e9ac9",
+    "name": "Desk Computer",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "417baf05-cfab-5e9f-88d6-42085db04ab9",
+    "name": "Desk Corner",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "902b80af-6f58-578b-913b-5ac679dfbc68",
+    "name": "Desk Glass Top",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "ec630e09-39b8-5954-ad29-92dcfdb4227c",
+    "name": "Desk L Shape",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "4432e514-be6e-5417-bf8d-b76582d0e892",
+    "name": "Desk Lamp",
+    "cuft": "1",
+    "weight": "7",
+    "description": ""
+  },
+  {
+    "id": "37b66790-1184-5ef7-b041-7293a8c30d9d",
+    "name": "Desk Large",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "6e623e3d-2444-517f-aa9e-25ce47815014",
+    "name": "Desk Marble Top",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "29130a48-c3e0-573e-ad8e-621acb3dbffd",
+    "name": "Desk Medium",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "9c160ccd-a04b-5289-840a-269e13dd1d0e",
+    "name": "Desk Office",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "ad2add2f-85c5-5847-bbd5-b186ba4bacf0",
+    "name": "Desk Secretary",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "5d16c903-25db-5e46-a7d2-651351ac45d3",
+    "name": "Desk Secretary",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "562970b1-6de0-5b4d-9ed2-5977888f2205",
+    "name": "Desk Small",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "3d5ded0d-49ae-5c95-a89f-c77b809ae3ce",
+    "name": "Desk U Shape",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "64c3deac-5d63-555a-a248-22296205577d",
+    "name": "Desk with Hutch",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "a7800c9a-bff9-566e-80b0-58b6fbfc7616",
+    "name": "Desk with Return (L-Shape)",
+    "cuft": "65",
+    "weight": "455",
+    "description": ""
+  },
+  {
+    "id": "58dcb43a-c9f3-5884-9cce-62597341ab0b",
+    "name": "Desk, Small",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "4f10d682-10a6-58a4-be06-18d8020221bf",
+    "name": "Diaper Can",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "b02fdfe6-19bd-5606-81f1-aa91c439d443",
+    "name": "Dining Bench",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "8ee84a78-b8ea-550b-bee6-1f0eadacbb8f",
+    "name": "Dining Chair",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "4b51c259-c212-5688-81f1-54b95792b9a0",
+    "name": "Dining Table",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "f4e8281e-32c9-539b-a7d3-b0ba5fc2489b",
+    "name": "Dining Table Glass",
+    "cuft": "45",
+    "weight": "315",
+    "description": ""
+  },
+  {
+    "id": "5d12c83e-ed05-583f-b88a-0f55c06458f8",
+    "name": "Dining Table Large",
+    "cuft": "70",
+    "weight": "490",
+    "description": ""
+  },
+  {
+    "id": "94247910-c271-53e0-8665-9eed17768cf1",
+    "name": "Dining Table Marble Top",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "199e1c24-172e-5fdb-891a-f177ec396daf",
+    "name": "Dining table glass top",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "4131083b-4eed-50af-a43d-7fce928759e9",
+    "name": "Dirt Bike",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "8ccac421-fc12-54f1-bc4c-27a9fffdeb86",
+    "name": "Dish Box",
+    "cuft": "5.2",
+    "weight": "36.4",
+    "description": ""
+  },
+  {
+    "id": "15f29384-429c-590c-8150-ff5af6a12ecf",
+    "name": "Dish Box already packed",
+    "cuft": "5.2",
+    "weight": "36.4",
+    "description": ""
+  },
+  {
+    "id": "7df3c6f2-ac87-5d1e-94f8-bda21e3f9603",
+    "name": "Dishwasher",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "b18d9dc1-0878-506c-8fdc-554dd1c0cafc",
+    "name": "Display Case",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "f3c9a7b8-6c31-533b-a1da-0ea7481bf568",
+    "name": "Dog Cage Large",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "427cef81-2f5e-599c-8333-49b722cddaec",
+    "name": "Dog Crate Large",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "5e5bc540-5879-5c03-aa52-57d5930ddefc",
+    "name": "Dog Crate Medium",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "451608ce-9b1a-5952-81d2-48c6f585a959",
+    "name": "Dog Crate Small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "512ae464-acfb-59ab-a0c6-944f43b99030",
+    "name": "Dog bed",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "97ba5a1e-d230-55ac-833b-3f3cc86c031d",
+    "name": "Dollhouse",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "99278504-b459-50a0-a339-468d9fedac4a",
+    "name": "Dolly",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "60f4ba5f-4723-532f-9890-2ea002527812",
+    "name": "Door",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "e74ef09a-92e5-5eb5-a43c-b4686287ed43",
+    "name": "Drafting Table",
+    "cuft": "42",
+    "weight": "294",
+    "description": ""
+  },
+  {
+    "id": "c1a59db2-147d-58c0-b2c2-5d0586b9d67a",
+    "name": "Drawer Unit",
+    "cuft": "7",
+    "weight": "49",
+    "description": ""
+  },
+  {
+    "id": "19ab2e94-6b7b-5156-b84a-c4d048574e5b",
+    "name": "Dresser",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "e26e0910-72d4-58b9-928f-47c479fabba8",
+    "name": "Dresser Double Column",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "6c877d51-4728-5364-8574-08b697569547",
+    "name": "Dresser Double Marble Top",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "0c3a98f8-2345-5dba-8c21-339a79a0fe68",
+    "name": "Dresser Large",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "b5cfda34-7e9d-5f45-bfcc-ad843f7fef57",
+    "name": "Dresser Marble Top",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "299a3864-8656-5f4d-9361-d592e1300b72",
+    "name": "Dresser Single Column",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "51d1e5f1-abdf-5355-a207-ee53e360ba20",
+    "name": "Dresser Triple Column",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "8c9916ae-862c-53a8-a068-80f03bb41949",
+    "name": "Dresser Triple Marble Top",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "2717606a-5b5d-50c8-8f74-964a06aadf89",
+    "name": "Dresser With Mirror",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "f8327ada-2ce0-5cb9-8486-c1ca175940e5",
+    "name": "Drum Set",
+    "cuft": "70",
+    "weight": "490",
+    "description": ""
+  },
+  {
+    "id": "c63264ea-9cde-588d-8381-cb1645fcd134",
+    "name": "Dry Sink",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "2400ffd7-1993-5b05-bc4d-44e41fb0a7c0",
+    "name": "Dryer Electric",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "93146e1f-6149-55d2-a46d-21853d2b2d8a",
+    "name": "Drying Rack",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "9135335d-0947-5d07-853e-a1e1d79e4008",
+    "name": "Duffel Bag",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "62f9af78-ed40-5005-855d-9e5ea9bb4cf2",
+    "name": "Duffle Bag",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "fa770117-819b-5d1a-8b21-ac77aca5e8a4",
+    "name": "Eames Chair and Ottoman",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "641394dc-cb03-5134-8ef0-2c62793ad234",
+    "name": "Easel",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "678cfacb-1198-5ef9-9427-65107a7a6400",
+    "name": "Easel Medium",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "cece4cb9-44bb-546a-89b8-9874ea8840de",
+    "name": "Egg Chair",
+    "cuft": "45",
+    "weight": "315",
+    "description": ""
+  },
+  {
+    "id": "d4051c97-d912-5c2e-99e8-331eb66c7f3d",
+    "name": "Electric Scooter",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "90c31bc2-c25d-5e16-9f06-8e784f9ee6ea",
+    "name": "Elliptical",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "871c6406-6e91-520c-a84d-85065d9ecdfb",
+    "name": "End Table",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "3954630f-d052-5b32-8fe8-919937f138c5",
+    "name": "End Table Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "e8e23fcf-1147-5763-8e87-c5505ca74781",
+    "name": "End Table Marble Top",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "a99bb864-d459-5821-912f-5716d46280ef",
+    "name": "Entertainment Center Large",
+    "cuft": "75",
+    "weight": "525",
+    "description": ""
+  },
+  {
+    "id": "39f873d9-13e1-55cc-995b-969a3638eda9",
+    "name": "Entertainment Center Med",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "872c20af-1cff-5250-a9be-8530aceeff8a",
+    "name": "Entertainment Center Small",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "77174166-4842-5f1c-aea3-7c1c85c33083",
+    "name": "Entry Table",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "cd39c738-f521-525a-8f85-a0b7d21b97b9",
+    "name": "Exercise Bike",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "72dbbae6-5bb9-5805-8e34-6cab5dc1a005",
+    "name": "Exercise Equipment",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "ba5ceb84-3cf0-593e-abf6-a3b0ae253c35",
+    "name": "Extending Ladder",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "47423eda-1220-5ac2-b916-4cad956c1867",
+    "name": "Extra Large Box already packed",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "01c50830-c6cd-5892-a739-15b8ead984ac",
+    "name": "Fan",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "2b658e7f-a96d-5aab-9db5-6f44a77c3cf5",
+    "name": "Fan Standing",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "4c6a3baf-072a-5341-8af1-9877a74699a5",
+    "name": "Fax Machine",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "a42dee99-ac5a-503e-9ff3-3cb368556af0",
+    "name": "File Box",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "5b049652-3cf3-57db-9ef3-447aa2ad1bad",
+    "name": "File Box - Carrier Pack",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "39811812-62cc-551c-a605-0493ad273b76",
+    "name": "File Cabinet 2 Drawers",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "0b5112ae-e100-5c54-96b3-f2718f8265c7",
+    "name": "File Cabinet 3 Drawers",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "1d681657-194e-533a-a8e1-fdf50f3a1063",
+    "name": "File Cabinet 4-5 Drawers",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "d3a21df7-c2bc-566e-b4e1-1d7e3508b36f",
+    "name": "Fireplace",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "a3fd522c-0e42-54af-952a-523d68bc802a",
+    "name": "Fireplace Electric",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "01b7f80c-531f-59a5-b603-ce0a8b6b8850",
+    "name": "Fish Tank Large",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "c0d1f3d9-d7b5-52de-9a49-d7730a6c50c6",
+    "name": "Fish Tank Med",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "3e222c6b-7348-5f73-ba6b-8927f38d819a",
+    "name": "Fish Tank Small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "f017d9de-9ccb-5349-8ce7-4a8b76169cd8",
+    "name": "Floor Lamp Arc",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "5f1d6bfc-4a9e-58e7-b2f7-4ac976f9d428",
+    "name": "Floor Lamp Medium",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "2a23d1e9-72de-542b-9962-11c269585754",
+    "name": "Floor LampLarge",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "bd0a7fab-1707-5c61-bd31-b6eed4b73e36",
+    "name": "Floor Mat",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "40e18228-995b-5447-9dfc-7d5c3a9c96d8",
+    "name": "Folding Mini Crib",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "2241b118-b273-560c-a60f-e22113e6908d",
+    "name": "Fooseball Machine",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "13caf296-c109-511c-b160-1e70dd9e56c4",
+    "name": "Footlocker",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "982e5e31-0f24-5dc4-a225-234b40dfe015",
+    "name": "Footstool",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "0cacc07f-0890-5ecf-9f63-ca2e58480e71",
+    "name": "Freezer Large",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "5be58d29-d3a6-545e-87b4-054e89b73b74",
+    "name": "Freezer Small",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "4c1e7ea8-b41d-5564-991c-e06dccd9d40e",
+    "name": "Futon",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "7bbe7e87-ca64-5817-99b0-da4b0474848b",
+    "name": "Gaming Chair",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "4040012a-8e98-5d5f-b3d8-50676d49aa87",
+    "name": "Garbage Can",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "5f1b4e1a-1563-5cbd-b54e-7942b0b46bfa",
+    "name": "Garden Cart",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "ff3656bd-4d96-5b0b-93da-b38a45215050",
+    "name": "Garden Hose",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "c2d3172e-99f4-52cb-8aa0-e4fe6f687d66",
+    "name": "Garden Tools",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "a2b854d1-0b65-58d7-bcc9-d62dc05acb13",
+    "name": "Garment Bag",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "f82e719e-fbb2-526e-ae0f-c29cfe096389",
+    "name": "Garment Rack",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "239ac38e-4368-5ae3-80e7-8e671f4285ae",
+    "name": "Generator",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "30e84eeb-d54a-5ace-8f0a-c1d9fc319aa1",
+    "name": "Glass Bookcase",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "35e87cf5-2010-549e-ad5f-c578b2fb503f",
+    "name": "Glass Coffee Table",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "8015f2d8-363c-52aa-852f-d380ed5d45fe",
+    "name": "Glass Conference Table",
+    "cuft": "80",
+    "weight": "560",
+    "description": ""
+  },
+  {
+    "id": "40a380da-fb92-52ee-bf42-ca2ee9897664",
+    "name": "Glass Console Table",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "95766040-d82c-5370-ad0f-68cd27510398",
+    "name": "Glass Door Bookcase Large",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "c92f2aaf-6d0a-5251-a17c-f62f8e558baa",
+    "name": "Glass Door Bookcase Small",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "2f63108e-cf1c-5e0c-852b-2309ad43959d",
+    "name": "Glass Door Cabinet",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "06946221-f5f5-5ea8-a1b7-1280da1b42f5",
+    "name": "Glass End Table",
+    "cuft": "7",
+    "weight": "49",
+    "description": ""
+  },
+  {
+    "id": "dc4ac080-9454-5840-b06c-7dd0796df17a",
+    "name": "Glass Shelves",
+    "cuft": "1",
+    "weight": "7",
+    "description": ""
+  },
+  {
+    "id": "b78b302d-e3ea-5070-809e-fbfa095be268",
+    "name": "Glass Side Table",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "142dc8af-cf5c-5e86-98b9-e5024f57e5f1",
+    "name": "Glass Top Desk",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "22d7deb4-04f3-5488-b7e3-8a950ca4e145",
+    "name": "Glass top Night Stand",
+    "cuft": "7",
+    "weight": "49",
+    "description": ""
+  },
+  {
+    "id": "e391a32e-44ea-52a1-ac92-536c198c56db",
+    "name": "Glider Chair",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "6bb73c4d-1d26-518a-9626-3fb06afac170",
+    "name": "Golf Bag & Clubs",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "3899e372-c09d-5feb-b57f-e45e80056ee1",
+    "name": "Golf Cart",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "68d713e8-2601-50d2-8892-9809f8fe27bf",
+    "name": "Grand Organ",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "1c9a3245-d47e-52bd-a643-f843b5ca7198",
+    "name": "Guitar",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "d83c45e8-8c5c-5ea3-a1af-d725de08ea42",
+    "name": "Guitar Bass",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "3eb1c944-f4a3-52cb-a91c-d7d9a84f7f3e",
+    "name": "Guitar Case",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "a777b264-2272-5897-a347-5707343eccf5",
+    "name": "Guitar Stand",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "97006d31-475b-53cf-8eaa-1d6140a9b9a5",
+    "name": "Gun Cabinet",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "2f394160-7df1-57c5-9b89-d5a11ebca32e",
+    "name": "Hall tree",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "da3947c3-e7e5-57ae-8363-dde3d6d85b2f",
+    "name": "Hammock",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "82f6a451-8125-5244-8bfb-5b7203d65185",
+    "name": "Hamper",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "1bc84f8e-012b-553e-bc02-4767ca1a1f3e",
+    "name": "Hand Truck",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "24026c50-2720-548d-800d-145ab6aea238",
+    "name": "Hat & Coat Stand",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "3935735b-2eae-5ea9-8c63-0c2525eaaf9c",
+    "name": "Headboard",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "11a7c1e3-90a4-5d4a-8a14-f670536cdcba",
+    "name": "Headboard & Footboard Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "d4be872b-788b-51ce-a748-5a7126b7a70e",
+    "name": "Heater",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "56d975a6-b1c9-5c7c-80f5-10e7332569e2",
+    "name": "Hockey Table",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "b6562f3a-9f31-5a8a-99e5-1f7d146bdc58",
+    "name": "Hope Chest",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "f31685d1-6945-54a1-ad2d-086137fa9aa6",
+    "name": "Hot Tub",
+    "cuft": "150",
+    "weight": "1050",
+    "description": ""
+  },
+  {
+    "id": "62feb387-8545-5ec5-b8ca-2eca8a3ae5a6",
+    "name": "Humidifier",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "6de5b740-bc8d-596b-88a1-4ccb64b8e3ad",
+    "name": "Ironing Board",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "4adb2d29-2947-541e-a5cf-79788175755a",
+    "name": "Jet Ski",
+    "cuft": "200",
+    "weight": "1400",
+    "description": ""
+  },
+  {
+    "id": "783a079c-1884-524c-b378-d5a5dc49f2b2",
+    "name": "Jewelry Armoire",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "b7f6b4af-85ee-56d1-ba75-78000dc582b4",
+    "name": "Kayak",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "0b63e435-4ceb-5fad-9c9d-ae57e97f6c43",
+    "name": "Kayak Small",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "eab2b339-3d8c-5024-9f38-4eb17dfacdfb",
+    "name": "Keyboard",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "6972bd3f-1336-58ba-a69c-01d561c55ada",
+    "name": "Kids Basketball hoop",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "a08f1120-f328-5ae7-b81d-a3c24b4930fb",
+    "name": "Kids Rocking Chair",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "6dd03cb3-aa3b-5c4a-9426-401d0ae3b5cd",
+    "name": "Kids Soft Chair",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "7cba864d-01cf-5215-80ba-30117754ac69",
+    "name": "Kids Teepee Tent",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "b2bfaad0-6b70-5ffb-83e4-8e36daf669fe",
+    "name": "Kitchen Cabinet Large",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "4fb3e3a0-7d7b-5079-8231-8853d0084b81",
+    "name": "Kitchen Cabinet Med",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "49d4c2f2-c778-5479-a0b8-11766867d66c",
+    "name": "Kitchen Cart / Butcher Block",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "03c40cf3-2c2f-5635-9255-2728e0af89eb",
+    "name": "Kitchen Chair",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "3ece9952-4e62-526f-b601-e79b28e43cc6",
+    "name": "Kitchen Island",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "e761bef8-2a45-57b8-899d-51d6a7e9cf3f",
+    "name": "Kitchen Table",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "e51a6df5-7dee-55c9-a58b-819614cff230",
+    "name": "Kitchen Table Glass",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "7a12ec31-bac5-5a3a-8afa-0801841eb241",
+    "name": "Kitchen Table Marble Top",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "a8b45203-6882-5520-90a1-045454ed0a1b",
+    "name": "Ladder",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "ba70a113-6d81-58b5-ae13-ff0c0b18f199",
+    "name": "Ladder Steps",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "1e032f8a-c5e1-5ad4-a442-109462593d04",
+    "name": "Ladder bookshelf/stand",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "ce6b90ca-88e8-557e-b073-831f2237121a",
+    "name": "Lamp",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "8c7c0aea-a087-55c2-be97-c62223435502",
+    "name": "Lamp Box",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "085bf0f5-267b-56d6-a3ca-13588ad245f8",
+    "name": "Lamp Box - Carrier Pack",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "8bede5c0-5a74-55da-8b8c-17f60562345d",
+    "name": "Lamp Floor",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "06d14e00-ca32-59e1-96c7-b62fc0e72547",
+    "name": "Lamp Floor Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "efa7123f-bd9b-5a34-be1a-27ad734c0908",
+    "name": "Lamp Shade",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "6454393f-eb15-53e2-8a3d-43a62b5c256f",
+    "name": "Lamp Table",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "237abe7e-9c53-5f9e-a965-a2268533e404",
+    "name": "Lamp Table Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "37ea9238-e89b-5a0d-b28c-2e8028a38647",
+    "name": "Large plastic bin CP",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "69d133e4-e741-5faf-8429-6ee1d4bd7b48",
+    "name": "Large plastic bin Carrier Pack",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "8e1f7517-ef29-528a-ac51-b54f9f302f8e",
+    "name": "Laundry Basket",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "74d50c9e-e6a6-5512-bbdf-0ed50550f602",
+    "name": "Lawn Edger",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "554fa78a-bb02-5f7d-a53e-bcabfed02e86",
+    "name": "Lawn Mower Push",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "bd3a6569-5fa1-5b4e-886b-3fb3994f0d81",
+    "name": "Lawn Mower Riding",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "75807a3b-15b9-5619-a8d9-326f16b17d25",
+    "name": "Lazy Boy",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "8a479bbb-202d-508b-9ef1-8041cdfa697d",
+    "name": "Leaf Blower",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "2281b861-d812-5440-99cd-16f7d254eca3",
+    "name": "Leaf Blower Portable",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "293a4a1b-6699-5323-add4-773d607a7caf",
+    "name": "Leather chair",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "ab96486b-4c3f-5ffb-baad-c42335649361",
+    "name": "Light Fixture",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "1f7b1ff8-c1e6-5b19-9cba-fd37c0b22ba1",
+    "name": "Lingerie Chest",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "7513852b-2a50-5be3-b09a-261cbe0bc116",
+    "name": "Living Room Chair",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "babc5d9e-5768-5638-9342-3cabdc9598c4",
+    "name": "Living Room Chair and Ottoman",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "0baafe82-fddc-5641-a6d5-b3892f1093e9",
+    "name": "Locker Large",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "4054334b-6459-58a4-aa68-a3711da79906",
+    "name": "Locker Med",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "e029430c-784a-5d5d-84fc-4a63435d3907",
+    "name": "Love Seat",
+    "cuft": "45",
+    "weight": "315",
+    "description": ""
+  },
+  {
+    "id": "9ab4d93d-9719-5011-8eb4-e9c9ed901636",
+    "name": "Magazine Rack",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "a3ae5cfd-6faf-5408-8787-8d2954a64ed5",
+    "name": "Mannequin",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "54278fc9-6b2e-51ba-8f23-9d5252bd0f32",
+    "name": "Marble Top Large",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "6c45d9a4-0fe4-5f79-9968-6a0016af7fde",
+    "name": "Marble Top Medium",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "45595f5d-21a0-5d6d-9e4a-20108d829ffd",
+    "name": "Marble Top Small",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "32f8cf86-0a33-556e-a984-7f620fcb6980",
+    "name": "Massage table",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "608a27db-f92e-5550-8dca-aa474a56d85b",
+    "name": "Mattress California King 72\"x84",
+    "cuft": "42",
+    "weight": "294",
+    "description": ""
+  },
+  {
+    "id": "f0b1d625-6e56-50bd-a621-cb7d1d0ee998",
+    "name": "Mattress Crib",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "436fb407-2868-5f24-b1bb-1253a7f45f36",
+    "name": "Mattress Double",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "e79e056c-2506-51a5-a510-7f5553ca23b7",
+    "name": "Mattress Full",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "e197090f-d9ca-50ba-b9d3-e9fca5f32e93",
+    "name": "Mattress Futon",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "df330874-a1d7-5aec-b03e-1be004e75801",
+    "name": "Mattress King",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "facc32b1-21d9-5150-a9fa-aef83a3c0fb5",
+    "name": "Mattress Queen",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "6f4301a1-64bb-5d0e-9871-c5b97209d6d5",
+    "name": "Mattress Single",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "fdf9387b-2f71-534a-b972-f6a4765f62a3",
+    "name": "Mattress Twin",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "539961c1-3b22-5ac2-8396-3fec4fc4677d",
+    "name": "Medium Box already packed",
+    "cuft": "3.1",
+    "weight": "21.7",
+    "description": ""
+  },
+  {
+    "id": "c53e8829-7067-52d8-8813-001ce5807adf",
+    "name": "Metal Cart",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "7cc12c1f-f72a-52d4-b5ea-9c4c99c93449",
+    "name": "Metro Shelf - Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "bc9e4a40-ad27-5a08-890e-e2e060b26774",
+    "name": "Metro Shelf - Medium",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "109e510c-bbc2-51aa-8c2a-ed465e24821c",
+    "name": "Metro Shelf - Small",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "1db60d48-3a8b-52ae-ba97-6baabd580b0a",
+    "name": "Microwave",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "b677cdbc-149d-5cd6-8ced-b05a51ada3b0",
+    "name": "Microwave Cart",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "06a068ce-ac29-5326-be0f-f5913b64e486",
+    "name": "Milk Crate",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "2dc418c9-be11-5f57-a210-56d09977ca4d",
+    "name": "Mirror",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "5ed2e471-d81c-5fff-9f94-f4af3a3aa542",
+    "name": "Mirror Full Length Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "da7ef9d6-847e-56bc-bd3d-f2375671d51d",
+    "name": "Mirror Large",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "faf3164a-031e-5941-ae9f-a6b7c2aadf8b",
+    "name": "Mirror Medium",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "ffe60bee-d441-5faf-bc45-8686eacb9af9",
+    "name": "Mirror Small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "2eb793a2-68ba-5733-a5c8-3a7680d26a0b",
+    "name": "Mirrored Double Dresser",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "6694c3f2-b6e5-54f2-8cb2-a0e3f0123cfd",
+    "name": "Mirrored Single Dresser",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "86672c32-6dae-5d04-9321-b47d6909c94d",
+    "name": "Mirrored Triple Dresser",
+    "cuft": "75",
+    "weight": "525",
+    "description": ""
+  },
+  {
+    "id": "92e54913-ae2c-5b86-b32a-e817a0df0c65",
+    "name": "Mirrored nightstand",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "e1447d72-c2e2-580f-a395-0d783b01cb1f",
+    "name": "Misc toy large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "2d759553-07b8-5b81-8efb-377b54bc082a",
+    "name": "Misc toy medium",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "f7b70461-cbdd-5caa-97fc-b1f4a1fc16db",
+    "name": "Misc toy small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "b8ae871e-620a-5280-8875-160fb1d6e707",
+    "name": "Misc. Small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "7140667f-b8bf-5df6-93ec-ea80da67e20e",
+    "name": "Miscellaneous",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "b52d3352-d1c9-5005-8427-9c3678408d14",
+    "name": "Motor Scooter",
+    "cuft": "65",
+    "weight": "455",
+    "description": ""
+  },
+  {
+    "id": "209d97b3-78ba-5642-b7d9-e3e2830d3594",
+    "name": "Motorcycle",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "ccf7a7fd-1fa1-5980-ae01-05eef85d74d3",
+    "name": "Musical Instrument",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "6a87b834-c6b1-5cf4-bb9c-3a63488fff98",
+    "name": "Nesting Table",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "e064a8ef-5833-5e59-95e7-6c8e9101e3ac",
+    "name": "Night Stand",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "1010b10a-b096-5cd0-88b5-9395e9a1d12f",
+    "name": "Night Stand Marble Top",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "d62debbb-2469-540e-8900-4ef6da506964",
+    "name": "Night Stand Table Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "1d6a9751-f512-5e8b-a734-b940bc9ed20f",
+    "name": "Night Stand Table Small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "f329805e-99d0-5a2a-956f-833fb9c9d266",
+    "name": "Office Cart",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "9ccfdc26-4b4f-5eea-b294-2daf9d5fba6e",
+    "name": "Office Chair",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "be3f8dd4-f1fc-5c2c-b722-dea7c7f8a08e",
+    "name": "Office Desk",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "96b30124-7fc7-513f-83bb-935270f4d0ff",
+    "name": "Office Shredder",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "fce593fd-2655-5228-a040-69524a86497b",
+    "name": "Organ",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "6e5cee02-7176-566a-9639-c7c58ef4a1e8",
+    "name": "Organizer",
+    "cuft": "7",
+    "weight": "49",
+    "description": ""
+  },
+  {
+    "id": "cdc732c2-8d1e-5afd-9909-ccea5fc4e335",
+    "name": "Ottoman",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "59e6be90-0fce-5bc8-899c-6711cbb5cac9",
+    "name": "Ottoman Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "e1068757-c04b-5ff3-a87f-f01cd75a0c04",
+    "name": "Ottoman Med.",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "128409bc-1671-5a2f-9e2e-15a4a5270baf",
+    "name": "Outdoor Bar Portable",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "f6656d80-2f5d-5545-8162-6a6d0d716b61",
+    "name": "Outdoor Bench",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "c877589d-020f-5fb0-afe4-b36f31309f1f",
+    "name": "Outdoor Chair",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "8a9761e9-8036-5223-a3fa-0a15d4cb04e9",
+    "name": "Outdoor Chair Lounge",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "2e38acdd-c576-550b-96dd-34fbc82b66b8",
+    "name": "Outdoor Coffee Table",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "6d61c4ab-19dc-51cb-86f3-a37eb6667515",
+    "name": "Outdoor End Table",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "439c075c-71e9-5710-8e70-f50e2938c886",
+    "name": "Outdoor Love Seat",
+    "cuft": "45",
+    "weight": "315",
+    "description": ""
+  },
+  {
+    "id": "9038366c-2e01-5312-b33c-9daa9de2fe39",
+    "name": "Outdoor Sectional",
+    "cuft": "150",
+    "weight": "1050",
+    "description": ""
+  },
+  {
+    "id": "41cbaa05-c415-597b-993e-59f5270550df",
+    "name": "Outdoor Sofa",
+    "cuft": "65",
+    "weight": "455",
+    "description": ""
+  },
+  {
+    "id": "5eb08021-ce14-5bdd-b34f-6d7037d1b1e2",
+    "name": "Outdoor Swing",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "aad0fa09-636d-53a4-ad3f-8d07f6920b38",
+    "name": "Outdoor Table",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "e5226972-ec8e-518e-a885-a1802d2760f4",
+    "name": "Outdoor Umbrella",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "1eec2fd0-db05-5222-bc08-b56fdf62741b",
+    "name": "Oven",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "2aa16fb2-b0a9-569d-8d9b-f5e49d5722ae",
+    "name": "Pack and play",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "83c1a1c8-8a21-576d-bff2-ec84d940ded4",
+    "name": "Painting Large",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "cc338811-e802-58bf-a100-5f56add110b9",
+    "name": "Painting Med",
+    "cuft": "4",
+    "weight": "28",
+    "description": ""
+  },
+  {
+    "id": "daf88df7-2914-5cc9-a8ad-8ad9ee1d6155",
+    "name": "Painting/Picture Small",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "4846d596-c3d9-56c9-a6f7-1fd79901e980",
+    "name": "Pantry Cabinet",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "af3953d8-d311-5ea1-bb83-79632fe9704d",
+    "name": "Patio Chair",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "ce9f63ba-ad86-5209-a153-dc35ef485bdc",
+    "name": "Patio Table",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "d0d0ca35-c07c-5565-8fa0-10c76711afab",
+    "name": "Patio Umbrella",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "862c7c93-c12c-57b4-ba25-cd05a0176834",
+    "name": "Peloton",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "a8e64231-307c-5ee4-800f-ea8767b5fd2e",
+    "name": "Piano Baby Grand",
+    "cuft": "70",
+    "weight": "490",
+    "description": ""
+  },
+  {
+    "id": "de7cb7e3-a585-5a73-aa28-4dbac6785b2f",
+    "name": "Piano Bench",
+    "cuft": "7",
+    "weight": "49",
+    "description": ""
+  },
+  {
+    "id": "8a9ca979-117c-5231-a179-68807339d25b",
+    "name": "Piano Concert Grand",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "eb6b4822-d4f2-59b0-a10f-1eafae8eec1d",
+    "name": "Piano Electric",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "8f569014-695d-5f13-8127-a76912a4234b",
+    "name": "Piano Grand",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "5b974d1d-a832-550d-bb46-9dd569d36436",
+    "name": "Piano Upright",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "92548c7e-bb7d-5ca0-b8bf-c7d8594e8f53",
+    "name": "Picture Bin",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "948b0d94-9730-5b2c-b14a-1333b29b43c4",
+    "name": "Picture Box",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "c0002577-fd36-5903-8b0b-dd201c911bb8",
+    "name": "Picture Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "44fa1f8c-244f-57cd-942e-7b9e4bad6153",
+    "name": "Picture Medium",
+    "cuft": "4",
+    "weight": "28",
+    "description": ""
+  },
+  {
+    "id": "83de44b2-2ba4-5749-83c5-d1a72fdb2a1c",
+    "name": "Picture Small",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "5b63a39c-8380-5825-8079-7c495d1cf262",
+    "name": "Picture/Painting Extra Large",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "0d91941e-4369-529e-bed8-46de520b3bd8",
+    "name": "Picture/Painting Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "7d9169ae-d1f9-5240-9f02-203859ebdb2d",
+    "name": "Picture/Painting Medium",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "cce20bf5-3fb8-509e-83c7-b6ab2ff1806f",
+    "name": "Ping Pong Table",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "be1b8c6d-10c2-50c7-b3a4-83059d61a66a",
+    "name": "Plant Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "ef0a0cb3-359f-54da-98df-885c6311ac82",
+    "name": "Plant Medium",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "44c45872-c0b2-57f0-bb0d-39ecafbad3a7",
+    "name": "Plant Small",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "7b9cfd7f-9dca-59f6-a701-20245b3506f1",
+    "name": "Plant Stand",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "16070f70-0343-5d6d-817c-9972d8d20e2c",
+    "name": "Planter",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "98bb600a-e882-57f2-88d7-0d851e3553c4",
+    "name": "Plastic Bin Extra Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "fa80b334-7b78-50b1-aa9f-45d3d68d8540",
+    "name": "Plastic Bin Large",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "c4e9e670-cc21-5751-aaa7-2b3bd023d84b",
+    "name": "Plastic Bin Large",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "6859a194-3c5d-576e-b4de-3b3f7e0a3abc",
+    "name": "Plastic Bin Med",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "871c53ea-41c5-5268-80a1-a51d18247360",
+    "name": "Plastic Bin Small",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "17dbc565-f1a9-52d2-a031-ddd47171d83b",
+    "name": "Plastic Bins (Extra Large 54gal)",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "06f99de3-b776-54b4-9190-19d8bdd23653",
+    "name": "Plastic Bins (Large 32gal)",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "aa820d85-c60b-5caf-87ff-da904024c363",
+    "name": "Plastic Bins (Medium 18gal)",
+    "cuft": "4",
+    "weight": "28",
+    "description": ""
+  },
+  {
+    "id": "569d8861-dd71-5c88-8777-0a9b2c0422db",
+    "name": "Plastic Bins (Small 10gal)",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "7040d3a5-9731-5609-b88d-5bdf6a685db8",
+    "name": "Plastic BinsSmall",
+    "cuft": "1.5",
+    "weight": "10.5",
+    "description": ""
+  },
+  {
+    "id": "ddaeb18b-cc55-5035-8bd7-56b06b6498cb",
+    "name": "Plastic CabinetLarge",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "2c7ea1b0-1280-59fc-87ef-0da38930fe47",
+    "name": "Plastic Chair",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "b993afbc-0f82-5cec-ac08-dbf575378aa8",
+    "name": "Plastic Drawers",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "b3447de7-8aa0-5222-8561-6799347cd5e7",
+    "name": "Plastic bin dish CP",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "38bf60a4-2246-5963-9d79-864d90a4c90b",
+    "name": "Plastic bin dish Carrier Pack",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "4cf9cf0e-4a8b-5bf3-a523-4e37424c4cdf",
+    "name": "Playpen",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "22e6acf0-f514-5c98-bdc9-a7ba00b9d77e",
+    "name": "Pool Table Large",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "c77e17af-687a-55c6-aae8-fe98764594db",
+    "name": "Poster large",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "41555164-a061-53d5-b103-534e22d7cebb",
+    "name": "Poster medium",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "854d1aee-36a9-52f2-a13c-ae627a02705d",
+    "name": "Poster small",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "72aa00be-8267-510d-bde8-ba71577ba85b",
+    "name": "Power Hand Tool",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "a83a70d0-f279-5bb1-8cce-53e3ce415f67",
+    "name": "Power Wash",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "fe771ff2-13dc-5936-b330-f4e0b3e54722",
+    "name": "Powerwheel (small)",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "ac061ecf-1f59-5b30-a553-9c02dfbcd25e",
+    "name": "Printer",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "624a0351-0b9a-59c8-a8f0-c0c699b5ffb1",
+    "name": "Projector",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "bdce39b1-dea8-53e2-8364-7a8790602f3b",
+    "name": "Projector Screen",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "c7bdb446-c211-5e0d-bb5f-e404c24c6e35",
+    "name": "Punching Bag",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "028fb14a-9312-5840-9ddf-dd13b9a65b5d",
+    "name": "Rack, Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "776a97c7-feb6-59d0-8b70-738c1b6e9fd3",
+    "name": "Rack, Medium",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "a5f784ac-791f-5a68-9f98-14700d4d7310",
+    "name": "Rack, small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "a0cbdf79-a9d6-5173-bd26-37ada0cd7fd5",
+    "name": "Rawing Machine",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "37fac14f-f59e-52d6-baf4-b9d8e1cfe57f",
+    "name": "Recliner",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "81f8e921-54b6-52b2-a64b-63e9703ac213",
+    "name": "Recliner La-Z-Boy",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "8fec8694-1f9d-5dcc-aa8d-901bba8fecc5",
+    "name": "Record player",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "45eae6ee-c856-5fc8-ab95-681bd92c7dbe",
+    "name": "Recycle Bin",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "3bd55a6a-c0b7-5a9f-93e5-53f20f8b0b9c",
+    "name": "Refrigerator",
+    "cuft": "45",
+    "weight": "315",
+    "description": ""
+  },
+  {
+    "id": "cac60371-81a6-5837-9184-8d751e4f6f88",
+    "name": "Refrigerator - bottom freezer",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "1a8bff02-1635-5a4f-bebd-c4ac98dc195d",
+    "name": "Refrigerator - mini",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "cd29b071-7b80-5f5d-b818-135a6eea1994",
+    "name": "Refrigerator - side by side",
+    "cuft": "80",
+    "weight": "560",
+    "description": ""
+  },
+  {
+    "id": "e33fba25-3f70-5aac-8b34-56dbedfcb317",
+    "name": "Refrigerator - top freezer",
+    "cuft": "45",
+    "weight": "315",
+    "description": ""
+  },
+  {
+    "id": "933a8864-bb19-5a63-ae69-a1eb754eda33",
+    "name": "Refrigerator Large",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "9d9c4423-c00c-5e63-832d-0bd9c75708eb",
+    "name": "Rocking Horse",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "c96191b3-5116-5f16-94ec-083850790a93",
+    "name": "Rolling Rack",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "8598bd05-a946-5fc3-b169-442d5c1e246d",
+    "name": "Room Divider",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "2b7cd0b7-461b-544d-80be-ba48939da890",
+    "name": "Round Table Marble Top",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "93e4681c-0d89-54f4-a44e-43389ec1cb35",
+    "name": "Rowing Machine",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "78770c3b-c5e3-540b-aa97-a7245975aa39",
+    "name": "Rug Extra Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "2cc50145-b2ec-5b2c-82cf-4e4ec45b5555",
+    "name": "Rug Large",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "d0ac355b-ac8e-50a2-8d55-47ba618a0417",
+    "name": "Rug Med",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "646e2654-5d7b-5879-b7b3-854fb5910736",
+    "name": "Rug Small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "b73108d2-8bf9-5140-9f03-3a8d2c473baf",
+    "name": "Rug, runner",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "b10256b6-c40c-5b8c-ba31-37b2e25bd294",
+    "name": "RugMed",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "af511d9b-3334-5f9e-a4e2-04d0a6c5a62e",
+    "name": "Runner",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "5af1877c-52b9-558b-98a8-3ab47129d378",
+    "name": "Safe Extra Large",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "a58423c6-5665-56f2-8b2d-28ace81a39b7",
+    "name": "Safe Large",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "6857b93f-a750-5ab9-b558-dd47c50c719e",
+    "name": "Safe Med",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "9fdaa282-8362-51ea-b94a-b281950bec7a",
+    "name": "Safe Medium",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "102cf4e6-7bf1-59aa-baa7-e5f5e3b64362",
+    "name": "Safe Small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "a30270e1-dab9-5f7c-a0ab-ef7fb4ece289",
+    "name": "Sanding Machine",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "bca39cbf-f585-52b5-b0d6-23a197e87547",
+    "name": "Saw Horse",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "53236a4a-cc3d-59a3-b8cd-7b6e45154ed8",
+    "name": "Saxophone",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "276ea8e1-cea0-5af6-b161-13f4671f0b65",
+    "name": "Scooter Small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "e35fb797-6cd9-5498-ac3a-f81dc21b91df",
+    "name": "Screen",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "56f02823-be9d-5e7c-ace4-ca5eaa8365f2",
+    "name": "Sculpture",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "5006d084-74c8-535b-8d9d-1d703d1307d1",
+    "name": "Sculpture Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "f5a12881-ced0-530c-920e-03f5173c81df",
+    "name": "Sectional Sofa per seating",
+    "cuft": "45",
+    "weight": "315",
+    "description": ""
+  },
+  {
+    "id": "a236f228-8e64-52b9-a188-7540be136000",
+    "name": "Sectional sofa large",
+    "cuft": "150",
+    "weight": "1050",
+    "description": ""
+  },
+  {
+    "id": "4de10e55-60ee-506c-bd95-e48454cf447b",
+    "name": "Sectional sofa regular",
+    "cuft": "110",
+    "weight": "770",
+    "description": ""
+  },
+  {
+    "id": "63635a87-ad05-59a1-939d-4fa4556a4173",
+    "name": "Server",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "cee1cc78-c6e8-5f1e-8f23-d1cdba5cc251",
+    "name": "Sewing Machine Cabinet",
+    "cuft": "12",
+    "weight": "84",
+    "description": ""
+  },
+  {
+    "id": "52cfcff2-2fc4-555c-8929-0efcd118c09e",
+    "name": "Sewing Machine Portable",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "2178cae3-9876-5786-82fa-91afc4ea5287",
+    "name": "Shelf",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "19632f5d-e9c8-594b-9cfd-56b7a08179ca",
+    "name": "Shelving Unit Collapsible",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "c4070a29-e177-596c-b72f-b8542ac3ea89",
+    "name": "Shelving Unit Large",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "b0ee3b71-b082-53f2-9df0-23295ec69ca5",
+    "name": "Shelving Unit Medium",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "02e6c462-50a0-5703-b0ca-ced592536907",
+    "name": "Shelving Unit Small",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "480b42e0-8fd6-5ff2-a8b9-56f3b3a8347b",
+    "name": "Shoe Bench",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "fb5f56b0-df14-5099-8933-25361747fdd1",
+    "name": "Shoe Cabinet",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "a3ec087f-5ae8-56c5-938a-bf47cca8674d",
+    "name": "Shoe Rack",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "8acdc14b-61d2-5287-8ce6-b1feebb5783e",
+    "name": "Shop Vac",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "0e200802-d13e-50fb-80b4-c228fd99af05",
+    "name": "Shopping Cart",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "2f533610-4e7b-5cd1-9f50-ec67d53c9159",
+    "name": "Shopping cart",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "15caa90c-86cf-5b0e-8cc9-54b51581a1f6",
+    "name": "Shredder",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "9ce99a5b-83f1-5619-8804-cc9d28926226",
+    "name": "Side Board",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "82bcad83-389b-51e0-a53a-4dc5456ab67d",
+    "name": "Skateboard",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "d325a79d-5e8b-5d24-977c-9d91adb4141f",
+    "name": "Ski",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "26a950b6-2ab5-5686-bda2-3603566e2b0d",
+    "name": "Sled",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "b14ef4f4-66db-5672-9f00-664897992c98",
+    "name": "Sleeping Bag",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "fd9a5ab4-b4cf-54f6-9cf5-c19582978c7f",
+    "name": "Small Bistro Table",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "8b1159de-8967-506f-a8e5-1cd1ffac6a3a",
+    "name": "Small Box",
+    "cuft": "2.14",
+    "weight": "14.98",
+    "description": ""
+  },
+  {
+    "id": "eb0e0c8a-d915-53a8-b59e-d9cacb675ce1",
+    "name": "Snow Blower",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "5e4fc3a1-e13e-5fb8-a9c6-d39dc904b25e",
+    "name": "Snowboard",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "3443e557-1687-5414-925e-227de67e76ec",
+    "name": "Sofa",
+    "cuft": "65",
+    "weight": "455",
+    "description": ""
+  },
+  {
+    "id": "6af7c943-9240-5d91-91ea-664f29d6eba7",
+    "name": "Sofa 3 cushions",
+    "cuft": "65",
+    "weight": "455",
+    "description": ""
+  },
+  {
+    "id": "b77dac9e-0678-53c0-95a7-e3acd2f8875e",
+    "name": "Sofa 4 cushions",
+    "cuft": "80",
+    "weight": "560",
+    "description": ""
+  },
+  {
+    "id": "23323932-c462-5ef8-8e00-e7c670e17e88",
+    "name": "Sofa Chair",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "95a652e2-a764-5f89-9676-de3d076a60fb",
+    "name": "Sofa Hide-a-Bed",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "f9abda17-8b8e-5c2d-bb2e-fdfb8e39aa12",
+    "name": "Sofa L-Shape",
+    "cuft": "120",
+    "weight": "840",
+    "description": ""
+  },
+  {
+    "id": "2ebe7459-a1ff-5356-800b-4edaa1e33ef6",
+    "name": "Sofa Large",
+    "cuft": "70",
+    "weight": "490",
+    "description": ""
+  },
+  {
+    "id": "0d715ebb-eb1f-55ff-ac19-67b4fc659950",
+    "name": "Sofa Table",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "2597ecd8-58e3-5e75-b715-afe06cb35feb",
+    "name": "Sofabed",
+    "cuft": "70",
+    "weight": "490",
+    "description": ""
+  },
+  {
+    "id": "f3683f56-b31f-5389-b2bf-d1d79a4f2f1b",
+    "name": "Sound bar",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "87435286-f588-5549-b1f3-a1b0e2e0f746",
+    "name": "Speaker ,small",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "edfda641-10c7-5dd8-9f25-8edb379a8057",
+    "name": "Speaker Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "8ab612be-11a5-57dc-b42f-f855542ec0e8",
+    "name": "Speaker, Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "94d48dd9-61b8-51d4-9a11-5a7698370265",
+    "name": "Speaker, Medium",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "22228afc-df1e-5f24-9cea-39b8527c65c6",
+    "name": "Sport Mat",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "27db59e7-8ebd-50b0-bda4-a6758b23611b",
+    "name": "Stand",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "e3e687d6-6179-5b61-981f-4c833c95bd6e",
+    "name": "Standing Desk",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "66eff5e7-e0bc-559d-a87d-f91149a2d0c9",
+    "name": "Standing Mirror",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "e2a274e5-5290-5318-9640-d0bea9f56369",
+    "name": "Statue",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "b889378b-d374-5d87-b939-4613ea71f9ef",
+    "name": "Statue Large",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "e032d6df-a8b0-5548-87f9-3217ee166eea",
+    "name": "Steamer",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "806b18b1-2755-5d2f-830b-efa16bc86883",
+    "name": "Step Ladder",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "20417741-6769-509e-a3ad-e6f520de398d",
+    "name": "Step Stool",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "aa3ac86f-408a-5796-81e6-d96154c3f01a",
+    "name": "Stereo Cabinet",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "f53f4aaf-651b-5cab-9df2-80aa6d332a33",
+    "name": "Stool",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "b5df16b1-9bcc-5511-8049-529a3da42fd1",
+    "name": "Storage Cabinet",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "877aef6b-d4d9-5d67-a119-9338a8797c6c",
+    "name": "Stove",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "a509dc0f-690b-5b0d-81c0-f4be4dcda6a3",
+    "name": "Stroller",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "72006ba8-14e5-5c36-a0c9-f785dfba0531",
+    "name": "Subwoofer",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "d77abbff-3c58-50fa-995c-0401e24de1c9",
+    "name": "Suitcase",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "9845850d-07ad-5e6a-b528-1d15ee970ca6",
+    "name": "Suitcase Carry-On",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "39c85ff6-9654-5be6-bb27-6b05d00b353a",
+    "name": "Surfing Board",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "356e04eb-7525-504b-9515-cb0b9aaeef5f",
+    "name": "TV 26\"-43\"",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "4ec6de1e-5871-5367-aa55-090923c0865f",
+    "name": "TV 44\"-48\" flat screen",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "c8cd06c5-a4aa-5b5a-a32f-196224c8206b",
+    "name": "TV 49\"-55\" flat screen",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "77ec9445-4262-552c-a48e-921d45aefb3d",
+    "name": "TV 60\"-65\" flat screen",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "5720eec0-f772-5f0b-96a0-632fb7c3cbb4",
+    "name": "TV 70\"",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "b705b4bd-764d-5f65-b91e-6c27d1811ad0",
+    "name": "TV 75\"",
+    "cuft": "22",
+    "weight": "154",
+    "description": ""
+  },
+  {
+    "id": "07a6009b-9361-519c-93eb-53a861b7fa77",
+    "name": "TV 80\"",
+    "cuft": "23",
+    "weight": "161",
+    "description": ""
+  },
+  {
+    "id": "3f4a2e70-4956-5776-a675-dd0dafe25679",
+    "name": "TV 85\"",
+    "cuft": "24",
+    "weight": "168",
+    "description": ""
+  },
+  {
+    "id": "fdfef86c-d09a-56de-ae4f-ce38109c9cb0",
+    "name": "TV 90\"",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "34e8feab-042b-5385-9a36-e31b2a9f0a4a",
+    "name": "TV Cabinet Marble Top",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "0bba3010-2bb1-5b57-9c34-99ebf0474967",
+    "name": "TV Console",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "7d7b03f9-c8c2-5740-b597-44978a21511e",
+    "name": "TV Stand",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "91f4cc7e-8388-5f30-85f2-c736e853af5d",
+    "name": "TV Stand Glass",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "ea194ceb-458d-5dba-b010-5595ec769d62",
+    "name": "TV Stand Wood",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "56454518-2ecb-5efe-8405-542df5f48dca",
+    "name": "TV Tray Set",
+    "cuft": "4",
+    "weight": "28",
+    "description": ""
+  },
+  {
+    "id": "31804cfa-d1f7-5bf3-b166-21c337abd2c1",
+    "name": "TV cabinet",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "882c39aa-9ecd-5dcb-8b0e-e0b2ecf26106",
+    "name": "TV flat screen 17\"-26\"",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "4cbab253-9e92-5e38-971c-1a3bdc5d1a79",
+    "name": "TV flat screen27\"-42\"",
+    "cuft": "12",
+    "weight": "84",
+    "description": ""
+  },
+  {
+    "id": "5d85fa07-8f18-52d2-9473-282c030b9853",
+    "name": "TV stand Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "400ddb86-f88b-50ac-a7ce-cbff3bfeec35",
+    "name": "TV stand Medium",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "5c3735f5-f63c-5fea-bf21-5a0d51596cef",
+    "name": "Table",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "ebd63617-a60a-55ea-9808-5e312031c146",
+    "name": "Table Bistro",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "0f114a61-a60d-56b5-af8a-9ea9ee2d5c50",
+    "name": "Table Bistro",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "d571043d-24f6-5185-b1e0-5b3a8867fe2d",
+    "name": "Table Children's",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "4d1df16e-9df9-5471-94ae-6afe724537ff",
+    "name": "Table Coffee",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "300c51c9-ba20-5a25-b895-aa0f7b1ee686",
+    "name": "Table Conference Large",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "d20ecb73-6f66-50af-a9f4-15974d75e03c",
+    "name": "Table Conference Med",
+    "cuft": "60",
+    "weight": "420",
+    "description": ""
+  },
+  {
+    "id": "214d40fe-d92e-5c9a-a92e-75123e320e03",
+    "name": "Table Drop",
+    "cuft": "12",
+    "weight": "84",
+    "description": ""
+  },
+  {
+    "id": "1d85e612-16c6-5f0c-87d0-8ed9486bc7fa",
+    "name": "Table Drop Leaf",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "8d525e24-431a-5c02-b668-9ee82004c8e3",
+    "name": "Table Folding",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "559df2c8-9260-5013-ab08-48ded233b088",
+    "name": "Table Folding Small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "b45d8cc4-7c6b-5ad5-abb0-54ed67d54df9",
+    "name": "Table Lamp",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "e650f27b-a898-5296-8104-9ac221a67d65",
+    "name": "Table Lamp Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "27fb3d62-69b6-58a4-9385-5bc3a94ed399",
+    "name": "Table Large",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "0d993437-372a-5291-b7de-00f875964504",
+    "name": "Table Leaf",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "12ddb678-aa3e-5945-b3e4-8820c6c6b71c",
+    "name": "Table Marble Top",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "df63df02-974c-5201-a83e-40160f9a27b5",
+    "name": "Table Massage",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "19be3796-a332-533b-b32b-a6a651752f05",
+    "name": "Table Side",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "8cdec759-c896-5a99-982c-0a2e6b0d05e2",
+    "name": "Table Utilty",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "3b85e8c3-ae18-5f81-8565-f46b16b5f727",
+    "name": "Table Work",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "ea326f83-281d-508b-a27c-d8e380f1e47f",
+    "name": "Table, Conference small",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "eb3b6298-e257-58e5-be82-9762c38e18c9",
+    "name": "Tea Cart",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "20dc16dd-7c66-5b6e-b4d4-d9e9cdc2a85a",
+    "name": "Telescope",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "fd3aa790-c28d-559b-b905-466cee1ff73b",
+    "name": "Tire",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "6e80e6ea-7637-5cf8-abaf-c812ac29bfdb",
+    "name": "Toaster Oven",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "0d032e26-88ab-5e90-a805-b8e3f66c3423",
+    "name": "Toddler Bed",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "2acca90d-533e-5d59-9c23-2b8b43c9ccd6",
+    "name": "Tool Box Medium",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "9ae1c0ca-94fc-592e-8844-5bf17257eef9",
+    "name": "Tool Box Small",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "41ab901a-c80b-5f42-989a-0fdd2d887ea9",
+    "name": "Tool Chest Large",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "4837b8f3-1d2a-5a37-b1bc-987a88d39b82",
+    "name": "Tool Chest Small",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "53fd808b-fff1-5a33-8bd0-cd77de7c8d6f",
+    "name": "Total Gym",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "b73491c3-5344-526e-879d-5b8ad7881442",
+    "name": "Toy Bookshelf with Bins",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "015c711e-06be-5216-996b-536926445793",
+    "name": "Toy Cabby",
+    "cuft": "12",
+    "weight": "84",
+    "description": ""
+  },
+  {
+    "id": "91f24990-f299-5167-934d-4a4315f48333",
+    "name": "Toy Car",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "5d47c497-40d7-58d3-897b-3218e84f8e0d",
+    "name": "Toy Kitchen",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "d6efdbd6-af8a-5b82-bc8c-a89307e76023",
+    "name": "Toy Large",
+    "cuft": "12",
+    "weight": "84",
+    "description": ""
+  },
+  {
+    "id": "bb2b8295-8624-564f-a319-da1a4159952d",
+    "name": "Train Table",
+    "cuft": "18",
+    "weight": "126",
+    "description": ""
+  },
+  {
+    "id": "fde8e51b-9b75-5c0b-a851-7d77a57d659f",
+    "name": "Trampoline",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "90e827f3-267a-560b-9f42-03adb6ff3a06",
+    "name": "Trash Can",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "6b3014fe-0a40-5c95-8f9d-8e3327c5bcf3",
+    "name": "Trash Can Small",
+    "cuft": "1",
+    "weight": "7",
+    "description": ""
+  },
+  {
+    "id": "03245a68-642c-5c24-b0ca-69c5db5d54ba",
+    "name": "Treadmill",
+    "cuft": "42",
+    "weight": "294",
+    "description": ""
+  },
+  {
+    "id": "69cc9977-21a6-5513-a447-28e8b7c00119",
+    "name": "Treadmill Folding",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "4e634fd7-d6ad-5826-b22b-2bdaa40a9bc7",
+    "name": "Tree cutter, Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "8235f689-fa61-5e7b-9613-de56821085d6",
+    "name": "Tree cutter, Medium",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "500d2119-ab85-5236-86b6-123706e2c1ad",
+    "name": "Tree cutter, Small",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "72c7a979-1e38-58a8-849b-e93eba2e94f5",
+    "name": "Tricycle",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "79648bfb-62cf-5fd9-b1ef-e363156cee31",
+    "name": "Tripod",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "020dea3a-76be-59ad-ab6b-d44e94932cae",
+    "name": "Trumpet",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "749c5714-0bf4-5783-adb7-27a33a958be0",
+    "name": "Trunk",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "6610b23a-c491-5bfe-bbc3-fb31779618d3",
+    "name": "Trunk Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "2dd94711-fa3c-51ef-b16f-448a687d2e3c",
+    "name": "Umbrella Holder",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "f051d6e6-5258-52e6-83bf-6430c19bd0d3",
+    "name": "Upholstered Bench",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "d10e023f-cbb6-5f8d-a3d0-8a55bcc24679",
+    "name": "Upholstered Bench Med.",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "9f0ff724-c777-544c-8136-6a3885d91c74",
+    "name": "VASE",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "37013391-5cbf-5011-8b53-244254ee701e",
+    "name": "Vacum Commercial",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "727e5afd-78b5-597f-a5bf-a5c4ab0ab4f7",
+    "name": "Vacuum Cleaner",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "d3818d6e-0375-5357-9998-75c8d4b471b0",
+    "name": "Vanity Bench Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "33540d20-a094-54fa-9627-f45045d60303",
+    "name": "Vanity Bench Small",
+    "cuft": "8",
+    "weight": "56",
+    "description": ""
+  },
+  {
+    "id": "7d01f204-4b04-5ef5-99c2-10f6e87a60d0",
+    "name": "Vanity Table Large",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "6ac07a97-a3d8-5e61-b104-39e951b25f44",
+    "name": "Vanity Table Med.",
+    "cuft": "12",
+    "weight": "84",
+    "description": ""
+  },
+  {
+    "id": "1f7e22fd-ab7d-55f4-9f16-d9eecae07770",
+    "name": "Vanity Table Mirror",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "a4074143-b057-5551-9b24-008bdcfc751d",
+    "name": "Violin",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "b8de77b0-2cff-5632-a967-0e4d2309a7c6",
+    "name": "Wagon",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "26b2ea16-e145-575b-b723-677cb6583963",
+    "name": "Walker",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "64c238d5-c09a-5fef-98f0-378bcb2b4bb1",
+    "name": "Walking Pad",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "58005d50-c335-549d-919a-782a7c14c521",
+    "name": "Wall Unit (i.e. 2 tower bridge and...)",
+    "cuft": "100",
+    "weight": "700",
+    "description": ""
+  },
+  {
+    "id": "b714111c-d316-5298-8f9d-d0245d1d7346",
+    "name": "Wall Unit Large",
+    "cuft": "70",
+    "weight": "490",
+    "description": ""
+  },
+  {
+    "id": "d960a1ac-7f62-59e3-a5a5-794af6ca7e05",
+    "name": "Wall Unit Small",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "dfeeac81-2298-597e-b72f-aecbd616de42",
+    "name": "Wardrobe Cabinet Large",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "e80da418-a740-5ca0-a630-b2c68b02088d",
+    "name": "Wardrobe Cabinet Small",
+    "cuft": "30",
+    "weight": "210",
+    "description": ""
+  },
+  {
+    "id": "2fff7f82-a449-5ebb-ae60-91c17b5e6cb8",
+    "name": "Wardrobe Rental",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "9ff71768-0d6e-5a09-81f7-3cc9273dc014",
+    "name": "Waste Basket",
+    "cuft": "1",
+    "weight": "7",
+    "description": ""
+  },
+  {
+    "id": "39df3588-085b-5b0d-9ea2-631c36b3d2ce",
+    "name": "Water Bottle",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "887b6c51-e2e9-5667-a4d5-54212f80f0a8",
+    "name": "Water Cooler",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "6e5c8539-9f0e-5def-972d-e399a042312e",
+    "name": "Wedding Dress",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "9b27d663-0733-5792-bc05-aedc0aa474bf",
+    "name": "Weed Wacker",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "cb94e03e-dc04-5b0d-8028-b3b9873386dc",
+    "name": "Weight Bench Large",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "28e69896-7422-518b-b59e-38ba14334bd5",
+    "name": "Weight Bench Large",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "e2a75f4c-ac14-51b9-b35b-874143753a9f",
+    "name": "Weight Bench Small",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "7706d401-9c28-559d-95b6-e7554aa8e9ff",
+    "name": "Weights",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "909a7c1d-10f6-558f-9031-40ed4dc6cee7",
+    "name": "Wheelbarrow",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "2c0f3d1f-0ec0-5fd6-aa79-ec94af17717e",
+    "name": "Wheelchair",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "ad123a9a-a40c-56f8-ab46-1755e479ab30",
+    "name": "Whiteboard",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "5aa8b4f9-1f3c-5238-8a4c-53d370ecf571",
+    "name": "Wicker Basket",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "adc9b8e6-f02a-560e-8172-c854ac2dc900",
+    "name": "Wicker Bench",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "c64a9dbd-5448-56c0-8b88-a8b290fd5bcb",
+    "name": "Wicker Bookcase Large",
+    "cuft": "35",
+    "weight": "245",
+    "description": ""
+  },
+  {
+    "id": "d69e3134-0e2d-51a6-8fb4-9afd3d965854",
+    "name": "Wicker Bookshelve",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "5f27104d-8d61-527b-85a4-835acc41c1be",
+    "name": "Wicker Chair",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "c66e1914-c29b-5aac-a7d8-bf96c713f1c4",
+    "name": "Wicker Chaise",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "dc7e5b9d-510a-5386-9b0e-dec4f2d34cb4",
+    "name": "Wicker Chest",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "7413d20c-d686-5f63-bc57-41eadc4c420d",
+    "name": "Wicker Chest Small",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "4ef83a49-0fae-5a61-b4cc-8cb2ed9216ee",
+    "name": "Wicker Coffee Table",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "05182543-1d91-5497-b125-1ae9fe22b034",
+    "name": "Wicker End Table",
+    "cuft": "5",
+    "weight": "35",
+    "description": ""
+  },
+  {
+    "id": "2d6225cd-fce7-5ded-9af0-0063069feeba",
+    "name": "Wicker Loveseat",
+    "cuft": "45",
+    "weight": "315",
+    "description": ""
+  },
+  {
+    "id": "99b59c64-373d-5fea-bf53-5c57a929516a",
+    "name": "Wicker Sofa",
+    "cuft": "65",
+    "weight": "455",
+    "description": ""
+  },
+  {
+    "id": "b4e7dfde-4c71-5054-9f7f-4e0ed7eb83cd",
+    "name": "Wine Cooler",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "2903df97-df9c-5cd9-99e1-676889a5bb78",
+    "name": "Wine Cooler Small",
+    "cuft": "6",
+    "weight": "42",
+    "description": ""
+  },
+  {
+    "id": "e6c08409-afe0-5c5f-8548-b00e200edca8",
+    "name": "Wine Fridge Large",
+    "cuft": "45",
+    "weight": "315",
+    "description": ""
+  },
+  {
+    "id": "5394fd1c-e201-5cd7-a933-0e38484921ed",
+    "name": "Wine Fridge Medium",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "ff2f13c7-2b4e-597f-a3c5-323cc1141028",
+    "name": "Wine Fridge Small",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "45e94946-5b45-58d5-940f-8d6576fc8b47",
+    "name": "Wine Rack Large",
+    "cuft": "25",
+    "weight": "175",
+    "description": ""
+  },
+  {
+    "id": "8f1cad60-8578-5fe8-b85c-34155b89093b",
+    "name": "Wine Rack Med",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "b11feca1-552e-5163-a220-7353f0b60fde",
+    "name": "Wine Rack Small",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "10dee5ca-a234-5647-948c-c63188552609",
+    "name": "Wine Refrigerator",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "9317e26a-dc60-59de-8f34-94d74ba42c59",
+    "name": "Wooden Bed Frame",
+    "cuft": "10",
+    "weight": "70",
+    "description": ""
+  },
+  {
+    "id": "24facb29-6ffb-5c31-8f7f-ac5dd148e35a",
+    "name": "Wooden Box Small",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "cc6a5aa2-60d9-5580-aeb7-548d2795b976",
+    "name": "Work Bench",
+    "cuft": "20",
+    "weight": "140",
+    "description": ""
+  },
+  {
+    "id": "9dcd18d8-b78e-527b-818b-97d0b3c0fca7",
+    "name": "Work Station",
+    "cuft": "50",
+    "weight": "350",
+    "description": ""
+  },
+  {
+    "id": "9321c33e-1dc2-52ea-908c-e6a3d1be87fa",
+    "name": "Workbench",
+    "cuft": "40",
+    "weight": "280",
+    "description": ""
+  },
+  {
+    "id": "d7d4048d-9b80-51f5-a7be-6bc1e0465496",
+    "name": "Workout Bench",
+    "cuft": "15",
+    "weight": "105",
+    "description": ""
+  },
+  {
+    "id": "28324f17-e634-5cd7-96ba-966d68b855b3",
+    "name": "Yoga Ball",
+    "cuft": "3",
+    "weight": "21",
+    "description": ""
+  },
+  {
+    "id": "aeef90d7-f50b-5835-b6d6-223923d06501",
+    "name": "Yoga Booster",
+    "cuft": "2",
+    "weight": "14",
+    "description": ""
+  },
+  {
+    "id": "920836d1-c518-55a1-b051-eccdf891ce63",
+    "name": "Yoga Mat",
+    "cuft": "1",
+    "weight": "7",
+    "description": ""
+  }
+]

@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
+const exports = {};
+const calls = [];
+let active = 0, maxActive = 0;
+vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/referenceImageRequests.ts', import.meta.url), 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText, {exports, setTimeout, fetch: async (url, options) => {
+  active++; maxActive = Math.max(maxActive, active);
+  const names = JSON.parse(options.body).names;
+  calls.push(names);
+  await new Promise(resolve => setTimeout(resolve, 1));
+  active--;
+  return {ok:true,json:async()=>({images:Object.fromEntries(names.map(name=>[name,[{name}]]))})};
+}});
+const requests = Array.from({length:200}, (_,i) => exports.requestReferenceImages('/photos','key','session',`Item ${i}`));
+assert.equal(exports.requestReferenceImages('/photos','key','session','Item 0'), requests[0]);
+const results = await Promise.all(requests);
+assert.equal(calls.length, 1);
+assert.equal(maxActive, 1);
+assert.equal(results[199][0].name, 'Item 199');
+assert.equal(calls[0].length, 200);
+console.log('200 items loaded in one request; duplicates share a request.');

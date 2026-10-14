@@ -11,10 +11,25 @@ phases:
 
   pre_build:
     commands:
-      - echo "Running database migrations"
-      - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
+      - |
+        if [ "$ENVIRONMENT" = "prod" ]; then
+          cd "$CODEBUILD_SRC_DIR/backend" && python pipeline_settings.py check
+        fi
+      - cd $CODEBUILD_SRC_DIR/backend && python reset_liveswitch_access_token.py
+      - echo "Running schema and settings migrations (no client data backfills)"
+      - |
+        cd "$CODEBUILD_SRC_DIR/backend"
+        if [ "$ENVIRONMENT" = "prod" ]; then
+          python migrate.py --skip-pricing-seeds
+        else
+          python migrate.py
+        fi
       - echo "Ensuring seed data (admin user + company)"
       - cd $CODEBUILD_SRC_DIR/backend && python -c "from import_leads import ensure_seed_data; from database import SessionLocal; s=SessionLocal(); ensure_seed_data(s); s.commit(); s.close(); print('Seed data OK')"
+      - |
+        if [ "$ENVIRONMENT" = "prod" ]; then
+          cd "$CODEBUILD_SRC_DIR/backend" && python pipeline_settings.py apply
+        fi
       - |
         SSM_KEY="/moving-crm/${ENVIRONMENT:-dev}/API_SECRET"
         if ! aws ssm get-parameter --name "$SSM_KEY" --with-decryption > /dev/null 2>&1; then
@@ -23,6 +38,12 @@ phases:
           echo "API_SECRET generated and stored in SSM"
         else
           echo "API_SECRET already exists in SSM"
+        fi
+
+      - |
+        if [ "${ENVIRONMENT:-dev}" = "dev" ]; then
+          aws ssm put-parameter --name "/moving-crm/dev/PUBLIC_MOVE_LINK_DRY_RUN" --value "false" --type String --overwrite
+          echo "Customer link sending is live for dev"
         fi
 
   build:
@@ -36,6 +57,10 @@ phases:
       - echo "Updating API backend Lambda function code"
       - aws lambda update-function-code --function-name moving-crm-api-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key api-backend/package.zip
 
+      - echo "Updating public move sync Lambda function code"
+      - aws lambda update-function-code --function-name moving-crm-public-move-sync-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key api-backend/package.zip
+      - aws lambda wait function-updated --function-name moving-crm-public-move-sync-${ENVIRONMENT:-dev}
+
       - echo "Updating realtime Lambda function code"
       - aws lambda update-function-code --function-name moving-crm-realtime-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key api-backend/package.zip
 
@@ -43,12 +68,16 @@ phases:
       - aws lambda update-function-code --function-name moving-crm-message-stream-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key message-stream/package.zip
 
       - echo "Deploying frontend to S3"
-      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --delete --exclude "lead-followup/*" --exclude "api-backend/*" --exclude "lead-duplicate/*" --exclude "message-stream/*"
+      # Keep versioned assets used by cached pages and already-open browser tabs.
+      # Publish scripts/styles first; publish index.html only after all uploads succeed.
+      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/assets/ s3://${FRONTEND_BUCKET}/assets/ --cache-control "public,max-age=31536000,immutable"
+      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/ s3://${FRONTEND_BUCKET}/ --exclude "assets/*" --exclude "index.html" --exclude "api-config.js" --cache-control "no-cache,max-age=0,must-revalidate"
 
       - echo "Frontend calls the API same-origin via CloudFront (/api/*), so no absolute URL is injected"
       - REALTIME_URL=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='RealtimeURL'].OutputValue" --output text)
       - echo "window.__API_URL__ = ''; window.__WS_URL__ = '${REALTIME_URL}';" > /tmp/api-config.js
-      - aws s3 cp /tmp/api-config.js s3://${FRONTEND_BUCKET}/api-config.js
+      - aws s3 cp /tmp/api-config.js s3://${FRONTEND_BUCKET}/api-config.js --cache-control "no-cache,max-age=0,must-revalidate"
+      - aws s3 cp $CODEBUILD_SRC_DIR/frontend/dist/index.html s3://${FRONTEND_BUCKET}/index.html --cache-control "no-cache,max-age=0,must-revalidate"
 
       - echo "Invalidating CloudFront cache (frontend)"
       - DIST_ID=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)
@@ -56,6 +85,10 @@ phases:
 
   post_build:
     commands:
+      - |
+        if [ "$CODEBUILD_BUILD_SUCCEEDING" = "1" ] && [ "$ENVIRONMENT" = "dev" ]; then
+          cd "$CODEBUILD_SRC_DIR/backend" && python pipeline_settings.py publish
+        fi
       - echo "Deploy complete"
 
 cache:

@@ -1,27 +1,79 @@
 import logging
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from auth import require_admin, get_current_user
 from company_colors import normalize_company_color, resolve_company_color
 from database import get_db
-from models import Company, User, UserCompany, Lead
+from models import Company, User, UserCompany, Lead, LeadJob
+from company_dispatch import validate_dispatches_for
 
 logger = logging.getLogger("moving-crm")
 
 router = APIRouter(prefix="/api/companies", tags=["Companies"])
 
+_SENDER_EMAIL_RE = re.compile(r"^[^@\s<>\"]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$")
 
-class CompanyCreate(BaseModel):
+
+def _clean_sender_email(value: str | None) -> str | None:
+    value = (value or "").strip().lower()
+    if not value:
+        return None
+    if not _SENDER_EMAIL_RE.match(value):
+        raise HTTPException(status_code=400, detail="Sender email must be a valid email address")
+    return value
+
+
+class CompanyLogo(BaseModel):
+    dot_number: str | None = Field(default=None, max_length=30)
+    logo: Optional[str] = Field(default=None, max_length=400000)
+
+    @field_validator('dot_number')
+    @classmethod
+    def validate_dot_number(cls, value):
+        if value is None:
+            return None
+        value = value.strip()
+        if value and not re.fullmatch(r'[0-9]+', value):
+            raise ValueError('USDOT number must contain digits only.')
+        return value
+
+    @field_validator('logo')
+    @classmethod
+    def validate_logo(cls, value):
+        if not value:
+            return value
+        import base64
+        import struct
+        try:
+            if not value.startswith('data:image/png;base64,'):
+                raise ValueError()
+            raw = base64.b64decode(value.split(',', 1)[1], validate=True)
+            if raw[:8] != b'\x89PNG\r\n\x1a\n' or raw[12:16] != b'IHDR':
+                raise ValueError()
+            width, height = struct.unpack('>II', raw[16:24])
+            if width != 256 or height != 256:
+                raise ValueError()
+        except Exception:
+            raise ValueError('Logo must be a cropped 256 by 256 PNG image.')
+        return value
+
+
+class CompanyCreate(CompanyLogo):
     name: str
     color: Optional[str] = None
     phone: str = ""
+    office_address: str = Field(default="", max_length=1000)
+    sender_email: str = Field(default="", max_length=255)
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
     aircall_name: str = ""
+    dispatches_for_company_id: str | None = None
     samrtmoving_branch_id: str = ""
     granot_api_id: str = ""
     granot_mover_ref: str = ""
@@ -85,9 +137,14 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
         raise HTTPException(status_code=409, detail="Company already exists")
     page_id = (body.facebook_page_id or "").strip() or None
     company = Company(
+        dispatches_for_company_id=validate_dispatches_for(db, body.dispatches_for_company_id),
         name=company_name,
+        logo=body.logo or None,
         color=resolve_company_color(company_name, body.color),
         phone=(body.phone or "").strip(),
+        office_address=body.office_address.strip(),
+        dot_number=body.dot_number or "",
+        sender_email=_clean_sender_email(body.sender_email),
         facebook_page_id=page_id,
         aircall_number_id=(body.aircall_number_id or "").strip(),
         aircall_name=(body.aircall_name or "").strip() or None,
@@ -102,13 +159,16 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
     return company.to_dict()
 
 
-class CompanyUpdate(BaseModel):
+class CompanyUpdate(CompanyLogo):
     name: str
     color: Optional[str] = None
     phone: str = ""
+    office_address: str | None = Field(default=None, max_length=1000)
+    sender_email: str | None = Field(default=None, max_length=255)
     facebook_page_id: Optional[str] = None
     aircall_number_id: str = ""
     aircall_name: str = ""
+    dispatches_for_company_id: str | None = None
     samrtmoving_branch_id: str = ""
     granot_api_id: str = ""
     granot_mover_ref: str = ""
@@ -132,9 +192,19 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     if duplicate:
         raise HTTPException(status_code=409, detail="Company name already exists")
 
+    if "dispatches_for_company_id" in body.model_fields_set:
+        company.dispatches_for_company_id = validate_dispatches_for(db, body.dispatches_for_company_id, company.id)
+    if body.logo is not None:
+        company.logo = body.logo or None
     company.name = company_name
     company.color = resolve_company_color(company_name, body.color)
     company.phone = (body.phone or "").strip()
+    if body.office_address is not None:
+        company.office_address = body.office_address.strip()
+    if body.dot_number is not None:
+        company.dot_number = body.dot_number
+    if body.sender_email is not None:
+        company.sender_email = _clean_sender_email(body.sender_email)
     company.facebook_page_id = (body.facebook_page_id or "").strip() or None
     company.aircall_number_id = (body.aircall_number_id or "").strip()
     company.aircall_name = (body.aircall_name or "").strip() or None
@@ -145,6 +215,27 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
     db.commit()
     db.refresh(company)
     return company.to_dict()
+
+
+class CompanyDefaultUpdate(BaseModel):
+    is_default_company: bool
+
+
+@router.patch("/{company_id}/default")
+def set_default_company(company_id: str, body: CompanyDefaultUpdate, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    # Serialize switches, including when no company is currently the default.
+    db.execute(text("SELECT pg_advisory_xact_lock(724103, 1)"))
+    company = db.query(Company).filter(Company.id == company_id).with_for_update().first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if body.is_default_company:
+        db.query(Company).filter(Company.is_default_company.is_(True)).update(
+            {Company.is_default_company: False}, synchronize_session="fetch"
+        )
+        db.flush()
+    company.is_default_company = body.is_default_company
+    db.commit()
+    return [c.to_dict() for c in db.query(Company).order_by(Company.name).all()]
 
 
 @router.delete("/{company_id}")
@@ -160,6 +251,11 @@ def delete_company(company_id: str, user: User = Depends(require_admin), db: Ses
     linked_leads = db.query(Lead).filter(Lead.company_id == company_id).count()
     if linked_leads:
         raise HTTPException(status_code=409, detail="Cannot delete company with existing leads")
+
+    if db.query(Company).filter(Company.dispatches_for_company_id == company_id).first():
+        raise HTTPException(status_code=409, detail="Cannot delete company used by a subcontractor")
+    if db.query(LeadJob).filter((LeadJob.company_id == company_id) | (LeadJob.dispatch_company_id == company_id)).first():
+        raise HTTPException(status_code=409, detail="Cannot delete company with existing jobs or subcontractor assignments")
 
     db.delete(company)
     db.commit()

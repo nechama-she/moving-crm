@@ -99,7 +99,7 @@ export default function LoginPage() {
             />
           </label>
 
-          <button type="submit" disabled={submitting} style={{
+          <button className="slds-button" type="submit" disabled={submitting} style={{
             width: "100%", padding: "10px 0",
             background: submitting ? "#5a9fd4" : "#0176d3",
             color: "#fff", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 600,

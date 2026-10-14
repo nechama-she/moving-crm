@@ -1,7 +1,9 @@
+from company_dispatch import resolve_company_dispatch, smartmoving_dispatch_company, apply_job_dispatch
 import hashlib
 import io
 import json
 import logging
+import mimetypes
 import os
 import re
 import zipfile
@@ -45,10 +47,11 @@ from libs.smartmoving.client import (
     finish_request_capture,
     update_opportunity_salesperson,
 )
-from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation
+from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation, PublicMoveAccess
 from realtime import publish_realtime_event
 from referral_assignment_rules import configured_rep_ids_for_referral
 from routes.templates import get_company_template, render_template
+from zip_state import delivery_location
 
 logger = logging.getLogger("moving-crm")
 
@@ -365,7 +368,7 @@ def _build_smartmoving_refresh_payload(opportunity: dict, user: User) -> dict:
         ("full_name", customer.get("name")),
         ("smartmoving_id", opportunity.get("id")),
         ("smartmoving_created_time", opportunity.get("createdAtUtc")),
-        ("leadgen_id", str(opportunity.get("quoteNumber")) if opportunity.get("quoteNumber") not in (None, "") else None),
+        ("quote_number", str(opportunity.get("quoteNumber")) if opportunity.get("quoteNumber") not in (None, "") else None),
         ("phone_number", customer.get("phoneNumber")),
         ("email", customer.get("emailAddress")),
         ("referral_source", opportunity.get("referralSource")),
@@ -374,7 +377,7 @@ def _build_smartmoving_refresh_payload(opportunity: dict, user: User) -> dict:
         if clean_value:
             payload[key] = clean_value
 
-    move_type = {0: "Local", 1: "Intrastate", 2: "Interstate"}.get(opportunity.get("opportunityType"), "")
+    move_type = {0: "Local", 1: "Local", 2: "Long Distance"}.get(opportunity.get("opportunityType"), "")
     if move_type:
         payload["move_type"] = move_type
 
@@ -1006,12 +1009,14 @@ def get_dispatch_calendar(
             raise HTTPException(status_code=403, detail="Not allowed for this company")
         target_company_ids = [company_id]
 
+    calendar_company_id = func.coalesce(LeadJob.dispatch_company_id, LeadJob.company_id)
+
     # Dispatch calendar groups jobs by the job-level move_date.
     rows_query = (
         db.query(LeadJob, Lead, Company.name.label("company_name"), Company.color.label("company_color"))
         .join(Lead, Lead.id == LeadJob.lead_id)
-        .join(Company, Company.id == LeadJob.company_id)
-        .filter(LeadJob.company_id.in_(target_company_ids))
+        .join(Company, Company.id == calendar_company_id)
+        .filter(calendar_company_id.in_(target_company_ids))
         .filter(Lead.status.in_(DISPATCH_STATUSES))
     )
     if user.role == "foreman":
@@ -1038,7 +1043,7 @@ def get_dispatch_calendar(
                 "foreman_id": job.foreman_id or "",
                 "foreman_name": job.foreman.name if job.foreman else "",
                 "job_order": int(job.job_order or 0),
-                "company_id": job.company_id,
+                "company_id": job.dispatch_company_id or job.company_id,
                 "company_name": company_name,
                 "company_color": resolve_company_color(company_name, company_color),
                 "full_name": lead.full_name or "",
@@ -1356,14 +1361,16 @@ def search_dispatch_jobs(
     if not allowed_company_ids:
         return {"items": []}
 
+    calendar_company_id = func.coalesce(LeadJob.dispatch_company_id, LeadJob.company_id)
+
     # Exact job-id lookup for deep-linking from lead job cards.
     exact_row = (
         db.query(LeadJob, Lead, Company.name.label("company_name"), Company.color.label("company_color"))
         .join(Lead, Lead.id == LeadJob.lead_id)
-        .join(Company, LeadJob.company_id == Company.id)
+        .join(Company, calendar_company_id == Company.id)
         .filter(
             LeadJob.id == search,
-            LeadJob.company_id.in_(allowed_company_ids),
+            calendar_company_id.in_(allowed_company_ids),
             Lead.status.in_(DISPATCH_STATUSES),
         )
         .first()
@@ -1383,7 +1390,7 @@ def search_dispatch_jobs(
                     "id": job.id,
                     "lead_id": lead.id,
                     "job_order": int(job.job_order or 0),
-                    "company_id": job.company_id,
+                    "company_id": job.dispatch_company_id or job.company_id,
                     "company_name": company_name or "",
                     "company_color": resolve_company_color(company_name, company_color),
                     "full_name": lead.full_name or "",
@@ -1402,9 +1409,9 @@ def search_dispatch_jobs(
     rows = (
         db.query(LeadJob, Lead, Company.name.label("company_name"), Company.color.label("company_color"))
         .join(Lead, Lead.id == LeadJob.lead_id)
-        .join(Company, LeadJob.company_id == Company.id)
+        .join(Company, calendar_company_id == Company.id)
         .filter(
-            LeadJob.company_id.in_(allowed_company_ids),
+            calendar_company_id.in_(allowed_company_ids),
             Lead.status.in_(DISPATCH_STATUSES),
             (
                 Lead.full_name.ilike(pattern)
@@ -1434,7 +1441,7 @@ def search_dispatch_jobs(
                 "id": job.id,
                 "lead_id": lead.id,
                 "job_order": int(job.job_order or 0),
-                "company_id": job.company_id,
+                "company_id": job.dispatch_company_id or job.company_id,
                 "company_name": company_name or "",
                 "company_color": resolve_company_color(company_name, company_color),
                 "full_name": lead.full_name or "",
@@ -1455,6 +1462,7 @@ def search_dispatch_jobs(
 
 @router.get("/leads")
 def get_leads(
+    overview_month: str = Query(default="", pattern=r"^(?:[1-9][0-9]{3}-(?:0[1-9]|1[0-2]))?$"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     search: str = Query(default=""),
@@ -1467,13 +1475,18 @@ def get_leads(
     db: Session = Depends(get_db),
 ):
     company_ids = _get_user_company_ids(user, db)
-    if not company_ids:
+    if not company_ids and user.role != "admin":
         return {"items": [], "total": 0, "has_more": False}
 
-    query = db.query(Lead).filter(Lead.company_id.in_(company_ids))
+    visibility = Lead.company_id.in_(company_ids)
+    if user.role == "admin":
+        visibility = or_(visibility, Lead.company_id.is_(None))
+    query = db.query(Lead).filter(visibility)
 
     # Filter by specific company if requested
-    if company_id:
+    if company_id == "__unassigned__" and user.role == "admin":
+        query = query.filter(Lead.company_id.is_(None))
+    elif company_id:
         if company_id not in company_ids:
             return {"items": [], "total": 0, "has_more": False}
         query = query.filter(Lead.company_id == company_id)
@@ -1489,7 +1502,7 @@ def get_leads(
     if status:
         query = query.filter(Lead.status == status)
 
-    # Assigned-to filter (admin/dispatch only — sales_rep is already forced above)
+    # Assigned-to filter (admin/dispatch only - sales_rep is already forced above)
     if assigned_to and user.role != "sales_rep":
         if assigned_to == "__unassigned__":
             query = query.filter(Lead.assigned_to == None)  # noqa: E711
@@ -1497,35 +1510,50 @@ def get_leads(
             query = query.filter(Lead.assigned_to == assigned_to)
 
     # Search
+    from phone_search import phone_search_condition
     if search.strip():
         q = f"%{search.strip().lower()}%"
         query = query.filter(
             Lead.full_name.ilike(q)
             | Lead.leadgen_id.ilike(q)
             | Lead.phone.ilike(q)
+            | phone_search_condition(Lead.phone, search)
             | Lead.email.ilike(q)
         )
 
+    from lead_overview import overview
+    summary = overview(query, db, month=overview_month or None) if offset == 0 else None
+
+    def displayed_location(column, fallback):
+        primary = (db.query(column).filter(LeadJob.lead_id == Lead.id)
+                   .order_by(LeadJob.job_order, LeadJob.created_at, LeadJob.id)
+                   .limit(1).correlate(Lead).scalar_subquery())
+        return func.coalesce(func.nullif(func.trim(primary), ""), fallback)
+
+    pickup = displayed_location(LeadJob.pickup_zip, Lead.pickup_zip)
+    delivery = displayed_location(LeadJob.delivery_zip, Lead.delivery_zip)
     SORTABLE = {
         "created_time": Lead.created_at,
         "full_name": Lead.full_name,
         "status": Lead.status,
         "move_size": Lead.move_size,
-        "pickup_zip": Lead.pickup_zip,
-        "delivery_zip": Lead.delivery_zip,
+        "pickup_zip": pickup,
+        "delivery_zip": delivery,
         "company_name": Company.name,
     }
     if sort_by == "company_name":
-        query = query.join(Company, Lead.company_id == Company.id)
+        query = query.outerjoin(Company, Lead.company_id == Company.id)
     sort_col = SORTABLE.get(sort_by, Lead.created_at)
     order = sort_col.asc() if sort_dir == "asc" else sort_col.desc()
     query = query.order_by(order)
     total = query.count()
-    items = query.offset(offset).limit(limit).all()
+    items = query.add_columns(pickup, delivery).offset(offset).limit(limit).all()
     has_more = offset + limit < total
 
     return {
-        "items": [lead.to_dict() for lead in items],
+        "summary": summary,
+        "items": [{**lead.to_dict(), "pickup_zip": origin or "", "delivery_zip": destination or ""}
+                  for lead, origin, destination in items],
         "total": total,
         "has_more": has_more,
     }
@@ -1629,18 +1657,7 @@ def delete_lead_by_smartmoving(
 
 @router.get("/leads/{lead_id}")
 def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    company_ids = _get_user_company_ids(user, db)
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.company_id.in_(company_ids)).first()
-    if not lead:
-        # Also try by leadgen_id for backwards compatibility
-        lead = db.query(Lead).filter(Lead.leadgen_id == lead_id, Lead.company_id.in_(company_ids)).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    if user.role == "foreman" and not db.query(LeadJob.id).filter(
-        LeadJob.lead_id == lead.id,
-        LeadJob.foreman_id == user.id,
-    ).first():
-        raise HTTPException(status_code=404, detail="Lead not found")
+    lead = _get_visible_lead_or_404(lead_id, user, db)
 
     # If facebook_user_id is missing, try to find it from sender_info
     if user.role != "foreman" and not lead.facebook_user_id:
@@ -1650,7 +1667,19 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
             db.commit()
             logger.info("Matched sender_id %s for lead %s", sender_id, lead.id)
 
-    return lead.to_dict()
+    result = lead.to_dict()
+    result['has_customer_page'] = db.query(PublicMoveAccess.id).filter(PublicMoveAccess.lead_id == lead.id).first() is not None
+    channels = {row[0] for row in db.query(CommunicationAssociation.channel).filter(
+        CommunicationAssociation.lead_id == lead.id,
+        CommunicationAssociation.client_identifier == lead.facebook_user_id,
+        CommunicationAssociation.channel.in_(['messenger', 'instagram']),
+    ).all()} if lead.facebook_user_id else set()
+    if len(channels) == 1:
+        result['meta_platform'] = 'instagram' if 'instagram' in channels else 'facebook'
+    else:
+        source = (lead.source or '').strip().lower()
+        result['meta_platform'] = 'instagram' if source == 'instagram' else 'facebook' if source in ('facebook', 'messenger') else ''
+    return result
 
 
 class CopyLeadRequest(BaseModel):
@@ -1757,6 +1786,7 @@ def create_lead_through_copy_path(
             detail=f"SmartMoving could not create the copied lead: {smartmoving_result.get('error', 'unknown error')}",
         )
 
+    smartmoving_response = smartmoving_result.get("response")
     api_secret = get_config().get("API_SECRET", os.getenv("API_SECRET", ""))
     creation_result = create_lead(
         NewLead(
@@ -1768,6 +1798,7 @@ def create_lead_through_copy_path(
             move_size=move_size,
             move_date=move_date,
             smartmoving_id=_clean_optional_text(smartmoving_result.get("lead_id")) or None,
+            quote_number=smartmoving_response.get("quoteNumber") if isinstance(smartmoving_response, dict) else None,
             facebook_user_id=facebook_user_id or None,
             assigned_to=assigned_to or None,
             notes=notes,
@@ -2068,9 +2099,10 @@ JOB_STOPS_SETTING_PREFIX = "lead_job_stops:"
 
 def _get_visible_lead_or_404(lead_id: str, user: User, db: Session) -> Lead:
     company_ids = _get_user_company_ids(user, db)
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.company_id.in_(company_ids)).first()
+    visible = or_(Lead.company_id.in_(company_ids), Lead.company_id.is_(None)) if user.role == "admin" else Lead.company_id.in_(company_ids)
+    lead = db.query(Lead).filter(Lead.id == lead_id, visible).first()
     if not lead:
-        lead = db.query(Lead).filter(Lead.leadgen_id == lead_id, Lead.company_id.in_(company_ids)).first()
+        lead = db.query(Lead).filter(Lead.leadgen_id == lead_id, visible).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     if user.role == "foreman":
@@ -2131,6 +2163,7 @@ def _get_or_create_primary_lead_job(lead: Lead, db: Session) -> LeadJob:
 class LeadJobChargePayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    id: str | None = None
     name: str = ""
     description: str = ""
     editable_description: str | None = Field(default=None, alias="editableDescription")
@@ -2138,6 +2171,7 @@ class LeadJobChargePayload(BaseModel):
     subtotal: float = 0
     discount_amount: float = Field(default=0, alias="discountAmount")
     total_cost: float = Field(default=0, alias="totalCost")
+    pricing_key: str | None = Field(default=None, alias="pricingKey", pattern=r'^((stairs|long_carry|elevator):(pickup|delivery)|extra-stop:[0-9a-f-]{36})$')
 
 
 class ExternalLeadUpdateLogRequest(BaseModel):
@@ -2290,7 +2324,10 @@ def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload | dict
     if not job.id:
         db.flush()
 
-    db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id).delete(synchronize_session=False)
+    from charge_updates import ChargeUpdates
+    existing = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id).all()
+    updates = ChargeUpdates(db, existing, match_legacy_base=True)
+    existing_ids = {row.id for row in existing}
 
     for index, charge in enumerate(charges):
         if isinstance(charge, dict):
@@ -2299,7 +2336,14 @@ def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload | dict
         display_name = (charge.editable_description or "").strip() or (charge.name or "").strip()
         if not display_name:
             continue
-        db.add(LeadJobCharge(
+        charge_id = charge.id
+        if charge_id and charge_id not in existing_ids:
+            raise HTTPException(409, 'Charge changed. Refresh the job before saving.')
+        if not charge_id and charge.pricing_key:
+            from uuid import uuid5, NAMESPACE_URL
+            charge_id = charge.pricing_key if charge.pricing_key.startswith('extra-stop:') else str(uuid5(NAMESPACE_URL, f'customer-packing:{job.id}:{charge.pricing_key}'))
+        updates.add(LeadJobCharge(
+            id=charge_id or str(uuid4()),
             job_id=job.id,
             name=display_name,
             description=(charge.description or "").strip(),
@@ -2308,12 +2352,14 @@ def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload | dict
             discount_amount=_to_money_decimal(charge.discount_amount, "discount_amount"),
             total_cost=_to_money_decimal(charge.total_cost, "total_cost"),
         ))
+    updates.finish()
 
 
 class LeadJobCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     company_id: str | None = None
+    dispatch_company_id: str | None = None
     smartmoving_job_id: str = ""
     pickup_zip: str = ""
     delivery_zip: str = ""
@@ -2333,6 +2379,7 @@ class LeadJobUpdate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     company_id: str | None = None
+    dispatch_company_id: str | None = None
     smartmoving_job_id: str | None = None
     pickup_zip: str | None = None
     delivery_zip: str | None = None
@@ -2380,6 +2427,14 @@ def _normalize_stops_list(value: list[str] | None) -> list[str]:
         if text:
             out.append(text)
     return out
+
+
+def _route_move_type(pickup_address: str | None, delivery_address: str | None) -> str | None:
+    pickup_state, _ = delivery_location(pickup_address or "")
+    delivery_state, _ = delivery_location(delivery_address or "")
+    if not pickup_state or not delivery_state:
+        return None
+    return "Local" if pickup_state == delivery_state else "Long Distance"
 
 
 def _read_addresses_from_setting(db: Session, key: str) -> list[str]:
@@ -2447,6 +2502,12 @@ def _validate_job_route_has_one_side(pickup: str, delivery: str) -> None:
 
 def _serialize_job_with_addresses(job: LeadJob, db: Session) -> dict:
     payload = job.to_dict()
+    # Internal CRM only; keep dispatch details out of shared/customer serializers.
+    payload["dispatch_company_id"] = job.dispatch_company_id or ""
+    payload["dispatch_company_name"] = job.dispatch_company.name if job.dispatch_company else ""
+    selection = json.loads(job.customer_packing_package or '{}')
+    payload['pricing_error'] = selection.get('pricing_save_error', '') if selection.get('pricing_pending') else ''
+    payload['pricing_error'] = job.price_refresh_error or payload['pricing_error']
     pickup, stops, delivery = _read_job_route(db, job)
     payload["pickup_zip"] = pickup
     payload["delivery_zip"] = delivery
@@ -2472,6 +2533,10 @@ def list_lead_jobs(
     if user.role == "foreman":
         rows_query = rows_query.filter(LeadJob.foreman_id == user.id)
     rows = rows_query.order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc()).all()
+    if user.role != 'foreman':
+        from price_validity import refresh_expired_price
+        for row in rows:
+            refresh_expired_price(lead, row, db)
     return {"items": [_serialize_job_with_addresses(row, db) for row in rows]}
 
 
@@ -2485,6 +2550,7 @@ def create_lead_job(
     _ensure_not_dispatch_write(user)
     lead = _get_visible_lead_or_404(lead_id, user, db)
     company_ids = _get_user_company_ids(user, db)
+    dispatch_company_id = _validate_dispatch_company(body.dispatch_company_id, company_ids, db)
 
     company_id = (body.company_id or "").strip() or lead.company_id
     if company_id not in company_ids:
@@ -2512,6 +2578,7 @@ def create_lead_job(
         lead_id=lead.id,
         company_id=company_id,
         job_order=_next_lead_job_order(lead.id, db),
+        dispatch_company_id=dispatch_company_id,
         smartmoving_job_id=(body.smartmoving_job_id or "").strip() or None,
         pickup_zip="",
         delivery_zip="",
@@ -2572,6 +2639,87 @@ def replace_lead_job_charges(
     return _serialize_job_with_addresses(row, db)
 
 
+def _refresh_lead_estimated_total(lead_id: str, db: Session) -> None:
+    """Use all job prices and discounts for the lead summary, retaining existing tax data."""
+    db.flush()
+    lead = db.get(Lead, lead_id)
+    existing = _deserialize_estimated_total(lead.estimated_total) or {}
+    final_before_tax = Decimal(0)
+    discounts = Decimal(0)
+    for job in db.query(LeadJob).filter(LeadJob.lead_id == lead_id).all():
+        db.expire(job, ['charges'])
+        if job.price is not None:
+            final_before_tax += _to_money_decimal(job.price, 'price')
+        else:
+            final_before_tax += sum((_to_money_decimal(charge.total_cost, 'total_cost') for charge in job.charges), Decimal(0))
+        discounts += sum((_to_money_decimal(charge.discount_amount, 'discount_amount') for charge in job.charges), Decimal(0))
+    tax = _to_money_decimal(existing.get('tax'), 'tax')
+    lead.estimated_total = _serialize_estimated_total(EstimatedTotalPayload(
+        subtotal=final_before_tax + discounts,
+        taxableAmount=existing.get('taxableAmount', 0),
+        tax=tax,
+        finalTotal=final_before_tax + tax,
+    ))
+
+
+class SaveJobPriceBody(LeadJobChargesBody):
+    price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+
+
+@router.put("/leads/{lead_id}/jobs/{job_id}/price")
+def save_lead_job_price(
+    lead_id: str,
+    job_id: str,
+    body: SaveJobPriceBody,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_not_dispatch_write(user)
+    row = _get_job_or_404(lead_id, job_id, user, db)
+    charges = []
+    for charge in body.estimated_charges:
+        amounts = [_to_money_decimal(value, field) for value, field in (
+            (charge.subtotal, 'subtotal'), (charge.discount_amount, 'discount_amount'), (charge.total_cost, 'total_cost'))]
+        if not all(amount.is_finite() for amount in amounts):
+            raise HTTPException(400, 'Charges must contain finite amounts')
+        if amounts[0] - amounts[1] != amounts[2]:
+            raise HTTPException(400, 'Charge total must equal subtotal minus discount')
+        if amounts[2] == 0 and not (amounts[0] > 0 and amounts[1] > 0):
+            continue
+        if not (charge.editable_description or charge.name).strip():
+            raise HTTPException(400, 'Each charge needs a name')
+        charges.append(charge)
+    total = sum((_to_money_decimal(charge.total_cost, 'total_cost') for charge in charges), Decimal(0))
+    if total != body.price:
+        raise HTTPException(400, 'Price must match the charge total')
+    db.query(Lead).filter(Lead.id == lead_id).with_for_update().one()
+    _replace_job_charges(row, charges, db)
+    row.price = body.price
+    row.price_calculated_at = datetime.utcnow()
+    row.price_refresh_error = None
+    _refresh_lead_estimated_total(lead_id, db)
+    lead_obj = db.get(Lead, lead_id)
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
+    if access:
+        access.published_price = row.price
+        if lead_obj and lead_obj.volume:
+            access.published_cuft = lead_obj.volume
+        access.published_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    return _serialize_job_with_addresses(row, db)
+
+
+def _validate_dispatch_company(value: str | None, company_ids: list[str], db: Session) -> str | None:
+    company_id = (value or "").strip() or None
+    if company_id:
+        if company_id not in company_ids:
+            raise HTTPException(status_code=403, detail="Not allowed for this subcontractor")
+        if not db.get(Company, company_id):
+            raise HTTPException(status_code=404, detail="Subcontractor not found")
+    return company_id
+
+
 @router.patch("/leads/{lead_id}/jobs/{job_id}")
 def update_lead_job(
     lead_id: str,
@@ -2583,8 +2731,8 @@ def update_lead_job(
     payload = body.model_dump(exclude_unset=True, by_alias=False)
     if user.role == "foreman" and set(payload) != {"foreman_notes"}:
         raise HTTPException(status_code=403, detail="Foreman users can only update foreman notes")
-    if user.role == "dispatch" and (not payload or not set(payload).issubset({"foreman_id", "notes", "customer_notes", "foreman_notes"})):
-        raise HTTPException(status_code=403, detail="Dispatch users can only assign a foreman or update job notes")
+    if user.role == "dispatch" and (not payload or not set(payload).issubset({"dispatch_company_id", "foreman_id", "notes", "customer_notes", "foreman_notes"})):
+        raise HTTPException(status_code=403, detail="Dispatch users can only assign a subcontractor or foreman, or update job notes")
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadJob)
@@ -2611,6 +2759,9 @@ def update_lead_job(
 
     if "smartmoving_job_id" in payload:
         row.smartmoving_job_id = (payload.get("smartmoving_job_id") or "").strip() or None
+
+    if "dispatch_company_id" in payload:
+        row.dispatch_company_id = _validate_dispatch_company(payload["dispatch_company_id"], company_ids, db)
 
     if "foreman_id" in payload:
         if user.role not in ("admin", "dispatch"):
@@ -2665,6 +2816,11 @@ def update_lead_job(
 
     row.pickup_zip = next_pickup
     row.delivery_zip = next_delivery
+    from routes.pricing import infer_job_move_type
+
+    derived_move_type, _ = infer_job_move_type(lead, row, db)
+    if derived_move_type:
+        lead.move_type = derived_move_type
     if "move_date" in payload:
         row.move_date = _normalize_move_date(payload.get("move_date") or "")
 
@@ -2690,6 +2846,21 @@ def update_lead_job(
             row.price = price_value
 
     _persist_job_route(db, row.id, next_pickup, next_stops, next_delivery)
+
+    should_recalculate_price = bool({
+        "company_id",
+        "pickup_zip",
+        "delivery_zip",
+        "stops",
+        "pickup_addresses",
+        "delivery_addresses",
+        "move_date",
+        "price",
+    } & set(payload))
+    if should_recalculate_price:
+        from routes.pricing import calculate_and_save_lead_job_price
+        from pricing_save import attempt_pricing
+        attempt_pricing(lead, row, db, lambda: calculate_and_save_lead_job_price(lead, row, db), require_price=True)
 
     db.commit()
     db.refresh(row)
@@ -2786,6 +2957,53 @@ def _ensure_attachment_link_columns(db: Session) -> None:
 
 def _safe_attachment_name(value: str) -> str:
     return re.sub(r'[\\/\r\n"]+', "_", (value or "").strip())[:255] or "attachment"
+
+
+def _smartmoving_attachment_metadata(content: bytes, file_name: str, content_type: str) -> tuple[str, str]:
+    """Derive missing SmartMoving file metadata from the downloaded content."""
+    from media_type import detected_media_type
+
+    detected_type = detected_media_type(content[:64], "application/octet-stream")
+    declared_type = (content_type or "application/octet-stream").split(";", 1)[0].strip().lower()
+    normalized_type = detected_type if detected_type != "application/octet-stream" else declared_type
+    name = _safe_attachment_name(file_name)
+    if not os.path.splitext(name)[1] and normalized_type != "application/octet-stream":
+        extension = mimetypes.guess_extension(normalized_type, strict=False)
+        if extension:
+            name = name[:255 - len(extension)] + extension
+    return name, normalized_type
+
+
+def _repair_smartmoving_s3_metadata(row: LeadAttachment) -> bool:
+    """Repair extensionless SmartMoving rows during the next SmartMoving refresh."""
+    location = urlparse((row.external_url or "").strip())
+    if location.scheme != "s3" or not location.netloc or not location.path:
+        return False
+    storage = boto3.client("s3")
+    metadata = storage.head_object(Bucket=location.netloc, Key=location.path.lstrip("/"))
+    stream = storage.get_object(
+        Bucket=location.netloc,
+        Key=location.path.lstrip("/"),
+        Range="bytes=0-63",
+    )["Body"]
+    try:
+        header = stream.read(64)
+    finally:
+        stream.close()
+    file_name, content_type = _smartmoving_attachment_metadata(
+        header,
+        row.file_name,
+        row.content_type or metadata.get("ContentType") or "application/octet-stream",
+    )
+    changed = (row.file_name, row.content_type, row.file_size) != (
+        file_name,
+        content_type,
+        metadata["ContentLength"],
+    )
+    row.file_name = file_name
+    row.content_type = content_type
+    row.file_size = metadata["ContentLength"]
+    return changed
 
 
 def _upload_attachment_bytes_to_s3(
@@ -3002,6 +3220,14 @@ def _sync_opportunity_files_to_s3(
             if existing_row and existing_row.job_id != target_job_id:
                 existing_row.job_id = target_job_id
                 reassigned += 1
+            if existing_row and (not os.path.splitext(existing_row.file_name or "")[1]
+                                 or (existing_row.content_type or "").split(";", 1)[0].strip().lower()
+                                 in ("", "application/octet-stream", "binary/octet-stream")):
+                try:
+                    if _repair_smartmoving_s3_metadata(existing_row):
+                        reassigned += 1
+                except Exception:
+                    logger.exception("Failed repairing SmartMoving file metadata for attachment %s", existing_row.id)
             continue
         fetched = download_opportunity_file(item["url"])
         if not fetched.get("ok"):
@@ -3017,7 +3243,11 @@ def _sync_opportunity_files_to_s3(
             "_",
             _clean_optional_text(fetched.get("file_name")) or item["name"],
         )[:255]
-        content_type = _clean_optional_text(fetched.get("content_type")) or "application/octet-stream"
+        file_name, content_type = _smartmoving_attachment_metadata(
+            content,
+            file_name,
+            _clean_optional_text(fetched.get("content_type")) or "application/octet-stream",
+        )
         file_scope = f"jobs/{target_job.id}" if target_job else "lead"
         object_key = f"leads/{lead.id}/{file_scope}/smartmoving/{source_hash}/{file_name}"
         try:
@@ -3137,6 +3367,14 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
             if existing.job_id:
                 existing.job_id = None
                 stored += 1
+            if (not os.path.splitext(existing.file_name or "")[1]
+                    or (existing.content_type or "").split(";", 1)[0].strip().lower()
+                    in ("", "application/octet-stream", "binary/octet-stream")):
+                try:
+                    if _repair_smartmoving_s3_metadata(existing):
+                        stored += 1
+                except Exception:
+                    logger.exception("Failed repairing SmartMoving document metadata for attachment %s", existing.id)
             continue
         fetched = download_opportunity_document(
             smartmoving_id,
@@ -3152,7 +3390,11 @@ def _sync_smartmoving_documents_to_s3(lead: Lead, user: User, db: Session) -> in
             or doc.get("name")
             or "SmartMoving Document"
         )
-        content_type = _clean_optional_text(fetched.get("content_type")) or "application/octet-stream"
+        file_name, content_type = _smartmoving_attachment_metadata(
+            content,
+            file_name,
+            _clean_optional_text(fetched.get("content_type")) or "application/octet-stream",
+        )
         try:
             s3_url = _upload_attachment_bytes_to_s3(
                 lead_id=lead.id,
@@ -3375,7 +3617,8 @@ def download_lead_attachments(
         Params={"Bucket": bucket, "Key": object_key, "ResponseContentDisposition": f'attachment; filename="{download_name}"'},
         ExpiresIn=300,
     )
-    return RedirectResponse(url=signed_url, status_code=307)
+    # The endpoint is POST, while the presigned S3 URL only accepts GET.
+    return RedirectResponse(url=signed_url, status_code=303)
 
 
 @router.get("/leads/{lead_id}/jobs/{job_id}/attachments")
@@ -3763,6 +4006,7 @@ class LeadUpdate(BaseModel):
     notes: str | None = None
     full_name: str | None = None
     leadgen_id: str | None = None
+    quote_number: str | int | None = Field(default=None, alias="quoteNumber")
     smartmoving_id: str | None = None
     smartmoving_created_time: str | None = None
     phone_number: str | None = None
@@ -3832,11 +4076,15 @@ def _apply_lead_update(
     db: Session,
     *,
     allow_dispatch_smartmoving_refresh: bool = False,
+    incoming_smartmoving_company: Company | None = None,
 ):
     if not (allow_dispatch_smartmoving_refresh and user.role == "dispatch"):
         _ensure_not_dispatch_write(user)
     company_ids = _get_user_company_ids(user, db)
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.company_id.in_(company_ids)).first()
+    visibility = Lead.company_id.in_(company_ids)
+    if user.role == "admin":
+        visibility = or_(visibility, Lead.company_id.is_(None))
+    lead = db.query(Lead).filter(Lead.id == lead_id, visibility).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
@@ -3890,6 +4138,20 @@ def _apply_lead_update(
             raise HTTPException(status_code=404, detail=f"company_name '{requested_company_name}' not found")
         next_company_id = company.id
 
+    mapped_dispatch_id = None
+    incoming_company = incoming_smartmoving_company
+    if next_company_id is not None:
+        if next_company_id not in company_ids:
+            raise HTTPException(status_code=403, detail="Not allowed to use this company")
+        incoming_company = db.get(Company, next_company_id)
+        if not incoming_company:
+            raise HTTPException(status_code=404, detail="Company not found")
+    if incoming_company is not None:
+        contract_company, mapped_dispatch_id = resolve_company_dispatch(db, incoming_company)
+        next_company_id = contract_company.id
+        if mapped_dispatch_id and mapped_dispatch_id not in company_ids:
+            raise HTTPException(status_code=403, detail="Not allowed to use this subcontractor")
+
     if next_company_id is not None:
         if next_company_id not in company_ids:
             raise HTTPException(status_code=403, detail="Not allowed to move lead to this company")
@@ -3919,6 +4181,8 @@ def _apply_lead_update(
         lead.full_name = name
     if body.leadgen_id is not None:
         lead.leadgen_id = body.leadgen_id.strip() or None
+    if body.quote_number is not None:
+        lead.quote_number = str(body.quote_number).strip() or None
     if body.smartmoving_id is not None:
         lead.smartmoving_id = body.smartmoving_id.strip() or None
     if body.smartmoving_created_time is not None:
@@ -4023,6 +4287,9 @@ def _apply_lead_update(
     primary_job = _get_or_create_primary_lead_job(lead, db)
     if next_company_id is not None:
         primary_job.company_id = lead.company_id
+    if mapped_dispatch_id:
+        for mapped_job in db.query(LeadJob).filter(LeadJob.lead_id == lead.id).all():
+            apply_job_dispatch(mapped_job, lead.company_id, mapped_dispatch_id)
 
     if body.jobs is not None:
         requested_job_orders: dict[str, int] = {}
@@ -4074,6 +4341,7 @@ def _apply_lead_update(
                         db.add(target_job)
                         db.flush()
 
+            apply_job_dispatch(target_job, lead.company_id, mapped_dispatch_id)
             if not target_job.id:
                 db.flush()
             incoming_job_ids.add(target_job.id)
@@ -4435,6 +4703,7 @@ def _refresh_lead_from_smartmoving(
         user,
         db,
         allow_dispatch_smartmoving_refresh=True,
+        incoming_smartmoving_company=smartmoving_dispatch_company(db, opportunity),
     )
     sync_result = sync_smartmoving_files(lead, user, db, opportunity)
     request.state.audit_request_payload = {
@@ -4569,7 +4838,7 @@ def assign_lead_by_name(
     return lead.to_dict()
 
 
-# ---- POST /api/leads — create a new lead from Zapier / external source ----
+# ---- POST /api/leads - create a new lead from Zapier / external source ----
 
 MOVE_TYPE_MAP = {
     "out of state": "interstate",
@@ -4609,6 +4878,7 @@ class NewLead(BaseModel):
     created_time: str | None = None
     smartmoving_created_time: str | None = None
     leadgen_id: str | None = None
+    quote_number: str | int | None = Field(default=None, alias="quoteNumber")
     smartmoving_id: str | None = None
     smartmoving_job_id: str | None = None
     facebook_user_id: str | None = None
@@ -4661,6 +4931,8 @@ def create_lead(
     company = db.query(Company).filter(Company.name == body.company_name.strip()).first()
     if not company:
         raise HTTPException(status_code=400, detail=f"Company '{body.company_name}' not found")
+
+    company, mapped_dispatch_id = resolve_company_dispatch(db, company)
 
     assigned_to_user_id = None
     assignment_mode = "manual"
@@ -4794,6 +5066,7 @@ def create_lead(
         phone=_normalize_phone(body.phone_number),
         source=body.source or "zapier",
         leadgen_id=_clean_optional_text(body.leadgen_id) or None,
+        quote_number=(str(body.quote_number).strip() or None) if body.quote_number is not None else None,
         smartmoving_id=_clean_optional_text(body.smartmoving_id) or None,
         facebook_user_id=_clean_optional_text(body.facebook_user_id) or None,
         pickup_zip=_clean_optional_text(body.pickup_zip),
@@ -4819,6 +5092,7 @@ def create_lead(
             lead_id=lead.id,
             company_id=lead.company_id,
             job_order=1,
+            dispatch_company_id=mapped_dispatch_id,
             smartmoving_job_id=_clean_optional_text(body.smartmoving_job_id) or None,
             pickup_zip=lead.pickup_zip,
             delivery_zip=lead.delivery_zip,

@@ -1,4 +1,5 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import "./LeadsList.css";
+﻿import { useEffect, useState, useRef, useCallback } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Lead, formatLabel, formatValue } from "./leadUtils";
 import { API_BASE } from "./apiConfig";
@@ -22,9 +23,9 @@ const HIDDEN_FROM_TABLE = new Set([
 
 const TABLE_FIELDS = [
   "full_name",
+  "status",
   "company_name",
   "assigned_to_name",
-  "leadgen_id",
   "pickup_zip",
   "delivery_zip",
   "when_is_the_move?",
@@ -33,6 +34,7 @@ const TABLE_FIELDS = [
   "email",
   "are_you_moving_within_the_state_or_out_of_state?",
   "created_time",
+  "leadgen_id",
 ];
 
 const COL_WIDTHS: Record<string, number> = {
@@ -40,8 +42,8 @@ const COL_WIDTHS: Record<string, number> = {
   full_name: 250,
   company_name: 190,
   assigned_to_name: 160,
-  pickup_zip: 120,
-  delivery_zip: 130,
+  pickup_zip: 230,
+  delivery_zip: 230,
   "when_is_the_move?": 180,
   move_size: 140,
   phone_number: 150,
@@ -64,8 +66,20 @@ function cellStyle(key: string): React.CSSProperties {
 
 export default function LeadsList() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
+  const easternParts = new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York',year:'numeric',month:'2-digit'}).formatToParts(new Date());
+  const currentMonth = `${easternParts.find(p => p.type === 'year')!.value}-${easternParts.find(p => p.type === 'month')!.value}`;
+  const [overviewMonth, setOverviewMonth] = useState(currentMonth);
+  const isCurrentMonth = overviewMonth === currentMonth;
+  const monthLabel = new Date(`${overviewMonth}-01T12:00:00`).toLocaleDateString('en-US', {month:'long',year:'numeric'});
+  function moveMonth(delta: number) {
+    const [year, month] = overviewMonth.split('-').map(Number);
+    const date = new Date(year, month - 1 + delta, 1);
+    setOverviewMonth(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+  }
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<{new_today: number; new_month: number; quotes: number; quote_value: number; booked_value: number} | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
@@ -121,6 +135,7 @@ export default function LeadsList() {
     const requestVersion = isFirst ? ++requestVersionRef.current : requestVersionRef.current;
     if (isFirst) {
       setError("");
+      setSummary(null);
       setHasMore(false);
       setLoading(true);
       setLoadingMore(false);
@@ -129,6 +144,7 @@ export default function LeadsList() {
     }
     try {
       const params = new URLSearchParams({ limit: "50", offset: String(offset) });
+      params.set("overview_month", overviewMonth);
       if (query) params.set("search", query);
       const effectiveCompanyId = companyIdFilter || companyFilter;
       if (effectiveCompanyId) params.set("company_id", effectiveCompanyId);
@@ -150,6 +166,8 @@ export default function LeadsList() {
         return [...merged.values()];
       });
       setHasMore(data.has_more);
+      setTotal(data.total);
+      if (isFirst) setSummary(data.summary || null);
       hasLoadedRef.current = true;
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -161,7 +179,7 @@ export default function LeadsList() {
         setLoadingMore(false);
       }
     }
-  }, [token, companyIdFilter, companyFilter, assignedToFilter, statusFilter, sortBy, sortDir]);
+  }, [token, companyIdFilter, companyFilter, assignedToFilter, statusFilter, sortBy, sortDir, overviewMonth]);
 
   useEffect(() => {
     fetchLeads(0, search);
@@ -202,19 +220,30 @@ export default function LeadsList() {
     return ordered;
   };
 
-  if (loading && !hasLoadedRef.current) return <p>Loading…</p>;
+  if (loading && !hasLoadedRef.current) return <p>Loading...</p>;
 
   const columns = getColumns(leads);
 
   return (
-    <div style={{ padding: "20px 24px", fontFamily: "inherit", display: "flex", flexDirection: "column", height: "calc(100vh - 52px)", boxSizing: "border-box", overflow: "hidden" }}>
+    <div className="leads-workspace" style={{ padding: "20px 24px", fontFamily: "inherit", display: "flex", flexDirection: "column", height: "calc(100vh - 52px)", boxSizing: "border-box", overflow: "hidden" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-        <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700 }}>Leads</h1>
+        <div className="leads-heading"><span className="leads-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M6.5 15a2.5 2.5 0 0 1 5 0M14 8h3M14 12h3M8 18h9"/></svg></span><div><span className="leads-eyebrow">SALES WORKSPACE</span><h1>Leads</h1><p>{loading ? "Updating records..." : `${total.toLocaleString()} records`} &middot; {companyNameFilter || companies.find(c => c.id === companyFilter)?.name || "All accessible companies"}</p></div></div>
+      </div>
+      <div className="leads-month-controls"><strong>Sales overview</strong><div role="group" aria-label="Statistics month"><button type="button" className="slds-button" aria-label="Previous month" onClick={() => moveMonth(-1)}>&lsaquo;</button><span aria-live="polite">{monthLabel}</span><button type="button" className="slds-button" aria-label="Next month" disabled={overviewMonth >= currentMonth} onClick={() => moveMonth(1)}>&rsaquo;</button><button type="button" className="slds-button" disabled={isCurrentMonth} onClick={() => setOverviewMonth(currentMonth)}>This month</button></div></div>
+      <div className="leads-metrics" aria-label="Sales overview">
+        {([
+          [isCurrentMonth ? 'New leads today' : 'New leads', isCurrentMonth ? summary?.new_today : summary?.new_month, false, isCurrentMonth ? 'Created today \u00b7 Eastern time' : monthLabel],
+          [isCurrentMonth ? 'Quotes this month' : 'Quotes', summary?.quotes, false, `Priority 1 leads \u00b7 ${isCurrentMonth ? 'Month to date' : monthLabel}`],
+          [isCurrentMonth ? 'Quote value this month' : 'Quote value', summary?.quote_value, true, `Current quote totals \u00b7 ${isCurrentMonth ? 'Month to date' : monthLabel}`],
+          [isCurrentMonth ? 'Booked value this month' : 'Booked value', summary?.booked_value, true, `Booked sales \u00b7 ${isCurrentMonth ? 'Month to date' : monthLabel}`],
+        ] as const).map(([label, value, money, caption], index) => <section className={`leads-metric metric-${index}`} key={label}>
+          <span className="leads-metric-label">{label}</span><strong>{value == null ? '\u2014' : money ? new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',maximumFractionDigits:0}).format(value) : value.toLocaleString()}</strong><small>{caption}</small>
+        </section>)}
       </div>
       {error && (
         <div style={{ marginBottom: 10, padding: "8px 12px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, color: "#b91c1c", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Failed to load leads: {error}</span>
-          <button onClick={() => { setError(""); fetchLeads(0, search); }} style={{ border: "none", background: "none", cursor: "pointer", color: "#b91c1c", fontWeight: 700 }}>Retry</button>
+          <button className="slds-button" onClick={() => { setError(""); fetchLeads(0, search); }} style={{ border: "none", background: "none", cursor: "pointer", color: "#b91c1c", fontWeight: 700 }}>Retry</button>
         </div>
       )}
       {companyIdFilter ? (
@@ -222,7 +251,7 @@ export default function LeadsList() {
           <span>
             Showing company: <strong>{companyNameFilter || companyIdFilter}</strong>
           </span>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => setSearchParams((prev) => {
               const next = new URLSearchParams(prev);
@@ -236,10 +265,11 @@ export default function LeadsList() {
           </button>
         </div>
       ) : null}
-      <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+      <div className="leads-filters" style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
         <input
+          aria-label="Search leads"
           type="text"
-          placeholder="Search by name, ID, phone, or email…"
+          placeholder="Search by name, ID, phone, or email..."
           value={searchInput}
           onChange={(e) => handleSearchChange(e.target.value)}
           style={{
@@ -253,7 +283,7 @@ export default function LeadsList() {
           }}
         />
         <select
-          value={statusFilter}
+          aria-label="Status" value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
           style={{ padding: "8px 12px", border: "1px solid #dddbda", borderRadius: 4, fontSize: 14, background: "#fff", cursor: "pointer" }}
         >
@@ -262,13 +292,14 @@ export default function LeadsList() {
             <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
           ))}
         </select>
-        {!companyIdFilter && companies.length > 1 && (
+        {!companyIdFilter && (companies.length > 1 || user?.role === "admin") && (
           <select
-            value={companyFilter}
+            aria-label="Company" value={companyFilter}
             onChange={(e) => setCompanyFilter(e.target.value)}
             style={{ padding: "8px 12px", border: "1px solid #dddbda", borderRadius: 4, fontSize: 14, background: "#fff", cursor: "pointer" }}
           >
             <option value="">All Companies</option>
+            {user?.role === "admin" && <option value="__unassigned__">Unassigned company</option>}
             {companies.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
@@ -276,7 +307,7 @@ export default function LeadsList() {
         )}
         {reps.length > 0 && (
           <select
-            value={assignedToFilter}
+            aria-label="Sales representative" value={assignedToFilter}
             onChange={(e) => setAssignedToFilter(e.target.value)}
             style={{ padding: "8px 12px", border: "1px solid #dddbda", borderRadius: 4, fontSize: 14, background: "#fff", cursor: "pointer" }}
           >
@@ -288,10 +319,11 @@ export default function LeadsList() {
           </select>
         )}
       </div>
+      <div className="leads-list-caption"><strong>Lead directory</strong><span>{leads.length.toLocaleString()} of {total.toLocaleString()} records &middot; Overview follows filters</span><button type="button" className="slds-button" onClick={() => { if (debounceRef.current) clearTimeout(debounceRef.current); setSearchInput(""); setSearch(""); setStatusFilter(""); setCompanyFilter(""); setAssignedToFilter(""); setSearchParams({}); }}>Clear filters</button></div>
       {leads.length === 0 ? (
         <p>No leads found.</p>
       ) : (
-        <div style={{ flex: 1, overflow: "auto", background: "#fff", border: "1px solid #dddbda", borderRadius: 4, boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
+        <div className="leads-table-scroll" style={{ flex: 1, overflow: "auto", background: "#fff", border: "1px solid #dddbda", borderRadius: 4, boxShadow: "0 1px 2px rgba(0,0,0,.08)" }}>
         <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -301,6 +333,8 @@ export default function LeadsList() {
                 return (
                 <th
                   key={col}
+                  className={col === "full_name" ? "leads-frozen" : undefined}
+                  aria-sort={isActive ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
                   onClick={() => handleSort(col)}
                   style={{
                     ...cellStyle(col),
@@ -340,11 +374,13 @@ export default function LeadsList() {
                 }
               >
                 {columns.map((col) => {
-                  const text = formatValue(col, lead[col]);
+                  const text = col === "company_name" && !lead.company_id ? "Unassigned company" : formatValue(col, lead[col]);
                   const isCompanyCell = col === "company_name" && lead.company_id;
                   return (
                     <td
                       key={col}
+                      className={col === "full_name" ? "leads-frozen" : undefined}
+                      title={text}
                       style={{
                         ...cellStyle(col),
                         borderBottom: "1px solid #eee",
@@ -362,11 +398,11 @@ export default function LeadsList() {
                         setTooltip(null);
                       }}
                     >
-                      {isCompanyCell ? (
+                      {col === "status" ? <span className={`lead-status status-${String(lead.status || "new").toLowerCase()}`}>{text}</span> : col === "full_name" ? <Link to={`/leads/${lead.id}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>{text || "Unnamed lead"}</Link> : isCompanyCell ? (
                         <Link
                           to={`/?company_id=${encodeURIComponent(String(lead.company_id))}&company_name=${encodeURIComponent(String(lead.company_name || ""))}`}
                           onClick={(e) => e.stopPropagation()}
-                          style={{ color: "#2563eb", textDecoration: "underline" }}
+                          style={{ color: "#2563eb", textDecoration: "none" }}
                         >
                           {text}
                         </Link>
@@ -381,7 +417,7 @@ export default function LeadsList() {
           </tbody>
         </table>
         <div ref={sentinelRef} style={{ height: 1 }} />
-        {loadingMore && <p style={{ padding: "8px 12px", margin: 0 }}>Loading more…</p>}
+        {loadingMore && <p style={{ padding: "8px 12px", margin: 0 }}>Loading more...</p>}
         </div>
       )}
 
@@ -415,3 +451,4 @@ export default function LeadsList() {
     </div>
   );
 }
+

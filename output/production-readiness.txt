@@ -1,0 +1,86 @@
+PRODUCTION READINESS REVIEW - 2026-10-13
+Reviewed local main commit: 2d586ef
+Scope: upgrade existing production; preserve production clients; do not import development clients.
+Status: local audit only. No AWS resources, database records, or deployments changed.
+
+FOLLOW-UP DECISION: SCHEMA AND SETTINGS, NO CLIENT DATA MIGRATION
+The user permits pricing, catalog and settings migrations. Existing configuration
+seeds, pricing cleanup/copy and company/admin seeding are restored. The automatic
+lead/job dispatch ownership backfill remains removed. Do not copy development
+clients or rewrite production client/lead/job records. Schema additions to their
+tables remain allowed. public_move_access alterations follow table creation.
+The findings below describe the original audit, before these local corrections.
+Custom development settings still require a concrete transfer manifest; restoring
+the existing seed scripts does not itself transfer all development configuration.
+
+CONFIRMED FINDINGS
+1. deployspec.yml runs backend/migrate.py and ensure_seed_data on deployment.
+   It does not invoke the import_leads import routine. There is no dev-client copy
+   in the reviewed deployment commands.
+2. migrate.py is NOT schema-only:
+   - Seeds missing inventory catalog items and room types from repository data.
+   - migrate_company_dispatch updates existing lead/job company assignments.
+   - catalog_material_cleanup removes pricing material assignments whose catalog
+     IDs are absent or deleted in the target database.
+   - migrate_movers95_pricing copies Gorilla Haulers East settings into Movers 95,
+     replaces its rules/rates/services and deletes/recreates its local routes,
+     unless its migration marker already exists. Missing/ambiguous source books
+     can also fail deployment.
+3. ensure_seed_data creates Gorilla Haulers and an admin account if absent.
+   Confirm these are intended production defaults; do not run the full importer.
+4. migrate.py alters public_move_access before its create-if-missing block.
+   It also assumes existing core tables. Production schema must be inspected;
+   this script is not a verified migration from every historical release.
+5. Unique indexes for default company and active walkthrough per job may fail
+   if existing production rows violate their rules. Check counts before migration.
+6. Infrastructure changes run alongside the build, before the Deploy stage.
+   A failed build does not mean infrastructure was untouched. The reviewed
+   pipeline has no manual approval stage before infrastructure changes.
+7. Build runs the frontend production build but no Python regression suite.
+8. Deployment updates migrations and individual Lambda functions sequentially;
+   this is not an atomic release. Old code must tolerate the migrated schema.
+9. Deployment removes a legacy LiveSwitch access-token override once per
+   environment. Confirm production OAuth refresh authorization beforehand.
+10. Existing dev deployment explicitly enables customer-link sending. The new
+    inventory-ready SMS production guard is not a global messaging switch.
+
+DATA POLICY
+Preserve all current production customers, jobs, users, uploads, reports and IDs.
+Do not restore the dev database over production or run customer import scripts.
+Add required tables/columns. Review each backfill separately before enabling it.
+Copy configuration only from an explicit reviewed manifest with source/target
+company IDs, dependent IDs, row counts and overwrite rules. Candidates: pricing
+books, catalog customizations, moving terms, templates, company settings.
+Repository catalog seeds do not include all custom records edited in development.
+Credentials and OAuth tokens must be configured for production, not bulk copied.
+
+RELEASE SEQUENCE
+1. Identify actual AWS production account/region, stack, pipeline, deployed commit,
+   database, storage buckets and customer domain using read-only access.
+2. Compare deployed release with 2d586ef; inspect actual schema and migration markers.
+3. Produce exact schema/backfill/configuration manifest and remove or gate any
+   unapproved automatic business-data changes in a separately reviewed patch.
+4. Take production snapshot; restore an isolated rehearsal database. Isolate SMS,
+   email, webhooks, scheduled jobs and workers from real recipients/integrations.
+5. Run migrations twice on the rehearsal copy. Compare customer/job counts and
+   IDs; inspect assignment and pricing differences. Resolve test failures.
+6. Exercise upload -> same conversation -> report -> edit -> re-rate -> PDF, plus
+   authentication, role permissions, pricing, SMS recipient/link and report retries.
+7. Retain previous frontend artifacts, Lambda packages, infrastructure template,
+   configuration manifest and snapshot identifier. Review compatibility rollback.
+8. Present release commit, rehearsal evidence, approved data changes, maintenance
+   window and rollback procedure for final production approval.
+9. Deploy and validate using one designated internal lead. Monitor queues, errors,
+   duplicate conversations, price consistency and outbound messages before expanding.
+
+ROLLBACK
+Prefer previous application artifacts only when compatible with the new schema.
+Do not drop new tables or restore the database blindly. Snapshot restoration loses
+post-snapshot writes; stop writes and reconcile those records before a DB cutback.
+Infrastructure and credentials need their own reviewed rollback, not just code.
+
+ACCESS NEEDED
+AWS CLI is not installed/on PATH here; Python boto3 reports no named AWS profiles.
+No production identity or schema has been verified. Obtain approved read-only AWS
+access, or inspect the existing production console with the user. Never paste
+AWS passwords, secret access keys or production database passwords into chat.

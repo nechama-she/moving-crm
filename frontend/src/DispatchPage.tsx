@@ -1041,7 +1041,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
             </div>
             <div className="mobile-filter-rail" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               <button
-                className="mobile-filter-pill"
+                className="slds-button mobile-filter-pill"
                 type="button"
                 onClick={() => {
                   const allIds = dispatchCompanies.map((c) => c.id);
@@ -1081,7 +1081,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 const tone = toneForCompanyColor(company.color, company.name);
                 return (
                   <button
-                    className="mobile-filter-pill"
+                    className="slds-button mobile-filter-pill"
                     type="button"
                     key={company.id}
                     onClick={() => {
@@ -1120,7 +1120,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
 
             <button
               type="button"
-              className="mobile-totals-toggle"
+              className="slds-button mobile-totals-toggle"
               aria-expanded={mobileSummaryExpanded}
               onClick={() => setMobileSummaryExpanded((expanded) => !expanded)}
             >
@@ -1149,7 +1149,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
             </div>
 
             <div style={{ border: "1px solid #dbe4ef", borderRadius: 14, background: "#fff", overflow: "hidden" }}>
-              <button
+              <button className="slds-button"
                 type="button"
                 onClick={() => setTotalsExpanded((prev) => !prev)}
                 style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "none", background: "#f8fafc", padding: "12px 14px", cursor: "pointer", textAlign: "left" }}
@@ -1232,7 +1232,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                 <div style={{ padding: 10, fontSize: 13, color: "#64748b" }}>No jobs found.</div>
               ) : null}
               {jobSearchResults.map((job) => (
-                <button
+                <button className="slds-button"
                   key={job.id}
                   type="button"
                   onClick={() => selectDispatchJob(job)}
@@ -1338,14 +1338,14 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
                   onChange={(e) => setPassword(e.target.value)}
                   style={{ ...inputStyle, flex: 1, minWidth: 0, height: 34 }}
                 />
-                <button
+                <button className="slds-button"
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
                   style={{ border: "1px solid #dddbda", background: "#fff", borderRadius: 4, padding: "0 10px", fontSize: 12, height: 34 }}
                 >
                   {showPassword ? "Hide" : "Show"}
                 </button>
-                <button
+                <button className="slds-button"
                   type="button"
                   onClick={() => void copyPassword()}
                   disabled={!password}
@@ -1368,7 +1368,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
               <strong>{selectedCompanyIds.length === 0 ? "No companies selected" : `${selectedCompanyIds.length} selected`}</strong>
               <span>{selectedCompanyIds.length === 0 ? "Choose the companies this dispatcher can access" : "Access limited to selected companies"}</span>
             </div>
-            <button type="button" onClick={() => setShowInitialCompanyPicker((open) => !open)}>
+            <button className="slds-button" type="button" onClick={() => setShowInitialCompanyPicker((open) => !open)}>
               {showInitialCompanyPicker ? "Done" : "Choose companies"}
             </button>
           </div>
@@ -1376,7 +1376,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
             {companies.map((company) => {
               const checked = selectedCompanyIds.includes(company.id);
               return (
-                <button
+                <button className="slds-button"
                   type="button"
                   key={company.id}
                   onClick={() => toggleCompany(company.id)}
@@ -1397,7 +1397,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
         </div>
 
         <div style={{ marginTop: 14 }}>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={createDispatchUser}
             disabled={saving}
@@ -1708,10 +1708,10 @@ function CompanyCalendar({
           <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>Filtered by selected month</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button type="button" onClick={onPrevMonth} style={calendarNavBtn}>◀</button>
+          <button className="slds-button" type="button" onClick={onPrevMonth} style={calendarNavBtn}>◀</button>
           <button
             type="button"
-            className="calendar-month-toggle"
+            className="slds-button calendar-month-toggle"
             aria-expanded={mobileMonthExpanded}
             title={mobileMonthExpanded ? "Show day agenda" : "Show full month"}
             onClick={() => setMobileMonthExpanded((expanded) => !expanded)}
@@ -1720,7 +1720,7 @@ function CompanyCalendar({
             {monthLabel}
             <span className="calendar-view-caret" aria-hidden="true">{mobileMonthExpanded ? " ▴" : " ▾"}</span>
           </button>
-          <button type="button" onClick={onNextMonth} style={calendarNavBtn}>▶</button>
+          <button className="slds-button" type="button" onClick={onNextMonth} style={calendarNavBtn}>▶</button>
         </div>
       </div>
 
@@ -1761,7 +1761,7 @@ function CompanyCalendar({
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#1e293b" }}>{day}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <button
+                    <button className="slds-button"
                       type="button"
                       onClick={() => openDayPanel(day)}
                       style={{
@@ -1774,7 +1774,7 @@ function CompanyCalendar({
                     >
                       <NoteIcon active={Boolean(dayNote)} />
                     </button>
-                    <button
+                    <button className="slds-button"
                       type="button"
                       onClick={() => openDayPanel(day)}
                       style={{
@@ -1801,7 +1801,7 @@ function CompanyCalendar({
                   </div>
                 </div>
                 {dayNote ? (
-                  <button
+                  <button className="slds-button"
                     type="button"
                     onClick={() => openDayPanel(day)}
                     style={{ marginBottom: 6, width: "100%", textAlign: "left", fontSize: 10, color: "#334155", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4, padding: "4px 5px", cursor: "pointer" }}
@@ -1842,7 +1842,7 @@ function CompanyCalendar({
                       </Link>
                     ))}
                     {overflowCount > 0 ? (
-                      <button
+                      <button className="slds-button"
                         type="button"
                         onClick={() => openDayPanel(day)}
                         style={{
@@ -1876,7 +1876,7 @@ function CompanyCalendar({
             const selected = day === mobileSelectedDay;
             const count = (jobsByDay.get(day) || []).length;
             return (
-              <button
+              <button className="slds-button"
                 key={day}
                 data-mobile-day={day}
                 type="button"
@@ -1914,7 +1914,7 @@ function CompanyCalendar({
               </strong>
               <div style={{ color: "#706e6b", fontSize: 11 }}>{(jobsByDay.get(mobileSelectedDay) || []).length} jobs</div>
             </div>
-            <button type="button" onClick={() => openDayPanel(mobileSelectedDay)} style={{ ...calendarNavBtn, width: "auto", padding: "6px 9px", fontSize: 11 }}>
+            <button className="slds-button" type="button" onClick={() => openDayPanel(mobileSelectedDay)} style={{ ...calendarNavBtn, width: "auto", padding: "6px 9px", fontSize: 11 }}>
               Day settings
             </button>
           </div>
@@ -1984,18 +1984,18 @@ function CompanyCalendar({
           >
             <div style={{ padding: 14, borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button type="button" onClick={() => shiftDispatchDayPanel(-1)} style={calendarNavBtn} aria-label="Previous day">
+                <button className="slds-button" type="button" onClick={() => shiftDispatchDayPanel(-1)} style={calendarNavBtn} aria-label="Previous day">
                   ◀
                 </button>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Day Panel • {dayDateKey(jobPanelDay)}</div>
                   <div style={{ fontSize: 12, color: "#64748b" }}>{panelDayJobs.length} job{panelDayJobs.length === 1 ? "" : "s"}</div>
                 </div>
-                <button type="button" onClick={() => shiftDispatchDayPanel(1)} style={calendarNavBtn} aria-label="Next day">
+                <button className="slds-button" type="button" onClick={() => shiftDispatchDayPanel(1)} style={calendarNavBtn} aria-label="Next day">
                   ▶
                 </button>
               </div>
-              <button type="button" onClick={closeDayPanel} style={calendarNavBtn} aria-label="Close day panel">
+              <button className="slds-button" type="button" onClick={closeDayPanel} style={calendarNavBtn} aria-label="Close day panel">
                 ✕
               </button>
             </div>
@@ -2041,7 +2041,7 @@ function CompanyCalendar({
                 {panelCompanyId === ALL_SELECTED_COMPANIES_VALUE ? <div style={{ fontSize: 12, color: "#475569" }}>Saving will apply to all selected companies.</div> : null}
                 {panelError ? <div style={{ fontSize: 12, color: "#ba0517" }}>{panelError}</div> : null}
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <button
+                  <button className="slds-button"
                     type="button"
                     onClick={() => void saveDayPanelSetting()}
                     disabled={!panelCompanyId || panelLoading || panelSaving || daySettingCompanies.length === 0}
@@ -2182,19 +2182,19 @@ function DispatchRow({
             <strong>{assigned.length === 0 ? "No companies" : `${assigned.length} companies`}</strong>
             <span>{assigned.length === 0 ? "No company access" : assigned.slice(0, 2).map((company) => company.name).join(", ")}{assigned.length > 2 ? ` +${assigned.length - 2}` : ""}</span>
           </div>
-          <button type="button" onClick={() => { setDraftCompanyIds(assigned.map((company) => company.id)); setCompanySearch(""); setShowCompanyManager(true); }}>
+          <button className="slds-button" type="button" onClick={() => { setDraftCompanyIds(assigned.map((company) => company.id)); setCompanySearch(""); setShowCompanyManager(true); }}>
             Manage Companies
           </button>
         </div>
       </td>
       <td data-label="Actions" style={td}><div className="user-row-actions">
-        {editing ? <><button type="button" disabled={savingEdit} onClick={() => { setSavingEdit(true); void onUpdate(dispatchUser.id, { name: editName, email: editEmail, phone: editPhone }).then(() => setEditing(false)).catch(() => undefined).finally(() => setSavingEdit(false)); }}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></> : <button type="button" onClick={() => setEditing(true)}>Edit</button>}
-        <button type="button" className="danger" onClick={() => void onDelete(dispatchUser)}>Delete</button>
+        {editing ? <><button className="slds-button" type="button" disabled={savingEdit} onClick={() => { setSavingEdit(true); void onUpdate(dispatchUser.id, { name: editName, email: editEmail, phone: editPhone }).then(() => setEditing(false)).catch(() => undefined).finally(() => setSavingEdit(false)); }}>Save</button><button className="slds-button" type="button" onClick={() => setEditing(false)}>Cancel</button></> : <button className="slds-button" type="button" onClick={() => setEditing(true)}>Edit</button>}
+        <button type="button" className="slds-button danger" onClick={() => void onDelete(dispatchUser)}>Delete</button>
       </div></td>
       {showCompanyManager ? <td className="company-access-modal-cell"><div className="company-access-backdrop" onMouseDown={() => !savingCompanies && setShowCompanyManager(false)}><section className="company-access-modal" role="dialog" aria-modal="true" aria-label={`Manage companies for ${dispatchUser.name}`} onMouseDown={(event) => event.stopPropagation()}>
-        <header><div><span className="company-access-icon">▦</span><div><h2>Manage Company Access</h2><p>{dispatchUser.name}</p></div></div><button type="button" aria-label="Close" onClick={() => setShowCompanyManager(false)}>×</button></header>
+        <header><div><span className="company-access-icon">▦</span><div><h2>Manage Company Access</h2><p>{dispatchUser.name}</p></div></div><button className="slds-button" type="button" aria-label="Close" onClick={() => setShowCompanyManager(false)}>×</button></header>
         <div className="company-access-body"><input value={companySearch} onChange={(event) => setCompanySearch(event.target.value)} placeholder="Search companies" aria-label="Search companies" /><div className="company-access-count">{draftCompanyIds.length} of {companies.length} selected</div><div className="company-access-options">{filteredCompanies.map((company) => { const checked = draftCompanyIds.includes(company.id); return <label key={company.id} className={checked ? "selected" : ""}><input type="checkbox" checked={checked} onChange={() => setDraftCompanyIds((current) => checked ? current.filter((id) => id !== company.id) : [...current, company.id])} /><span><strong>{company.name}</strong><small>{checked ? "Access enabled" : "No access"}</small></span></label>; })}</div></div>
-        <footer><button type="button" onClick={() => setShowCompanyManager(false)}>Cancel</button><button type="button" className="primary" disabled={savingCompanies} onClick={() => void saveCompanyAccess()}>{savingCompanies ? "Saving..." : "Save Changes"}</button></footer>
+        <footer><button className="slds-button" type="button" onClick={() => setShowCompanyManager(false)}>Cancel</button><button type="button" className="slds-button primary" disabled={savingCompanies} onClick={() => void saveCompanyAccess()}>{savingCompanies ? "Saving..." : "Save Changes"}</button></footer>
       </section></div></td> : null}
     </tr>
   );

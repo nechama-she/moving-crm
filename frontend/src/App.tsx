@@ -1,8 +1,13 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation, NavLink } from "react-router-dom";
 import { lazy, Suspense, useEffect, useState } from "react";
+import MainNavigation from "./MainNavigation";
 import { AuthProvider, useAuth } from "./AuthContext";
+import ErrorBoundary from "./ErrorBoundary";
+
+const CustomerMovePage = lazy(() => import("./CustomerMovePage"));
 const LiveSwitchCallbackPage = lazy(() => import("./LiveSwitchCallbackPage"));
-const LoginPage = lazy(() => import("./LoginPage"));
+const WalkthroughRequestsPage = lazy(() => import("./WalkthroughRequestsPage"));
+import LoginPage from "./LoginPage";
 const ChangePasswordPage = lazy(() => import("./ChangePasswordPage"));
 const LeadsList = lazy(() => import("./LeadsList"));
 const LeadDetail = lazy(() => import("./LeadDetail"));
@@ -12,6 +17,8 @@ const SalesRepsPage = lazy(() => import("./SalesRepsPage"));
 const DispatchPage = lazy(() => import("./DispatchPage"));
 const CompaniesPage = lazy(() => import("./CompaniesPage"));
 const CompanyTemplatesPage = lazy(() => import("./CompanyTemplatesPage"));
+const InventoryCatalogPage = lazy(() => import("./InventoryCatalogPage"));
+const MovingTermsPage = lazy(() => import("./MovingTermsPage"));
 const SettingsPage = lazy(() => import("./SettingsPage"));
 const AutoAssignTrackerPage = lazy(() => import("./AutoAssignTrackerPage"));
 const AdminUsersPage = lazy(() => import("./AdminUsersPage"));
@@ -26,7 +33,9 @@ const ImpersonateUsersPage = lazy(() => import("./ImpersonateUsersPage"));
 const ChatsPage = lazy(() => import("./UnifiedCommunicationsPage"));
 const UnansweredMessagesPage = lazy(() => import("./UnansweredMessagesPage"));
 const IgnoredCallNumbersPage = lazy(() => import("./IgnoredCallNumbersPage"));
+const ReportsPage = lazy(() => import("./ReportsPage"));
 const StatsPage = lazy(() => import("./StatsPage"));
+const AccessHistoryPage = lazy(() => import("./AccessHistoryPage"));
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
   color: isActive ? "#ffffff" : "#9dc9e8",
@@ -75,7 +84,7 @@ function ProtectedRoutes() {
   }
   return (
     <div className="crm-shell" style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      {isImpersonating ? <div className="impersonation-banner"><span>Viewing CRM as <strong>{user?.name}</strong> ({user?.role}).</span><button type="button" onClick={() => { stopImpersonating(); window.location.assign("/settings/impersonate"); }}>Return to {previousUser?.name || "Previous User"}</button></div> : null}
+      {isImpersonating ? <div className="impersonation-banner"><span>Viewing CRM as <strong>{user?.name}</strong> ({user?.role}).</span><button className="slds-button" type="button" onClick={() => { stopImpersonating(); window.location.assign("/settings/impersonate"); }}>Return to {previousUser?.name || "Previous User"}</button></div> : null}
       <nav className="crm-nav" style={{
         background: "#032d60",
         display: "flex",
@@ -90,7 +99,7 @@ function ProtectedRoutes() {
         </span>
         <button
           type="button"
-          className="crm-mobile-menu-button"
+          className="slds-button crm-mobile-menu-button"
           aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
           aria-expanded={mobileMenuOpen}
           onClick={() => setMobileMenuOpen((open) => !open)}
@@ -98,36 +107,7 @@ function ProtectedRoutes() {
           <span aria-hidden="true">{mobileMenuOpen ? "×" : "☰"}</span>
         </button>
         <div className="crm-nav-links" style={{ display: "flex", flex: 1 }}>
-          {isForemanUser ? (
-            <>
-              <NavLink to="/dispatch" style={navLinkStyle}>My Jobs</NavLink>
-              <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
-            </>
-          ) : isDispatchUser ? (
-            <>
-              <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
-              <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
-              <NavLink to="/sales-performance" style={navLinkStyle}>Performance</NavLink>
-              <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
-            </>
-          ) : (
-            <>
-              <NavLink to="/" end style={navLinkStyle}>Leads</NavLink>
-              {user?.role === "admin" ? <NavLink to="/chats" style={navLinkStyle}>Communications</NavLink> : null}
-              {user?.role === "admin" ? <NavLink to="/sales-work-queue" style={navLinkStyle}>Sales Work Queue</NavLink> : null}
-              {user?.role === "admin" ? <NavLink to="/stats" style={navLinkStyle}>Stats</NavLink> : null}
-              <NavLink to="/sales-calendar" style={navLinkStyle}>Sales Calender</NavLink>
-              <NavLink to="/sales-performance" style={navLinkStyle}>Performance</NavLink>
-              <NavLink to="/outreach" style={navLinkStyle}>Outreach</NavLink>
-                  <NavLink to="/settings" style={navLinkStyle}>Settings</NavLink>
-                  <NavLink to="/pricing" style={navLinkStyle}>Pricing</NavLink>
-              {user?.role === "admin" && (
-                <>
-                  <NavLink to="/dispatch" style={navLinkStyle}>Dispatch Calendar</NavLink>
-                </>
-              )}
-            </>
-          )}
+          <MainNavigation role={user?.role} />
         </div>
         <div className="crm-user-actions" style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {user && <span style={{ color: "#9dc9e8", fontSize: 13 }}>{user.name}</span>}
@@ -136,7 +116,7 @@ function ProtectedRoutes() {
               Change Password
             </NavLink>
           ) : null}
-          <button
+          <button className="slds-button"
             onClick={logout}
             style={{
               background: "none", border: "1px solid rgba(255,255,255,.35)",
@@ -152,7 +132,7 @@ function ProtectedRoutes() {
         <>
           <button
             type="button"
-            className="crm-mobile-menu-backdrop"
+            className="slds-button crm-mobile-menu-backdrop"
             aria-label="Close navigation menu"
             onClick={() => setMobileMenuOpen(false)}
           />
@@ -162,40 +142,10 @@ function ProtectedRoutes() {
               <span>{user?.role || ""}</span>
             </div>
             <div className="crm-mobile-menu-links">
-              {isForemanUser ? (
-                <>
-                  <NavLink to="/dispatch">My Jobs</NavLink>
-                  <NavLink to="/settings">Settings</NavLink>
-                  {!isImpersonating ? <NavLink to="/change-password">Change Password</NavLink> : null}
-                </>
-              ) : isDispatchUser ? (
-                <>
-                  <NavLink to="/dispatch">Dispatch Calendar</NavLink>
-                  <NavLink to="/sales-calendar">Sales Calendar</NavLink>
-                  <NavLink to="/sales-performance">Sales Performance</NavLink>
-                  <NavLink to="/settings">Settings</NavLink>
-                </>
-              ) : (
-                <>
-                  <NavLink to="/">Leads</NavLink>
-                  {user?.role === "admin" ? <NavLink to="/chats">Communications</NavLink> : null}
-                  {user?.role === "admin" ? <NavLink to="/sales-work-queue">Sales Work Queue</NavLink> : null}
-                  {user?.role === "admin" ? <NavLink to="/stats">Stats</NavLink> : null}
-                  <NavLink to="/sales-calendar">Sales Calendar</NavLink>
-                  <NavLink to="/sales-performance">Sales Performance</NavLink>
-                  <NavLink to="/outreach">Outreach</NavLink>
-                  <NavLink to="/settings">Settings</NavLink>
-                  <NavLink to="/pricing">Pricing</NavLink>
-                  {user?.role === "admin" ? (
-                    <>
-                      <NavLink to="/dispatch">Dispatch Calendar</NavLink>
-                    </>
-                  ) : null}
-                  {!isImpersonating ? <NavLink to="/change-password">Change Password</NavLink> : null}
-                </>
-              )}
+              <MainNavigation role={user?.role} mobile />
+              {!isDispatchUser && !isImpersonating ? <NavLink to="/change-password">Change Password</NavLink> : null}
             </div>
-            <button type="button" className="crm-mobile-signout" onClick={logout}>Sign Out</button>
+            <button type="button" className="slds-button crm-mobile-signout" onClick={logout}>Sign Out</button>
           </aside>
         </>
       ) : null}
@@ -204,6 +154,9 @@ function ProtectedRoutes() {
           <Route path="/" element={<LeadsList />} />
           <Route path="/chats" element={user?.role === "admin" ? <ChatsPage /> : <Navigate to="/" replace />} />
           <Route path="/sales-work-queue" element={user?.role === "admin" ? <UnansweredMessagesPage /> : <Navigate to="/" replace />} />
+          <Route path="/reports" element={user?.role === "admin" ? <Navigate to="/reports/booking-percentage" replace /> : <Navigate to="/" replace />} />
+          <Route path="/reports/booking-percentage" element={user?.role === "admin" ? <ReportsPage /> : <Navigate to="/" replace />} />
+          <Route path="/walkthrough-requests" element={user?.role === "admin" ? <WalkthroughRequestsPage /> : <Navigate to="/" replace />} />
           <Route path="/stats" element={user?.role === "admin" ? <StatsPage /> : <Navigate to="/" replace />} />
           <Route path="/outreach" element={<OutreachEventsPage />} />
           <Route path="/sales-calendar" element={<SalesCalendarPage />} />
@@ -216,13 +169,16 @@ function ProtectedRoutes() {
           <Route path="/dispatch-users" element={<DispatchPage mode="manage" />} />
           <Route path="/foremen" element={<ForemenPage />} />
           <Route path="/settings/companies" element={<CompaniesPage />} />
+          <Route path="/settings/inventory-catalog" element={user?.role === "admin" ? <InventoryCatalogPage /> : <Navigate to="/settings" replace />} />
+          <Route path="/settings/moving-terms" element={user?.role === "admin" ? <MovingTermsPage /> : <Navigate to="/settings" replace />} />
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
           <Route path="/settings/pending-duplications" element={<PendingDuplicationsPage />} />
           <Route path="/settings/duplication-rules" element={user?.role === "admin" ? <LeadDuplicationRulesPage /> : <Navigate to="/" replace />} />
           <Route path="/settings/ignored-call-numbers" element={user?.role === "admin" ? <IgnoredCallNumbersPage /> : <Navigate to="/" replace />} />
           <Route path="/settings/impersonate" element={<ImpersonateUsersPage />} />
+          <Route path="/settings/access-history" element={user?.role === "admin" ? <AccessHistoryPage /> : <Navigate to="/" replace />} />
           <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/pricing" element={<PricingPage />} />
+          <Route path="/pricing" element={<ErrorBoundary><PricingPage /></ErrorBoundary>} />
           <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />
           <Route path="/leads/:leadId" element={<LeadDetail />} />
           <Route path="/change-password" element={<ChangePasswordPage />} />
@@ -237,13 +193,16 @@ function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
-          <Routes>
-            <Route path="/liveswitch/callback" element={<LiveSwitchCallbackPage />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/*" element={<ProtectedRoutes />} />
-          </Routes>
-        </Suspense>
+        <ErrorBoundary>
+          <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
+            <Routes>
+              <Route path="/move/:accessId" element={<CustomerMovePage />} />
+              <Route path="/liveswitch/callback" element={<LiveSwitchCallbackPage />} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/*" element={<ProtectedRoutes />} />
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
       </BrowserRouter>
     </AuthProvider>
   );

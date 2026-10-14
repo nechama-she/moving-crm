@@ -7,11 +7,13 @@ phases:
       python: 3.11
       nodejs: 20
     commands:
+      - cd $CODEBUILD_SRC_DIR && pip install -r backend/deploy-requirements.txt 'pytest>=8,<9' --quiet
       - echo "Installing frontend dependencies"
       - cd $CODEBUILD_SRC_DIR/frontend && npm ci
 
   build:
     commands:
+      - cd $CODEBUILD_SRC_DIR && python -m pytest tests/unit/test_settings_transfer.py tests/unit/test_pipeline_settings.py -q
       - echo "Building frontend"
       - cd $CODEBUILD_SRC_DIR/frontend && npm run build
 
@@ -57,6 +59,7 @@ phases:
       - find ./package \( -type d \( -name __pycache__ -o -name tests \) -exec rm -rf {} + \) -o \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.pyx' \) -delete 2>/dev/null || true
       - cp *.py ./package/
       - cp -r routes ./package/
+      - cp -r data ./package/
       - cp -r $CODEBUILD_SRC_DIR/libs ./package/libs
       - cd package && zip -qr9 ../api-package.zip . && cd ..
       - echo "api-backend package size:" && du -h $CODEBUILD_SRC_DIR/backend/api-package.zip
@@ -76,6 +79,11 @@ phases:
       - echo "Uploading message stream package to S3"
       - aws s3 cp $CODEBUILD_SRC_DIR/backend/message-stream-package.zip s3://${FRONTEND_BUCKET}/message-stream/package.zip
       - rm -rf $CODEBUILD_SRC_DIR/backend/message-stream-package $CODEBUILD_SRC_DIR/backend/message-stream-package.zip
+
+  post_build:
+    commands:
+      # Deploy uses frontend/dist; node_modules only makes BuildOutput slower.
+      - rm -rf $CODEBUILD_SRC_DIR/frontend/node_modules
 
 artifacts:
   files:
