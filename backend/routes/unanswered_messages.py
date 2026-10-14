@@ -23,6 +23,7 @@ from database import get_db
 from db import calls_table, conversations_table, sms_messages_table
 from models import AppSetting, Company, Lead, MessageState, MissedCallState, User
 from realtime import publish_realtime_event
+from ended_chat_retention import visible_message_states
 from work_queue_rules import _digits, _epoch, _smartmoving_created_at, calculate_followup_rows
 
 router = APIRouter(prefix="/api/unanswered-messages", tags=["Unanswered Messages"])
@@ -99,7 +100,7 @@ def queue_summary(_: User = Depends(require_admin), db: Session = Depends(get_db
     ignored = _ignored_call_numbers(db)
     ignored_from = [number for number, directions in ignored.items() if directions & {"from", "both"}]
     ignored_to = [number for number, directions in ignored.items() if directions & {"to", "both"}]
-    messages = db.query(MessageState.conversation_ended, func.count()).filter(~and_(
+    messages = db.query(MessageState.conversation_ended, func.count()).filter(visible_message_states(), ~and_(
         MessageState.channel == "sms", or_(MessageState.client_identifier.in_(ignored_from), MessageState.company_identifier.in_(ignored_to)),
     )).group_by(MessageState.conversation_ended).all()
     message_counts = {bool(ended): count for ended, count in messages}
@@ -560,14 +561,57 @@ def list_missed_calls(
     return {"items": items, "count": len(states), "global_count": len(global_states)}
 
 
+class MessageCleanupRequest(BaseModel):
+    channel: str
+    message_id: str
+
+
+@router.post("/message-states/clean")
+def clean_message_state(body: MessageCleanupRequest, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from message_state_cleanup import latest_message
+    state = db.get(MessageState, (body.channel, body.message_id))
+    if state is None:
+        return {"removed": 0, "result": "already_removed"}
+    if state.conversation_ended:
+        return {"removed": 0, "result": "manually_ended"}
+    if state.channel not in {"sms", "messenger", "instagram"}:
+        return {"removed": 0, "result": "unverified"}
+    # Capture the exact state before network I/O; never delete a concurrently
+    # replaced, reassigned or manually ended row based on this older snapshot.
+    channel, message_id = state.channel, state.message_id
+    client, company, occurred = state.client_identifier, state.company_identifier, state.occurred_at
+    db.rollback()
+    try:
+        latest = latest_message(sms_messages_table if channel == "sms" else conversations_table,
+                                channel, client, company)
+    except (BotoCoreError, ClientError, TimeoutError, ValueError):
+        logger.exception("Could not verify message state %s/%s", channel, message_id)
+        return {"removed": 0, "result": "unverified"}
+    normalized = occurred.replace(tzinfo=timezone.utc) if occurred.tzinfo is None else occurred
+    if not latest or latest[1] == "unknown":
+        return {"removed": 0, "result": "unverified"}
+    if latest[1] != "outbound" or latest[0] <= normalized:
+        return {"removed": 0, "result": "still_unanswered"}
+    removed = db.query(MessageState).filter_by(channel=channel, message_id=message_id,
+        client_identifier=client, company_identifier=company, occurred_at=occurred,
+        conversation_ended=False).delete(synchronize_session=False)
+    db.commit()
+    if removed:
+        publish_realtime_event({"type": "message_state_changed", "event_id": str(uuid.uuid4()),
+            "action": "remove", "channel": channel, "message_ids": [message_id],
+            "count_delta": {"unanswered": -removed, "ended": 0}})
+    return {"removed": removed, "result": "answered" if removed else "changed_during_check"}
+
+
 @router.get("/message-states/all")
 def list_all_message_states(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Return the CRM message state table exactly as stored, without side effects."""
+    """Return active states and the last 24 hours of ended history."""
     states = (
         db.query(MessageState)
+        .filter(visible_message_states())
         .order_by(MessageState.occurred_at.desc(), MessageState.channel.asc(), MessageState.message_id.asc())
         .all()
     )
@@ -790,15 +834,15 @@ def list_message_states(
     ignored_numbers = _ignored_call_numbers(db)
     ignored_from = {number for number, directions in ignored_numbers.items() if directions & {"from", "both"}}
     ignored_to = {number for number, directions in ignored_numbers.items() if directions & {"to", "both"}}
-    global_visible_filter = True
+    global_visible_filter = visible_message_states()
     if ignored_numbers:
-        global_visible_filter = ~and_(
+        global_visible_filter = and_(global_visible_filter, ~and_(
             MessageState.channel == "sms",
             or_(
                 MessageState.client_identifier.in_(ignored_from) if ignored_from else False,
                 MessageState.company_identifier.in_(ignored_to) if ignored_to else False,
             ),
-        )
+        ))
     global_count_rows = (
         db.query(MessageState.conversation_ended, func.count())
         .filter(global_visible_filter)
@@ -913,6 +957,7 @@ def set_conversation_ended(
     if previous_ended == body.ended:
         return {"message_id": state.message_id, "conversation_ended": previous_ended, "event": None}
     state.conversation_ended = body.ended
+    state.ended_at = datetime.now(timezone.utc) if body.ended else None
     db.commit()
     lead = (
         db.query(Lead)

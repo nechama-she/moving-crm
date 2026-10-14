@@ -6,30 +6,13 @@ phases:
     runtime-versions:
       python: 3.11
     commands:
-      - echo "Installing database migration and seed dependencies"
+      - echo "Installing database migration dependencies"
       - cd $CODEBUILD_SRC_DIR/backend && pip install -r deploy-requirements.txt --quiet
 
   pre_build:
     commands:
-      - |
-        if [ "$ENVIRONMENT" = "prod" ]; then
-          cd "$CODEBUILD_SRC_DIR/backend" && python pipeline_settings.py check
-        fi
-      - cd $CODEBUILD_SRC_DIR/backend && python reset_liveswitch_access_token.py
-      - echo "Running schema and settings migrations (no client data backfills)"
-      - |
-        cd "$CODEBUILD_SRC_DIR/backend"
-        if [ "$ENVIRONMENT" = "prod" ]; then
-          python migrate.py --skip-pricing-seeds
-        else
-          python migrate.py
-        fi
-      - echo "Ensuring seed data (admin user + company)"
-      - cd $CODEBUILD_SRC_DIR/backend && python -c "from import_leads import ensure_seed_data; from database import SessionLocal; s=SessionLocal(); ensure_seed_data(s); s.commit(); s.close(); print('Seed data OK')"
-      - |
-        if [ "$ENVIRONMENT" = "prod" ]; then
-          cd "$CODEBUILD_SRC_DIR/backend" && python pipeline_settings.py apply
-        fi
+      - echo "Applying pending schema changes to the existing database"
+      - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
       - |
         SSM_KEY="/moving-crm/${ENVIRONMENT:-dev}/API_SECRET"
         if ! aws ssm get-parameter --name "$SSM_KEY" --with-decryption > /dev/null 2>&1; then
@@ -101,10 +84,6 @@ phases:
 
   post_build:
     commands:
-      - |
-        if [ "$CODEBUILD_BUILD_SUCCEEDING" = "1" ] && [ "$ENVIRONMENT" = "dev" ]; then
-          cd "$CODEBUILD_SRC_DIR/backend" && python pipeline_settings.py publish
-        fi
       - echo "Deploy complete"
 
 cache:

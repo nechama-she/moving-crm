@@ -359,6 +359,10 @@ class Lead(Base):
 
 class MessageState(Base):
     __tablename__ = "message_states"
+    __table_args__ = (
+        Index("ix_message_states_status_ended", "conversation_ended", "ended_at"),
+        Index("ix_message_states_status_order", "conversation_ended", text("occurred_at DESC"), "channel", "message_id"),
+    )
 
     channel = Column(String(20), primary_key=True)
     message_id = Column(String(255), primary_key=True)
@@ -367,6 +371,7 @@ class MessageState(Base):
     company_identifier = Column(String(255), nullable=False, index=True)
     direction = Column(String(20), nullable=False)
     conversation_ended = Column(Boolean, nullable=False, default=False)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
     occurred_at = Column(DateTime(timezone=True), nullable=False, index=True)
 
     lead = relationship("Lead")

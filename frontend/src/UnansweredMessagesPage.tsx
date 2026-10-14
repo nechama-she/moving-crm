@@ -86,6 +86,8 @@ export default function UnansweredMessagesPage() {
   const [globalMissedCallCount, setGlobalMissedCallCount] = useState(0);
   const [messageStates, setMessageStates] = useState<RawMessageState[]>([]);
   const [loadingMessageStates, setLoadingMessageStates] = useState(false);
+  const [cleanupProgress, setCleanupProgress] = useState<{ checked: number; total: number } | null>(null);
+  const cleanupRunning = useRef(false);
   const [missedCallStates, setMissedCallStates] = useState<RawMissedCallState[]>([]);
   const [loadingMissedCallStates, setLoadingMissedCallStates] = useState(false);
   const [leadTab, setLeadTab] = useState<LeadTab>("overdue");
@@ -250,6 +252,50 @@ export default function UnansweredMessagesPage() {
   useEffect(() => {
     if (queueTab === "message-state") void loadMessageStates();
   }, [queueTab, loadMessageStates]);
+
+  const cleanMessageStates = async () => {
+    if (cleanupRunning.current) return;
+    cleanupRunning.current = true;
+    setCleanupProgress({ checked: 0, total: 0 });
+    setError("");
+    setValidationNotice("");
+    let removed = 0;
+    let unverified = 0;
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/message-states/all`, { headers: authHeaders(token) });
+      if (!response.ok) throw new Error(`Message states HTTP ${response.status}`);
+      const data = await response.json();
+      const targets: RawMessageState[] = (data.items || []).filter((row: RawMessageState) => !row.conversation_ended);
+      setCleanupProgress({ checked: 0, total: targets.length });
+      // Each request verifies actual history. These are finite work batches,
+      // not polling; no requests continue after the selected rows are checked.
+      for (let start = 0; start < targets.length; start += 3) {
+        await Promise.all(targets.slice(start, start + 3).map(async (row) => {
+          try {
+            const result = await fetch(`${API_BASE}/api/unanswered-messages/message-states/clean`, {
+              method: "POST", headers: { ...authHeaders(token), "Content-Type": "application/json" },
+              body: JSON.stringify({ channel: row.channel, message_id: row.message_id }),
+            });
+            if (!result.ok) throw new Error(`Check HTTP ${result.status}`);
+            const outcome = await result.json();
+            removed += Number(outcome.removed || 0);
+            if (outcome.result === "unverified" || outcome.result === "changed_during_check") unverified += 1;
+            if (outcome.removed) setMessageStates((current) => current.filter((item) => item.channel !== row.channel || item.message_id !== row.message_id));
+          } catch {
+            unverified += 1;
+          }
+          setCleanupProgress((current) => current ? { ...current, checked: current.checked + 1 } : null);
+        }));
+      }
+      setValidationNotice(`Checked ${targets.length} entries. Removed ${removed} answered entries.${unverified ? ` ${unverified} could not be verified and were kept.` : ""}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not check message history");
+    } finally {
+      await Promise.allSettled([loadMessageStates(), loadSummary(), loadMessages()]);
+      cleanupRunning.current = false;
+      setCleanupProgress(null);
+    }
+  };
 
   const loadMissedCallStates = useCallback(async () => {
     setLoadingMissedCallStates(true);
@@ -683,7 +729,7 @@ export default function UnansweredMessagesPage() {
       {queueTab === "message-state" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Message State Table ({messageStates.length})</h2>
-          <button className="slds-button" type="button" onClick={() => void loadMessageStates()} disabled={loadingMessageStates} style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: loadingMessageStates ? "wait" : "pointer" }}>{loadingMessageStates ? "Loading…" : "Reload"}</button>
+          <button className="slds-button" type="button" onClick={() => void cleanMessageStates()} disabled={loadingMessageStates || cleanupProgress !== null} style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: loadingMessageStates || cleanupProgress ? "wait" : "pointer" }}>{cleanupProgress ? `Checking ${cleanupProgress.checked}/${cleanupProgress.total}` : loadingMessageStates ? "Loading…" : "Reload"}</button>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse" }}>
