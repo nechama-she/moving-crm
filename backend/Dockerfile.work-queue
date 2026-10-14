@@ -1,6 +1,0 @@
-FROM python:3.11-slim
-RUN pip install --no-cache-dir boto3 psycopg2-binary
-WORKDIR /app
-COPY work_queue_listener.py .
-USER 65534:65534
-CMD ["python", "-u", "work_queue_listener.py"]
