@@ -22,6 +22,27 @@ import sqlalchemy.dialects.postgresql
 from public_move_security import digest, secret_digest, link_token, contact_fingerprint, file_type, normalize_phone
 
 
+@pytest.mark.parametrize('rep', [False, True])
+def test_public_links_use_first_configured_domain(portal, monkeypatch, rep):
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod, 'setting', lambda name: 'https://www.crm.example.com,crm.example.com')
+    url = mod.public_url(access, rep=rep)
+    assert url.startswith(f'https://www.crm.example.com/move/{access.id}#key=')
+    assert ',' not in url
+    assert ('&audience=rep' in url) == rep
+
+
+@pytest.mark.parametrize('origin', ['http://crm.example.com', 'https://',
+    'https://user:secret@crm.example.com', 'https://crm.example.com/path',
+    'https://crm.example.com?next=other', 'https://crm.example.com:bad'])
+def test_public_links_reject_invalid_origin(portal, monkeypatch, origin):
+    mod, db, lead, access = portal
+    monkeypatch.setattr(mod, 'setting', lambda name: origin)
+    with pytest.raises(HTTPException) as error:
+        mod.public_url(access)
+    assert error.value.status_code == 503
+
+
 @pytest.fixture
 def portal(monkeypatch):
     monkeypatch.setenv('JWT_SECRET', 'test-only-secret-with-at-least-32-characters')

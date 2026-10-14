@@ -70,7 +70,7 @@ Parameters:
   DomainName:
     Type: String
     Default: ""
-    Description: Custom frontend domain (e.g. crm.example.com). Empty = CloudFront default domain only.
+    Description: Comma-separated frontend domains; the first is used for customer and rep links. Empty = CloudFront default domain only.
 
   HostedZoneId:
     Type: String
@@ -1608,7 +1608,7 @@ Resources:
           PUBLIC_MOVE_COGNITO_POOL_ID: !Ref CustomerPortalUserPool
           PUBLIC_MOVE_ORIGIN: !If
             - IsProd
-            - !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${CloudFrontDistribution.DomainName}"]
+            - !If [HasDomain, !Join ["", ["https://", !Select [0, !Split [",", !Ref DomainName]]]], !Sub "https://${CloudFrontDistribution.DomainName}"]
             - !Sub "https://${CloudFrontDistribution.DomainName}"
           CORS_ORIGINS: !If
             - IsProd
