@@ -1973,10 +1973,11 @@ Resources:
 
   WorkQueueFailureBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
+    DeletionPolicy: RetainExceptOnCreate
     UpdateReplacePolicy: Retain
     Properties:
-      BucketName: !Sub moving-crm-work-queue-failures-${AWS::AccountId}-${Environment}
+      # Generate a unique name so a bucket retained by an earlier rollback
+      # cannot block deployment. Consumers use this resource's ARN below.
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
