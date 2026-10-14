@@ -51,7 +51,7 @@ export default function ChangePasswordPage() {
 
   return (
     <div style={{ padding: "40px 24px", maxWidth: 460, margin: "0 auto" }}>
-      <button
+      <button className="slds-button"
         onClick={() => navigate(-1)}
         style={{
           background: "none", border: "none", color: "#0176d3",
@@ -118,7 +118,7 @@ export default function ChangePasswordPage() {
             </label>
           ))}
 
-          <button
+          <button className="slds-button"
             type="submit"
             disabled={submitting}
             style={{

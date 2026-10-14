@@ -10,3 +10,5 @@ httpx==0.27.0
 python-dotenv==1.0.1
 python-multipart==0.0.12
 python-dateutil==2.9.0.post0
+
+reportlab==4.4.3

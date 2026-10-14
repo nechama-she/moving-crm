@@ -1,3 +1,4 @@
+import CompanyLogoEditor from './CompanyLogoEditor';
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
@@ -6,23 +7,34 @@ type Company = {
   id: string;
   name: string;
   color?: string;
+  logo?: string;
   phone?: string;
+  office_address?: string;
+  dot_number?: string;
+  sender_email?: string;
   facebook_page_id?: string;
   aircall_number_id?: string;
   aircall_name?: string;
+  dispatches_for_company_id?: string;
   samrtmoving_branch_id?: string;
   granot_api_id?: string;
   granot_mover_ref?: string;
   timezone?: string;
+  is_default_company?: boolean;
 };
 
 type CompanyForm = {
   name: string;
   color: string;
+  logo: string;
   phone: string;
+  office_address: string;
+  dot_number: string;
+  sender_email: string;
   facebook_page_id: string;
   aircall_number_id: string;
   aircall_name: string;
+  dispatches_for_company_id: string;
   samrtmoving_branch_id: string;
   granot_api_id: string;
   granot_mover_ref: string;
@@ -32,10 +44,15 @@ type CompanyForm = {
 const emptyForm: CompanyForm = {
   name: "",
   color: "",
+  logo: "",
   phone: "",
+  office_address: "",
+  dot_number: "",
+  sender_email: "",
   facebook_page_id: "",
   aircall_number_id: "",
   aircall_name: "",
+  dispatches_for_company_id: "",
   samrtmoving_branch_id: "",
   granot_api_id: "",
   granot_mover_ref: "",
@@ -49,6 +66,7 @@ export default function CompaniesPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingDefault, setSavingDefault] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
@@ -96,10 +114,15 @@ export default function CompaniesPage() {
     setForm({
       name: company.name || "",
       color: company.color || "",
+      logo: company.logo || "",
       phone: company.phone || "",
+      office_address: company.office_address || "",
+      dot_number: company.dot_number || "",
+      sender_email: company.sender_email || "",
       facebook_page_id: company.facebook_page_id || "",
       aircall_number_id: company.aircall_number_id || "",
       aircall_name: company.aircall_name || "",
+      dispatches_for_company_id: company.dispatches_for_company_id || "",
       samrtmoving_branch_id: company.samrtmoving_branch_id || "",
       granot_api_id: company.granot_api_id || "",
       granot_mover_ref: company.granot_mover_ref || "",
@@ -123,10 +146,15 @@ export default function CompaniesPage() {
       const payload = {
         name: form.name.trim(),
         color: form.color.trim(),
+        logo: form.logo,
         phone: form.phone.trim(),
+        office_address: form.office_address.trim(),
+        dot_number: form.dot_number.trim(),
+        sender_email: form.sender_email.trim(),
         facebook_page_id: form.facebook_page_id.trim(),
         aircall_number_id: form.aircall_number_id.trim(),
         aircall_name: form.aircall_name.trim(),
+        dispatches_for_company_id: form.dispatches_for_company_id || null,
         samrtmoving_branch_id: form.samrtmoving_branch_id.trim(),
         granot_api_id: form.granot_api_id.trim(),
         granot_mover_ref: form.granot_mover_ref.trim(),
@@ -153,6 +181,29 @@ export default function CompaniesPage() {
       setError(err instanceof Error ? err.message : "Failed to save company");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function setDefaultCompany(company: Company, checked: boolean) {
+    setSavingDefault(true);
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/companies/${company.id}/default`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ is_default_company: checked }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(err.detail || "Failed to update default company");
+      }
+      setCompanies(await res.json() as Company[]);
+      setInfo(checked ? `${company.name} is now the default company.` : "Default company cleared.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to update default company");
+    } finally {
+      setSavingDefault(false);
     }
   }
 
@@ -187,6 +238,9 @@ export default function CompaniesPage() {
         c.name || "",
         c.color || "",
         c.phone || "",
+        c.office_address || "",
+        c.dot_number || "",
+        c.sender_email || "",
         c.facebook_page_id || "",
         c.aircall_number_id || "",
         c.aircall_name || "",
@@ -217,6 +271,7 @@ export default function CompaniesPage() {
 
       <div style={{ border: "1px solid #dddbda", borderRadius: 4, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
         <h2 style={sectionHeader}>{editing ? "Edit Company" : "Create Company"}</h2>
+        <CompanyLogoEditor key={editingId || "new"} value={form.logo} name={form.name} color={previewColor} disabled={saving} onChange={value => updateField("logo", value)} />
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
           <label style={fieldLabel}>
             Name
@@ -232,6 +287,20 @@ export default function CompaniesPage() {
           <label style={fieldLabel}>
             Phone
             <input value={form.phone} onChange={(e) => updateField("phone", e.target.value)} style={inputStyle} />
+          </label>
+          <label style={{ ...fieldLabel, gridColumn: "1 / -1" }}>
+            USDOT number
+            <input value={form.dot_number} onChange={(e) => updateField("dot_number", e.target.value)} style={inputStyle} inputMode="numeric" placeholder="Enter USDOT number" maxLength={30} />
+          </label>
+          <label style={{ ...fieldLabel, gridColumn: "1 / -1" }}>
+            Office address
+            <input value={form.office_address} onChange={(e) => updateField("office_address", e.target.value)} style={inputStyle} placeholder="Street address, city, state, ZIP" maxLength={1000} />
+            <small>Used for local travel time: office to pickup, and delivery back to office.</small>
+          </label>
+          <label style={{ ...fieldLabel, gridColumn: "1 / -1" }}>
+            Sender email
+            <input type="email" value={form.sender_email} onChange={(e) => updateField("sender_email", e.target.value)} style={inputStyle} placeholder="sales@company.com" maxLength={255} />
+            <small>Customer emails (verification codes) are sent from this address. Its domain must be verified in AWS SES first; leave empty to use the generic AWS sender.</small>
           </label>
           <label style={fieldLabel}>
             Facebook Page ID
@@ -250,6 +319,14 @@ export default function CompaniesPage() {
             <input value={form.samrtmoving_branch_id} onChange={(e) => updateField("samrtmoving_branch_id", e.target.value)} style={inputStyle} />
           </label>
           <label style={fieldLabel}>
+            Subcontractor for (contract company)
+            <select value={form.dispatches_for_company_id} onChange={(e) => updateField("dispatches_for_company_id", e.target.value)} style={inputStyle}>
+              <option value="">Own contracts</option>
+              {companies.filter((c) => c.id !== editingId && !c.dispatches_for_company_id).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <small>When SmartMoving sends this company, use the selected company for the contract and this company as the subcontractor. Existing subcontractor assignments are kept.</small>
+          </label>
+          <label style={fieldLabel}>
             Granot API ID
             <input value={form.granot_api_id} onChange={(e) => updateField("granot_api_id", e.target.value)} style={inputStyle} />
           </label>
@@ -264,7 +341,7 @@ export default function CompaniesPage() {
         </div>
 
         <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => void saveCompany()}
             disabled={saving}
@@ -273,7 +350,7 @@ export default function CompaniesPage() {
             {saving ? (editing ? "Saving..." : "Creating...") : (editing ? "Save Company" : "Create Company")}
           </button>
           {editing ? (
-            <button
+            <button className="slds-button"
               type="button"
               onClick={resetForm}
               style={{ border: "1px solid #c9c7c5", background: "#fff", color: "#3e3e3c", borderRadius: 4, padding: "8px 14px", fontWeight: 600 }}
@@ -301,13 +378,17 @@ export default function CompaniesPage() {
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1080 }}>
           <thead>
             <tr>
+              <th style={th}>Company ID</th>
               <th style={th}>Name</th>
+              <th style={th}>Default company</th>
               <th style={th}>Color</th>
               <th style={th}>Phone</th>
+              <th style={th}>Office address</th>
               <th style={th}>Facebook Page ID</th>
               <th style={th}>Aircall Number ID</th>
               <th style={th}>Aircall Name</th>
               <th style={th}>SmartMoving Branch ID</th>
+              <th style={th}>Subcontractor for</th>
               <th style={th}>Granot API ID</th>
               <th style={th}>Granot Mover Ref</th>
               <th style={th}>Timezone</th>
@@ -317,19 +398,30 @@ export default function CompaniesPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td style={td} colSpan={11}>Loading...</td>
+                <td style={td} colSpan={15}>Loading...</td>
               </tr>
             ) : null}
 
             {!loading && filteredCompanies.length === 0 ? (
               <tr>
-                <td style={td} colSpan={11}>No companies found.</td>
+                <td style={td} colSpan={15}>No companies found.</td>
               </tr>
             ) : null}
 
             {!loading && filteredCompanies.map((company) => (
               <tr key={company.id} style={{ borderTop: "1px solid #f1f0ef" }}>
+                <td style={{ ...td, fontFamily: "monospace", fontSize: 12, userSelect: "all" }}>{company.id}</td>
                 <td style={td}>{company.name || "-"}</td>
+                <td style={td}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Use ${company.name} as default company`}
+                    title="SMS sender for customer verification when no company is assigned"
+                    checked={!!company.is_default_company}
+                    disabled={savingDefault || saving}
+                    onChange={(e) => void setDefaultCompany(company, e.target.checked)}
+                  />
+                </td>
                 <td style={td}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ width: 16, height: 16, borderRadius: 999, background: company.color || "#ffffff", border: "1px solid #cbd5e1", display: "inline-block" }} />
@@ -337,23 +429,25 @@ export default function CompaniesPage() {
                   </div>
                 </td>
                 <td style={td}>{company.phone || "-"}</td>
+                <td style={td}>{company.office_address || "Not set"}</td>
                 <td style={td}>{company.facebook_page_id || "-"}</td>
                 <td style={td}>{company.aircall_number_id || "-"}</td>
                 <td style={td}>{company.aircall_name || "-"}</td>
                 <td style={td}>{company.samrtmoving_branch_id || "-"}</td>
+                <td style={td}>{companies.find((c) => c.id === company.dispatches_for_company_id)?.name || "Own contracts"}</td>
                 <td style={td}>{company.granot_api_id || "-"}</td>
                 <td style={td}>{company.granot_mover_ref || "-"}</td>
                 <td style={td}>{company.timezone || "-"}</td>
                 <td style={td}>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <button
+                    <button className="slds-button"
                       type="button"
                       onClick={() => startEdit(company)}
                       style={{ border: "1px solid #0176d3", color: "#0176d3", background: "#fff", borderRadius: 4, padding: "4px 10px", fontSize: 12, fontWeight: 600 }}
                     >
                       Edit
                     </button>
-                    <button
+                    <button className="slds-button"
                       type="button"
                       onClick={() => void deleteCompany(company)}
                       style={{ border: "1px solid #ba0517", color: "#ba0517", background: "#fff", borderRadius: 4, padding: "4px 10px", fontSize: 12, fontWeight: 600 }}

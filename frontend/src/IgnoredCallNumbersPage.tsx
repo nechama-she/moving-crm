@@ -67,14 +67,14 @@ export default function IgnoredCallNumbersPage() {
           <option value="to">To this number</option>
           <option value="both">Both directions</option>
         </select>
-        <button type="button" onClick={() => void addNumber()} disabled={saving || !input.trim()} style={{ border: 0, borderRadius: 5, padding: "9px 15px", background: "#0176d3", color: "#fff", fontWeight: 700 }}>Add number</button>
+        <button className="slds-button" type="button" onClick={() => void addNumber()} disabled={saving || !input.trim()} style={{ border: 0, borderRadius: 5, padding: "9px 15px", background: "#0176d3", color: "#fff", fontWeight: 700 }}>Add number</button>
       </div>
       {error ? <p style={{ color: "#b91c1c", padding: "0 16px" }}>{error}</p> : null}
       {loading ? <p style={{ color: "#64748b", padding: 16 }}>Loading…</p> : null}
       {!loading && numbers.length === 0 ? <p style={{ color: "#64748b", padding: 16 }}>No ignored numbers.</p> : null}
       {numbers.map((entry) => <div key={`${entry.number}:${entry.direction}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 16px", borderTop: "1px solid #e2e8f0" }}>
         <div><strong style={{ color: "#334155" }}>{displayPhone(entry.number)}</strong><div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{entry.direction === "from" ? "Ignore messages/calls from this number" : entry.direction === "to" ? "Ignore messages/calls to this number" : "Ignore both directions"}</div></div>
-        <button type="button" disabled={saving} onClick={() => void removeNumber(entry.number, entry.direction)} style={{ border: "1px solid #dc2626", borderRadius: 5, background: "#fff", color: "#dc2626", padding: "6px 10px", fontWeight: 700 }}>Remove</button>
+        <button className="slds-button" type="button" disabled={saving} onClick={() => void removeNumber(entry.number, entry.direction)} style={{ border: "1px solid #dc2626", borderRadius: 5, background: "#fff", color: "#dc2626", padding: "6px 10px", fontWeight: 700 }}>Remove</button>
       </div>)}
     </section>
   </main>;

@@ -1,0 +1,18 @@
+.settings-hub{padding:28px;max-width:1240px;margin:0 auto;box-sizing:border-box;color:#16325c}
+.settings-hub-header{display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:28px}
+.settings-hub h1{margin:0;font-size:26px;color:#032d60}
+.settings-hub-header p{margin:8px 0 0;color:#52667e}
+.settings-search{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:600;width:300px;max-width:100%}
+.settings-search input{box-sizing:border-box;width:100%;min-height:44px;padding:10px 12px;border:1px solid #c9d3df;border-radius:8px;font:inherit;font-size:14px;background:white}
+.settings-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:start}
+.settings-group{background:#fff;border:1px solid #dce3ec;border-radius:12px;overflow:hidden}
+.settings-hub h2{font-size:15px;margin:0;padding:18px 20px;background:#f5f8fc;color:#032d60}
+.settings-entry{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 20px;min-height:44px;text-decoration:none;color:inherit;border-top:1px solid #edf0f4}
+.settings-entry strong{display:block;font-size:14px;font-weight:600}
+.settings-entry small{display:block;color:#52667e;font-size:12px;line-height:1.5;margin-top:4px}
+.settings-entry:hover{background:#eef5fc}
+.settings-entry:focus-visible,.settings-search input:focus-visible,.settings-integrations summary:focus-visible{outline:2px solid #0176d3;outline-offset:-3px}
+.settings-integrations{margin-top:24px;border:1px solid #dce3ec;border-radius:12px;overflow:hidden;background:#fff}
+.settings-integrations summary{cursor:pointer;padding:16px 20px;font-size:14px;min-height:44px;box-sizing:border-box}
+.settings-integrations details>section,.settings-integrations details>div{margin:0 16px 16px;max-width:100%;box-sizing:border-box}
+@media(max-width:700px){.settings-hub{padding:20px 16px}.settings-hub-header{align-items:stretch;flex-direction:column;gap:16px;margin-bottom:20px}.settings-search{width:100%}.settings-groups{grid-template-columns:minmax(0,1fr);gap:16px}.settings-entry{padding:14px 16px}.settings-hub h2{padding:16px}}

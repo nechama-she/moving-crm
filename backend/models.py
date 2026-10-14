@@ -2,10 +2,11 @@ import uuid
 import json
 from datetime import datetime
 
-from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, Boolean, UniqueConstraint, LargeBinary, Numeric
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, BigInteger, Boolean, UniqueConstraint, LargeBinary, Numeric, Index, text
+from sqlalchemy.orm import declarative_base, relationship, validates
 
 from company_colors import resolve_company_color
+from move_types import normalize_move_type
 
 Base = declarative_base()
 
@@ -23,18 +24,31 @@ def _now() -> datetime:
 # ---------------------------------------------------------------------------
 class Company(Base):
     __tablename__ = "companies"
+    __table_args__ = (
+        Index("uq_companies_default", "is_default_company", unique=True,
+              postgresql_where=text("is_default_company = true"),
+              sqlite_where=text("is_default_company = 1")),
+    )
 
     id = Column(String(36), primary_key=True, default=_uuid)
     name = Column(String(255), nullable=False, unique=True)
     color = Column(String(7))
+    logo = Column(Text, nullable=True)
+    customer_questions = Column(Text, nullable=True)
     phone = Column(String(30))
+    office_address = Column(Text, nullable=False, default="", server_default="")
+    dot_number = Column(String(30), nullable=False, default="", server_default="")
+    # Customer emails (e.g. portal codes) are sent from this address via SES; its domain must be verified in SES.
+    sender_email = Column(String(255))
     facebook_page_id = Column(String(100), unique=True, index=True)
     aircall_number_id = Column(String(50))
     aircall_name = Column(String(255))
+    dispatches_for_company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
     samrtmoving_branch_id = Column(String(100))
     granot_api_id = Column(String(100))
     granot_mover_ref = Column(String(100))
     timezone = Column(String(50), default="America/New_York")
+    is_default_company = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), default=_now)
 
     users = relationship("UserCompany", back_populates="company")
@@ -45,14 +59,20 @@ class Company(Base):
             "id": self.id,
             "name": self.name,
             "color": resolve_company_color(self.name, self.color),
+            "logo": self.logo or "",
             "phone": self.phone or "",
+            "office_address": self.office_address or "",
+            "dot_number": self.dot_number or "",
+            "sender_email": self.sender_email or "",
             "facebook_page_id": self.facebook_page_id or "",
             "aircall_number_id": self.aircall_number_id or "",
             "aircall_name": self.aircall_name or "",
             "samrtmoving_branch_id": self.samrtmoving_branch_id or "",
+            "dispatches_for_company_id": self.dispatches_for_company_id or "",
             "granot_api_id": self.granot_api_id or "",
             "granot_mover_ref": self.granot_mover_ref or "",
             "timezone": self.timezone or "America/New_York",
+            "is_default_company": bool(self.is_default_company),
             "created_at": self.created_at.isoformat() if self.created_at else "",
         }
 
@@ -214,7 +234,7 @@ class Lead(Base):
     __tablename__ = "leads"
 
     id = Column(String(36), primary_key=True, default=_uuid)
-    company_id = Column(String(36), ForeignKey("companies.id"), nullable=False, index=True)
+    company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
     assigned_to = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
 
     full_name = Column(String(255), nullable=False, index=True)
@@ -224,6 +244,7 @@ class Lead(Base):
     # sources: facebook, website, referral, manual
     facebook_user_id = Column(String(100), index=True)
     leadgen_id = Column(String(100), index=True)
+    quote_number = Column(String(100), nullable=True)
     smartmoving_id = Column(String(100), index=True, unique=True)
     inbox_url = Column(Text)
     notes = Column(Text)
@@ -237,6 +258,11 @@ class Lead(Base):
     move_date = Column(Text)
     booked_move_date = Column(Date)
     move_type = Column(Text)
+
+    @validates("move_type")
+    def normalize_move_category(self, key, value):
+        return normalize_move_type(value)
+
     service_type = Column(String(50))
     referral_source = Column(String(100))
     estimated_total = Column(Text)
@@ -302,6 +328,7 @@ class Lead(Base):
             "company_phone": self.company.phone if self.company else "",
             "aircall_number_id": self.company.aircall_number_id if self.company else "",
             "leadgen_id": self.leadgen_id or "",
+            "quote_number": self.quote_number or "",
             "smartmoving_id": self.smartmoving_id or "",
             "full_name": self.full_name or "",
             "email": self.email or "",
@@ -313,7 +340,8 @@ class Lead(Base):
             "weight": float(self.weight) if self.weight is not None else None,
             "when_is_the_move?": self.move_date or "",
             "booked_move_date": self.booked_move_date.isoformat() if self.booked_move_date else "",
-            "are_you_moving_within_the_state_or_out_of_state?": self.move_type or "",
+            "move_type": normalize_move_type(self.move_type),
+            "are_you_moving_within_the_state_or_out_of_state?": normalize_move_type(self.move_type),
             "created_time": self.created_time or "",
             "created_at": self.created_at.isoformat() if self.created_at else "",
             "inbox_url": self.inbox_url or "",
@@ -424,18 +452,20 @@ class LeadUpdateLog(Base):
 class LeadAttachment(Base):
     __tablename__ = "lead_attachments"
 
+    report_deleted_at = Column(DateTime, nullable=True)
+    liveswitch_panel_visible = Column(Boolean, nullable=False, default=False, server_default='false')
     id = Column(String(36), primary_key=True, default=_uuid)
     lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
     job_id = Column(String(36), ForeignKey("lead_jobs.id"), nullable=True, index=True)
     file_name = Column(String(255), nullable=False)
     content_type = Column(String(120), nullable=False, default="application/octet-stream")
-    file_size = Column(Integer, nullable=False, default=0)
+    file_size = Column(BigInteger, nullable=False, default=0)
     file_blob = Column(LargeBinary, nullable=False)
     external_url = Column(Text)
     is_external_link = Column(Boolean, nullable=False, default=False)
     external_source = Column(String(50), index=True)
     source_external_id = Column(String(255), index=True)
-    uploaded_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    uploaded_by = Column(String(36), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
 
     def to_dict(self):
@@ -460,7 +490,8 @@ class LeadJob(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid)
     lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
-    company_id = Column(String(36), ForeignKey("companies.id"), nullable=False, index=True)
+    company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
+    dispatch_company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
     job_order = Column(Integer, nullable=False, default=1)
     pickup_zip = Column(Text)
     delivery_zip = Column(Text)
@@ -472,12 +503,19 @@ class LeadJob(Base):
     customer_notes = Column(Text)
     foreman_notes = Column(Text)
     estimated_materials = Column(Text)
+    customer_packing = Column(Text)
+    customer_packing_package = Column(Text)
+    price_calculated_at = Column(DateTime)
+    price_refresh_attempted_at = Column(DateTime)
+    price_refresh_error = Column(Text)
     price = Column(Numeric(12, 2))
+    stop_types = Column(Text)
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
 
     lead = relationship("Lead", foreign_keys=[lead_id])
     company = relationship("Company", foreign_keys=[company_id])
+    dispatch_company = relationship("Company", foreign_keys=[dispatch_company_id])
     foreman = relationship("User", foreign_keys=[foreman_id])
     charges = relationship("LeadJobCharge", back_populates="job", cascade="all, delete-orphan", order_by="LeadJobCharge.sort_order.asc(), LeadJobCharge.created_at.asc()")
 
@@ -799,6 +837,9 @@ class PricingPlan(Base):
     source_sheet = Column(String(255), nullable=False, default="")
     pickup_regions = Column(Text, nullable=False, default="")
     fuel_percent = Column(Numeric(7, 3))
+    price_valid_days = Column(Integer, nullable=False, default=7, server_default='7')
+    item_materials = Column(Text, nullable=True)
+    item_selectors = Column(Text, nullable=True)
     active = Column(Boolean, nullable=False, default=True)
     sort_order = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), default=_now)
@@ -816,6 +857,7 @@ class PricingPlan(Base):
     )
 
     def summary_dict(self):
+        from pickup_areas import pickup_areas, pickup_summary
         return {
             "id": self.id,
             "company_id": self.company_id or "",
@@ -823,8 +865,10 @@ class PricingPlan(Base):
             "name": self.name,
             "source_file": self.source_file,
             "source_sheet": self.source_sheet,
-            "pickup_regions": self.pickup_regions,
+            "pickup_regions": pickup_summary(self.pickup_regions),
+            "pickup_areas": pickup_areas(self.pickup_regions),
             "fuel_percent": float(self.fuel_percent) if self.fuel_percent is not None else None,
+            "price_valid_days": self.price_valid_days,
             "active": bool(self.active),
             "rate_count": len(self.rates),
             "rule_count": len(self.rules),
@@ -911,3 +955,243 @@ class PricingService(Base):
             "comments": self.comments,
             "sort_order": self.sort_order,
         }
+
+
+class LocalPricingRoute(Base):
+    __tablename__ = "local_pricing_routes"
+    __table_args__ = (
+        UniqueConstraint("company_id", "pickup", "delivery", name="uq_local_pricing_routes_company_pair"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    company_id = Column(String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    pickup = Column(String(64), nullable=False)
+    delivery = Column(String(64), nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "company_id": self.company_id,
+            "pickup": self.pickup,
+            "delivery": self.delivery,
+            "sort_order": int(self.sort_order or 0),
+        }
+
+class LeadLiveSwitch(Base):
+    __tablename__ = "lead_liveswitch"
+    lead_id = Column(String(36), ForeignKey("leads.id", ondelete="CASCADE"), primary_key=True)
+    details = Column(Text, nullable=False)
+
+
+class LeadSparkInventoryItem(Base):
+    __tablename__ = "lead_spark_inventory_items"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    job_id = Column(String(36), ForeignKey("lead_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(Text, nullable=False)
+    cuft = Column(Numeric(12, 2))
+    amount = Column(Numeric(12, 2))
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "name": self.name or "",
+            "cuft": float(self.cuft) if self.cuft is not None else None,
+            "amount": float(self.amount) if self.amount is not None else None,
+            "sort_order": int(self.sort_order or 0),
+        }
+
+class PublicMoveAccess(Base):
+    __tablename__ = 'public_move_access'
+    id = Column(String(36), primary_key=True, default=_uuid)
+    lead_id = Column(String(36), ForeignKey('leads.id', ondelete='CASCADE'), nullable=False, unique=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), nullable=False)
+    key_hash = Column(String(64), nullable=False, unique=True)
+    request_hash = Column(String(64), nullable=False)
+    token_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    revoked = Column(Boolean, nullable=False, default=False)
+    otp_hash = Column(String(64))
+    otp_expires = Column(DateTime)
+    otp_attempts = Column(Integer, nullable=False, default=0)
+    otp_sent_at = Column(DateTime)
+    otp_hour = Column(DateTime)
+    otp_sends = Column(Integer, nullable=False, default=0)
+    contact_hash = Column(String(64))
+    published_price = Column(Numeric(12, 2))
+    published_cuft = Column(Numeric(12, 2))
+    published_at = Column(DateTime)
+    link_sms_sent_at = Column(DateTime)
+    link_sms_phone_last4 = Column(String(4))
+    created_at = Column(DateTime, default=_now)
+
+
+class PublicMoveRepVerification(Base):
+    __tablename__ = 'public_move_rep_verification'
+    id = Column(String(36), ForeignKey('public_move_access.id', ondelete='CASCADE'), primary_key=True)
+    otp_hash = Column(String(64))
+    otp_expires = Column(DateTime)
+    otp_attempts = Column(Integer, nullable=False, default=0)
+    otp_sent_at = Column(DateTime)
+    otp_hour = Column(DateTime)
+    otp_sends = Column(Integer, nullable=False, default=0)
+    contact_hash = Column(String(64))
+
+
+class PublicMoveSession(Base):
+    __tablename__ = 'public_move_sessions'
+    token_hash = Column(String(64), primary_key=True)
+    access_id = Column(String(36), ForeignKey('public_move_access.id', ondelete='CASCADE'), nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    contact_hash = Column(String(64), nullable=False)
+
+
+class AccessAuditLog(Base):
+    __tablename__ = "access_audit_logs"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_name = Column(String(255), nullable=False, default="Anonymous")
+    user_email = Column(String(255), nullable=True)
+    user_role = Column(String(50), nullable=False, default="anonymous")
+    ip_address = Column(String(100), nullable=False, index=True)
+    method = Column(String(10), nullable=False, index=True)
+    path = Column(String(1000), nullable=False, index=True)
+    query_params = Column(Text, nullable=True)
+    status_code = Column(Integer, nullable=False, index=True)
+    error_message = Column(Text, nullable=True)
+    request_body = Column(Text, nullable=True)
+    response_body = Column(Text, nullable=True)
+    duration_ms = Column(Integer, nullable=False, default=0)
+    user_agent = Column(Text, nullable=True)
+    referer = Column(Text, nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "created_at": self.created_at.isoformat() if self.created_at else "",
+            "user_id": self.user_id,
+            "user_name": self.user_name,
+            "user_email": self.user_email,
+            "user_role": self.user_role,
+            "ip_address": self.ip_address,
+            "method": self.method,
+            "path": self.path,
+            "query_params": self.query_params or "",
+            "status_code": self.status_code,
+            "error_message": self.error_message or "",
+            "request_body": self.request_body,
+            "response_body": self.response_body,
+            "duration_ms": self.duration_ms,
+            "user_agent": self.user_agent or "",
+            "referer": self.referer or "",
+        }
+
+
+class WalkthroughRequest(Base):
+    __tablename__ = 'walkthrough_requests'
+    id = Column(String(36), primary_key=True, default=_uuid)
+    lead_id = Column(String(36), ForeignKey('leads.id', ondelete='CASCADE'), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), nullable=False)
+    status = Column(String(20), nullable=False, default='requested')
+    availability = Column(Text)
+    timezone = Column(String(80), nullable=False, default='America/New_York')
+    scheduled_at = Column(DateTime)
+    assigned_to = Column(String(36), ForeignKey('users.id'))
+    created_at = Column(DateTime, default=_now)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
+
+
+class PublicMoveUpload(Base):
+    __tablename__ = 'public_move_uploads'
+    attachment_id = Column(String(36), ForeignKey('lead_attachments.id', ondelete='CASCADE'), primary_key=True)
+    access_id = Column(String(36), ForeignKey('public_move_access.id', ondelete='CASCADE'), nullable=False, index=True)
+    request_id = Column(String(64), nullable=False)
+    synced_at = Column(DateTime)
+    sync_status = Column(String(20), nullable=False, default='pending', server_default='pending')
+    sync_token = Column(String(36))
+    sync_error = Column(Text)
+    sync_upload_url = Column(Text)
+    __table_args__ = (UniqueConstraint('access_id', 'request_id'),)
+
+
+class PublicMoveRate(Base):
+    __tablename__ = 'public_move_rates'
+    key = Column(String(64), primary_key=True)
+    window = Column(Integer, nullable=False)
+    count = Column(Integer, nullable=False)
+
+class PublicMovePendingUpload(Base):
+    __tablename__ = 'public_move_pending_uploads'
+    id = Column(String(36), primary_key=True, default=_uuid)
+    access_id = Column(String(36), ForeignKey('public_move_access.id', ondelete='CASCADE'), nullable=False, index=True)
+    request_id = Column(String(64), nullable=False)
+    object_key = Column(Text, nullable=False)
+    file_name = Column(String(255), nullable=False)
+    content_type = Column(String(120), nullable=False)
+    file_size = Column(BigInteger, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    __table_args__ = (UniqueConstraint('access_id', 'request_id'),)
+
+
+class InventoryRoomType(Base):
+    __tablename__ = 'inventory_room_types'
+    id = Column(String(36), primary_key=True)
+    name = Column(String(100), nullable=False, unique=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class InventoryCatalogItem(Base):
+    __tablename__ = 'inventory_catalog_items'
+    id = Column(String(36), primary_key=True)
+    name = Column(String(255), nullable=False, index=True)
+    description = Column(Text, nullable=False, default='')
+    cuft = Column(Numeric(12, 2), nullable=False)
+    weight = Column(Numeric(12, 2), nullable=False)
+    active = Column(Boolean, nullable=False, default=True)
+    deleted = Column(Boolean, nullable=False, default=False, server_default='false')
+    packing_materials = Column(Text, nullable=False, default='[]')
+
+
+class InventoryEditState(Base):
+    __tablename__ = 'inventory_edit_states'
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), primary_key=True)
+    source_hash = Column(String(64), nullable=False)
+    revision = Column(String(36), nullable=False)
+    report_id = Column(String(100))
+    receipts = Column(Text, nullable=False, default='{}')
+
+
+class InventoryEditRoom(Base):
+    __tablename__ = 'inventory_edit_rooms'
+    id = Column(String(36), primary_key=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), nullable=False, index=True)
+    room_type_id = Column(String(100), ForeignKey('inventory_room_types.id'))
+    name = Column(String(100), nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class InventoryEditItem(Base):
+    __tablename__ = 'inventory_edit_items'
+    id = Column(String(36), primary_key=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), nullable=False, index=True)
+    room_id = Column(String(36), ForeignKey('inventory_edit_rooms.id', ondelete='CASCADE'), nullable=False, index=True)
+    catalog_item_id = Column(String(100), ForeignKey('inventory_catalog_items.id'))
+    # Only custom names or explicit overrides; default catalog names come from a JOIN.
+    name = Column(String(200))
+    quantity = Column(Integer, nullable=False)
+    unit_cuft = Column(Numeric(18, 8), nullable=False)
+    unit_weight = Column(Numeric(18, 8), nullable=False, default=0)
+    going = Column(Boolean, nullable=False, default=True)
+    mover_pack = Column(Boolean)
+    selections = Column(Text, nullable=False, default='{}')
+    sort_order = Column(Integer, nullable=False, default=0)
+    inventory_record_id = Column(String(36))

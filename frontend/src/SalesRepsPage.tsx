@@ -349,14 +349,14 @@ export default function SalesRepsPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 style={{ ...inputStyle, flex: 1, height: 34 }}
               />
-              <button
+              <button className="slds-button"
                 type="button"
                 onClick={() => setShowPassword((v) => !v)}
                 style={{ border: "1px solid #dddbda", background: "#fff", borderRadius: 4, padding: "0 10px", fontSize: 12, height: 34 }}
               >
                 {showPassword ? "Hide" : "Show"}
               </button>
-              <button
+              <button className="slds-button"
                 type="button"
                 onClick={() => void copyPassword()}
                 disabled={!password}
@@ -379,7 +379,7 @@ export default function SalesRepsPage() {
               <strong>{selectedCompanyIds.length === 0 ? "No companies selected" : `${selectedCompanyIds.length} selected`}</strong>
               <span>{selectedCompanyIds.length === 0 ? "Choose the companies this rep can access" : "Access limited to selected companies"}</span>
             </div>
-            <button type="button" onClick={() => setShowInitialCompanyPicker((open) => !open)}>
+            <button className="slds-button" type="button" onClick={() => setShowInitialCompanyPicker((open) => !open)}>
               {showInitialCompanyPicker ? "Done" : "Choose companies"}
             </button>
           </div>
@@ -387,7 +387,7 @@ export default function SalesRepsPage() {
             {companies.map((company) => {
               const checked = selectedCompanyIds.includes(company.id);
               return (
-                <button
+                <button className="slds-button"
                   type="button"
                   key={company.id}
                   onClick={() => toggleCompany(company.id)}
@@ -408,7 +408,7 @@ export default function SalesRepsPage() {
         </div>
 
         <div style={{ marginTop: 14 }}>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={createSalesRep}
             disabled={saving}
@@ -569,7 +569,7 @@ function RepRow({
             <span style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>%</span>
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <button
+            <button className="slds-button"
               type="button"
               onClick={() => void saveCommissionPercent()}
               disabled={savingCommission}
@@ -577,7 +577,7 @@ function RepRow({
             >
               {savingCommission ? "Saving..." : "Save %"}
             </button>
-            <button
+            <button className="slds-button"
               type="button"
               onClick={() => void resetCommissionPercent()}
               disabled={savingCommission}
@@ -613,7 +613,7 @@ function RepRow({
               </span>
             ))}
             {extraCompaniesCount > 0 ? <span style={{ fontSize: 11, color: "#64748b" }}>+{extraCompaniesCount} more</span> : null}
-            <button
+            <button className="slds-button"
               type="button"
               onClick={() => setShowCompanyManager((v) => !v)}
               style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "4px 8px", fontSize: 11, fontWeight: 700 }}
@@ -629,7 +629,7 @@ function RepRow({
                 {assigned.map((c) => (
                   <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #c9c7c5", borderRadius: 16, padding: "3px 8px", fontSize: 12, color: "#3e3e3c", background: "#fff" }}>
                     {c.name}
-                    <button
+                    <button className="slds-button"
                       type="button"
                       onClick={() => void onUnassign(rep.id, c.id)}
                       style={{ border: "none", background: "transparent", color: "#ba0517", fontSize: 12, padding: 0, cursor: "pointer" }}
@@ -647,7 +647,7 @@ function RepRow({
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </select>
-                <button
+                <button className="slds-button"
                   type="button"
                   onClick={() => void onAssign(rep.id, selectedCompanyId)}
                   disabled={!selectedCompanyId}
@@ -662,7 +662,7 @@ function RepRow({
       </td>
       <td data-label="Actions" style={td}>
         <div style={{ display: "flex", gap: 8 }}>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => void saveRep()}
             disabled={savingRep}
@@ -670,7 +670,7 @@ function RepRow({
           >
             {savingRep ? "Saving..." : "Save"}
           </button>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => void onDelete(rep.id, rep.name)}
             style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}

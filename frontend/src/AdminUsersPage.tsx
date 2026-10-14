@@ -242,14 +242,14 @@ export default function AdminUsersPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   style={{ ...inputStyle, flex: 1, height: 34 }}
                 />
-                <button
+                <button className="slds-button"
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
                   style={{ border: "1px solid #dddbda", background: "#fff", borderRadius: 4, padding: "0 10px", fontSize: 12, height: 34 }}
                 >
                   {showPassword ? "Hide" : "Show"}
                 </button>
-                <button
+                <button className="slds-button"
                   type="button"
                   onClick={() => void copyPassword()}
                   disabled={!password}
@@ -276,7 +276,7 @@ export default function AdminUsersPage() {
               <strong>{selectedCompanyIds.length === 0 ? "All companies" : `${selectedCompanyIds.length} selected`}</strong>
               <span>{selectedCompanyIds.length === 0 ? "No company restrictions" : "Access limited to selected companies"}</span>
             </div>
-            <button type="button" onClick={() => setShowInitialCompanyPicker((open) => !open)}>
+            <button className="slds-button" type="button" onClick={() => setShowInitialCompanyPicker((open) => !open)}>
               {showInitialCompanyPicker ? "Done" : "Choose companies"}
             </button>
           </div>
@@ -284,7 +284,7 @@ export default function AdminUsersPage() {
             {companies.map((company) => {
               const checked = selectedCompanyIds.includes(company.id);
               return (
-                <button
+                <button className="slds-button"
                   type="button"
                   key={company.id}
                   onClick={() => toggleCompany(company.id)}
@@ -305,7 +305,7 @@ export default function AdminUsersPage() {
         </div>
 
         <div style={{ marginTop: 14 }}>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={createAdmin}
             disabled={saving}
@@ -442,7 +442,7 @@ function AdminRow({
             onChange={(e) => setSmartmovingRepId(e.target.value)}
             style={{ ...inputStyle, minWidth: 180, padding: "6px 8px" }}
           />
-          <button
+          <button className="slds-button"
             type="button"
             disabled={savingSmartmovingId || smartmovingRepId.trim() === (adminUser.smartmoving_rep_id || "").trim()}
             onClick={async () => {
@@ -467,7 +467,7 @@ function AdminRow({
             <strong>{assigned.length === 0 ? "All companies" : `${assigned.length} companies`}</strong>
             <span>{assigned.length === 0 ? "No restrictions" : assigned.slice(0, 2).map((company) => company.name).join(", ")}{assigned.length > 2 ? ` +${assigned.length - 2}` : ""}</span>
           </div>
-          <button type="button" onClick={() => setShowCompanyManager((open) => !open)}>
+          <button className="slds-button" type="button" onClick={() => setShowCompanyManager((open) => !open)}>
             {showCompanyManager ? "Done" : "Manage access"}
           </button>
         </div>
@@ -475,7 +475,7 @@ function AdminRow({
           {assigned.map((c) => (
             <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #c9c7c5", borderRadius: 16, padding: "3px 8px", fontSize: 12, color: "#3e3e3c", background: "#f8f9fa" }}>
               {c.name}
-              <button
+              <button className="slds-button"
                 type="button"
                 onClick={() => void onUnassign(adminUser.id, c.id)}
                 style={{ border: "none", background: "transparent", color: "#ba0517", fontSize: 12, padding: 0, cursor: "pointer" }}
@@ -495,7 +495,7 @@ function AdminRow({
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => void onAssign(adminUser.id, selectedCompanyId)}
             disabled={!selectedCompanyId}

@@ -205,7 +205,7 @@ function ReferralAssignmentRulesPanel() {
             ) : (
               <div className="referral-manual-source" style={{ display: "flex", gap: 7 }}>
                 <input autoFocus style={referralInput} value={referralSource} onChange={(event) => setReferralSource(event.target.value)} placeholder="Enter Referral Source" />
-                <button type="button" style={referralSecondaryButton} onClick={() => { setReferralSource(""); setManualReferralSource(false); }}>Choose existing</button>
+                <button className="slds-button" type="button" style={referralSecondaryButton} onClick={() => { setReferralSource(""); setManualReferralSource(false); }}>Choose existing</button>
               </div>
             )}
           </label>
@@ -253,8 +253,8 @@ function ReferralAssignmentRulesPanel() {
         </label>
         {error ? <div style={referralErrorBox}>{error}</div> : null}
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-          <button type="button" onClick={saveRule} disabled={saveDisabled} style={{ ...referralPrimaryButton, opacity: saveDisabled ? 0.55 : 1, cursor: saveDisabled ? "not-allowed" : "pointer" }}>{saving ? "Saving..." : editingId ? "Save Changes" : "Add Rule"}</button>
-          {editingId ? <button type="button" onClick={resetForm} style={referralSecondaryButton}>Cancel</button> : null}
+          <button className="slds-button" type="button" onClick={saveRule} disabled={saveDisabled} style={{ ...referralPrimaryButton, opacity: saveDisabled ? 0.55 : 1, cursor: saveDisabled ? "not-allowed" : "pointer" }}>{saving ? "Saving..." : editingId ? "Save Changes" : "Add Rule"}</button>
+          {editingId ? <button className="slds-button" type="button" onClick={resetForm} style={referralSecondaryButton}>Cancel</button> : null}
         </div>
       </div>
 
@@ -270,7 +270,7 @@ function ReferralAssignmentRulesPanel() {
                   <td style={referralTd}><strong>{rule.referral_source}</strong></td>
                   <td style={referralTd}><div style={{ display: "grid", gap: 5 }}>{rule.rep_assignments.map((assignment) => <div key={assignment.rep_user_id}><span style={referralRepBadge}>{repName.get(assignment.rep_user_id) || assignment.rep_user_id}</span><span style={{ marginLeft: 7, color: "#706e6b", fontSize: 12 }}>{assignment.schedule === "always" ? "Always" : `${assignment.start_date} – ${assignment.end_date}`}</span></div>)}</div></td>
                   <td style={referralTd}><span style={{ ...referralStatusBadge, ...(rule.active ? referralStatusEnabled : referralStatusDisabled) }}>{rule.active ? "Enabled" : "Disabled"}</span></td>
-                  <td style={{ ...referralTd, whiteSpace: "nowrap" }}><button type="button" onClick={() => editRule(rule)} style={referralLinkButton}>Edit</button><button type="button" onClick={() => deleteRule(rule.id)} style={{ ...referralLinkButton, color: "#ba0517" }}>Delete</button></td>
+                  <td style={{ ...referralTd, whiteSpace: "nowrap" }}><button className="slds-button" type="button" onClick={() => editRule(rule)} style={referralLinkButton}>Edit</button><button className="slds-button" type="button" onClick={() => deleteRule(rule.id)} style={{ ...referralLinkButton, color: "#ba0517" }}>Delete</button></td>
                 </tr>
               ))}
               {data.rules.length === 0 ? <tr><td colSpan={5} style={{ ...referralTd, padding: 30, textAlign: "center", color: "#706e6b" }}>No assignment rules configured.</td></tr> : null}
@@ -831,7 +831,7 @@ export default function PeriodAssignPage() {
                             />
                           </label>
                           <div>
-                            <button
+                            <button className="slds-button"
                               type="button"
                               onClick={() => removeRepSlot(rep.id, slotIndex)}
                               style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "6px 10px", fontSize: 12 }}
@@ -842,7 +842,7 @@ export default function PeriodAssignPage() {
                         </div>
                       ))}
                       <div>
-                        <button
+                        <button className="slds-button"
                           type="button"
                           onClick={() => addRepSlot(rep.id)}
                           style={{ border: "1px solid #91c8f6", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
@@ -859,7 +859,7 @@ export default function PeriodAssignPage() {
         </div>
 
         <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={createAdminWindow}
             disabled={savingWindow || !adminId}
@@ -867,7 +867,7 @@ export default function PeriodAssignPage() {
           >
             {savingWindow ? "Saving..." : "Mark Admin Unavailable"}
           </button>
-          <button
+          <button className="slds-button"
             type="button"
             onClick={() => loadAllWindows(adminId)}
             disabled={!adminId || loadingWindows}
@@ -896,7 +896,7 @@ export default function PeriodAssignPage() {
                   <strong style={{ color: "#032d60" }}>Admin Slot</strong>
                   <div style={{ display: "flex", gap: 8 }}>
                     {!isEditing ? (
-                      <button
+                      <button className="slds-button"
                         type="button"
                         onClick={() => startEditWindow(w)}
                         style={{ border: "1px solid #dddbda", background: "#fff", borderRadius: 4, padding: "5px 10px", fontSize: 12 }}
@@ -905,7 +905,7 @@ export default function PeriodAssignPage() {
                       </button>
                     ) : (
                       <>
-                        <button
+                        <button className="slds-button"
                           type="button"
                           onClick={() => saveWindowUpdate(w)}
                           disabled={savingWindow}
@@ -913,7 +913,7 @@ export default function PeriodAssignPage() {
                         >
                           {savingWindow ? "Saving..." : "Update"}
                         </button>
-                        <button
+                        <button className="slds-button"
                           type="button"
                           onClick={() => setEditingWindowId("")}
                           style={{ border: "1px solid #dddbda", background: "#fff", borderRadius: 4, padding: "5px 10px", fontSize: 12 }}
@@ -922,7 +922,7 @@ export default function PeriodAssignPage() {
                         </button>
                       </>
                     )}
-                    <button
+                    <button className="slds-button"
                       type="button"
                       onClick={() => deleteAdminWindow(w.id)}
                       style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "5px 10px", fontSize: 12 }}
@@ -1041,7 +1041,7 @@ export default function PeriodAssignPage() {
                                       />
                                     </label>
                                     <div>
-                                      <button
+                                      <button className="slds-button"
                                         type="button"
                                         onClick={() => removeEditRepSlot(rep.id, slotIndex)}
                                         style={{ border: "1px solid #f9b9b5", background: "#fff", color: "#ba0517", borderRadius: 4, padding: "6px 10px", fontSize: 12 }}
@@ -1052,7 +1052,7 @@ export default function PeriodAssignPage() {
                                   </div>
                                 ))}
                                 <div>
-                                  <button
+                                  <button className="slds-button"
                                     type="button"
                                     onClick={() => addEditRepSlot(rep.id)}
                                     style={{ border: "1px solid #91c8f6", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}

@@ -2,6 +2,29 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Moving CRM — Full stack (VPC, RDS, S3, CodePipeline, CodeBuild)
 
 Parameters:
+  SettingsSourceAccountId:
+    Type: String
+    Default: "381492064416"
+    AllowedPattern: "[0-9]{12}"
+  SettingsProductionAccountId:
+    Type: String
+    Default: "669880792736"
+    AllowedPattern: "[0-9]{12}"
+  # Compatibility with deployed pipelines that still pass the former SES settings.
+  # Keep these accepted while the Infrastructure action updates itself.
+  CustomerPortalEmailIdentityArn:
+    Type: String
+    Default: ""
+    Description: Legacy compatibility parameter; unused by Cognito default email sending.
+  CustomerPortalEmailFrom:
+    Type: String
+    Default: ""
+    Description: Legacy compatibility parameter; unused by Cognito default email sending.
+  PublicMoveEmbedOrigins:
+    Type: String
+    Default: "http://127.0.0.1:4321 http://localhost:4321"
+    Description: Space-separated HTTP or HTTPS origins allowed to embed the customer page. Empty permits same-origin embedding only.
+    AllowedPattern: "^$|^https?://[A-Za-z0-9.-]+(:[0-9]+)?( https?://[A-Za-z0-9.-]+(:[0-9]+)?)*$"
   Environment:
     Type: String
     Default: dev
@@ -73,12 +96,59 @@ Parameters:
 Conditions:
   ShouldDeployLambda: !Equals [!Ref DeployLambda, "true"]
   IsProd: !Equals [!Ref Environment, "prod"]
+  IsDevEnvironment: !Equals [!Ref Environment, "dev"]
   IsDev: !Not [!Equals [!Ref Environment, "prod"]]
   HasDomain: !Not [!Equals [!Ref DomainName, ""]]
   HasSmartMovingKey: !Not [!Equals [!Ref SmartMovingApiKey, ""]]
   HasCert: !Not [!Equals [!Ref AcmCertificateArn, ""]]
 
 Resources:
+  SettingsTransferBucket:
+    Type: AWS::S3::Bucket
+    Condition: IsDevEnvironment
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub moving-crm-settings-dev-${AWS::AccountId}
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  SettingsTransferBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: IsDevEnvironment
+    Properties:
+      Bucket: !Ref SettingsTransferBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt SettingsTransferBucket.Arn
+              - !Sub "${SettingsTransferBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${SettingsProductionAccountId}:root"
+            Action: s3:GetObject
+            Resource: !Sub "${SettingsTransferBucket.Arn}/releases/*"
+            Condition:
+              ArnEquals:
+                aws:PrincipalArn: !Sub "arn:aws:iam::${SettingsProductionAccountId}:role/moving-crm-codebuild-prod"
   # ===========================================================================
   # NETWORKING
   # ===========================================================================
@@ -424,6 +494,13 @@ Resources:
       Type: String
       Value: !Ref SmartMovingApiKey
 
+  SSMPublicMoveOtpHourlyLimit:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /moving-crm/${Environment}/PUBLIC_MOVE_OTP_HOURLY_LIMIT
+      Type: String
+      Value: "50"
+
   # ===========================================================================
   # S3 — Frontend hosting + Pipeline artifacts
   # ===========================================================================
@@ -449,6 +526,10 @@ Resources:
               SSEAlgorithm: AES256
       LifecycleConfiguration:
         Rules:
+          - Id: RemovePendingCustomerUploads
+            Status: Enabled
+            Prefix: public-pending/
+            ExpirationInDays: 1
           - Id: RemoveTemporaryDownloads
             Status: Enabled
             Prefix: downloads/
@@ -463,6 +544,7 @@ Resources:
           - AllowedMethods:
               - GET
               - HEAD
+              - POST
             AllowedOrigins:
               - "*"
             AllowedHeaders:
@@ -622,6 +704,21 @@ Resources:
   # The ACM cert is supplied via AcmCertificateArn (created out-of-band so cross-account
   # DNS validation works — the Route 53 zone lives in the management account).
 
+  CustomerPageResponseHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub moving-crm-customer-page-${Environment}
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: !Sub "frame-ancestors 'self' ${PublicMoveEmbedOrigins}; object-src 'none'; base-uri 'self'"
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: no-referrer
+            Override: true
+
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -643,6 +740,7 @@ Resources:
               OriginProtocolPolicy: https-only
               OriginSSLProtocols: [TLSv1.2]
         DefaultCacheBehavior:
+          ResponseHeadersPolicyId: !Ref CustomerPageResponseHeaders
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
           AllowedMethods: [GET, HEAD]
@@ -688,6 +786,18 @@ Resources:
             Version: "2012-10-17"
             Statement:
               # CloudWatch Logs
+              - !If
+                - IsDevEnvironment
+                - Effect: Allow
+                  Action: [s3:GetObject, s3:PutObject]
+                  Resource: !Sub "arn:aws:s3:::moving-crm-settings-dev-${AWS::AccountId}/releases/*"
+                - !Ref AWS::NoValue
+              - !If
+                - IsProd
+                - Effect: Allow
+                  Action: s3:GetObject
+                  Resource: !Sub "arn:aws:s3:::moving-crm-settings-dev-${SettingsSourceAccountId}/releases/*"
+                - !Ref AWS::NoValue
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -730,6 +840,9 @@ Resources:
                   - ssm:GetParametersByPath
                   - ssm:PutParameter
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/*"
+              - Effect: Allow
+                Action: ssm:DeleteParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/LIVESWITCH_ACCESS_TOKEN"
               # DynamoDB (read leads for import)
               - Effect: Allow
                 Action:
@@ -748,6 +861,11 @@ Resources:
                 Action:
                   - lambda:UpdateFunctionCode
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-*"
+              # Wait for the public move sync worker code update to complete
+              - Effect: Allow
+                Action:
+                  - lambda:GetFunctionConfiguration
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-public-move-sync-${Environment}"
               # CloudFormation (read stack outputs during deploy)
               - Effect: Allow
                 Action:
@@ -850,6 +968,18 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:CreateUserPool
+                  - cognito-idp:UpdateUserPool
+                  - cognito-idp:DeleteUserPool
+                  - cognito-idp:DescribeUserPool
+                  - cognito-idp:SetLogDeliveryConfiguration
+                  - cognito-idp:GetLogDeliveryConfiguration
+                  - cognito-idp:TagResource
+                  - cognito-idp:UntagResource
+                  - cognito-idp:ListTagsForResource
+                Resource: "*"
               # Networking (VPC, subnets, security groups, route tables)
               - Effect: Allow
                 Action:
@@ -972,6 +1102,19 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
                   - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/vendedlogs/cognito/moving-crm-*"
+              # Cognito's vended-log delivery setup requires account-level APIs.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
               # CodeStar Connections (for pipeline source action)
               - Effect: Allow
                 Action:
@@ -1039,7 +1182,7 @@ Resources:
             Value: leads
 
   # ===========================================================================
-  # CODEPIPELINE V2 — Source → Build → Infrastructure → Deploy
+  # CODEPIPELINE V2 — Source → Build + Infrastructure → Deploy
   # ===========================================================================
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -1076,9 +1219,8 @@ Resources:
               OutputArtifacts:
                 - Name: SourceCode
 
-        # --- Infrastructure: deploy CloudFormation template (self-mutating) ---
-        # --- Build: compile frontend, package Lambdas ---
-        - Name: Build
+        # Build and infrastructure are independent, so run them in parallel.
+        - Name: BuildAndInfrastructure
           Actions:
             - Name: Build
               ActionTypeId:
@@ -1092,10 +1234,6 @@ Resources:
                 - Name: SourceCode
               OutputArtifacts:
                 - Name: BuildOutput
-
-        # --- Infrastructure: deploy CloudFormation template (self-mutating) ---
-        - Name: Infrastructure
-          Actions:
             - Name: DeployInfra
               ActionTypeId:
                 Category: Deploy
@@ -1108,19 +1246,25 @@ Resources:
                 TemplatePath: SourceCode::infra/template.yaml
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationExecutionRole.Arn
-                ParameterOverrides: !Sub |
-                  {
-                    "Environment": "${Environment}",
-                    "GitHubConnectionArn": "${GitHubConnectionArn}",
-                    "GitHubRepo": "${GitHubRepo}",
-                    "GitHubBranch": "${GitHubBranch}",
-                    "AllowedCIDR": "${AllowedCIDR}",
-                    "SmartMovingApiKey": "${SmartMovingApiKey}",
-                    "DomainName": "${DomainName}",
-                    "HostedZoneId": "${HostedZoneId}",
-                    "AcmCertificateArn": "${AcmCertificateArn}",
-                    "DeployLambda": "true"
-                  }
+                ParameterOverrides: !Sub
+                  - |
+                    {
+                      "Environment": "${Environment}",
+                      "PublicMoveEmbedOrigins": "${PipelineEmbedOrigins}",
+                      "GitHubConnectionArn": "${GitHubConnectionArn}",
+                      "GitHubRepo": "${GitHubRepo}",
+                      "GitHubBranch": "${GitHubBranch}",
+                      "AllowedCIDR": "${AllowedCIDR}",
+                      "SmartMovingApiKey": "${SmartMovingApiKey}",
+                      "DomainName": "${DomainName}",
+                      "HostedZoneId": "${HostedZoneId}",
+                      "AcmCertificateArn": "${AcmCertificateArn}",
+                      "DeployLambda": "true"
+                    }
+                  - PipelineEmbedOrigins: !If
+                      - IsDevEnvironment
+                      - "http://127.0.0.1:4321 http://localhost:4321 https://d106rx0ot8ijyc.cloudfront.net"
+                      - !Ref PublicMoveEmbedOrigins
               InputArtifacts:
                 - Name: SourceCode
 
@@ -1168,6 +1312,10 @@ Resources:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
         EnvironmentVariables:
+          - Name: SETTINGS_SOURCE_ACCOUNT_ID
+            Value: !Ref SettingsSourceAccountId
+          - Name: SETTINGS_PRODUCTION_ACCOUNT_ID
+            Value: !Ref SettingsProductionAccountId
           - Name: ENVIRONMENT
             Value: !Ref Environment
           - Name: SSM_PREFIX
@@ -1195,6 +1343,57 @@ Resources:
   # ===========================================================================
   # API BACKEND LAMBDA + API GATEWAY
   # ===========================================================================
+  CustomerPortalUserPool:
+    Type: AWS::Cognito::UserPool
+    DependsOn: CloudFormationExecutionRole
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: !Sub moving-crm-customer-email-${Environment}
+      UserPoolTier: LITE
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+        InviteMessageTemplate:
+          EmailSubject: "Your moving page code"
+          EmailMessage: "<p>Your code is <strong>{####}</strong>.</p><p>Enter it on your moving page. This code expires in 10 minutes. Do not share it.</p><p>Request reference: {username}</p>"
+      MfaConfiguration: "OFF"
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 6
+          RequireLowercase: false
+          RequireUppercase: false
+          RequireNumbers: true
+          RequireSymbols: false
+          TemporaryPasswordValidityDays: 1
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: false
+
+  CustomerPortalEmailLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: CloudFormationExecutionRole
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/vendedlogs/cognito/moving-crm-customer-email-${Environment}
+      RetentionInDays: 30
+
+  CustomerPortalEmailLogDelivery:
+    Type: AWS::Cognito::LogDeliveryConfiguration
+    DependsOn: CloudFormationExecutionRole
+    Properties:
+      UserPoolId: !Ref CustomerPortalUserPool
+      LogConfigurations:
+        - EventSource: userNotification
+          LogLevel: ERROR
+          CloudWatchLogsConfiguration:
+            # Cognito expects the group ARN without the :* suffix from GetAtt Arn.
+            LogGroupArn: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${CustomerPortalEmailLogGroup}
+
   ApiLambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -1216,6 +1415,17 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
+                  - cognito-idp:AdminCreateUser
+                Resource: !GetAtt CustomerPortalUserPool.Arn
+              - Effect: Allow
+                Action: ses:SendEmail
+                Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+              - Effect: Allow
+                Action: sns:Publish
+                NotResource: !Sub "arn:aws:sns:*:${AWS::AccountId}:*"
+
+              - Effect: Allow
+                Action:
                   - ssm:GetParameter
                   - ssm:GetParameters
                   - ssm:GetParametersByPath
@@ -1225,6 +1435,11 @@ Resources:
               - Effect: Allow
                 Action:
                   - ssm:PutParameter
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/LIVESWITCH_REFRESH_TOKEN"
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/LIVESWITCH_OAUTH_CONFIG"
+              - Effect: Allow
+                Action: ssm:DeleteParameter
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/LIVESWITCH_REFRESH_TOKEN"
               - Effect: Allow
                 Action:
@@ -1255,6 +1470,10 @@ Resources:
                 Action:
                   - sqs:SendMessage
                 Resource: !GetAtt LeadDuplicateQueue.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt PublicMoveSyncQueue.Arn
               - Effect: Allow
                 Action:
                   - s3:GetObject
@@ -1331,6 +1550,11 @@ Resources:
           AUTO_ASSIGN_DRY_RUN_ONLY: !If [IsProd, "false", "true"]
           NEW_LEAD_SMS_DRY_RUN: !If [IsProd, "false", "true"]
           REP_ASSIGNMENT_SMS_DRY_RUN: !If [IsProd, "false", "true"]
+          PUBLIC_MOVE_COGNITO_POOL_ID: !Ref CustomerPortalUserPool
+          PUBLIC_MOVE_ORIGIN: !If
+            - IsProd
+            - !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${CloudFrontDistribution.DomainName}"]
+            - !Sub "https://${CloudFrontDistribution.DomainName}"
           CORS_ORIGINS: !If
             - IsProd
             - !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${CloudFrontDistribution.DomainName}"]
@@ -1339,12 +1563,142 @@ Resources:
               - - !Sub "https://${CloudFrontDistribution.DomainName}"
                 - "http://localhost:5173"
           LEAD_DUPLICATE_QUEUE_URL: !GetAtt LeadDuplicateQueue.QueueUrl
+          PUBLIC_MOVE_SYNC_QUEUE_URL: !Ref PublicMoveSyncQueue
           ATTACHMENTS_BUCKET: !Ref AttachmentBucket
           LEAD_DUPLICATE_FUNCTION_ARN: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-lead-duplicate-${Environment}"
           LEAD_DUPLICATE_SCHEDULER_ROLE_ARN: !GetAtt LeadDuplicateSchedulerRole.Arn
           REALTIME_CONNECTIONS_TABLE: !Ref RealtimeConnectionsTable
           REALTIME_MANAGEMENT_ENDPOINT: !Sub "https://${RealtimeApi}.execute-api.${AWS::Region}.amazonaws.com/live"
           REALTIME_FUNCTION_NAME: !Ref RealtimeFunction
+
+  # ===========================================================================
+  # CUSTOMER FILE SYNC — one file per message, isolated from lead duplication
+  # ===========================================================================
+  PublicMoveSyncDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub moving-crm-public-move-sync-dlq-${Environment}
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 1080
+      SqsManagedSseEnabled: true
+
+  PublicMoveSyncQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub moving-crm-public-move-sync-${Environment}
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 1080
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt PublicMoveSyncDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  PublicMoveSyncRole:
+    Type: AWS::IAM::Role
+    Condition: ShouldDeployLambda
+    Properties:
+      RoleName: !Sub moving-crm-public-move-sync-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: PublicMoveSyncPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt RealtimeFunction.Arn
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt PublicMoveSyncQueue.Arn
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/*"
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/moving-crm/${Environment}/LIVESWITCH_REFRESH_TOKEN"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !GetAtt Database.MasterUserSecret.SecretArn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub "${AttachmentBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource:
+                  - !GetAtt PublicMoveSyncQueue.Arn
+                  - !GetAtt PublicMoveSyncDeadLetterQueue.Arn
+
+  PublicMoveSyncFunction:
+    Type: AWS::Lambda::Function
+    Condition: ShouldDeployLambda
+    Properties:
+      FunctionName: !Sub moving-crm-public-move-sync-${Environment}
+      Runtime: python3.11
+      Handler: public_move_sync_handler.handler
+      Timeout: 180
+      MemorySize: 512
+      Role: !GetAtt PublicMoveSyncRole.Arn
+      VpcConfig: !If
+        - IsProd
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+        - !Ref "AWS::NoValue"
+      Code:
+        S3Bucket: !Ref FrontendBucket
+        S3Key: api-backend/package.zip
+      Environment:
+        Variables:
+          SSM_PREFIX: !Sub /moving-crm/${Environment}/
+          AWS_REGION_NAME: !Ref AWS::Region
+          DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
+          SMARTMOVING_API_KEY: !Sub "{{resolve:ssm:/moving-crm/${Environment}/SMARTMOVING_API_KEY}}"
+          JWT_SECRET: !Sub "{{resolve:secretsmanager:${JwtSecret}:SecretString}}"
+          ATTACHMENTS_BUCKET: !Ref AttachmentBucket
+          PUBLIC_MOVE_SYNC_DLQ_ARN: !GetAtt PublicMoveSyncDeadLetterQueue.Arn
+          PUBLIC_MOVE_SYNC_QUEUE_URL: !Ref PublicMoveSyncQueue
+          REALTIME_FUNCTION_NAME: !Ref RealtimeFunction
+
+  PublicMoveSyncEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Condition: ShouldDeployLambda
+    Properties:
+      EventSourceArn: !GetAtt PublicMoveSyncQueue.Arn
+      FunctionName: !Ref PublicMoveSyncFunction
+      BatchSize: 1
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      ScalingConfig:
+        MaximumConcurrency: 2
+
+  # The same handler distinguishes DLQ records by ARN and persists terminal failure,
+  # including jobs whose normal processing repeatedly hit the Lambda hard timeout.
+  PublicMoveSyncDeadLetterEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Condition: ShouldDeployLambda
+    Properties:
+      EventSourceArn: !GetAtt PublicMoveSyncDeadLetterQueue.Arn
+      FunctionName: !Ref PublicMoveSyncFunction
+      BatchSize: 1
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      ScalingConfig:
+        MaximumConcurrency: 2
 
   MessageStreamLookupRole:
     Type: AWS::IAM::Role
@@ -2079,6 +2433,14 @@ Resources:
       TreatMissingData: notBreaching
 
 Outputs:
+  CustomerEmailErrorsLogGroup:
+    Description: Cognito notification errors (30-day retention; not delivery receipts).
+    Value: !Ref CustomerPortalEmailLogGroup
+
+  CustomerEmailSendAttemptsLogGroup:
+    Description: Search for customer_email_send to trace each CRM email attempt and Cognito request ID.
+    Value: !Sub /aws/lambda/moving-crm-api-${Environment}
+
   FrontendURL:
     Description: Frontend URL (CloudFront)
     Value: !Sub "https://${CloudFrontDistribution.DomainName}"

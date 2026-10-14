@@ -161,7 +161,7 @@ export default function PendingDuplicationsPage() {
                 <h2 id="duplicate-now-title" style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Duplicate Now</h2>
                 <p style={{ margin: "3px 0 0", color: "#706e6b", fontSize: 12 }}>{runItem.lead_name || runItem.lead_id}</p>
               </div>
-              <button type="button" aria-label="Close" disabled={Boolean(running)} onClick={() => setRunItem(null)} style={closeButton}>×</button>
+              <button className="slds-button" type="button" aria-label="Close" disabled={Boolean(running)} onClick={() => setRunItem(null)} style={closeButton}>×</button>
             </header>
             <div style={modalBody}>
               <label style={fieldLabel}>
@@ -190,9 +190,9 @@ export default function PendingDuplicationsPage() {
               {runItem.is_sample ? <div style={demoNotice}>Dev preview only — this sample cannot create or delete anything.</div> : null}
             </div>
             <footer className="pending-dup-modal-footer" style={modalFooter}>
-              <button type="button" disabled={Boolean(running)} onClick={() => setRunItem(null)} style={secondaryButton}>{runResult ? "Close" : "Cancel"}</button>
+              <button className="slds-button" type="button" disabled={Boolean(running)} onClick={() => setRunItem(null)} style={secondaryButton}>{runResult ? "Close" : "Cancel"}</button>
               {!runResult ? (
-                <button type="button" disabled={runItem.is_sample || Boolean(running) || !runCompanyId || !runReferralSource.trim()} onClick={() => void duplicateNow()} style={primaryButton}>
+                <button className="slds-button" type="button" disabled={runItem.is_sample || Boolean(running) || !runCompanyId || !runReferralSource.trim()} onClick={() => void duplicateNow()} style={primaryButton}>
                   {runItem.is_sample ? "Preview Only" : running ? "Waiting for responses..." : "Duplicate Now"}
                 </button>
               ) : null}
@@ -205,7 +205,7 @@ export default function PendingDuplicationsPage() {
           <h1 style={title}>Pending Lead Duplications</h1>
           <p style={subtitle}>Leads waiting for their scheduled copy to another company.</p>
         </div>
-        <button type="button" onClick={() => void load()} disabled={loading} style={secondaryButton}>
+        <button className="slds-button" type="button" onClick={() => void load()} disabled={loading} style={secondaryButton}>
           {loading ? "Refreshing…" : "Refresh"}
         </button>
       </div>
@@ -274,7 +274,7 @@ export default function PendingDuplicationsPage() {
                     <td style={td}>{item.target_referral_source || "—"}</td>
                     <td style={td}>{formatDate(item.fire_at)}</td>
                     <td className="pending-dup-actions" style={{ ...td, textAlign: "right" }}>
-                      <button
+                      <button className="slds-button"
                         type="button"
                         onClick={() => openDuplicateNow(item)}
                         disabled={running === item.schedule_name || deleting === item.schedule_name}
@@ -282,7 +282,7 @@ export default function PendingDuplicationsPage() {
                       >
                         {running === item.schedule_name ? "Starting..." : "Duplicate Now"}
                       </button>
-                      <button
+                      <button className="slds-button"
                         type="button"
                         onClick={() => void deleteSchedule(item)}
                         disabled={item.is_sample || deleting === item.schedule_name || running === item.schedule_name}

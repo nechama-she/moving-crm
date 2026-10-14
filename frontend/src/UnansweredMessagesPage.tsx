@@ -529,7 +529,7 @@ export default function UnansweredMessagesPage() {
   };
 
   const validationButton = (
-    <button
+    <button className="slds-button"
       type="button"
       onClick={() => void validateCurrentTab()}
       disabled={validatingTab !== null}
@@ -551,42 +551,42 @@ export default function UnansweredMessagesPage() {
       {error ? <p style={{ color: "#b91c1c" }}>{error}</p> : null}
       {validationNotice ? <p style={{ color: "#2e844a" }}>{validationNotice}</p> : null}
       {numberMenu ? <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "fixed", zIndex: 1000, left: Math.min(numberMenu.x, window.innerWidth - 220), top: Math.min(numberMenu.y, window.innerHeight - 175), minWidth: 210, padding: 5, border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", boxShadow: "0 6px 18px rgba(15,23,42,.2)" }}>
-        {numberMenu.connectTarget ? <button type="button" onClick={() => { setConnectTarget(numberMenu.connectTarget || null); setNumberMenu(null); }} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#0b5cab", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Connect to a lead</button> : null}
+        {numberMenu.connectTarget ? <button className="slds-button" type="button" onClick={() => { setConnectTarget(numberMenu.connectTarget || null); setNumberMenu(null); }} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#0b5cab", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Connect to a lead</button> : null}
         {!numberMenu.connectTarget || numberMenu.connectTarget.channel === "sms" || numberMenu.connectTarget.channel === "phone" ? <>
-          <button type="button" onClick={() => void ignoreNumber(numberMenu.number, "from")} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore from this number</button>
-          <button type="button" onClick={() => void ignoreNumber(numberMenu.number, "to")} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore to this number</button>
-          <button type="button" onClick={() => void ignoreNumber(numberMenu.number, "both")} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore both directions</button>
+          <button className="slds-button" type="button" onClick={() => void ignoreNumber(numberMenu.number, "from")} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore from this number</button>
+          <button className="slds-button" type="button" onClick={() => void ignoreNumber(numberMenu.number, "to")} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore to this number</button>
+          <button className="slds-button" type="button" onClick={() => void ignoreNumber(numberMenu.number, "both")} style={{ width: "100%", border: 0, borderRadius: 4, background: "transparent", color: "#b91c1c", padding: "9px 11px", textAlign: "left", fontWeight: 600, cursor: "pointer" }}>Ignore both directions</button>
         </> : null}
       </div> : null}
       {connectTarget ? <ConnectCommunicationLeadModal target={connectTarget} token={token} onClose={() => setConnectTarget(null)} onConnected={(lead) => { setItems((current) => current.map((row) => row.channel === connectTarget.channel && row.client_identifier === connectTarget.clientIdentifier && row.company_identifier === connectTarget.companyIdentifier ? { ...row, lead_id: lead.id, client: lead.name, company: lead.company, rep: lead.rep || "Unassigned" } : row)); setMissedCalls((current) => current.map((row) => ["calls", "call", "phone"].includes(connectTarget.channel) && row.client_identifier === connectTarget.clientIdentifier && row.company_identifier === connectTarget.companyIdentifier ? { ...row, lead_id: lead.id, client: lead.name, company: lead.company, rep: lead.rep || "Unassigned" } : row)); setConnectTarget(null); }} /> : null}
 
       <nav aria-label="Sales work queue categories" style={{ display: "flex", flexWrap: "nowrap", gap: 12, overflowX: "auto", paddingBottom: 12, marginBottom: 6 }}>
-        <button type="button" onClick={() => setQueueTab("messages")} style={{ ...queueCard, ...(queueTab === "messages" ? activeQueueCard : {}) }}>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("messages")} style={{ ...queueCard, ...(queueTab === "messages" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Unanswered Messages</span>
           <strong style={queueCardCount}>{globalCounts.unanswered}</strong>
           <span style={queueCardDescription}>Client messages waiting for a response</span>
         </button>
-        <button type="button" onClick={() => setQueueTab("calls")} style={{ ...queueCard, ...(queueTab === "calls" ? activeQueueCard : {}) }}>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("calls")} style={{ ...queueCard, ...(queueTab === "calls" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Missed Calls</span>
           <strong style={queueCardCount}>{globalMissedCallCount}</strong>
           <span style={queueCardDescription}>Missed calls without a later contact attempt</span>
         </button>
-        <button type="button" onClick={() => setQueueTab("leads")} style={{ ...queueCard, ...(queueTab === "leads" ? activeQueueCard : {}) }}>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("leads")} style={{ ...queueCard, ...(queueTab === "leads" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Leads Awaiting First Contact</span>
           <strong style={queueCardCount}>{globalFirstContactCounts.new + globalFirstContactCounts.overdue}</strong>
           <span style={queueCardDescription}>New leads with no call attempt</span>
         </button>
-        <button type="button" onClick={() => setQueueTab("followups")} style={{ ...queueCard, ...(queueTab === "followups" ? activeQueueCard : {}) }}>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("followups")} style={{ ...queueCard, ...(queueTab === "followups" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Priority 0 Follow-ups</span>
           <strong style={queueCardCount}>{globalFollowupCounts.overdue}</strong>
           <span style={queueCardDescription}>Six call periods and three required messages</span>
         </button>
-        <button type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Message State Table</span>
           <strong style={queueCardCount}>{messageStates.length}</strong>
           <span style={queueCardDescription}>Raw CRM message state rows</span>
         </button>
-        <button type="button" onClick={() => setQueueTab("missed-call-state")} style={{ ...queueCard, ...(queueTab === "missed-call-state" ? activeQueueCard : {}) }}>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("missed-call-state")} style={{ ...queueCard, ...(queueTab === "missed-call-state" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Missed Call State Table</span>
           <strong style={queueCardCount}>{missedCallStates.length}</strong>
           <span style={queueCardDescription}>Raw CRM missed-call state rows</span>
@@ -602,7 +602,7 @@ export default function UnansweredMessagesPage() {
       {queueTab === "message-state" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Message State Table ({messageStates.length})</h2>
-          <button type="button" onClick={() => void loadMessageStates()} disabled={loadingMessageStates} style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: loadingMessageStates ? "wait" : "pointer" }}>{loadingMessageStates ? "Loading…" : "Reload"}</button>
+          <button className="slds-button" type="button" onClick={() => void loadMessageStates()} disabled={loadingMessageStates} style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: loadingMessageStates ? "wait" : "pointer" }}>{loadingMessageStates ? "Loading…" : "Reload"}</button>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse" }}>
@@ -630,7 +630,7 @@ export default function UnansweredMessagesPage() {
       {queueTab === "missed-call-state" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Missed Call State Table ({missedCallStates.length})</h2>
-          <button type="button" onClick={() => void loadMissedCallStates()} disabled={loadingMissedCallStates} style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: loadingMissedCallStates ? "wait" : "pointer" }}>{loadingMissedCallStates ? "Loading…" : "Reload"}</button>
+          <button className="slds-button" type="button" onClick={() => void loadMissedCallStates()} disabled={loadingMissedCallStates} style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: loadingMissedCallStates ? "wait" : "pointer" }}>{loadingMissedCallStates ? "Loading…" : "Reload"}</button>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 1080, borderCollapse: "collapse" }}>
@@ -659,7 +659,7 @@ export default function UnansweredMessagesPage() {
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Unanswered Messages ({tab === "unanswered" ? filteredMessageCount : counts.unanswered})</h2>{validationButton}</div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {([ ["unanswered", "Unanswered Messages", counts.unanswered], ["ended", "Ended Chats", counts.ended] ] as const).map(([key, label, count]) => (
-              <button key={key} type="button" onClick={() => setTab(key)} style={{ border: 0, borderBottom: tab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: tab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: tab === key ? 700 : 500, cursor: "pointer" }}>{label} ({tab === key ? filteredMessageCount : count})</button>
+              <button className="slds-button" key={key} type="button" onClick={() => setTab(key)} style={{ border: 0, borderBottom: tab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: tab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: tab === key ? 700 : 500, cursor: "pointer" }}>{label} ({tab === key ? filteredMessageCount : count})</button>
             ))}
           </div>
         </div>
@@ -707,7 +707,7 @@ export default function UnansweredMessagesPage() {
                 <td style={cell}><strong>{row.missed_count}</strong></td>
                 <td style={cell}>{new Date(row.first_missed_at).toLocaleString()}</td>
                 <td style={cell}>{new Date(row.latest_missed_at).toLocaleString()}</td>
-                <td style={cell}><button type="button" onClick={() => void ignoreMissedCall(row)} style={{ border: "1px solid #c9c7c5", borderRadius: 4, background: "#fff", color: "#475569", padding: "6px 11px", fontWeight: 600, cursor: "pointer" }}>Ignore</button></td>
+                <td style={cell}><button className="slds-button" type="button" onClick={() => void ignoreMissedCall(row)} style={{ border: "1px solid #c9c7c5", borderRadius: 4, background: "#fff", color: "#475569", padding: "6px 11px", fontWeight: 600, cursor: "pointer" }}>Ignore</button></td>
               </tr>)}
             </tbody>
           </table>
@@ -719,7 +719,7 @@ export default function UnansweredMessagesPage() {
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Leads Awaiting First Contact ({firstContactCounts.new + firstContactCounts.overdue})</h2>{validationButton}</div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {([ ["new", "New Leads", firstContactCounts.new], ["overdue", "Overdue", firstContactCounts.overdue] ] as const).map(([key, label, count]) => (
-              <button key={key} type="button" onClick={() => setLeadTab(key)} style={{ border: 0, borderBottom: leadTab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: leadTab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: leadTab === key ? 700 : 500, cursor: "pointer" }}>{label} ({count})</button>
+              <button className="slds-button" key={key} type="button" onClick={() => setLeadTab(key)} style={{ border: 0, borderBottom: leadTab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: leadTab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: leadTab === key ? 700 : 500, cursor: "pointer" }}>{label} ({count})</button>
             ))}
           </div>
         </div>
@@ -750,7 +750,7 @@ export default function UnansweredMessagesPage() {
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2>{validationButton}</div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {([ ["all", "All Leads", followupCounts.all], ["overdue", "Overdue Items", followupCounts.overdue] ] as const).map(([key, label, count]) => (
-              <button key={key} type="button" onClick={() => setFollowupTab(key)} style={{ border: 0, borderBottom: followupTab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: followupTab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: followupTab === key ? 700 : 500, cursor: "pointer" }}>{label} ({count})</button>
+              <button className="slds-button" key={key} type="button" onClick={() => setFollowupTab(key)} style={{ border: 0, borderBottom: followupTab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: followupTab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: followupTab === key ? 700 : 500, cursor: "pointer" }}>{label} ({count})</button>
             ))}
           </div>
         </div>

@@ -2,17 +2,24 @@
 
 import base64
 import hashlib
-import hmac
 import json
+import hmac
 import os
+import re
 import secrets
 import time
-from urllib.parse import urlencode
+from datetime import datetime
+from decimal import Decimal
+from spark_processing import SparkProcessingLog
+from spark_history import archive_report_for_new_media, remember_report, report_history, activate_report
+from urllib.parse import urlencode, urlsplit
 
 import boto3
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
+from botocore.exceptions import BotoCoreError, ClientError
+from pydantic import BaseModel, Field
 
 from auth import require_admin
 from config import get_config
@@ -23,18 +30,106 @@ router = APIRouter(prefix="/api/liveswitch", tags=["LiveSwitch"])
 AUTHORIZE_URL = "https://id.liveswitch.com/authorize"
 TOKEN_URL = "https://id.liveswitch.com/oauth/token"
 AUDIENCE = "https://public-api.production.liveswitch.com/"
-SCOPES = "openid profile email offline_access conversations conversations.write contacts webhooks webhooks.write"
+SCOPES = "openid profile email offline_access conversations conversations.write contacts webhooks webhooks.write spark-templates sparks sparks.write recordings"
 STATE_TTL_SECONDS = 300
 
 
-def _settings() -> tuple[str, str, str]:
+def _connection_config() -> dict:
+    # Read current credentials on each instance, including already-warm Lambdas.
+    try:
+        value = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1")).get_parameter(
+            Name=_refresh_token_parameter().replace("LIVESWITCH_REFRESH_TOKEN", "LIVESWITCH_OAUTH_CONFIG"),
+            WithDecryption=True,
+        )["Parameter"]["Value"]
+        return json.loads(value)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") != "ParameterNotFound":
+            raise HTTPException(503, "Could not read LiveSwitch settings. Please try again.") from exc
+    except (BotoCoreError, ValueError) as exc:
+        raise HTTPException(503, "Could not read LiveSwitch settings. Please try again.") from exc
     config = get_config()
-    client_id = str(config.get("LIVESWITCH_CLIENT_ID") or "").strip()
-    client_secret = str(config.get("LIVESWITCH_CLIENT_SECRET") or "").strip()
-    redirect_uri = str(config.get("LIVESWITCH_REDIRECT_URI") or "").strip()
+    res = {key: str(config.get("LIVESWITCH_" + key.upper()) or os.getenv("LIVESWITCH_" + key.upper(), "")).strip()
+            for key in ("client_id", "client_secret", "redirect_uri")}
+    res["spark_template_id"] = str(config.get("LIVESWITCH_SPARK_TEMPLATE_ID") or os.getenv("LIVESWITCH_SPARK_TEMPLATE_ID", "")).strip()
+    return res
+
+
+def _settings() -> tuple[str, str, str]:
+    config = _connection_config()
+    client_id, client_secret, redirect_uri = (config.get(key, "") for key in ("client_id", "client_secret", "redirect_uri"))
     if not client_id or not client_secret or not redirect_uri:
         raise HTTPException(status_code=503, detail="LiveSwitch OAuth is not configured")
     return client_id, client_secret, redirect_uri
+
+
+class ConnectionSettings(BaseModel):
+    client_id: str = Field(min_length=1, max_length=512)
+    client_secret: str = Field(default="", max_length=2048)
+    redirect_uri: str = Field(min_length=1, max_length=2048)
+    spark_template_id: str | None = Field(default=None, max_length=512)
+
+
+@router.get("/settings")
+def connection_status(admin: User = Depends(require_admin)):
+    config = _connection_config()
+    token_saved = False
+    try:
+        boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1")).get_parameter(
+            Name=_refresh_token_parameter(), WithDecryption=False)
+        token_saved = True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") != "ParameterNotFound":
+            raise HTTPException(503, "Could not check LiveSwitch connection.") from exc
+    except BotoCoreError as exc:
+        raise HTTPException(503, "Could not check LiveSwitch connection.") from exc
+    return {"client_id": config.get("client_id", ""), "redirect_uri": config.get("redirect_uri", ""),
+            "has_secret": bool(config.get("client_secret")), "authorization_saved": token_saved,
+            "spark_template_id": config.get("spark_template_id", "")}
+
+
+@router.put("/settings")
+def save_connection_settings(body: ConnectionSettings, admin: User = Depends(require_admin)):
+    old = _connection_config()
+    values = {
+        "client_id": body.client_id.strip(),
+        "client_secret": body.client_secret.strip() or old.get("client_secret", ""),
+        "redirect_uri": body.redirect_uri.strip(),
+        "spark_template_id": (body.spark_template_id or "").strip(),
+    }
+    uri = urlsplit(values["redirect_uri"])
+    if (not uri.hostname or uri.username or uri.password or uri.query or uri.fragment
+            or uri.path not in ("/api/liveswitch/oauth/callback", "/liveswitch/callback")
+            or not (uri.scheme == "https" or (uri.scheme == "http" and uri.hostname in ("localhost", "127.0.0.1")))):
+        raise HTTPException(400, "Enter the CRM callback address ending in /liveswitch/callback or /api/liveswitch/oauth/callback.")
+    if not values["client_id"] or not values["client_secret"]:
+        raise HTTPException(400, "Enter the Client ID and Client Secret from the LiveSwitch email.")
+    if values["client_id"] != old.get("client_id") and not body.client_secret.strip():
+        raise HTTPException(400, "Enter the Client Secret for the new Client ID.")
+    try:
+        ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
+        # Only invalidate token if credentials/redirect changed
+        credentials_changed = (
+            values["client_id"] != old.get("client_id") or
+            (body.client_secret.strip() and values["client_secret"] != old.get("client_secret")) or
+            values["redirect_uri"] != old.get("redirect_uri")
+        )
+        if credentials_changed:
+            try:
+                ssm.delete_parameter(Name=_refresh_token_parameter())
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") != "ParameterNotFound":
+                    raise
+            _token_cache.update(value="", expires=0.0)
+
+        ssm.put_parameter(
+            Name=_refresh_token_parameter().replace("LIVESWITCH_REFRESH_TOKEN", "LIVESWITCH_OAUTH_CONFIG"),
+            Value=json.dumps(values),
+            Type="SecureString",
+            Overwrite=True,
+        )
+    except (BotoCoreError, ClientError) as exc:
+        raise HTTPException(503, "Could not save LiveSwitch settings. Please try again.") from exc
+    return {"saved": True}
 
 
 def _state_secret() -> bytes:
@@ -82,53 +177,78 @@ def _refresh_token_parameter() -> str:
 
 
 @router.get("/oauth/start")
-def start_oauth(admin: User = Depends(require_admin)):
+def start_oauth(response: Response, admin: User = Depends(require_admin)):
     client_id, _, redirect_uri = _settings()
     params = {
         'response_type': 'code',
         'client_id': client_id,
         'redirect_uri': redirect_uri,
         'scope': SCOPES,
+        'prompt': 'consent',
         'audience': AUDIENCE,
         'state': _create_state(admin.id),
     }
     authorization_url = f"{AUTHORIZE_URL}?{urlencode(params)}"
-    return {"authorization_url": authorization_url}
+    response.set_cookie("liveswitch_oauth_state", params["state"], max_age=STATE_TTL_SECONDS,
+                        httponly=True, secure=redirect_uri.startswith("https://"), samesite="lax", path="/api/liveswitch/oauth")
+    response.headers["Cache-Control"] = "no-store"
+    from liveswitch_connect_trace import redact, ConnectionTrace
+    return {"authorization_url": authorization_url, 'trace':ConnectionTrace([{'stage':'authorization request',
+        'method':'GET','url':AUTHORIZE_URL,'query':redact(params)}])}
 
 
 @router.get("/oauth/callback", response_class=HTMLResponse)
 async def oauth_callback(
+    request: Request,
     code: str = Query(default=""),
     state: str = Query(default=""),
     error: str = Query(default=""),
     error_description: str = Query(default=""),
 ):
-    if state:
-        _validate_state(state)
+    _validate_state(state)
+    if not hmac.compare_digest(state, request.cookies.get("liveswitch_oauth_state", "")):
+        raise HTTPException(400, "Connection attempt expired. Return to Settings and click Connect LiveSwitch again.")
+    from liveswitch_connect_trace import redact, response_body, token_claims, trace_page, ConnectionTrace
+    trace=ConnectionTrace([{'stage':'callback received','method':request.method,'path':request.url.path,
+            'query':redact(dict(request.query_params),[code,state])}])
     if error:
         detail = error_description.strip() or error
-        raise HTTPException(status_code=400, detail=f"LiveSwitch authorization failed: {detail}")
+        trace.append({'error':redact(detail,[code,state])})
+        return trace_page(trace,False,400)
     if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code")
+        trace.append({'error':'Missing authorization code'})
+        return trace_page(trace,False,400)
 
     client_id, client_secret, redirect_uri = _settings()
+    token_request = {'grant_type':'authorization_code','code':code,'client_id':client_id,
+                     'client_secret':client_secret,'redirect_uri':redirect_uri}
+    trace.append({'stage':'token request','method':'POST','url':TOKEN_URL,
+                  'headers':{'Content-Type':'application/json'},'body':redact(token_request)})
+    exchange_started = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.post(TOKEN_URL, json={
-                "grant_type": "authorization_code",
-                "code": code,
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uri": redirect_uri,
-            })
+            response = await client.post(TOKEN_URL, json=token_request)
     except httpx.RequestError as exc:
-        raise HTTPException(status_code=502, detail="Could not reach LiveSwitch token service") from exc
+        trace.append({'stage':'token response','error':redact(str(exc),[code,state,client_secret])})
+        return trace_page(trace,False,502)
+    trace.append({'stage':'token response','status':response.status_code,
+        'duration_ms':round((time.monotonic()-exchange_started)*1000),
+        'headers':redact(dict(getattr(response,'headers',{}))),
+        'body':response_body(response,[code,state,client_secret])})
     if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail="LiveSwitch rejected the authorization code")
-    tokens = response.json()
+        return trace_page(trace,False,502)
+    try:
+        tokens = response.json()
+    except ValueError:
+        trace.append({'error':'LiveSwitch returned a non-JSON token response'})
+        return trace_page(trace,False,502)
+    trace.append({'stage':'issued access token claims (diagnostic only)',
+                  'requested_scopes':SCOPES.split(), 'response_scope':tokens.get('scope'),
+                  'claims':token_claims(tokens.get('access_token',''))})
     refresh_token = str(tokens.get("refresh_token") or "")
     if not refresh_token:
-        raise HTTPException(status_code=502, detail="LiveSwitch did not return a refresh token")
+        trace.append({'error':'LiveSwitch did not return a refresh token'})
+        return trace_page(trace,False,502)
 
     boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1")).put_parameter(
         Name=_refresh_token_parameter(),
@@ -136,8 +256,1006 @@ async def oauth_callback(
         Type="SecureString",
         Overwrite=True,
     )
-    return HTMLResponse(
-        "<!doctype html><title>LiveSwitch connected</title>"
-        "<main style='font-family:system-ui;padding:40px'>"
-        "<h1>LiveSwitch connected</h1><p>You can close this window and return to the CRM.</p></main>"
-    )
+    _token_cache.update(value="", expires=0.0)
+    trace.append({'stage':'CRM authorization save','status':'saved'})
+    result = trace_page(trace,True)
+    result.delete_cookie("liveswitch_oauth_state", path="/api/liveswitch/oauth")
+    return result
+
+# Lead conversation endpoints keep OAuth credentials on the server.
+from threading import Lock
+from typing import Literal
+from pydantic import BaseModel, Field
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+from auth import get_current_user
+from database import get_db
+from models import Lead, LeadLiveSwitch, PublicMoveAccess, SalesRep, Company
+from libs.aircall.client import send_sms, find_number_id
+from libs.smartmoving.client import get_opportunity
+from routes.leads import _get_visible_lead_or_404, _ensure_not_dispatch_write
+
+
+def _safe_float(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+_token_lock = Lock()
+_token_cache = {"value": "", "expires": 0.0}
+
+
+def _access_token():
+    with _token_lock:
+        ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
+        try:
+            refresh = ssm.get_parameter(Name=_refresh_token_parameter(), WithDecryption=True)["Parameter"]["Value"]
+        except ClientError as exc:
+            if exc.response.get('Error', {}).get('Code') != 'ParameterNotFound':
+                raise HTTPException(503, 'Could not read the current LiveSwitch authorization.') from exc
+            config = get_config()
+            configured_token = '' if config.get('LIVESWITCH_ACCESS_RESET_20260926') else str(config.get('LIVESWITCH_ACCESS_TOKEN') or os.getenv('LIVESWITCH_ACCESS_TOKEN', '')).strip()
+            if configured_token:
+                return configured_token
+            raise HTTPException(503, 'Connect LiveSwitch in Settings before starting a conversation') from exc
+        except Exception as exc:
+            raise HTTPException(503, 'Could not read the current LiveSwitch authorization.') from exc
+        # Check shared authorization before using an instance-local cache. Reconnects
+        # must invalidate tokens on every warm API/worker instance, not only the callback.
+        client_id, client_secret, _ = _settings()
+        credential_key = hashlib.sha256((client_id + "\n" + client_secret + "\n" + SCOPES).encode()).hexdigest()
+        refresh_key = hashlib.sha256(refresh.encode()).hexdigest()
+        if (_token_cache['expires'] > time.time() and _token_cache.get('credential_key') == credential_key
+                and _token_cache.get('refresh_key') == refresh_key):
+            return _token_cache['value']
+        try:
+            response = httpx.post(TOKEN_URL, json={"grant_type": "refresh_token", "refresh_token": refresh,
+                "client_id": client_id, "client_secret": client_secret, "scope": SCOPES}, timeout=20)
+            response.raise_for_status()
+            data = response.json()
+            token = data["access_token"]
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            raise HTTPException(502, "LiveSwitch connection needs to be reconnected in Settings") from exc
+        if data.get("refresh_token") and data["refresh_token"] != refresh:
+            ssm.put_parameter(Name=_refresh_token_parameter(), Value=data["refresh_token"], Type="SecureString", Overwrite=True)
+            refresh_key = hashlib.sha256(data['refresh_token'].encode()).hexdigest()
+        _token_cache.update(value=token, credential_key=credential_key, refresh_key=refresh_key,
+                            expires=time.time() + max(0, int(data.get("expires_in", 300)) - 60))
+        return token
+
+
+def _api_get(path, params=None):
+    try:
+        response = httpx.get(
+            AUDIENCE + "v1/" + path,
+            params=params,
+            headers={"Authorization": "Bearer " + _access_token(), "Accept": "application/json"},
+            timeout=45,
+        )
+        if response.status_code == 401:
+            raise HTTPException(503, "LiveSwitch authorization has expired. Ask an administrator to reconnect LiveSwitch.")
+        response.raise_for_status()
+        return response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(502, "LiveSwitch could not complete the request. Please try again.") from exc
+
+
+def _api_post(path, body):
+    try:
+        response = httpx.post(AUDIENCE + "v1/" + path, json=body,
+            headers={"Authorization": "Bearer " + _access_token(), "Accept": "application/json"}, timeout=45)
+        if response.status_code == 401:
+            raise HTTPException(503, "LiveSwitch authorization has expired. Ask an administrator to reconnect LiveSwitch.")
+        response.raise_for_status()
+        return response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(502, "LiveSwitch could not complete the request. Please try again.") from exc
+
+
+@router.get("/spark-templates")
+def list_spark_templates(admin: User = Depends(require_admin)):
+    data = _api_get("spark-templates")
+    # LiveSwitch returns either a list directly or an object containing an items/results array
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("items") or data.get("results") or data.get("data") or [data]
+    return []
+
+
+@router.post("/leads/{lead_id}/run-spark")
+def run_spark_on_conversation(
+    lead_id: str,
+    body: dict | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    return generate_uploaded_report(lead.id, body, db)
+
+
+def selected_media(lead_id, body, db):
+    from models import LeadAttachment
+    selected = body.get('file_ids') if isinstance(body, dict) else None
+    if not isinstance(selected, list) or not selected or any(not isinstance(value, str) for value in selected):
+        raise HTTPException(400, 'Select files for this action.')
+    rows = db.query(LeadAttachment).filter(LeadAttachment.lead_id == lead_id,
+        LeadAttachment.id.in_(selected), LeadAttachment.liveswitch_panel_visible.is_(True)).order_by(LeadAttachment.id).all()
+    if {row.id for row in rows} != set(selected):
+        raise HTTPException(400, 'Some selected files are no longer in this gallery.')
+    return rows
+
+
+@router.post('/leads/{lead_id}/upload-media', status_code=202)
+def upload_media(lead_id: str, body: dict, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    return stage_selected_media(lead.id, body, db, user.id)
+
+
+def stage_selected_media(lead_id, body, db, actor_id=None):
+    from models import PublicMoveUpload
+    from public_move_sync import queue_files
+    from report_files import file_list, validate_report_media
+    lead = db.query(Lead).filter_by(id=lead_id).with_for_update().one()
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
+    details = json.loads(saved.details or '{}') if saved else {}
+    if archive_report_for_new_media(details):
+        saved.details = json.dumps(details)
+        db.commit()
+    if not os.getenv('PUBLIC_MOVE_SYNC_QUEUE_URL', '').strip():
+        raise HTTPException(503, 'File upload worker is not configured.')
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
+    if not access:
+        raise HTTPException(409, 'Open the customer page before uploading media.')
+    files = selected_media(lead_id, body, db)
+    for attachment in files:
+        validate_report_media(attachment)
+    selected_ids = {file.id for file in files}
+    media = details.get('media_upload') or {}
+    same_files = {file['id'] for file in media.get('files', [])} == selected_ids
+    reuse = same_files and not media.get('report_id')
+    if not reuse:
+        conversation = ensure_lead_conversation(lead, db, fresh=True)
+        media = {'conversation': conversation, 'files': file_list(files), 'sync_tokens': {}}
+        details['media_upload'] = media
+        if not saved:
+            saved = LeadLiveSwitch(lead_id=lead_id)
+            db.add(saved)
+    details.update(media['conversation'])
+    saved.details = json.dumps(details)
+    for attachment in files:
+        row = db.get(PublicMoveUpload, attachment.id)
+        if row is None:
+            row = PublicMoveUpload(attachment_id=attachment.id, access_id=access.id, request_id='media-' + attachment.id)
+            db.add(row)
+        if not reuse or row.sync_token != media.get('sync_tokens', {}).get(attachment.id):
+            row.access_id = access.id
+            row.synced_at = None
+            row.sync_status = 'pending'
+            row.sync_token = row.sync_upload_url = row.sync_error = None
+    db.flush()
+    queue_files(access.id, db, actor_id=actor_id, upload_only=True)
+    rows = db.query(PublicMoveUpload).filter(PublicMoveUpload.attachment_id.in_([file.id for file in files])).all()
+    if any(row.sync_status == 'failed' for row in rows):
+        raise HTTPException(502, 'Some files could not be queued. Click Upload to LiveSwitch to retry.')
+    return {'ok': True, 'file_ids': [file.id for file in files], 'conversation': media['conversation']}
+
+
+def generate_uploaded_report(lead_id, body, db):
+    from models import PublicMoveUpload, LeadJob
+    from spark_history import REPORT_KEYS
+    from uuid import uuid4
+    db.query(Lead).filter_by(id=lead_id).with_for_update().one()
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
+    details = json.loads(saved.details or '{}') if saved else {}
+    if archive_report_for_new_media(details):
+        saved.details = json.dumps(details)
+        db.commit()
+    files = selected_media(lead_id, body, db)
+    media = details.get('media_upload') or {}
+    if {file['id'] for file in media.get('files', [])} != {file.id for file in files}:
+        raise HTTPException(409, 'Upload this selection to LiveSwitch before generating a report.')
+    if details.get('pending_spark_payload'):
+        raise HTTPException(409, 'Upload this selection again to replace the pending automatic report before generating.')
+    if media.get('report_id'):
+        return {'id': media['report_id'], 'status': details.get('last_spark_status', 'queued')}
+    rows = db.query(PublicMoveUpload).filter(PublicMoveUpload.attachment_id.in_([file.id for file in files])).all()
+    if len(rows) != len(files) or any(not row.synced_at or row.sync_token != media.get('sync_tokens', {}).get(row.attachment_id) for row in rows):
+        failures = [file.file_name for file in files if any(row.attachment_id == file.id and row.sync_status == 'failed' for row in rows)]
+        if failures:
+            raise HTTPException(409, 'Upload failed for ' + ', '.join(failures) + '. Click Upload to LiveSwitch to retry.')
+        raise HTTPException(409, 'The selected files have not finished uploading to LiveSwitch. Please try Generate Report again after the upload finishes.')
+    if not os.getenv('PUBLIC_MOVE_SYNC_QUEUE_URL', '').strip():
+        raise HTTPException(503, 'Report worker is not configured.')
+    template_id = body.get('sparkTemplateId') or _connection_config().get('spark_template_id')
+    if not template_id:
+        raise HTTPException(400, 'No Spark template is configured. Choose one in Settings.')
+    payload = {'sparkTemplateId': template_id, 'shareWith': ['anyone']}
+    remember_report(details)
+    details['carried_question_state'] = details.get('carried_question_state') or {key: details[key] for key in ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot') if key in details}
+    for key in REPORT_KEYS:
+        if key != 'carried_question_state':
+            details.pop(key, None)
+    draft = details.get('inventory_draft') or {}
+    details.update(report_list_body=draft.get('body'), report_list_rows=draft.get('rows', []),
+                   report_list_cuft=draft.get('cuft', 0), report_list_weight=draft.get('weight', 0),
+                   manual_rooms=draft.get('rooms', []), report_source='combined' if draft.get('rows') else 'liveswitch')
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
+    job = db.get(LeadJob, access.job_id)
+    details.update(report_customer_packing=job.customer_packing, report_customer_package=job.customer_packing_package)
+    details.update(media['conversation'])
+    pending_id = 'pending-' + str(uuid4())
+    details.update(last_spark_id=pending_id, last_spark_status='queued',
+                   last_spark_at=int(time.time()), spark_pricing_ready=False,
+                   report_conversation=media['conversation'], report_files=media['files'],
+                   pending_spark_payload=payload)
+    media.pop('report_id', None)
+    details['media_upload'] = media
+    details.pop('upload_error', None)
+    remember_report(details)
+    saved.details = json.dumps(details)
+    access.published_price = access.published_cuft = access.published_at = None
+    db.commit()
+    start_ready_report(lead_id, db)
+    return {'id': pending_id, 'status': 'queued'}
+
+
+def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = None):
+    from models import LeadAttachment, PublicMoveUpload, LeadJob
+    from public_move_sync import queue_files
+    from uuid import uuid4
+    from spark_history import REPORT_KEYS
+    if not os.getenv('PUBLIC_MOVE_SYNC_QUEUE_URL', '').strip():
+        raise HTTPException(503, 'Customer file sync worker is not configured')
+    lead = db.query(Lead).filter_by(id=lead_id).with_for_update().one_or_none()
+    if not lead:
+        raise HTTPException(404, 'Lead not found')
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
+    if not access:
+        raise HTTPException(409, 'Generate the customer page before running an inventory report.')
+    from report_files import active_report_files, move_files
+    explicit_files = bool(body is not None and 'file_ids' in body)
+    files = (move_files(access, db, all_lead=True, include_removed=True)
+             if explicit_files else active_report_files(access, db))
+    if body is not None and 'file_ids' in body:
+        selected = body['file_ids']
+        if not isinstance(selected, list) or any(not isinstance(value, str) for value in selected):
+            raise HTTPException(400, 'Select valid files for this report.')
+        if set(selected) - {file.id for file in files}:
+            raise HTTPException(400, 'Selected files are no longer available on this move.')
+        files = [file for file in files if file.id in set(selected)]
+    config = _connection_config()
+    template_id = (body and body.get('sparkTemplateId')) or config.get('spark_template_id')
+    if not template_id:
+        raise HTTPException(400, 'No Spark template is configured. Choose one in Settings.')
+    payload = {'sparkTemplateId': template_id, 'shareWith': ['anyone']}
+    for key in ('tasks', 'shareWith'):
+        if body and key in body:
+            payload[key] = body[key]
+    from report_conversation import prepare_upload_conversation
+    saved = db.get(LeadLiveSwitch, lead_id)
+    current = json.loads(saved.details or '{}') if saved else {}
+    if current.get('pending_spark_payload') or current.get('last_spark_status') in ('queued', 'running'):
+        return {'id': current['last_spark_id'], 'status': current.get('last_spark_status', 'queued')}
+    conversation = prepare_upload_conversation(access, db)
+    if explicit_files:
+        for file in files:
+            file.report_deleted_at = None
+    saved = db.get(LeadLiveSwitch, lead_id)
+    details = json.loads(saved.details or '{}') if saved else {}
+    job = db.get(LeadJob, access.job_id)
+    details['report_customer_packing'] = job.customer_packing
+    details['report_customer_package'] = job.customer_packing_package
+    remember_report(details)
+    details['carried_question_state'] = details.get('carried_question_state') or {key: details[key] for key in ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot') if key in details}
+    for key in REPORT_KEYS:
+        if key != 'carried_question_state':
+            details.pop(key, None)
+    details['report_customer_packing'] = job.customer_packing
+    details['report_customer_package'] = job.customer_packing_package
+    draft = details.get('inventory_draft') or {}
+    details.update(report_list_body=draft.get('body'), report_list_rows=draft.get('rows', []),
+                   report_list_cuft=draft.get('cuft', 0), report_list_weight=draft.get('weight', 0),
+                   manual_rooms=draft.get('rooms', []), report_source='combined' if draft.get('rows') else 'liveswitch')
+    details.update(conversation)
+    details.update(last_spark_id='pending-' + str(uuid4()), last_spark_status='queued',
+                   last_spark_at=int(time.time()), spark_pricing_ready=False,
+                   report_conversation=conversation, pending_spark_payload=payload,
+                   report_files=[{'id': f.id, 'name': f.file_name, 'size': f.file_size, 'content_type': f.content_type} for f in files])
+    details.pop('upload_error', None)
+    remember_report(details)
+    if not saved:
+        saved = LeadLiveSwitch(lead_id=lead_id)
+        db.add(saved)
+    saved.details = json.dumps(details)
+    for attachment in files:
+        row = db.get(PublicMoveUpload, attachment.id)
+        if row is None:
+            row = PublicMoveUpload(attachment_id=attachment.id, access_id=access.id, request_id='report-' + attachment.id)
+            db.add(row)
+        row.access_id = access.id
+        # Preserve completed and in-flight transfers into this conversation.
+        if row.sync_status not in ('synced', 'queued', 'syncing'):
+            row.sync_status = 'pending'
+            row.sync_error = None
+    access.published_price = access.published_cuft = access.published_at = None
+    db.commit()
+    queue_files(access.id, db)
+    start_ready_report(lead_id, db)
+    return {'id': details['last_spark_id'], 'status': 'queued'}
+
+
+def start_ready_report(lead_id: str, db: Session):
+    """Start a queued run only after every snapshot file reaches its conversation."""
+    from models import PublicMoveUpload
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).populate_existing().with_for_update().first()
+    details = json.loads(saved.details or '{}') if saved else {}
+    payload = details.get('pending_spark_payload')
+    if not payload:
+        # A retry can arrive after the report was created but queueing its monitor failed.
+        from customer_report_updates import queue_report_check
+        queue_report_check(lead_id, db)
+        return
+    file_ids = [row['id'] for row in details.get('report_files', [])]
+    rows = db.query(PublicMoveUpload).filter(PublicMoveUpload.attachment_id.in_(file_ids)).all()
+    if len(rows) != len(file_ids) or any(not row.synced_at for row in rows):
+        details['last_spark_status'] = 'failed' if any(row.sync_status == 'failed' for row in rows) else 'queued'
+        saved.details = json.dumps(details)
+        db.commit()
+        return
+    # Wait five minutes from Generate, or from the last upload when Generate also uploads files.
+    import math
+    import boto3
+    ready_at = max([datetime.utcfromtimestamp(details['last_spark_at']),
+                    *(row.synced_at for row in rows)])
+    remaining = 300 - (datetime.utcnow() - ready_at).total_seconds()
+    if remaining > 0:
+        if details.get('spark_start_queued_for') != details.get('last_spark_id'):
+            boto3.client('sqs').send_message(
+                QueueUrl=os.environ['PUBLIC_MOVE_SYNC_QUEUE_URL'],
+                DelaySeconds=min(900, max(1, math.ceil(remaining))),
+                MessageBody=json.dumps({'start_report': details['last_spark_id'], 'lead_id': lead_id}),
+            )
+            details['spark_start_queued_for'] = details['last_spark_id']
+        details['last_spark_status'] = 'queued'
+        saved.details = json.dumps(details)
+        db.commit()
+        return
+    result = _api_post(f"conversations/{details['id']}/sparks", payload)
+    if not result.get('id'):
+        raise HTTPException(502, 'LiveSwitch did not return a report ID.')
+    old_id = details['last_spark_id']
+    details['spark_history'] = [row for row in details.get('spark_history', []) if row.get('last_spark_id') != old_id]
+    details.update(last_spark_id=result['id'], last_spark_status=result.get('status', 'queued'),
+                   last_spark_at=int(time.time()))
+    details.pop('pending_spark_payload', None)
+    details.pop('spark_start_queued_for', None)
+    media = details.get('media_upload') or {}
+    if {row.get('id') for row in media.get('files', [])} == set(file_ids):
+        media['report_id'] = result['id']
+        details['media_upload'] = media
+    remember_report(details)
+    saved.details = json.dumps(details)
+    db.commit()
+    from customer_report_updates import queue_report_check
+    queue_report_check(lead_id, db)
+
+
+def fetch_and_extract_spark_report(share_url: str, processing=None) -> tuple[float | None, float | None, list[dict[str, object]]]:
+    if not share_url:
+        raise ValueError('Completed report has no share URL')
+    report_id = share_url.split('/reports/')[-1].split('?')[0].strip()
+    if not report_id:
+        raise ValueError('Report URL has no report ID')
+    api_url = f'https://api.scribe.production.liveswitch.com/api/public/reports/{report_id}'
+    resp = httpx.get(api_url, timeout=15)
+    if resp.status_code != 200:
+        raise RuntimeError(f'Report download returned HTTP {resp.status_code}')
+    if processing:
+        processing.mark('download', 'success', f'Report received (HTTP {resp.status_code})')
+        processing.mark('extract', 'running')
+    data = resp.json()
+    if not isinstance(data, dict):
+        raise ValueError('Report response is not a JSON object')
+
+    cuft = None
+    weight = None
+    inventory_rows: list[dict[str, object]] = []
+
+    # Method 1: from structuredResult items
+    sr = data.get("structuredResult")
+    if isinstance(sr, dict):
+        for sec in sr.get("sections", []):
+            if sec.get("id") == "item-list" and "rows" in sec:
+                total_vol = 0.0
+                total_wt = 0.0
+                for row in sec["rows"]:
+                    qty = _safe_float(row.get("quantity"))
+                    u_vol = _safe_float(row.get("unit_volume"))
+                    u_wt = _safe_float(row.get("unit_weight"))
+                    row_cuft = round(qty * u_vol, 2)
+                    total_vol += qty * u_vol if row.get("going", True) else 0
+                    total_wt += qty * u_wt if row.get("going", True) else 0
+                    name = str(row.get("item_name") or row.get("name") or row.get("item") or "").strip()
+                    if name or qty > 0 or row_cuft > 0:
+                        inventory_rows.append({
+                            "name": name or "Item",
+                            "room": str(row.get("room") or ""),
+                            "going": row.get("going", True),
+                            "unit_cuft": u_vol,
+                            "weight": round(qty * u_wt, 2) if row.get("going", True) else 0,
+                            "cuft": row_cuft if row_cuft > 0 and row.get("going", True) else 0.0,
+                            "amount": round(qty, 2) if qty > 0 else 0.0,
+                        })
+                if inventory_rows:
+                    cuft = total_vol
+                    weight = round(total_wt, 1)
+
+    # Method 2: regex fallback on markdown
+    if cuft is None:
+        text = data.get("result", "")
+        pattern = r'\|\s*\*{0,2}Total\*{0,2}\s*\|(?:[^|]*\|){5}\s*([0-9.,]+)\s*\|\s*([0-9.,]+)\s*\|'
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            try:
+                cuft = float(m.group(1).replace(",", ""))
+                weight = float(m.group(2).replace(",", ""))
+            except ValueError:
+                pass
+
+    return cuft, weight, inventory_rows
+
+
+def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expected_report_id: str | None = None, use_snapshot: bool = False, calculate_price: bool = True) -> dict:
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    saved = db.get(LeadLiveSwitch, lead.id)
+    details = json.loads(saved.details) if saved and saved.details else {}
+
+    if expected_report_id is not None and details.get('last_spark_id') != expected_report_id:
+        return {'ok': False, 'detail': 'A different report is now current. Refresh to see its results.'}
+    processing = SparkProcessingLog(details.get('last_spark_id'))
+    processing.mark('download', 'running')
+    processing.persist(db, lead_id)
+    try:
+        if use_snapshot or details.get('report_source') == 'manual':
+            cuft, weight = details.get('spark_extracted_cuft'), details.get('spark_extracted_weight')
+            inventory_rows = details.get('spark_inventory_snapshot', [])
+            processing.mark('download', 'success', 'Using saved room inventory; no LiveSwitch request')
+            processing.mark('extract', 'running')
+        else:
+            cuft, weight, inventory_rows = fetch_and_extract_spark_report(share_url, processing=processing)
+            if details.get('report_source') == 'combined':
+                if not cuft or cuft <= 0:
+                    raise ValueError('No positive volume was found in the media report.')
+                cuft += details.get('report_list_cuft', 0)
+                weight = (weight or 0) + details.get('report_list_weight', 0)
+                inventory_rows = inventory_rows + details.get('report_list_rows', [])
+        if saved:
+            # A new run/selection may have arrived while downloading this report.
+            db.refresh(saved, with_for_update=True)
+            current_details = json.loads(saved.details or '{}')
+            if current_details.get('last_spark_id') != details.get('last_spark_id'):
+                db.rollback()
+                return {'ok': False, 'detail': 'A different report is now current. Refresh to see its results.'}
+            details = current_details
+        if (not cuft or cuft <= 0) and not details.get('question_original_rows'):
+            raise ValueError('No positive volume could be extracted from structuredResult item-list rows or the report total')
+
+        from inventory_questions import adjusted_inventory
+        from models import Company
+        question_company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
+        inventory_rows, cuft, weight = adjusted_inventory(question_company, details, inventory_rows, cuft, weight, db)
+        processing.mark('extract', 'success', f'{len(inventory_rows)} inventory rows; {cuft:g} cu ft')
+        processing.mark('inventory', 'running')
+        lead.volume = Decimal(str(cuft))
+        if weight is not None:
+            lead.weight = Decimal(str(weight))
+
+        details["spark_extracted_id"] = details.get("last_spark_id")
+        details["spark_extracted_cuft"] = cuft
+        details["spark_extracted_weight"] = weight
+        details["last_spark_share_url"] = share_url
+        details["spark_inventory_snapshot"] = inventory_rows
+        from models import LeadJob, LeadSparkInventoryItem
+        job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order).first()
+        price = None
+        if not job:
+            raise ValueError('No job found for this lead')
+        if job:
+            db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job.id).delete(synchronize_session=False)
+            for index, row in enumerate(inventory_rows):
+                if row.get("going") is False:
+                    continue
+                db.add(LeadSparkInventoryItem(
+                    job_id=job.id,
+                    name=str(row.get("name") or "Item"),
+                    cuft=Decimal(str(row.get("cuft") or 0)),
+                    amount=Decimal(str(row.get("amount") or 0)),
+                    sort_order=index,
+                ))
+
+            db.flush()
+            processing.mark('inventory', 'success', f'{len(inventory_rows)} rows prepared for job {job.job_order}')
+            if calculate_price:
+                processing.mark('pricing', 'running')
+                from routes.pricing import calculate_and_save_lead_job_price
+                price = calculate_and_save_lead_job_price(lead, job, db) if cuft > 0 else None
+                if cuft <= 0: job.price = None
+            if not calculate_price:
+                processing.mark('pricing', 'skipped', 'Inventory saved; calculate the updated estimate separately')
+            elif price is None:
+                job.price_refresh_error = 'Your inventory is saved, but no estimate could be calculated. Your moving team needs to check the move volume, route, and pricing settings.'
+                processing.mark('pricing', 'error', 'No price returned - click to view details',
+                                'The pricing calculator returned no price. Check move volume, company, active pricing book, pickup/delivery matching, and configured rates.')
+            else:
+                selection = json.loads(job.customer_packing_package or '{}')
+                selection.pop('pricing_pending', None)
+                selection.pop('pricing_save_error', None)
+                job.customer_packing_package = json.dumps(selection)
+                job.price_refresh_error = None
+                processing.mark('pricing', 'success', f'Calculated ${price:,.2f}')
+            processing.mark('publish', 'running')
+
+        from models import PublicMoveAccess
+        access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
+        if access:
+            access.published_cuft = lead.volume
+            if calculate_price and cuft <= 0: access.published_price = None
+            if price is not None:
+                access.published_price = job.price
+                access.published_at = datetime.utcnow()
+
+        processing.mark('inventory', 'success', f'{len(inventory_rows)} rows saved to job {job.job_order}')
+        processing.mark('publish', 'success' if price is not None else 'skipped',
+                        'Estimate saved' if price is not None else 'Inventory saved; no new estimate to publish')
+        details["spark_pricing_ready"] = price is not None
+        details.pop('notification_error', None)
+        processing.finish()
+        if saved:
+            processing.attach(details)
+            saved.details = json.dumps(details)
+        db.commit()
+        from realtime import publish_customer_update
+        publish_customer_update(lead_id)
+        if not use_snapshot:
+            from inventory_ready_sms import try_notify_inventory_ready
+            try_notify_inventory_ready(lead_id, details.get("last_spark_id"), db)
+        return {
+            "ok": True,
+            "cuft": cuft,
+            "weight": weight,
+            "price": price,
+            "inventory_count": len(inventory_rows),
+            "job_id": job.id if job else None,
+        }
+    except Exception as exc:
+        db.rollback()
+        processing.fail(exc)
+        processing.persist(db, lead_id)
+        return {'ok': False, 'detail': 'Report processing failed. Your moving team can view the processing log in the CRM.'}
+
+
+def select_spark_report(lead_id: str, report_id: str, db: Session):
+    saved = db.get(LeadLiveSwitch, lead_id)
+    if saved:
+        db.refresh(saved, with_for_update=True)
+    details = json.loads(saved.details or '{}') if saved else {}
+    if details.get('last_spark_status') in ('queued', 'running'):
+        raise HTTPException(409, 'Wait for the new report to finish before choosing an earlier report.')
+    from models import LeadJob
+    job = db.query(LeadJob).filter_by(lead_id=lead_id).order_by(LeadJob.job_order).first()
+    current_package = json.loads(job.customer_packing_package or '{}') if job else {}
+    if job:
+        details['report_customer_packing'] = job.customer_packing
+        details['report_customer_package'] = job.customer_packing_package
+    try:
+        activate_report(details, report_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if job:
+        job.customer_packing = details.get('report_customer_packing')
+        selected_package = json.loads(details.get('report_customer_package') or '{}')
+        # Route and access services belong to the job, not an inventory report.
+        # Keep their current answers and cached distances when changing reports.
+        for key in ('extra_stops', 'elevator', 'long_carry', 'stairs', 'storage_date', 'shuttle',
+                    'delivery_route', 'origin_route', 'pricing_locations', 'pricing_pending', 'pricing_save_error'):
+            if key in current_package:
+                selected_package[key] = current_package[key]
+            else:
+                selected_package.pop(key, None)
+        job.customer_packing_package = json.dumps(selected_package)
+        details['report_customer_package'] = job.customer_packing_package
+    # The selected report is pending import, even if it was imported previously.
+    details.pop('spark_extracted_id', None)
+    details['spark_pricing_ready'] = False
+    saved.details = json.dumps(details)
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead_id).first()
+    if access:
+        access.published_price = None
+        access.published_cuft = None
+        access.published_at = None
+    db.commit()
+    return apply_spark_results_to_lead(lead_id, details.get('last_spark_share_url', ''), db, expected_report_id=report_id)
+
+
+@router.get('/leads/{lead_id}/report-history')
+def get_report_history(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    return {'reports': report_history(json.loads(saved.details or '{}') if saved else {}, staff=True)}
+
+
+@router.post('/leads/{lead_id}/reports/{report_id}/select')
+def select_report_endpoint(lead_id: str, report_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    result = select_spark_report(lead.id, report_id, db)
+    if not result.get('ok'):
+        raise HTTPException(422, result.get('detail'))
+    return result
+
+
+@router.post('/leads/{lead_id}/report-events-token')
+def report_events_token(lead_id: str, request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    import jwt
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    from auth import decode_access_token
+    claims = decode_access_token(request.headers.get('authorization', '').split(' ', 1)[-1])
+    token = jwt.encode({'sub': f'report-updates:{user.id}', 'role': 'report_updates', 'purpose': 'report_updates',
+                        'lead_id': lead.id, 'iss': os.getenv('JWT_ISSUER', 'moving-crm'),
+                        'exp': min(int(claims['exp']), int(time.time()) + 7200)}, os.environ['JWT_SECRET'], algorithm='HS256')
+    return {'token': token}
+
+
+@router.get('/leads/{lead_id}/spark-processing')
+def get_spark_processing(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    details = json.loads(saved.details or '{}') if saved else {}
+    processing = details.get('spark_processing')
+    if processing and processing.get('report_id') != details.get('last_spark_id'):
+        processing = None
+    return {'processing': processing}
+
+
+@router.get("/leads/{lead_id}/spark-inventory")
+def get_lead_spark_inventory(
+    lead_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+
+    from models import LeadJob, LeadSparkInventoryItem
+    job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order).first()
+    if not job:
+        return {"job_id": None, "rows": []}
+
+    rows = db.query(LeadSparkInventoryItem).filter_by(job_id=job.id).order_by(
+        LeadSparkInventoryItem.sort_order.asc(), LeadSparkInventoryItem.created_at.asc()
+    ).all()
+    return {
+        "job_id": job.id,
+        "rows": [row.to_dict() for row in rows],
+    }
+
+
+class ApplyReportBody(BaseModel):
+    reportUrl: str | None = None
+
+
+@router.post("/leads/{lead_id}/apply-spark-report")
+def apply_spark_report_endpoint(
+    lead_id: str,
+    body: ApplyReportBody | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    details = json.loads(saved.details) if saved and saved.details else {}
+    url = (body and body.reportUrl) or details.get("last_spark_share_url")
+    if not url and details.get("report_source") != "manual":
+        raise HTTPException(400, "No Spark report URL provided or found for this lead.")
+    res = apply_spark_results_to_lead(lead.id, url, db)
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("detail", "Failed to apply spark report."))
+    return res
+
+
+def _can_get_spark_result(details: dict) -> bool:
+    if details.get('last_spark_status') not in ('queued', 'running'):
+        return False
+    if details.get('pending_spark_payload') or str(details.get('last_spark_id') or '').startswith('pending-'):
+        return False
+    if details.get('report_check_timed_out'):
+        return True
+    started_at = float(details.get('last_spark_at') or 0)
+    monitor_until = float(details.get('notification_until') or 0)
+    return bool(started_at and time.time() >= started_at + 900
+                and (not monitor_until or time.time() >= monitor_until))
+
+
+@router.get("/leads/{lead_id}/spark-status")
+def get_lead_spark_status(
+    lead_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    if not saved:
+        return {"spark": None}
+    details = json.loads(saved.details)
+    spark_id = details.get("last_spark_id")
+    if not spark_id:
+        return {"spark": None}
+    if details.get('report_source') == 'manual':
+        return {'spark': {'id': spark_id, 'status': 'completed', 'source': 'manual'},
+                'cuft': details.get('spark_extracted_cuft'), 'weight': details.get('spark_extracted_weight')}
+    return {'spark': {'id': spark_id, 'status': details.get('last_spark_status', 'queued'),
+                      'shareUrl': details.get('last_spark_share_url'),
+                      'error': details.get('upload_error') or details.get('notification_error'),
+                      'canGetResult': _can_get_spark_result(details)},
+            'cuft': details.get('spark_extracted_cuft'), 'weight': details.get('spark_extracted_weight')}
+
+
+@router.post("/leads/{lead_id}/spark-result")
+def get_lead_spark_result(
+    lead_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Perform one explicit provider check after automatic monitoring has timed out."""
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    details = json.loads(saved.details or '{}') if saved else {}
+    spark_id = details.get('last_spark_id')
+    if not spark_id or details.get('report_source') == 'manual':
+        raise HTTPException(409, 'There is no pending LiveSwitch report to retrieve.')
+    if details.get('last_spark_status') in ('completed', 'failed', 'cancelled'):
+        return get_lead_spark_status(lead_id, user, db)
+    if not _can_get_spark_result(details):
+        raise HTTPException(409, 'Automatic result checks are still active.')
+    try:
+        remote = _api_get(f"sparks/{spark_id}")
+        db.refresh(saved, with_for_update=True)
+        details = json.loads(saved.details)
+        if details.get("last_spark_id") != spark_id:
+            spark_id = details.get("last_spark_id")
+            remote = None
+        if isinstance(remote, dict) and "status" in remote:
+            details["last_spark_status"] = remote.get("status")
+            details.pop('notification_error', None)
+            share_url = remote.get("shareUrl")
+            if share_url:
+                details["last_spark_share_url"] = share_url
+            saved.details = json.dumps(details)
+            db.commit()
+
+            # Auto-extract and calculate price if report is completed
+            if remote.get("status") == "completed" and share_url and details.get("spark_extracted_id") != spark_id:
+                try:
+                    apply_spark_results_to_lead(lead.id, share_url, db)
+                    details = json.loads(saved.details)
+                except Exception:
+                    pass
+
+            result = {
+                "spark": remote,
+                "cuft": details.get("spark_extracted_cuft"),
+                "weight": details.get("spark_extracted_weight"),
+            }
+            result['spark']['canGetResult'] = remote.get('status') in ('queued', 'running')
+            if not result['spark']['canGetResult']:
+                details.pop('report_check_timed_out', None)
+                saved.details = json.dumps(details)
+                db.commit()
+            return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, 'LiveSwitch could not return the report result. Please try again.') from exc
+    raise HTTPException(502, 'LiveSwitch returned an invalid report result.')
+
+
+def ensure_lead_conversation(lead: Lead, db: Session, fresh: bool = False) -> dict:
+    saved = db.get(LeadLiveSwitch, lead.id)
+    if saved and not fresh and json.loads(saved.details or "{}").get("id"):
+        return json.loads(saved.details)
+    company = lead.company
+    if company is None:
+        company = db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
+    if company is None:
+        raise HTTPException(400, "Select a default company in Settings to start LiveSwitch for an unassigned lead")
+    company_phone = (company.phone or "").strip()
+    if not company_phone:
+        raise HTTPException(400, "Add a phone number to the sending company before starting LiveSwitch")
+    quote_number = str(lead.quote_number or "").strip()
+    public_move = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
+    if public_move and not quote_number:
+        conversation_name = lead.full_name
+    else:
+        conversation_name = quote_number
+    if not quote_number and not public_move:
+        if not (lead.smartmoving_id or "").strip():
+            raise HTTPException(400, "Connect this lead to SmartMoving before starting LiveSwitch")
+        opportunity_result = get_opportunity(lead.smartmoving_id)
+        opportunity = opportunity_result.get("data")
+        if opportunity_result.get("error") or not isinstance(opportunity, dict):
+            raise HTTPException(502, "Could not retrieve the SmartMoving quote number. Please try again.")
+        quote_number = str(opportunity.get("quoteNumber") or "").strip()
+        if not quote_number:
+            raise HTTPException(400, "This SmartMoving lead does not have a quote number yet")
+        lead.quote_number = quote_number
+    conversation_name = quote_number or conversation_name
+    result = _api_post("conversations", {"type": "LiveConversation", "phone": company_phone, "name": conversation_name})
+    if not result.get("id"):
+        raise HTTPException(502, "LiveSwitch did not return a conversation ID")
+    details = {key: result.get(key, "") for key in ("id", "hostJoinUrl", "participantJoinUrl", "conversationUrl", "embeddedConversationUrl")}
+    details["name"] = conversation_name
+    if fresh:
+        return details
+    if saved:
+        existing = json.loads(saved.details or '{}')
+        existing.update(details)
+        details = existing
+        saved.details = json.dumps(details)
+    else:
+        saved = LeadLiveSwitch(lead_id=lead.id, details=json.dumps(details))
+        db.add(saved)
+    db.commit()
+    return details
+
+
+@router.post("/leads/{lead_id}/conversation")
+def ensure_conversation(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    # Lock the parent row so simultaneous opens cannot create duplicate conversations.
+    db.query(Lead).filter(Lead.id == lead.id).with_for_update().one()
+    details = ensure_lead_conversation(lead, db)
+    return {**details, 'canGetResult': _can_get_spark_result(details)}
+
+
+@router.post("/leads/{lead_id}/participant-sms")
+def send_participant_sms(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    if not saved:
+        raise HTTPException(409, "Start the conversation first")
+    link = str(json.loads(saved.details).get("participantJoinUrl") or "").strip()
+    if not link:
+        raise HTTPException(400, "The participant link is unavailable")
+    phone = (lead.phone or "").strip()
+    if not phone:
+        raise HTTPException(400, "This lead has no phone number")
+
+    rep = lead.assignee
+    number_id = (rep.aircall_number_id or "").strip() if rep else ""
+    if not number_id and rep and (rep.name or "").strip():
+        sales_rep = db.query(SalesRep).filter(
+            func.lower(func.trim(SalesRep.name)) == rep.name.strip().lower()
+        ).first()
+        if sales_rep:
+            number_id = (sales_rep.aircall_number_id or "").strip()
+    if not number_id and lead.company:
+        number_id = (lead.company.aircall_number_id or "").strip()
+        if not number_id and (lead.company.phone or "").strip():
+            number_id = find_number_id(lead.company.phone)
+    if not number_id:
+        raise HTTPException(400, "No Aircall sending number is configured for the assigned rep or this company")
+
+    result = send_sms(to=phone, text=f"Please click this link to join the live video call. {link}", number_id=number_id)
+    if not result.get("ok"):
+        raise HTTPException(502, result.get("detail") or result.get("error") or "Could not send SMS through Aircall")
+    return {"ok": True, "message_id": result.get("message_id", "")}
+
+
+class UploadFileInfo(BaseModel):
+    fileName: str = Field(min_length=1, max_length=255)
+    contentType: str = Field(min_length=1, max_length=150)
+
+
+@router.post("/leads/{lead_id}/upload-urls/{kind}")
+def upload_urls(lead_id: str, kind: Literal["images", "videos", "documents"], files: list[UploadFileInfo],
+                user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    saved = db.get(LeadLiveSwitch, lead.id)
+    if not saved:
+        raise HTTPException(409, "Start the conversation first")
+    if not 1 <= len(files) <= 20:
+        raise HTTPException(400, "Select between 1 and 20 files per batch")
+    conversation_id = json.loads(saved.details)["id"]
+    return _api_post(f"conversations/{conversation_id}/upload-urls/{kind}", [file.model_dump() for file in files])
+
+
+class PanelUpload(BaseModel):
+    request_id: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+    name: str = Field(min_length=1, max_length=255)
+    size: int = Field(gt=0)
+    content_type: str = Field(default="application/octet-stream", min_length=1, max_length=120)
+
+
+def panel_upload_context(lead_id, body, user, db):
+    from models import LeadAttachment
+    from routes.leads import _safe_attachment_name, _ensure_attachment_link_columns
+    _ensure_not_dispatch_write(user)
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    _ensure_attachment_link_columns(db)
+    existing = db.get(LeadAttachment, body.request_id)
+    if existing and (existing.lead_id != lead.id or existing.uploaded_by != user.id):
+        raise HTTPException(409, "Upload ID is already in use")
+    bucket = os.getenv("ATTACHMENTS_BUCKET", "").strip()
+    if not bucket:
+        raise HTTPException(503, "Upload storage is unavailable")
+    name = _safe_attachment_name(body.name)
+    key = f"public-pending/staff/{lead.id}/{user.id}/{body.request_id}/{name}"
+    return lead, existing, bucket, key, name
+
+
+@router.post("/leads/{lead_id}/prepare-upload")
+def prepare_panel_upload(lead_id: str, body: PanelUpload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead, existing, bucket, key, name = panel_upload_context(lead_id, body, user, db)
+    if existing:
+        if not existing.liveswitch_panel_visible:
+            saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).with_for_update().first()
+            if saved:
+                details = json.loads(saved.details or '{}')
+                if archive_report_for_new_media(details):
+                    saved.details = json.dumps(details)
+        existing.liveswitch_panel_visible = True
+        db.commit()
+        return {"completed": True, "id": existing.id}
+    signed = boto3.client("s3").generate_presigned_post(
+        Bucket=bucket, Key=key, Fields={"Content-Type": body.content_type},
+        Conditions=[{"Content-Type": body.content_type}, ["content-length-range", 1, body.size]], ExpiresIn=3600)
+    return {"completed": False, "upload": signed}
+
+
+@router.post("/leads/{lead_id}/finish-upload")
+def finish_panel_upload(lead_id: str, body: PanelUpload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from models import LeadAttachment
+    lead, existing, bucket, key, name = panel_upload_context(lead_id, body, user, db)
+    if existing:
+        return {"id": existing.id}
+    s3 = boto3.client("s3")
+    try:
+        obj = s3.head_object(Bucket=bucket, Key=key)
+    except Exception as exc:
+        raise HTTPException(502, "The uploaded file could not be verified. Please retry.") from exc
+    if obj["ContentLength"] != body.size or obj.get("ContentType") != body.content_type:
+        raise HTTPException(400, "File content does not match its expected size.")
+    destination = f"leads/{lead.id}/jobs/lead/crm/{body.request_id}/{name}"
+    s3.copy({"Bucket": bucket, "Key": key}, bucket, destination, ExtraArgs={"ServerSideEncryption": "AES256"})
+    row = LeadAttachment(id=body.request_id, lead_id=lead.id, file_name=name, content_type=body.content_type,
+        liveswitch_panel_visible=True,
+        file_size=body.size, file_blob=b"", external_url=f"s3://{bucket}/{destination}",
+        is_external_link=True, external_source="crm_s3", uploaded_by=user.id)
+    try:
+        db.add(row)
+        saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).with_for_update().first()
+        if saved:
+            details = json.loads(saved.details or '{}')
+            if archive_report_for_new_media(details):
+                saved.details = json.dumps(details)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    try:
+        s3.delete_object(Bucket=bucket, Key=key)
+    except Exception:
+        pass  # Storage lifecycle removes abandoned staging files.
+    return {"id": row.id}
