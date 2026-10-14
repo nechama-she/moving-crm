@@ -70,7 +70,7 @@ Parameters:
   DomainName:
     Type: String
     Default: ""
-    Description: Custom frontend domain (e.g. crm.example.com). Empty = CloudFront default domain only.
+    Description: Comma-separated frontend domains; the first is used for customer and rep links. Empty = CloudFront default domain only.
 
   HostedZoneId:
     Type: String
@@ -317,14 +317,13 @@ Resources:
 
   DBIngressLambda:
     Type: AWS::EC2::SecurityGroupIngress
-    Condition: IsProd
     Properties:
       GroupId: !Ref DBSecurityGroup
       IpProtocol: tcp
       FromPort: 5432
       ToPort: 5432
       SourceSecurityGroupId: !Ref LambdaSecurityGroup
-      Description: PostgreSQL from compute SG (prod)
+      Description: PostgreSQL from compute SG
 
   DBIngressProxy:
     Type: AWS::EC2::SecurityGroupIngress
@@ -861,11 +860,35 @@ Resources:
                 Action:
                   - lambda:UpdateFunctionCode
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-*"
-              # Wait for the public move sync worker code update to complete
+              # Wait for background function code updates to complete.
               - Effect: Allow
                 Action:
                   - lambda:GetFunctionConfiguration
-                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-public-move-sync-${Environment}"
+                Resource:
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-public-move-sync-${Environment}"
+                  - !GetAtt WorkQueueStreamFunction.Arn
+                  - !GetAtt WorkQueueWorkerFunction.Arn
+              - Effect: Allow
+                Action: lambda:ListEventSourceMappings
+                Resource: "*"
+              - Effect: Allow
+                Action: [lambda:GetEventSourceMapping, lambda:UpdateEventSourceMapping]
+                Resource:
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:${WorkQueueSmsMapping}"
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:${WorkQueueMetaMapping}"
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:${WorkQueueCallsMapping}"
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action: [ecr:BatchCheckLayerAvailability, ecr:InitiateLayerUpload, ecr:UploadLayerPart, ecr:CompleteLayerUpload, ecr:PutImage]
+                Resource: !GetAtt WorkQueueRepository.Arn
+              - Effect: Allow
+                Action: [ecs:UpdateService, ecs:DescribeServices]
+                Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:service/moving-crm-work-queue-${Environment}/moving-crm-work-queue-${Environment}"
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt WorkQueueWorkerFunction.Arn
               # CloudFormation (read stack outputs during deploy)
               - Effect: Allow
                 Action:
@@ -990,6 +1013,15 @@ Resources:
                 Action:
                   - rds:*
                 Resource: "*"
+              - Effect: Allow
+                Action: [ecs:*, ecr:*]
+                Resource: "*"
+              - Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName: ecs.amazonaws.com
               # S3
               - Effect: Allow
                 Action:
@@ -1095,6 +1127,16 @@ Resources:
                 Action:
                   - cloudfront:*
                 Resource: "*"
+              # Metric alarm lifecycle, scoped to this application's alarms.
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                  - cloudwatch:ListTagsForResource
+                Resource: !Sub "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:moving-crm-${Environment}-*"
               # CloudWatch Logs
               - Effect: Allow
                 Action:
@@ -1102,6 +1144,7 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
                   - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/moving-crm-*"
                   - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/vendedlogs/cognito/moving-crm-*"
               # Cognito's vended-log delivery setup requires account-level APIs.
               - Effect: Allow
@@ -1297,7 +1340,7 @@ Resources:
           Subnets: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
           SecurityGroupIds: [!Ref LambdaSecurityGroup]
         - !Ref "AWS::NoValue"
-      TimeoutInMinutes: 10
+      TimeoutInMinutes: 20
       Source:
         Type: CODEPIPELINE
         BuildSpec: deployspec.yml
@@ -1311,6 +1354,7 @@ Resources:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_SMALL
         Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        PrivilegedMode: true
         EnvironmentVariables:
           - Name: SETTINGS_SOURCE_ACCOUNT_ID
             Value: !Ref SettingsSourceAccountId
@@ -1497,6 +1541,16 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-lead-duplicate-${Environment}"
                   - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-realtime-${Environment}"
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-work-queue-worker-${Environment}"
+              - Effect: Allow
+                Action: [scheduler:CreateSchedule, scheduler:UpdateSchedule, scheduler:DeleteSchedule]
+                Resource: !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/moving-crm-work-queue-${Environment}-*"
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt WorkQueueSchedulerRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: scheduler.amazonaws.com
               # Allow passing the scheduler role to EventBridge Scheduler
               - Effect: Allow
                 Action:
@@ -1541,6 +1595,7 @@ Resources:
                 return {"statusCode": 503, "body": "bootstrapping"}
       Environment:
         Variables:
+          WORK_QUEUE_READ_MODEL: "auto"
           SSM_PREFIX: !Sub /moving-crm/${Environment}/
           AWS_REGION_NAME: !Ref AWS::Region
           DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
@@ -1553,7 +1608,7 @@ Resources:
           PUBLIC_MOVE_COGNITO_POOL_ID: !Ref CustomerPortalUserPool
           PUBLIC_MOVE_ORIGIN: !If
             - IsProd
-            - !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${CloudFrontDistribution.DomainName}"]
+            - !If [HasDomain, !Join ["", ["https://", !Select [0, !Split [",", !Ref DomainName]]]], !Sub "https://${CloudFrontDistribution.DomainName}"]
             - !Sub "https://${CloudFrontDistribution.DomainName}"
           CORS_ORIGINS: !If
             - IsProd
@@ -1915,6 +1970,305 @@ Resources:
       FilterCriteria:
         Filters:
           - Pattern: '{"eventName":["INSERT","MODIFY"],"dynamodb":{"NewImage":{"record_type":{"S":["call"]}}}}'
+
+  WorkQueueFailureBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: RetainExceptOnCreate
+    UpdateReplacePolicy: Retain
+    Properties:
+      # Generate a unique name so a bucket retained by an earlier rollback
+      # cannot block deployment. Consumers use this resource's ARN below.
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  WorkQueueFailurePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: work-queue-failure-retention
+      Roles: [!Ref MessageStreamConsumerRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: s3:PutObject
+            Resource: !Sub "${WorkQueueFailureBucket.Arn}/*"
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource: !GetAtt WorkQueueFailureBucket.Arn
+
+  WorkQueueStreamFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub moving-crm-work-queue-stream-${Environment}
+      Runtime: python3.11
+      Handler: work_queue_stream.handler
+      Timeout: 30
+      MemorySize: 512
+      Role: !GetAtt MessageStreamConsumerRole.Arn
+      VpcConfig: !If
+        - IsProd
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+        - !Ref "AWS::NoValue"
+      Code: !If
+        - ShouldDeployLambda
+        - S3Bucket: !Ref FrontendBucket
+          S3Key: api-backend/package.zip
+        - ZipFile: |
+            def handler(event, context):
+                raise RuntimeError("Work queue deployment is not complete")
+      Environment:
+        Variables:
+          SSM_PREFIX: !Sub /moving-crm/${Environment}/
+          DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
+
+  WorkQueueWorkerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub moving-crm-work-queue-worker-${Environment}
+      Runtime: python3.11
+      Handler: work_queue_worker.handler
+      Timeout: 60
+      MemorySize: 512
+      ReservedConcurrentExecutions: 1
+      Role: !GetAtt ApiLambdaRole.Arn
+      VpcConfig: !If
+        - IsProd
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+        - !Ref "AWS::NoValue"
+      Code: !If
+        - ShouldDeployLambda
+        - S3Bucket: !Ref FrontendBucket
+          S3Key: api-backend/package.zip
+        - ZipFile: |
+            def handler(event, context):
+                raise RuntimeError("Work queue deployment is not complete")
+      Environment:
+        Variables:
+          SSM_PREFIX: !Sub /moving-crm/${Environment}/
+          DB_SECRET_ARN: !GetAtt Database.MasterUserSecret.SecretArn
+          # Session advisory locks require a direct database connection.
+          WORK_QUEUE_LOCK_HOST: !GetAtt Database.Endpoint.Address
+          WORK_QUEUE_FUNCTION_NAME: !Sub moving-crm-work-queue-worker-${Environment}
+          WORK_QUEUE_FUNCTION_ARN: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-work-queue-worker-${Environment}"
+          WORK_QUEUE_DEADLINE_NAME: !Sub moving-crm-work-queue-${Environment}
+          WORK_QUEUE_SCHEDULER_ROLE_ARN: !GetAtt WorkQueueSchedulerRole.Arn
+          REALTIME_FUNCTION_NAME: !Sub moving-crm-realtime-${Environment}
+
+  WorkQueueSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-work-queue-scheduler-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: scheduler.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeQueue
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-work-queue-worker-${Environment}"
+
+  WorkQueueRepository:
+    Type: AWS::ECR::Repository
+    DependsOn: CloudFormationExecutionRole
+    Properties:
+      RepositoryName: !Sub moving-crm-work-queue-${Environment}
+      ImageScanningConfiguration: {ScanOnPush: true}
+
+  WorkQueueCluster:
+    Type: AWS::ECS::Cluster
+    DependsOn: CloudFormationExecutionRole
+    Properties:
+      ClusterName: !Sub moving-crm-work-queue-${Environment}
+
+  WorkQueueListenerLogs:
+    Type: AWS::Logs::LogGroup
+    DependsOn: CloudFormationExecutionRole
+    Properties:
+      LogGroupName: !Sub /ecs/moving-crm-work-queue-${Environment}
+      RetentionInDays: 30
+
+  WorkQueueListenerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-work-queue-execution-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  WorkQueueListenerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub moving-crm-work-queue-listener-${Environment}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: QueueListener
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !GetAtt Database.MasterUserSecret.SecretArn
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt WorkQueueWorkerFunction.Arn
+
+  WorkQueueListenerTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub moving-crm-work-queue-${Environment}
+      Cpu: "256"
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt WorkQueueListenerExecutionRole.Arn
+      TaskRoleArn: !GetAtt WorkQueueListenerRole.Arn
+      ContainerDefinitions:
+        - Name: listener
+          Image: !Sub "${WorkQueueRepository.RepositoryUri}:latest"
+          Essential: true
+          Environment:
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+            - Name: DB_HOST
+              Value: !GetAtt Database.Endpoint.Address
+            - Name: DB_NAME
+              Value: !Ref DBName
+            - Name: DB_SECRET_ARN
+              Value: !GetAtt Database.MasterUserSecret.SecretArn
+            - Name: WORK_QUEUE_FUNCTION_NAME
+              Value: !Ref WorkQueueWorkerFunction
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WorkQueueListenerLogs
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: listener
+
+  WorkQueueListenerService:
+    Type: AWS::ECS::Service
+    DependsOn: DBIngressLambda
+    Properties:
+      ServiceName: !Sub moving-crm-work-queue-${Environment}
+      Cluster: !Ref WorkQueueCluster
+      TaskDefinition: !Ref WorkQueueListenerTask
+      LaunchType: FARGATE
+      # Deploy starts the service only after schema, image and worker are ready.
+      DesiredCount: 0
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: !If [IsProd, DISABLED, ENABLED]
+          SecurityGroups: [!Ref LambdaSecurityGroup]
+          Subnets: !If [IsProd, [!Ref PrivateSubnetA, !Ref PrivateSubnetB], [!Ref PublicSubnetA, !Ref PublicSubnetB]]
+
+  WorkQueueSmsMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    DependsOn: WorkQueueFailurePolicy
+    Properties:
+      EventSourceArn: !GetAtt SourceMessageStreams.SmsStreamArn
+      FunctionName: !Ref WorkQueueStreamFunction
+      StartingPosition: TRIM_HORIZON
+      Enabled: false
+      BatchSize: 100
+      MaximumBatchingWindowInSeconds: 1
+      BisectBatchOnFunctionError: true
+      MaximumRetryAttempts: 10
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt WorkQueueFailureBucket.Arn
+
+  WorkQueueMetaMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    DependsOn: WorkQueueFailurePolicy
+    Properties:
+      EventSourceArn: !GetAtt SourceMessageStreams.ConversationsStreamArn
+      FunctionName: !Ref WorkQueueStreamFunction
+      StartingPosition: TRIM_HORIZON
+      Enabled: false
+      BatchSize: 100
+      MaximumBatchingWindowInSeconds: 1
+      BisectBatchOnFunctionError: true
+      MaximumRetryAttempts: 10
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt WorkQueueFailureBucket.Arn
+
+  WorkQueueCallsMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    DependsOn: WorkQueueFailurePolicy
+    Properties:
+      EventSourceArn: !GetAtt SourceMessageStreams.CallsStreamArn
+      FunctionName: !Ref WorkQueueStreamFunction
+      StartingPosition: TRIM_HORIZON
+      Enabled: false
+      BatchSize: 100
+      MaximumBatchingWindowInSeconds: 1
+      BisectBatchOnFunctionError: true
+      MaximumRetryAttempts: 10
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt WorkQueueFailureBucket.Arn
+
+  WorkQueueWorkerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: CloudFormationExecutionRole
+    Properties:
+      AlarmDescription: Work queue background processing failed
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref WorkQueueWorkerFunction
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  WorkQueueStreamLagAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: CloudFormationExecutionRole
+    Properties:
+      AlarmDescription: Work queue activity ingestion is more than three minutes behind
+      Namespace: AWS/Lambda
+      MetricName: IteratorAge
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref WorkQueueStreamFunction
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 180000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
 
   RealtimeConnectionsTable:
     Type: AWS::DynamoDB::Table
@@ -2358,6 +2712,7 @@ Resources:
 
   RDSCpuAlarm:
     Type: AWS::CloudWatch::Alarm
+    DependsOn: CloudFormationExecutionRole
     Condition: IsProd
     Properties:
       AlarmName: !Sub moving-crm-${Environment}-rds-cpu
@@ -2377,6 +2732,7 @@ Resources:
 
   RDSStorageAlarm:
     Type: AWS::CloudWatch::Alarm
+    DependsOn: CloudFormationExecutionRole
     Condition: IsProd
     Properties:
       AlarmName: !Sub moving-crm-${Environment}-rds-storage
@@ -2396,6 +2752,7 @@ Resources:
 
   ApiLambdaErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
+    DependsOn: CloudFormationExecutionRole
     Condition: IsProd
     Properties:
       AlarmName: !Sub moving-crm-${Environment}-api-errors
@@ -2415,6 +2772,7 @@ Resources:
 
   LeadDuplicateDLQAlarm:
     Type: AWS::CloudWatch::Alarm
+    DependsOn: CloudFormationExecutionRole
     Condition: IsProd
     Properties:
       AlarmName: !Sub moving-crm-${Environment}-dlq-depth

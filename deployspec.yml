@@ -6,30 +6,13 @@ phases:
     runtime-versions:
       python: 3.11
     commands:
-      - echo "Installing database migration and seed dependencies"
+      - echo "Installing database migration dependencies"
       - cd $CODEBUILD_SRC_DIR/backend && pip install -r deploy-requirements.txt --quiet
 
   pre_build:
     commands:
-      - |
-        if [ "$ENVIRONMENT" = "prod" ]; then
-          cd "$CODEBUILD_SRC_DIR/backend" && python pipeline_settings.py check
-        fi
-      - cd $CODEBUILD_SRC_DIR/backend && python reset_liveswitch_access_token.py
-      - echo "Running schema and settings migrations (no client data backfills)"
-      - |
-        cd "$CODEBUILD_SRC_DIR/backend"
-        if [ "$ENVIRONMENT" = "prod" ]; then
-          python migrate.py --skip-pricing-seeds
-        else
-          python migrate.py
-        fi
-      - echo "Ensuring seed data (admin user + company)"
-      - cd $CODEBUILD_SRC_DIR/backend && python -c "from import_leads import ensure_seed_data; from database import SessionLocal; s=SessionLocal(); ensure_seed_data(s); s.commit(); s.close(); print('Seed data OK')"
-      - |
-        if [ "$ENVIRONMENT" = "prod" ]; then
-          cd "$CODEBUILD_SRC_DIR/backend" && python pipeline_settings.py apply
-        fi
+      - echo "Applying pending schema changes to the existing database"
+      - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
       - |
         SSM_KEY="/moving-crm/${ENVIRONMENT:-dev}/API_SECRET"
         if ! aws ssm get-parameter --name "$SSM_KEY" --with-decryption > /dev/null 2>&1; then
@@ -67,6 +50,22 @@ phases:
       - echo "Updating message stream Lambda function code"
       - aws lambda update-function-code --function-name moving-crm-message-stream-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key message-stream/package.zip
 
+      - echo "Updating work queue background functions"
+      - aws lambda update-function-code --function-name moving-crm-work-queue-stream-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key api-backend/package.zip
+      - aws lambda update-function-code --function-name moving-crm-work-queue-worker-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key api-backend/package.zip
+      - aws lambda wait function-updated --function-name moving-crm-work-queue-stream-${ENVIRONMENT:-dev}
+      - aws lambda wait function-updated --function-name moving-crm-work-queue-worker-${ENVIRONMENT:-dev}
+      - echo "Building and publishing the event listener"
+      - |
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        QUEUE_IMAGE="${REGISTRY}/moving-crm-work-queue-${ENVIRONMENT:-dev}:latest"
+        aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+        docker build -f "$CODEBUILD_SRC_DIR/backend/Dockerfile.work-queue" -t "$QUEUE_IMAGE" "$CODEBUILD_SRC_DIR/backend"
+        docker push "$QUEUE_IMAGE"
+      - cd $CODEBUILD_SRC_DIR/backend && python start_work_queue.py
+      - aws ecs wait services-stable --cluster moving-crm-work-queue-${ENVIRONMENT:-dev} --services moving-crm-work-queue-${ENVIRONMENT:-dev}
+
       - echo "Deploying frontend to S3"
       # Keep versioned assets used by cached pages and already-open browser tabs.
       # Publish scripts/styles first; publish index.html only after all uploads succeed.
@@ -85,10 +84,6 @@ phases:
 
   post_build:
     commands:
-      - |
-        if [ "$CODEBUILD_BUILD_SUCCEEDING" = "1" ] && [ "$ENVIRONMENT" = "dev" ]; then
-          cd "$CODEBUILD_SRC_DIR/backend" && python pipeline_settings.py publish
-        fi
       - echo "Deploy complete"
 
 cache:

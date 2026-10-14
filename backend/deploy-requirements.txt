@@ -1,4 +1,4 @@
-# Dependencies used only by migrate.py and ensure_seed_data during deployment.
+# Dependencies used by database deployment tooling.
 fastapi==0.115.0
 sqlalchemy==2.0.35
 psycopg2-binary==2.9.9

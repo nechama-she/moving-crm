@@ -5,6 +5,7 @@ import { authHeaders, useAuth } from "./AuthContext";
 import { RealtimeEvent, useRealtimeUpdates } from "./useRealtimeUpdates";
 import MessageAttachments, { attachmentSummary, MessageAttachment } from "./MessageAttachments";
 import ConnectCommunicationLeadModal, { CommunicationTarget } from "./ConnectCommunicationLeadModal";
+import { createQueueRefreshScheduler } from "./queueRefreshScheduler";
 
 type MessageTab = "unanswered" | "ended";
 type QueueTab = "messages" | "calls" | "leads" | "followups" | "message-state" | "missed-call-state";
@@ -24,6 +25,18 @@ const displayPhone = (value: string) => {
   const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
   return local.length === 10 ? `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}` : value;
 };
+
+async function queueWindow(url: string, params: URLSearchParams, token: string | null, size: number) {
+  const start = Number(params.get("offset") || 0);
+  const pages = await Promise.all(Array.from({ length: Math.max(1, Math.ceil(size / 50)) }, async (_, index) => {
+    const page = new URLSearchParams(params);
+    page.set("offset", String(start + index * 50));
+    const response = await fetch(`${url}?${page}`, { headers: authHeaders(token) });
+    if (!response.ok) throw new Error(`Queue HTTP ${response.status}`);
+    return response.json();
+  }));
+  return { ...pages[0], items: pages.flatMap((page) => page.items || []), has_more: pages[pages.length - 1].has_more };
+}
 
 function IgnoreNumberTarget({ number, name, showUnknown = false, openMenu }: { number: string; name?: string; showUnknown?: boolean; openMenu: (number: string, x: number, y: number) => void }) {
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -73,6 +86,8 @@ export default function UnansweredMessagesPage() {
   const [globalMissedCallCount, setGlobalMissedCallCount] = useState(0);
   const [messageStates, setMessageStates] = useState<RawMessageState[]>([]);
   const [loadingMessageStates, setLoadingMessageStates] = useState(false);
+  const [cleanupProgress, setCleanupProgress] = useState<{ checked: number; total: number } | null>(null);
+  const cleanupRunning = useRef(false);
   const [missedCallStates, setMissedCallStates] = useState<RawMissedCallState[]>([]);
   const [loadingMissedCallStates, setLoadingMissedCallStates] = useState(false);
   const [leadTab, setLeadTab] = useState<LeadTab>("overdue");
@@ -90,6 +105,8 @@ export default function UnansweredMessagesPage() {
   const [loadingFollowups, setLoadingFollowups] = useState(false);
   const [expandedFollowups, setExpandedFollowups] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
+  const [loadingCalls, setLoadingCalls] = useState(true);
+  const [queueStatus, setQueueStatus] = useState<{ enabled: boolean; ready: boolean; stale: boolean; updated_at: string | null } | null>(null);
   const [validatingTab, setValidatingTab] = useState<QueueTab | null>(null);
   const [validationNotice, setValidationNotice] = useState("");
   const [error, setError] = useState("");
@@ -102,13 +119,23 @@ export default function UnansweredMessagesPage() {
   const [directoryCompanies, setDirectoryCompanies] = useState<string[]>([]);
   const processedEvents = useRef(new Set<string>());
   const loadingRef = useRef(true);
+  const loadingCallsRef = useRef(false);
+  const messageRequest = useRef(0);
+  const callRequest = useRef(0);
   const pendingEvents = useRef<RealtimeEvent[]>([]);
   const messageLoadSentinel = useRef<HTMLDivElement | null>(null);
   const leadLoadSentinel = useRef<HTMLDivElement | null>(null);
   const followupLoadSentinel = useRef<HTMLDivElement | null>(null);
-  const queueRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const refreshFirstContact = useRef(false);
-  const refreshFollowups = useRef(false);
+  const queueRefreshScheduler = useRef<ReturnType<typeof createQueueRefreshScheduler> | null>(null);
+  const leadRequest = useRef(0);
+  const followupRequest = useRef(0);
+  const leadInFlight = useRef(Promise.resolve());
+  const followupInFlight = useRef(Promise.resolve());
+  const loadedSizes = useRef({ leads: 0, followups: 0 });
+  loadedSizes.current = { leads: firstContactLeads.length, followups: followupLeads.length };
+  const queueFilterKey = `${token}|${leadTab}|${followupTab}|${repFilter}|${companyFilter}`;
+  const currentQueueFilterKey = useRef(queueFilterKey);
+  currentQueueFilterKey.current = queueFilterKey;
 
   useEffect(() => {
     Promise.allSettled([
@@ -124,25 +151,19 @@ export default function UnansweredMessagesPage() {
     });
   }, [token]);
 
-  const load = useCallback(async () => {
+  const loadMessages = useCallback(async () => {
+    const request = ++messageRequest.current;
     loadingRef.current = true;
     setLoading(true);
     setError("");
     try {
       const messageParams = new URLSearchParams({ ended: String(tab === "ended"), limit: "20" });
-      const callParams = new URLSearchParams({ limit: "100" });
-      if (repFilter) { messageParams.set("rep", repFilter); callParams.set("rep", repFilter); }
-      if (companyFilter) { messageParams.set("company", companyFilter); callParams.set("company", companyFilter); }
+      if (repFilter) messageParams.set("rep", repFilter);
+      if (companyFilter) messageParams.set("company", companyFilter);
       if (platformFilter) messageParams.set("platform", platformFilter);
-      const [messageResponse, callsResponse] = await Promise.all([
-        fetch(`${API_BASE}/api/unanswered-messages?${messageParams.toString()}`, { headers: authHeaders(token) }),
-        fetch(`${API_BASE}/api/unanswered-messages/missed-calls?${callParams.toString()}`, { headers: authHeaders(token) }),
-      ]);
-      const [messageData, callsData] = await Promise.all([
-        messageResponse.json().catch(() => ({})),
-        callsResponse.json().catch(() => ({})),
-      ]);
-      const failures: string[] = [];
+      const messageResponse = await fetch(`${API_BASE}/api/unanswered-messages?${messageParams.toString()}`, { headers: authHeaders(token) });
+      const messageData = await messageResponse.json().catch(() => ({}));
+      if (request !== messageRequest.current) return;
       if (messageResponse.ok) {
         setItems(messageData.items || []);
         setMessageCursor(String(messageData.next_cursor || ""));
@@ -150,25 +171,68 @@ export default function UnansweredMessagesPage() {
         setCounts(messageData.counts || { unanswered: 0, ended: 0 });
         setGlobalCounts(messageData.global_counts || messageData.counts || { unanswered: 0, ended: 0 });
       } else {
-        failures.push(`Unanswered Messages HTTP ${messageResponse.status}: ${String(messageData.detail || "request failed")}`);
+        throw new Error(`Unanswered Messages HTTP ${messageResponse.status}: ${String(messageData.detail || "request failed")}`);
       }
+    } catch (reason) {
+      if (request === messageRequest.current) setError(reason instanceof Error ? reason.message : "Could not load messages");
+    } finally {
+      if (request === messageRequest.current) {
+        loadingRef.current = false;
+        setLoading(false);
+      }
+    }
+  }, [tab, token, repFilter, companyFilter, platformFilter]);
+
+  const loadCalls = useCallback(async () => {
+    const request = ++callRequest.current;
+    loadingCallsRef.current = true;
+    setLoadingCalls(true);
+    try {
+      const callParams = new URLSearchParams({ limit: "100" });
+      if (repFilter) callParams.set("rep", repFilter);
+      if (companyFilter) callParams.set("company", companyFilter);
+      const callsResponse = await fetch(`${API_BASE}/api/unanswered-messages/missed-calls?${callParams.toString()}`, { headers: authHeaders(token) });
+      const callsData = await callsResponse.json().catch(() => ({}));
+      if (request !== callRequest.current) return;
       if (callsResponse.ok) {
         setMissedCalls(platformFilter && platformFilter !== "calls" ? [] : (callsData.items || []));
         setMissedCallCount(platformFilter && platformFilter !== "calls" ? 0 : Number(callsData.count || 0));
         setGlobalMissedCallCount(Number(callsData.global_count ?? callsData.count ?? 0));
       } else {
-        failures.push(`Missed Calls HTTP ${callsResponse.status}: ${String(callsData.detail || "request failed")}`);
+        throw new Error(`Missed Calls HTTP ${callsResponse.status}: ${String(callsData.detail || "request failed")}`);
       }
-      if (failures.length) setError(failures.join(" | "));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not load messages");
+      if (request === callRequest.current) setError(reason instanceof Error ? reason.message : "Could not load missed calls");
     } finally {
-      loadingRef.current = false;
-      setLoading(false);
+      if (request === callRequest.current) {
+        loadingCallsRef.current = false;
+        setLoadingCalls(false);
+      }
     }
-  }, [tab, token, repFilter, companyFilter, platformFilter]);
+  }, [token, repFilter, companyFilter, platformFilter]);
 
-  useEffect(() => { void load(); }, [load]);
+  const load = useCallback(() => Promise.all([loadMessages(), loadCalls()]), [loadMessages, loadCalls]);
+  useEffect(() => { void loadMessages(); }, [loadMessages]);
+  useEffect(() => { if (queueTab === "calls") void loadCalls(); }, [loadCalls, queueTab]);
+
+  const loadSummary = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/summary`, { headers: authHeaders(token) });
+      if (!response.ok) throw new Error(`Queue counts HTTP ${response.status}`);
+      const data = await response.json();
+      setQueueStatus({ enabled: Boolean(data.enabled), ready: Boolean(data.ready), stale: Boolean(data.stale), updated_at: data.updated_at || null });
+      setGlobalCounts(data.messages);
+      setGlobalMissedCallCount(data.missed_calls);
+      if (data.enabled && data.first_contact) setGlobalFirstContactCounts(data.first_contact);
+      if (data.enabled && data.followups) setGlobalFollowupCounts(data.followups);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load queue counts");
+    }
+  }, [token]);
+
+  useEffect(() => {
+    void loadSummary();
+  }, [loadSummary]);
 
   const loadMessageStates = useCallback(async () => {
     setLoadingMessageStates(true);
@@ -189,6 +253,50 @@ export default function UnansweredMessagesPage() {
     if (queueTab === "message-state") void loadMessageStates();
   }, [queueTab, loadMessageStates]);
 
+  const cleanMessageStates = async () => {
+    if (cleanupRunning.current) return;
+    cleanupRunning.current = true;
+    setCleanupProgress({ checked: 0, total: 0 });
+    setError("");
+    setValidationNotice("");
+    let removed = 0;
+    let unverified = 0;
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/message-states/all`, { headers: authHeaders(token) });
+      if (!response.ok) throw new Error(`Message states HTTP ${response.status}`);
+      const data = await response.json();
+      const targets: RawMessageState[] = (data.items || []).filter((row: RawMessageState) => !row.conversation_ended);
+      setCleanupProgress({ checked: 0, total: targets.length });
+      // Each request verifies actual history. These are finite work batches,
+      // not polling; no requests continue after the selected rows are checked.
+      for (let start = 0; start < targets.length; start += 3) {
+        await Promise.all(targets.slice(start, start + 3).map(async (row) => {
+          try {
+            const result = await fetch(`${API_BASE}/api/unanswered-messages/message-states/clean`, {
+              method: "POST", headers: { ...authHeaders(token), "Content-Type": "application/json" },
+              body: JSON.stringify({ channel: row.channel, message_id: row.message_id }),
+            });
+            if (!result.ok) throw new Error(`Check HTTP ${result.status}`);
+            const outcome = await result.json();
+            removed += Number(outcome.removed || 0);
+            if (outcome.result === "unverified" || outcome.result === "changed_during_check") unverified += 1;
+            if (outcome.removed) setMessageStates((current) => current.filter((item) => item.channel !== row.channel || item.message_id !== row.message_id));
+          } catch {
+            unverified += 1;
+          }
+          setCleanupProgress((current) => current ? { ...current, checked: current.checked + 1 } : null);
+        }));
+      }
+      setValidationNotice(`Checked ${targets.length} entries. Removed ${removed} answered entries.${unverified ? ` ${unverified} could not be verified and were kept.` : ""}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not check message history");
+    } finally {
+      await Promise.allSettled([loadMessageStates(), loadSummary(), loadMessages()]);
+      cleanupRunning.current = false;
+      setCleanupProgress(null);
+    }
+  };
+
   const loadMissedCallStates = useCallback(async () => {
     setLoadingMissedCallStates(true);
     setError("");
@@ -208,16 +316,22 @@ export default function UnansweredMessagesPage() {
     if (queueTab === "missed-call-state") void loadMissedCallStates();
   }, [queueTab, loadMissedCallStates]);
 
-  const loadFirstContactLeads = useCallback(async (offset = 0, refresh = false) => {
-    if (offset) setLoadingLeads(true);
-    else setLoadingLeads(true);
+  const loadFirstContactLeads = useCallback(async (offset = 0, refresh = false, silent = false) => {
+    const key = currentQueueFilterKey.current;
+    const previous = leadInFlight.current;
+    let release!: () => void;
+    leadInFlight.current = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    if (key !== currentQueueFilterKey.current) { release(); return; }
+    const request = ++leadRequest.current;
+    if (!silent) setLoadingLeads(true);
     try {
       const params = new URLSearchParams({ category: leadTab, limit: "50", offset: String(offset), refresh: String(refresh) });
       if (repFilter) params.set("rep", repFilter);
       if (companyFilter) params.set("company", companyFilter);
-      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-leads?${params.toString()}`, { headers: authHeaders(token) });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || `Leads HTTP ${response.status}`);
+      const data = await queueWindow(`${API_BASE}/api/unanswered-messages/first-contact-leads`, params, token, silent ? loadedSizes.current.leads : 50);
+      if (request !== leadRequest.current || key !== currentQueueFilterKey.current) return;
+      loadedSizes.current.leads = offset + data.items.length;
       setFirstContactLeads((current) => offset ? [...current, ...(data.items || [])] : (data.items || []));
       setFirstContactCounts(data.counts || { new: 0, overdue: 0 });
       setGlobalFirstContactCounts(data.global_counts || data.counts || { new: 0, overdue: 0 });
@@ -225,22 +339,30 @@ export default function UnansweredMessagesPage() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load leads awaiting first contact");
     } finally {
-      setLoadingLeads(false);
+      if (request === leadRequest.current) setLoadingLeads(false);
+      release();
     }
   }, [leadTab, token, repFilter, companyFilter]);
 
-  useEffect(() => { void loadFirstContactLeads(0); }, [loadFirstContactLeads]);
+  useEffect(() => { if (queueTab === "leads") void loadFirstContactLeads(0); }, [loadFirstContactLeads, queueTab]);
 
-  const loadFollowups = useCallback(async (offset = 0, refresh = false) => {
-    setLoadingFollowups(true);
+  const loadFollowups = useCallback(async (offset = 0, refresh = false, silent = false) => {
+    const key = currentQueueFilterKey.current;
+    const previous = followupInFlight.current;
+    let release!: () => void;
+    followupInFlight.current = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    if (key !== currentQueueFilterKey.current) { release(); return; }
+    const request = ++followupRequest.current;
+    if (!silent) setLoadingFollowups(true);
     try {
       const params = new URLSearchParams({ category: followupTab, limit: "50", offset: String(offset) });
       if (refresh) params.set("refresh", "true");
       if (repFilter) params.set("rep", repFilter);
       if (companyFilter) params.set("company", companyFilter);
-      const response = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls?${params.toString()}`, { headers: authHeaders(token) });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || `Follow-ups HTTP ${response.status}`);
+      const data = await queueWindow(`${API_BASE}/api/unanswered-messages/followup-calls`, params, token, silent ? loadedSizes.current.followups : 50);
+      if (request !== followupRequest.current || key !== currentQueueFilterKey.current) return;
+      loadedSizes.current.followups = offset + data.items.length;
       setFollowupLeads((current) => offset ? [...current, ...(data.items || [])] : (data.items || []));
       setFollowupCounts(data.counts || { all: 0, overdue: 0 });
       setGlobalFollowupCounts(data.global_counts || data.counts || { all: 0, overdue: 0 });
@@ -249,30 +371,36 @@ export default function UnansweredMessagesPage() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load follow-up calls");
     } finally {
-      setLoadingFollowups(false);
+      if (request === followupRequest.current) setLoadingFollowups(false);
+      release();
     }
   }, [followupTab, repFilter, companyFilter, token]);
 
-  const scheduleQueueRefresh = useCallback((firstContact: boolean, followups: boolean) => {
-    refreshFirstContact.current ||= firstContact;
-    refreshFollowups.current ||= followups;
-    if (queueRefreshTimer.current) clearTimeout(queueRefreshTimer.current);
-    queueRefreshTimer.current = setTimeout(() => {
-      queueRefreshTimer.current = null;
-      const reloadFirstContact = refreshFirstContact.current;
-      const reloadFollowups = refreshFollowups.current;
-      refreshFirstContact.current = false;
-      refreshFollowups.current = false;
-      if (reloadFirstContact) void loadFirstContactLeads(0, true);
-      if (reloadFollowups) void loadFollowups(0, true);
-    }, 250);
-  }, [loadFirstContactLeads, loadFollowups]);
+  const queueLoaders = useRef({ loadFirstContactLeads, loadFollowups, loadSummary, queueTab });
+  queueLoaders.current = { loadFirstContactLeads, loadFollowups, loadSummary, queueTab };
 
-  useEffect(() => () => {
-    if (queueRefreshTimer.current) clearTimeout(queueRefreshTimer.current);
+  useEffect(() => {
+    const scheduler = createQueueRefreshScheduler(async (firstContact, followups) => {
+      await Promise.allSettled([
+        queueLoaders.current.loadSummary(),
+        firstContact && queueLoaders.current.queueTab === "leads" ? queueLoaders.current.loadFirstContactLeads(0, false, true) : Promise.resolve(),
+        followups && queueLoaders.current.queueTab === "followups" ? queueLoaders.current.loadFollowups(0, false, true) : Promise.resolve(),
+      ]);
+    });
+    queueRefreshScheduler.current = scheduler;
+    return () => scheduler.dispose();
   }, []);
 
-  useEffect(() => { void loadFollowups(0); }, [loadFollowups]);
+  const scheduleQueueRefresh = useCallback((firstContact: boolean, followups: boolean) => {
+    queueRefreshScheduler.current?.request(firstContact, followups);
+  }, []);
+
+  useEffect(() => { if (queueTab === "followups") void loadFollowups(0); }, [loadFollowups, queueTab]);
+  useEffect(() => {
+    if (queueStatus?.enabled !== false) return;
+    if (queueTab !== "leads") void loadFirstContactLeads(0);
+    if (queueTab !== "followups") void loadFollowups(0);
+  }, [queueStatus?.enabled, queueTab, loadFirstContactLeads, loadFollowups]);
 
   useEffect(() => {
     const target = followupLoadSentinel.current;
@@ -374,7 +502,7 @@ export default function UnansweredMessagesPage() {
 
   const applyMissedCallEvent = useCallback((event: RealtimeEvent) => {
     if (event.type !== "missed_call_state_changed") return;
-    if (loadingRef.current) { pendingEvents.current.push(event); return; }
+    if (loadingCallsRef.current) { pendingEvents.current.push(event); return; }
     const eventId = String(event.event_id || "");
     if (!eventId || processedEvents.current.has(eventId)) return;
     processedEvents.current.add(eventId);
@@ -391,31 +519,30 @@ export default function UnansweredMessagesPage() {
   }, []);
 
   useRealtimeUpdates(token, (event) => {
+    if (event.type === "work_queue_updated" || event.type === "realtime_connected") {
+      scheduleQueueRefresh(true, true);
+      return;
+    }
     if (event.type === "sales_work_queue_batch") {
       ((event.events || []) as RealtimeEvent[]).forEach((item) => {
         applyRealtimeEvent(item);
         applyMissedCallEvent(item);
-        if (item.type === "call_activity_changed" || item.type === "missed_call_state_changed") scheduleQueueRefresh(true, true);
-        if (item.type === "message_activity_changed" || item.type === "message_state_changed") scheduleQueueRefresh(false, true);
-        if (item.type === "lead_activity_changed") scheduleQueueRefresh(true, true);
+        if (item.type === "work_queue_updated") scheduleQueueRefresh(true, true);
       });
       return;
     }
     applyRealtimeEvent(event);
     applyMissedCallEvent(event);
-    if (event.type === "call_activity_changed" || event.type === "missed_call_state_changed") scheduleQueueRefresh(true, true);
-    if (event.type === "message_activity_changed" || event.type === "message_state_changed") scheduleQueueRefresh(false, true);
-    if (event.type === "lead_activity_changed") scheduleQueueRefresh(true, true);
   });
 
   useEffect(() => {
-    if (loading || pendingEvents.current.length === 0) return;
+    if (pendingEvents.current.length === 0) return;
     const queued = pendingEvents.current.splice(0);
     queued.forEach((event) => {
       applyRealtimeEvent(event);
       applyMissedCallEvent(event);
     });
-  }, [loading, applyRealtimeEvent, applyMissedCallEvent]);
+  }, [loading, loadingCalls, applyRealtimeEvent, applyMissedCallEvent]);
 
   const setEnded = async (row: MessageRow, ended: boolean) => {
     const response = await fetch(`${API_BASE}/api/unanswered-messages/end`, {
@@ -573,12 +700,12 @@ export default function UnansweredMessagesPage() {
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("leads")} style={{ ...queueCard, ...(queueTab === "leads" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Leads Awaiting First Contact</span>
-          <strong style={queueCardCount}>{globalFirstContactCounts.new + globalFirstContactCounts.overdue}</strong>
+          <strong style={queueCardCount}>{queueStatus?.ready || queueStatus?.enabled === false ? globalFirstContactCounts.new + globalFirstContactCounts.overdue : "Loading..."}</strong>
           <span style={queueCardDescription}>New leads with no call attempt</span>
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("followups")} style={{ ...queueCard, ...(queueTab === "followups" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Priority 0 Follow-ups</span>
-          <strong style={queueCardCount}>{globalFollowupCounts.overdue}</strong>
+          <strong style={queueCardCount}>{queueStatus?.ready || queueStatus?.enabled === false ? globalFollowupCounts.overdue : "Loading..."}</strong>
           <span style={queueCardDescription}>Six call periods and three required messages</span>
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>
@@ -602,7 +729,7 @@ export default function UnansweredMessagesPage() {
       {queueTab === "message-state" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Message State Table ({messageStates.length})</h2>
-          <button className="slds-button" type="button" onClick={() => void loadMessageStates()} disabled={loadingMessageStates} style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: loadingMessageStates ? "wait" : "pointer" }}>{loadingMessageStates ? "Loading…" : "Reload"}</button>
+          <button className="slds-button" type="button" onClick={() => void cleanMessageStates()} disabled={loadingMessageStates || cleanupProgress !== null} style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: loadingMessageStates || cleanupProgress ? "wait" : "pointer" }}>{cleanupProgress ? `Checking ${cleanupProgress.checked}/${cleanupProgress.total}` : loadingMessageStates ? "Loading…" : "Reload"}</button>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse" }}>
@@ -697,9 +824,9 @@ export default function UnansweredMessagesPage() {
               {['Client', 'Rep', 'Company', 'Rang On', 'Missed Calls', 'First Missed', 'Latest Missed', 'Action'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
-              {loading ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
-              {!loading && filteredMissedCalls.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{missedCalls.length ? "No missed calls match these filters." : "No missed calls."}</td></tr> : null}
-              {!loading && filteredMissedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
+              {loadingCalls ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
+              {!loadingCalls && filteredMissedCalls.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{missedCalls.length ? "No missed calls match these filters." : "No missed calls."}</td></tr> : null}
+              {!loadingCalls && filteredMissedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
                 <td style={cell} onContextMenu={!row.lead_id ? (event) => { event.preventDefault(); setNumberMenu({ number: row.client_identifier, x: event.clientX, y: event.clientY, connectTarget: { channel: "calls", clientIdentifier: row.client_identifier, companyIdentifier: row.company_identifier } }); } : undefined} title={!row.lead_id ? "Right-click to connect this call to a lead" : undefined}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : null}<div style={{ marginTop: row.lead_id ? 4 : 0 }}><IgnoreNumberTarget number={row.client_identifier} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></div></td>
                 <td style={cell}>{row.rep}</td>
                 <td style={cell}>{row.company}</td>

@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Literal
 from types import SimpleNamespace
 from uuid import uuid4
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import boto3
@@ -176,8 +176,18 @@ class Intake(BaseModel):
 
 
 def public_url(row, rep=False):
-    origin = setting('PUBLIC_MOVE_ORIGIN').rstrip('/')
-    if not origin.startswith('https://'):
+    # Older deployments supplied the comma-separated CloudFront aliases here.
+    # The first configured alias is the canonical customer/rep website.
+    origin = setting('PUBLIC_MOVE_ORIGIN').split(',', 1)[0].strip().rstrip('/')
+    try:
+        parsed = urlsplit(origin)
+        valid = (parsed.scheme == 'https' and parsed.hostname and not parsed.username
+                 and not parsed.password and not parsed.path and not parsed.query
+                 and not parsed.fragment and not any(c.isspace() for c in origin))
+        parsed.port  # Reject malformed ports as configuration errors.
+    except ValueError:
+        valid = False
+    if not valid:
         raise HTTPException(503, 'The customer website origin is not configured')
     return f'{origin}/move/{row.id}#key={rep_link_token(row) if rep else link_token(row.id)}' + ('&audience=rep' if rep else '')
 

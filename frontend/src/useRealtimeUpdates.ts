@@ -15,7 +15,7 @@ export function useRealtimeUpdates(token: string | null, onEvent: (event: Realti
     let timer = 0;
     const connect = () => {
       socket = new WebSocket(`${window.__WS_URL__}?token=${encodeURIComponent(token)}`);
-      socket.onopen = () => { retry = 1000; };
+      socket.onopen = () => { retry = 1000; callbackRef.current({ type: "realtime_connected" }); };
       socket.onmessage = ({ data }) => {
         try {
           const event = JSON.parse(data) as RealtimeEvent;
