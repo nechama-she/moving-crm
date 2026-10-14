@@ -15,11 +15,12 @@ logger = logging.getLogger("migrate")
 def migrate() -> None:
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE message_states ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ"))
-        connection.execute(text("UPDATE message_states SET ended_at = CURRENT_TIMESTAMP WHERE conversation_ended IS TRUE AND ended_at IS NULL"))
+        from ended_chat_retention import clear_existing_ended_states
+        removed = clear_existing_ended_states(connection)
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_message_states_status_ended ON message_states (conversation_ended, ended_at)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_message_states_status_order ON message_states (conversation_ended, occurred_at DESC, channel ASC, message_id ASC)"))
         connection.execute(text("DROP TRIGGER IF EXISTS work_queue_ended_changed ON message_states"))
-    logger.info("Message-state expiration column and indexes are ready")
+    logger.info("Message-state expiration column and indexes are ready; removed %s existing ended entries", removed)
 
 
 if __name__ == "__main__":
