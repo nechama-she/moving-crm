@@ -5,6 +5,7 @@ import json
 import logging
 import time
 import uuid
+from threading import Lock
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -14,7 +15,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Load, Session, joinedload
 
 from auth import require_admin
 from database import get_db
@@ -30,6 +31,7 @@ _first_contact_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "contact
 _followup_calls_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "calls": []}
 _followup_messages_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "messages": []}
 _followup_rows_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "rows": []}
+_call_tracking_lock = Lock()
 
 CALL_PERIODS = (
     ("morning", 8, 12),
@@ -47,6 +49,22 @@ def _open_sales_status_filter():
 
 def _exclude_mirit_company_filter():
     return ~Lead.company.has(func.lower(func.trim(Company.name)) == MIRIT_COMPANY_NAME)
+
+
+def _queue_lead_options(relationship=None):
+    # Company logos and lead notes can be large. None of the queue rows need
+    # them; select only the fields used by labels and contact calculations.
+    lead = Load(Lead) if relationship is None else joinedload(relationship)
+    return (
+        lead.load_only(Lead.id, Lead.full_name, Lead.phone, Lead.status,
+                       Lead.priority, Lead.created_at, Lead.created_time,
+                       Lead.facebook_user_id, Lead.company_id, Lead.assigned_to),
+        lead.joinedload(Lead.company).load_only(
+            Company.name, Company.phone, Company.timezone,
+            Company.aircall_number_id, Company.facebook_page_id),
+        lead.joinedload(Lead.assignee).load_only(
+            User.name, User.phone, User.aircall_number_id),
+    )
 
 
 class EndStateRequest(BaseModel):
@@ -91,41 +109,32 @@ def _smartmoving_created_at(value: object) -> datetime | None:
         return None
 
 
-def _query_since(table, record_type: str, since: int) -> list[dict]:
+def _query_since(table, record_type: str, since: int, fields: tuple[str, ...] = ()) -> list[dict]:
     items: list[dict] = []
-    response = table.query(
-        IndexName=COMMUNICATION_TIMESTAMP_INDEX,
-        KeyConditionExpression=Key("record_type").eq(record_type) & Key("timestamp").gte(since),
-        ScanIndexForward=True,
-    )
+    query = {
+        "IndexName": COMMUNICATION_TIMESTAMP_INDEX,
+        "KeyConditionExpression": Key("record_type").eq(record_type) & Key("timestamp").gte(since),
+        "ScanIndexForward": True,
+    }
+    if fields:
+        names = {f"#field{i}": field for i, field in enumerate(fields)}
+        query.update(ProjectionExpression=", ".join(names), ExpressionAttributeNames=names)
+    response = table.query(**query)
     while True:
         items.extend(response.get("Items", []))
         if "LastEvaluatedKey" not in response:
             return items
-        response = table.query(
-            IndexName=COMMUNICATION_TIMESTAMP_INDEX,
-            KeyConditionExpression=Key("record_type").eq(record_type) & Key("timestamp").gte(since),
-            ScanIndexForward=True,
-            ExclusiveStartKey=response["LastEvaluatedKey"],
-        )
+        response = table.query(**query, ExclusiveStartKey=response["LastEvaluatedKey"])
 
 
 def _first_contact_tracking() -> tuple[datetime | None, dict[tuple[str, str, str], datetime]]:
     now = time.time()
-    if _first_contact_cache["tracking_start"] is not None and now - _first_contact_cache["loaded_at"] < 30:
+    tracking_start, calls = _followup_call_tracking()
+    if (_first_contact_cache.get("source_calls") is calls
+            and now - _first_contact_cache["loaded_at"] < 30):
         return _first_contact_cache["tracking_start"], _first_contact_cache["contacts"]
-    first_page = calls_table.query(
-        IndexName=COMMUNICATION_TIMESTAMP_INDEX,
-        KeyConditionExpression=Key("record_type").eq("call"),
-        ScanIndexForward=True,
-        Limit=1,
-    )
-    first_items = first_page.get("Items", [])
-    if not first_items:
+    if tracking_start is None:
         return None, {}
-    first_epoch = _epoch(first_items[0].get("timestamp"))
-    tracking_start = datetime.fromtimestamp(first_epoch, tz=timezone.utc)
-    calls = _query_since(calls_table, "call", int(first_epoch))
     contacts: dict[tuple[str, str, str], datetime] = {}
 
     def record_contact(key: tuple[str, str, str], raw_timestamp: object) -> None:
@@ -142,13 +151,20 @@ def _first_contact_tracking() -> tuple[datetime | None, dict[tuple[str, str, str
                 ("phone", _digits(item.get("phone_number")), _digits(item.get("company_number"))),
                 item.get("timestamp"),
             )
-    _first_contact_cache.update({"loaded_at": now, "tracking_start": tracking_start, "contacts": contacts})
+    _first_contact_cache.update({"loaded_at": now, "tracking_start": tracking_start, "contacts": contacts, "source_calls": calls})
     return tracking_start, contacts
 
 
 def _followup_call_tracking() -> tuple[datetime | None, list[dict]]:
+    # Both queue endpoints arrive together. Share one history read, including
+    # on a cold worker, instead of issuing duplicate paginated DynamoDB queries.
+    with _call_tracking_lock:
+        return _load_call_tracking()
+
+
+def _load_call_tracking() -> tuple[datetime | None, list[dict]]:
     now = time.time()
-    if _followup_calls_cache["tracking_start"] is not None and now - _followup_calls_cache["loaded_at"] < 30:
+    if _followup_calls_cache["loaded_at"] and now - _followup_calls_cache["loaded_at"] < 30:
         return _followup_calls_cache["tracking_start"], _followup_calls_cache["calls"]
     first_page = calls_table.query(
         IndexName=COMMUNICATION_TIMESTAMP_INDEX,
@@ -158,12 +174,14 @@ def _followup_call_tracking() -> tuple[datetime | None, list[dict]]:
     )
     first_items = first_page.get("Items", [])
     if not first_items:
+        _followup_calls_cache.update({"loaded_at": time.time(), "tracking_start": None, "calls": []})
         return None, []
     first_epoch = _epoch(first_items[0].get("timestamp"))
-    calls = _query_since(calls_table, "call", int(first_epoch))
+    calls = _query_since(calls_table, "call", int(first_epoch),
+                         ("direction", "timestamp", "phone_number", "company_number"))
     outbound = [item for item in calls if str(item.get("direction") or "").strip().lower() == "outbound"]
     tracking_start = datetime.fromtimestamp(first_epoch, tz=timezone.utc)
-    _followup_calls_cache.update({"loaded_at": now, "tracking_start": tracking_start, "calls": outbound})
+    _followup_calls_cache.update({"loaded_at": time.time(), "tracking_start": tracking_start, "calls": outbound})
     return tracking_start, outbound
 
 
@@ -174,8 +192,10 @@ def _followup_message_tracking(tracking_start: datetime) -> list[dict]:
         return _followup_messages_cache["messages"]
     since_epoch = int(tracking_start.timestamp())
     with ThreadPoolExecutor(max_workers=2) as executor:
-        sms_future = executor.submit(_query_since, sms_messages_table, "message", since_epoch)
-        meta_future = executor.submit(_query_since, conversations_table, "message", since_epoch * 1000)
+        sms_future = executor.submit(_query_since, sms_messages_table, "message", since_epoch,
+                                     ("direction", "sales_name", "company_name", "timestamp", "phone_number", "company_number", "number_id"))
+        meta_future = executor.submit(_query_since, conversations_table, "message", since_epoch * 1000,
+                                      ("role", "sales_name", "platform", "timestamp", "user_id", "page_id"))
         sms_messages, meta_messages = sms_future.result(), meta_future.result()
     messages: list[dict] = []
     for item in sms_messages:
@@ -370,10 +390,9 @@ def list_followup_calls(
             limit=limit,
             offset=offset,
         )
-    messages = _followup_message_tracking(tracking_start)
     candidate_leads = (
         db.query(Lead)
-        .options(joinedload(Lead.company), joinedload(Lead.assignee))
+        .options(*_queue_lead_options())
         .filter(
             Lead.priority == 0,
             _open_sales_status_filter(),
@@ -396,6 +415,9 @@ def list_followup_calls(
         if created_at is not None and created_at >= tracking_start
     ]
     leads_with_created_at.sort(key=lambda pair: pair[1], reverse=True)
+    # Messages older than every eligible lead cannot complete any attempt.
+    # Avoid fetching message history at all when this queue has no candidates.
+    messages = _followup_message_tracking(leads_with_created_at[-1][1]) if leads_with_created_at else []
     calls_by_pair: dict[tuple[str, str], list[datetime]] = {}
     for call in calls:
         call_at = datetime.fromtimestamp(_epoch(call.get("timestamp")), tz=timezone.utc)
@@ -560,12 +582,13 @@ def list_first_contact_leads(
 ):
     if refresh:
         _first_contact_cache["loaded_at"] = 0.0
+        _followup_calls_cache["loaded_at"] = 0.0
     tracking_start, contacts = _first_contact_tracking()
     if tracking_start is None:
         return {"items": [], "counts": {"new": 0, "overdue": 0}, "total": 0, "has_more": False, "tracking_start": ""}
     leads = (
         db.query(Lead)
-        .options(joinedload(Lead.company), joinedload(Lead.assignee))
+        .options(*_queue_lead_options())
         .filter(
             Lead.created_at >= tracking_start,
             Lead.priority == 0,
@@ -690,7 +713,7 @@ def list_missed_calls(
 ):
     states = (
         db.query(MissedCallState)
-        .options(joinedload(MissedCallState.lead).joinedload(Lead.company), joinedload(MissedCallState.lead).joinedload(Lead.assignee))
+        .options(*_queue_lead_options(MissedCallState.lead))
         .order_by(MissedCallState.latest_missed_at.desc())
         .all()
     )
@@ -994,7 +1017,7 @@ def list_message_states(
             visible_filter = and_(visible_filter, MessageState.lead.has(Lead.assignee.has(User.name == rep)))
     if company:
         visible_filter = and_(visible_filter, MessageState.lead.has(Lead.company.has(Company.name == company)))
-    count_rows = (
+    count_rows = global_count_rows if not (rep or company or platform) else (
         db.query(MessageState.conversation_ended, func.count())
         .filter(visible_filter)
         .group_by(MessageState.conversation_ended)
@@ -1003,7 +1026,7 @@ def list_message_states(
     counts_by_ended = {bool(value): int(count) for value, count in count_rows}
     query = (
         db.query(MessageState)
-        .options(joinedload(MessageState.lead).joinedload(Lead.company), joinedload(MessageState.lead).joinedload(Lead.assignee))
+        .options(*_queue_lead_options(MessageState.lead))
         .filter(visible_filter, MessageState.conversation_ended.is_(ended))
         .order_by(MessageState.occurred_at.desc(), MessageState.channel.asc(), MessageState.message_id.asc())
     )

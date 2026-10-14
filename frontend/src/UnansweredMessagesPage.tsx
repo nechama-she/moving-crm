@@ -5,6 +5,7 @@ import { authHeaders, useAuth } from "./AuthContext";
 import { RealtimeEvent, useRealtimeUpdates } from "./useRealtimeUpdates";
 import MessageAttachments, { attachmentSummary, MessageAttachment } from "./MessageAttachments";
 import ConnectCommunicationLeadModal, { CommunicationTarget } from "./ConnectCommunicationLeadModal";
+import { createQueueRefreshScheduler } from "./queueRefreshScheduler";
 
 type MessageTab = "unanswered" | "ended";
 type QueueTab = "messages" | "calls" | "leads" | "followups" | "message-state" | "missed-call-state";
@@ -90,6 +91,7 @@ export default function UnansweredMessagesPage() {
   const [loadingFollowups, setLoadingFollowups] = useState(false);
   const [expandedFollowups, setExpandedFollowups] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
+  const [loadingCalls, setLoadingCalls] = useState(true);
   const [validatingTab, setValidatingTab] = useState<QueueTab | null>(null);
   const [validationNotice, setValidationNotice] = useState("");
   const [error, setError] = useState("");
@@ -102,13 +104,14 @@ export default function UnansweredMessagesPage() {
   const [directoryCompanies, setDirectoryCompanies] = useState<string[]>([]);
   const processedEvents = useRef(new Set<string>());
   const loadingRef = useRef(true);
+  const loadingCallsRef = useRef(true);
+  const messageRequest = useRef(0);
+  const callRequest = useRef(0);
   const pendingEvents = useRef<RealtimeEvent[]>([]);
   const messageLoadSentinel = useRef<HTMLDivElement | null>(null);
   const leadLoadSentinel = useRef<HTMLDivElement | null>(null);
   const followupLoadSentinel = useRef<HTMLDivElement | null>(null);
-  const queueRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const refreshFirstContact = useRef(false);
-  const refreshFollowups = useRef(false);
+  const queueRefreshScheduler = useRef<ReturnType<typeof createQueueRefreshScheduler> | null>(null);
 
   useEffect(() => {
     Promise.allSettled([
@@ -124,25 +127,19 @@ export default function UnansweredMessagesPage() {
     });
   }, [token]);
 
-  const load = useCallback(async () => {
+  const loadMessages = useCallback(async () => {
+    const request = ++messageRequest.current;
     loadingRef.current = true;
     setLoading(true);
     setError("");
     try {
       const messageParams = new URLSearchParams({ ended: String(tab === "ended"), limit: "20" });
-      const callParams = new URLSearchParams({ limit: "100" });
-      if (repFilter) { messageParams.set("rep", repFilter); callParams.set("rep", repFilter); }
-      if (companyFilter) { messageParams.set("company", companyFilter); callParams.set("company", companyFilter); }
+      if (repFilter) messageParams.set("rep", repFilter);
+      if (companyFilter) messageParams.set("company", companyFilter);
       if (platformFilter) messageParams.set("platform", platformFilter);
-      const [messageResponse, callsResponse] = await Promise.all([
-        fetch(`${API_BASE}/api/unanswered-messages?${messageParams.toString()}`, { headers: authHeaders(token) }),
-        fetch(`${API_BASE}/api/unanswered-messages/missed-calls?${callParams.toString()}`, { headers: authHeaders(token) }),
-      ]);
-      const [messageData, callsData] = await Promise.all([
-        messageResponse.json().catch(() => ({})),
-        callsResponse.json().catch(() => ({})),
-      ]);
-      const failures: string[] = [];
+      const messageResponse = await fetch(`${API_BASE}/api/unanswered-messages?${messageParams.toString()}`, { headers: authHeaders(token) });
+      const messageData = await messageResponse.json().catch(() => ({}));
+      if (request !== messageRequest.current) return;
       if (messageResponse.ok) {
         setItems(messageData.items || []);
         setMessageCursor(String(messageData.next_cursor || ""));
@@ -150,25 +147,49 @@ export default function UnansweredMessagesPage() {
         setCounts(messageData.counts || { unanswered: 0, ended: 0 });
         setGlobalCounts(messageData.global_counts || messageData.counts || { unanswered: 0, ended: 0 });
       } else {
-        failures.push(`Unanswered Messages HTTP ${messageResponse.status}: ${String(messageData.detail || "request failed")}`);
+        throw new Error(`Unanswered Messages HTTP ${messageResponse.status}: ${String(messageData.detail || "request failed")}`);
       }
+    } catch (reason) {
+      if (request === messageRequest.current) setError(reason instanceof Error ? reason.message : "Could not load messages");
+    } finally {
+      if (request === messageRequest.current) {
+        loadingRef.current = false;
+        setLoading(false);
+      }
+    }
+  }, [tab, token, repFilter, companyFilter, platformFilter]);
+
+  const loadCalls = useCallback(async () => {
+    const request = ++callRequest.current;
+    loadingCallsRef.current = true;
+    setLoadingCalls(true);
+    try {
+      const callParams = new URLSearchParams({ limit: "100" });
+      if (repFilter) callParams.set("rep", repFilter);
+      if (companyFilter) callParams.set("company", companyFilter);
+      const callsResponse = await fetch(`${API_BASE}/api/unanswered-messages/missed-calls?${callParams.toString()}`, { headers: authHeaders(token) });
+      const callsData = await callsResponse.json().catch(() => ({}));
+      if (request !== callRequest.current) return;
       if (callsResponse.ok) {
         setMissedCalls(platformFilter && platformFilter !== "calls" ? [] : (callsData.items || []));
         setMissedCallCount(platformFilter && platformFilter !== "calls" ? 0 : Number(callsData.count || 0));
         setGlobalMissedCallCount(Number(callsData.global_count ?? callsData.count ?? 0));
       } else {
-        failures.push(`Missed Calls HTTP ${callsResponse.status}: ${String(callsData.detail || "request failed")}`);
+        throw new Error(`Missed Calls HTTP ${callsResponse.status}: ${String(callsData.detail || "request failed")}`);
       }
-      if (failures.length) setError(failures.join(" | "));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not load messages");
+      if (request === callRequest.current) setError(reason instanceof Error ? reason.message : "Could not load missed calls");
     } finally {
-      loadingRef.current = false;
-      setLoading(false);
+      if (request === callRequest.current) {
+        loadingCallsRef.current = false;
+        setLoadingCalls(false);
+      }
     }
-  }, [tab, token, repFilter, companyFilter, platformFilter]);
+  }, [token, repFilter, companyFilter, platformFilter]);
 
-  useEffect(() => { void load(); }, [load]);
+  const load = useCallback(() => Promise.all([loadMessages(), loadCalls()]), [loadMessages, loadCalls]);
+  useEffect(() => { void loadMessages(); }, [loadMessages]);
+  useEffect(() => { void loadCalls(); }, [loadCalls]);
 
   const loadMessageStates = useCallback(async () => {
     setLoadingMessageStates(true);
@@ -253,23 +274,22 @@ export default function UnansweredMessagesPage() {
     }
   }, [followupTab, repFilter, companyFilter, token]);
 
-  const scheduleQueueRefresh = useCallback((firstContact: boolean, followups: boolean) => {
-    refreshFirstContact.current ||= firstContact;
-    refreshFollowups.current ||= followups;
-    if (queueRefreshTimer.current) clearTimeout(queueRefreshTimer.current);
-    queueRefreshTimer.current = setTimeout(() => {
-      queueRefreshTimer.current = null;
-      const reloadFirstContact = refreshFirstContact.current;
-      const reloadFollowups = refreshFollowups.current;
-      refreshFirstContact.current = false;
-      refreshFollowups.current = false;
-      if (reloadFirstContact) void loadFirstContactLeads(0, true);
-      if (reloadFollowups) void loadFollowups(0, true);
-    }, 250);
-  }, [loadFirstContactLeads, loadFollowups]);
+  const queueLoaders = useRef({ loadFirstContactLeads, loadFollowups });
+  queueLoaders.current = { loadFirstContactLeads, loadFollowups };
 
-  useEffect(() => () => {
-    if (queueRefreshTimer.current) clearTimeout(queueRefreshTimer.current);
+  useEffect(() => {
+    const scheduler = createQueueRefreshScheduler(async (firstContact, followups) => {
+      await Promise.allSettled([
+        firstContact ? queueLoaders.current.loadFirstContactLeads(0, true) : Promise.resolve(),
+        followups ? queueLoaders.current.loadFollowups(0, true) : Promise.resolve(),
+      ]);
+    });
+    queueRefreshScheduler.current = scheduler;
+    return () => scheduler.dispose();
+  }, []);
+
+  const scheduleQueueRefresh = useCallback((firstContact: boolean, followups: boolean) => {
+    queueRefreshScheduler.current?.request(firstContact, followups);
   }, []);
 
   useEffect(() => { void loadFollowups(0); }, [loadFollowups]);
@@ -374,7 +394,7 @@ export default function UnansweredMessagesPage() {
 
   const applyMissedCallEvent = useCallback((event: RealtimeEvent) => {
     if (event.type !== "missed_call_state_changed") return;
-    if (loadingRef.current) { pendingEvents.current.push(event); return; }
+    if (loadingCallsRef.current) { pendingEvents.current.push(event); return; }
     const eventId = String(event.event_id || "");
     if (!eventId || processedEvents.current.has(eventId)) return;
     processedEvents.current.add(eventId);
@@ -409,13 +429,13 @@ export default function UnansweredMessagesPage() {
   });
 
   useEffect(() => {
-    if (loading || pendingEvents.current.length === 0) return;
+    if (pendingEvents.current.length === 0) return;
     const queued = pendingEvents.current.splice(0);
     queued.forEach((event) => {
       applyRealtimeEvent(event);
       applyMissedCallEvent(event);
     });
-  }, [loading, applyRealtimeEvent, applyMissedCallEvent]);
+  }, [loading, loadingCalls, applyRealtimeEvent, applyMissedCallEvent]);
 
   const setEnded = async (row: MessageRow, ended: boolean) => {
     const response = await fetch(`${API_BASE}/api/unanswered-messages/end`, {
@@ -697,9 +717,9 @@ export default function UnansweredMessagesPage() {
               {['Client', 'Rep', 'Company', 'Rang On', 'Missed Calls', 'First Missed', 'Latest Missed', 'Action'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
-              {loading ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
-              {!loading && filteredMissedCalls.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{missedCalls.length ? "No missed calls match these filters." : "No missed calls."}</td></tr> : null}
-              {!loading && filteredMissedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
+              {loadingCalls ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
+              {!loadingCalls && filteredMissedCalls.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{missedCalls.length ? "No missed calls match these filters." : "No missed calls."}</td></tr> : null}
+              {!loadingCalls && filteredMissedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
                 <td style={cell} onContextMenu={!row.lead_id ? (event) => { event.preventDefault(); setNumberMenu({ number: row.client_identifier, x: event.clientX, y: event.clientY, connectTarget: { channel: "calls", clientIdentifier: row.client_identifier, companyIdentifier: row.company_identifier } }); } : undefined} title={!row.lead_id ? "Right-click to connect this call to a lead" : undefined}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : null}<div style={{ marginTop: row.lead_id ? 4 : 0 }}><IgnoreNumberTarget number={row.client_identifier} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></div></td>
                 <td style={cell}>{row.rep}</td>
                 <td style={cell}>{row.company}</td>
