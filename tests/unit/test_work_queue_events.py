@@ -84,6 +84,24 @@ def test_unaccepted_event_raises_for_retry(monkeypatch):
         worker.invoke_event("worker", {"source": "continuation"})
 
 
+@pytest.mark.parametrize("source", [None, "deadline", "continuation"])
+def test_async_continuation_uses_database_event_not_lambda_recursion(source, monkeypatch):
+    db = Mock()
+    invoke = Mock()
+    monkeypatch.setattr(worker, "invoke_event", invoke)
+    worker.request_continuation(db, source)
+    assert "pg_notify('work_queue_changed', '')" in str(db.execute.call_args.args[0])
+    db.commit.assert_called_once()
+    invoke.assert_not_called()
+
+
+def test_listener_continuation_needs_no_additional_event():
+    db = Mock()
+    worker.request_continuation(db, "listener")
+    db.execute.assert_not_called()
+    db.commit.assert_not_called()
+
+
 def test_listener_wakes_on_socket_events_and_recovers_on_start(monkeypatch):
     import work_queue_listener as listener
 

@@ -26,6 +26,14 @@ def invoke_event(function, payload):
         raise RuntimeError("Queue event delivery was not accepted")
 
 
+def request_continuation(db, source):
+    # A synchronous listener invocation already returns its pending-work flag.
+    # Startup/deadline invocations hand off via NOTIFY, never Lambda recursion.
+    if source != "listener":
+        db.execute(text("SELECT pg_notify('work_queue_changed', '')"))
+        db.commit()
+
+
 def schedule_deadline(db):
     """Replace the single next deadline; never create a recurring schedule."""
     due = db.query(func.min(QueueLead.next_due_at)).scalar()
@@ -227,8 +235,7 @@ def handler(event, context):
                 remaining = context.get_remaining_time_in_millis() / 1000 if context else 55
                 result = run(db, {"calls": calls_table, "sms_messages": sms_messages_table, "conversations": conversations_table}, seconds=max(1, remaining - 10))
                 if result.get("initializing") or result.get("pending"):
-                    if event.get("source") != "listener":
-                        invoke_event(os.environ["WORK_QUEUE_FUNCTION_NAME"], {"source": "continuation"})
+                    request_continuation(db, event.get("source"))
                 else:
                     schedule_deadline(db)
                     # Deliver only after all saved rows and counts have committed.

@@ -91,7 +91,17 @@ def test_automatic_switch_waits_for_complete_build_and_survives_delays(db, monke
     save_checkpoint(db, "published", {"updated_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()})
     db.commit()
     assert read_model_active(db)
+    # Event-driven results do not expire merely because the system is idle.
+    assert not read_queue(db, "first", "new")["stale"]
+    dirty = QueueDirty(lead_id="pending-lead")
+    db.add(dirty)
+    db.commit()
+    # Keep serving saved results while a real change waits for processing.
+    assert read_model_active(db)
     assert read_queue(db, "first", "new")["stale"]
+    db.delete(dirty)
+    db.commit()
+    assert not read_queue(db, "first", "new")["stale"]
     monkeypatch.setenv("WORK_QUEUE_READ_MODEL", "false")
     assert not read_model_active(db)
 
