@@ -1,7 +1,6 @@
-"""Production-only completion notice for video inventory reports."""
+"""Inventory completion SMS is disabled in every environment."""
 import json
 import logging
-import os
 from datetime import datetime
 
 from models import Company, Lead, LeadLiveSwitch, PublicMoveAccess
@@ -10,10 +9,8 @@ logger = logging.getLogger(__name__)
 
 
 def production_sms_enabled():
-    environment = os.getenv("ENVIRONMENT")
-    if environment is not None:
-        return environment == "prod"
-    return os.getenv("SSM_PREFIX") == "/moving-crm/prod/"
+    # Customer-requested global disable, including production.
+    return False
 
 
 def notify_inventory_ready(lead_id, report_id, db):

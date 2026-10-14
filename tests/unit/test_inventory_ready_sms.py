@@ -14,10 +14,10 @@ from models import LeadLiveSwitch, PublicMoveAccess
 @pytest.mark.parametrize("environment,prefix,enabled", [
     ("dev", "/moving-crm/prod/", False),
     ("staging", "/moving-crm/prod/", False),
-    ("prod", "/moving-crm/prod/", True),
+    ("prod", "/moving-crm/prod/", False),
     (None, "/moving-crm/dev/", False),
     (None, "/moving-crm/staging/", False),
-    (None, "/moving-crm/prod/", True),
+    (None, "/moving-crm/prod/", False),
     (None, "", False),
 ])
 def test_production_gate(monkeypatch, environment, prefix, enabled):
@@ -33,13 +33,13 @@ def test_production_gate(monkeypatch, environment, prefix, enabled):
 
 
 @pytest.mark.parametrize("source,mime,completed,sends", [
-    ("liveswitch", "video/mp4", True, True),
-    ("combined", "video/quicktime", True, True),
+    ("liveswitch", "video/mp4", True, False),
+    ("combined", "video/quicktime", True, False),
     ("manual", "video/mp4", True, False),
     ("liveswitch", "image/jpeg", True, False),
     ("liveswitch", "video/mp4", False, False),
 ])
-def test_completion_notice_is_video_only_and_sent_once(monkeypatch, source, mime, completed, sends):
+def test_completion_notice_never_sends_in_production(monkeypatch, source, mime, completed, sends):
     monkeypatch.setenv("ENVIRONMENT", "prod")
     send = MagicMock(return_value={"ok": True})
     monkeypatch.setitem(sys.modules, "libs.aircall.client", SimpleNamespace(send_sms=send, find_number_id=MagicMock()))
@@ -60,8 +60,4 @@ def test_completion_notice_is_video_only_and_sent_once(monkeypatch, source, mime
     sms.notify_inventory_ready("lead", "report", db)
     sms.notify_inventory_ready("lead", "report", db)
     assert send.call_count == int(sends)
-    if sends:
-        assert "Your inventory is ready!" in send.call_args.kwargs["text"]
-        assert "https://customer.test/move/link" in send.call_args.kwargs["text"]
-        assert send.call_args.kwargs["sensitive"] is True
-        assert json.loads(saved.details)["inventory_ready_sms"]["report"]["status"] == "sent"
+    assert not db.mock_calls
