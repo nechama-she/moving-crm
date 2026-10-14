@@ -28,6 +28,8 @@ def migrate(*, skip_pricing_seeds: bool = False) -> None:
     )
     """
     with engine.begin() as connection:
+        from work_queue_schema import install as install_work_queue
+        install_work_queue(connection)
         from inventory_catalog_seed import seed_inventory_catalog
         from models import InventoryCatalogItem
         InventoryCatalogItem.__table__.create(connection, checkfirst=True)

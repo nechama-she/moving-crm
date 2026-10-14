@@ -26,6 +26,18 @@ const displayPhone = (value: string) => {
   return local.length === 10 ? `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}` : value;
 };
 
+async function queueWindow(url: string, params: URLSearchParams, token: string | null, size: number) {
+  const start = Number(params.get("offset") || 0);
+  const pages = await Promise.all(Array.from({ length: Math.max(1, Math.ceil(size / 50)) }, async (_, index) => {
+    const page = new URLSearchParams(params);
+    page.set("offset", String(start + index * 50));
+    const response = await fetch(`${url}?${page}`, { headers: authHeaders(token) });
+    if (!response.ok) throw new Error(`Queue HTTP ${response.status}`);
+    return response.json();
+  }));
+  return { ...pages[0], items: pages.flatMap((page) => page.items || []), has_more: pages[pages.length - 1].has_more };
+}
+
 function IgnoreNumberTarget({ number, name, showUnknown = false, openMenu }: { number: string; name?: string; showUnknown?: boolean; openMenu: (number: string, x: number, y: number) => void }) {
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelHold = () => { if (holdTimer.current) clearTimeout(holdTimer.current); holdTimer.current = null; };
@@ -92,6 +104,7 @@ export default function UnansweredMessagesPage() {
   const [expandedFollowups, setExpandedFollowups] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [loadingCalls, setLoadingCalls] = useState(true);
+  const [queueStatus, setQueueStatus] = useState<{ enabled: boolean; ready: boolean; stale: boolean; updated_at: string | null } | null>(null);
   const [validatingTab, setValidatingTab] = useState<QueueTab | null>(null);
   const [validationNotice, setValidationNotice] = useState("");
   const [error, setError] = useState("");
@@ -104,7 +117,7 @@ export default function UnansweredMessagesPage() {
   const [directoryCompanies, setDirectoryCompanies] = useState<string[]>([]);
   const processedEvents = useRef(new Set<string>());
   const loadingRef = useRef(true);
-  const loadingCallsRef = useRef(true);
+  const loadingCallsRef = useRef(false);
   const messageRequest = useRef(0);
   const callRequest = useRef(0);
   const pendingEvents = useRef<RealtimeEvent[]>([]);
@@ -112,6 +125,15 @@ export default function UnansweredMessagesPage() {
   const leadLoadSentinel = useRef<HTMLDivElement | null>(null);
   const followupLoadSentinel = useRef<HTMLDivElement | null>(null);
   const queueRefreshScheduler = useRef<ReturnType<typeof createQueueRefreshScheduler> | null>(null);
+  const leadRequest = useRef(0);
+  const followupRequest = useRef(0);
+  const leadInFlight = useRef(Promise.resolve());
+  const followupInFlight = useRef(Promise.resolve());
+  const loadedSizes = useRef({ leads: 0, followups: 0 });
+  loadedSizes.current = { leads: firstContactLeads.length, followups: followupLeads.length };
+  const queueFilterKey = `${token}|${leadTab}|${followupTab}|${repFilter}|${companyFilter}`;
+  const currentQueueFilterKey = useRef(queueFilterKey);
+  currentQueueFilterKey.current = queueFilterKey;
 
   useEffect(() => {
     Promise.allSettled([
@@ -189,7 +211,26 @@ export default function UnansweredMessagesPage() {
 
   const load = useCallback(() => Promise.all([loadMessages(), loadCalls()]), [loadMessages, loadCalls]);
   useEffect(() => { void loadMessages(); }, [loadMessages]);
-  useEffect(() => { void loadCalls(); }, [loadCalls]);
+  useEffect(() => { if (queueTab === "calls") void loadCalls(); }, [loadCalls, queueTab]);
+
+  const loadSummary = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/summary`, { headers: authHeaders(token) });
+      if (!response.ok) throw new Error(`Queue counts HTTP ${response.status}`);
+      const data = await response.json();
+      setQueueStatus({ enabled: Boolean(data.enabled), ready: Boolean(data.ready), stale: Boolean(data.stale), updated_at: data.updated_at || null });
+      setGlobalCounts(data.messages);
+      setGlobalMissedCallCount(data.missed_calls);
+      if (data.enabled && data.first_contact) setGlobalFirstContactCounts(data.first_contact);
+      if (data.enabled && data.followups) setGlobalFollowupCounts(data.followups);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load queue counts");
+    }
+  }, [token]);
+
+  useEffect(() => {
+    void loadSummary();
+  }, [loadSummary]);
 
   const loadMessageStates = useCallback(async () => {
     setLoadingMessageStates(true);
@@ -229,16 +270,22 @@ export default function UnansweredMessagesPage() {
     if (queueTab === "missed-call-state") void loadMissedCallStates();
   }, [queueTab, loadMissedCallStates]);
 
-  const loadFirstContactLeads = useCallback(async (offset = 0, refresh = false) => {
-    if (offset) setLoadingLeads(true);
-    else setLoadingLeads(true);
+  const loadFirstContactLeads = useCallback(async (offset = 0, refresh = false, silent = false) => {
+    const key = currentQueueFilterKey.current;
+    const previous = leadInFlight.current;
+    let release!: () => void;
+    leadInFlight.current = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    if (key !== currentQueueFilterKey.current) { release(); return; }
+    const request = ++leadRequest.current;
+    if (!silent) setLoadingLeads(true);
     try {
       const params = new URLSearchParams({ category: leadTab, limit: "50", offset: String(offset), refresh: String(refresh) });
       if (repFilter) params.set("rep", repFilter);
       if (companyFilter) params.set("company", companyFilter);
-      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-leads?${params.toString()}`, { headers: authHeaders(token) });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || `Leads HTTP ${response.status}`);
+      const data = await queueWindow(`${API_BASE}/api/unanswered-messages/first-contact-leads`, params, token, silent ? loadedSizes.current.leads : 50);
+      if (request !== leadRequest.current || key !== currentQueueFilterKey.current) return;
+      loadedSizes.current.leads = offset + data.items.length;
       setFirstContactLeads((current) => offset ? [...current, ...(data.items || [])] : (data.items || []));
       setFirstContactCounts(data.counts || { new: 0, overdue: 0 });
       setGlobalFirstContactCounts(data.global_counts || data.counts || { new: 0, overdue: 0 });
@@ -246,22 +293,30 @@ export default function UnansweredMessagesPage() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load leads awaiting first contact");
     } finally {
-      setLoadingLeads(false);
+      if (request === leadRequest.current) setLoadingLeads(false);
+      release();
     }
   }, [leadTab, token, repFilter, companyFilter]);
 
-  useEffect(() => { void loadFirstContactLeads(0); }, [loadFirstContactLeads]);
+  useEffect(() => { if (queueTab === "leads") void loadFirstContactLeads(0); }, [loadFirstContactLeads, queueTab]);
 
-  const loadFollowups = useCallback(async (offset = 0, refresh = false) => {
-    setLoadingFollowups(true);
+  const loadFollowups = useCallback(async (offset = 0, refresh = false, silent = false) => {
+    const key = currentQueueFilterKey.current;
+    const previous = followupInFlight.current;
+    let release!: () => void;
+    followupInFlight.current = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    if (key !== currentQueueFilterKey.current) { release(); return; }
+    const request = ++followupRequest.current;
+    if (!silent) setLoadingFollowups(true);
     try {
       const params = new URLSearchParams({ category: followupTab, limit: "50", offset: String(offset) });
       if (refresh) params.set("refresh", "true");
       if (repFilter) params.set("rep", repFilter);
       if (companyFilter) params.set("company", companyFilter);
-      const response = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls?${params.toString()}`, { headers: authHeaders(token) });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || `Follow-ups HTTP ${response.status}`);
+      const data = await queueWindow(`${API_BASE}/api/unanswered-messages/followup-calls`, params, token, silent ? loadedSizes.current.followups : 50);
+      if (request !== followupRequest.current || key !== currentQueueFilterKey.current) return;
+      loadedSizes.current.followups = offset + data.items.length;
       setFollowupLeads((current) => offset ? [...current, ...(data.items || [])] : (data.items || []));
       setFollowupCounts(data.counts || { all: 0, overdue: 0 });
       setGlobalFollowupCounts(data.global_counts || data.counts || { all: 0, overdue: 0 });
@@ -270,18 +325,20 @@ export default function UnansweredMessagesPage() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load follow-up calls");
     } finally {
-      setLoadingFollowups(false);
+      if (request === followupRequest.current) setLoadingFollowups(false);
+      release();
     }
   }, [followupTab, repFilter, companyFilter, token]);
 
-  const queueLoaders = useRef({ loadFirstContactLeads, loadFollowups });
-  queueLoaders.current = { loadFirstContactLeads, loadFollowups };
+  const queueLoaders = useRef({ loadFirstContactLeads, loadFollowups, loadSummary, queueTab });
+  queueLoaders.current = { loadFirstContactLeads, loadFollowups, loadSummary, queueTab };
 
   useEffect(() => {
     const scheduler = createQueueRefreshScheduler(async (firstContact, followups) => {
       await Promise.allSettled([
-        firstContact ? queueLoaders.current.loadFirstContactLeads(0, true) : Promise.resolve(),
-        followups ? queueLoaders.current.loadFollowups(0, true) : Promise.resolve(),
+        queueLoaders.current.loadSummary(),
+        firstContact && queueLoaders.current.queueTab === "leads" ? queueLoaders.current.loadFirstContactLeads(0, false, true) : Promise.resolve(),
+        followups && queueLoaders.current.queueTab === "followups" ? queueLoaders.current.loadFollowups(0, false, true) : Promise.resolve(),
       ]);
     });
     queueRefreshScheduler.current = scheduler;
@@ -292,7 +349,12 @@ export default function UnansweredMessagesPage() {
     queueRefreshScheduler.current?.request(firstContact, followups);
   }, []);
 
-  useEffect(() => { void loadFollowups(0); }, [loadFollowups]);
+  useEffect(() => { if (queueTab === "followups") void loadFollowups(0); }, [loadFollowups, queueTab]);
+  useEffect(() => {
+    if (queueStatus?.enabled !== false) return;
+    if (queueTab !== "leads") void loadFirstContactLeads(0);
+    if (queueTab !== "followups") void loadFollowups(0);
+  }, [queueStatus?.enabled, queueTab, loadFirstContactLeads, loadFollowups]);
 
   useEffect(() => {
     const target = followupLoadSentinel.current;
@@ -411,21 +473,20 @@ export default function UnansweredMessagesPage() {
   }, []);
 
   useRealtimeUpdates(token, (event) => {
+    if (event.type === "work_queue_updated" || event.type === "realtime_connected") {
+      scheduleQueueRefresh(true, true);
+      return;
+    }
     if (event.type === "sales_work_queue_batch") {
       ((event.events || []) as RealtimeEvent[]).forEach((item) => {
         applyRealtimeEvent(item);
         applyMissedCallEvent(item);
-        if (item.type === "call_activity_changed" || item.type === "missed_call_state_changed") scheduleQueueRefresh(true, true);
-        if (item.type === "message_activity_changed" || item.type === "message_state_changed") scheduleQueueRefresh(false, true);
-        if (item.type === "lead_activity_changed") scheduleQueueRefresh(true, true);
+        if (item.type === "work_queue_updated") scheduleQueueRefresh(true, true);
       });
       return;
     }
     applyRealtimeEvent(event);
     applyMissedCallEvent(event);
-    if (event.type === "call_activity_changed" || event.type === "missed_call_state_changed") scheduleQueueRefresh(true, true);
-    if (event.type === "message_activity_changed" || event.type === "message_state_changed") scheduleQueueRefresh(false, true);
-    if (event.type === "lead_activity_changed") scheduleQueueRefresh(true, true);
   });
 
   useEffect(() => {
@@ -593,12 +654,12 @@ export default function UnansweredMessagesPage() {
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("leads")} style={{ ...queueCard, ...(queueTab === "leads" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Leads Awaiting First Contact</span>
-          <strong style={queueCardCount}>{globalFirstContactCounts.new + globalFirstContactCounts.overdue}</strong>
+          <strong style={queueCardCount}>{queueStatus?.ready || queueStatus?.enabled === false ? globalFirstContactCounts.new + globalFirstContactCounts.overdue : "Loading..."}</strong>
           <span style={queueCardDescription}>New leads with no call attempt</span>
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("followups")} style={{ ...queueCard, ...(queueTab === "followups" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Priority 0 Follow-ups</span>
-          <strong style={queueCardCount}>{globalFollowupCounts.overdue}</strong>
+          <strong style={queueCardCount}>{queueStatus?.ready || queueStatus?.enabled === false ? globalFollowupCounts.overdue : "Loading..."}</strong>
           <span style={queueCardDescription}>Six call periods and three required messages</span>
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>

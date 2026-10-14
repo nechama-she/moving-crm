@@ -9,8 +9,7 @@ function setup(refresh) {
   let id = 0;
   const context = {
     exports: {},
-    setTimeout(fn) { timers.set(++id, fn); return id; },
-    clearTimeout(key) { timers.delete(key); },
+    queueMicrotask(fn) { timers.set(++id, fn); },
   };
   const source = readFileSync(new URL('../src/queueRefreshScheduler.ts', import.meta.url), 'utf8');
   vm.runInNewContext(ts.transpileModule(source, {
@@ -66,6 +65,7 @@ test('unmount cancels queued work and prevents an in-flight request rescheduling
   const queued = setup(async () => assert.fail('Disposed work ran'));
   queued.scheduler.request(true, true);
   queued.scheduler.dispose();
+  await queued.tick();
   assert.equal(queued.timers.size, 0);
   const active = setup(() => new Promise(resolve => { finish = resolve; }));
   active.scheduler.request(true, true);

@@ -16,6 +16,7 @@ from boto3.dynamodb.conditions import Key
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 from models import Base, Company, Lead, MessageState, MissedCallState, User
+from work_queue_rules import _digits, _epoch
 
 
 def tracking_scope():
@@ -24,7 +25,7 @@ def tracking_scope():
                  "_followup_call_tracking", "_load_call_tracking"}
     tree = ast.parse(source.read_text(encoding="utf-8"))
     tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in functions]
-    scope = dict(time=time, datetime=datetime, timezone=timezone, Key=Key,
+    scope = dict(time=time, datetime=datetime, timezone=timezone, Key=Key, _digits=_digits, _epoch=_epoch,
                  COMMUNICATION_TIMESTAMP_INDEX="record-type-timestamp-index",
                  calls_table=Mock(), _call_tracking_lock=Lock(),
                  _first_contact_cache={"loaded_at": 0, "tracking_start": None, "contacts": {}},

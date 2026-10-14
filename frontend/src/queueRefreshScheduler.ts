@@ -1,18 +1,19 @@
 // Coalesce live events while allowing only one refresh batch at a time.
 export function createQueueRefreshScheduler(
   refresh: (firstContact: boolean, followups: boolean) => Promise<unknown>,
-  delay = 1000,
 ) {
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  let queued = false;
   let running = false;
   let disposed = false;
   let firstContact = false;
   let followups = false;
 
   const schedule = () => {
-    if (disposed || running || timer !== null || (!firstContact && !followups)) return;
-    timer = setTimeout(async () => {
-      timer = null;
+    if (disposed || running || queued || (!firstContact && !followups)) return;
+    queued = true;
+    queueMicrotask(async () => {
+      queued = false;
+      if (disposed) return;
       running = true;
       const first = firstContact;
       const follow = followups;
@@ -24,7 +25,7 @@ export function createQueueRefreshScheduler(
         running = false;
         schedule();
       }
-    }, delay);
+    });
   };
 
   return {
@@ -35,7 +36,6 @@ export function createQueueRefreshScheduler(
     },
     dispose() {
       disposed = true;
-      if (timer !== null) clearTimeout(timer);
     },
   };
 }
