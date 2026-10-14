@@ -65,6 +65,33 @@ def test_keeps_production_company_ids():
                            [{'id': 'prod', 'name': 'gorilla haulers'}]) == {'dev': 'prod'}
 
 
+def test_catalog_rename_updates_settings_without_rewriting_customer_inventory():
+    from sqlalchemy import create_engine, select
+    from models import Base, InventoryCatalogItem, InventoryEditItem
+    from settings_transfer import export_settings, apply_settings
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    catalog_id = '4b51c259-c212-5688-81f1-54b95792b9a0'
+    with engine.begin() as connection:
+        connection.execute(InventoryCatalogItem.__table__.insert().values(
+            id=catalog_id, name='Dining Table', cuft=30, weight=210))
+        connection.execute(InventoryEditItem.__table__.insert().values(
+            id='saved-item', job_id='existing-job', room_id='existing-room',
+            catalog_item_id=catalog_id, name='Customer table', quantity=2,
+            unit_cuft=30, unit_weight=210))
+        before = dict(connection.execute(select(InventoryEditItem.__table__)).mappings().one())
+        bundle = export_settings(connection)
+        bundle['tables']['inventory_catalog_items'][0].update(name='Dining Table - Large', cuft=45)
+        for _ in range(2):
+            apply_settings(connection, bundle)
+        catalog = connection.execute(select(InventoryCatalogItem.__table__)).mappings().one()
+        assert catalog['id'] == catalog_id
+        assert catalog['name'] == 'Dining Table - Large'
+        assert catalog['cuft'] == 45
+        assert dict(connection.execute(select(InventoryEditItem.__table__)).mappings().one()) == before
+    engine.dispose()
+
+
 def test_room_names_preserve_production_ids():
     from sqlalchemy import create_engine, select
     from models import Base, InventoryRoomType
