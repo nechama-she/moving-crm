@@ -28,21 +28,7 @@ def install(connection):
     """))
     connection.execute(text("DROP TRIGGER IF EXISTS first_contact_changed ON leads"))
     connection.execute(text("CREATE TRIGGER first_contact_changed AFTER INSERT OR UPDATE ON leads FOR EACH ROW EXECUTE FUNCTION sync_first_contact_state()"))
-    # Seed existing eligible candidates once. Reload verifies their older history.
-    claimed = connection.execute(text("""
-        INSERT INTO app_settings(key,value) VALUES ('migration:first-contact-state-v1','seeded')
-        ON CONFLICT (key) DO NOTHING RETURNING key
-    """)).scalar()
-    if claimed:
-        connection.execute(text("""
-            INSERT INTO first_contact_states(lead_id,waiting_since)
-            SELECT l.id,l.created_at FROM leads l WHERE l.priority=0
-            AND lower(trim(coalesce(l.status,''))) IN ('new','contacted','quoted','')
-            AND NOT EXISTS (SELECT 1 FROM first_contact_resolutions r WHERE r.lead_id=l.id)
-            AND NOT EXISTS (SELECT 1 FROM app_settings a WHERE a.key='first_contact.ignore:' || l.id)
-            AND NOT EXISTS (SELECT 1 FROM companies c WHERE c.id=l.company_id AND lower(trim(c.name))='mirit great american')
-            ON CONFLICT (lead_id) DO NOTHING
-        """))
+    # Existing leads are not backfilled. Lead inserts/updates maintain the queue.
 
 
 def resolve(db, lead_id, occurred_at):
