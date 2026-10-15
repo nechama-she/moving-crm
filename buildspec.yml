@@ -7,7 +7,7 @@ phases:
       python: 3.11
       nodejs: 20
     commands:
-      - cd $CODEBUILD_SRC_DIR && pip install -r backend/deploy-requirements.txt 'pytest>=8,<9' --quiet
+      - cd $CODEBUILD_SRC_DIR && pip install -r backend/deploy-requirements.txt 'pytest>=8,<9' 'phonenumberslite>=9,<10' --quiet
       - echo "Installing frontend dependencies"
       - cd $CODEBUILD_SRC_DIR/frontend && npm ci
 

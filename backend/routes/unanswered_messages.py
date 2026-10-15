@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Load, Session, joinedload
@@ -44,6 +44,24 @@ CALL_PERIODS = (
 )
 OPEN_SALES_STATUSES = ("new", "contacted", "quoted")
 MIRIT_COMPANY_NAME = "mirit great american"
+
+
+def _is_us_client_phone(value):
+    """Include the 50 states and D.C., excluding territories and toll-free numbers."""
+    import phonenumbers
+    try:
+        number = phonenumbers.parse(str(value or ""), "US")
+    except phonenumbers.NumberParseException:
+        return False
+    return (
+        phonenumbers.is_valid_number(number)
+        and phonenumbers.region_code_for_number(number) == "US"
+        and phonenumbers.number_type(number) in (
+            phonenumbers.PhoneNumberType.FIXED_LINE,
+            phonenumbers.PhoneNumberType.MOBILE,
+            phonenumbers.PhoneNumberType.FIXED_LINE_OR_MOBILE,
+        )
+    )
 
 
 def _open_sales_status_filter():
@@ -306,6 +324,7 @@ def list_followup_calls(
             or (lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc)),
         )
         for lead in candidate_leads
+        if _is_us_client_phone(lead.phone)
     ]
     leads_with_created_at = [
         (lead, created_at)
@@ -347,9 +366,9 @@ def export_followup_calls(
     leads = {lead.id: lead for lead in db.query(Lead).filter(
         Lead.id.in_([row["lead_id"] for row in result["items"]])).all()}
     if prepare:
-        return {"missing_quote_lead_ids": [lead.id for lead in leads.values()
+        return JSONResponse({"missing_quote_lead_ids": [lead.id for lead in leads.values()
                 if not str(lead.quote_number or "").strip()
-                and str(lead.smartmoving_id or "").strip()]}
+                and str(lead.smartmoving_id or "").strip()]}, headers={"Cache-Control": "no-store"})
     rows = [{**row, "quote_number": str(leads[row["lead_id"]].quote_number or "").strip()}
             for row in result["items"] if row["lead_id"] in leads]
     filename = f"follow-ups-{category}-{datetime.now(timezone.utc):%Y-%m-%d}.xlsx"

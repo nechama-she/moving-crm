@@ -20,6 +20,31 @@ from models import Base, Company, Lead, MessageState, MissedCallState, User, Fir
 from work_queue_rules import _digits, _epoch
 
 
+@pytest.mark.parametrize("phone,expected", [
+    ("(212) 555-1234", True),
+    ("+1 907 555 1234", True),
+    ("8085551234", True),
+    ("+1 202 555 1234", True),
+    ("+1 771 555 1234", True),
+    ("+1 787 555 1234", False),
+    ("+1 939 555 1234", False),
+    ("+1 416 555 1234", False),
+    ("+1 340 555 1234", False),
+    ("+1 671 555 1234", False),
+    ("+1 800 555 1234", False),
+    ("+44 20 8366 1177", False),
+    ("", False),
+])
+def test_followup_us_client_numbers(monkeypatch, phone, expected):
+    source = Path(__file__).resolve().parents[2] / "backend/routes/unanswered_messages.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name == "_is_us_client_phone"]
+    scope = {}
+    exec(compile(tree, str(source), "exec"), scope)
+    assert scope["_is_us_client_phone"](phone) is expected
+
+
 @pytest.mark.parametrize("smartmoving_id,created_here,history_result,should_check,should_add", [
     ("existing", False, False, True, True),
     ("existing", False, True, True, False),

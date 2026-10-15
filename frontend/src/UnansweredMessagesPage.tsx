@@ -425,13 +425,13 @@ export default function UnansweredMessagesPage() {
   }, [followupTab, repFilter, companyFilter, token]);
 
   const downloadFollowups = async () => {
-    if (exportingFollowups) return;
+    if (exportingFollowups || validatingTab !== null) return;
     setExportingFollowups(true);
     try {
       const params = new URLSearchParams({ category: followupTab });
       if (repFilter) params.set("rep", repFilter);
       if (companyFilter) params.set("company", companyFilter);
-      const preparation = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls/export?${params}&prepare=true`, { headers: authHeaders(token) });
+      const preparation = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls/export?${params}&prepare=true`, { headers: authHeaders(token), cache: "no-store" });
       if (!preparation.ok) throw new Error(`Could not prepare Excel report (HTTP ${preparation.status})`);
       const { missing_quote_lead_ids: missingIds } = await preparation.json() as { missing_quote_lead_ids: string[] };
       // Reuse the same full refresh as the lead's Refresh from SmartMoving button.
@@ -727,6 +727,7 @@ export default function UnansweredMessagesPage() {
   ), [followupLeads, repFilter, companyFilter]);
 
   const validateCurrentTab = async () => {
+    if (validatingTab !== null || exportingFollowups) return;
     const rows = queueTab === "messages"
       ? filteredItems
       : queueTab === "calls"
@@ -739,6 +740,54 @@ export default function UnansweredMessagesPage() {
     setValidationNotice("");
     setError("");
     try {
+      if (queueTab === "followups") {
+        // Collect the filtered set before refreshing changes queue eligibility.
+        const matchingIds = new Set<string>();
+        let offset = 0;
+        setValidationNotice("Loading filtered leads...");
+        while (true) {
+          const params = new URLSearchParams({ category: followupTab, limit: "100", offset: String(offset) });
+          if (repFilter) params.set("rep", repFilter);
+          if (companyFilter) params.set("company", companyFilter);
+          const response = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls?${params}`, { headers: authHeaders(token) });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || "Could not load filtered leads");
+          const items = data.items as FollowupLead[];
+          if (!Array.isArray(items) || (data.has_more && items.length === 0)) throw new Error("Could not load the complete filtered list");
+          items.forEach((row) => { if (row.lead_id) matchingIds.add(row.lead_id); });
+          if (!data.has_more) break;
+          offset += items.length;
+        }
+        const refreshIds = [...matchingIds];
+        let refreshed = 0;
+        let removed = 0;
+        let skipped = 0;
+        let failed = 0;
+        for (let index = 0; index < refreshIds.length; index += 30) {
+          const batchStarted = Date.now();
+          await Promise.all(refreshIds.slice(index, index + 30).map(async (leadId) => {
+            try {
+              const response = await fetch(`${API_BASE}/api/leads/${encodeURIComponent(leadId)}/refresh-smartmoving`, {
+                method: "POST", headers: authHeaders(token),
+              });
+              const data = await response.json().catch(() => ({}));
+              if (!response.ok) {
+                if (response.status === 400 && data.detail === "Lead does not have a smartmoving_id") skipped++;
+                else failed++;
+              } else if (data.deleted_lead_id) removed++;
+              else refreshed++;
+            } catch { failed++; }
+          }));
+          setValidationNotice(`Refreshing SmartMoving: ${Math.min(index + 30, refreshIds.length)} of ${refreshIds.length} leads.`);
+          if (index + 30 < refreshIds.length) {
+            await new Promise((resolve) => window.setTimeout(resolve, Math.max(0, 1000 - (Date.now() - batchStarted))));
+          }
+        }
+        await loadFollowups(0, true);
+        setValidationNotice(`Refreshed ${refreshed} leads, including available quote numbers; removed ${removed} stale leads${skipped ? `; skipped ${skipped} without a SmartMoving ID` : ""}.`);
+        if (failed) setError(`${failed} SmartMoving refreshes failed. Please retry.`);
+        return;
+      }
       let checked = 0;
       let removed = 0;
       let skipped = 0;
@@ -772,7 +821,7 @@ export default function UnansweredMessagesPage() {
     <button className="slds-button"
       type="button"
       onClick={() => void validateCurrentTab()}
-      disabled={validatingTab !== null}
+      disabled={validatingTab !== null || exportingFollowups}
       title="Check this tab's linked leads against SmartMoving"
       style={{ border: "1px solid #0176d3", borderRadius: 4, background: "#fff", color: "#0b5cab", padding: "7px 12px", fontWeight: 700, cursor: validatingTab ? "wait" : "pointer" }}
     >
@@ -988,7 +1037,7 @@ export default function UnansweredMessagesPage() {
 
       {queueTab === "followups" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px 0" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button>{validationButton}</div></div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button>{validationButton}</div></div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             <div style={{ color: "#032d60", padding: "10px 14px", fontWeight: 700 }}>Overdue Items ({followupCounts.overdue})</div>
           </div>
