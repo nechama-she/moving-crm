@@ -10,7 +10,6 @@ import { createQueueRefreshScheduler } from "./queueRefreshScheduler";
 type MessageTab = "unanswered" | "ended";
 type QueueTab = "messages" | "calls" | "leads" | "followups" | "message-state" | "missed-call-state";
 type LeadTab = "new" | "overdue";
-type FollowupTab = "all" | "overdue";
 type MessageRow = { channel: string; message_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type FirstContactLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; created_at: string; age_minutes: number };
@@ -113,7 +112,7 @@ export default function UnansweredMessagesPage() {
   const [ignoringLead, setIgnoringLead] = useState<string | null>(null);
   const [reloadingContacts, setReloadingContacts] = useState(false);
   const contactReloadRunning = useRef(false);
-  const [followupTab, setFollowupTab] = useState<FollowupTab>("overdue");
+  const followupTab = "overdue";
   const [followupLeads, setFollowupLeads] = useState<FollowupLead[]>([]);
   const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0 });
   const [globalFollowupCounts, setGlobalFollowupCounts] = useState({ all: 0, overdue: 0 });
@@ -991,9 +990,7 @@ export default function UnansweredMessagesPage() {
         <div style={{ padding: "16px 18px 0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button>{validationButton}</div></div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
-            {([ ["all", "All Leads", followupCounts.all], ["overdue", "Overdue Items", followupCounts.overdue] ] as const).map(([key, label, count]) => (
-              <button className="slds-button" key={key} type="button" onClick={() => setFollowupTab(key)} style={{ border: 0, borderBottom: followupTab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: followupTab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: followupTab === key ? 700 : 500, cursor: "pointer" }}>{label} ({count})</button>
-            ))}
+            <div style={{ color: "#032d60", padding: "10px 14px", fontWeight: 700 }}>Overdue Items ({followupCounts.overdue})</div>
           </div>
         </div>
         <div style={{ overflowX: "auto" }}>
@@ -1003,7 +1000,7 @@ export default function UnansweredMessagesPage() {
             </tr></thead>
             <tbody>
               {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
-              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "overdue" ? "No overdue follow-ups." : "No priority 0 leads to show."}</td></tr> : null}
+              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : "No overdue follow-ups."}</td></tr> : null}
               {filteredFollowupLeads.map((row) => {
                 const expanded = expandedFollowups.has(row.lead_id);
                 const toggleExpanded = () => setExpandedFollowups((current) => {
