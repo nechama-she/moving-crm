@@ -1788,7 +1788,7 @@ def create_lead_through_copy_path(
 
     smartmoving_response = smartmoving_result.get("response")
     api_secret = get_config().get("API_SECRET", os.getenv("API_SECRET", ""))
-    creation_result = create_lead(
+    creation_result = _create_lead(
         NewLead(
             full_name=full_name,
             email=email,
@@ -1799,6 +1799,7 @@ def create_lead_through_copy_path(
             move_date=move_date,
             smartmoving_id=_clean_optional_text(smartmoving_result.get("lead_id")) or None,
             quote_number=smartmoving_response.get("quoteNumber") if isinstance(smartmoving_response, dict) else None,
+            smartmoving_created_time=smartmoving_response.get("createdAtUtc") if isinstance(smartmoving_response, dict) else None,
             facebook_user_id=facebook_user_id or None,
             assigned_to=assigned_to or None,
             notes=notes,
@@ -1810,6 +1811,7 @@ def create_lead_through_copy_path(
         ),
         x_api_secret=api_secret,
         db=db,
+        created_in_smartmoving_here=True,
     )
     created_lead = db.query(Lead).filter(Lead.id == creation_result["lead_id"]).first()
     if not created_lead:
@@ -4918,6 +4920,10 @@ def create_lead(
     x_api_secret: str = Header(...),
     db: Session = Depends(get_db),
 ):
+    return _create_lead(body, x_api_secret, db)
+
+
+def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
     cfg = get_config()
     secret = cfg.get("API_SECRET", os.getenv("API_SECRET", ""))
     if not secret:
@@ -5113,6 +5119,10 @@ def create_lead(
     
     db.refresh(lead)
     logger.info("Created lead: %s (%s)", lead.full_name, lead.id)
+    from first_contact_state import add_created_lead
+    saved_lead_id = lead.id
+    db.rollback()  # Release the read transaction; the lead was already committed.
+    add_created_lead(saved_lead_id, created_in_smartmoving_here=created_in_smartmoving_here)
 
     suppress_new_lead_automation = lead.status in NO_MESSAGE_STATUSES
     

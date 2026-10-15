@@ -92,6 +92,7 @@ def import_leads(commit: bool = False, limit: int = 0):
 
     session = SessionLocal()
     created = 0
+    created_rows = []
     skipped = 0
     errors = 0
 
@@ -134,6 +135,7 @@ def import_leads(commit: bool = False, limit: int = 0):
                     status="new",
                 )
                 session.add(new_lead)
+                created_rows.append(new_lead)
                 created += 1
                 existing_ids.add(leadgen_id)
             except Exception as e:
@@ -141,7 +143,12 @@ def import_leads(commit: bool = False, limit: int = 0):
                 logger.warning("Skipping lead %s: %s", leadgen_id, e)
 
         if commit:
+            session.flush()
+            created_ids = [row.id for row in created_rows]
             session.commit()
+            from first_contact_state import add_created_lead
+            for lead_id in created_ids:
+                add_created_lead(lead_id)
             logger.info("Committed %d new leads (%d skipped, %d errors)", created, skipped, errors)
         else:
             session.rollback()

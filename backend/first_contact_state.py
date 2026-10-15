@@ -10,33 +10,53 @@ from models import FirstContactState, FirstContactResolution
 def install(connection):
     FirstContactState.__table__.create(connection, checkfirst=True)
     FirstContactResolution.__table__.create(connection, checkfirst=True)
-    connection.execute(text("""
-        CREATE OR REPLACE FUNCTION sync_first_contact_state() RETURNS trigger AS $$
-        BEGIN
-            IF NEW.priority = 0 AND lower(trim(coalesce(NEW.status, ''))) IN ('new','contacted','quoted','')
-               AND NOT EXISTS (SELECT 1 FROM first_contact_resolutions WHERE lead_id = NEW.id)
-               AND NOT EXISTS (SELECT 1 FROM app_settings WHERE key = 'first_contact.ignore:' || NEW.id)
-               AND NOT EXISTS (SELECT 1 FROM companies WHERE id = NEW.company_id AND lower(trim(name)) = 'mirit great american')
-            THEN
-                INSERT INTO first_contact_states(lead_id, waiting_since) VALUES (NEW.id, NEW.created_at)
-                ON CONFLICT (lead_id) DO NOTHING;
-            ELSE
-                DELETE FROM first_contact_states WHERE lead_id = NEW.id;
-            END IF;
-            RETURN NEW;
-        END; $$ LANGUAGE plpgsql
-    """))
     connection.execute(text("DROP TRIGGER IF EXISTS first_contact_changed ON leads"))
-    connection.execute(text("CREATE TRIGGER first_contact_changed AFTER INSERT OR UPDATE ON leads FOR EACH ROW EXECUTE FUNCTION sync_first_contact_state()"))
-    # Existing leads are not backfilled. Lead inserts/updates maintain the queue.
+    connection.execute(text("DROP FUNCTION IF EXISTS sync_first_contact_state()"))
 
 
 def resolve(db, lead_id, occurred_at):
-    # Serialize against lead updates so they cannot reinsert the pending row.
+    # Serialize contact removal against the initial queue insertion.
     db.execute(text("SELECT id FROM leads WHERE id=:id FOR UPDATE"), {"id": lead_id})
     statement = insert(FirstContactResolution).values(lead_id=lead_id, contacted_at=occurred_at)
     db.execute(statement.on_conflict_do_nothing(index_elements=[FirstContactResolution.lead_id]))
     return db.query(FirstContactState).filter_by(lead_id=lead_id).delete(synchronize_session=False)
+
+
+def add_created_lead(lead_id, *, created_in_smartmoving_here=False):
+    """Best effort after lead commit; never fail creation because of this queue."""
+    import logging
+    try:
+        from database import SessionLocal
+        from sqlalchemy.orm import joinedload
+        from models import Lead, AppSetting
+        from work_queue_rules import _smartmoving_created_at
+        with SessionLocal() as db:
+            lead = db.query(Lead).options(joinedload(Lead.company), joinedload(Lead.assignee)).filter_by(id=lead_id).first()
+            if not lead or lead.priority != 0 or (lead.status or '').strip().lower() not in {'new', 'contacted', 'quoted', ''}:
+                return
+            if lead.company and (lead.company.name or '').strip().lower() == 'mirit great american':
+                return
+            created = _smartmoving_created_at(lead.created_time) if lead.created_time else lead.created_at
+            if created is None:
+                raise ValueError('Invalid source creation time')
+            if not created.tzinfo:
+                created = created.replace(tzinfo=timezone.utc)
+            db.expunge_all()
+        if lead.smartmoving_id and not created_in_smartmoving_here:
+            from routes.unanswered_messages import has_first_contact
+            if has_first_contact(lead, created):
+                return
+        with SessionLocal() as db:
+            # Serialize only the final write with contact events, never history reads.
+            if not db.query(Lead.id).filter(Lead.id == lead_id).with_for_update().first():
+                return
+            if db.get(FirstContactResolution, lead_id) or db.get(AppSetting, 'first_contact.ignore:' + lead_id):
+                return
+            statement = insert(FirstContactState).values(lead_id=lead_id, waiting_since=created)
+            db.execute(statement.on_conflict_do_nothing(index_elements=[FirstContactState.lead_id]))
+            db.commit()
+    except Exception:
+        logging.getLogger('moving-crm').exception('Could not add saved lead %s to first-contact queue', lead_id)
 
 
 def record_contact(db, channel, item):
@@ -44,8 +64,10 @@ def record_contact(db, channel, item):
     from models import Lead, Company, User
     from sqlalchemy import func, or_
     occurred = datetime.fromtimestamp(_epoch(item.get('timestamp')), timezone.utc)
-    if channel == 'calls':
-        if str(item.get('direction') or '').lower() != 'outbound':
+    if channel in {'calls', 'sms'}:
+        if str(item.get('direction') or '').lower() not in ({'outbound'} if channel == 'calls' else {'outbound', 'sent'}):
+            return 0
+        if channel == 'sms' and (str(item.get('sales_name') or '').lower() in {'ai', 'assistant', 'bot'} or str(item.get('role') or '').lower() in {'ai', 'assistant', 'bot'}):
             return 0
         phone = _digits(item.get('phone_number'))
         destination = _digits(item.get('company_number'))
@@ -68,14 +90,18 @@ def record_contact(db, channel, item):
             return 0
         if not item.get('user_id') or not item.get('page_id'):
             return 0
-        query = db.query(Lead).filter(func.trim(func.coalesce(Lead.phone,'')) == '',
+        query = db.query(Lead).filter(
             Lead.facebook_user_id == str(item['user_id']),
             Lead.company.has(Company.facebook_page_id == str(item['page_id'])))
     else:
         return 0
     removed = 0
     for lead in query.order_by(Lead.id).all():
-        created = lead.created_at.replace(tzinfo=timezone.utc) if not lead.created_at.tzinfo else lead.created_at
+        from work_queue_rules import _smartmoving_created_at
+        created = _smartmoving_created_at(lead.created_time) if lead.created_time else lead.created_at
+        if created is None:
+            continue
+        created = created.replace(tzinfo=timezone.utc) if not created.tzinfo else created
         if occurred >= created:
             removed += resolve(db, lead.id, occurred)
     return removed

@@ -20,6 +20,34 @@ from models import Base, Company, Lead, MessageState, MissedCallState, User, Fir
 from work_queue_rules import _digits, _epoch
 
 
+@pytest.mark.parametrize("smartmoving_id,created_here,history_result,should_check,should_add", [
+    ("existing", False, False, True, True),
+    ("existing", False, True, True, False),
+    ("newly-created", True, False, False, True),
+    (None, False, False, False, True),
+    ("existing", False, TimeoutError("unavailable"), True, False),
+])
+def test_first_contact_checks_only_existing_smartmoving_leads(
+        monkeypatch, smartmoving_id, created_here, history_result, should_check, should_add):
+    import first_contact_state as state
+    db = Mock()
+    db.__enter__ = Mock(return_value=db)
+    db.__exit__ = Mock(return_value=False)
+    lead = SimpleNamespace(id="saved", priority=0, status="new", company=None,
+                           smartmoving_id=smartmoving_id, created_time="2026-10-01T12:00:00Z")
+    db.query.return_value.options.return_value.filter_by.return_value.first.return_value = lead
+    db.get.return_value = None
+    monkeypatch.setitem(sys.modules, "database", SimpleNamespace(SessionLocal=lambda: db))
+    history = Mock(side_effect=history_result) if isinstance(history_result, Exception) else Mock(return_value=history_result)
+    monkeypatch.setitem(sys.modules, "routes.unanswered_messages", SimpleNamespace(has_first_contact=history))
+    state.add_created_lead("saved", created_in_smartmoving_here=created_here)
+    assert history.call_count == int(should_check)
+    if should_check:
+        history.assert_called_once_with(lead, datetime(2026, 10, 1, 12, tzinfo=timezone.utc))
+    assert db.commit.call_count == int(should_add)
+    assert db.execute.call_count == int(should_add)
+
+
 def test_first_contact_page_reads_only_saved_pending_rows():
     source = Path(__file__).resolve().parents[2] / "backend/routes/unanswered_messages.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
