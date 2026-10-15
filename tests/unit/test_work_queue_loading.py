@@ -2,10 +2,11 @@
 import ast
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 from unittest.mock import Mock
+from types import SimpleNamespace
 import sys
 
 import pytest
@@ -15,8 +16,65 @@ from sqlalchemy.orm import Load, Session, joinedload
 from boto3.dynamodb.conditions import Key
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
-from models import Base, Company, Lead, MessageState, MissedCallState, User
+from models import Base, Company, Lead, MessageState, MissedCallState, User, FirstContactState
 from work_queue_rules import _digits, _epoch
+
+
+def test_first_contact_page_reads_only_saved_pending_rows():
+    source = Path(__file__).resolve().parents[2] / "backend/routes/unanswered_messages.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name in {"list_first_contact_leads", "_queue_lead_options"}]
+    for node in tree.body:
+        node.decorator_list = []
+        if node.name == "list_first_contact_leads":
+            node.args.defaults = [ast.Constant(None) for _ in node.args.defaults]
+    ast.fix_missing_locations(tree)
+    scope = dict(Lead=Lead, Company=Company, User=User, FirstContactState=FirstContactState,
+                 Session=Session, Load=Load, joinedload=joinedload, datetime=datetime,
+                 timezone=timezone, timedelta=timedelta)
+    exec(compile(tree, str(source), "exec"), scope)
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    now = datetime.now(timezone.utc)
+    with Session(engine) as db:
+        db.add_all([Lead(id="pending", full_name="Pending", created_at=now-timedelta(hours=1)),
+                    Lead(id="contacted", full_name="Contacted", created_at=now-timedelta(hours=1))])
+        db.flush()
+        db.add(FirstContactState(lead_id="pending", waiting_since=now-timedelta(hours=1)))
+        db.commit()
+        result = scope["list_first_contact_leads"](category="overdue", rep="", company="", refresh=False,
+                                                    limit=50, offset=0, _=None, db=db)
+        assert [row["lead_id"] for row in result["items"]] == ["pending"]
+        assert result["global_counts"] == {"new": 0, "overdue": 1}
+    engine.dispose()
+
+
+def test_phoneless_messenger_contact_requires_human_reply_on_matching_page():
+    source = Path(__file__).resolve().parents[2] / "backend/routes/unanswered_messages.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name == "_has_human_messenger_contact"]
+    table = Mock()
+    scope = {"Key": Key, "_epoch": _epoch, "conversations_table": table}
+    exec(compile(tree, str(source), "exec"), scope)
+    lead = SimpleNamespace(facebook_user_id="client", company=SimpleNamespace(facebook_page_id="page"))
+    created = datetime.fromtimestamp(1700000000, timezone.utc)
+    records = [
+        {"page_id": "page", "role": "agent", "timestamp": 1699999999000},
+        {"page_id": "page", "role": "ai", "timestamp": 1700000001000},
+        {"page_id": "other", "role": "agent", "timestamp": 1700000002000},
+        {"page_id": "page", "role": "agent", "direction": "draft", "timestamp": 1700000003000},
+    ]
+    table.query.return_value = {"Items": records}
+    check = scope["_has_human_messenger_contact"]
+    assert not check(lead, created)
+    table.query.side_effect = [
+        {"Items": records, "LastEvaluatedKey": {"user_id": "client", "timestamp": 1700000003000}},
+        {"Items": [{"page_id": "page", "role": "agent", "timestamp": 1700000004000}]},
+    ]
+    assert check(lead, created)
+    assert "ExclusiveStartKey" in table.query.call_args.kwargs
 
 
 def tracking_scope():

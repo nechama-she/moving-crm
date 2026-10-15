@@ -13,6 +13,8 @@ logger = logging.getLogger("migrate")
 
 def migrate() -> None:
     with engine.begin() as connection:
+        from first_contact_state import install as install_first_contact
+        install_first_contact(connection)
         # Stop invalidations from the retired projection worker. Keep existing
         # projection tables untouched; no message or lead data is removed here.
         for table_name, trigger_name in (

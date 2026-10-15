@@ -357,6 +357,18 @@ class Lead(Base):
         }
 
 
+class FirstContactState(Base):
+    __tablename__ = "first_contact_states"
+    lead_id = Column(String(36), ForeignKey("leads.id", ondelete="CASCADE"), primary_key=True)
+    waiting_since = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class FirstContactResolution(Base):
+    __tablename__ = "first_contact_resolutions"
+    lead_id = Column(String(36), ForeignKey("leads.id", ondelete="CASCADE"), primary_key=True)
+    contacted_at = Column(DateTime(timezone=True), nullable=False)
+
+
 class MessageState(Base):
     __tablename__ = "message_states"
     __table_args__ = (
