@@ -287,6 +287,8 @@ def intake(body: Intake, request: Request, x_api_secret: str = Header(default=''
             result = {'lead_id': lead.id, 'job_id': job.id}
             run('commit', db.commit, lambda _: {'committed': True})
             committed = True
+            from first_contact_state import add_created_lead
+            add_created_lead(result['lead_id'])
         url = run('build_customer_url', lambda: public_url(access), lambda value: {'url': value})
         result['url'] = url
         failures = []

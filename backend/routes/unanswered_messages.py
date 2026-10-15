@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Load, Session, joinedload
@@ -44,6 +44,24 @@ CALL_PERIODS = (
 )
 OPEN_SALES_STATUSES = ("new", "contacted", "quoted")
 MIRIT_COMPANY_NAME = "mirit great american"
+
+
+def _is_us_client_phone(value):
+    """Include the 50 states and D.C., excluding territories and toll-free numbers."""
+    import phonenumbers
+    try:
+        number = phonenumbers.parse(str(value or ""), "US")
+    except phonenumbers.NumberParseException:
+        return False
+    return (
+        phonenumbers.is_valid_number(number)
+        and phonenumbers.region_code_for_number(number) == "US"
+        and phonenumbers.number_type(number) in (
+            phonenumbers.PhoneNumberType.FIXED_LINE,
+            phonenumbers.PhoneNumberType.MOBILE,
+            phonenumbers.PhoneNumberType.FIXED_LINE_OR_MOBILE,
+        )
+    )
 
 
 def _open_sales_status_filter():
@@ -306,6 +324,7 @@ def list_followup_calls(
             or (lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc)),
         )
         for lead in candidate_leads
+        if _is_us_client_phone(lead.phone)
     ]
     leads_with_created_at = [
         (lead, created_at)
@@ -347,9 +366,9 @@ def export_followup_calls(
     leads = {lead.id: lead for lead in db.query(Lead).filter(
         Lead.id.in_([row["lead_id"] for row in result["items"]])).all()}
     if prepare:
-        return {"missing_quote_lead_ids": [lead.id for lead in leads.values()
+        return JSONResponse({"missing_quote_lead_ids": [lead.id for lead in leads.values()
                 if not str(lead.quote_number or "").strip()
-                and str(lead.smartmoving_id or "").strip()]}
+                and str(lead.smartmoving_id or "").strip()]}, headers={"Cache-Control": "no-store"})
     rows = [{**row, "quote_number": str(leads[row["lead_id"]].quote_number or "").strip()}
             for row in result["items"] if row["lead_id"] in leads]
     filename = f"follow-ups-{category}-{datetime.now(timezone.utc):%Y-%m-%d}.xlsx"
@@ -403,6 +422,34 @@ def _has_human_messenger_contact(lead, created_at):
         args["ExclusiveStartKey"] = cursor
 
 
+def has_first_contact(lead, created):
+    """Shared by initial eligibility and Reload: this client's calls and messages."""
+    from libs.common.phone import phone_variants
+    phone = _digits(lead.phone)
+    destinations = {_digits(lead.company.phone) if lead.company else '',
+                    _digits(lead.assignee.phone) if lead.assignee else ''} - {''}
+    deadline = time.monotonic() + 12
+    if phone and destinations:
+        for table in (calls_table, sms_messages_table):
+            for variant in sorted(set(phone_variants(phone))):
+                args = {'KeyConditionExpression': Key('phone_number').eq(variant), 'ConsistentRead': True}
+                while True:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError('First-contact history check timed out')
+                    page = table.query(**args)
+                    for item in page.get('Items', []):
+                        if (_digits(item.get('company_number')) in destinations
+                                and _epoch(item.get('timestamp')) >= created.timestamp()
+                                and str(item.get('direction') or '').lower() in {'outbound', 'sent'}
+                                and str(item.get('sales_name') or '').lower() not in {'ai', 'assistant', 'bot'}
+                                and str(item.get('role') or '').lower() not in {'ai', 'assistant', 'bot'}):
+                            return True
+                    if not page.get('LastEvaluatedKey'):
+                        break
+                    args['ExclusiveStartKey'] = page['LastEvaluatedKey']
+    return _has_human_messenger_contact(lead, created)
+
+
 @router.get("/first-contact-reload")
 def first_contact_reload_candidates(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     return {"lead_ids": [row[0] for row in db.query(FirstContactState.lead_id).all()]}
@@ -411,38 +458,14 @@ def first_contact_reload_candidates(_: User = Depends(require_admin), db: Sessio
 @router.post("/first-contact-reload/{lead_id}")
 def reload_first_contact_lead(lead_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)):
     from first_contact_state import resolve
-    from libs.common.phone import phone_variants
-    if not db.get(FirstContactState, lead_id):
+    state = db.get(FirstContactState, lead_id)
+    if not state:
         return {"removed": False}
     lead = db.query(Lead).options(*_queue_lead_options()).filter(Lead.id == lead_id).first()
     if not lead:
         return {"removed": False}
-    created = lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc)
-    phone = _digits(lead.phone)
-    destinations = {_digits(lead.company.phone) if lead.company else "", _digits(lead.assignee.phone) if lead.assignee else ""} - {""}
-    contacted = False
-    contact_time = created
-    if phone:
-        deadline = time.monotonic() + 12
-        for variant in sorted(set(phone_variants(phone))):
-            args = {"KeyConditionExpression": Key("phone_number").eq(variant), "ConsistentRead": True}
-            while True:
-                if time.monotonic() >= deadline:
-                    raise HTTPException(503, "History check timed out; lead kept")
-                page = calls_table.query(**args)
-                for item in page.get("Items", []):
-                    if str(item.get("direction") or "").lower() == "outbound" and _digits(item.get("company_number")) in destinations and _epoch(item.get("timestamp")) >= created.timestamp():
-                        contacted = True
-                        contact_time = datetime.fromtimestamp(_epoch(item.get("timestamp")), timezone.utc)
-                        break
-                if contacted or not page.get("LastEvaluatedKey"):
-                    break
-                args["ExclusiveStartKey"] = page["LastEvaluatedKey"]
-            if contacted:
-                break
-    else:
-        contacted = _has_human_messenger_contact(lead, created)
-    removed = resolve(db, lead_id, contact_time) if contacted else 0
+    created = state.waiting_since if state.waiting_since.tzinfo else state.waiting_since.replace(tzinfo=timezone.utc)
+    removed = resolve(db, lead_id, created) if has_first_contact(lead, created) else 0
     db.commit()
     if removed:
         publish_realtime_event({"type": "first_contact_ignored", "lead_id": lead_id})
@@ -472,11 +495,11 @@ def list_first_contact_leads(
         query = query.filter(Lead.company.has(Company.name == company))
     counts = counts_for(query)
     query = query.filter(FirstContactState.waiting_since > cutoff if category == "new" else FirstContactState.waiting_since <= cutoff)
-    rows = query.options(*_queue_lead_options()).order_by(FirstContactState.waiting_since, Lead.id).offset(offset).limit(limit).all()
+    rows = query.add_columns(FirstContactState.waiting_since).options(*_queue_lead_options()).order_by(FirstContactState.waiting_since, Lead.id).offset(offset).limit(limit).all()
     now = datetime.now(timezone.utc)
     items = []
-    for lead in rows:
-        created = lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc)
+    for lead, waiting_since in rows:
+        created = waiting_since if waiting_since.tzinfo else waiting_since.replace(tzinfo=timezone.utc)
         items.append({"lead_id": lead.id, "client": lead.full_name or lead.phone or "Unknown client",
             "client_phone": lead.phone or "", "rep": lead.assignee.name if lead.assignee else "",
             "company": lead.company.name if lead.company else "", "status": lead.status or "new",
