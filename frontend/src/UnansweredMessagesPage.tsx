@@ -110,6 +110,9 @@ export default function UnansweredMessagesPage() {
   const [globalFirstContactCounts, setGlobalFirstContactCounts] = useState({ new: 0, overdue: 0 });
   const [firstContactHasMore, setFirstContactHasMore] = useState(false);
   const [loadingLeads, setLoadingLeads] = useState(false);
+  const [ignoringLead, setIgnoringLead] = useState<string | null>(null);
+  const [reloadingContacts, setReloadingContacts] = useState(false);
+  const contactReloadRunning = useRef(false);
   const [followupTab, setFollowupTab] = useState<FollowupTab>("overdue");
   const [followupLeads, setFollowupLeads] = useState<FollowupLead[]>([]);
   const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0 });
@@ -117,6 +120,7 @@ export default function UnansweredMessagesPage() {
   const [followupFilterOptions, setFollowupFilterOptions] = useState({ reps: [] as string[], companies: [] as string[] });
   const [followupHasMore, setFollowupHasMore] = useState(false);
   const [loadingFollowups, setLoadingFollowups] = useState(false);
+  const [exportingFollowups, setExportingFollowups] = useState(false);
   const [expandedFollowups, setExpandedFollowups] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [loadingCalls, setLoadingCalls] = useState(true);
@@ -235,7 +239,7 @@ export default function UnansweredMessagesPage() {
       setQueueStatus({ enabled: Boolean(data.enabled), ready: Boolean(data.ready), stale: Boolean(data.stale), updated_at: data.updated_at || null });
       setGlobalCounts(data.messages);
       setGlobalMissedCallCount(data.missed_calls);
-      if (data.enabled && data.first_contact) setGlobalFirstContactCounts(data.first_contact);
+      if (data.first_contact) setGlobalFirstContactCounts(data.first_contact);
       if (data.enabled && data.followups) setGlobalFollowupCounts(data.followups);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load queue counts");
@@ -348,6 +352,49 @@ export default function UnansweredMessagesPage() {
   }, [leadTab, token, repFilter, companyFilter]);
 
 
+  const reloadFirstContacts = async () => {
+    if (contactReloadRunning.current) return;
+    contactReloadRunning.current = true;
+    setReloadingContacts(true);
+    let removed = 0;
+    let failed = 0;
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-reload`, { headers: authHeaders(token) });
+      if (!response.ok) throw new Error("Could not load pending contact entries");
+      const { lead_ids: ids } = await response.json() as { lead_ids: string[] };
+      for (let offset = 0; offset < ids.length; offset += 3) {
+        await Promise.all(ids.slice(offset, offset + 3).map(async (id) => {
+          try {
+            const result = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-reload/${encodeURIComponent(id)}`, { method: "POST", headers: authHeaders(token) });
+            if (!result.ok) throw new Error("Verification failed");
+            if ((await result.json()).removed) removed++;
+          } catch { failed++; }
+        }));
+        setValidationNotice(`Checked ${Math.min(offset + 3, ids.length)} of ${ids.length} pending leads.`);
+      }
+      setValidationNotice(`Removed ${removed} contacted leads. ${failed ? `${failed} could not be verified and were kept.` : "Check complete."}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not check pending leads");
+    } finally {
+      await loadFirstContactLeads(0, false, true);
+      setReloadingContacts(false);
+      contactReloadRunning.current = false;
+    }
+  };
+
+  const ignoreFirstContactLead = async (leadId: string) => {
+    setIgnoringLead(leadId);
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-leads/${encodeURIComponent(leadId)}`, {
+        method: "DELETE", headers: authHeaders(token),
+      });
+      if (!response.ok) throw new Error("Could not ignore this lead");
+      await loadFirstContactLeads(0, false, true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not ignore this lead");
+    } finally { setIgnoringLead(null); }
+  };
+
   const loadFollowups = useCallback(async (offset = 0, refresh = false, silent = false) => {
     const key = currentQueueFilterKey.current;
     const previous = followupInFlight.current;
@@ -377,6 +424,41 @@ export default function UnansweredMessagesPage() {
       release();
     }
   }, [followupTab, repFilter, companyFilter, token]);
+
+  const downloadFollowups = async () => {
+    if (exportingFollowups) return;
+    setExportingFollowups(true);
+    try {
+      const params = new URLSearchParams({ category: followupTab });
+      if (repFilter) params.set("rep", repFilter);
+      if (companyFilter) params.set("company", companyFilter);
+      const preparation = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls/export?${params}&prepare=true`, { headers: authHeaders(token) });
+      if (!preparation.ok) throw new Error(`Could not prepare Excel report (HTTP ${preparation.status})`);
+      const { missing_quote_lead_ids: missingIds } = await preparation.json() as { missing_quote_lead_ids: string[] };
+      // Reuse the same full refresh as the lead's Refresh from SmartMoving button.
+      // Separate requests keep a large export from running one long backend refresh.
+      for (let start = 0; start < missingIds.length; start += 3) {
+        await Promise.all(missingIds.slice(start, start + 3).map(async (leadId) => {
+          const refreshed = await fetch(`${API_BASE}/api/leads/${encodeURIComponent(leadId)}/refresh-smartmoving`, {
+            method: "POST", headers: authHeaders(token),
+          });
+          if (!refreshed.ok) throw new Error(`SmartMoving refresh failed for lead ${leadId}. Excel was not downloaded; please retry.`);
+        }));
+      }
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls/export?${params}`, { headers: authHeaders(token) });
+      if (!response.ok) throw new Error(`Excel download failed (HTTP ${response.status})`);
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `follow-ups-${followupTab}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not download follow-ups");
+    } finally { setExportingFollowups(false); }
+  };
 
   const queueLoaders = useRef({ loadFirstContactLeads, loadFollowups, loadSummary, queueTab });
   queueLoaders.current = { loadFirstContactLeads, loadFollowups, loadSummary, queueTab };
@@ -542,12 +624,22 @@ export default function UnansweredMessagesPage() {
   }, []);
 
   useRealtimeUpdates(token, (event) => {
+    if (event.type === "first_contact_ignored") {
+      tabLoads.current.delete("leads");
+      if (contactReloadRunning.current) return;
+      scheduleQueueRefresh(true, false);
+      return;
+    }
     if (event.type === "realtime_connected") {
       scheduleQueueRefresh(true, true);
       return;
     }
     if (event.type === "sales_work_queue_batch") {
       ((event.events || []) as RealtimeEvent[]).forEach((item) => {
+        if (item.type === "first_contact_ignored") {
+          tabLoads.current.delete("leads");
+          if (!contactReloadRunning.current) scheduleQueueRefresh(true, false);
+        }
         applyRealtimeEvent(item);
         applyMissedCallEvent(item);
       });
@@ -865,7 +957,7 @@ export default function UnansweredMessagesPage() {
 
       {queueTab === "leads" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px 0" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Leads Awaiting First Contact ({firstContactCounts.new + firstContactCounts.overdue})</h2>{validationButton}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Leads Awaiting First Contact ({firstContactCounts.new + firstContactCounts.overdue})</h2><button type="button" className="slds-button" disabled={reloadingContacts} onClick={() => void reloadFirstContacts()} title="Check pending leads against their communication history">{reloadingContacts ? "Checking communications..." : "Reload"}</button></div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {([ ["new", "New Leads", firstContactCounts.new], ["overdue", "Overdue", firstContactCounts.overdue] ] as const).map(([key, label, count]) => (
               <button className="slds-button" key={key} type="button" onClick={() => setLeadTab(key)} style={{ border: 0, borderBottom: leadTab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: leadTab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: leadTab === key ? 700 : 500, cursor: "pointer" }}>{label} ({count})</button>
@@ -875,11 +967,11 @@ export default function UnansweredMessagesPage() {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 760, borderCollapse: "collapse", tableLayout: "fixed" }}>
             <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>
-              {['Client', 'Rep', 'Company', 'Status', 'Created', 'Waiting'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+              {['Client', 'Rep', 'Company', 'Status', 'Created', 'Waiting', 'Action'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
-              {loadingLeads && firstContactLeads.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, textAlign: "center" }}>Loading leads…</td></tr> : null}
-              {!loadingLeads && filteredFirstContactLeads.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{firstContactLeads.length ? "No leads match these filters." : "No leads awaiting first contact."}</td></tr> : null}
+              {loadingLeads && firstContactLeads.length === 0 ? <tr><td colSpan={7} style={{ padding: 32, textAlign: "center" }}>Loading leads…</td></tr> : null}
+              {!loadingLeads && filteredFirstContactLeads.length === 0 ? <tr><td colSpan={7} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{firstContactLeads.length ? "No leads match these filters." : "No leads awaiting first contact."}</td></tr> : null}
               {filteredFirstContactLeads.map((row) => <tr key={row.lead_id}>
                 <td style={cell}><Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</td>
                 <td style={cell}>{row.rep || "—"}</td>
@@ -887,6 +979,7 @@ export default function UnansweredMessagesPage() {
                 <td style={cell}>{row.status}</td>
                 <td style={cell}>{new Date(row.created_at).toLocaleString()}</td>
                 <td style={cell}><strong style={{ color: leadTab === "overdue" ? "#b91c1c" : "#0b5cab" }}>{row.age_minutes < 60 ? `${row.age_minutes}m` : row.age_minutes < 1440 ? `${Math.floor(row.age_minutes / 60)}h ${row.age_minutes % 60}m` : `${Math.floor(row.age_minutes / 1440)}d ${Math.floor((row.age_minutes % 1440) / 60)}h`}</strong></td>
+                <td style={cell}><button type="button" className="slds-button" disabled={ignoringLead !== null} onClick={() => void ignoreFirstContactLead(row.lead_id)} title="Ignore this lead in Awaiting First Contact">{ignoringLead === row.lead_id ? "Ignoring..." : "Ignore"}</button></td>
               </tr>)}
             </tbody>
           </table>
@@ -896,7 +989,7 @@ export default function UnansweredMessagesPage() {
 
       {queueTab === "followups" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px 0" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2>{validationButton}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button>{validationButton}</div></div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {([ ["all", "All Leads", followupCounts.all], ["overdue", "Overdue Items", followupCounts.overdue] ] as const).map(([key, label, count]) => (
               <button className="slds-button" key={key} type="button" onClick={() => setFollowupTab(key)} style={{ border: 0, borderBottom: followupTab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: followupTab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: followupTab === key ? 700 : 500, cursor: "pointer" }}>{label} ({count})</button>

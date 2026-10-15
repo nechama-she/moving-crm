@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Load, Session, joinedload
@@ -21,7 +22,7 @@ from sqlalchemy.orm import Load, Session, joinedload
 from auth import require_admin
 from database import get_db
 from db import calls_table, conversations_table, sms_messages_table
-from models import AppSetting, Company, Lead, MessageState, MissedCallState, User
+from models import AppSetting, Company, Lead, MessageState, MissedCallState, User, FirstContactState
 from realtime import publish_realtime_event
 from ended_chat_retention import visible_message_states
 from work_queue_rules import _digits, _epoch, _smartmoving_created_at, calculate_followup_rows
@@ -96,9 +97,14 @@ def queue_summary(_: User = Depends(require_admin), db: Session = Depends(get_db
     )).group_by(MessageState.conversation_ended).all()
     message_counts = {bool(ended): count for ended, count in messages}
     calls = db.query(MissedCallState).filter(~MissedCallState.client_identifier.in_(ignored_from), ~MissedCallState.company_identifier.in_(ignored_to)).count()
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+    first_new, first_overdue = db.query(
+        func.count().filter(FirstContactState.waiting_since > cutoff),
+        func.count().filter(FirstContactState.waiting_since <= cutoff),
+    ).one()
     return {"enabled": False, "ready": False,
             "messages": {"unanswered": message_counts.get(False, 0), "ended": message_counts.get(True, 0)},
-            "missed_calls": calls, "first_contact": None,
+            "missed_calls": calls, "first_contact": {"new": first_new, "overdue": first_overdue},
             "followups": None}
 
 
@@ -326,6 +332,123 @@ def list_followup_calls(
     )
 
 
+@router.get("/followup-calls/export")
+def export_followup_calls(
+    category: str = Query("all", pattern="^(all|overdue)$"),
+    rep: str = Query(""), company: str = Query(""),
+    prepare: bool = Query(False),
+    _: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    from followup_export import workbook_bytes
+    # A single calculation supplies the complete filtered snapshot, not just
+    # the browser's loaded pages and not a separate calculation per page.
+    result = list_followup_calls(category=category, rep=rep, company=company,
+                                 refresh=False, limit=2**31-1, offset=0, _=_, db=db)
+    leads = {lead.id: lead for lead in db.query(Lead).filter(
+        Lead.id.in_([row["lead_id"] for row in result["items"]])).all()}
+    if prepare:
+        return {"missing_quote_lead_ids": [lead.id for lead in leads.values()
+                if not str(lead.quote_number or "").strip()
+                and str(lead.smartmoving_id or "").strip()]}
+    rows = [{**row, "quote_number": str(leads[row["lead_id"]].quote_number or "").strip()}
+            for row in result["items"] if row["lead_id"] in leads]
+    filename = f"follow-ups-{category}-{datetime.now(timezone.utc):%Y-%m-%d}.xlsx"
+    return Response(workbook_bytes(rows),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
+
+
+@router.delete("/first-contact-leads/{lead_id}")
+def ignore_first_contact_lead(lead_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    if not db.query(Lead.id).filter(Lead.id == lead_id).with_for_update().first():
+        raise HTTPException(404, "Lead not found")
+    from sqlalchemy.dialects.postgresql import insert
+    statement = insert(AppSetting).values(key="first_contact.ignore:" + lead_id, value="true")
+    db.execute(statement.on_conflict_do_nothing(index_elements=[AppSetting.key]))
+    db.query(FirstContactState).filter_by(lead_id=lead_id).delete(synchronize_session=False)
+    db.commit()
+    publish_realtime_event({"type": "first_contact_ignored", "lead_id": lead_id})
+    return {"ok": True}
+
+
+def _has_human_messenger_contact(lead, created_at):
+    user_id = str(lead.facebook_user_id or "").strip()
+    page_id = str(lead.company.facebook_page_id or "").strip() if lead.company else ""
+    if not user_id or not page_id:
+        return False
+    args = {"KeyConditionExpression": Key("user_id").eq(user_id), "ConsistentRead": True}
+    while True:
+        response = conversations_table.query(**args)
+        for item in response.get("Items", []):
+            if str(item.get("page_id") or "").strip() != page_id:
+                continue
+            if str(item.get("platform") or "messenger").lower() != "messenger":
+                continue
+            if item.get("record_type", "message") != "message":
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            sender = str(item.get("sales_name") or "").strip().lower()
+            direction = str(item.get("direction") or "").strip().lower()
+            if role in {"ai", "assistant", "bot", "user", "client", "customer"} or sender in {"ai", "assistant", "bot"}:
+                continue
+            if direction in {"draft", "inbound", "received"}:
+                continue
+            if direction not in {"sent", "outbound"} and role not in {"agent", "human", "sales", "sales_rep", "admin", "business", "page"}:
+                continue
+            if _epoch(item.get("timestamp")) >= created_at.timestamp():
+                return True
+        cursor = response.get("LastEvaluatedKey")
+        if not cursor:
+            return False
+        args["ExclusiveStartKey"] = cursor
+
+
+@router.get("/first-contact-reload")
+def first_contact_reload_candidates(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return {"lead_ids": [row[0] for row in db.query(FirstContactState.lead_id).all()]}
+
+
+@router.post("/first-contact-reload/{lead_id}")
+def reload_first_contact_lead(lead_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from first_contact_state import resolve
+    from libs.common.phone import phone_variants
+    if not db.get(FirstContactState, lead_id):
+        return {"removed": False}
+    lead = db.query(Lead).options(*_queue_lead_options()).filter(Lead.id == lead_id).first()
+    if not lead:
+        return {"removed": False}
+    created = lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc)
+    phone = _digits(lead.phone)
+    destinations = {_digits(lead.company.phone) if lead.company else "", _digits(lead.assignee.phone) if lead.assignee else ""} - {""}
+    contacted = False
+    contact_time = created
+    if phone:
+        deadline = time.monotonic() + 12
+        for variant in sorted(set(phone_variants(phone))):
+            args = {"KeyConditionExpression": Key("phone_number").eq(variant), "ConsistentRead": True}
+            while True:
+                if time.monotonic() >= deadline:
+                    raise HTTPException(503, "History check timed out; lead kept")
+                page = calls_table.query(**args)
+                for item in page.get("Items", []):
+                    if str(item.get("direction") or "").lower() == "outbound" and _digits(item.get("company_number")) in destinations and _epoch(item.get("timestamp")) >= created.timestamp():
+                        contacted = True
+                        contact_time = datetime.fromtimestamp(_epoch(item.get("timestamp")), timezone.utc)
+                        break
+                if contacted or not page.get("LastEvaluatedKey"):
+                    break
+                args["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+            if contacted:
+                break
+    else:
+        contacted = _has_human_messenger_contact(lead, created)
+    removed = resolve(db, lead_id, contact_time) if contacted else 0
+    db.commit()
+    if removed:
+        publish_realtime_event({"type": "first_contact_ignored", "lead_id": lead_id})
+    return {"removed": bool(removed)}
+
+
 @router.get("/first-contact-leads")
 def list_first_contact_leads(
     category: str = Query("new", pattern="^(new|overdue)$"),
@@ -337,79 +460,29 @@ def list_first_contact_leads(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    if refresh:
-        _first_contact_cache["loaded_at"] = 0.0
-        _followup_calls_cache["loaded_at"] = 0.0
-    tracking_start, contacts = _first_contact_tracking()
-    if tracking_start is None:
-        return {"items": [], "counts": {"new": 0, "overdue": 0}, "total": 0, "has_more": False, "tracking_start": ""}
-    leads = (
-        db.query(Lead)
-        .options(*_queue_lead_options())
-        .filter(
-            Lead.created_at >= tracking_start,
-            Lead.priority == 0,
-            _open_sales_status_filter(),
-            _exclude_mirit_company_filter(),
-        )
-        .order_by(Lead.created_at.desc())
-        .all()
-    )
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+    query = db.query(Lead).join(FirstContactState, FirstContactState.lead_id == Lead.id)
+    def counts_for(q):
+        return {"new": q.filter(FirstContactState.waiting_since > cutoff).count(),
+                "overdue": q.filter(FirstContactState.waiting_since <= cutoff).count()}
+    global_counts = counts_for(query)
+    if rep:
+        query = query.filter(Lead.assignee.has(User.name == rep)) if rep != "Unassigned" else query.filter(Lead.assigned_to.is_(None))
+    if company:
+        query = query.filter(Lead.company.has(Company.name == company))
+    counts = counts_for(query)
+    query = query.filter(FirstContactState.waiting_since > cutoff if category == "new" else FirstContactState.waiting_since <= cutoff)
+    rows = query.options(*_queue_lead_options()).order_by(FirstContactState.waiting_since, Lead.id).offset(offset).limit(limit).all()
     now = datetime.now(timezone.utc)
-    thirty_minutes_ago = now - timedelta(minutes=30)
-    pending: dict[str, list[Lead]] = {"new": [], "overdue": []}
-    for lead in leads:
-        created_at = (
-            _smartmoving_created_at(lead.created_time)
-            or (lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc))
-        )
-        if created_at < tracking_start:
-            continue
-        client_phone = _digits(lead.phone)
-        company_phone = _digits(lead.company.phone) if lead.company else ""
-        rep_phone = _digits(lead.assignee.phone) if lead.assignee else ""
-        contact_keys = (
-            ("phone", client_phone, company_phone),
-            ("phone", client_phone, rep_phone),
-        )
-        contacted = any(contacts.get(key) is not None and contacts[key] >= created_at for key in contact_keys)
-        if contacted:
-            continue
-        pending["new" if created_at > thirty_minutes_ago else "overdue"].append(lead)
-    global_counts = {name: len(rows) for name, rows in pending.items()}
-    filtered_pending = {
-        name: [lead for lead in rows if (not rep or (lead.assignee.name if lead.assignee else "Unassigned") == rep) and (not company or (lead.company.name if lead.company else "") == company)]
-        for name, rows in pending.items()
-    }
-    selected = filtered_pending[category]
-    if category == "overdue":
-        selected.sort(key=lambda lead: lead.created_at)
-    page = selected[offset:offset + limit]
     items = []
-    for lead in page:
-        created_at = (
-            _smartmoving_created_at(lead.created_time)
-            or (lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc))
-        )
-        items.append({
-            "lead_id": lead.id,
-            "client": lead.full_name or lead.phone or "Unknown client",
-            "client_phone": lead.phone or "",
-            "rep": lead.assignee.name if lead.assignee else "",
-            "company": lead.company.name if lead.company else "",
-            "status": lead.status or "new",
-            "created_at": created_at.isoformat(),
-            "age_minutes": max(0, int((now - created_at).total_seconds() // 60)),
-        })
-    counts = {name: len(rows) for name, rows in filtered_pending.items()}
-    return {
-        "items": items,
-        "counts": counts,
-        "global_counts": global_counts,
-        "total": len(selected),
-        "has_more": offset + limit < len(selected),
-        "tracking_start": tracking_start.isoformat(),
-    }
+    for lead in rows:
+        created = lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc)
+        items.append({"lead_id": lead.id, "client": lead.full_name or lead.phone or "Unknown client",
+            "client_phone": lead.phone or "", "rep": lead.assignee.name if lead.assignee else "",
+            "company": lead.company.name if lead.company else "", "status": lead.status or "new",
+            "created_at": created.isoformat(), "age_minutes": max(0, int((now-created).total_seconds()//60))})
+    return {"items": items, "counts": counts, "global_counts": global_counts,
+            "total": counts[category], "has_more": offset + len(items) < counts[category], "tracking_start": ""}
 
 
 def _ignored_call_numbers(db: Session) -> dict[str, set[str]]:

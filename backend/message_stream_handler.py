@@ -470,7 +470,13 @@ def handler(event, context):
             try:
                 was_processed, realtime_event = _process_record(db, record, event_id)
                 if was_processed:
+                    from first_contact_state import record_contact
+                    item = _image(record)
+                    channel = "calls" if ":table/calls/stream/" in str(record.get("eventSourceARN")) else _channel(record, item)
+                    contact_removed = record_contact(db, channel, item)
                     db.commit()
+                    if contact_removed:
+                        realtime_events.append({"type": "first_contact_ignored"})
                     processed += 1
                     if realtime_event:
                         realtime_events.append(realtime_event)
