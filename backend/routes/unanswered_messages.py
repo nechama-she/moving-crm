@@ -495,11 +495,11 @@ def list_first_contact_leads(
         query = query.filter(Lead.company.has(Company.name == company))
     counts = counts_for(query)
     query = query.filter(FirstContactState.waiting_since > cutoff if category == "new" else FirstContactState.waiting_since <= cutoff)
-    rows = query.options(*_queue_lead_options()).order_by(FirstContactState.waiting_since, Lead.id).offset(offset).limit(limit).all()
+    rows = query.add_columns(FirstContactState.waiting_since).options(*_queue_lead_options()).order_by(FirstContactState.waiting_since, Lead.id).offset(offset).limit(limit).all()
     now = datetime.now(timezone.utc)
     items = []
-    for lead in rows:
-        created = state.waiting_since if state.waiting_since.tzinfo else state.waiting_since.replace(tzinfo=timezone.utc)
+    for lead, waiting_since in rows:
+        created = waiting_since if waiting_since.tzinfo else waiting_since.replace(tzinfo=timezone.utc)
         items.append({"lead_id": lead.id, "client": lead.full_name or lead.phone or "Unknown client",
             "client_phone": lead.phone or "", "rep": lead.assignee.name if lead.assignee else "",
             "company": lead.company.name if lead.company else "", "status": lead.status or "new",

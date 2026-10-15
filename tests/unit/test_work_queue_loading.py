@@ -94,12 +94,15 @@ def test_first_contact_page_reads_only_saved_pending_rows():
         db.add_all([Lead(id="pending", full_name="Pending", created_at=now-timedelta(hours=1)),
                     Lead(id="contacted", full_name="Contacted", created_at=now-timedelta(hours=1))])
         db.flush()
-        db.add(FirstContactState(lead_id="pending", waiting_since=now-timedelta(hours=1)))
+        waiting_since = now - timedelta(days=2)
+        db.add(FirstContactState(lead_id="pending", waiting_since=waiting_since))
         db.commit()
         result = scope["list_first_contact_leads"](category="overdue", rep="", company="", refresh=False,
                                                     limit=50, offset=0, _=None, db=db)
         assert [row["lead_id"] for row in result["items"]] == ["pending"]
         assert result["global_counts"] == {"new": 0, "overdue": 1}
+        assert result["items"][0]["created_at"] == waiting_since.isoformat()
+        assert result["items"][0]["age_minutes"] >= 2 * 24 * 60
     engine.dispose()
 
 
