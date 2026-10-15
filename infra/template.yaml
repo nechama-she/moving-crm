@@ -1937,17 +1937,6 @@ Resources:
         Filters:
           - Pattern: '{"eventName":["INSERT","MODIFY"],"dynamodb":{"NewImage":{"record_type":{"S":["call"]}}}}'
 
-  # Keep the existing image archive during retirement. Deleting a nonempty
-  # repository would fail the infrastructure update; no service runs its images.
-  WorkQueueRepository:
-    Type: AWS::ECR::Repository
-    DependsOn: CloudFormationExecutionRole
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      RepositoryName: !Sub moving-crm-work-queue-${Environment}
-      ImageScanningConfiguration: {ScanOnPush: false}
-
   RealtimeConnectionsTable:
     Type: AWS::DynamoDB::Table
     DependsOn: CloudFormationExecutionRole
