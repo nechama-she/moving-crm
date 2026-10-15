@@ -10,16 +10,16 @@ def workbook_bytes(rows):
     summary = workbook.active
     summary.title = "Follow-ups"
     details = workbook.create_sheet("Attempts")
-    summary.append(["Client", "Phone", "Rep", "Company", "Status", "Priority", "Created (UTC)",
+    summary.append(["Quote Number", "Client", "Phone", "Rep", "Company", "Status", "Priority", "Created (UTC)",
                     "Calls completed", "Calls overdue", "Messages completed", "Messages overdue", "Lead ID"])
-    details.append(["Lead ID", "Client", "Type", "Attempt", "Status", "Scheduled start (UTC)",
+    details.append(["Quote Number", "Lead ID", "Client", "Type", "Attempt", "Status", "Scheduled start (UTC)",
                     "Scheduled end (UTC)", "Completed (UTC)"])
     for row in rows:
         summary.append([row.get(key, "") for key in (
-            "client", "client_phone", "rep", "company", "status", "priority", "created_at",
+            "quote_number", "client", "client_phone", "rep", "company", "status", "priority", "created_at",
             "completed_count", "overdue_count", "completed_message_count", "overdue_message_count", "lead_id")])
         for attempt in row.get("timeline", []):
-            details.append([row.get("lead_id", ""), row.get("client", ""),
+            details.append([row.get("quote_number", ""), row.get("lead_id", ""), row.get("client", ""),
                             *[attempt.get(key, "") for key in ("kind", "label", "status", "scheduled_start", "scheduled_end", "completed_at")]])
     for sheet in (summary, details):
         sheet.freeze_panes = "A2"

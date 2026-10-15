@@ -432,6 +432,19 @@ export default function UnansweredMessagesPage() {
       const params = new URLSearchParams({ category: followupTab });
       if (repFilter) params.set("rep", repFilter);
       if (companyFilter) params.set("company", companyFilter);
+      const preparation = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls/export?${params}&prepare=true`, { headers: authHeaders(token) });
+      if (!preparation.ok) throw new Error(`Could not prepare Excel report (HTTP ${preparation.status})`);
+      const { missing_quote_lead_ids: missingIds } = await preparation.json() as { missing_quote_lead_ids: string[] };
+      // Reuse the same full refresh as the lead's Refresh from SmartMoving button.
+      // Separate requests keep a large export from running one long backend refresh.
+      for (let start = 0; start < missingIds.length; start += 3) {
+        await Promise.all(missingIds.slice(start, start + 3).map(async (leadId) => {
+          const refreshed = await fetch(`${API_BASE}/api/leads/${encodeURIComponent(leadId)}/refresh-smartmoving`, {
+            method: "POST", headers: authHeaders(token),
+          });
+          if (!refreshed.ok) throw new Error(`SmartMoving refresh failed for lead ${leadId}. Excel was not downloaded; please retry.`);
+        }));
+      }
       const response = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls/export?${params}`, { headers: authHeaders(token) });
       if (!response.ok) throw new Error(`Excel download failed (HTTP ${response.status})`);
       const url = URL.createObjectURL(await response.blob());

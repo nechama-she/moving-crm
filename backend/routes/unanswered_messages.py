@@ -336,6 +336,7 @@ def list_followup_calls(
 def export_followup_calls(
     category: str = Query("all", pattern="^(all|overdue)$"),
     rep: str = Query(""), company: str = Query(""),
+    prepare: bool = Query(False),
     _: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     from followup_export import workbook_bytes
@@ -343,8 +344,16 @@ def export_followup_calls(
     # the browser's loaded pages and not a separate calculation per page.
     result = list_followup_calls(category=category, rep=rep, company=company,
                                  refresh=False, limit=2**31-1, offset=0, _=_, db=db)
+    leads = {lead.id: lead for lead in db.query(Lead).filter(
+        Lead.id.in_([row["lead_id"] for row in result["items"]])).all()}
+    if prepare:
+        return {"missing_quote_lead_ids": [lead.id for lead in leads.values()
+                if not str(lead.quote_number or "").strip()
+                and str(lead.smartmoving_id or "").strip()]}
+    rows = [{**row, "quote_number": str(leads[row["lead_id"]].quote_number or "").strip()}
+            for row in result["items"] if row["lead_id"] in leads]
     filename = f"follow-ups-{category}-{datetime.now(timezone.utc):%Y-%m-%d}.xlsx"
-    return Response(workbook_bytes(result["items"]),
+    return Response(workbook_bytes(rows),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
 
