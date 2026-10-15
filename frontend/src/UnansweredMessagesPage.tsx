@@ -120,6 +120,7 @@ export default function UnansweredMessagesPage() {
   const [followupFilterOptions, setFollowupFilterOptions] = useState({ reps: [] as string[], companies: [] as string[] });
   const [followupHasMore, setFollowupHasMore] = useState(false);
   const [loadingFollowups, setLoadingFollowups] = useState(false);
+  const [exportingFollowups, setExportingFollowups] = useState(false);
   const [expandedFollowups, setExpandedFollowups] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [loadingCalls, setLoadingCalls] = useState(true);
@@ -423,6 +424,28 @@ export default function UnansweredMessagesPage() {
       release();
     }
   }, [followupTab, repFilter, companyFilter, token]);
+
+  const downloadFollowups = async () => {
+    if (exportingFollowups) return;
+    setExportingFollowups(true);
+    try {
+      const params = new URLSearchParams({ category: followupTab });
+      if (repFilter) params.set("rep", repFilter);
+      if (companyFilter) params.set("company", companyFilter);
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls/export?${params}`, { headers: authHeaders(token) });
+      if (!response.ok) throw new Error(`Excel download failed (HTTP ${response.status})`);
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `follow-ups-${followupTab}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not download follow-ups");
+    } finally { setExportingFollowups(false); }
+  };
 
   const queueLoaders = useRef({ loadFirstContactLeads, loadFollowups, loadSummary, queueTab });
   queueLoaders.current = { loadFirstContactLeads, loadFollowups, loadSummary, queueTab };
@@ -953,7 +976,7 @@ export default function UnansweredMessagesPage() {
 
       {queueTab === "followups" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px 0" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2>{validationButton}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button>{validationButton}</div></div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {([ ["all", "All Leads", followupCounts.all], ["overdue", "Overdue Items", followupCounts.overdue] ] as const).map(([key, label, count]) => (
               <button className="slds-button" key={key} type="button" onClick={() => setFollowupTab(key)} style={{ border: 0, borderBottom: followupTab === key ? "3px solid #0b5cab" : "3px solid transparent", background: "transparent", color: followupTab === key ? "#032d60" : "#475569", padding: "10px 14px", fontWeight: followupTab === key ? 700 : 500, cursor: "pointer" }}>{label} ({count})</button>

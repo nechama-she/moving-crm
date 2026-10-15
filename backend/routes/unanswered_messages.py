@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Load, Session, joinedload
@@ -329,6 +330,23 @@ def list_followup_calls(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/followup-calls/export")
+def export_followup_calls(
+    category: str = Query("all", pattern="^(all|overdue)$"),
+    rep: str = Query(""), company: str = Query(""),
+    _: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    from followup_export import workbook_bytes
+    # A single calculation supplies the complete filtered snapshot, not just
+    # the browser's loaded pages and not a separate calculation per page.
+    result = list_followup_calls(category=category, rep=rep, company=company,
+                                 refresh=False, limit=2**31-1, offset=0, _=_, db=db)
+    filename = f"follow-ups-{category}-{datetime.now(timezone.utc):%Y-%m-%d}.xlsx"
+    return Response(workbook_bytes(result["items"]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
 
 
 @router.delete("/first-contact-leads/{lead_id}")
