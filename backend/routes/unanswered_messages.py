@@ -88,15 +88,6 @@ class IgnoredNumberRequest(BaseModel):
 
 @router.get("/summary")
 def queue_summary(_: User = Depends(require_admin), db: Session = Depends(get_db)):
-    from work_queue_models import QueueLead
-    from work_queue_store import read_model_active, status
-    meta = status(db)
-    first_new, first_overdue, follow_all, follow_overdue = db.query(
-        func.count().filter(QueueLead.first_category == "new"),
-        func.count().filter(QueueLead.first_category == "overdue"),
-        func.count().filter(QueueLead.followup.is_(True)),
-        func.count().filter(and_(QueueLead.followup.is_(True), QueueLead.overdue.is_(True))),
-    ).select_from(QueueLead).one()
     ignored = _ignored_call_numbers(db)
     ignored_from = [number for number, directions in ignored.items() if directions & {"from", "both"}]
     ignored_to = [number for number, directions in ignored.items() if directions & {"to", "both"}]
@@ -105,10 +96,10 @@ def queue_summary(_: User = Depends(require_admin), db: Session = Depends(get_db
     )).group_by(MessageState.conversation_ended).all()
     message_counts = {bool(ended): count for ended, count in messages}
     calls = db.query(MissedCallState).filter(~MissedCallState.client_identifier.in_(ignored_from), ~MissedCallState.company_identifier.in_(ignored_to)).count()
-    return {**meta, "enabled": read_model_active(db),
+    return {"enabled": False, "ready": False,
             "messages": {"unanswered": message_counts.get(False, 0), "ended": message_counts.get(True, 0)},
-            "missed_calls": calls, "first_contact": {"new": first_new, "overdue": first_overdue} if meta["ready"] else None,
-            "followups": {"all": follow_all, "overdue": follow_overdue} if meta["ready"] else None}
+            "missed_calls": calls, "first_contact": None,
+            "followups": None}
 
 
 def _query_since(table, record_type: str, since: int, fields: tuple[str, ...] = ()) -> list[dict]:
@@ -271,23 +262,6 @@ def list_followup_calls(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    from work_queue_store import read_model_active
-    if not read_model_active(db):
-        return _legacy_list_followup_calls(category=category, rep=rep, company=company, refresh=refresh, limit=limit, offset=offset, _=_, db=db)
-    from work_queue_store import read_queue
-    return read_queue(db, "followup", category, rep, company, limit, offset)
-
-
-def _legacy_list_followup_calls(
-    category: str = Query("all", pattern="^(all|overdue)$"),
-    rep: str = Query(""),
-    company: str = Query(""),
-    refresh: bool = Query(False),
-    limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-    _: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-):
     if refresh:
         _followup_calls_cache["loaded_at"] = 0.0
         _followup_messages_cache["loaded_at"] = 0.0
@@ -354,23 +328,6 @@ def _legacy_list_followup_calls(
 
 @router.get("/first-contact-leads")
 def list_first_contact_leads(
-    category: str = Query("new", pattern="^(new|overdue)$"),
-    rep: str = Query(""),
-    company: str = Query(""),
-    refresh: bool = Query(False),
-    limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-    _: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-):
-    from work_queue_store import read_model_active
-    if not read_model_active(db):
-        return _legacy_list_first_contact_leads(category=category, rep=rep, company=company, refresh=refresh, limit=limit, offset=offset, _=_, db=db)
-    from work_queue_store import read_queue
-    return read_queue(db, "first", category, rep, company, limit, offset)
-
-
-def _legacy_list_first_contact_leads(
     category: str = Query("new", pattern="^(new|overdue)$"),
     rep: str = Query(""),
     company: str = Query(""),
@@ -893,8 +850,7 @@ def list_message_states(
     sql_finished_at = time.perf_counter()
     unanswered_count = counts_by_ended.get(False, 0)
     ended_count = counts_by_ended.get(True, 0)
-    from work_queue_store import read_model_active, read_previews
-    messages = read_previews(db, states) if read_model_active(db) else _preview_messages(states)
+    messages = _preview_messages(states)
     previews_finished_at = time.perf_counter()
     companies_by_phone = {_digits(phone): name for name, phone in db.query(Company.name, Company.phone).all() if _digits(phone)}
     reps_by_phone = {_digits(phone): name for name, phone in db.query(User.name, User.phone).all() if _digits(phone)}

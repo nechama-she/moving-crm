@@ -1,7 +1,6 @@
 ﻿"""Pending schema changes for the existing production database.
 
-The production baseline is already installed. Completed migrations are retained
-in Git history rather than replayed on each deployment.
+Remove retired queue triggers and apply message-state changes.
 """
 import logging
 
@@ -14,6 +13,18 @@ logger = logging.getLogger("migrate")
 
 def migrate() -> None:
     with engine.begin() as connection:
+        # Stop invalidations from the retired projection worker. Keep existing
+        # projection tables untouched; no message or lead data is removed here.
+        for table_name, trigger_name in (
+            ("leads", "work_queue_lead_changed"),
+            ("companies", "work_queue_directory_changed"),
+            ("users", "work_queue_directory_changed"),
+            ("work_queue_dirty", "work_queue_notify"),
+            ("work_queue_activity", "work_queue_notify"),
+            ("work_queue_checkpoints", "work_queue_recovered"),
+        ):
+            if connection.execute(text("SELECT to_regclass(:table_name)"), {"table_name": table_name}).scalar():
+                connection.execute(text(f"DROP TRIGGER IF EXISTS {trigger_name} ON {table_name}"))
         connection.execute(text("ALTER TABLE message_states ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ"))
         from ended_chat_retention import clear_existing_ended_states
         removed = clear_existing_ended_states(connection)

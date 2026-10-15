@@ -73,8 +73,22 @@ function FollowupStatus({ attempt }: { attempt: FollowupAttempt }) {
 
 export default function UnansweredMessagesPage() {
   const { token } = useAuth();
-  const [queueTab, setQueueTab] = useState<QueueTab>("messages");
-  const [tab, setTab] = useState<MessageTab>("unanswered");
+  const [queueTab, setQueueTab] = useState<QueueTab>(() => {
+    try {
+      const saved = sessionStorage.getItem("sales-work-queue.tab");
+      return (["messages", "calls", "leads", "followups", "message-state", "missed-call-state"] as string[]).includes(saved || "") ? saved as QueueTab : "messages";
+    } catch { return "messages"; }
+  });
+  const [tab, setTab] = useState<MessageTab>(() => {
+    try { return sessionStorage.getItem("sales-work-queue.messages-tab") === "ended" ? "ended" : "unanswered"; }
+    catch { return "unanswered"; }
+  });
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("sales-work-queue.tab", queueTab);
+      sessionStorage.setItem("sales-work-queue.messages-tab", tab);
+    } catch { /* Storage can be disabled by the browser. */ }
+  }, [queueTab, tab]);
   const [items, setItems] = useState<MessageRow[]>([]);
   const [messageCursor, setMessageCursor] = useState("");
   const [messageHasMore, setMessageHasMore] = useState(false);
@@ -212,8 +226,6 @@ export default function UnansweredMessagesPage() {
   }, [token, repFilter, companyFilter, platformFilter]);
 
   const load = useCallback(() => Promise.all([loadMessages(), loadCalls()]), [loadMessages, loadCalls]);
-  useEffect(() => { void loadMessages(); }, [loadMessages]);
-  useEffect(() => { if (queueTab === "calls") void loadCalls(); }, [loadCalls, queueTab]);
 
   const loadSummary = useCallback(async () => {
     try {
@@ -230,9 +242,6 @@ export default function UnansweredMessagesPage() {
     }
   }, [token]);
 
-  useEffect(() => {
-    void loadSummary();
-  }, [loadSummary]);
 
   const loadMessageStates = useCallback(async () => {
     setLoadingMessageStates(true);
@@ -249,9 +258,6 @@ export default function UnansweredMessagesPage() {
     }
   }, [token]);
 
-  useEffect(() => {
-    if (queueTab === "message-state") void loadMessageStates();
-  }, [queueTab, loadMessageStates]);
 
   const cleanMessageStates = async () => {
     if (cleanupRunning.current) return;
@@ -312,9 +318,6 @@ export default function UnansweredMessagesPage() {
     }
   }, [token]);
 
-  useEffect(() => {
-    if (queueTab === "missed-call-state") void loadMissedCallStates();
-  }, [queueTab, loadMissedCallStates]);
 
   const loadFirstContactLeads = useCallback(async (offset = 0, refresh = false, silent = false) => {
     const key = currentQueueFilterKey.current;
@@ -344,7 +347,6 @@ export default function UnansweredMessagesPage() {
     }
   }, [leadTab, token, repFilter, companyFilter]);
 
-  useEffect(() => { if (queueTab === "leads") void loadFirstContactLeads(0); }, [loadFirstContactLeads, queueTab]);
 
   const loadFollowups = useCallback(async (offset = 0, refresh = false, silent = false) => {
     const key = currentQueueFilterKey.current;
@@ -395,12 +397,33 @@ export default function UnansweredMessagesPage() {
     queueRefreshScheduler.current?.request(firstContact, followups);
   }, []);
 
-  useEffect(() => { if (queueTab === "followups") void loadFollowups(0); }, [loadFollowups, queueTab]);
+  const tabLoads = useRef(new Map<QueueTab | "summary", { loader: () => Promise<unknown>; promise: Promise<unknown> }>());
   useEffect(() => {
-    if (queueStatus?.enabled !== false) return;
-    if (queueTab !== "leads") void loadFirstContactLeads(0);
-    if (queueTab !== "followups") void loadFollowups(0);
-  }, [queueStatus?.enabled, queueTab, loadFirstContactLeads, loadFollowups]);
+    let cancelled = false;
+    const loaders = {
+      messages: loadMessages, calls: loadCalls, leads: loadFirstContactLeads,
+      followups: loadFollowups, "message-state": loadMessageStates,
+      "missed-call-state": loadMissedCallStates, summary: loadSummary,
+    };
+    const ensureLoaded = (key: keyof typeof loaders) => {
+      const loader = loaders[key];
+      const existing = tabLoads.current.get(key);
+      if (existing?.loader === loader) return existing.promise;
+      const promise = Promise.resolve().then(() => loader());
+      tabLoads.current.set(key, { loader, promise });
+      return promise;
+    };
+    void (async () => {
+      await ensureLoaded(queueTab);
+      if (cancelled) return;
+      // Once the selected tab finishes, fetch the remaining data in parallel.
+      const backgroundKeys = (Object.keys(loaders) as (keyof typeof loaders)[])
+        .filter((key) => key !== queueTab && !(key === "messages" && tab === "ended"));
+      await Promise.allSettled(backgroundKeys.map(ensureLoaded));
+    })();
+    return () => { cancelled = true; };
+  }, [queueTab, tab, loadMessages, loadCalls, loadFirstContactLeads, loadFollowups,
+      loadMessageStates, loadMissedCallStates, loadSummary]);
 
   useEffect(() => {
     const target = followupLoadSentinel.current;
@@ -519,7 +542,7 @@ export default function UnansweredMessagesPage() {
   }, []);
 
   useRealtimeUpdates(token, (event) => {
-    if (event.type === "work_queue_updated" || event.type === "realtime_connected") {
+    if (event.type === "realtime_connected") {
       scheduleQueueRefresh(true, true);
       return;
     }
@@ -527,7 +550,6 @@ export default function UnansweredMessagesPage() {
       ((event.events || []) as RealtimeEvent[]).forEach((item) => {
         applyRealtimeEvent(item);
         applyMissedCallEvent(item);
-        if (item.type === "work_queue_updated") scheduleQueueRefresh(true, true);
       });
       return;
     }
