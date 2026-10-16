@@ -6,7 +6,6 @@ import logging
 import os
 import time
 import uuid
-from threading import Lock
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -25,23 +24,12 @@ from db import calls_table, conversations_table, sms_messages_table
 from models import AppSetting, Company, Lead, MessageState, MissedCallState, User, FirstContactState
 from realtime import publish_realtime_event
 from ended_chat_retention import visible_message_states
-from work_queue_rules import _digits, _epoch, _smartmoving_created_at, calculate_followup_rows
+from work_queue_rules import _digits, _epoch, _smartmoving_created_at
 
 router = APIRouter(prefix="/api/unanswered-messages", tags=["Unanswered Messages"])
 logger = logging.getLogger("moving-crm")
 IGNORED_CALL_NUMBERS_SETTING = "sales_work_queue.ignored_call_numbers"
 COMMUNICATION_TIMESTAMP_INDEX = "record-type-timestamp-index"
-_first_contact_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "contacts": {}}
-_followup_calls_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "calls": []}
-_followup_messages_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "messages": []}
-_followup_rows_cache: dict = {"loaded_at": 0.0, "tracking_start": None, "rows": []}
-_call_tracking_lock = Lock()
-
-CALL_PERIODS = (
-    ("morning", 8, 12),
-    ("afternoon", 12, 17),
-    ("evening", 17, 20),
-)
 OPEN_SALES_STATUSES = ("new", "contacted", "quoted")
 MIRIT_COMPANY_NAME = "mirit great american"
 
@@ -120,235 +108,50 @@ def queue_summary(_: User = Depends(require_admin), db: Session = Depends(get_db
         func.count().filter(FirstContactState.waiting_since > cutoff),
         func.count().filter(FirstContactState.waiting_since <= cutoff),
     ).one()
+    from models import Task
+    followups = db.query(func.count(func.distinct(Task.lead_id))).join(Lead, Lead.id == Task.lead_id).filter(
+        Task.automatic_key.isnot(None), Task.status != 'done', Task.due_at < datetime.now(timezone.utc),
+        Lead.priority == 0, Lead.followup_priority_confirmed.is_(True),
+        _open_sales_status_filter(), _exclude_mirit_company_filter()).scalar()
     return {"enabled": False, "ready": False,
             "messages": {"unanswered": message_counts.get(False, 0), "ended": message_counts.get(True, 0)},
             "missed_calls": calls, "first_contact": {"new": first_new, "overdue": first_overdue},
-            "followups": None}
-
-
-def _query_since(table, record_type: str, since: int, fields: tuple[str, ...] = ()) -> list[dict]:
-    items: list[dict] = []
-    query = {
-        "IndexName": COMMUNICATION_TIMESTAMP_INDEX,
-        "KeyConditionExpression": Key("record_type").eq(record_type) & Key("timestamp").gte(since),
-        "ScanIndexForward": True,
-    }
-    if fields:
-        names = {f"#field{i}": field for i, field in enumerate(fields)}
-        query.update(ProjectionExpression=", ".join(names), ExpressionAttributeNames=names)
-    response = table.query(**query)
-    while True:
-        items.extend(response.get("Items", []))
-        if "LastEvaluatedKey" not in response:
-            return items
-        response = table.query(**query, ExclusiveStartKey=response["LastEvaluatedKey"])
-
-
-def _first_contact_tracking() -> tuple[datetime | None, dict[tuple[str, str, str], datetime]]:
-    now = time.time()
-    tracking_start, calls = _followup_call_tracking()
-    if (_first_contact_cache.get("source_calls") is calls
-            and now - _first_contact_cache["loaded_at"] < 30):
-        return _first_contact_cache["tracking_start"], _first_contact_cache["contacts"]
-    if tracking_start is None:
-        return None, {}
-    contacts: dict[tuple[str, str, str], datetime] = {}
-
-    def record_contact(key: tuple[str, str, str], raw_timestamp: object) -> None:
-        if not key[1] or not key[2]:
-            return
-        occurred_at = datetime.fromtimestamp(_epoch(raw_timestamp), tz=timezone.utc)
-        previous = contacts.get(key)
-        if previous is None or occurred_at > previous:
-            contacts[key] = occurred_at
-
-    for item in calls:
-        if str(item.get("direction") or "").strip().lower() == "outbound":
-            record_contact(
-                ("phone", _digits(item.get("phone_number")), _digits(item.get("company_number"))),
-                item.get("timestamp"),
-            )
-    _first_contact_cache.update({"loaded_at": now, "tracking_start": tracking_start, "contacts": contacts, "source_calls": calls})
-    return tracking_start, contacts
-
-
-def _followup_call_tracking() -> tuple[datetime | None, list[dict]]:
-    # Both queue endpoints arrive together. Share one history read, including
-    # on a cold worker, instead of issuing duplicate paginated DynamoDB queries.
-    with _call_tracking_lock:
-        return _load_call_tracking()
-
-
-def _load_call_tracking() -> tuple[datetime | None, list[dict]]:
-    now = time.time()
-    if _followup_calls_cache["loaded_at"] and now - _followup_calls_cache["loaded_at"] < 30:
-        return _followup_calls_cache["tracking_start"], _followup_calls_cache["calls"]
-    first_page = calls_table.query(
-        IndexName=COMMUNICATION_TIMESTAMP_INDEX,
-        KeyConditionExpression=Key("record_type").eq("call"),
-        ScanIndexForward=True,
-        Limit=1,
-    )
-    first_items = first_page.get("Items", [])
-    if not first_items:
-        _followup_calls_cache.update({"loaded_at": time.time(), "tracking_start": None, "calls": []})
-        return None, []
-    first_epoch = _epoch(first_items[0].get("timestamp"))
-    calls = _query_since(calls_table, "call", int(first_epoch),
-                         ("direction", "timestamp", "phone_number", "company_number"))
-    outbound = [item for item in calls if str(item.get("direction") or "").strip().lower() == "outbound"]
-    tracking_start = datetime.fromtimestamp(first_epoch, tz=timezone.utc)
-    _followup_calls_cache.update({"loaded_at": time.time(), "tracking_start": tracking_start, "calls": outbound})
-    return tracking_start, outbound
-
-
-def _followup_message_tracking(tracking_start: datetime) -> list[dict]:
-    now = time.time()
-    cached_start = _followup_messages_cache["tracking_start"]
-    if cached_start == tracking_start and now - _followup_messages_cache["loaded_at"] < 30:
-        return _followup_messages_cache["messages"]
-    since_epoch = int(tracking_start.timestamp())
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        sms_future = executor.submit(_query_since, sms_messages_table, "message", since_epoch,
-                                     ("direction", "sales_name", "company_name", "timestamp", "phone_number", "company_number", "number_id"))
-        meta_future = executor.submit(_query_since, conversations_table, "message", since_epoch * 1000,
-                                      ("role", "sales_name", "platform", "timestamp", "user_id", "page_id"))
-        sms_messages, meta_messages = sms_future.result(), meta_future.result()
-    messages: list[dict] = []
-    for item in sms_messages:
-        direction = str(item.get("direction") or "").strip().lower()
-        sender = str(item.get("sales_name") or item.get("company_name") or "").strip().lower()
-        if direction not in {"sent", "outbound"} or sender in {"ai", "assistant", "bot"}:
-            continue
-        messages.append({
-            "channel": "sms",
-            "occurred_at": datetime.fromtimestamp(_epoch(item.get("timestamp")), tz=timezone.utc),
-            "client": _digits(item.get("phone_number")),
-            "destination": _digits(item.get("company_number")),
-            "number_id": str(item.get("number_id") or "").strip(),
-        })
-    for item in meta_messages:
-        role = str(item.get("role") or "").strip().lower()
-        sender = str(item.get("sales_name") or "").strip().lower()
-        if role in {"user", "client", "customer", "ai", "assistant", "bot"} or sender in {"ai", "assistant", "bot"}:
-            continue
-        messages.append({
-            "channel": str(item.get("platform") or "messenger").strip().lower(),
-            "occurred_at": datetime.fromtimestamp(_epoch(item.get("timestamp")), tz=timezone.utc),
-            "client": str(item.get("user_id") or "").strip(),
-            "page_id": str(item.get("page_id") or "").strip(),
-        })
-    messages.sort(key=lambda item: item["occurred_at"])
-    _followup_messages_cache.update({"loaded_at": now, "tracking_start": tracking_start, "messages": messages})
-    return messages
-
-
-def _followup_page(
-    rows: list[dict],
-    *,
-    category: str,
-    rep: str,
-    company: str,
-    limit: int,
-    offset: int,
-) -> dict:
-    """Filter and paginate an already-calculated follow-up snapshot."""
-    global_overdue_rows = [row for row in rows if row["overdue_count"] or row["overdue_message_count"]]
-    rep_filter = rep.strip().casefold()
-    company_filter = company.strip().casefold()
-    filtered_rows = [
-        row for row in rows
-        if (not rep_filter or str(row["rep"] or "").strip().casefold() == rep_filter)
-        and (not company_filter or str(row["company"] or "").strip().casefold() == company_filter)
-    ]
-    overdue_rows = [row for row in filtered_rows if row["overdue_count"] or row["overdue_message_count"]]
-    selected = filtered_rows if category == "all" else overdue_rows
-    return {
-        "items": selected[offset:offset + limit],
-        "counts": {"all": len(filtered_rows), "overdue": len(overdue_rows)},
-        "global_counts": {"all": len(rows), "overdue": len(global_overdue_rows)},
-        "filter_options": {
-            "reps": sorted({str(row["rep"]) for row in rows if row["rep"]}),
-            "companies": sorted({str(row["company"]) for row in rows if row["company"]}),
-        },
-        "has_more": offset + limit < len(selected),
-    }
+            "followups": {"all": followups, "overdue": followups}}
 
 
 @router.get("/followup-calls")
 def list_followup_calls(
-    category: str = Query("all", pattern="^(all|overdue)$"),
-    rep: str = Query(""),
-    company: str = Query(""),
-    refresh: bool = Query(False),
-    limit: int = Query(50, ge=1, le=100),
+    category: str = Query("overdue", pattern="^(all|overdue)$"),
+    rep: str = Query(""), company: str = Query(""),
+    refresh: bool = Query(False), limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    _: User = Depends(require_admin),
-    db: Session = Depends(get_db),
+    _: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
-    if refresh:
-        _followup_calls_cache["loaded_at"] = 0.0
-        _followup_messages_cache["loaded_at"] = 0.0
-        _followup_rows_cache["loaded_at"] = 0.0
-    tracking_start, calls = _followup_call_tracking()
-    if tracking_start is None:
-        return _followup_page([], category=category, rep=rep, company=company, limit=limit, offset=offset)
-    now_monotonic = time.monotonic()
-    if (
-        _followup_rows_cache["tracking_start"] == tracking_start
-        and now_monotonic - _followup_rows_cache["loaded_at"] < 30
-    ):
-        return _followup_page(
-            _followup_rows_cache["rows"],
-            category=category,
-            rep=rep,
-            company=company,
-            limit=limit,
-            offset=offset,
-        )
-    candidate_leads = (
-        db.query(Lead)
-        .options(*_queue_lead_options())
-        .filter(
-            Lead.priority == 0,
-            _open_sales_status_filter(),
-            _exclude_mirit_company_filter(),
-            func.length(func.trim(func.coalesce(Lead.phone, ""))) > 0,
-        )
-        .all()
-    )
-    leads_with_created_at = [
-        (
-            lead,
-            _smartmoving_created_at(lead.created_time)
-            or (lead.created_at if lead.created_at.tzinfo else lead.created_at.replace(tzinfo=timezone.utc)),
-        )
-        for lead in candidate_leads
-        if _is_us_client_phone(lead.phone)
-    ]
-    leads_with_created_at = [
-        (lead, created_at)
-        for lead, created_at in leads_with_created_at
-        if created_at is not None and created_at >= tracking_start
-    ]
-    leads_with_created_at.sort(key=lambda pair: pair[1], reverse=True)
-    # Messages older than every eligible lead cannot complete any attempt.
-    # Avoid fetching message history at all when this queue has no candidates.
-    messages = _followup_message_tracking(leads_with_created_at[-1][1]) if leads_with_created_at else []
-    rows = calculate_followup_rows(leads_with_created_at, calls, messages, datetime.now(timezone.utc))
-    _followup_rows_cache.update({
-        "loaded_at": time.monotonic(),
-        "tracking_start": tracking_start,
-        "rows": rows,
-    })
-    return _followup_page(
-        rows,
-        category=category,
-        rep=rep,
-        company=company,
-        limit=limit,
-        offset=offset,
-    )
+    from models import Task
+    from followup_tasks import lead_row
+    now = datetime.now(timezone.utc)
+    overdue = db.query(Task.lead_id).filter(
+        Task.automatic_key.isnot(None), Task.status != 'done', Task.due_at < now,
+    ).distinct().subquery()
+    query = db.query(Lead).join(overdue, overdue.c.lead_id == Lead.id).filter(
+        Lead.priority == 0, Lead.followup_priority_confirmed.is_(True),
+        _open_sales_status_filter(), _exclude_mirit_company_filter())
+    total = query.count()
+    reps = [name for name, in query.join(User, Lead.assigned_to == User.id).with_entities(User.name).distinct().order_by(User.name)]
+    companies = [name for name, in query.join(Company, Lead.company_id == Company.id).with_entities(Company.name).distinct().order_by(Company.name)]
+    if rep:
+        query = query.filter(Lead.assigned_to.is_(None)) if rep == 'Unassigned' else query.filter(Lead.assignee.has(User.name == rep))
+    if company:
+        query = query.filter(Lead.company.has(Company.name == company))
+    count = query.count()
+    leads = query.options(*_queue_lead_options()).order_by(Lead.created_time.desc(), Lead.id).offset(offset).limit(limit).all()
+    tasks_by_lead = {lead.id: [] for lead in leads}
+    if leads:
+        for task in db.query(Task).filter(Task.lead_id.in_(tasks_by_lead), Task.automatic_key.isnot(None)).all():
+            tasks_by_lead[task.lead_id].append(task)
+    return {'items': [lead_row(lead, tasks_by_lead[lead.id], now) for lead in leads],
+            'counts': {'all': count, 'overdue': count}, 'global_counts': {'all': total, 'overdue': total},
+            'filter_options': {'reps': reps, 'companies': companies}, 'has_more': offset + len(leads) < count}
 
 
 @router.get("/followup-calls/export")
@@ -359,8 +162,7 @@ def export_followup_calls(
     _: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     from followup_export import workbook_bytes
-    # A single calculation supplies the complete filtered snapshot, not just
-    # the browser's loaded pages and not a separate calculation per page.
+    # Export the same filtered, saved tasks as the overdue view.
     result = list_followup_calls(category=category, rep=rep, company=company,
                                  refresh=False, limit=2**31-1, offset=0, _=_, db=db)
     leads = {lead.id: lead for lead in db.query(Lead).filter(

@@ -1,4 +1,4 @@
-"""Pure queue rules shared by the API comparison path and background worker."""
+"""Pure scheduling rules used when communication events update Activity tasks."""
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 

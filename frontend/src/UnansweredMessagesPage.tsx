@@ -243,7 +243,7 @@ export default function UnansweredMessagesPage() {
       setGlobalCounts(data.messages);
       setGlobalMissedCallCount(data.missed_calls);
       if (data.first_contact) setGlobalFirstContactCounts(data.first_contact);
-      if (data.enabled && data.followups) setGlobalFollowupCounts(data.followups);
+      if (data.followups) setGlobalFollowupCounts(data.followups);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load queue counts");
     }
@@ -653,6 +653,11 @@ export default function UnansweredMessagesPage() {
   }, []);
 
   useRealtimeUpdates(token, (event) => {
+    if (event.type === "followup_tasks_changed") {
+      tabLoads.current.delete("followups");
+      scheduleQueueRefresh(false, true);
+      return;
+    }
     if (event.type === "first_contact_ignored") {
       tabLoads.current.delete("leads");
       if (contactReloadRunning.current) return;
@@ -665,6 +670,10 @@ export default function UnansweredMessagesPage() {
     }
     if (event.type === "sales_work_queue_batch") {
       ((event.events || []) as RealtimeEvent[]).forEach((item) => {
+        if (item.type === "followup_tasks_changed") {
+          tabLoads.current.delete("followups");
+          scheduleQueueRefresh(false, true);
+        }
         if (item.type === "first_contact_ignored") {
           tabLoads.current.delete("leads");
           if (!contactReloadRunning.current) scheduleQueueRefresh(true, false);

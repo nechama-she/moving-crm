@@ -2022,12 +2022,15 @@ def validate_smartmoving_leads(
             leads_by_id[lead_id].status = smartmoving_status
             updated_statuses.append(lead_id)
         smartmoving_priority = _parse_smartmoving_priority(result.get("lead_status"))
+        from followup_tasks import sync as sync_followup_tasks
+        sync_followup_tasks(db, leads_by_id[lead_id], smartmoving_priority, reconcile=True)
         if smartmoving_priority is not None:
             leads_by_id[lead_id].priority = smartmoving_priority
             updated_priorities.append(lead_id)
 
-    if updated_created_times or updated_statuses or updated_priorities:
+    if results:
         db.commit()
+        publish_realtime_event({"type": "followup_tasks_changed"})
 
     return {
         "ok": not errors,
@@ -4079,6 +4082,7 @@ def _apply_lead_update(
     *,
     allow_dispatch_smartmoving_refresh: bool = False,
     incoming_smartmoving_company: Company | None = None,
+    confirmed_smartmoving_priority: bool = False,
 ):
     if not (allow_dispatch_smartmoving_refresh and user.role == "dispatch"):
         _ensure_not_dispatch_write(user)
@@ -4537,6 +4541,9 @@ def _apply_lead_update(
         lead.move_date = current_primary_job.move_date
         lead.booked_move_date = current_primary_job.booked_move_date
 
+    if confirmed_smartmoving_priority:
+        from followup_tasks import sync as sync_followup_tasks
+        sync_followup_tasks(db, lead, body.priority, reconcile=True)
     try:
         db.commit()
     except IntegrityError as exc:
@@ -4547,6 +4554,14 @@ def _apply_lead_update(
         raise HTTPException(status_code=500, detail="Failed to update lead")
     db.refresh(lead)
     _sync_smartmoving_job_details(lead, db)
+    if confirmed_smartmoving_priority:
+        publish_realtime_event({"type": "followup_tasks_changed", "lead_id": lead.id})
+    if not confirmed_smartmoving_priority:
+        from followup_tasks import sync_saved_lead
+        saved_id = lead.id
+        db.commit()
+        sync_saved_lead(saved_id)
+        db.refresh(lead)
 
     # If assignment changed to a new rep, send the rep_assignment SMS.
     will_send_rep_assignment_sms = (
@@ -4706,6 +4721,7 @@ def _refresh_lead_from_smartmoving(
         db,
         allow_dispatch_smartmoving_refresh=True,
         incoming_smartmoving_company=smartmoving_dispatch_company(db, opportunity),
+        confirmed_smartmoving_priority=True,
     )
     sync_result = sync_smartmoving_files(lead, user, db, opportunity)
     request.state.audit_request_payload = {

@@ -1,10 +1,7 @@
-"""Queue history performance regressions, without AWS credentials or network."""
+"""Saved queue state and task lifecycle regressions, without AWS or network."""
 import ast
-import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from threading import Lock
 from unittest.mock import Mock
 from types import SimpleNamespace
 import sys
@@ -17,7 +14,141 @@ from boto3.dynamodb.conditions import Key
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 from models import Base, Company, Lead, MessageState, MissedCallState, User, FirstContactState
-from work_queue_rules import _digits, _epoch
+from work_queue_rules import _epoch
+
+
+@pytest.fixture
+def task_queue(monkeypatch):
+    import followup_tasks
+    from models import Task
+    monkeypatch.setitem(sys.modules, 'routes.unanswered_messages', SimpleNamespace(_is_us_client_phone=lambda phone: True))
+    replay = Mock(return_value=([], []))
+    monkeypatch.setattr(followup_tasks, 'history', replay)
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        company = Company(id='company', name='Movers', phone='2029372625', timezone='America/New_York')
+        lead = Lead(id='lead', full_name='Client', phone='2403703417', company=company,
+                    smartmoving_id='sm-1', created_time='2026-10-16T13:00:00Z', status='new')
+        db.add(lead)
+        db.commit()
+        yield followup_tasks, db, lead, Task, replay
+    engine.dispose()
+
+
+def test_unknown_priority_creates_no_tasks_even_when_model_defaults_to_zero(task_queue):
+    service, db, lead, Task, replay = task_queue
+    service.sync(db, lead, None)
+    db.commit()
+    assert lead.priority == 0
+    assert not lead.followup_priority_confirmed
+    assert db.query(Task).count() == 0
+    replay.assert_not_called()
+
+
+def test_nonzero_priority_never_creates_tasks_or_reads_history(task_queue):
+    service, db, lead, Task, replay = task_queue
+    service.sync(db, lead, 2)
+    db.commit()
+    assert db.query(Task).count() == 0
+    assert lead.priority == 2
+    replay.assert_not_called()
+
+
+def test_missing_smartmoving_creation_time_does_not_use_crm_time(task_queue):
+    service, db, lead, Task, _ = task_queue
+    lead.created_time = ''
+    service.sync(db, lead, 0)
+    db.commit()
+    assert db.query(Task).count() == 0
+
+
+def test_late_message_delivery_can_correct_an_earlier_superseded_task(task_queue):
+    service, db, lead, Task, _ = task_queue
+    service.sync(db, lead, 0)
+    db.commit()
+    sms = {'phone_number': lead.phone, 'company_number': lead.company.phone, 'direction': 'sent', 'sales_name': 'Rep'}
+    service.record_contact(db, lead, 'sms', {**sms, 'timestamp': datetime(2026, 10, 17, 14, tzinfo=timezone.utc).timestamp()})
+    db.commit()
+    welcome = db.query(Task).filter_by(automatic_key='priority0:message:1').one()
+    assert welcome.completion_reason == 'Superseded by later message'
+    service.record_contact(db, lead, 'sms', {**sms, 'timestamp': datetime(2026, 10, 16, 14, tzinfo=timezone.utc).timestamp()})
+    db.commit()
+    assert welcome.completion_reason == 'Communication'
+    assert db.query(Task).filter(Task.completed_at.isnot(None), Task.task_type == 'text').count() == 2
+
+
+def test_confirmed_zero_creates_nine_timed_tasks_once_and_priority_change_closes_them(task_queue):
+    service, db, lead, Task, replay = task_queue
+    service.sync(db, lead, 0)
+    db.commit()
+    tasks = db.query(Task).all()
+    assert len(tasks) == 9
+    assert sum(task.task_type == 'call' for task in tasks) == 6
+    assert sum(task.task_type == 'text' for task in tasks) == 3
+    assert all(task.due_at and task.scheduled_start and task.status == 'open' for task in tasks)
+    assert min(service.utc(task.due_at) for task in tasks) == datetime(2026, 10, 16, 16, tzinfo=timezone.utc)
+    service.sync(db, lead, 0)
+    db.commit()
+    assert db.query(Task).count() == 9
+    assert replay.call_count == 1
+    service.sync(db, lead, 1)
+    db.commit()
+    assert all(task.status == 'done' and task.completion_reason == 'Priority changed' for task in db.query(Task))
+    service.sync(db, lead, 0)
+    db.commit()
+    assert all(task.status == 'done' for task in db.query(Task))
+
+
+def test_duplicate_calls_and_wrong_destination_do_not_complete_extra_tasks(task_queue):
+    service, db, lead, Task, _ = task_queue
+    service.sync(db, lead, 0)
+    db.commit()
+    call = {'timestamp': datetime(2026, 10, 16, 14, tzinfo=timezone.utc).timestamp(),
+            'phone_number': lead.phone, 'company_number': lead.company.phone, 'direction': 'outbound'}
+    assert service.record_contact(db, lead, 'calls', call)
+    db.commit()
+    assert not service.record_contact(db, lead, 'calls', call)
+    db.commit()
+    assert db.query(Task).filter_by(status='done', task_type='call').count() == 1
+    service.record_contact(db, lead, 'calls', {**call, 'timestamp': call['timestamp'] + 4 * 3600, 'company_number': '9999999999'})
+    db.commit()
+    assert db.query(Task).filter_by(status='done', task_type='call').count() == 1
+    service.record_contact(db, lead, 'sms', {**call, 'sales_name': 'AI'})
+    db.commit()
+    assert db.query(Task).filter_by(status='done', task_type='text').count() == 0
+
+
+def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_queue, monkeypatch):
+    service, db, lead, Task, replay = task_queue
+    service.sync(db, lead, 0)
+    db.commit()
+    for task in db.query(Task):
+        task.scheduled_start = datetime.now(timezone.utc) - timedelta(hours=2)
+        task.due_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    db.commit()
+    replay.reset_mock()
+    source = Path(__file__).resolve().parents[2] / 'backend/routes/unanswered_messages.py'
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name in {'list_followup_calls', '_queue_lead_options', '_open_sales_status_filter', '_exclude_mirit_company_filter'}]
+    for node in tree.body:
+        node.decorator_list = []
+        if node.name == 'list_followup_calls':
+            node.args.defaults = [ast.Constant(None) for _ in node.args.defaults]
+    ast.fix_missing_locations(tree)
+    from sqlalchemy import func, or_
+    scope = dict(Lead=Lead, Company=Company, User=User, Session=Session, Load=Load, joinedload=joinedload,
+                 datetime=datetime, timezone=timezone, func=func, or_=or_,
+                 OPEN_SALES_STATUSES=('new', 'contacted', 'quoted'), MIRIT_COMPANY_NAME='mirit great american')
+    exec(compile(tree, str(source), 'exec'), scope)
+    kwargs = dict(category='overdue', rep='', company='', refresh=False, limit=50, offset=0, _=None, db=db)
+    assert [row['lead_id'] for row in scope['list_followup_calls'](**kwargs)['items']] == ['lead']
+    assert scope['list_followup_calls'](**{**kwargs, 'company': 'Other'})['items'] == []
+    lead.priority = 1
+    db.commit()
+    assert scope['list_followup_calls'](**kwargs)['items'] == []
+    replay.assert_not_called()
 
 
 def test_contact_resolution_saves_triggering_evidence_without_overwriting_first():
@@ -78,6 +209,8 @@ def test_followup_us_client_numbers(monkeypatch, phone, expected):
 def test_first_contact_checks_only_existing_smartmoving_leads(
         monkeypatch, smartmoving_id, created_here, history_result, should_check, should_add):
     import first_contact_state as state
+    import followup_tasks
+    monkeypatch.setattr(followup_tasks, 'sync_saved_lead', Mock())
     db = Mock()
     db.__enter__ = Mock(return_value=db)
     db.__exit__ = Mock(return_value=False)
@@ -159,87 +292,6 @@ def test_phoneless_messenger_contact_requires_human_reply_on_matching_page():
     ]
     assert check(lead, created)
     assert "ExclusiveStartKey" in table.query.call_args.kwargs
-
-
-def tracking_scope():
-    source = Path(__file__).resolve().parents[2] / "backend/routes/unanswered_messages.py"
-    functions = {"_digits", "_epoch", "_query_since", "_first_contact_tracking",
-                 "_followup_call_tracking", "_load_call_tracking"}
-    tree = ast.parse(source.read_text(encoding="utf-8"))
-    tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in functions]
-    scope = dict(time=time, datetime=datetime, timezone=timezone, Key=Key, _digits=_digits, _epoch=_epoch,
-                 COMMUNICATION_TIMESTAMP_INDEX="record-type-timestamp-index",
-                 calls_table=Mock(), _call_tracking_lock=Lock(),
-                 _first_contact_cache={"loaded_at": 0, "tracking_start": None, "contacts": {}},
-                 _followup_calls_cache={"loaded_at": 0, "tracking_start": None, "calls": []})
-    exec(compile(tree, str(source), "exec"), scope)
-    return scope
-
-
-def test_concurrent_queues_share_history_and_keep_latest_outbound_contact():
-    scope = tracking_scope()
-    calls = [
-        {"timestamp": 100, "direction": "inbound", "phone_number": "2125550100", "company_number": "2125550200"},
-        {"timestamp": 200, "direction": "outbound", "phone_number": "12125550100", "company_number": "2125550200"},
-        {"timestamp": 300, "direction": "outbound", "phone_number": "2125550100", "company_number": "2125550200"},
-    ]
-    scope["calls_table"].query.side_effect = [{"Items": [{"timestamp": 100}]}, {"Items": calls}]
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(scope["_first_contact_tracking"])
-        followup = executor.submit(scope["_followup_call_tracking"])
-        start, contacts = first.result()
-        followup_start, outbound = followup.result()
-    assert start == followup_start == datetime.fromtimestamp(100, tz=timezone.utc)
-    assert len(outbound) == 2
-    assert contacts[("phone", "2125550100", "2125550200")] == datetime.fromtimestamp(300, tz=timezone.utc)
-    assert scope["calls_table"].query.call_count == 2
-
-
-def test_refreshed_history_invalidates_derived_first_contacts():
-    scope = tracking_scope()
-    scope["calls_table"].query.side_effect = [
-        {"Items": [{"timestamp": 100}]}, {"Items": []},
-        {"Items": [{"timestamp": 100}]},
-        {"Items": [{"timestamp": 400, "direction": "outbound", "phone_number": "2125550100", "company_number": "2125550200"}]},
-    ]
-    assert scope["_first_contact_tracking"]()[1] == {}
-    scope["_followup_calls_cache"]["loaded_at"] = 0
-    assert len(scope["_first_contact_tracking"]()[1]) == 1
-
-
-def test_empty_history_is_cached():
-    scope = tracking_scope()
-    scope["calls_table"].query.return_value = {"Items": []}
-    assert scope["_first_contact_tracking"]() == (None, {})
-    assert scope["_followup_call_tracking"]() == (None, [])
-    scope["calls_table"].query.assert_called_once()
-
-
-def test_projection_is_preserved_on_every_history_page():
-    scope = tracking_scope()
-    table = Mock()
-    table.query.side_effect = [
-        {"Items": [{"timestamp": 100}], "LastEvaluatedKey": {"pk": "next"}},
-        {"Items": [{"timestamp": 200}]},
-    ]
-    assert scope["_query_since"](table, "message", 100, ("timestamp", "role")) == [{"timestamp": 100}, {"timestamp": 200}]
-    for call in table.query.call_args_list:
-        assert call.kwargs["ExpressionAttributeNames"] == {"#field0": "timestamp", "#field1": "role"}
-        assert call.kwargs["ProjectionExpression"] == "#field0, #field1"
-    assert table.query.call_args.kwargs["ExclusiveStartKey"] == {"pk": "next"}
-
-
-def test_failed_history_read_is_retried():
-    scope = tracking_scope()
-    scope["calls_table"].query.side_effect = [RuntimeError("unavailable"), {"Items": []}]
-    try:
-        scope["_followup_call_tracking"]()
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("Expected the failed lookup to propagate")
-    assert scope["_followup_call_tracking"]() == (None, [])
-    assert scope["calls_table"].query.call_count == 2
 
 
 @pytest.mark.parametrize("model", [Lead, MessageState, MissedCallState])

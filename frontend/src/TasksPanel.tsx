@@ -6,6 +6,11 @@ interface Task {
   id: string;
   title: string;
   due_date: string;
+  due_at: string;
+  scheduled_start: string;
+  automatic_key: string;
+  completed_at: string;
+  completion_reason: string;
   status: "open" | "in_progress" | "done";
   task_type: TaskType;
   notes: string;
@@ -111,11 +116,13 @@ export default function TasksPanel({ leadId, token }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editDueDate, setEditDueDate] = useState("");
+  const [editDueTime, setEditDueTime] = useState("");
   const [editStatus, setEditStatus] = useState<Task["status"]>("open");
   const [editType, setEditType] = useState<TaskType>("call");
   const [editNotes, setEditNotes] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [newDueDate, setNewDueDate] = useState("");
+  const [newDueTime, setNewDueTime] = useState("");
   const [newType, setNewType] = useState<TaskType>("call");
   const [newNotes, setNewNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -139,10 +146,11 @@ export default function TasksPanel({ leadId, token }: Props) {
     await fetch(`${API_BASE}/api/leads/${leadId}/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
-      body: JSON.stringify({ title, due_date: newDueDate || null, task_type: newType, notes: newNotes }),
+      body: JSON.stringify({ title, due_date: newDueDate || null, due_at: newDueDate && newDueTime ? new Date(`${newDueDate}T${newDueTime}`).toISOString() : null, task_type: newType, notes: newNotes }),
     });
     setNewTitle("");
     setNewDueDate("");
+    setNewDueTime("");
     setNewType("call");
     setNewNotes("");
     setShowNewForm(false);
@@ -167,6 +175,7 @@ export default function TasksPanel({ leadId, token }: Props) {
       body: JSON.stringify({
         title: editTitle.trim() || task.title,
         due_date: editDueDate || null,
+        due_at: editDueDate && editDueTime ? new Date(`${editDueDate}T${editDueTime}`).toISOString() : null,
         status: editStatus,
         task_type: editType,
         notes: editNotes,
@@ -190,6 +199,11 @@ export default function TasksPanel({ leadId, token }: Props) {
     setEditingId(task.id);
     setEditTitle(task.title);
     setEditDueDate(task.due_date);
+    if (task.due_at) {
+      const due = new Date(task.due_at);
+      setEditDueDate(`${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, "0")}-${String(due.getDate()).padStart(2, "0")}`);
+      setEditDueTime(`${String(due.getHours()).padStart(2, "0")}:${String(due.getMinutes()).padStart(2, "0")}`);
+    } else setEditDueTime("");
     setEditStatus(task.status);
     setEditType(task.task_type || "other");
     setEditNotes(task.notes || "");
@@ -198,11 +212,12 @@ export default function TasksPanel({ leadId, token }: Props) {
   function groupByDate(list: Task[]): Record<string, Task[]> {
     const map: Record<string, Task[]> = {};
     for (const t of list) {
-      const key = t.due_date || "No Due Date";
+      const due = t.due_at ? new Date(t.due_at) : null;
+      const key = due ? `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, "0")}-${String(due.getDate()).padStart(2, "0")}` : t.due_date || "No Due Date";
       (map[key] ||= []).push(t);
     }
     for (const key of Object.keys(map)) {
-      map[key].sort((a, b) => a.created_at.localeCompare(b.created_at));
+      map[key].sort((a, b) => (a.due_at || a.created_at).localeCompare(b.due_at || b.created_at));
     }
     return map;
   }
@@ -268,6 +283,10 @@ export default function TasksPanel({ leadId, token }: Props) {
                 onChange={(e) => setNewDueDate(e.target.value)}
                 style={{ ...inputStyle, marginTop: 3 }}
               />
+            </label>
+            <label style={{ flex: 1, fontSize: 11, color: "#706e6b" }}>
+              Due time (your timezone)
+              <input type="time" value={newDueTime} disabled={!newDueDate} onChange={(e) => setNewDueTime(e.target.value)} style={{ ...inputStyle, marginTop: 3 }} />
             </label>
           </div>
           <label style={{ display: "block", fontSize: 11, color: "#706e6b", marginTop: 8 }}>
@@ -380,7 +399,7 @@ export default function TasksPanel({ leadId, token }: Props) {
   function renderTaskRow(task: Task, dateKey: string) {
     const isExpanded = expandedId === task.id;
     const isEditing = editingId === task.id;
-    const isOverdue = dateKey !== "No Due Date" && dateKey < todayISO() && task.status !== "done";
+    const isOverdue = task.status !== "done" && (task.due_at ? Date.parse(task.due_at) < Date.now() : dateKey !== "No Due Date" && dateKey < todayISO());
     return (
       <div key={task.id} style={taskRow(isExpanded)}>
         <div
@@ -409,7 +428,7 @@ export default function TasksPanel({ leadId, token }: Props) {
             <div style={{ display: "flex", gap: 10, marginTop: 3, fontSize: 11, color: "#706e6b", alignItems: "center" }}>
               {task.due_date && (
                 <span style={{ color: isOverdue ? "#c23934" : "#706e6b", fontWeight: isOverdue ? 600 : 400 }}>
-                  📅 {formatDueLabel(task.due_date)}
+                  📅 {task.due_at ? new Date(task.due_at).toLocaleString() : formatDueLabel(task.due_date)}
                 </span>
               )}
               <span style={{ color: STATUS_COLORS[task.status], fontWeight: 600 }}>
@@ -440,6 +459,10 @@ export default function TasksPanel({ leadId, token }: Props) {
                   <label style={{ ...fieldLabel, flex: 1 }}>
                     Due Date
                     <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} style={inputStyle} />
+                  </label>
+                  <label style={{ ...fieldLabel, flex: 1 }}>
+                    Due time (your timezone)
+                    <input type="time" value={editDueTime} disabled={!editDueDate} onChange={(e) => setEditDueTime(e.target.value)} style={inputStyle} />
                   </label>
                   <label style={{ ...fieldLabel, flex: 1 }}>
                     Status
@@ -473,7 +496,9 @@ export default function TasksPanel({ leadId, token }: Props) {
                   <dt style={dtStyle}>Status</dt>
                   <dd style={ddStyle}>{STATUS_LABELS[task.status]}</dd>
                   <dt style={dtStyle}>Due Date</dt>
-                  <dd style={ddStyle}>{task.due_date ? formatDueLabel(task.due_date) : "—"}</dd>
+                  <dd style={ddStyle}>{task.due_at ? new Date(task.due_at).toLocaleString() : task.due_date ? formatDueLabel(task.due_date) : "—"}</dd>
+                  {task.completion_reason ? <><dt style={dtStyle}>Completion reason</dt><dd style={ddStyle}>{task.completion_reason}</dd></> : null}
+                  {task.scheduled_start ? <><dt style={dtStyle}>Scheduled start</dt><dd style={ddStyle}>{new Date(task.scheduled_start).toLocaleString()}</dd></> : null}
                   <dt style={dtStyle}>Created</dt>
                   <dd style={ddStyle}>{new Date(task.created_at).toLocaleString()}</dd>
                 </dl>
@@ -486,8 +511,8 @@ export default function TasksPanel({ leadId, token }: Props) {
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "flex-end" }}>
-                  <button className="slds-button" onClick={(e) => { e.stopPropagation(); deleteTask(task); }} style={btnDanger}>Delete</button>
-                  <button className="slds-button" onClick={(e) => { e.stopPropagation(); startEdit(task); }} style={btnPrimary}>Edit</button>
+                  {!task.automatic_key ? <button className="slds-button" onClick={(e) => { e.stopPropagation(); deleteTask(task); }} style={btnDanger}>Delete</button> : null}
+                  {!task.automatic_key ? <button className="slds-button" onClick={(e) => { e.stopPropagation(); startEdit(task); }} style={btnPrimary}>Edit</button> : null}
                 </div>
               </>
             )}

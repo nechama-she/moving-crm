@@ -1,9 +1,10 @@
 import logging
+from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
@@ -36,6 +37,11 @@ class TaskResponse(BaseModel):
     lead_id: str = Field(..., description="Lead this task belongs to")
     title: str = Field(..., description="Task subject / what needs to be done")
     due_date: str = Field("", description="YYYY-MM-DD, empty string if no due date")
+    due_at: str = ""
+    scheduled_start: str = ""
+    automatic_key: str = ""
+    completed_at: str = ""
+    completion_reason: str = ""
     status: TaskStatus = Field(..., description="open | in_progress | done")
     task_type: TaskType = Field(..., description="call | email | text | messenger | instagram | other")
     notes: str = Field("", description="Free-form details, supports newlines")
@@ -118,6 +124,14 @@ def list_tasks(
 class TaskCreate(BaseModel):
     title: str = Field(..., min_length=1, description="Task subject")
     due_date: Optional[str] = Field(None, description="YYYY-MM-DD; omit or null for no due date")
+    due_at: Optional[datetime] = None
+
+    @field_validator('due_at')
+    @classmethod
+    def timezone_required(cls, value):
+        if value is not None and value.tzinfo is None:
+            raise ValueError('due_at must include a timezone')
+        return value
     notes: Optional[str] = Field(None, description="Free-form details, supports newlines")
     status: TaskStatus = Field(TaskStatus.open, description="Initial status")
     task_type: TaskType = Field(TaskType.other, description="Channel / activity type")
@@ -147,6 +161,7 @@ def create_task(
         lead_id=lead_id,
         title=title,
         due_date=(body.due_date or "").strip() or None,
+        due_at=body.due_at,
         notes=body.notes or "",
         status=body.status.value,
         task_type=body.task_type.value,
@@ -164,6 +179,12 @@ def create_task(
 class TaskUpdate(BaseModel):
     title: Optional[str] = Field(None, description="New subject")
     due_date: Optional[str] = Field(None, description="YYYY-MM-DD; empty string clears the due date")
+    due_at: Optional[datetime] = None
+
+    @field_validator('due_at')
+    @classmethod
+    def timezone_required(cls, value):
+        return TaskCreate.timezone_required(value)
     notes: Optional[str] = Field(None, description="Free-form details, supports newlines")
     status: Optional[TaskStatus] = None
     task_type: Optional[TaskType] = None
@@ -185,6 +206,14 @@ def update_task(
     if not _can_see_lead(user, lead, db):
         raise HTTPException(status_code=403, detail="Access denied")
 
+    if task.automatic_key and {'title', 'due_date', 'due_at', 'task_type'} & body.model_fields_set:
+        raise HTTPException(400, 'Automatic follow-up schedules are managed by lead and communication updates')
+    if task.automatic_key:
+        db.query(Lead.id).filter(Lead.id == lead.id).with_for_update().one()
+        db.refresh(lead)
+        db.refresh(task)
+    if task.automatic_key and body.status is not None and body.status != TaskStatus.done and (lead.priority != 0 or not lead.followup_priority_confirmed):
+        raise HTTPException(400, 'Only confirmed Priority 0 leads can have open follow-up tasks')
     if body.title is not None:
         title = body.title.strip()
         if not title:
@@ -192,15 +221,22 @@ def update_task(
         task.title = title
     if body.due_date is not None:
         task.due_date = body.due_date.strip() or None
+    if 'due_at' in body.model_fields_set:
+        task.due_at = body.due_at
     if body.notes is not None:
         task.notes = body.notes
     if body.status is not None:
         task.status = body.status.value
+        task.completed_at = datetime.now(timezone.utc) if body.status == TaskStatus.done else None
+        task.completion_reason = 'Manually completed' if body.status == TaskStatus.done else None
     if body.task_type is not None:
         task.task_type = body.task_type.value
 
     db.commit()
     db.refresh(task)
+    if task.automatic_key:
+        from realtime import publish_realtime_event
+        publish_realtime_event({'type': 'followup_tasks_changed', 'lead_id': lead.id})
     return task.to_dict()
 
 
@@ -222,5 +258,7 @@ def delete_task(
     if not _can_see_lead(user, lead, db):
         raise HTTPException(status_code=403, detail="Access denied")
 
+    if task.automatic_key:
+        raise HTTPException(400, 'Automatic follow-up tasks cannot be deleted; mark them completed instead')
     db.delete(task)
     db.commit()

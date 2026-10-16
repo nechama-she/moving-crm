@@ -1,6 +1,6 @@
 """Pending schema changes for the existing production database.
 
-Install first-contact tracking and clear the old backfill once.
+Install timed follow-up tasks and first-contact tracking.
 """
 import logging
 
@@ -13,6 +13,8 @@ logger = logging.getLogger("migrate")
 
 def migrate() -> None:
     with engine.begin() as connection:
+        from followup_tasks import install as install_followup_tasks
+        install_followup_tasks(connection)
         from first_contact_state import install as install_first_contact
         install_first_contact(connection)
         # Clear the incorrectly backfilled queue once. The marker and delete
@@ -25,7 +27,7 @@ def migrate() -> None:
         if clear_first_contact:
             cleared = connection.execute(text("DELETE FROM first_contact_states")).rowcount
             logger.info("Cleared %s first-contact state rows", cleared)
-    logger.info("First-contact state setup complete")
+    logger.info("Follow-up task and first-contact state setup complete")
 
 
 if __name__ == "__main__":

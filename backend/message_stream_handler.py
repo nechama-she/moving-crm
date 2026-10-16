@@ -475,6 +475,8 @@ def handler(event, context):
                     channel = "calls" if ":table/calls/stream/" in str(record.get("eventSourceARN")) else _channel(record, item)
                     contact_removed = record_contact(db, channel, item)
                     db.commit()
+                    if db.info.pop('followup_tasks_changed', False):
+                        realtime_events.append({"type": "followup_tasks_changed"})
                     if contact_removed:
                         realtime_events.append({"type": "first_contact_ignored"})
                     processed += 1
@@ -482,6 +484,7 @@ def handler(event, context):
                         realtime_events.append(realtime_event)
             except Exception:
                 db.rollback()
+                db.info.pop('followup_tasks_changed', None)
                 logger.exception("Failed message stream record %s", event_id)
                 failures.append({"itemIdentifier": event_id})
         if realtime_events:

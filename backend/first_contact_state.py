@@ -42,6 +42,8 @@ def resolve(db, lead_id, occurred_at, evidence=None, source='contact_event'):
 
 def add_created_lead(lead_id, *, created_in_smartmoving_here=False):
     """Best effort after lead commit; never fail creation because of this queue."""
+    from followup_tasks import sync_saved_lead
+    sync_saved_lead(lead_id)
     import logging
     try:
         from database import SessionLocal
@@ -126,4 +128,8 @@ def record_contact(db, channel, item):
         created = created.replace(tzinfo=timezone.utc) if not created.tzinfo else created
         if occurred >= created:
             removed += resolve(db, lead.id, occurred, contact_evidence(channel, item))
+            from followup_tasks import record_contact as record_followup_contact
+            if record_followup_contact(db, lead, channel, item):
+                # The stream handler publishes after committing this transaction.
+                db.info['followup_tasks_changed'] = True
     return removed
