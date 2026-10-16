@@ -4960,7 +4960,10 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
     if x_api_secret != secret:
         raise HTTPException(status_code=401, detail="Invalid API secret")
 
-    body = _hydrate_new_lead_from_smartmoving(body)
+    # Copy creates the provider lead immediately above this call. Its initial
+    # CRM data is already known; only incoming pushes need hydration.
+    if not created_in_smartmoving_here:
+        body = _hydrate_new_lead_from_smartmoving(body)
 
     if not body.full_name.strip():
         raise HTTPException(status_code=400, detail="full_name is required")

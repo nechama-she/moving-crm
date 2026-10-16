@@ -60,6 +60,19 @@ def test_creation_loads_smartmoving_details_before_tasks():
     lead_call = next(node for node in ast.walk(creation) if isinstance(node, ast.Call)
                      and isinstance(node.func, ast.Name) and node.func.id == 'Lead')
     assert hydrate_call.lineno < lead_call.lineno
+    guard = next(node for node in creation.body if isinstance(node, ast.If)
+                 and hydrate_call in list(ast.walk(node)))
+    lookup = Mock(return_value='hydrated')
+    guarded_scope = dict(created_in_smartmoving_here=True, body='copied',
+                         _hydrate_new_lead_from_smartmoving=lookup)
+    guarded_code = compile(ast.Module(body=[guard], type_ignores=[]), str(source), 'exec')
+    exec(guarded_code, guarded_scope)
+    lookup.assert_not_called()
+    assert guarded_scope['body'] == 'copied'
+    guarded_scope['created_in_smartmoving_here'] = False
+    exec(guarded_code, guarded_scope)
+    lookup.assert_called_once_with('copied')
+    assert guarded_scope['body'] == 'hydrated'
     assert any(item.arg == 'priority' and isinstance(item.value, ast.Attribute)
                and item.value.attr == 'priority' for item in lead_call.keywords)
 
