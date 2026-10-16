@@ -390,7 +390,7 @@ def ignore_first_contact_lead(lead_id: str, _: User = Depends(require_admin), db
     return {"ok": True}
 
 
-def _has_human_messenger_contact(lead, created_at):
+def _has_human_messenger_contact(lead, created_at, return_contact=False):
     user_id = str(lead.facebook_user_id or "").strip()
     page_id = str(lead.company.facebook_page_id or "").strip() if lead.company else ""
     if not user_id or not page_id:
@@ -415,6 +415,9 @@ def _has_human_messenger_contact(lead, created_at):
             if direction not in {"sent", "outbound"} and role not in {"agent", "human", "sales", "sales_rep", "admin", "business", "page"}:
                 continue
             if _epoch(item.get("timestamp")) >= created_at.timestamp():
+                if return_contact:
+                    from first_contact_state import contact_evidence
+                    return contact_evidence('messenger', item)
                 return True
         cursor = response.get("LastEvaluatedKey")
         if not cursor:
@@ -422,7 +425,7 @@ def _has_human_messenger_contact(lead, created_at):
         args["ExclusiveStartKey"] = cursor
 
 
-def has_first_contact(lead, created):
+def has_first_contact(lead, created, return_contact=False):
     """Shared by initial eligibility and Reload: this client's calls and messages."""
     from libs.common.phone import phone_variants
     phone = _digits(lead.phone)
@@ -443,11 +446,41 @@ def has_first_contact(lead, created):
                                 and str(item.get('direction') or '').lower() in {'outbound', 'sent'}
                                 and str(item.get('sales_name') or '').lower() not in {'ai', 'assistant', 'bot'}
                                 and str(item.get('role') or '').lower() not in {'ai', 'assistant', 'bot'}):
+                            if return_contact:
+                                from first_contact_state import contact_evidence
+                                return contact_evidence('calls' if table is calls_table else 'sms', item)
                             return True
                     if not page.get('LastEvaluatedKey'):
                         break
                     args['ExclusiveStartKey'] = page['LastEvaluatedKey']
-    return _has_human_messenger_contact(lead, created)
+    return _has_human_messenger_contact(lead, created, return_contact=return_contact)
+
+
+@router.get("/first-contact-states/all")
+def list_all_first_contact_states(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    rows = db.query(FirstContactState, Lead.full_name, Lead.phone).outerjoin(
+        Lead, Lead.id == FirstContactState.lead_id
+    ).order_by(FirstContactState.waiting_since, FirstContactState.lead_id).all()
+    return {"items": [{"lead_id": state.lead_id, "client": name or "", "phone": phone or "",
+                       "waiting_since": state.waiting_since.isoformat()}
+                      for state, name, phone in rows], "count": len(rows)}
+
+
+@router.get("/first-contact-history/all")
+def list_first_contact_history(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from models import FirstContactResolution
+    rows = db.query(FirstContactResolution, Lead.full_name, Lead.phone).outerjoin(
+        Lead, Lead.id == FirstContactResolution.lead_id
+    ).order_by(FirstContactResolution.contacted_at.desc(), FirstContactResolution.lead_id).all()
+    items = []
+    for resolution, name, phone in rows:
+        evidence = json.loads(resolution.evidence) if resolution.evidence else {}
+        outcome = ('Removed from stale table' if evidence.get('was_pending') else 'Contact found; not in stale table') if evidence else 'Historical record; details unavailable'
+        items.append({'lead_id': resolution.lead_id, 'client': name or '', 'phone': phone or '',
+                      'contacted_at': resolution.contacted_at.isoformat(),
+                      'recorded_at': resolution.recorded_at.isoformat() if resolution.recorded_at else None,
+                      'outcome': outcome, 'evidence': evidence})
+    return {'items': items, 'count': len(items)}
 
 
 @router.get("/first-contact-reload")
@@ -465,7 +498,8 @@ def reload_first_contact_lead(lead_id: str, _: User = Depends(require_admin), db
     if not lead:
         return {"removed": False}
     created = state.waiting_since if state.waiting_since.tzinfo else state.waiting_since.replace(tzinfo=timezone.utc)
-    removed = resolve(db, lead_id, created) if has_first_contact(lead, created) else 0
+    contact = has_first_contact(lead, created, return_contact=True)
+    removed = resolve(db, lead_id, datetime.fromisoformat(contact['contacted_at']), contact, 'reload') if contact else 0
     db.commit()
     if removed:
         publish_realtime_event({"type": "first_contact_ignored", "lead_id": lead_id})

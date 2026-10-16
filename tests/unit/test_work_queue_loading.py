@@ -20,6 +20,29 @@ from models import Base, Company, Lead, MessageState, MissedCallState, User, Fir
 from work_queue_rules import _digits, _epoch
 
 
+def test_contact_resolution_saves_triggering_evidence_without_overwriting_first():
+    import json
+    from sqlalchemy.dialects import postgresql
+    from first_contact_state import contact_evidence, resolve
+    db = Mock()
+    db.get.return_value = object()
+    db.query.return_value.filter_by.return_value.delete.return_value = 1
+    evidence = contact_evidence('sms', {'message_id': 'sms-42', 'timestamp': 1792152000,
+        'direction': 'sent', 'sales_name': 'Eli', 'phone_number': '2403703417',
+        'company_number': '2029372625', 'body': 'Hello', 'secret': 'not stored'})
+    occurred = datetime.fromisoformat(evidence['contacted_at'])
+    assert resolve(db, 'lead-1', occurred, evidence, 'reload') == 1
+    statement = db.execute.call_args_list[1].args[0]
+    compiled = statement.compile(dialect=postgresql.dialect())
+    saved = json.loads(compiled.params['evidence'])
+    assert saved['record_id'] == 'sms-42'
+    assert saved['message'] == 'Hello'
+    assert saved['was_pending'] is True
+    assert saved['source'] == 'reload'
+    assert 'secret' not in saved
+    assert 'ON CONFLICT (lead_id) DO NOTHING' in str(compiled)
+
+
 @pytest.mark.parametrize("phone,expected", [
     ("(212) 555-1234", True),
     ("+1 907 555 1234", True),
@@ -64,12 +87,17 @@ def test_first_contact_checks_only_existing_smartmoving_leads(
     db.get.return_value = None
     monkeypatch.setitem(sys.modules, "database", SimpleNamespace(SessionLocal=lambda: db))
     history = Mock(side_effect=history_result) if isinstance(history_result, Exception) else Mock(return_value=history_result)
+    if history_result is True:
+        history.return_value = {'contacted_at': '2026-10-01T13:00:00+00:00', 'channel': 'sms', 'record_id': 'message-1'}
+    resolve = Mock()
+    monkeypatch.setattr(state, 'resolve', resolve)
     monkeypatch.setitem(sys.modules, "routes.unanswered_messages", SimpleNamespace(has_first_contact=history))
     state.add_created_lead("saved", created_in_smartmoving_here=created_here)
     assert history.call_count == int(should_check)
     if should_check:
-        history.assert_called_once_with(lead, datetime(2026, 10, 1, 12, tzinfo=timezone.utc))
-    assert db.commit.call_count == int(should_add)
+        history.assert_called_once_with(lead, datetime(2026, 10, 1, 12, tzinfo=timezone.utc), return_contact=True)
+    assert resolve.call_count == int(history_result is True and should_check)
+    assert db.commit.call_count == int(should_add or (history_result is True and should_check))
     assert db.execute.call_count == int(should_add)
 
 

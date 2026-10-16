@@ -367,6 +367,8 @@ class FirstContactResolution(Base):
     __tablename__ = "first_contact_resolutions"
     lead_id = Column(String(36), ForeignKey("leads.id", ondelete="CASCADE"), primary_key=True)
     contacted_at = Column(DateTime(timezone=True), nullable=False)
+    evidence = Column(Text, nullable=True)
+    recorded_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class MessageState(Base):

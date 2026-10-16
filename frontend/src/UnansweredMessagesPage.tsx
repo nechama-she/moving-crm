@@ -8,7 +8,7 @@ import ConnectCommunicationLeadModal, { CommunicationTarget } from "./ConnectCom
 import { createQueueRefreshScheduler } from "./queueRefreshScheduler";
 
 type MessageTab = "unanswered" | "ended";
-type QueueTab = "messages" | "calls" | "leads" | "followups" | "message-state" | "missed-call-state";
+type QueueTab = "messages" | "calls" | "leads" | "followups" | "message-state" | "missed-call-state" | "stale-state" | "contact-history";
 type LeadTab = "new" | "overdue";
 type MessageRow = { channel: string; message_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
@@ -75,7 +75,7 @@ export default function UnansweredMessagesPage() {
   const [queueTab, setQueueTab] = useState<QueueTab>(() => {
     try {
       const saved = sessionStorage.getItem("sales-work-queue.tab");
-      return (["messages", "calls", "leads", "followups", "message-state", "missed-call-state"] as string[]).includes(saved || "") ? saved as QueueTab : "messages";
+      return (["messages", "calls", "leads", "followups", "message-state", "missed-call-state", "stale-state", "contact-history"] as string[]).includes(saved || "") ? saved as QueueTab : "messages";
     } catch { return "messages"; }
   });
   const [tab, setTab] = useState<MessageTab>(() => {
@@ -109,6 +109,10 @@ export default function UnansweredMessagesPage() {
   const [globalFirstContactCounts, setGlobalFirstContactCounts] = useState({ new: 0, overdue: 0 });
   const [firstContactHasMore, setFirstContactHasMore] = useState(false);
   const [loadingLeads, setLoadingLeads] = useState(false);
+  const [staleStates, setStaleStates] = useState<{lead_id: string; client: string; phone: string; waiting_since: string}[]>([]);
+  const [loadingStaleStates, setLoadingStaleStates] = useState(false);
+  const [contactHistory, setContactHistory] = useState<{lead_id: string; client: string; phone: string; contacted_at: string; recorded_at: string | null; outcome: string; evidence: Record<string, string>}[]>([]);
+  const [loadingContactHistory, setLoadingContactHistory] = useState(false);
   const [ignoringLead, setIgnoringLead] = useState<string | null>(null);
   const [reloadingContacts, setReloadingContacts] = useState(false);
   const contactReloadRunning = useRef(false);
@@ -322,6 +326,32 @@ export default function UnansweredMessagesPage() {
   }, [token]);
 
 
+  const loadContactHistory = useCallback(async () => {
+    setLoadingContactHistory(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-history/all`, { headers: authHeaders(token), cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Contact history HTTP ${response.status}`);
+      setContactHistory(data.items || []);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load contact history");
+    } finally { setLoadingContactHistory(false); }
+  }, [token]);
+
+  const loadStaleStates = useCallback(async () => {
+    setLoadingStaleStates(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-states/all`, { headers: authHeaders(token), cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Stale lead state HTTP ${response.status}`);
+      setStaleStates(data.items || []);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load stale lead states");
+    } finally { setLoadingStaleStates(false); }
+  }, [token]);
+
   const loadFirstContactLeads = useCallback(async (offset = 0, refresh = false, silent = false) => {
     const key = currentQueueFilterKey.current;
     const previous = leadInFlight.current;
@@ -484,7 +514,7 @@ export default function UnansweredMessagesPage() {
     const loaders = {
       messages: loadMessages, calls: loadCalls, leads: loadFirstContactLeads,
       followups: loadFollowups, "message-state": loadMessageStates,
-      "missed-call-state": loadMissedCallStates, summary: loadSummary,
+      "missed-call-state": loadMissedCallStates, "stale-state": loadStaleStates, "contact-history": loadContactHistory, summary: loadSummary,
     };
     const ensureLoaded = (key: keyof typeof loaders) => {
       const loader = loaders[key];
@@ -504,7 +534,7 @@ export default function UnansweredMessagesPage() {
     })();
     return () => { cancelled = true; };
   }, [queueTab, tab, loadMessages, loadCalls, loadFirstContactLeads, loadFollowups,
-      loadMessageStates, loadMissedCallStates, loadSummary]);
+      loadMessageStates, loadMissedCallStates, loadStaleStates, loadContactHistory, loadSummary]);
 
   useEffect(() => {
     const target = followupLoadSentinel.current;
@@ -880,9 +910,45 @@ export default function UnansweredMessagesPage() {
           <strong style={queueCardCount}>{missedCallStates.length}</strong>
           <span style={queueCardDescription}>Raw CRM missed-call state rows</span>
         </button>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("stale-state")} style={{ ...queueCard, ...(queueTab === "stale-state" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>Stale Lead State Table</span>
+          <strong style={queueCardCount}>{staleStates.length}</strong>
+          <span style={queueCardDescription}>Raw CRM first-contact state rows</span>
+        </button>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("contact-history")} style={{ ...queueCard, ...(queueTab === "contact-history" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>First Contact History</span>
+          <strong style={queueCardCount}>{contactHistory.length}</strong>
+          <span style={queueCardDescription}>Contact that removed or excluded each lead</span>
+        </button>
       </nav>
 
-      {queueTab !== "message-state" && queueTab !== "missed-call-state" ? <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+      {queueTab === "contact-history" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 18 }}>
+          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>First Contact History ({contactHistory.length})</h2>
+          <button type="button" className="slds-button" disabled={loadingContactHistory} onClick={() => void loadContactHistory()}>{loadingContactHistory ? "Loading..." : "Reload"}</button>
+        </div>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr>{["Client", "Phone", "Outcome", "Contact time", "Recorded", "Channel", "Sender", "Direction", "Destination", "Call / Message ID", "Message", "Source", "Lead ID"].map(label => <th key={label} style={{ padding: 14, textAlign: "left", background: "#f8fafc" }}>{label}</th>)}</tr></thead>
+          <tbody>{contactHistory.map(row => <tr key={row.lead_id}>
+            {[row.client, row.phone, row.outcome, new Date(row.contacted_at).toLocaleString(), row.recorded_at ? new Date(row.recorded_at).toLocaleString() : "Not recorded", row.evidence.channel, row.evidence.sender, row.evidence.direction, row.evidence.destination, row.evidence.record_id, row.evidence.message, row.evidence.source, row.lead_id].map((value, index) => <td key={index} style={{ padding: 14, borderTop: "1px solid #d8dde6", minWidth: index === 10 ? 240 : undefined, whiteSpace: "pre-wrap" }}>{value || ""}</td>)}
+          </tr>)}{!loadingContactHistory && !contactHistory.length ? <tr><td colSpan={13} style={{ padding: 32, textAlign: "center" }}>No contact history recorded.</td></tr> : null}</tbody>
+        </table></div>
+      </section> : null}
+
+      {queueTab === "stale-state" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 18 }}>
+          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Stale Lead State Table ({staleStates.length})</h2>
+          <button type="button" className="slds-button" disabled={loadingStaleStates} onClick={() => void loadStaleStates()}>{loadingStaleStates ? "Loading..." : "Reload"}</button>
+        </div>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr>{["Client", "Phone", "Lead ID", "Waiting Since"].map(label => <th key={label} style={{ padding: 14, textAlign: "left", background: "#f8fafc" }}>{label}</th>)}</tr></thead>
+          <tbody>{staleStates.map(row => <tr key={row.lead_id}>
+            {[row.client, row.phone, row.lead_id, new Date(row.waiting_since).toLocaleString()].map((value, index) => <td key={index} style={{ padding: 14, borderTop: "1px solid #d8dde6" }}>{value}</td>)}
+          </tr>)}{!loadingStaleStates && !staleStates.length ? <tr><td colSpan={4} style={{ padding: 32, textAlign: "center" }}>No saved stale lead rows.</td></tr> : null}</tbody>
+        </table></div>
+      </section> : null}
+
+      {queueTab !== "message-state" && queueTab !== "missed-call-state" && queueTab !== "stale-state" && queueTab !== "contact-history" ? <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
         <select aria-label="Filter work queue by rep" value={repFilter} onChange={(event) => setRepFilter(event.target.value)} style={filterSelect}><option value="">All reps</option>{filterOptions.reps.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         <select aria-label="Filter work queue by company" value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} style={filterSelect}><option value="">All companies</option>{filterOptions.companies.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         {queueTab !== "leads" ? <select aria-label="Filter work queue by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select> : null}

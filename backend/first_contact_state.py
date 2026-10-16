@@ -10,14 +10,32 @@ from models import FirstContactState, FirstContactResolution
 def install(connection):
     FirstContactState.__table__.create(connection, checkfirst=True)
     FirstContactResolution.__table__.create(connection, checkfirst=True)
+    connection.execute(text("ALTER TABLE first_contact_resolutions ADD COLUMN IF NOT EXISTS evidence TEXT"))
+    connection.execute(text("ALTER TABLE first_contact_resolutions ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMPTZ"))
     connection.execute(text("DROP TRIGGER IF EXISTS first_contact_changed ON leads"))
     connection.execute(text("DROP FUNCTION IF EXISTS sync_first_contact_state()"))
 
 
-def resolve(db, lead_id, occurred_at):
+def contact_evidence(channel, item):
+    from work_queue_rules import _epoch
+    return {'channel': channel,
+            'contacted_at': datetime.fromtimestamp(_epoch(item.get('timestamp')), timezone.utc).isoformat(),
+            'record_id': str(item.get('call_id') or item.get('message_id') or item.get('id') or ''),
+            'direction': str(item.get('direction') or ''),
+            'sender': str(item.get('sales_name') or item.get('role') or ''),
+            'client_identifier': str(item.get('phone_number') or item.get('user_id') or ''),
+            'destination': str(item.get('company_number') or item.get('page_id') or ''),
+            'message': str(item.get('message') or item.get('body') or item.get('text') or '')[:4000]}
+
+
+def resolve(db, lead_id, occurred_at, evidence=None, source='contact_event'):
+    import json
     # Serialize contact removal against the initial queue insertion.
     db.execute(text("SELECT id FROM leads WHERE id=:id FOR UPDATE"), {"id": lead_id})
-    statement = insert(FirstContactResolution).values(lead_id=lead_id, contacted_at=occurred_at)
+    was_pending = db.get(FirstContactState, lead_id) is not None
+    details = {**(evidence or {}), 'source': source, 'was_pending': was_pending}
+    statement = insert(FirstContactResolution).values(
+        lead_id=lead_id, contacted_at=occurred_at, evidence=json.dumps(details), recorded_at=datetime.now(timezone.utc))
     db.execute(statement.on_conflict_do_nothing(index_elements=[FirstContactResolution.lead_id]))
     return db.query(FirstContactState).filter_by(lead_id=lead_id).delete(synchronize_session=False)
 
@@ -44,7 +62,11 @@ def add_created_lead(lead_id, *, created_in_smartmoving_here=False):
             db.expunge_all()
         if lead.smartmoving_id and not created_in_smartmoving_here:
             from routes.unanswered_messages import has_first_contact
-            if has_first_contact(lead, created):
+            contact = has_first_contact(lead, created, return_contact=True)
+            if contact:
+                with SessionLocal() as db:
+                    resolve(db, lead_id, datetime.fromisoformat(contact['contacted_at']), contact, 'initial_check')
+                    db.commit()
                 return
         with SessionLocal() as db:
             # Serialize only the final write with contact events, never history reads.
@@ -103,5 +125,5 @@ def record_contact(db, channel, item):
             continue
         created = created.replace(tzinfo=timezone.utc) if not created.tzinfo else created
         if occurred >= created:
-            removed += resolve(db, lead.id, occurred)
+            removed += resolve(db, lead.id, occurred, contact_evidence(channel, item))
     return removed
