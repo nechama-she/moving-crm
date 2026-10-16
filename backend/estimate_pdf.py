@@ -190,6 +190,8 @@ def build_estimate_pdf(data, rows):
         story.append(p(elevator['terms'] + '. Fee applies at each address where an elevator is used.', 'NoteEstimate'))
         for row in elevator['locations']:
             answer = ('Yes' if row['uses_elevator'] else 'No') + f"; charge {money(row['total'])}" if row['uses_elevator'] is not None else 'Not answered - elevator charges may apply'
+            if row.get('unknown'):
+                answer = 'Customer does not know - elevator use and any applicable charge are pending confirmation.'
             story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
     if data.get('long_carry'):
         carry = data['long_carry']
@@ -206,6 +208,8 @@ def build_estimate_pdf(data, rows):
         story.append(p(f"Up to {stairs['steps_per_flight']} steps counts as one flight. {stairs['free_flights']} free flight(s) at each address; ${stairs['rate_per_cuft']:.2f} per cu ft per additional flight. Stairs inside the house or apartment are excluded.", 'NoteEstimate'))
         for row in stairs['locations']:
             answer = f"{row['flights']} flight(s); charge {money(row['total'])}" if row['flights'] is not None else 'Not answered - stair charges may apply'
+            if row.get('unknown'):
+                answer = 'Customer does not know - stairs and any applicable charge are pending confirmation.'
             story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
     if data.get('storage'):
         storage = data['storage']

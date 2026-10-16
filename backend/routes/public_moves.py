@@ -986,6 +986,7 @@ class CustomerPackingChange(BaseModel):
     elevator: bool | None = Field(default=None, strict=True)
     carry_feet: int | None = Field(default=None, ge=0, le=100000, strict=True)
     carry_unknown: bool = Field(default=False, strict=True)
+    access_unknown: bool = Field(default=False, strict=True)
     carry_acknowledged: bool = Field(default=False, strict=True)
     flights: int | None = Field(default=None, ge=0, le=1000, strict=True)
     available_date: str = Field(default='', max_length=10)
@@ -1082,14 +1083,14 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     if body.change and body.change.kind == 'elevator':
         from routes.pricing import customer_elevator, sync_elevator_charges
         change = body.change
-        if change.location is None or change.elevator is None:
+        if change.location is None or (not change.access_unknown and change.elevator is None) or (change.access_unknown and change.elevator is not None):
             raise HTTPException(400, 'Choose Yes or No for elevator use at this address.')
         option = customer_elevator(lead, job, db)
         question = next((row for row in option['locations'] if row['location'] == change.location), None) if option else None
         if not question or question['revision'] != change.revision:
             raise HTTPException(409, 'The address or elevator settings changed. Refresh and answer again.')
         selection = json.loads(job.customer_packing_package or '{}')
-        selection.setdefault('elevator', {})[change.location] = {'revision': question['revision'], 'uses_elevator': change.elevator}
+        selection.setdefault('elevator', {})[change.location] = {'revision': question['revision'], 'uses_elevator': change.elevator, 'unknown': change.access_unknown}
         job.customer_packing_package = json.dumps(selection)
         sync_elevator_charges(lead, job, db, change.location)
         db.commit()
@@ -1113,14 +1114,14 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
     if body.change and body.change.kind == 'stairs':
         from routes.pricing import customer_stairs, sync_stairs_charges
         change = body.change
-        if change.location is None or change.flights is None:
+        if change.location is None or (not change.access_unknown and change.flights is None) or (change.access_unknown and change.flights is not None):
             raise HTTPException(400, 'Choose the number of flights for this address, including zero if there are no stairs.')
         option = customer_stairs(lead, job, db)
         question = next((row for row in option['locations'] if row['location'] == change.location), None) if option else None
         if not question or question['revision'] != change.revision:
             raise HTTPException(409, 'The address or stairs settings changed. Refresh and answer again.')
         selection = json.loads(job.customer_packing_package or '{}')
-        selection.setdefault('stairs', {})[change.location] = {'revision': question['revision'], 'flights': change.flights}
+        selection.setdefault('stairs', {})[change.location] = {'revision': question['revision'], 'flights': change.flights, 'unknown': change.access_unknown}
         job.customer_packing_package = json.dumps(selection)
         sync_stairs_charges(lead, job, db, change.location)
         db.commit()

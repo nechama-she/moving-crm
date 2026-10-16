@@ -187,11 +187,11 @@ export default function CustomerMovePage() {
   const [calculationError, setCalculationError] = useState('');
   const [stopsIncomplete,setStopsIncomplete]=useState<Record<string,boolean>>({});
   const [stopsMissing,setStopsMissing]=useState(false);
-  const [elevatorAnswers, setElevatorAnswers] = useState<Record<string, boolean | null>>({});
+  const [elevatorAnswers, setElevatorAnswers] = useState<Record<string, boolean | 'unknown' | null>>({});
   const [elevatorMissing, setElevatorMissing] = useState(false);
   const [carryAnswers, setCarryAnswers] = useState<Record<string, number | 'unknown' | null>>({});
   const [carryMissing, setCarryMissing] = useState(false);
-  const [stairsAnswers, setStairsAnswers] = useState<Record<string, number | null>>({});
+  const [stairsAnswers, setStairsAnswers] = useState<Record<string, number | 'unknown' | null>>({});
   const [stairsMissing, setStairsMissing] = useState(false);
   const [storageDate, setStorageDate] = useState('');
   const [storageMissing, setStorageMissing] = useState(false);
@@ -221,7 +221,7 @@ export default function CustomerMovePage() {
       setReportState('idle');
     } finally { setBusy(false); }
   }
-  type PricingChange = { kind: 'additional_protection' | 'material' | 'inventory_boxes' | 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; material_item?:import('./CustomerPackingOptions').AdditionalMaterialItem|null; box_quantities?:Record<string,number>; stop_change?:import('./CustomerExtraStopsQuestion').ExtraStopChange; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
+  type PricingChange = { kind: 'additional_protection' | 'material' | 'inventory_boxes' | 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; material_item?:import('./CustomerPackingOptions').AdditionalMaterialItem|null; box_quantities?:Record<string,number>; stop_change?:import('./CustomerExtraStopsQuestion').ExtraStopChange; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; access_unknown?: boolean; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
   const failedPricing = useRef(new Map<string, PricingChange>());
   function savePricingChange(change: PricingChange) {
     const id = `pricing:${change.kind}:${change.location || change.item_id || ''}:${change.stop_change?.previous || change.stop_change?.address || ''}`;
@@ -325,12 +325,12 @@ export default function CustomerMovePage() {
   const nextPricingLabels: Record<PricingStep,string> = { stops:'additional stops', elevator:'elevator', access:'truck access', stairs:'stairs', storage:'delivery date', bulky:'bulky items', package:'packing services', items:'moving terms' };
   const packingSections:('service'|'boxes'|'protection')[]=['service',...(packageSelection.mode==='none'?['protection'] as const:[]),...(packageSelection.mode !== 'full' && data?.packing_package?.box_items?.length?['boxes'] as const:[])];
   const nextPackingSection=packingSections[packingSections.indexOf(packingSection)+1];
-  useEffect(() => { setElevatorAnswers(Object.fromEntries((data?.elevator?.locations || []).map(row => [row.location,row.uses_elevator]))); setElevatorMissing(false); }, [data?.elevator?.locations.map(row => row.revision).join(':')]);
+  useEffect(() => { setElevatorAnswers(Object.fromEntries((data?.elevator?.locations || []).map(row => [row.location,row.unknown ? 'unknown' : row.uses_elevator]))); setElevatorMissing(false); }, [data?.elevator?.locations.map(row => row.revision).join(':')]);
   const pickupCarry = data?.long_carry?.locations.find(row => row.location === 'pickup');
   const deliveryCarry = data?.long_carry?.locations.find(row => row.location === 'delivery');
   const showDeliveryCarry = !!deliveryCarry && (!data?.shuttle || data.shuttle.automatic || shuttleAnswer === false);
   useEffect(() => { setCarryAnswers(Object.fromEntries((data?.long_carry?.locations || []).map(row => [row.location,row.unknown && row.acknowledged ? 'unknown' : row.distance_feet]))); setCarryMissing(false); }, [data?.long_carry?.locations.map(row => row.revision).join(':')]);
-  useEffect(() => { setStairsAnswers(Object.fromEntries((data?.stairs?.locations || []).map(row => [row.location,row.flights]))); setStairsMissing(false); }, [data?.stairs?.locations.map(row => row.revision).join(':')]);
+  useEffect(() => { setStairsAnswers(Object.fromEntries((data?.stairs?.locations || []).map(row => [row.location,row.unknown ? 'unknown' : row.flights]))); setStairsMissing(false); }, [data?.stairs?.locations.map(row => row.revision).join(':')]);
   function combinedPricingStep(step: string): PricingStep {
     if (step.startsWith('stops_')) return 'stops';
     if (step.startsWith('elevator_')) return 'elevator';
@@ -468,9 +468,9 @@ export default function CustomerMovePage() {
   }
   function openChargeQuestion(target: {step: PricingStep; section?: 'service' | 'boxes' | 'protection'}) {
     openRequiredQuestions([]);
-    setElevatorAnswers(Object.fromEntries((data?.elevator?.locations || []).map(row => [row.location, row.uses_elevator])));
+    setElevatorAnswers(Object.fromEntries((data?.elevator?.locations || []).map(row => [row.location, row.unknown ? 'unknown' : row.uses_elevator])));
     setCarryAnswers(Object.fromEntries((data?.long_carry?.locations || []).map(row => [row.location, row.unknown && row.acknowledged ? 'unknown' : row.distance_feet])));
-    setStairsAnswers(Object.fromEntries((data?.stairs?.locations || []).map(row => [row.location, row.flights])));
+    setStairsAnswers(Object.fromEntries((data?.stairs?.locations || []).map(row => [row.location, row.unknown ? 'unknown' : row.flights])));
     setStopsIncomplete({});
     setTermsValidationAttempt(0);
     setPackingStep(target.step);
@@ -1190,9 +1190,9 @@ export default function CustomerMovePage() {
                       setShuttleAnswer(data.shuttle?.answer ?? null); setShuttleMissing(false);
                       setStorageDate(data.storage?.available_date || ''); setStorageMissing(false);
                       setStopsIncomplete({});setStopsMissing(false);
-                      setElevatorAnswers(Object.fromEntries((data.elevator?.locations || []).map(row => [row.location,row.uses_elevator]))); setElevatorMissing(false);
+                      setElevatorAnswers(Object.fromEntries((data.elevator?.locations || []).map(row => [row.location,row.unknown ? 'unknown' : row.uses_elevator]))); setElevatorMissing(false);
                       setCarryAnswers(Object.fromEntries((data.long_carry?.locations || []).map(row => [row.location,row.unknown && row.acknowledged ? 'unknown' : row.distance_feet]))); setCarryMissing(false);
-                      setStairsAnswers(Object.fromEntries((data.stairs?.locations || []).map(row => [row.location, row.flights]))); setStairsMissing(false);
+                      setStairsAnswers(Object.fromEntries((data.stairs?.locations || []).map(row => [row.location, row.unknown ? 'unknown' : row.flights]))); setStairsMissing(false);
                       setPackingStep(pricingSteps[0] || 'items');
                       setPackingSection('service');
                       setPackageSelection(data.packing_package?.selection || { mode: 'none', unpacking: false, item_ids: [] });
@@ -1271,7 +1271,7 @@ export default function CustomerMovePage() {
                   </div>
                   {packingStep==='package'&&<nav className="cm-packing-subtabs cm-packing-subtabs-heading" aria-label="Packing services sections">{packingSections.map(section=><button type="button" key={section} aria-current={packingSection===section?'page':undefined} onClick={()=>{setPackingSection(section);setPackingError('');termsBody.current?.scrollTo({top:0});}}>{section==='service'?'Service':section==='boxes'?'Boxes':'Item protection'}</button>)}</nav>}
                   <div className="cm-modal-body" ref={termsBody} onChangeCapture={event=>{const action=(event.target as HTMLElement).closest<HTMLElement>('[data-customer-action]');if(action)lastCustomerAction.current=action.dataset.customerAction||null;}} onClickCapture={event=>{const action=(event.target as HTMLElement).closest<HTMLElement>('[data-customer-action]');if(action)lastCustomerAction.current=action.dataset.customerAction||null;}}>
-                    {packingStep === 'stops' && data.extra_stops ? <div style={{display:'grid',gap:24}}>{data.extra_stops.locations.map(group=><CustomerExtraStopsQuestion key={group.location} group={group} apiKey={data.google_maps_browser_key || ''} missing={stopsMissing && (stopsIncomplete[group.location] || group.answer==null || (group.answer && !group.stops.length))} onIncomplete={value=>{setStopsIncomplete(old=>({...old,[group.location]:value}));setStopsMissing(false);}} onChange={(has_stops,stop_change)=>savePricingChange({kind:'extra_stops',location:group.location,has_stops,stop_change})}/>)}</div> : packingStep === 'elevator' && data.elevator ? <div style={{display:'grid',gap:24}}>{data.elevator.locations.map(location=><CustomerElevatorQuestion key={location.location} config={data.elevator!} location={location} value={elevatorAnswers[location.location] ?? null} missing={elevatorMissing && elevatorAnswers[location.location] == null} onChange={elevator => { setElevatorAnswers(prev => ({ ...prev, [location.location]: elevator })); setElevatorMissing(false); savePricingChange({kind:'elevator',location:location.location,revision:location.revision,elevator}); }} />)}</div> : packingStep === 'access' ? <div style={{display:'grid',gap:24}}>
+                    {packingStep === 'stops' && data.extra_stops ? <div style={{display:'grid',gap:24}}>{data.extra_stops.locations.map(group=><CustomerExtraStopsQuestion key={group.location} group={group} apiKey={data.google_maps_browser_key || ''} missing={stopsMissing && (stopsIncomplete[group.location] || group.answer==null || (group.answer && !group.stops.length))} onIncomplete={value=>{setStopsIncomplete(old=>({...old,[group.location]:value}));setStopsMissing(false);}} onChange={(has_stops,stop_change)=>savePricingChange({kind:'extra_stops',location:group.location,has_stops,stop_change})}/>)}</div> : packingStep === 'elevator' && data.elevator ? <div style={{display:'grid',gap:24}}>{data.elevator.locations.map(location=><CustomerElevatorQuestion key={location.location} config={data.elevator!} location={location} value={elevatorAnswers[location.location] ?? null} missing={elevatorMissing && elevatorAnswers[location.location] == null} onChange={elevator => { setElevatorAnswers(prev => ({ ...prev, [location.location]: elevator })); setElevatorMissing(false); savePricingChange({kind:'elevator',location:location.location,revision:location.revision,elevator: typeof elevator === 'boolean' ? elevator : undefined, access_unknown: elevator === 'unknown'}); }} />)}</div> : packingStep === 'access' ? <div style={{display:'grid',gap:24}}>
                       {pickupCarry && data.long_carry && <CustomerLongCarryQuestion key={`pickup:${pickupCarry.revision}`} config={data.long_carry} location={pickupCarry} value={carryAnswers.pickup ?? null} missing={carryMissing && carryAnswers.pickup == null} onChange={carry_feet => { setCarryAnswers(prev => ({...prev,pickup:carry_feet})); setCarryMissing(false); if (carry_feet !== null) savePricingChange({kind:'long_carry',location:'pickup',revision:pickupCarry.revision,...(carry_feet === 'unknown' ? {carry_unknown:true,carry_acknowledged:true} : {carry_feet})}); }} />}
                       {data.shuttle ? <fieldset data-customer-action="delivery-shuttle" style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
                       <legend>Delivery shuttle</legend>
@@ -1294,7 +1294,7 @@ export default function CustomerMovePage() {
                         }} />
                       </div>}
                       </fieldset> : deliveryCarry && data.long_carry ? <CustomerLongCarryQuestion key={`delivery:${deliveryCarry.revision}`} config={data.long_carry} location={deliveryCarry} value={carryAnswers.delivery ?? null} missing={carryMissing && carryAnswers.delivery == null} onChange={carry_feet => { setCarryAnswers(prev => ({...prev,delivery:carry_feet})); setCarryMissing(false); if (carry_feet !== null) savePricingChange({kind:'long_carry',location:'delivery',revision:deliveryCarry.revision,...(carry_feet === 'unknown' ? {carry_unknown:true,carry_acknowledged:true} : {carry_feet})}); }} /> : null}
-                    </div> : packingStep === 'stairs' && data.stairs ? <div style={{display:'grid',gap:24}}>{data.stairs.locations.map(location=><CustomerStairsQuestion key={location.location} config={data.stairs!} location={location} value={stairsAnswers[location.location] ?? null} missing={stairsMissing && stairsAnswers[location.location] == null} onChange={flights => { setStairsAnswers(prev => ({ ...prev, [location.location]: flights })); setStairsMissing(false); if (flights !== null) savePricingChange({ kind: 'stairs', location: location.location, revision: location.revision, flights }); }} />)}</div> : packingStep === 'storage' && data.storage ? <CustomerStorageQuestion saving={answersSaving} onPickupChange={saveStoragePickup} config={data.storage} value={storageDate} missing={storageMissing} onChange={date => { setStorageDate(date); setStorageMissing(false); savePricingChange({ kind: 'storage', available_date: date }); }} /> : packingStep === 'items' ? <CustomerItemQuestions visibleIds={visibleTermsIds} validationAttempt={termsValidationAttempt} questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={answer => {
+                    </div> : packingStep === 'stairs' && data.stairs ? <div style={{display:'grid',gap:24}}>{data.stairs.locations.map(location=><CustomerStairsQuestion key={location.location} config={data.stairs!} location={location} value={stairsAnswers[location.location] ?? null} missing={stairsMissing && stairsAnswers[location.location] == null} onChange={flights => { setStairsAnswers(prev => ({ ...prev, [location.location]: flights })); setStairsMissing(false); if (flights !== null) savePricingChange({ kind: 'stairs', location: location.location, revision: location.revision, flights: typeof flights === 'number' ? flights : undefined, access_unknown: flights === 'unknown' }); }} />)}</div> : packingStep === 'storage' && data.storage ? <CustomerStorageQuestion saving={answersSaving} onPickupChange={saveStoragePickup} config={data.storage} value={storageDate} missing={storageMissing} onChange={date => { setStorageDate(date); setStorageMissing(false); savePricingChange({ kind: 'storage', available_date: date }); }} /> : packingStep === 'items' ? <CustomerItemQuestions visibleIds={visibleTermsIds} validationAttempt={termsValidationAttempt} questions={data.item_questions || []} endpoint={base} linkKey={key} session={session} onSave={answer => {
                       const reportId = data.spark?.id;
                       answerPending.current += 1;
                       answerRevision.current += 1;

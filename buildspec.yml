@@ -15,6 +15,7 @@ phases:
     commands:
       - cd $CODEBUILD_SRC_DIR && python -m pytest tests/unit/test_settings_transfer.py tests/unit/test_pipeline_settings.py -q
       - cd $CODEBUILD_SRC_DIR && python -m pytest tests/unit/test_work_queue_loading.py tests/unit/test_message_state_cleanup.py tests/unit/test_ended_chat_retention.py -q
+      - cd $CODEBUILD_SRC_DIR && python -m pytest tests/unit/test_elevator_pricing.py tests/unit/test_stairs_pricing.py -q
       - echo "Building frontend"
       - cd $CODEBUILD_SRC_DIR/frontend && npm run build
       - cd $CODEBUILD_SRC_DIR/frontend && node --test scripts/test-queue-refresh.mjs
