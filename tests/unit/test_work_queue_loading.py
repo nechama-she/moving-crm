@@ -83,6 +83,7 @@ def task_queue(monkeypatch):
     from models import Task
     monkeypatch.setattr('work_queue_rules._is_us_client_phone', lambda phone: True)
     replay = Mock(return_value=([], []))
+    monkeypatch.setattr(followup_tasks, 'history', replay)
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
     with Session(engine) as db:
@@ -106,6 +107,32 @@ def test_tasks_use_saved_priority_for_every_lead(task_queue, smartmoving_id, mon
     service.sync_saved_lead(lead.id)
     assert db.query(Task).count() == 9
 
+
+
+@pytest.mark.parametrize('already_initialized', [False, True])
+def test_existing_communications_complete_initial_and_reconciled_tasks(task_queue, already_initialized):
+    service, db, lead, Task, replay = task_queue
+    if already_initialized:
+        service.sync(db, lead)
+        db.commit()
+    call_time = datetime(2026, 10, 16, 14, tzinfo=timezone.utc)
+    rep = User(id='rep', name='Rep', email='rep@example.com', password_hash='unused', phone='4439513493')
+    db.add(rep)
+    lead.assignee = rep
+    call = {'timestamp': call_time.timestamp(), 'phone_number': lead.phone, 'company_number': rep.phone}
+    replay.return_value = ([call, call], [{'channel': 'sms', 'client': lead.phone,
+                                          'destination': rep.phone, 'occurred_at': call_time}])
+    service.sync(db, lead, reconcile=already_initialized)
+    db.commit()
+    assert db.query(Task).count() == 9
+    assert db.query(Task).filter_by(task_type='call', status='done').count() == 1
+    assert db.query(Task).filter_by(task_type='text', status='done').count() == 1
+    completed = db.query(Task).filter_by(task_type='call', status='done').one()
+    assert service.utc(completed.completed_at) == call_time
+    service.sync(db, lead, reconcile=True)
+    db.commit()
+    assert db.query(Task).count() == 9
+    assert db.query(Task).filter_by(task_type='call', status='done').count() == 1
 
 
 def test_nonzero_priority_never_creates_tasks_or_reads_history(task_queue):
@@ -164,7 +191,7 @@ def test_confirmed_zero_creates_nine_timed_tasks_once_and_priority_change_closes
     service.sync(db, lead)
     db.commit()
     assert db.query(Task).count() == 9
-    replay.assert_not_called()
+    assert replay.call_count == 1
     lead.priority = 1
     service.sync(db, lead)
     db.commit()

@@ -2026,7 +2026,7 @@ def validate_smartmoving_leads(
             leads_by_id[lead_id].priority = smartmoving_priority
             updated_priorities.append(lead_id)
         from followup_tasks import sync as sync_followup_tasks
-        sync_followup_tasks(db, leads_by_id[lead_id])
+        sync_followup_tasks(db, leads_by_id[lead_id], reconcile=True)
 
     if results:
         db.commit()
@@ -4541,7 +4541,7 @@ def _apply_lead_update(
         lead.booked_move_date = current_primary_job.booked_move_date
 
     from followup_tasks import sync as sync_followup_tasks
-    sync_followup_tasks(db, lead)
+    sync_followup_tasks(db, lead, reconcile=True)
     try:
         db.commit()
     except IntegrityError as exc:

@@ -55,6 +55,34 @@ def communication(channel, item):
             'page_id': str(item.get('page_id') or '')}
 
 
+def history(lead):
+    """Read this client's stored communications when initializing or reconciling tasks."""
+    from boto3.dynamodb.conditions import Key
+    from db import calls_table, sms_messages_table, conversations_table
+    from libs.common.phone import phone_variants
+    calls, messages = [], []
+    sources = []
+    for phone in sorted(set(phone_variants(lead.phone or ''))):
+        sources.extend([(calls_table, 'calls', 'phone_number', phone),
+                        (sms_messages_table, 'sms', 'phone_number', phone)])
+    if lead.facebook_user_id:
+        sources.append((conversations_table, 'messenger', 'user_id', lead.facebook_user_id))
+    for table, channel, key, identifier in sources:
+        query = {'KeyConditionExpression': Key(key).eq(identifier), 'ConsistentRead': True}
+        while True:
+            page = table.query(**query)
+            for item in page.get('Items', []):
+                if _epoch(item.get('timestamp')) < utc(lead.created_at).timestamp():
+                    continue
+                event = communication(channel, item)
+                if event is not None:
+                    (calls if channel == 'calls' else messages).append(event)
+            if not page.get('LastEvaluatedKey'):
+                break
+            query['ExclusiveStartKey'] = page['LastEvaluatedKey']
+    return calls, messages
+
+
 def apply_progress(db, lead, tasks, calls, messages):
     created = utc(lead.created_at)
     # Include completions already saved by stream events racing a refresh.
@@ -98,7 +126,7 @@ def apply_progress(db, lead, tasks, calls, messages):
     return changed
 
 
-def sync(db, lead):
+def sync(db, lead, *, reconcile=False):
     """Maintain Activity tasks from saved CRM data, regardless of lead source."""
     db.query(Lead.id).filter_by(id=lead.id).with_for_update().one()
     tasks = db.query(Task).filter(Task.lead_id == lead.id, Task.automatic_key.isnot(None)).all()
@@ -110,11 +138,12 @@ def sync(db, lead):
                     task.completed_at = datetime.now(timezone.utc)
                     task.completion_reason = 'Priority changed' if lead.priority != 0 else 'Lead closed'
         return
-    apply_progress(db, lead, tasks, [], [])
+    calls, messages = history(lead) if not tasks or reconcile else ([], [])
+    apply_progress(db, lead, tasks, calls, messages)
 
 
 def sync_saved_lead(lead_id):
-    """One creation hook for every lead; no external lookups."""
+    """One creation hook for every lead; no SmartMoving lookup."""
     from database import SessionLocal
     try:
         with SessionLocal() as db:
