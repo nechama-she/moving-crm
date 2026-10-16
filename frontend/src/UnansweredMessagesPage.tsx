@@ -910,18 +910,19 @@ export default function UnansweredMessagesPage() {
           <strong style={queueCardCount}>{missedCallStates.length}</strong>
           <span style={queueCardDescription}>Raw CRM missed-call state rows</span>
         </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("stale-state")} style={{ ...queueCard, ...(queueTab === "stale-state" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Stale Lead State Table</span>
+        <button className="slds-button" type="button" onClick={() => setQueueTab(queueTab === "contact-history" ? "contact-history" : "stale-state")} style={{ ...queueCard, ...(queueTab === "stale-state" || queueTab === "contact-history" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>First Contact State</span>
           <strong style={queueCardCount}>{staleStates.length}</strong>
-          <span style={queueCardDescription}>Raw CRM first-contact state rows</span>
-        </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("contact-history")} style={{ ...queueCard, ...(queueTab === "contact-history" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>First Contact History</span>
-          <strong style={queueCardCount}>{contactHistory.length}</strong>
-          <span style={queueCardDescription}>Contact that removed or excluded each lead</span>
+          <span style={queueCardDescription}>Stale leads and first contact history</span>
         </button>
       </nav>
 
+      {queueTab === "stale-state" || queueTab === "contact-history" ? <div style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+        <nav aria-label="First contact state views" style={{ display: "flex", gap: 8, padding: "12px 18px 0", borderBottom: "1px solid #d8dde6" }}>
+          {(["stale-state", "contact-history"] as const).map(tab => <button key={tab} type="button" className="slds-button" aria-current={queueTab === tab ? "page" : undefined} onClick={() => setQueueTab(tab)} style={{ padding: "12px 14px", border: 0, borderBottom: queueTab === tab ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0, background: "transparent", color: "#032d60", fontWeight: queueTab === tab ? 700 : 400 }}>
+            {tab === "stale-state" ? `Stale Lead State Table (${staleStates.length})` : `First Contact History (${contactHistory.length})`}
+          </button>)}
+        </nav>
       {queueTab === "contact-history" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 18 }}>
           <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>First Contact History ({contactHistory.length})</h2>
@@ -947,6 +948,8 @@ export default function UnansweredMessagesPage() {
           </tr>)}{!loadingStaleStates && !staleStates.length ? <tr><td colSpan={4} style={{ padding: 32, textAlign: "center" }}>No saved stale lead rows.</td></tr> : null}</tbody>
         </table></div>
       </section> : null}
+
+      </div> : null}
 
       {queueTab !== "message-state" && queueTab !== "missed-call-state" && queueTab !== "stale-state" && queueTab !== "contact-history" ? <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
         <select aria-label="Filter work queue by rep" value={repFilter} onChange={(event) => setRepFilter(event.target.value)} style={filterSelect}><option value="">All reps</option>{filterOptions.reps.map((value) => <option key={value} value={value}>{value}</option>)}</select>

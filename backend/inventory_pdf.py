@@ -66,7 +66,7 @@ def inventory_photos(rooms, details):
             for key, urls in matches.items()}
 
 
-def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, client=None, box_total=None):
+def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, client=None, box_total=None, liveswitch_used=False):
     output = BytesIO()
     from company_colors import resolve_company_color
     brand = colors.HexColor(resolve_company_color((company or {}).get('name'), (company or {}).get('color')))
@@ -178,6 +178,8 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
 
     def footer(canvas, doc):
         canvas.setFont('Helvetica', 9)
+        if liveswitch_used:
+            canvas.drawString(50, 22, 'Inventory prepared with LiveSwitch')
         canvas.drawRightString(562, 22, f'Page {doc.page}')
 
     SimpleDocTemplate(output, pagesize=letter, rightMargin=50, leftMargin=50,

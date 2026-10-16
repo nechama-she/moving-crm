@@ -859,7 +859,10 @@ def download_inventory(body: InventoryPdfInput, access: PublicMoveAccess = Depen
     client_name = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', '', lead.full_name or '').strip().rstrip('.')
     company_name = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', '', company_details.get('name') or '').strip().rstrip('.')
     filename = ' - '.join(part for part in [company_name, 'Inventory', client_name] if part) + '.pdf'
-    return Response(build_inventory_pdf(rooms, cuft, weight, photos, company=company_details, client=client_details, box_total=getattr(body, 'box_total', None)), media_type='application/pdf', headers={
+    liveswitch_used = bool(details.get('last_spark_id') and details.get('last_spark_status') == 'completed'
+                           and details.get('report_source', 'liveswitch') in ('liveswitch', 'combined'))
+    return Response(build_inventory_pdf(rooms, cuft, weight, photos, company=company_details, client=client_details,
+                                       box_total=getattr(body, 'box_total', None), liveswitch_used=liveswitch_used), media_type='application/pdf', headers={
         'Content-Disposition': f"attachment; filename=\"Inventory.pdf\"; filename*=UTF-8''{quote(filename, safe='')}",
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
