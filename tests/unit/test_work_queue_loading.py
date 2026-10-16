@@ -88,6 +88,12 @@ def test_confirmed_zero_creates_nine_timed_tasks_once_and_priority_change_closes
     assert sum(task.task_type == 'text' for task in tasks) == 3
     assert all(task.due_at and task.scheduled_start and task.status == 'open' for task in tasks)
     assert min(service.utc(task.due_at) for task in tasks) == datetime(2026, 10, 16, 16, tzinfo=timezone.utc)
+    welcome = next(task for task in tasks if task.automatic_key == 'priority0:message:1')
+    # 8 PM Eastern is midnight UTC the next day; Activity retains the local date.
+    assert service.utc(welcome.due_at) == datetime(2026, 10, 17, 0, tzinfo=timezone.utc)
+    assert welcome.due_date == '2026-10-16'
+    morning = next(task for task in tasks if task.automatic_key == 'priority0:call:1')
+    assert service.utc(morning.scheduled_start) == datetime(2026, 10, 16, 13, tzinfo=timezone.utc)
     service.sync(db, lead, 0)
     db.commit()
     assert db.query(Task).count() == 9
