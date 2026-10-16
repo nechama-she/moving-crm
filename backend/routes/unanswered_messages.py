@@ -35,21 +35,8 @@ MIRIT_COMPANY_NAME = "mirit great american"
 
 
 def _is_us_client_phone(value):
-    """Include the 50 states and D.C., excluding territories and toll-free numbers."""
-    import phonenumbers
-    try:
-        number = phonenumbers.parse(str(value or ""), "US")
-    except phonenumbers.NumberParseException:
-        return False
-    return (
-        phonenumbers.is_valid_number(number)
-        and phonenumbers.region_code_for_number(number) == "US"
-        and phonenumbers.number_type(number) in (
-            phonenumbers.PhoneNumberType.FIXED_LINE,
-            phonenumbers.PhoneNumberType.MOBILE,
-            phonenumbers.PhoneNumberType.FIXED_LINE_OR_MOBILE,
-        )
-    )
+    from work_queue_rules import _is_us_client_phone as is_us_client_phone
+    return is_us_client_phone(value)
 
 
 def _open_sales_status_filter():
@@ -111,7 +98,7 @@ def queue_summary(_: User = Depends(require_admin), db: Session = Depends(get_db
     from models import Task
     followups = db.query(func.count(func.distinct(Task.lead_id))).join(Lead, Lead.id == Task.lead_id).filter(
         Task.automatic_key.isnot(None), Task.status != 'done', Task.due_at < datetime.now(timezone.utc),
-        Lead.priority == 0, Lead.followup_priority_confirmed.is_(True),
+        Lead.priority == 0,
         _open_sales_status_filter(), _exclude_mirit_company_filter()).scalar()
     return {"enabled": False, "ready": False,
             "messages": {"unanswered": message_counts.get(False, 0), "ended": message_counts.get(True, 0)},
@@ -134,7 +121,7 @@ def list_followup_calls(
         Task.automatic_key.isnot(None), Task.status != 'done', Task.due_at < now,
     ).distinct().subquery()
     query = db.query(Lead).join(overdue, overdue.c.lead_id == Lead.id).filter(
-        Lead.priority == 0, Lead.followup_priority_confirmed.is_(True),
+        Lead.priority == 0,
         _open_sales_status_filter(), _exclude_mirit_company_filter())
     total = query.count()
     reps = [name for name, in query.join(User, Lead.assigned_to == User.id).with_entities(User.name).distinct().order_by(User.name)]

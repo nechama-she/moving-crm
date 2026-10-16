@@ -17,55 +17,107 @@ from models import Base, Company, Lead, MessageState, MissedCallState, User, Fir
 from work_queue_rules import _epoch
 
 
+def test_creation_loads_smartmoving_details_before_tasks():
+    from fastapi import HTTPException
+    from pydantic import BaseModel, ConfigDict, Field
+
+    class Input(BaseModel):
+        model_config = ConfigDict(populate_by_name=True)
+        smartmoving_id: str | None = None
+        priority: int = 0
+        full_name: str = 'Push name'
+        quote_number: str | None = Field(default=None, alias='quoteNumber')
+
+    source = Path(__file__).resolve().parents[2] / 'backend/routes/leads.py'
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == '_hydrate_new_lead_from_smartmoving')
+    fetch = Mock(return_value={'data': {'id': 'sm-1'}})
+    mapping = Mock(return_value={'priority': 2, 'full_name': 'Saved name', 'quote_number': '27210'})
+    scope = dict(NewLead=Input, HTTPException=HTTPException, User=SimpleNamespace,
+                 _clean_optional_text=lambda value: (value or '').strip(),
+                 get_opportunity=fetch, _build_smartmoving_refresh_payload=mapping)
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), scope)
+    hydrate = scope['_hydrate_new_lead_from_smartmoving']
+    native = Input()
+    assert hydrate(native) is native
+    fetch.assert_not_called()
+    result = hydrate(Input(smartmoving_id='sm-1'))
+    fetch.assert_called_once_with('sm-1')
+    assert (result.priority, result.full_name, result.quote_number) == (2, 'Saved name', '27210')
+    mapping.return_value = {}
+    with pytest.raises(HTTPException) as missing:
+        hydrate(Input(smartmoving_id='sm-1'))
+    assert missing.value.status_code == 502
+    fetch.return_value = {'error': 'Unavailable'}
+    with pytest.raises(HTTPException) as failed:
+        hydrate(Input(smartmoving_id='sm-1'))
+    assert failed.value.status_code == 502
+
+    creation = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_create_lead')
+    hydrate_call = next(node for node in ast.walk(creation) if isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Name) and node.func.id == '_hydrate_new_lead_from_smartmoving')
+    lead_call = next(node for node in ast.walk(creation) if isinstance(node, ast.Call)
+                     and isinstance(node.func, ast.Name) and node.func.id == 'Lead')
+    assert hydrate_call.lineno < lead_call.lineno
+    assert any(item.arg == 'priority' and isinstance(item.value, ast.Attribute)
+               and item.value.attr == 'priority' for item in lead_call.keywords)
+
+
 @pytest.fixture
 def task_queue(monkeypatch):
     import followup_tasks
     from models import Task
-    monkeypatch.setitem(sys.modules, 'routes.unanswered_messages', SimpleNamespace(_is_us_client_phone=lambda phone: True))
+    monkeypatch.setattr('work_queue_rules._is_us_client_phone', lambda phone: True)
     replay = Mock(return_value=([], []))
-    monkeypatch.setattr(followup_tasks, 'history', replay)
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         company = Company(id='company', name='Movers', phone='2029372625', timezone='America/New_York')
         lead = Lead(id='lead', full_name='Client', phone='2403703417', company=company,
-                    smartmoving_id='sm-1', created_time='2026-10-16T13:00:00Z', status='new')
+                    created_at=datetime(2026, 10, 16, 13, tzinfo=timezone.utc), smartmoving_id='sm-1', created_time='2026-10-16T13:00:00Z', status='new')
         db.add(lead)
         db.commit()
         yield followup_tasks, db, lead, Task, replay
     engine.dispose()
 
 
-def test_unknown_priority_creates_no_tasks_even_when_model_defaults_to_zero(task_queue):
-    service, db, lead, Task, replay = task_queue
-    service.sync(db, lead, None)
+@pytest.mark.parametrize('smartmoving_id', [None, 'sm-1'])
+def test_tasks_use_saved_priority_for_every_lead(task_queue, smartmoving_id, monkeypatch):
+    from contextlib import nullcontext
+    service, db, lead, Task, _ = task_queue
+    lead.smartmoving_id = smartmoving_id
     db.commit()
-    assert lead.priority == 0
-    assert not lead.followup_priority_confirmed
-    assert db.query(Task).count() == 0
-    replay.assert_not_called()
+    monkeypatch.setitem(sys.modules, 'database', SimpleNamespace(SessionLocal=lambda: nullcontext(db)))
+    monkeypatch.setitem(sys.modules, 'realtime', SimpleNamespace(publish_realtime_event=Mock()))
+    service.sync_saved_lead(lead.id)
+    assert db.query(Task).count() == 9
+
 
 
 def test_nonzero_priority_never_creates_tasks_or_reads_history(task_queue):
     service, db, lead, Task, replay = task_queue
-    service.sync(db, lead, 2)
+    lead.priority = 2
+    service.sync(db, lead)
     db.commit()
     assert db.query(Task).count() == 0
     assert lead.priority == 2
     replay.assert_not_called()
 
 
-def test_missing_smartmoving_creation_time_does_not_use_crm_time(task_queue):
+def test_tasks_do_not_require_smartmoving_creation_time(task_queue):
     service, db, lead, Task, _ = task_queue
     lead.created_time = ''
-    service.sync(db, lead, 0)
+    lead.priority = 0
+    service.sync(db, lead)
     db.commit()
-    assert db.query(Task).count() == 0
+    assert db.query(Task).count() == 9
 
 
 def test_late_message_delivery_can_correct_an_earlier_superseded_task(task_queue):
     service, db, lead, Task, _ = task_queue
-    service.sync(db, lead, 0)
+    lead.priority = 0
+    service.sync(db, lead)
     db.commit()
     sms = {'phone_number': lead.phone, 'company_number': lead.company.phone, 'direction': 'sent', 'sales_name': 'Rep'}
     service.record_contact(db, lead, 'sms', {**sms, 'timestamp': datetime(2026, 10, 17, 14, tzinfo=timezone.utc).timestamp()})
@@ -80,7 +132,8 @@ def test_late_message_delivery_can_correct_an_earlier_superseded_task(task_queue
 
 def test_confirmed_zero_creates_nine_timed_tasks_once_and_priority_change_closes_them(task_queue):
     service, db, lead, Task, replay = task_queue
-    service.sync(db, lead, 0)
+    lead.priority = 0
+    service.sync(db, lead)
     db.commit()
     tasks = db.query(Task).all()
     assert len(tasks) == 9
@@ -94,21 +147,25 @@ def test_confirmed_zero_creates_nine_timed_tasks_once_and_priority_change_closes
     assert welcome.due_date == '2026-10-16'
     morning = next(task for task in tasks if task.automatic_key == 'priority0:call:1')
     assert service.utc(morning.scheduled_start) == datetime(2026, 10, 16, 13, tzinfo=timezone.utc)
-    service.sync(db, lead, 0)
+    lead.priority = 0
+    service.sync(db, lead)
     db.commit()
     assert db.query(Task).count() == 9
-    assert replay.call_count == 1
-    service.sync(db, lead, 1)
+    replay.assert_not_called()
+    lead.priority = 1
+    service.sync(db, lead)
     db.commit()
     assert all(task.status == 'done' and task.completion_reason == 'Priority changed' for task in db.query(Task))
-    service.sync(db, lead, 0)
+    lead.priority = 0
+    service.sync(db, lead)
     db.commit()
     assert all(task.status == 'done' for task in db.query(Task))
 
 
 def test_duplicate_calls_and_wrong_destination_do_not_complete_extra_tasks(task_queue):
     service, db, lead, Task, _ = task_queue
-    service.sync(db, lead, 0)
+    lead.priority = 0
+    service.sync(db, lead)
     db.commit()
     call = {'timestamp': datetime(2026, 10, 16, 14, tzinfo=timezone.utc).timestamp(),
             'phone_number': lead.phone, 'company_number': lead.company.phone, 'direction': 'outbound'}
@@ -127,7 +184,8 @@ def test_duplicate_calls_and_wrong_destination_do_not_complete_extra_tasks(task_
 
 def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_queue, monkeypatch):
     service, db, lead, Task, replay = task_queue
-    service.sync(db, lead, 0)
+    lead.priority = 0
+    service.sync(db, lead)
     db.commit()
     for task in db.query(Task):
         task.scheduled_start = datetime.now(timezone.utc) - timedelta(hours=2)

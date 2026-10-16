@@ -271,7 +271,6 @@ class Lead(Base):
     status = Column(String(30), nullable=False, default="new", index=True)
     # new → contacted → quoted → booked → scheduled → completed | lost | cancelled
     priority = Column(Integer, nullable=False, default=0, index=True)
-    followup_priority_confirmed = Column(Boolean, nullable=False, default=False)
     # 0=normal, 1=high, 2=urgent
 
     created_time = Column(Text)

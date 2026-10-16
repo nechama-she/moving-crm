@@ -212,7 +212,7 @@ def update_task(
         db.query(Lead.id).filter(Lead.id == lead.id).with_for_update().one()
         db.refresh(lead)
         db.refresh(task)
-    if task.automatic_key and body.status is not None and body.status != TaskStatus.done and (lead.priority != 0 or not lead.followup_priority_confirmed):
+    if task.automatic_key and body.status is not None and body.status != TaskStatus.done and (lead.priority != 0):
         raise HTTPException(400, 'Only confirmed Priority 0 leads can have open follow-up tasks')
     if body.title is not None:
         title = body.title.strip()

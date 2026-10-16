@@ -1,10 +1,13 @@
 """Priority-zero Activity tasks, maintained on lead and communication events."""
 from datetime import datetime, timezone
+import logging
+
+logger = logging.getLogger("moving-crm")
 
 from sqlalchemy import text
 
 from models import Lead, Task
-from work_queue_rules import _digits, _epoch, _smartmoving_created_at, calculate_followup_rows
+from work_queue_rules import _digits, _epoch, calculate_followup_rows
 
 
 def utc(value):
@@ -12,7 +15,6 @@ def utc(value):
 
 
 def install(connection):
-    connection.execute(text('ALTER TABLE leads ADD COLUMN IF NOT EXISTS followup_priority_confirmed BOOLEAN NOT NULL DEFAULT FALSE'))
     for name, kind in [('due_at', 'TIMESTAMPTZ'), ('scheduled_start', 'TIMESTAMPTZ'),
                        ('automatic_key', 'VARCHAR(40)'), ('completed_at', 'TIMESTAMPTZ'),
                        ('completion_reason', 'VARCHAR(100)')]:
@@ -24,8 +26,8 @@ def install(connection):
 
 
 def eligible(lead):
-    from routes.unanswered_messages import _is_us_client_phone
-    return (lead.followup_priority_confirmed and lead.priority == 0
+    from work_queue_rules import _is_us_client_phone
+    return (lead.priority == 0
             and (lead.status or '').lower() in {'new', 'contacted', 'quoted', ''}
             and (not lead.company or (lead.company.name or '').lower() != 'mirit great american')
             and _is_us_client_phone(lead.phone))
@@ -53,34 +55,8 @@ def communication(channel, item):
             'page_id': str(item.get('page_id') or '')}
 
 
-def history(lead):
-    """Explicit reconciliation reads only this client's partitions, never a table scan."""
-    from boto3.dynamodb.conditions import Key
-    from db import calls_table, sms_messages_table, conversations_table
-    from libs.common.phone import phone_variants
-    calls, messages = [], []
-    sources = [(calls_table, 'calls', 'phone_number', value) for value in set(phone_variants(lead.phone or ''))]
-    sources += [(sms_messages_table, 'sms', 'phone_number', value) for value in set(phone_variants(lead.phone or ''))]
-    if lead.facebook_user_id:
-        sources.append((conversations_table, 'messenger', 'user_id', lead.facebook_user_id))
-    for table, channel, key, value in sources:
-        args = {'KeyConditionExpression': Key(key).eq(value), 'ConsistentRead': True}
-        while True:
-            page = table.query(**args)
-            for item in page.get('Items', []):
-                event = communication(channel, item)
-                if event:
-                    (calls if channel == 'calls' else messages).append(event)
-            if not page.get('LastEvaluatedKey'):
-                break
-            args['ExclusiveStartKey'] = page['LastEvaluatedKey']
-    return calls, messages
-
-
 def apply_progress(db, lead, tasks, calls, messages):
-    created = _smartmoving_created_at(lead.created_time)
-    if created is None:
-        return False  # No guessed creation time for SmartMoving leads.
+    created = utc(lead.created_at)
     # Include completions already saved by stream events racing a refresh.
     destination = _digits(lead.company.phone) if lead.company else ''
     destination = destination or (_digits(lead.assignee.phone) if lead.assignee else '')
@@ -122,54 +98,35 @@ def apply_progress(db, lead, tasks, calls, messages):
     return changed
 
 
-def sync(db, lead, priority, *, reconcile=False):
-    """Caller supplies priority read from SmartMoving, never the model's default zero."""
+def sync(db, lead):
+    """Maintain Activity tasks from saved CRM data, regardless of lead source."""
     db.query(Lead.id).filter_by(id=lead.id).with_for_update().one()
-    lead.followup_priority_confirmed = priority is not None
-    if priority is not None:
-        lead.priority = priority
-    existing = db.query(Task).filter(Task.lead_id == lead.id, Task.automatic_key.isnot(None)).all()
+    tasks = db.query(Task).filter(Task.lead_id == lead.id, Task.automatic_key.isnot(None)).all()
     if not eligible(lead):
-        if priority is not None and (priority != 0 or (lead.status or '').lower() not in {'new', 'contacted', 'quoted', ''}):
-            for task in existing:
+        if lead.priority != 0 or (lead.status or '').lower() not in {'new', 'contacted', 'quoted', ''}:
+            for task in tasks:
                 if task.status != 'done':
                     task.status = 'done'
                     task.completed_at = datetime.now(timezone.utc)
-                    task.completion_reason = 'Priority changed' if priority != 0 else 'Lead closed'
+                    task.completion_reason = 'Priority changed' if lead.priority != 0 else 'Lead closed'
         return
-    calls, messages = history(lead) if reconcile or not existing else ([], [])
-    # Event deliveries use the same lead lock. Refresh tasks after reconciliation.
-    tasks = db.query(Task).filter(Task.lead_id == lead.id, Task.automatic_key.isnot(None)).populate_existing().all()
-    apply_progress(db, lead, tasks, calls, messages)
+    apply_progress(db, lead, tasks, [], [])
 
 
 def sync_saved_lead(lead_id):
-    """Creation/update hook; a provider failure does not prevent saving the lead."""
-    import logging
+    """One creation hook for every lead; no external lookups."""
     from database import SessionLocal
-    from libs.smartmoving.client import check_opportunity_exists
-    from routes.leads import _parse_smartmoving_priority, _map_smartmoving_status
     try:
         with SessionLocal() as db:
             lead = db.get(Lead, lead_id)
-            if not lead or not lead.smartmoving_id:
+            if lead is None:
                 return
-            result = check_opportunity_exists(lead.smartmoving_id)
-            if not result.get('ok') or not result.get('exists'):
-                lead.followup_priority_confirmed = False
-                db.commit()
-                raise ValueError('SmartMoving priority could not be confirmed')
-            if result.get('created_at_utc'):
-                lead.created_time = result['created_at_utc']
-            status = _map_smartmoving_status(result.get('status'))
-            if status:
-                lead.status = status
-            sync(db, lead, _parse_smartmoving_priority(result.get('lead_status')))
+            sync(db, lead)
             db.commit()
             from realtime import publish_realtime_event
             publish_realtime_event({'type': 'followup_tasks_changed', 'lead_id': lead_id})
     except Exception:
-        logging.getLogger('moving-crm').exception('Could not synchronize follow-up tasks for lead %s', lead_id)
+        logger.exception('Could not synchronize follow-up tasks for lead %s', lead_id)
 
 
 def record_contact(db, lead, channel, item):
@@ -196,8 +153,8 @@ def lead_row(lead, tasks, now):
         (attempts if call else messages).append(entry)
     return {'lead_id': lead.id, 'client': lead.full_name or lead.phone, 'client_phone': lead.phone,
             'rep': lead.assignee.name if lead.assignee else '', 'company': lead.company.name if lead.company else '',
-            'status': lead.status, 'priority': lead.priority, 'created_at': _smartmoving_created_at(lead.created_time).isoformat(),
-            'smartmoving_created_time': lead.created_time, 'created_time_source': 'smartmoving',
+            'status': lead.status, 'priority': lead.priority, 'created_at': utc(lead.created_at).isoformat(),
+            'smartmoving_created_time': lead.created_time, 'created_time_source': 'crm',
             'attempts': attempts, 'message_attempts': messages,
             'timeline': sorted([item for item in attempts + messages if item['status'] != 'not_sent'], key=lambda item: item['scheduled_end']),
             'completed_count': sum(bool(item['completed_at']) for item in attempts),

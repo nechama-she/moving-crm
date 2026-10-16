@@ -2022,11 +2022,11 @@ def validate_smartmoving_leads(
             leads_by_id[lead_id].status = smartmoving_status
             updated_statuses.append(lead_id)
         smartmoving_priority = _parse_smartmoving_priority(result.get("lead_status"))
-        from followup_tasks import sync as sync_followup_tasks
-        sync_followup_tasks(db, leads_by_id[lead_id], smartmoving_priority, reconcile=True)
         if smartmoving_priority is not None:
             leads_by_id[lead_id].priority = smartmoving_priority
             updated_priorities.append(lead_id)
+        from followup_tasks import sync as sync_followup_tasks
+        sync_followup_tasks(db, leads_by_id[lead_id])
 
     if results:
         db.commit()
@@ -4003,7 +4003,7 @@ class LeadUpdate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     status: str | None = None
-    priority: int | None = None
+    priority: int | None = Field(default=None, ge=0)
     assigned_to: str | None = None
     assigned_to_name: str | None = None
     company_id: str | None = None
@@ -4082,7 +4082,6 @@ def _apply_lead_update(
     *,
     allow_dispatch_smartmoving_refresh: bool = False,
     incoming_smartmoving_company: Company | None = None,
-    confirmed_smartmoving_priority: bool = False,
 ):
     if not (allow_dispatch_smartmoving_refresh and user.role == "dispatch"):
         _ensure_not_dispatch_write(user)
@@ -4541,9 +4540,8 @@ def _apply_lead_update(
         lead.move_date = current_primary_job.move_date
         lead.booked_move_date = current_primary_job.booked_move_date
 
-    if confirmed_smartmoving_priority:
-        from followup_tasks import sync as sync_followup_tasks
-        sync_followup_tasks(db, lead, body.priority, reconcile=True)
+    from followup_tasks import sync as sync_followup_tasks
+    sync_followup_tasks(db, lead)
     try:
         db.commit()
     except IntegrityError as exc:
@@ -4554,14 +4552,7 @@ def _apply_lead_update(
         raise HTTPException(status_code=500, detail="Failed to update lead")
     db.refresh(lead)
     _sync_smartmoving_job_details(lead, db)
-    if confirmed_smartmoving_priority:
-        publish_realtime_event({"type": "followup_tasks_changed", "lead_id": lead.id})
-    if not confirmed_smartmoving_priority:
-        from followup_tasks import sync_saved_lead
-        saved_id = lead.id
-        db.commit()
-        sync_saved_lead(saved_id)
-        db.refresh(lead)
+    publish_realtime_event({"type": "followup_tasks_changed", "lead_id": lead.id})
 
     # If assignment changed to a new rep, send the rep_assignment SMS.
     will_send_rep_assignment_sms = (
@@ -4721,7 +4712,6 @@ def _refresh_lead_from_smartmoving(
         db,
         allow_dispatch_smartmoving_refresh=True,
         incoming_smartmoving_company=smartmoving_dispatch_company(db, opportunity),
-        confirmed_smartmoving_priority=True,
     )
     sync_result = sync_smartmoving_files(lead, user, db, opportunity)
     request.state.audit_request_payload = {
@@ -4904,6 +4894,7 @@ class NewLead(BaseModel):
     referral_source: str | None = None
     service_type: str | None = None
     status: str | None = None
+    priority: int = Field(default=0, ge=0)
     assigned_to: str | None = None
     assigned_to_name: str | None = None
     sales_person_id: str | None = None
@@ -4939,6 +4930,28 @@ def create_lead(
     return _create_lead(body, x_api_secret, db)
 
 
+def _hydrate_new_lead_from_smartmoving(body: NewLead) -> NewLead:
+    smartmoving_id = _clean_optional_text(body.smartmoving_id)
+    if not smartmoving_id:
+        return body
+    result = get_opportunity(smartmoving_id)
+    opportunity = result.get('data')
+    if result.get('error') or not isinstance(opportunity, dict):
+        raise HTTPException(502, 'Could not load SmartMoving lead details before creation')
+    # Reuse the refresh mapping, preserving the push's explicit assignment.
+    mapped = _build_smartmoving_refresh_payload(opportunity, User(role='sales_rep'))
+    if 'priority' not in mapped:
+        raise HTTPException(502, 'SmartMoving did not return a valid lead priority')
+    values = body.model_dump(by_alias=True)
+    for name, field in NewLead.model_fields.items():
+        key = field.alias or name
+        if name in mapped:
+            values[key] = mapped[name]
+        elif key in mapped:
+            values[key] = mapped[key]
+    return NewLead.model_validate(values)
+
+
 def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
     cfg = get_config()
     secret = cfg.get("API_SECRET", os.getenv("API_SECRET", ""))
@@ -4946,6 +4959,8 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
         raise HTTPException(status_code=500, detail="API secret not configured")
     if x_api_secret != secret:
         raise HTTPException(status_code=401, detail="Invalid API secret")
+
+    body = _hydrate_new_lead_from_smartmoving(body)
 
     if not body.full_name.strip():
         raise HTTPException(status_code=400, detail="full_name is required")
@@ -5104,6 +5119,7 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
         referral_source=_clean_optional_text(body.referral_source) or None,
         service_type=_clean_optional_text(body.service_type) or None,
         status=raw_status or "new",
+        priority=body.priority,
         estimated_total=_serialize_estimated_total(body.estimated_total),
         payments=_serialize_payments(body.payments),
     )

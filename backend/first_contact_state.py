@@ -121,6 +121,10 @@ def record_contact(db, channel, item):
         return 0
     removed = 0
     for lead in query.order_by(Lead.id).all():
+        db.query(Lead.id).filter_by(id=lead.id).with_for_update().one()
+        from followup_tasks import record_contact as record_followup_contact
+        if record_followup_contact(db, lead, channel, item):
+            db.info['followup_tasks_changed'] = True
         from work_queue_rules import _smartmoving_created_at
         created = _smartmoving_created_at(lead.created_time) if lead.created_time else lead.created_at
         if created is None:
@@ -128,8 +132,4 @@ def record_contact(db, channel, item):
         created = created.replace(tzinfo=timezone.utc) if not created.tzinfo else created
         if occurred >= created:
             removed += resolve(db, lead.id, occurred, contact_evidence(channel, item))
-            from followup_tasks import record_contact as record_followup_contact
-            if record_followup_contact(db, lead, channel, item):
-                # The stream handler publishes after committing this transaction.
-                db.info['followup_tasks_changed'] = True
     return removed
