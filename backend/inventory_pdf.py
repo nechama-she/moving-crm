@@ -1,5 +1,6 @@
 """Printable inventory snapshot, independent of estimate readiness."""
 from io import BytesIO
+from pathlib import Path
 import base64
 import binascii
 from concurrent.futures import ThreadPoolExecutor
@@ -177,10 +178,21 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
     story.extend([Spacer(1, 8), p('CP: movers pack. PBO: you pack. Volume going excludes items marked No.')])
 
     def footer(canvas, doc):
+        canvas.saveState()
         canvas.setFont('Helvetica', 9)
         if liveswitch_used:
-            canvas.drawString(50, 22, 'Inventory prepared with LiveSwitch')
+            canvas.setFont('Helvetica', 7)
+            canvas.setFillColor(colors.HexColor('#64748b'))
+            canvas.drawString(50, 22, 'Photo analysis by')
+            # Official wordmark, bundled locally; the logo itself is the link.
+            canvas.drawImage(str(Path(__file__).parent / 'data' / 'liveswitch-logo.png'),
+                             109, 19, width=65, height=13, mask='auto')
+            canvas.linkURL('https://www.liveswitch.com/', (109, 19, 174, 32),
+                           relative=0, thickness=0)
+        canvas.setFont('Helvetica', 9)
+        canvas.setFillColor(colors.black)
         canvas.drawRightString(562, 22, f'Page {doc.page}')
+        canvas.restoreState()
 
     SimpleDocTemplate(output, pagesize=letter, rightMargin=50, leftMargin=50,
                       topMargin=36, bottomMargin=36, title='Your Inventory').build(

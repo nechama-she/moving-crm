@@ -988,16 +988,27 @@ def _parse_move_month(value: str) -> tuple[date, date]:
 def get_dispatch_calendar(
     company_id: str = Query(default=""),
     move_month: str = Query(default=""),  # YYYY-MM
+    date_from: str = Query(default=""),
+    date_to: str = Query(default=""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     if user.role not in ("admin", "dispatch", "foreman"):
         raise HTTPException(status_code=403, detail="Dispatch access required")
 
-    if not move_month:
-        raise HTTPException(status_code=400, detail="move_month is required")
-
-    month_start, next_month = _parse_move_month(move_month)
+    if date_from or date_to:
+        try:
+            month_start = date.fromisoformat(date_from)
+            range_end = date.fromisoformat(date_to)
+            if range_end < month_start:
+                raise ValueError()
+            next_month = range_end + timedelta(days=1)
+        except (ValueError, OverflowError):
+            raise HTTPException(status_code=400, detail="Provide a valid start and end date in YYYY-MM-DD order")
+    else:
+        if not move_month:
+            raise HTTPException(status_code=400, detail="move_month or a date range is required")
+        month_start, next_month = _parse_move_month(move_month)
 
     allowed_company_ids = _get_user_company_ids(user, db)
     if not allowed_company_ids:
@@ -1067,16 +1078,27 @@ def get_dispatch_calendar(
 def get_sales_calendar(
     move_month: str = Query(default=""),  # YYYY-MM
     assigned_to: str = Query(default=""),
+    date_from: str = Query(default=""),
+    date_to: str = Query(default=""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     if user.role not in ("admin", "sales_rep", "dispatch"):
         raise HTTPException(status_code=403, detail="Sales calendar access required")
 
-    if not move_month:
-        raise HTTPException(status_code=400, detail="move_month is required")
-
-    month_start, next_month = _parse_move_month(move_month)
+    if date_from or date_to:
+        try:
+            month_start = date.fromisoformat(date_from)
+            range_end = date.fromisoformat(date_to)
+            if range_end < month_start:
+                raise ValueError()
+            next_month = range_end + timedelta(days=1)
+        except (ValueError, OverflowError):
+            raise HTTPException(status_code=400, detail="Provide a valid start and end date in YYYY-MM-DD order")
+    else:
+        if not move_month:
+            raise HTTPException(status_code=400, detail="move_month or a date range is required")
+        month_start, next_month = _parse_move_month(move_month)
 
     allowed_company_ids = _get_user_company_ids(user, db)
     if not allowed_company_ids:

@@ -1,3 +1,4 @@
+import CalendarDateRange from "./CalendarDateRange";
 import { Link, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE } from "./apiConfig";
@@ -318,6 +319,7 @@ export default function SalesCalendarPage() {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [mobileSelectedDay, setMobileSelectedDay] = useState(() => new Date().getDate());
+  const [dateRange, setDateRange] = useState<{ from: string; to: string } | null>(null);
   const [mobileMonthExpanded, setMobileMonthExpanded] = useState(false);
   const mobileDateRailRef = useRef<HTMLDivElement | null>(null);
   const [loading, setLoading] = useState(false);
@@ -435,6 +437,10 @@ export default function SalesCalendarPage() {
     void (async () => {
       try {
         const params = new URLSearchParams({ move_month: monthKey(viewMonth) });
+        if (dateRange) {
+          params.set("date_from", dateRange.from);
+          params.set("date_to", dateRange.to);
+        }
         const res = await fetch(`${API_BASE}/api/sales-calendar?${params.toString()}`, { headers: authHeaders(token) });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const payload = (await res.json()) as { items?: Array<Record<string, unknown>> };
@@ -473,7 +479,7 @@ export default function SalesCalendarPage() {
     return () => {
       cancelled = true;
     };
-  }, [token, viewMonth]);
+  }, [token, viewMonth, dateRange]);
 
   function commissionPercentForJob(job: SalesCalendarJob): number {
     if ((job.assigned_to_role || "") !== "sales_rep") return 0;
@@ -921,8 +927,12 @@ export default function SalesCalendarPage() {
     <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Sales Calendar</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
-        Leads grouped by the first booked move date and assignee for the selected month.
+        Leads grouped by the first booked move date and assignee for the selected dates.
       </p>
+      <CalendarDateRange key={`${monthKey(viewMonth)}:${dateRange?.from || ""}:${dateRange?.to || ""}`} value={dateRange} month={viewMonth} onChange={range => {
+        setDateRange(range);
+        if (range) setViewMonth(new Date(`${range.from.slice(0, 7)}-01T00:00:00`));
+      }} />
 
       {error ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{error}</p> : null}
 
@@ -931,7 +941,7 @@ export default function SalesCalendarPage() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <div style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Assignees</div>
             <div style={{ fontSize: 12, color: "#334155", fontWeight: 600 }}>
-              Total leads this month: {totalLeadCount}
+              Total leads {dateRange ? "in date range" : "this month"}: {totalLeadCount}
               {selectedAssigneeKeys.length > 0 && selectedAssigneeKeys.length !== assigneeOptions.length
                 ? ` • Showing ${filteredLeadCount} leads`
                 : ""}
