@@ -95,13 +95,23 @@ def record_contact(db, channel, item):
             return 0
         phone = _digits(item.get('phone_number'))
         destination = _digits(item.get('company_number'))
-        if not phone or not destination:
+        number_id = str(item.get('number_id') or '').strip() if channel == 'sms' else ''
+        if not phone or not (destination or number_id):
             return 0
         def normalized(column):
             return func.right(func.regexp_replace(column, r'\D', '', 'g'), 10)
-        query = db.query(Lead).filter(normalized(Lead.phone) == phone, or_(
-            Lead.company.has(normalized(Company.phone) == destination),
-            Lead.assignee.has(normalized(User.phone) == destination)))
+        destinations = []
+        if destination:
+            destinations.extend([
+                Lead.company.has(normalized(Company.phone) == destination),
+                Lead.assignee.has(normalized(User.phone) == destination),
+            ])
+        if number_id:
+            destinations.extend([
+                Lead.company.has(Company.aircall_number_id == number_id),
+                Lead.assignee.has(User.aircall_number_id == number_id),
+            ])
+        query = db.query(Lead).filter(normalized(Lead.phone) == phone, or_(*destinations))
     elif channel == 'messenger':
         role = str(item.get('role') or '').lower()
         sender = str(item.get('sales_name') or '').lower()
