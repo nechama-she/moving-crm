@@ -116,7 +116,7 @@ export default function UnansweredMessagesPage() {
   const [ignoringLead, setIgnoringLead] = useState<string | null>(null);
   const [reloadingContacts, setReloadingContacts] = useState(false);
   const contactReloadRunning = useRef(false);
-  const [followupTab, setFollowupTab] = useState<"overdue" | "due">("overdue");
+  const [followupTab, setFollowupTab] = useState<"overdue" | "due">("due");
   const [followupLeads, setFollowupLeads] = useState<FollowupLead[]>([]);
   const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
   const [globalFollowupCounts, setGlobalFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
@@ -1117,7 +1117,7 @@ export default function UnansweredMessagesPage() {
         <div style={{ padding: "16px 18px 0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button>{validationButton}</div></div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
-            {(["overdue", "due"] as const).map(category => <button key={category} type="button" className="slds-button" aria-pressed={followupTab === category} onClick={() => setFollowupTab(category)} style={{ color: "#032d60", padding: "10px 14px", minHeight: 44, fontWeight: followupTab === category ? 700 : 400, border: "none", borderBottom: followupTab === category ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0 }}>{category === "due" ? "Due" : "Overdue Items"} ({followupCounts[category] || 0})</button>)}
+            {(["due", "overdue"] as const).map(category => <button key={category} type="button" className="slds-button" aria-pressed={followupTab === category} onClick={() => setFollowupTab(category)} style={{ color: "#032d60", padding: "10px 14px", minHeight: 44, fontWeight: followupTab === category ? 700 : 400, border: "none", borderBottom: followupTab === category ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0 }}>{category === "due" ? "Due" : "Overdue Items"} ({followupCounts[category] || 0})</button>)}
           </div>
         </div>
         <div style={{ overflowX: "auto" }}>
