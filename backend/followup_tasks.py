@@ -7,11 +7,18 @@ logger = logging.getLogger("moving-crm")
 from sqlalchemy import text
 
 from models import Lead, Task
-from work_queue_rules import _digits, _epoch, calculate_followup_rows
+from work_queue_rules import _digits, _epoch, _smartmoving_created_at, calculate_followup_rows
 
 
 def utc(value):
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def followup_created_at(lead):
+    """Use the earlier recorded creation time for scheduling and history."""
+    crm = utc(lead.created_at)
+    smartmoving = _smartmoving_created_at(lead.created_time)
+    return (smartmoving, 'smartmoving') if smartmoving and smartmoving < crm else (crm, 'crm')
 
 
 def install(connection):
@@ -61,6 +68,7 @@ def history(lead):
     from db import calls_table, sms_messages_table, conversations_table
     from libs.common.phone import phone_variants
     calls, messages = [], []
+    created, _ = followup_created_at(lead)
     sources = []
     for phone in sorted(set(phone_variants(lead.phone or ''))):
         sources.extend([(calls_table, 'calls', 'phone_number', phone),
@@ -72,7 +80,7 @@ def history(lead):
         while True:
             page = table.query(**query)
             for item in page.get('Items', []):
-                if _epoch(item.get('timestamp')) < utc(lead.created_at).timestamp():
+                if _epoch(item.get('timestamp')) < created.timestamp():
                     continue
                 event = communication(channel, item)
                 if event is not None:
@@ -84,7 +92,7 @@ def history(lead):
 
 
 def apply_progress(db, lead, tasks, calls, messages):
-    created = utc(lead.created_at)
+    created, _ = followup_created_at(lead)
     # Include completions already saved by stream events racing a refresh.
     destination = _digits(lead.company.phone) if lead.company else ''
     destination = destination or (_digits(lead.assignee.phone) if lead.assignee else '')
@@ -170,6 +178,7 @@ def record_contact(db, lead, channel, item):
 
 def lead_row(lead, tasks, now):
     """Serialize saved tasks; no communication queries or schedule reconstruction."""
+    created, created_source = followup_created_at(lead)
     attempts, messages = [], []
     for task in sorted(tasks, key=lambda task: task.automatic_key):
         completed = utc(task.completed_at).isoformat() if task.completed_at else ''
@@ -182,8 +191,8 @@ def lead_row(lead, tasks, now):
         (attempts if call else messages).append(entry)
     return {'lead_id': lead.id, 'client': lead.full_name or lead.phone, 'client_phone': lead.phone,
             'rep': lead.assignee.name if lead.assignee else '', 'company': lead.company.name if lead.company else '',
-            'status': lead.status, 'priority': lead.priority, 'created_at': utc(lead.created_at).isoformat(),
-            'smartmoving_created_time': lead.created_time, 'created_time_source': 'crm',
+            'status': lead.status, 'priority': lead.priority, 'created_at': created.isoformat(),
+            'smartmoving_created_time': lead.created_time, 'created_time_source': created_source,
             'attempts': attempts, 'message_attempts': messages,
             'timeline': sorted([item for item in attempts + messages if item['status'] != 'not_sent'], key=lambda item: item['scheduled_end']),
             'completed_count': sum(bool(item['completed_at']) for item in attempts),

@@ -154,6 +154,31 @@ def test_tasks_do_not_require_smartmoving_creation_time(task_queue):
     assert db.query(Task).count() == 9
 
 
+@pytest.mark.parametrize('smartmoving_time,source', [
+    ('2026-10-16T12:00:00Z', 'smartmoving'),
+    ('2026-10-16T14:00:00Z', 'crm'),
+])
+def test_followups_use_earlier_creation_time(task_queue, smartmoving_time, source):
+    service, db, lead, Task, _ = task_queue
+    lead.created_time = smartmoving_time
+    lead.priority = 0
+    service.sync(db, lead)
+    db.commit()
+    call_time = datetime(2026, 10, 16, 12, 47, tzinfo=timezone.utc)
+    service.record_contact(db, lead, 'calls', {
+        'phone_number': lead.phone, 'company_number': lead.company.phone,
+        'direction': 'outbound', 'timestamp': call_time.timestamp(),
+    })
+    db.commit()
+    tasks = db.query(Task).all()
+    morning = next(task for task in tasks if task.automatic_key == 'priority0:call:1')
+    assert morning.status == ('done' if source == 'smartmoving' else 'open')
+    row = service.lead_row(lead, tasks, datetime.now(timezone.utc))
+    assert row['created_time_source'] == source
+    expected_hour = 12 if source == 'smartmoving' else 13
+    assert datetime.fromisoformat(row['created_at']).hour == expected_hour
+
+
 def test_late_message_delivery_can_correct_an_earlier_superseded_task(task_queue):
     service, db, lead, Task, _ = task_queue
     lead.priority = 0
