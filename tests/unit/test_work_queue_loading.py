@@ -35,6 +35,7 @@ def test_creation_loads_smartmoving_details_before_tasks():
     fetch = Mock(return_value={'data': {'id': 'sm-1'}})
     mapping = Mock(return_value={'priority': 2, 'full_name': 'Saved name', 'quote_number': '27210'})
     scope = dict(NewLead=Input, HTTPException=HTTPException, User=SimpleNamespace,
+                 logger=Mock(),
                  _clean_optional_text=lambda value: (value or '').strip(),
                  get_opportunity=fetch, _build_smartmoving_refresh_payload=mapping)
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), scope)
@@ -45,14 +46,20 @@ def test_creation_loads_smartmoving_details_before_tasks():
     result = hydrate(Input(smartmoving_id='sm-1'))
     fetch.assert_called_once_with('sm-1')
     assert (result.priority, result.full_name, result.quote_number) == (2, 'Saved name', '27210')
-    mapping.return_value = {}
-    with pytest.raises(HTTPException) as missing:
-        hydrate(Input(smartmoving_id='sm-1'))
-    assert missing.value.status_code == 502
-    fetch.return_value = {'error': 'Unavailable'}
-    with pytest.raises(HTTPException) as failed:
-        hydrate(Input(smartmoving_id='sm-1'))
-    assert failed.value.status_code == 502
+    submitted = Input(smartmoving_id='sm-1', priority=1, quoteNumber='original')
+    mapping.return_value = {'full_name': 'Updated name'}
+    result = hydrate(submitted)
+    assert result.priority == 1
+    assert result.full_name == 'Updated name'
+    for response in ({'error': 'HTTP 400'}, {'error': 'Unavailable'}, {'data': None}):
+        fetch.return_value = response
+        assert hydrate(submitted) is submitted
+    fetch.side_effect = TimeoutError('SmartMoving timeout')
+    assert hydrate(submitted) is submitted
+    fetch.side_effect = None
+    fetch.return_value = {'data': {'id': 'sm-1'}}
+    mapping.return_value = {'priority': 'invalid'}
+    assert hydrate(submitted) is submitted
 
     creation = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_create_lead')
     hydrate_call = next(node for node in ast.walk(creation) if isinstance(node, ast.Call)

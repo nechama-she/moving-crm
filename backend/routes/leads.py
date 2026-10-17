@@ -4956,22 +4956,25 @@ def _hydrate_new_lead_from_smartmoving(body: NewLead) -> NewLead:
     smartmoving_id = _clean_optional_text(body.smartmoving_id)
     if not smartmoving_id:
         return body
-    result = get_opportunity(smartmoving_id)
-    opportunity = result.get('data')
-    if result.get('error') or not isinstance(opportunity, dict):
-        raise HTTPException(502, 'Could not load SmartMoving lead details before creation')
-    # Reuse the refresh mapping, preserving the push's explicit assignment.
-    mapped = _build_smartmoving_refresh_payload(opportunity, User(role='sales_rep'))
-    if 'priority' not in mapped:
-        raise HTTPException(502, 'SmartMoving did not return a valid lead priority')
-    values = body.model_dump(by_alias=True)
-    for name, field in NewLead.model_fields.items():
-        key = field.alias or name
-        if name in mapped:
-            values[key] = mapped[name]
-        elif key in mapped:
-            values[key] = mapped[key]
-    return NewLead.model_validate(values)
+    try:
+        result = get_opportunity(smartmoving_id)
+        opportunity = result.get('data')
+        if result.get('error') or not isinstance(opportunity, dict):
+            logger.warning('SmartMoving enrichment unavailable for %s; retaining submitted lead data', smartmoving_id)
+            return body
+        # Reuse the refresh mapping, preserving the push's explicit assignment.
+        mapped = _build_smartmoving_refresh_payload(opportunity, User(role='sales_rep'))
+        values = body.model_dump(by_alias=True)
+        for name, field in NewLead.model_fields.items():
+            key = field.alias or name
+            if name in mapped:
+                values[key] = mapped[name]
+            elif key in mapped:
+                values[key] = mapped[key]
+        return NewLead.model_validate(values)
+    except Exception:
+        logger.exception('SmartMoving enrichment failed for %s; retaining submitted lead data', smartmoving_id)
+        return body
 
 
 def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
