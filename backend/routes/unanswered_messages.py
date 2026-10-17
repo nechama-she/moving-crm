@@ -96,17 +96,20 @@ def queue_summary(_: User = Depends(require_admin), db: Session = Depends(get_db
         func.count().filter(FirstContactState.waiting_since <= cutoff),
     ).one()
     from models import Task
+    followup_now = datetime.now(timezone.utc)
+    overdue_task = Task.due_at < followup_now
+    due_task = and_(Task.scheduled_start <= followup_now, Task.due_at >= followup_now)
     followup_query = db.query(func.count(func.distinct(Task.lead_id))).join(Lead, Lead.id == Task.lead_id).filter(
-        Task.automatic_key.isnot(None), Task.status != 'done', Task.scheduled_start <= datetime.now(timezone.utc),
+        Task.automatic_key.isnot(None), Task.status != 'done', or_(overdue_task, due_task),
         Lead.priority == 0,
         _open_sales_status_filter(), _exclude_mirit_company_filter())
     followups = followup_query.scalar()
-    overdue_followups = followup_query.filter(Task.due_at < datetime.now(timezone.utc)).scalar()
+    overdue_followups = followup_query.filter(overdue_task).scalar()
     return {"enabled": False, "ready": False,
             "messages": {"unanswered": message_counts.get(False, 0), "ended": message_counts.get(True, 0)},
             "missed_calls": calls, "first_contact": {"new": first_new, "overdue": first_overdue},
             "followups": {"all": followups, "overdue": overdue_followups,
-                          "due": followup_query.filter(Task.due_at >= datetime.now(timezone.utc)).scalar()}}
+                          "due": followup_query.filter(due_task).scalar()}}
 
 
 @router.get("/followup-calls")

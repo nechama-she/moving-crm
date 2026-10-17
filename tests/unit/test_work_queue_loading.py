@@ -296,12 +296,19 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
     kwargs = dict(category='overdue', rep='', company='', refresh=False, limit=50, offset=0, _=None, db=db)
     assert [row['lead_id'] for row in scope['list_followup_calls'](**kwargs)['items']] == ['lead']
     assert scope['list_followup_calls'](**{**kwargs, 'company': 'Other'})['items'] == []
-    task = db.query(Task).first()
+    task = db.query(Task).filter_by(task_type='call').first()
     task.due_at = datetime.now(timezone.utc) + timedelta(hours=1)
     db.commit()
     result = scope['list_followup_calls'](**{**kwargs, 'category': 'due'})
     assert [row['lead_id'] for row in result['items']] == ['lead']
     assert result['counts'] == {'all': 1, 'overdue': 1, 'due': 1}
+    message = db.query(Task).filter_by(task_type='text').first()
+    message.due_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    task.status = 'done'
+    db.commit()
+    assert [row['lead_id'] for row in scope['list_followup_calls'](**{**kwargs, 'category': 'due'})['items']] == ['lead']
+    message.status = 'done'
+    task.status = 'open'
     task.scheduled_start = datetime.now(timezone.utc) + timedelta(minutes=30)
     db.commit()
     assert scope['list_followup_calls'](**{**kwargs, 'category': 'due'})['items'] == []
