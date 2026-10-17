@@ -154,6 +154,21 @@ def test_tasks_do_not_require_smartmoving_creation_time(task_queue):
     assert db.query(Task).count() == 9
 
 
+def test_reconciliation_updates_existing_task_titles(task_queue):
+    service, db, lead, Task, _ = task_queue
+    lead.priority = 0
+    service.sync(db, lead)
+    db.commit()
+    morning = db.query(Task).filter_by(automatic_key='priority0:call:1').one()
+    morning.title = 'Evening call'
+    db.commit()
+    service.sync(db, lead, reconcile=True)
+    db.commit()
+    assert morning.title == 'Morning call'
+    assert service.utc(morning.due_at) == datetime(2026, 10, 16, 16, tzinfo=timezone.utc)
+    assert db.query(Task).count() == 9
+
+
 @pytest.mark.parametrize('smartmoving_time,source', [
     ('2026-10-16T12:00:00Z', 'smartmoving'),
     ('2026-10-16T14:00:00Z', 'crm'),

@@ -121,7 +121,7 @@ def apply_progress(db, lead, tasks, calls, messages):
             missed = attempt['status'] == 'not_sent'
             # SQLite drops offsets; PostgreSQL preserves instants. Store UTC in
             # both, while keeping the company-local calendar date for Activity.
-            values = dict(scheduled_start=start.astimezone(timezone.utc), due_at=end.astimezone(timezone.utc), due_date=end.date().isoformat(),
+            values = dict(title=attempt['label'], scheduled_start=start.astimezone(timezone.utc), due_at=end.astimezone(timezone.utc), due_date=end.date().isoformat(),
                           completed_at=completed.astimezone(timezone.utc) if completed else None, status='done' if completed or missed else 'open',
                           completion_reason='Communication' if completed else 'Superseded by later message' if missed else None)
             for name, value in values.items():
