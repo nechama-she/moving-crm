@@ -96,19 +96,22 @@ def queue_summary(_: User = Depends(require_admin), db: Session = Depends(get_db
         func.count().filter(FirstContactState.waiting_since <= cutoff),
     ).one()
     from models import Task
-    followups = db.query(func.count(func.distinct(Task.lead_id))).join(Lead, Lead.id == Task.lead_id).filter(
-        Task.automatic_key.isnot(None), Task.status != 'done', Task.due_at < datetime.now(timezone.utc),
+    followup_query = db.query(func.count(func.distinct(Task.lead_id))).join(Lead, Lead.id == Task.lead_id).filter(
+        Task.automatic_key.isnot(None), Task.status != 'done', Task.scheduled_start <= datetime.now(timezone.utc),
         Lead.priority == 0,
-        _open_sales_status_filter(), _exclude_mirit_company_filter()).scalar()
+        _open_sales_status_filter(), _exclude_mirit_company_filter())
+    followups = followup_query.scalar()
+    overdue_followups = followup_query.filter(Task.due_at < datetime.now(timezone.utc)).scalar()
     return {"enabled": False, "ready": False,
             "messages": {"unanswered": message_counts.get(False, 0), "ended": message_counts.get(True, 0)},
             "missed_calls": calls, "first_contact": {"new": first_new, "overdue": first_overdue},
-            "followups": {"all": followups, "overdue": followups}}
+            "followups": {"all": followups, "overdue": overdue_followups,
+                          "due": followup_query.filter(Task.due_at >= datetime.now(timezone.utc)).scalar()}}
 
 
 @router.get("/followup-calls")
 def list_followup_calls(
-    category: str = Query("overdue", pattern="^(all|overdue)$"),
+    category: str = Query("overdue", pattern="^(all|due|overdue)$"),
     rep: str = Query(""), company: str = Query(""),
     refresh: bool = Query(False), limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -117,33 +120,40 @@ def list_followup_calls(
     from models import Task
     from followup_tasks import lead_row
     now = datetime.now(timezone.utc)
-    overdue = db.query(Task.lead_id).filter(
-        Task.automatic_key.isnot(None), Task.status != 'done', Task.due_at < now,
-    ).distinct().subquery()
-    query = db.query(Lead).join(overdue, overdue.c.lead_id == Lead.id).filter(
-        Lead.priority == 0,
+    pending = db.query(Task.lead_id).filter(
+        Task.lead_id == Lead.id, Task.automatic_key.isnot(None), Task.status != 'done',
+    )
+    overdue = pending.filter(Task.due_at < now).exists()
+    due = pending.filter(Task.scheduled_start <= now, Task.due_at >= now).exists()
+    query = db.query(Lead).filter(or_(overdue, due), Lead.priority == 0,
         _open_sales_status_filter(), _exclude_mirit_company_filter())
-    total = query.count()
+    def counts_for(rows):
+        return {'all': rows.count(), 'overdue': rows.filter(overdue).count(),
+                'due': rows.filter(due).count()}
+    global_counts = counts_for(query)
     reps = [name for name, in query.join(User, Lead.assigned_to == User.id).with_entities(User.name).distinct().order_by(User.name)]
     companies = [name for name, in query.join(Company, Lead.company_id == Company.id).with_entities(Company.name).distinct().order_by(Company.name)]
     if rep:
         query = query.filter(Lead.assigned_to.is_(None)) if rep == 'Unassigned' else query.filter(Lead.assignee.has(User.name == rep))
     if company:
         query = query.filter(Lead.company.has(Company.name == company))
-    count = query.count()
+    counts = counts_for(query)
+    if category != 'all':
+        query = query.filter(due if category == 'due' else overdue)
+    count = counts[category]
     leads = query.options(*_queue_lead_options()).order_by(Lead.created_time.desc(), Lead.id).offset(offset).limit(limit).all()
     tasks_by_lead = {lead.id: [] for lead in leads}
     if leads:
         for task in db.query(Task).filter(Task.lead_id.in_(tasks_by_lead), Task.automatic_key.isnot(None)).all():
             tasks_by_lead[task.lead_id].append(task)
     return {'items': [lead_row(lead, tasks_by_lead[lead.id], now) for lead in leads],
-            'counts': {'all': count, 'overdue': count}, 'global_counts': {'all': total, 'overdue': total},
+            'counts': counts, 'global_counts': global_counts,
             'filter_options': {'reps': reps, 'companies': companies}, 'has_more': offset + len(leads) < count}
 
 
 @router.get("/followup-calls/export")
 def export_followup_calls(
-    category: str = Query("all", pattern="^(all|overdue)$"),
+    category: str = Query("all", pattern="^(all|due|overdue)$"),
     rep: str = Query(""), company: str = Query(""),
     prepare: bool = Query(False),
     _: User = Depends(require_admin), db: Session = Depends(get_db),

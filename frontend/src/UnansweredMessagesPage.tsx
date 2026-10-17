@@ -116,10 +116,10 @@ export default function UnansweredMessagesPage() {
   const [ignoringLead, setIgnoringLead] = useState<string | null>(null);
   const [reloadingContacts, setReloadingContacts] = useState(false);
   const contactReloadRunning = useRef(false);
-  const followupTab = "overdue";
+  const [followupTab, setFollowupTab] = useState<"overdue" | "due">("overdue");
   const [followupLeads, setFollowupLeads] = useState<FollowupLead[]>([]);
-  const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0 });
-  const [globalFollowupCounts, setGlobalFollowupCounts] = useState({ all: 0, overdue: 0 });
+  const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
+  const [globalFollowupCounts, setGlobalFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
   const [followupFilterOptions, setFollowupFilterOptions] = useState({ reps: [] as string[], companies: [] as string[] });
   const [followupHasMore, setFollowupHasMore] = useState(false);
   const [loadingFollowups, setLoadingFollowups] = useState(false);
@@ -442,8 +442,8 @@ export default function UnansweredMessagesPage() {
       if (request !== followupRequest.current || key !== currentQueueFilterKey.current) return;
       loadedSizes.current.followups = offset + data.items.length;
       setFollowupLeads((current) => offset ? [...current, ...(data.items || [])] : (data.items || []));
-      setFollowupCounts(data.counts || { all: 0, overdue: 0 });
-      setGlobalFollowupCounts(data.global_counts || data.counts || { all: 0, overdue: 0 });
+      setFollowupCounts(data.counts || { all: 0, overdue: 0, due: 0 });
+      setGlobalFollowupCounts(data.global_counts || data.counts || { all: 0, overdue: 0, due: 0 });
       setFollowupFilterOptions(data.filter_options || { reps: [], companies: [] });
       setFollowupHasMore(Boolean(data.has_more));
     } catch (reason) {
@@ -906,7 +906,7 @@ export default function UnansweredMessagesPage() {
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("followups")} style={{ ...queueCard, ...(queueTab === "followups" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Priority 0 Follow-ups</span>
-          <strong style={queueCardCount}>{queueStatus?.ready || queueStatus?.enabled === false ? globalFollowupCounts.overdue : "Loading..."}</strong>
+          <strong style={queueCardCount}>{queueStatus?.ready || queueStatus?.enabled === false ? globalFollowupCounts.all : "Loading..."}</strong>
           <span style={queueCardDescription}>Six call periods and three required messages</span>
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>
@@ -1117,7 +1117,7 @@ export default function UnansweredMessagesPage() {
         <div style={{ padding: "16px 18px 0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button>{validationButton}</div></div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
-            <div style={{ color: "#032d60", padding: "10px 14px", fontWeight: 700 }}>Overdue Items ({followupCounts.overdue})</div>
+            {(["overdue", "due"] as const).map(category => <button key={category} type="button" className="slds-button" aria-pressed={followupTab === category} onClick={() => setFollowupTab(category)} style={{ color: "#032d60", padding: "10px 14px", minHeight: 44, fontWeight: followupTab === category ? 700 : 400, border: "none", borderBottom: followupTab === category ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0 }}>{category === "due" ? "Due" : "Overdue Items"} ({followupCounts[category] || 0})</button>)}
           </div>
         </div>
         <div style={{ overflowX: "auto" }}>
@@ -1127,7 +1127,7 @@ export default function UnansweredMessagesPage() {
             </tr></thead>
             <tbody>
               {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
-              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : "No overdue follow-ups."}</td></tr> : null}
+              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "due" ? "No follow-ups due now." : "No overdue follow-ups."}</td></tr> : null}
               {filteredFollowupLeads.map((row) => {
                 const expanded = expandedFollowups.has(row.lead_id);
                 const toggleExpanded = () => setExpandedFollowups((current) => {
