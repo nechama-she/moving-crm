@@ -843,6 +843,7 @@ class InventoryPdfInput(ManualInventoryInput):
 def download_inventory(body: InventoryPdfInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from manual_inventory import build_inventory
     from inventory_pdf import build_inventory_pdf, inventory_photos
+    from item_selectors import inventory_selectors
     rooms, _, cuft, weight = build_inventory(body, db, allow_empty=True)
     lead = db.get(Lead, access.lead_id)
     job = db.get(LeadJob, access.job_id) if access.job_id else None
@@ -862,7 +863,8 @@ def download_inventory(body: InventoryPdfInput, access: PublicMoveAccess = Depen
     liveswitch_used = bool(details.get('last_spark_id') and details.get('last_spark_status') == 'completed'
                            and details.get('report_source', 'liveswitch') in ('liveswitch', 'combined'))
     return Response(build_inventory_pdf(rooms, cuft, weight, photos, company=company_details, client=client_details,
-                                       box_total=getattr(body, 'box_total', None), liveswitch_used=liveswitch_used), media_type='application/pdf', headers={
+                                       box_total=getattr(body, 'box_total', None), liveswitch_used=liveswitch_used,
+                                       item_services=inventory_selectors(access, db)), media_type='application/pdf', headers={
         'Content-Disposition': f"attachment; filename=\"Inventory.pdf\"; filename*=UTF-8''{quote(filename, safe='')}",
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
