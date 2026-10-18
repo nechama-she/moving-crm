@@ -1,4 +1,4 @@
-"""Pure queue rules shared by the API comparison path and background worker."""
+"""Pure scheduling rules used when communication events update Activity tasks."""
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -269,3 +269,21 @@ def calculate_followup_rows(leads_with_created_at, calls, messages, now):
             "overdue_count": overdue_count,
         })
     return rows
+
+
+def _is_us_client_phone(value):
+    """Include the 50 states and D.C., excluding territories and toll-free numbers."""
+    import phonenumbers
+    try:
+        number = phonenumbers.parse(str(value or ""), "US")
+    except phonenumbers.NumberParseException:
+        return False
+    return (
+        phonenumbers.is_valid_number(number)
+        and phonenumbers.region_code_for_number(number) == "US"
+        and phonenumbers.number_type(number) in (
+            phonenumbers.PhoneNumberType.FIXED_LINE,
+            phonenumbers.PhoneNumberType.MOBILE,
+            phonenumbers.PhoneNumberType.FIXED_LINE_OR_MOBILE,
+        )
+    )

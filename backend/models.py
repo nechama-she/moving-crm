@@ -367,6 +367,8 @@ class FirstContactResolution(Base):
     __tablename__ = "first_contact_resolutions"
     lead_id = Column(String(36), ForeignKey("leads.id", ondelete="CASCADE"), primary_key=True)
     contacted_at = Column(DateTime(timezone=True), nullable=False)
+    evidence = Column(Text, nullable=True)
+    recorded_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class MessageState(Base):
@@ -766,17 +768,27 @@ class AutoAssignEvent(Base):
 # ---------------------------------------------------------------------------
 class Task(Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        Index('uq_tasks_followup', 'lead_id', 'automatic_key', unique=True),
+        Index('ix_tasks_pending_followup', 'due_at', 'lead_id',
+              postgresql_where=text("automatic_key IS NOT NULL AND status <> 'done'")),
+    )
 
     id = Column(String(36), primary_key=True, default=_uuid)
     lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
     title = Column(String(500), nullable=False)
     due_date = Column(String(10))          # YYYY-MM-DD, nullable
+    due_at = Column(DateTime(timezone=True))
+    scheduled_start = Column(DateTime(timezone=True))
+    automatic_key = Column(String(40))
+    completed_at = Column(DateTime(timezone=True))
+    completion_reason = Column(String(100))
     status = Column(String(20), nullable=False, default="open", index=True)
     # statuses: open, in_progress, done
     task_type = Column(String(20), nullable=False, default="other", index=True)
     # types: call, email, text, messenger, instagram, other
     notes = Column(Text, nullable=False, default="")
-    created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_now)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
@@ -786,10 +798,15 @@ class Task(Base):
             "lead_id": self.lead_id,
             "title": self.title,
             "due_date": self.due_date or "",
+            "due_at": self.due_at.isoformat() if self.due_at else "",
+            "scheduled_start": self.scheduled_start.isoformat() if self.scheduled_start else "",
+            "automatic_key": self.automatic_key or "",
+            "completed_at": self.completed_at.isoformat() if self.completed_at else "",
+            "completion_reason": self.completion_reason or "",
             "status": self.status,
             "task_type": self.task_type or "other",
             "notes": self.notes or "",
-            "created_by": self.created_by,
+            "created_by": self.created_by or "",
             "created_at": self.created_at.isoformat() if self.created_at else "",
             "updated_at": self.updated_at.isoformat() if self.updated_at else "",
         }

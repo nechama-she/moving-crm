@@ -56,14 +56,15 @@ def elevator_quote(card, addresses, saved, volume):
         address = addresses.get(location, '')
         revision = hashlib.sha256(json.dumps([location, address.strip().lower()]).encode()).hexdigest()
         answer = saved.get(location) or {}
+        unknown = answer.get('revision') == revision and answer.get('unknown') is True
         uses_elevator = answer.get('uses_elevator') if answer.get('revision') == revision else None
-        if type(uses_elevator) is not bool:
+        if unknown or type(uses_elevator) is not bool:
             uses_elevator = None
         subtotal = fee if uses_elevator else Decimal(0)
         percent = getattr(card, location + '_discount_percent')
         discount = (subtotal * percent / 100).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         amount = subtotal - discount
-        locations.append({'location': location, 'address': address, 'revision': revision, 'uses_elevator': uses_elevator,
+        locations.append({'location': location, 'address': address, 'revision': revision, 'uses_elevator': uses_elevator, 'unknown': unknown,
                           'subtotal': float(subtotal), 'discount_percent': float(percent), 'discount_amount': float(discount), 'total': float(amount),
                           'question': f'Will the movers need to use an elevator at {location}?',
                           'description': f'Elevator at {location}; {volume} cu ft. {terms}.'})

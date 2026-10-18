@@ -15,6 +15,19 @@ def quote(volume, pickup=True, delivery=False, **params):
 def test_threshold(volume,total):
     assert quote(volume)[2]['total']==total
 
+
+def test_explicit_unknown_is_saved_answer_and_expires_with_address():
+    from estimate_questions import unanswered_questions
+    card, saved, _ = quote(500)
+    saved['pickup'] = {**saved['pickup'], 'uses_elevator': None, 'unknown': True}
+    result = elevator_quote(card, {}, saved, 500)
+    assert result['locations'][0]['unknown'] is True
+    assert result['locations'][0]['uses_elevator'] is None
+    assert result['locations'][0]['total'] == 0
+    assert 'elevator_pickup' not in unanswered_questions({'elevator': result})
+    changed = elevator_quote(card, {'pickup': 'Changed address'}, saved, 500)
+    assert 'elevator_pickup' in unanswered_questions({'elevator': changed})
+
 def test_each_address_and_discount():
     assert quote(500,True,True)[2]['total']==300
     card,saved,result=quote(501,True,True,pickup_discount_percent=100)

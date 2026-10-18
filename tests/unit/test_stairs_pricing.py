@@ -18,6 +18,19 @@ def test_each_address_has_its_own_allowance(pickup,delivery,total):
     assert quote(pickup,delivery)[2]['total'] == total
 
 
+def test_explicit_unknown_is_saved_answer_and_expires_with_address():
+    from estimate_questions import unanswered_questions
+    card, saved, _ = quote(0, 0)
+    saved['delivery'] = {**saved['delivery'], 'flights': None, 'unknown': True}
+    result = stairs_quote(card, {}, saved, 24, 286)
+    assert result['locations'][1]['unknown'] is True
+    assert result['locations'][1]['flights'] is None
+    assert result['locations'][1]['total'] == 0
+    assert 'stairs_delivery' not in unanswered_questions({'stairs': result})
+    changed = stairs_quote(card, {'delivery': 'Changed address'}, saved, 24, 286)
+    assert 'stairs_delivery' in unanswered_questions({'stairs': changed})
+
+
 def test_full_pickup_discount_preserves_original_charge():
     card,saved,result = quote(2,2,pickup_discount_percent=100)
     pickup,delivery = result['locations']

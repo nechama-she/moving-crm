@@ -988,16 +988,27 @@ def _parse_move_month(value: str) -> tuple[date, date]:
 def get_dispatch_calendar(
     company_id: str = Query(default=""),
     move_month: str = Query(default=""),  # YYYY-MM
+    date_from: str = Query(default=""),
+    date_to: str = Query(default=""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     if user.role not in ("admin", "dispatch", "foreman"):
         raise HTTPException(status_code=403, detail="Dispatch access required")
 
-    if not move_month:
-        raise HTTPException(status_code=400, detail="move_month is required")
-
-    month_start, next_month = _parse_move_month(move_month)
+    if date_from or date_to:
+        try:
+            month_start = date.fromisoformat(date_from)
+            range_end = date.fromisoformat(date_to)
+            if range_end < month_start:
+                raise ValueError()
+            next_month = range_end + timedelta(days=1)
+        except (ValueError, OverflowError):
+            raise HTTPException(status_code=400, detail="Provide a valid start and end date in YYYY-MM-DD order")
+    else:
+        if not move_month:
+            raise HTTPException(status_code=400, detail="move_month or a date range is required")
+        month_start, next_month = _parse_move_month(move_month)
 
     allowed_company_ids = _get_user_company_ids(user, db)
     if not allowed_company_ids:
@@ -1067,16 +1078,27 @@ def get_dispatch_calendar(
 def get_sales_calendar(
     move_month: str = Query(default=""),  # YYYY-MM
     assigned_to: str = Query(default=""),
+    date_from: str = Query(default=""),
+    date_to: str = Query(default=""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     if user.role not in ("admin", "sales_rep", "dispatch"):
         raise HTTPException(status_code=403, detail="Sales calendar access required")
 
-    if not move_month:
-        raise HTTPException(status_code=400, detail="move_month is required")
-
-    month_start, next_month = _parse_move_month(move_month)
+    if date_from or date_to:
+        try:
+            month_start = date.fromisoformat(date_from)
+            range_end = date.fromisoformat(date_to)
+            if range_end < month_start:
+                raise ValueError()
+            next_month = range_end + timedelta(days=1)
+        except (ValueError, OverflowError):
+            raise HTTPException(status_code=400, detail="Provide a valid start and end date in YYYY-MM-DD order")
+    else:
+        if not move_month:
+            raise HTTPException(status_code=400, detail="move_month or a date range is required")
+        month_start, next_month = _parse_move_month(move_month)
 
     allowed_company_ids = _get_user_company_ids(user, db)
     if not allowed_company_ids:
@@ -2025,9 +2047,12 @@ def validate_smartmoving_leads(
         if smartmoving_priority is not None:
             leads_by_id[lead_id].priority = smartmoving_priority
             updated_priorities.append(lead_id)
+        from followup_tasks import sync as sync_followup_tasks
+        sync_followup_tasks(db, leads_by_id[lead_id], reconcile=True)
 
-    if updated_created_times or updated_statuses or updated_priorities:
+    if results:
         db.commit()
+        publish_realtime_event({"type": "followup_tasks_changed"})
 
     return {
         "ok": not errors,
@@ -4000,7 +4025,7 @@ class LeadUpdate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     status: str | None = None
-    priority: int | None = None
+    priority: int | None = Field(default=None, ge=0)
     assigned_to: str | None = None
     assigned_to_name: str | None = None
     company_id: str | None = None
@@ -4537,6 +4562,8 @@ def _apply_lead_update(
         lead.move_date = current_primary_job.move_date
         lead.booked_move_date = current_primary_job.booked_move_date
 
+    from followup_tasks import sync as sync_followup_tasks
+    sync_followup_tasks(db, lead, reconcile=True)
     try:
         db.commit()
     except IntegrityError as exc:
@@ -4547,6 +4574,7 @@ def _apply_lead_update(
         raise HTTPException(status_code=500, detail="Failed to update lead")
     db.refresh(lead)
     _sync_smartmoving_job_details(lead, db)
+    publish_realtime_event({"type": "followup_tasks_changed", "lead_id": lead.id})
 
     # If assignment changed to a new rep, send the rep_assignment SMS.
     will_send_rep_assignment_sms = (
@@ -4888,6 +4916,7 @@ class NewLead(BaseModel):
     referral_source: str | None = None
     service_type: str | None = None
     status: str | None = None
+    priority: int = Field(default=0, ge=0)
     assigned_to: str | None = None
     assigned_to_name: str | None = None
     sales_person_id: str | None = None
@@ -4923,6 +4952,31 @@ def create_lead(
     return _create_lead(body, x_api_secret, db)
 
 
+def _hydrate_new_lead_from_smartmoving(body: NewLead) -> NewLead:
+    smartmoving_id = _clean_optional_text(body.smartmoving_id)
+    if not smartmoving_id:
+        return body
+    try:
+        result = get_opportunity(smartmoving_id)
+        opportunity = result.get('data')
+        if result.get('error') or not isinstance(opportunity, dict):
+            logger.warning('SmartMoving enrichment unavailable for %s; retaining submitted lead data', smartmoving_id)
+            return body
+        # Reuse the refresh mapping, preserving the push's explicit assignment.
+        mapped = _build_smartmoving_refresh_payload(opportunity, User(role='sales_rep'))
+        values = body.model_dump(by_alias=True)
+        for name, field in NewLead.model_fields.items():
+            key = field.alias or name
+            if name in mapped:
+                values[key] = mapped[name]
+            elif key in mapped:
+                values[key] = mapped[key]
+        return NewLead.model_validate(values)
+    except Exception:
+        logger.exception('SmartMoving enrichment failed for %s; retaining submitted lead data', smartmoving_id)
+        return body
+
+
 def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
     cfg = get_config()
     secret = cfg.get("API_SECRET", os.getenv("API_SECRET", ""))
@@ -4930,6 +4984,11 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
         raise HTTPException(status_code=500, detail="API secret not configured")
     if x_api_secret != secret:
         raise HTTPException(status_code=401, detail="Invalid API secret")
+
+    # Copy creates the provider lead immediately above this call. Its initial
+    # CRM data is already known; only incoming pushes need hydration.
+    if not created_in_smartmoving_here:
+        body = _hydrate_new_lead_from_smartmoving(body)
 
     if not body.full_name.strip():
         raise HTTPException(status_code=400, detail="full_name is required")
@@ -5088,6 +5147,7 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
         referral_source=_clean_optional_text(body.referral_source) or None,
         service_type=_clean_optional_text(body.service_type) or None,
         status=raw_status or "new",
+        priority=body.priority,
         estimated_total=_serialize_estimated_total(body.estimated_total),
         payments=_serialize_payments(body.payments),
     )

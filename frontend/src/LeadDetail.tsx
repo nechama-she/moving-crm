@@ -379,6 +379,9 @@ export default function LeadDetail() {
   const [renamingId, setRenamingId] = useState("");
   const [renameValue, setRenameValue] = useState("");
   const [savingStatus, setSavingStatus] = useState(false);
+  const [savingPriority, setSavingPriority] = useState(false);
+  const [priorityError, setPriorityError] = useState("");
+  const [taskRevision, setTaskRevision] = useState(0);
   const [savingRepPaymentIndex, setSavingRepPaymentIndex] = useState<number | null>(null);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [statusMenuRect, setStatusMenuRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
@@ -1276,7 +1279,37 @@ export default function LeadDetail() {
       <tr key={key}>
         <td style={cellLabel}>{key === "user_id" ? (lead?.meta_platform === "instagram" ? "Instagram ID" : lead?.meta_platform === "facebook" ? "Facebook ID" : "Meta ID") : isQuoteNumber ? "SmartMoving Quote Number" : formatLabel(key)}</td>
         <td style={cellValue}>
-          {isInbox ? (
+          {key === "priority" && canViewLeadCommunications ? (
+            <form onSubmit={async (event) => {
+              event.preventDefault();
+              if (savingPriority) return;
+              const priority = Number(new FormData(event.currentTarget).get("priority"));
+              if (!Number.isSafeInteger(priority) || priority < 0) return;
+              setSavingPriority(true);
+              setPriorityError("");
+              try {
+                const response = await fetch(`${API_BASE}/api/leads/${leadId}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json", ...authHeaders(token) },
+                  body: JSON.stringify({ priority }),
+                });
+                const updated = await response.json();
+                if (!response.ok) throw new Error(typeof updated.detail === "string" ? updated.detail : `HTTP ${response.status}`);
+                setLead(updated);
+                setTaskRevision((revision) => revision + 1);
+              } catch (reason) {
+                setPriorityError(reason instanceof Error ? reason.message : "Could not save priority");
+              } finally {
+                setSavingPriority(false);
+              }
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input key={`${leadId}:${String(val)}`} aria-label="Priority" name="priority" type="number" min="0" step="1" required defaultValue={String(val)} disabled={savingPriority} style={{ width: 80, padding: "5px 8px", border: "1px solid #dddbda", borderRadius: 4 }} />
+                <button className="slds-button" type="submit" disabled={savingPriority}>{savingPriority ? "Saving..." : "Save"}</button>
+              </div>
+              {priorityError ? <div role="alert" style={{ color: "#ba0517", marginTop: 6 }}>{priorityError}</div> : null}
+            </form>
+          ) : isInbox ? (
             <a href={String(val)} target="_blank" rel="noopener noreferrer">
               Open Inbox
             </a>
@@ -3658,7 +3691,7 @@ export default function LeadDetail() {
                 <p style={{ color: "#706e6b", fontSize: 13 }}>No conversation available for this lead.</p>
               )
             ) : activeTab === "activity" ? (
-              <TasksPanel leadId={leadId!} token={token} />
+              <TasksPanel key={`${leadId}:${taskRevision}`} leadId={leadId!} token={token} />
             ) : activeTab === "logs" ? (
               <LeadLogsPanel leadId={leadId!} token={token} />
             ) : null}

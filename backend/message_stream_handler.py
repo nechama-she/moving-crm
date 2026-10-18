@@ -469,12 +469,26 @@ def handler(event, context):
             event_id = str(((record.get("dynamodb") or {}).get("SequenceNumber")) or "")
             try:
                 was_processed, realtime_event = _process_record(db, record, event_id)
-                if was_processed:
+                item = _image(record)
+                # SMS task matching can use Aircall's number ID even when the
+                # message-state table cannot build a phone-number pair.
+                task_only_sms = (
+                    not was_processed
+                    and record.get("eventName") in {"INSERT", "MODIFY"}
+                    and ":table/sms_messages/stream/" in str(record.get("eventSourceARN") or "")
+                    and str(item.get("record_type") or "message").lower() == "message"
+                    and bool(item.get("message_id"))
+                    and item.get("timestamp") is not None
+                    and bool(item.get("number_id"))
+                    and bool(item.get("phone_number"))
+                )
+                if was_processed or task_only_sms:
                     from first_contact_state import record_contact
-                    item = _image(record)
                     channel = "calls" if ":table/calls/stream/" in str(record.get("eventSourceARN")) else _channel(record, item)
                     contact_removed = record_contact(db, channel, item)
                     db.commit()
+                    if db.info.pop('followup_tasks_changed', False):
+                        realtime_events.append({"type": "followup_tasks_changed"})
                     if contact_removed:
                         realtime_events.append({"type": "first_contact_ignored"})
                     processed += 1
@@ -482,6 +496,7 @@ def handler(event, context):
                         realtime_events.append(realtime_event)
             except Exception:
                 db.rollback()
+                db.info.pop('followup_tasks_changed', None)
                 logger.exception("Failed message stream record %s", event_id)
                 failures.append({"itemIdentifier": event_id})
         if realtime_events:

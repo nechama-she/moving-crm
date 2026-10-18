@@ -8,7 +8,7 @@ import ConnectCommunicationLeadModal, { CommunicationTarget } from "./ConnectCom
 import { createQueueRefreshScheduler } from "./queueRefreshScheduler";
 
 type MessageTab = "unanswered" | "ended";
-type QueueTab = "messages" | "calls" | "leads" | "followups" | "message-state" | "missed-call-state";
+type QueueTab = "messages" | "calls" | "leads" | "followups" | "message-state" | "missed-call-state" | "stale-state" | "contact-history";
 type LeadTab = "new" | "overdue";
 type MessageRow = { channel: string; message_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
@@ -60,10 +60,11 @@ function IgnoreNumberTarget({ number, name, showUnknown = false, openMenu }: { n
 }
 
 function FollowupStatus({ attempt }: { attempt: FollowupAttempt }) {
-  const color = attempt.status === "overdue" ? "#b91c1c" : attempt.status === "delayed" ? "#b45309" : attempt.status === "on_time" || attempt.status === "completed" ? "#2e844a" : "#64748b";
+  const due = attempt.status === "open";
+  const color = due ? "#075bad" : attempt.status === "overdue" ? "#b91c1c" : attempt.status === "delayed" ? "#b45309" : attempt.status === "on_time" || attempt.status === "completed" ? "#2e844a" : "#64748b";
   const label = attempt.status === "on_time" || attempt.status === "completed" ? "Completed" : attempt.status === "delayed" ? "Delayed" : attempt.status === "overdue" ? "Overdue" : attempt.status === "open" ? "Open" : attempt.status === "not_sent" ? "Not sent" : "Upcoming";
   const isCall = attempt.kind === "call";
-  return <div style={{ display: "grid", gridTemplateColumns: isCall ? "22px 90px minmax(0, 1fr)" : "140px minmax(0, 1fr)", gap: 6, alignItems: "baseline", fontSize: 12 }}>
+  return <div style={{ display: "grid", gridTemplateColumns: isCall ? "22px 90px minmax(0, 1fr)" : "140px minmax(0, 1fr)", gap: 6, alignItems: "baseline", fontSize: 12, padding: "2px 6px", borderRadius: 4, background: due ? "#eef6ff" : undefined, borderLeft: due ? "3px solid #0176d3" : "3px solid transparent" }}>
     {isCall ? <strong>{attempt.number ? `${attempt.number}.` : ""}</strong> : null}
     <span style={{ whiteSpace: "nowrap" }}>{attempt.label}</span>
     <span style={{ color }}><strong>{label}</strong>{attempt.completed_at ? ` - ${new Date(attempt.completed_at).toLocaleString()}` : ` - due by ${new Date(attempt.scheduled_end).toLocaleString()}`}</span>
@@ -75,7 +76,7 @@ export default function UnansweredMessagesPage() {
   const [queueTab, setQueueTab] = useState<QueueTab>(() => {
     try {
       const saved = sessionStorage.getItem("sales-work-queue.tab");
-      return (["messages", "calls", "leads", "followups", "message-state", "missed-call-state"] as string[]).includes(saved || "") ? saved as QueueTab : "messages";
+      return (["messages", "calls", "leads", "followups", "message-state", "missed-call-state", "stale-state", "contact-history"] as string[]).includes(saved || "") ? saved as QueueTab : "messages";
     } catch { return "messages"; }
   });
   const [tab, setTab] = useState<MessageTab>(() => {
@@ -109,13 +110,17 @@ export default function UnansweredMessagesPage() {
   const [globalFirstContactCounts, setGlobalFirstContactCounts] = useState({ new: 0, overdue: 0 });
   const [firstContactHasMore, setFirstContactHasMore] = useState(false);
   const [loadingLeads, setLoadingLeads] = useState(false);
+  const [staleStates, setStaleStates] = useState<{lead_id: string; client: string; phone: string; waiting_since: string}[]>([]);
+  const [loadingStaleStates, setLoadingStaleStates] = useState(false);
+  const [contactHistory, setContactHistory] = useState<{lead_id: string; client: string; phone: string; contacted_at: string; recorded_at: string | null; outcome: string; evidence: Record<string, string>}[]>([]);
+  const [loadingContactHistory, setLoadingContactHistory] = useState(false);
   const [ignoringLead, setIgnoringLead] = useState<string | null>(null);
   const [reloadingContacts, setReloadingContacts] = useState(false);
   const contactReloadRunning = useRef(false);
-  const followupTab = "overdue";
+  const [followupTab, setFollowupTab] = useState<"overdue" | "due">("due");
   const [followupLeads, setFollowupLeads] = useState<FollowupLead[]>([]);
-  const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0 });
-  const [globalFollowupCounts, setGlobalFollowupCounts] = useState({ all: 0, overdue: 0 });
+  const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
+  const [globalFollowupCounts, setGlobalFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
   const [followupFilterOptions, setFollowupFilterOptions] = useState({ reps: [] as string[], companies: [] as string[] });
   const [followupHasMore, setFollowupHasMore] = useState(false);
   const [loadingFollowups, setLoadingFollowups] = useState(false);
@@ -239,7 +244,7 @@ export default function UnansweredMessagesPage() {
       setGlobalCounts(data.messages);
       setGlobalMissedCallCount(data.missed_calls);
       if (data.first_contact) setGlobalFirstContactCounts(data.first_contact);
-      if (data.enabled && data.followups) setGlobalFollowupCounts(data.followups);
+      if (data.followups) setGlobalFollowupCounts(data.followups);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load queue counts");
     }
@@ -321,6 +326,32 @@ export default function UnansweredMessagesPage() {
     }
   }, [token]);
 
+
+  const loadContactHistory = useCallback(async () => {
+    setLoadingContactHistory(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-history/all`, { headers: authHeaders(token), cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Contact history HTTP ${response.status}`);
+      setContactHistory(data.items || []);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load contact history");
+    } finally { setLoadingContactHistory(false); }
+  }, [token]);
+
+  const loadStaleStates = useCallback(async () => {
+    setLoadingStaleStates(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/first-contact-states/all`, { headers: authHeaders(token), cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Stale lead state HTTP ${response.status}`);
+      setStaleStates(data.items || []);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load stale lead states");
+    } finally { setLoadingStaleStates(false); }
+  }, [token]);
 
   const loadFirstContactLeads = useCallback(async (offset = 0, refresh = false, silent = false) => {
     const key = currentQueueFilterKey.current;
@@ -412,8 +443,8 @@ export default function UnansweredMessagesPage() {
       if (request !== followupRequest.current || key !== currentQueueFilterKey.current) return;
       loadedSizes.current.followups = offset + data.items.length;
       setFollowupLeads((current) => offset ? [...current, ...(data.items || [])] : (data.items || []));
-      setFollowupCounts(data.counts || { all: 0, overdue: 0 });
-      setGlobalFollowupCounts(data.global_counts || data.counts || { all: 0, overdue: 0 });
+      setFollowupCounts(data.counts || { all: 0, overdue: 0, due: 0 });
+      setGlobalFollowupCounts(data.global_counts || data.counts || { all: 0, overdue: 0, due: 0 });
       setFollowupFilterOptions(data.filter_options || { reps: [], companies: [] });
       setFollowupHasMore(Boolean(data.has_more));
     } catch (reason) {
@@ -484,7 +515,7 @@ export default function UnansweredMessagesPage() {
     const loaders = {
       messages: loadMessages, calls: loadCalls, leads: loadFirstContactLeads,
       followups: loadFollowups, "message-state": loadMessageStates,
-      "missed-call-state": loadMissedCallStates, summary: loadSummary,
+      "missed-call-state": loadMissedCallStates, "stale-state": loadStaleStates, "contact-history": loadContactHistory, summary: loadSummary,
     };
     const ensureLoaded = (key: keyof typeof loaders) => {
       const loader = loaders[key];
@@ -504,7 +535,7 @@ export default function UnansweredMessagesPage() {
     })();
     return () => { cancelled = true; };
   }, [queueTab, tab, loadMessages, loadCalls, loadFirstContactLeads, loadFollowups,
-      loadMessageStates, loadMissedCallStates, loadSummary]);
+      loadMessageStates, loadMissedCallStates, loadStaleStates, loadContactHistory, loadSummary]);
 
   useEffect(() => {
     const target = followupLoadSentinel.current;
@@ -623,6 +654,11 @@ export default function UnansweredMessagesPage() {
   }, []);
 
   useRealtimeUpdates(token, (event) => {
+    if (event.type === "followup_tasks_changed") {
+      tabLoads.current.delete("followups");
+      scheduleQueueRefresh(false, true);
+      return;
+    }
     if (event.type === "first_contact_ignored") {
       tabLoads.current.delete("leads");
       if (contactReloadRunning.current) return;
@@ -635,6 +671,10 @@ export default function UnansweredMessagesPage() {
     }
     if (event.type === "sales_work_queue_batch") {
       ((event.events || []) as RealtimeEvent[]).forEach((item) => {
+        if (item.type === "followup_tasks_changed") {
+          tabLoads.current.delete("followups");
+          scheduleQueueRefresh(false, true);
+        }
         if (item.type === "first_contact_ignored") {
           tabLoads.current.delete("leads");
           if (!contactReloadRunning.current) scheduleQueueRefresh(true, false);
@@ -867,7 +907,7 @@ export default function UnansweredMessagesPage() {
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("followups")} style={{ ...queueCard, ...(queueTab === "followups" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Priority 0 Follow-ups</span>
-          <strong style={queueCardCount}>{queueStatus?.ready || queueStatus?.enabled === false ? globalFollowupCounts.overdue : "Loading..."}</strong>
+          <strong style={queueCardCount}>{queueStatus?.ready || queueStatus?.enabled === false ? globalFollowupCounts.all : "Loading..."}</strong>
           <span style={queueCardDescription}>Six call periods and three required messages</span>
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>
@@ -880,9 +920,48 @@ export default function UnansweredMessagesPage() {
           <strong style={queueCardCount}>{missedCallStates.length}</strong>
           <span style={queueCardDescription}>Raw CRM missed-call state rows</span>
         </button>
+        <button className="slds-button" type="button" onClick={() => setQueueTab(queueTab === "contact-history" ? "contact-history" : "stale-state")} style={{ ...queueCard, ...(queueTab === "stale-state" || queueTab === "contact-history" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>First Contact State</span>
+          <strong style={queueCardCount}>{staleStates.length}</strong>
+          <span style={queueCardDescription}>Stale leads and first contact history</span>
+        </button>
       </nav>
 
-      {queueTab !== "message-state" && queueTab !== "missed-call-state" ? <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+      {queueTab === "stale-state" || queueTab === "contact-history" ? <div style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+        <nav aria-label="First contact state views" style={{ display: "flex", gap: 8, padding: "12px 18px 0", borderBottom: "1px solid #d8dde6" }}>
+          {(["stale-state", "contact-history"] as const).map(tab => <button key={tab} type="button" className="slds-button" aria-current={queueTab === tab ? "page" : undefined} onClick={() => setQueueTab(tab)} style={{ padding: "12px 14px", border: 0, borderBottom: queueTab === tab ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0, background: "transparent", color: "#032d60", fontWeight: queueTab === tab ? 700 : 400 }}>
+            {tab === "stale-state" ? `Stale Lead State Table (${staleStates.length})` : `First Contact History (${contactHistory.length})`}
+          </button>)}
+        </nav>
+      {queueTab === "contact-history" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 18 }}>
+          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>First Contact History ({contactHistory.length})</h2>
+          <button type="button" className="slds-button" disabled={loadingContactHistory} onClick={() => void loadContactHistory()}>{loadingContactHistory ? "Loading..." : "Reload"}</button>
+        </div>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr>{["Client", "Phone", "Outcome", "Contact time", "Recorded", "Channel", "Sender", "Direction", "Destination", "Call / Message ID", "Message", "Source", "Lead ID"].map(label => <th key={label} style={{ padding: 14, textAlign: "left", background: "#f8fafc" }}>{label}</th>)}</tr></thead>
+          <tbody>{contactHistory.map(row => <tr key={row.lead_id}>
+            {[row.client, row.phone, row.outcome, new Date(row.contacted_at).toLocaleString(), row.recorded_at ? new Date(row.recorded_at).toLocaleString() : "Not recorded", row.evidence.channel, row.evidence.sender, row.evidence.direction, row.evidence.destination, row.evidence.record_id, row.evidence.message, row.evidence.source, row.lead_id].map((value, index) => <td key={index} style={{ padding: 14, borderTop: "1px solid #d8dde6", minWidth: index === 10 ? 240 : undefined, whiteSpace: "pre-wrap" }}>{index === 0 && row.lead_id ? <Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client || row.lead_id}</Link> : value || ""}</td>)}
+          </tr>)}{!loadingContactHistory && !contactHistory.length ? <tr><td colSpan={13} style={{ padding: 32, textAlign: "center" }}>No contact history recorded.</td></tr> : null}</tbody>
+        </table></div>
+      </section> : null}
+
+      {queueTab === "stale-state" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 18 }}>
+          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Stale Lead State Table ({staleStates.length})</h2>
+          <button type="button" className="slds-button" disabled={loadingStaleStates} onClick={() => void loadStaleStates()}>{loadingStaleStates ? "Loading..." : "Reload"}</button>
+        </div>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr>{["Client", "Phone", "Lead ID", "Waiting Since"].map(label => <th key={label} style={{ padding: 14, textAlign: "left", background: "#f8fafc" }}>{label}</th>)}</tr></thead>
+          <tbody>{staleStates.map(row => <tr key={row.lead_id}>
+            {[row.client, row.phone, row.lead_id, new Date(row.waiting_since).toLocaleString()].map((value, index) => <td key={index} style={{ padding: 14, borderTop: "1px solid #d8dde6" }}>{value}</td>)}
+          </tr>)}{!loadingStaleStates && !staleStates.length ? <tr><td colSpan={4} style={{ padding: 32, textAlign: "center" }}>No saved stale lead rows.</td></tr> : null}</tbody>
+        </table></div>
+      </section> : null}
+
+      </div> : null}
+
+      {queueTab !== "message-state" && queueTab !== "missed-call-state" && queueTab !== "stale-state" && queueTab !== "contact-history" ? <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
         <select aria-label="Filter work queue by rep" value={repFilter} onChange={(event) => setRepFilter(event.target.value)} style={filterSelect}><option value="">All reps</option>{filterOptions.reps.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         <select aria-label="Filter work queue by company" value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} style={filterSelect}><option value="">All companies</option>{filterOptions.companies.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         {queueTab !== "leads" ? <select aria-label="Filter work queue by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select> : null}
@@ -1039,7 +1118,7 @@ export default function UnansweredMessagesPage() {
         <div style={{ padding: "16px 18px 0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button>{validationButton}</div></div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
-            <div style={{ color: "#032d60", padding: "10px 14px", fontWeight: 700 }}>Overdue Items ({followupCounts.overdue})</div>
+            {(["due", "overdue"] as const).map(category => <button key={category} type="button" className="slds-button" aria-pressed={followupTab === category} onClick={() => setFollowupTab(category)} style={{ color: "#032d60", padding: "10px 14px", minHeight: 44, fontWeight: followupTab === category ? 700 : 400, border: "none", borderBottom: followupTab === category ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0 }}>{category === "due" ? "Due" : "Overdue Items"} ({followupCounts[category] || 0})</button>)}
           </div>
         </div>
         <div style={{ overflowX: "auto" }}>
@@ -1049,7 +1128,7 @@ export default function UnansweredMessagesPage() {
             </tr></thead>
             <tbody>
               {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
-              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : "No overdue follow-ups."}</td></tr> : null}
+              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "due" ? "No follow-ups due now." : "No overdue follow-ups."}</td></tr> : null}
               {filteredFollowupLeads.map((row) => {
                 const expanded = expandedFollowups.has(row.lead_id);
                 const toggleExpanded = () => setExpandedFollowups((current) => {

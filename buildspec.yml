@@ -15,6 +15,7 @@ phases:
     commands:
       - cd $CODEBUILD_SRC_DIR && python -m pytest tests/unit/test_settings_transfer.py tests/unit/test_pipeline_settings.py -q
       - cd $CODEBUILD_SRC_DIR && python -m pytest tests/unit/test_work_queue_loading.py tests/unit/test_message_state_cleanup.py tests/unit/test_ended_chat_retention.py -q
+      - cd $CODEBUILD_SRC_DIR && python -m pytest tests/unit/test_elevator_pricing.py tests/unit/test_stairs_pricing.py -q
       - echo "Building frontend"
       - cd $CODEBUILD_SRC_DIR/frontend && npm run build
       - cd $CODEBUILD_SRC_DIR/frontend && node --test scripts/test-queue-refresh.mjs
@@ -74,7 +75,7 @@ phases:
       - cd $CODEBUILD_SRC_DIR/backend
       - "pip install --root-user-action=ignore -r message-stream-requirements.txt -t ./message-stream-package --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.13 --implementation cp"
       - rm -rf ./message-stream-package/boto3* ./message-stream-package/botocore* ./message-stream-package/s3transfer* ./message-stream-package/jmespath* ./message-stream-package/sqlalchemy/dialects/mssql ./message-stream-package/sqlalchemy/dialects/mysql ./message-stream-package/sqlalchemy/dialects/oracle ./message-stream-package/sqlalchemy/dialects/sqlite
-      - cp message_stream_handler.py first_contact_state.py work_queue_rules.py communication_associations.py meta_attachment_archiver.py realtime.py database.py config.py models.py company_colors.py move_types.py ./message-stream-package/
+      - cp message_stream_handler.py first_contact_state.py followup_tasks.py work_queue_rules.py communication_associations.py meta_attachment_archiver.py realtime.py database.py config.py models.py company_colors.py move_types.py ./message-stream-package/
       - cd message-stream-package && zip -qr9 ../message-stream-package.zip . && cd ..
       - echo "message-stream package size:" && du -h $CODEBUILD_SRC_DIR/backend/message-stream-package.zip
 

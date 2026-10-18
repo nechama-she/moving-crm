@@ -1,3 +1,4 @@
+import CalendarDateRange from "./CalendarDateRange";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
@@ -316,6 +317,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [calendarJobs, setCalendarJobs] = useState<LeadJob[]>([]);
+  const [dateRange, setDateRange] = useState<{ from: string; to: string } | null>(null);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState("");
   const [daySettings, setDaySettings] = useState<Record<string, DispatchCalendarDaySetting>>({});
@@ -504,7 +506,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   useEffect(() => {
     if (!showCalendar) return;
     void loadDispatchCalendarJobs(dispatchMonth);
-  }, [token, showCalendar, dispatchMonth]);
+  }, [token, showCalendar, dispatchMonth, dateRange]);
 
   useEffect(() => {
     if (!showCalendar) return;
@@ -688,6 +690,10 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
       const params = new URLSearchParams({
         move_month: monthKey(month),
       });
+      if (dateRange) {
+        params.set("date_from", dateRange.from);
+        params.set("date_to", dateRange.to);
+      }
       const res = await fetch(`${API_BASE}/api/dispatch-calendar?${params.toString()}`, { headers: authHeaders(token) });
       if (!res.ok) throw new Error(`Dispatch calendar HTTP ${res.status}`);
       const data = (await res.json()) as { items?: Array<Record<string, unknown>> };
@@ -1022,8 +1028,12 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
       <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
         <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>{isForeman ? "My Jobs Calendar" : "Dispatcher Calender"}</h1>
         <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b" }}>
-          {isForeman ? "Only jobs assigned to you are shown." : "Jobs grouped by booked move date for all checked companies in the selected month."}
+          {isForeman ? "Only jobs assigned to you are shown." : "Jobs grouped by booked move date for all checked companies in the selected dates."}
         </p>
+        <CalendarDateRange key={`${monthKey(dispatchMonth)}:${dateRange?.from || ""}:${dateRange?.to || ""}`} value={dateRange} month={dispatchMonth} onChange={range => {
+        setDateRange(range);
+        if (range) setDispatchMonth(new Date(`${range.from.slice(0, 7)}-01T00:00:00`));
+      }} />
 
         {calendarError ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{calendarError}</p> : null}
         {daySettingsError ? <p style={{ marginBottom: 10, color: "#ba0517", fontSize: 13 }}>{daySettingsError}</p> : null}
@@ -1033,7 +1043,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>Companies</div>
               <div style={{ fontSize: 12, color: "#334155", fontWeight: 600 }}>
-                Total leads this month: {totalLeadCount} ({calendarJobs.length} jobs)
+                Total leads {dateRange ? "in date range" : "this month"}: {totalLeadCount} ({calendarJobs.length} jobs)
                 {selectedDispatchCompanyIds.length > 0 && selectedDispatchCompanyIds.length !== dispatchCompanies.length
                   ? ` • Showing ${filteredLeadCount} leads (${filteredCalendarJobs.length} jobs)`
                   : ""}
@@ -1705,7 +1715,7 @@ function CompanyCalendar({
       <div style={{ padding: "10px 14px", borderBottom: "1px solid #dddbda", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 15, color: "#032d60" }}>{companyName}</h2>
-          <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>Filtered by selected month</p>
+          <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>Calendar for selected jobs</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button className="slds-button" type="button" onClick={onPrevMonth} style={calendarNavBtn}>◀</button>

@@ -1,5 +1,6 @@
 """Printable inventory snapshot, independent of estimate readiness."""
 from io import BytesIO
+from pathlib import Path
 import base64
 import binascii
 from concurrent.futures import ThreadPoolExecutor
@@ -66,7 +67,7 @@ def inventory_photos(rooms, details):
             for key, urls in matches.items()}
 
 
-def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, client=None, box_total=None):
+def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, client=None, box_total=None, liveswitch_used=False, item_services=None):
     output = BytesIO()
     from company_colors import resolve_company_color
     brand = colors.HexColor(resolve_company_color((company or {}).get('name'), (company or {}).get('color')))
@@ -152,6 +153,13 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
             name = row['name']
             if re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b', name, re.I) and not re.search(r'\((CP|PBO)\)\s*$', name, re.I):
                 name += ' (PBO)'
+            from item_selectors import option_counts
+            service_lines = []
+            for selector in (item_services or {}).get(row.get('catalog_item_id') or row.get('item_id'), []):
+                counts = option_counts(selector, (row.get('selections') or {}).get(selector['id']), row['amount'])
+                service_lines.extend(f'{option} ({count})' if row['amount'] > 1 else option
+                                     for option, count in counts.items() if count > 0)
+            item_details = [p(name)] + [p(line) for line in service_lines]
             pictures = []
             for content in (photos or {}).get((room['name'], row.get('reference_name') or row['name']), []):
                 picture = Image(BytesIO(content))
@@ -159,7 +167,7 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
                 picture.drawWidth = picture.imageWidth * scale
                 picture.drawHeight = picture.imageHeight * scale
                 pictures.extend([picture, Spacer(1, 3)])
-            body.append([pictures or p('-'), p(name), p(f"{row['unit_cuft']:,.2f}"),
+            body.append([pictures or p('-'), item_details, p(f"{row['unit_cuft']:,.2f}"),
                          p(f"{row['unit_cuft'] * row['amount']:,.2f}"),
                          p(row['amount']), p('No' if row.get('going') is False else 'Yes')])
         if len(body) == 1:
@@ -177,8 +185,21 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
     story.extend([Spacer(1, 8), p('CP: movers pack. PBO: you pack. Volume going excludes items marked No.')])
 
     def footer(canvas, doc):
+        canvas.saveState()
         canvas.setFont('Helvetica', 9)
+        if liveswitch_used:
+            canvas.setFont('Helvetica', 7)
+            canvas.setFillColor(colors.HexColor('#64748b'))
+            canvas.drawString(50, 22, 'Photo analysis by')
+            # Official wordmark, bundled locally; the logo itself is the link.
+            canvas.drawImage(str(Path(__file__).parent / 'data' / 'liveswitch-logo.png'),
+                             109, 19, width=65, height=13, mask='auto')
+            canvas.linkURL('https://www.liveswitch.com/', (109, 19, 174, 32),
+                           relative=0, thickness=0)
+        canvas.setFont('Helvetica', 9)
+        canvas.setFillColor(colors.black)
         canvas.drawRightString(562, 22, f'Page {doc.page}')
+        canvas.restoreState()
 
     SimpleDocTemplate(output, pagesize=letter, rightMargin=50, leftMargin=50,
                       topMargin=36, bottomMargin=36, title='Your Inventory').build(

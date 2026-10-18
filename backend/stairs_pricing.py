@@ -34,15 +34,16 @@ def stairs_quote(card, addresses, saved, volume, move_minimum):
         address = addresses.get(location, '')
         revision = hashlib.sha256(json.dumps([location, address.strip().lower(), card.steps_per_flight]).encode()).hexdigest()
         answer = saved.get(location) or {}
+        unknown = answer.get('revision') == revision and answer.get('unknown') is True
         flights = answer.get('flights') if answer.get('revision') == revision else None
-        if type(flights) is not int or not 0 <= flights <= 1000:
+        if unknown or type(flights) is not int or not 0 <= flights <= 1000:
             flights = None
         paid = max(0, flights - card.free_flights) if flights is not None else 0
         subtotal = (card.rate_per_cuft * billable * paid).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         percent = getattr(card, location + '_discount_percent')
         discount = (subtotal * percent / 100).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         amount = subtotal - discount
-        locations.append({'location': location, 'address': address, 'revision': revision, 'flights': flights,
+        locations.append({'location': location, 'address': address, 'revision': revision, 'flights': flights, 'unknown': unknown,
                           'paid_flights': paid, 'subtotal': float(subtotal), 'discount_percent': float(percent), 'discount_amount': float(discount), 'total': float(amount),
                           'question': f'How many flights of outdoor or shared-building stairs will the movers need to use at {location}?',
                           'description': f'{flights if flights is not None else "Unanswered"} flights at {location}; {card.free_flights} free, {paid} billable × {billable} cu ft × ${card.rate_per_cuft:.2f}. Up to {card.steps_per_flight} steps per flight. Excludes stairs inside the home.'})

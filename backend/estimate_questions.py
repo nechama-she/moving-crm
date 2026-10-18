@@ -6,6 +6,8 @@ def unanswered_questions(data, package_saved=True):
             missing.append('stops_' + group['location'])
     for key, field, step in [('elevator', 'uses_elevator', 'elevator'), ('long_carry', 'distance_feet', 'carry'), ('stairs', 'flights', 'stairs')]:
         for row in (data.get(key) or {}).get('locations', []):
+            if key in {'elevator', 'stairs'} and row.get('unknown'):
+                continue
             if key == 'long_carry':
                 if row.get('unknown') and row.get('acknowledged'):
                     continue
