@@ -81,16 +81,56 @@ def _process(body: dict) -> dict:
     }
 
 
+def _record_result(body, error=None):
+    """Keep failed schedules visible; remove them only after a confirmed copy."""
+    name = body.get("schedule_name")
+    if not name:
+        return
+    scheduler = boto3.client("scheduler")
+    if error is None:
+        scheduler.delete_schedule(Name=name, GroupName="default")
+        return
+    schedule = scheduler.get_schedule(Name=name, GroupName="default")
+    # UpdateSchedule replaces the configuration, so preserve the target and timing.
+    settings = {key: schedule[key] for key in (
+        "ScheduleExpression", "ScheduleExpressionTimezone", "StartDate", "EndDate",
+        "State", "KmsKeyArn", "Target", "FlexibleTimeWindow",
+    ) if key in schedule}
+    settings["Target"] = {**settings["Target"], "Input": json.dumps(body)}
+    scheduler.update_schedule(
+        Name=name, GroupName="default", **settings,
+        ActionAfterCompletion="NONE",
+        Description=("Duplication failed: " + str(error))[:512],
+    )
+
+
+def _run(body):
+    try:
+        result = _process(body)
+    except Exception as exc:
+        try:
+            _record_result(body, exc)
+        except Exception:
+            logger.exception("Could not save duplication failure on its schedule")
+        raise
+    try:
+        _record_result(body)
+    except Exception:
+        # Do not retry a successful copy because schedule cleanup failed.
+        logger.exception("Copy succeeded but its pending schedule could not be removed")
+    return result
+
+
 def handler(event, context):
     if not isinstance(event, dict) or "Records" not in event:
         logger.info("lead-duplicate handler invoked directly")
-        return {"ok": True, "result": _process(event)}
+        return {"ok": True, "result": _run(event)}
 
     failures = []
     for record in event.get("Records", []):
         message_id = record.get("messageId", "unknown")
         try:
-            _process(json.loads(record["body"]))
+            _run(json.loads(record["body"]))
         except Exception:
             logger.exception("Failed to process SQS record %s", message_id)
             failures.append({"itemIdentifier": message_id})

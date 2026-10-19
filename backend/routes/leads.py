@@ -625,7 +625,7 @@ def _enqueue_lead_for_duplication(
     """Schedule a one-time EventBridge Scheduler invocation of the lead-duplicate Lambda.
 
     Uses EventBridge Scheduler (not SQS) because SQS DelaySeconds is capped at 15 minutes.
-    The schedule auto-deletes after firing (ActionAfterCompletion=DELETE).
+    The worker deletes the schedule after success; failures remain visible for review.
     """
     if os.getenv("ENABLE_LEAD_DUPLICATION", "false").strip().lower() != "true":
         logger.info("Lead duplication disabled; skipping schedule for lead %s", lead_id)
@@ -660,6 +660,7 @@ def _enqueue_lead_for_duplication(
         "lead_id": lead_id,
         "target_company_name": target_company_name,
         "target_referral_source": target_referral_source,
+        "schedule_name": schedule_name,
     }
 
     try:
@@ -669,7 +670,7 @@ def _enqueue_lead_for_duplication(
             ScheduleExpression=f"at({schedule_at})",
             ScheduleExpressionTimezone="UTC",
             FlexibleTimeWindow={"Mode": "OFF"},
-            ActionAfterCompletion="DELETE",
+            ActionAfterCompletion="NONE",
             Target={
                 "Arn": function_arn,
                 "RoleArn": role_arn,
@@ -752,6 +753,8 @@ def list_pending_lead_duplications(
             "target_referral_source": payload.get("target_referral_source") or "",
             "fire_at": fire_at,
             "created_at": detail.get("CreationDate") or schedule.get("CreationDate"),
+            "error": (detail.get("Description") or "").removeprefix("Duplication failed: ")
+                     if (detail.get("Description") or "").startswith("Duplication failed: ") else "",
         })
 
     items.sort(key=lambda item: item["fire_at"])
@@ -850,6 +853,7 @@ def run_pending_lead_duplication_now(
         raise HTTPException(status_code=502, detail="Pending duplication is incomplete")
     payload["target_company_name"] = target_company.name
     payload["target_referral_source"] = referral_source
+    payload["schedule_name"] = schedule_name
 
     try:
         response = boto3.client("lambda", region_name=region).invoke(
