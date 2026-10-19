@@ -19,7 +19,7 @@ export default function MainNavigation({ role, mobile = false }: { role?: string
   const admin = role === 'admin', dispatch = role === 'dispatch', foreman = role === 'foreman';
   const groups: Group[] = foreman ? [] : [
     ...(!dispatch ? [{ label: 'Sales', items: [
-      ...(admin ? [item('Communications', '/chats'), item('Sales Work Queue', '/sales-work-queue')] : []),
+      ...(admin ? [item('Communications', '/chats'), item('Sales Work Queue', '/sales-work-queue'), item('Pending Duplications', '/pending-duplications')] : []),
       item('Outreach', '/outreach'),
     ] }] : []),
     { label: 'Calendars', items: [

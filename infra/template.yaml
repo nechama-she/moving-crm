@@ -2270,14 +2270,9 @@ Resources:
                 Action: lambda:InvokeFunction
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:moving-crm-lead-duplicate-${Environment}"
 
-  LeadDuplicateSchedulerLambdaPermission:
-    Condition: ShouldDeployLambda
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !GetAtt LeadDuplicateFunction.Arn
-      Action: lambda:InvokeFunction
-      Principal: scheduler.amazonaws.com
-      SourceArn: !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/lead-dup-*"
+  # Scheduler invokes through LeadDuplicateSchedulerRole above. A redundant
+  # Lambda resource permission with a wildcard schedule ARN makes the Lambda
+  # console attempt to look up "lead-dup-*" as a literal schedule name.
 
   # ===========================================================================
   # LEAD DUPLICATE — SQS queues

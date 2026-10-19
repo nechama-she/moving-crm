@@ -39,7 +39,6 @@ export default function SettingsPage() {
       entry("Assignment rules", "/assign-period", "Rep availability and admin unavailability windows."),
       entry("Assignment tracker", "/auto-assign-tracker", "Review automatic lead assignments."),
       entry("Duplication rules", "/settings/duplication-rules", "Configure lead duplication."),
-      entry("Pending duplications", "/settings/pending-duplications", "Review or cancel scheduled duplications."),
     ] : [] },
     { title: "Communication", items: admin ? [
       entry("SMS templates", "/settings/templates", "Welcome, assignment and follow-up messages."),

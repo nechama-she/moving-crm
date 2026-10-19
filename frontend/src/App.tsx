@@ -172,7 +172,8 @@ function ProtectedRoutes() {
           <Route path="/settings/inventory-catalog" element={user?.role === "admin" ? <InventoryCatalogPage /> : <Navigate to="/settings" replace />} />
           <Route path="/settings/moving-terms" element={user?.role === "admin" ? <MovingTermsPage /> : <Navigate to="/settings" replace />} />
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
-          <Route path="/settings/pending-duplications" element={<PendingDuplicationsPage />} />
+          <Route path="/pending-duplications" element={<PendingDuplicationsPage />} />
+          <Route path="/settings/pending-duplications" element={<Navigate to="/pending-duplications" replace />} />
           <Route path="/settings/duplication-rules" element={user?.role === "admin" ? <LeadDuplicationRulesPage /> : <Navigate to="/" replace />} />
           <Route path="/settings/ignored-call-numbers" element={user?.role === "admin" ? <IgnoredCallNumbersPage /> : <Navigate to="/" replace />} />
           <Route path="/settings/impersonate" element={<ImpersonateUsersPage />} />
