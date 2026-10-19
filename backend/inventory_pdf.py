@@ -171,8 +171,15 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
                 name += ' (PBO)'
             from item_selectors import option_counts
             service_lines = []
-            for selector in (item_services or {}).get(row.get('catalog_item_id') or row.get('item_id'), []):
+            definitions = (item_services or {}).get(row.get('catalog_item_id') or row.get('item_id'), [])
+            for selector in definitions:
                 counts = option_counts(selector, (row.get('selections') or {}).get(selector['id']), row['amount'])
+                service_lines.extend(f'{option} ({count})' if row['amount'] > 1 else option
+                                     for option, count in counts.items() if count > 0)
+            for key, value in (row.get('selections') or {}).items():
+                if any(selector['id'] == key for selector in definitions):
+                    continue
+                counts = {value: row['amount']} if isinstance(value, str) else value
                 service_lines.extend(f'{option} ({count})' if row['amount'] > 1 else option
                                      for option, count in counts.items() if count > 0)
             item_details = [p(name)] + [p(line) for line in service_lines]

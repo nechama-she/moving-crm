@@ -107,17 +107,31 @@ def save_selectors(plan, body, db):
     return selector_setup(plan, db)
 
 
-def inventory_selectors(access, db):
-    lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
+def default_selections(values, definitions):
+    """Snapshot defaults only when a service has no saved choice."""
+    result = dict(values or {})
+    for definition in definitions:
+        result.setdefault(definition['id'], definition.get('default') or definition['options'][0])
+    return result
+
+
+def job_selectors(lead, job, db, item_ids=None):
     if not (job.company_id or lead.company_id):
         return {}
     from routes.pricing import infer_job_move_type
     _, plan = infer_job_move_type(lead, job, db)
+    wanted = set(item_ids) if item_ids is not None else None
     result = {}
     for row in service_rows(plan):
         for item_id in row['item_ids']:
-            result.setdefault(item_id, []).append(row)
+            if wanted is None or item_id in wanted:
+                result.setdefault(item_id, []).append(row)
     return result
+
+
+def inventory_selectors(access, db, item_ids=None):
+    lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
+    return job_selectors(lead, job, db, item_ids)
 
 
 @isolated_charge('Item services')

@@ -271,6 +271,7 @@ def build_inventory(body, db, allow_empty=False):
 def submit_inventory(body, access, db):
     from routes.liveswitch import apply_spark_results_to_lead
     rooms, rows, cuft, weight = build_inventory(body, db)
+    save_service_defaults(rows, access, db)
     return submit_inventory_snapshot(body.model_dump(mode='json'), rooms, rows, cuft, weight, access, db)
 
 
@@ -309,8 +310,16 @@ def submit_inventory_snapshot(list_body, rooms, rows, cuft, weight, access, db):
     return apply_spark_results_to_lead(access.lead_id, '', db, expected_report_id=report_id)
 
 
+def save_service_defaults(rows, access, db):
+    from item_selectors import inventory_selectors, default_selections
+    selectors = inventory_selectors(access, db, {row.get('catalog_item_id') or row.get('item_id') for row in rows})
+    for row in rows:
+        row['selections'] = default_selections(row.get('selections'), selectors.get(row.get('catalog_item_id') or row.get('item_id'), []))
+
+
 def save_inventory_draft(body, access, db):
     rooms, rows, cuft, weight = build_inventory(body, db, allow_empty=True)
+    save_service_defaults(rows, access, db)
     db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
     details = json.loads(saved.details or '{}') if saved else {}
@@ -328,6 +337,7 @@ def replace_current_inventory(body, access, db):
     """Replace the active report's editable inventory without replacing its media report."""
     from models import LeadSparkInventoryItem
     rooms, rows, cuft, weight = build_inventory(body, db, allow_empty=True)
+    save_service_defaults(rows, access, db)
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
     details = json.loads(saved.details or '{}') if saved else {}
     report_id = details.get('last_spark_id')

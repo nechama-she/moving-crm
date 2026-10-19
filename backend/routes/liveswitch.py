@@ -766,6 +766,13 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
         price = None
         if not job:
             raise ValueError('No job found for this lead')
+        from catalog_names import resolve_catalog_names
+        from item_selectors import job_selectors, default_selections
+        inventory_rows = resolve_catalog_names(inventory_rows, db)
+        selectors = job_selectors(lead, job, db, {row.get('catalog_item_id') or row.get('item_id') for row in inventory_rows})
+        for row in inventory_rows:
+            row['selections'] = default_selections(row.get('selections'), selectors.get(row.get('catalog_item_id') or row.get('item_id'), []))
+        details['spark_inventory_snapshot'] = inventory_rows
         if job:
             db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job.id).delete(synchronize_session=False)
             for index, row in enumerate(inventory_rows):

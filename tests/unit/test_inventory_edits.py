@@ -180,6 +180,13 @@ def test_item_selectors_persist_per_row(manual_catalog, active, monkeypatch):
     editor = load_inventory_editor(access, db)
     first, second = editor['rooms'][0]['custom_items']
     assert first['selectors'][0]['label'] == 'Service'
+    assert first['selections'] == {'service': 'Owner'}
+    assert json.loads(db.get(models.InventoryEditItem, second['id']).selections) == {'service': 'Owner'}
+    # A changed pricing default must not rewrite a saved inventory choice.
+    plan.item_selectors = json.dumps([dict(id='service', item_ids=['chair'], label='Service',
+        options=['Owner', 'Movers'], default='Movers')])
+    db.commit()
+    assert load_inventory_editor(access, db)['rooms'][0]['custom_items'][1]['selections'] == {'service': 'Owner'}
     save_inventory_edits(body(editor, update=[dict(id=first['id'], fields={'selections': {'service': 'Movers'}})]), access, db)
     # Rebuild from the report/draft snapshot as well as reopening persisted rows.
     db.get(models.InventoryEditState, access.job_id).source_hash = 'changed'

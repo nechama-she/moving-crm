@@ -10,7 +10,7 @@ from sqlalchemy import select, func
 from models import (Lead, LeadJob, LeadLiveSwitch, LeadSparkInventoryItem, InventoryRoomType,
                     InventoryCatalogItem, InventoryEditState, InventoryEditRoom, InventoryEditItem)
 from spark_history import remember_report
-from item_selectors import inventory_selectors, ServiceSelections
+from item_selectors import inventory_selectors, ServiceSelections, default_selections
 
 
 class Fields(BaseModel):
@@ -79,7 +79,7 @@ def validated_selections(values, definitions, previous=None):
         selected_options = [value] if isinstance(value, str) else list(value)
         if any(option not in options.get(key, []) for option in selected_options):
             raise HTTPException(422, 'This item option is unavailable. Reopen the inventory to refresh its selectors.')
-    return json.dumps(values)
+    return json.dumps(default_selections({**(previous or {}), **values}, definitions))
 
 
 def source(details):
@@ -196,7 +196,23 @@ def load_inventory_editor(access, db):
     rooms = db.query(InventoryEditRoom).filter_by(job_id=job.id).order_by(InventoryEditRoom.sort_order).all()
     result = {room.id: dict(id=room.id, name=room.name, room_type_id=room.room_type_id or '', items={}, custom_items=[]) for room in rooms}
     inventory_rows = joined_rows(job.id, db)
-    selectors = inventory_selectors(access, db)
+    selectors = inventory_selectors(access, db, {item.catalog_item_id for item, _ in inventory_rows if item.catalog_item_id})
+    defaults_saved = False
+    for item, _ in inventory_rows:
+        previous = json.loads(item.selections or '{}')
+        selections = default_selections(previous, selectors.get(item.catalog_item_id, []))
+        if selections != previous:
+            item.selections = json.dumps(selections)
+            defaults_saved = True
+    if defaults_saved:
+        project(job, access, details, inventory_rows, db)
+        if saved is None:
+            saved = LeadLiveSwitch(lead_id=access.lead_id)
+            db.add(saved)
+        saved.details = json.dumps(details)
+        state.source_hash = source_hash(details)
+        state.revision = str(uuid4())
+        db.commit()
     for item, name in inventory_rows:
         result[item.room_id]['custom_items'].append(dict(id=item.id, name=display_name(item, name),
             catalog_item_id=item.catalog_item_id, name_override=item.name is not None,
@@ -209,7 +225,6 @@ def load_inventory_editor(access, db):
 
 def save_inventory_edits(body, access, db):
     job, saved, details, state = lock(access, db)
-    selectors = inventory_selectors(access, db)
     if state is None:
         raise HTTPException(409, 'Open the inventory before editing.')
     receipts = json.loads(state.receipts or '{}')
@@ -249,6 +264,9 @@ def save_inventory_edits(body, access, db):
     from sqlalchemy import or_
     targets = query.filter(or_(InventoryEditItem.id.in_(requested), InventoryEditItem.room_id.in_(deleted_rooms))).all() if requested or deleted_rooms else []
     target_map = {row.id:row for row in targets}
+    selectors = inventory_selectors(access, db,
+        {row.catalog_item_id for row in targets if row.catalog_item_id}
+        | {item.catalog_item_id for item in body.add if item.catalog_item_id})
     if not requested <= target_map.keys(): raise HTTPException(409, 'Inventory row does not belong to this move or was deleted.')
     deleted = {str(x) for x in body.delete} | {r.id for r in targets if r.room_id in deleted_rooms}
     changed = []

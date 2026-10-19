@@ -105,6 +105,7 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
     </> : <>
       <div className={`mi-inventory-name${selectors.length ? ' mi-name-with-services' : ''}`}><span className="mi-item-name-label"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name} disabled={busy || packingLocked || !going} onChange={onMoverPackChange}/>}</span>
         {!!selectors.length && <span className="mi-item-services">{selectors.map(selector => <ServiceChoice key={selector.id} selector={selector} name={name} value={selections[selector.id]} quantity={quantity} disabled={serviceBusy || !going} open={openService === `${serviceRowId}:${selector.id}`} setOpen={open => setOpenService(open ? `${serviceRowId}:${selector.id}` : '')} onChange={value => onSelectionChange?.(selector.id, value)}/>)}</span>}
+        {Object.entries(selections).filter(([id]) => !selectors.some(selector => selector.id === id)).map(([id, value]) => <span key={id} className="mi-item-services">{typeof value === 'string' ? value : Object.entries(value).filter(([, count]) => count > 0).map(([option, count]) => `${option} (${count})`).join(', ')}</span>)}
       </div>
       <span><span className="mi-mobile-label">Unit volume</span>{cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })}<span className="mi-mobile-unit"> cu ft</span></span>
       <span aria-label="Total volume in cubic feet"><span className="mi-mobile-label">Total volume</span>{totalVolumeLabel}<span className="mi-mobile-unit"> cu ft</span></span>
@@ -164,7 +165,33 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   onDone: () => Promise<void>;
 }) {
   const [catalog, setCatalog] = useState<Catalog>();
-  const [rooms, setRooms] = useState<Room[]>([]);
+  const [rooms, setRoomsState] = useState<Room[]>([]);
+  function setRooms(update: Room[] | ((current: Room[]) => Room[])) {
+    setRoomsState(current => {
+      const next = typeof update === 'function' ? update(current) : update;
+      if (!catalog) return next;
+      const definitions = new Map((catalog?.items || []).map(item => [item.id, item]));
+      return next.map(room => {
+        const items = {...room.items};
+        const custom = [...(room.custom_items || [])];
+        for (const [id, quantity] of Object.entries(items)) {
+          const item = definitions.get(id);
+          if (quantity <= 0 || !item?.selectors?.length) continue;
+          custom.push({id: catalogInventoryId(room, id), catalog_item_id: id,
+            name: room.item_names?.[id] || item.name, name_override: !!room.item_names?.[id],
+            cuft: item.cuft, unit_weight: item.weight, quantity});
+          delete items[id];
+        }
+        return {...room, items, custom_items: custom.map(item => {
+          const selections = {...item.selections};
+          for (const selector of definitions.get(item.catalog_item_id || '')?.selectors || []) {
+            if (!(selector.id in selections)) selections[selector.id] = selector.default || selector.options[0];
+          }
+          return {...item, selections};
+        })};
+      });
+    });
+  }
   const [selected, setSelected] = useState('');
   const [roomPickerOpen, setRoomPickerOpen] = useState(false);
   const addRoomButton = useRef<HTMLButtonElement>(null);
@@ -279,6 +306,8 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   }, []);
   const modal = useRef<HTMLDivElement>(null);
   const loader = useRef(loadCatalog);
+  loader.current = loadCatalog;
+  const [catalogRefreshError, setCatalogRefreshError] = useState('');
   const inventoryLoader = useRef(loadInventory);
   useEffect(() => {
     let active = true;
@@ -320,6 +349,19 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     }).catch(err => { if (active) setError(err.message); });
     return () => { active = false; };
   }, []);
+  useEffect(() => {
+    // The first opening loads catalog and inventory together above. Later
+    // openings refresh services without replacing saved or unsaved item edits.
+    if (!visible || !loadedRooms.current) return;
+    let active = true;
+    setCatalogRefreshError('');
+    loader.current().then(value => {
+      if (active) setCatalog(value);
+    }).catch(() => {
+      if (active) setCatalogRefreshError('Could not refresh item services. Close and reopen the inventory to try again.');
+    });
+    return () => { active = false; };
+  }, [visible]);
   useEffect(() => {
     if (!visible) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -394,6 +436,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     <div className="mi-totals" aria-live="polite"><span>{rooms.length} rooms</span><span>{rooms.reduce((sum, r) => sum + count(r), 0)} items &middot; {rooms.reduce((sum, r) => sum + pieces(r), 0)} pieces &middot; {totalBoxes} boxes</span><strong>{number(cuft)} cu ft</strong><span>{number(weight)} lb</span></div>
     {draftError && <p className="mi-error" role="alert">{draftError}</p>}
     {error && <p className="mi-error" role="alert">{error}</p>}
+    {catalogRefreshError && <p className="mi-error" role="alert">{catalogRefreshError}</p>}
     <div className="mi-body">
       {!catalog ? <p>Loading inventory...</p> : <>
         <div className="mi-room-toolbar">
