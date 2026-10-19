@@ -80,6 +80,24 @@ def test_creation_loads_smartmoving_details_before_tasks():
     exec(guarded_code, guarded_scope)
     lookup.assert_called_once_with('copied')
     assert guarded_scope['body'] == 'hydrated'
+    duplication = next(node for node in creation.body if isinstance(node, ast.If)
+                       and any(isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                               and call.func.id == '_enqueue_lead_for_duplication' for call in ast.walk(node)))
+    suppression = next(node for node in creation.body if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name) and target.id == 'suppress_new_lead_automation' for target in node.targets))
+    terminal = next(node for node in tree.body if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == 'NO_MESSAGE_STATUSES' for target in node.targets))
+    from types import SimpleNamespace
+    eligibility = compile(ast.Expression(duplication.test), str(source), 'eval')
+    for status in ('new', 'contacted', 'quoted', 'booked', 'scheduled', 'completed', 'lost', 'cancelled'):
+        for priority in (0, 1, 3):
+            scope = dict(lead=SimpleNamespace(status=status, priority=priority, referral_source='Facebook'))
+            exec(compile(ast.Module(body=[terminal, suppression], type_ignores=[]), str(source), 'exec'), scope)
+            assert bool(eval(eligibility, scope)) == (status in ('new', 'contacted', 'quoted', 'lost', 'cancelled'))
+            enqueue = next(node for node in ast.walk(duplication) if isinstance(node, ast.Call)
+                           and isinstance(node.func, ast.Name) and node.func.id == '_enqueue_lead_for_duplication')
+            approval = next(keyword.value for keyword in enqueue.keywords if keyword.arg == 'requires_approval')
+            assert eval(compile(ast.Expression(approval), str(source), 'eval'), scope) == (status in ('lost', 'cancelled'))
     assert any(item.arg == 'priority' and isinstance(item.value, ast.Attribute)
                and item.value.attr == 'priority' for item in lead_call.keywords)
 

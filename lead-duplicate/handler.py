@@ -42,6 +42,13 @@ def _process(body: dict) -> dict:
 
     token = _login(api_url)
     headers = {"Authorization": f"Bearer {token}"}
+    lead_response = httpx.get(f"{api_url}/api/leads/{lead_id}", headers=headers, timeout=10)
+    lead_response.raise_for_status()
+    status = (lead_response.json().get("status") or "").strip().lower()
+    if status in {"booked", "scheduled", "completed"}:
+        return {"status": "skipped", "reason": status}
+    if status in {"lost", "cancelled"} and not body.get("approved"):
+        return {"status": "awaiting_approval"}
 
     # The Company Directory is the sole source of company configuration.
     companies_response = httpx.get(f"{api_url}/api/companies", headers=headers, timeout=10)
@@ -81,13 +88,13 @@ def _process(body: dict) -> dict:
     }
 
 
-def _record_result(body, error=None):
+def _record_result(body, error=None, awaiting_approval=False):
     """Keep failed schedules visible; remove them only after a confirmed copy."""
     name = body.get("schedule_name")
     if not name:
         return
     scheduler = boto3.client("scheduler")
-    if error is None:
+    if error is None and not awaiting_approval:
         scheduler.delete_schedule(Name=name, GroupName="default")
         return
     schedule = scheduler.get_schedule(Name=name, GroupName="default")
@@ -97,10 +104,12 @@ def _record_result(body, error=None):
         "State", "KmsKeyArn", "Target", "FlexibleTimeWindow",
     ) if key in schedule}
     settings["Target"] = {**settings["Target"], "Input": json.dumps(body)}
+    if awaiting_approval:
+        settings["State"] = "DISABLED"
     scheduler.update_schedule(
         Name=name, GroupName="default", **settings,
         ActionAfterCompletion="NONE",
-        Description=("Duplication failed: " + str(error))[:512],
+        Description="Awaiting duplication approval" if awaiting_approval else ("Duplication failed: " + str(error))[:512],
     )
 
 
@@ -114,7 +123,7 @@ def _run(body):
             logger.exception("Could not save duplication failure on its schedule")
         raise
     try:
-        _record_result(body)
+        _record_result(body, awaiting_approval=result.get("status") == "awaiting_approval")
     except Exception:
         # Do not retry a successful copy because schedule cleanup failed.
         logger.exception("Copy succeeded but its pending schedule could not be removed")
