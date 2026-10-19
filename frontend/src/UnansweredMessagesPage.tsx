@@ -7,16 +7,28 @@ import MessageAttachments, { attachmentSummary, MessageAttachment } from "./Mess
 import ConnectCommunicationLeadModal, { CommunicationTarget } from "./ConnectCommunicationLeadModal";
 import { createQueueRefreshScheduler } from "./queueRefreshScheduler";
 
+type SmartMovingFields = { smartmoving_id?: string; quote_number?: string };
+function SmartMovingCell({ row }: { row: SmartMovingFields }) {
+  const id = row.smartmoving_id?.trim();
+  const label = row.quote_number?.trim() || id;
+  return <td style={{ padding: "14px 16px", borderBottom: "1px solid #eef1f4", overflowWrap: "anywhere" }}>
+    {id ? <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(id)}/sales`}
+      target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()}
+      onKeyDown={event => event.stopPropagation()} style={{ color: "#0b5cab", fontWeight: 700 }}>{label}</a> : label || "-"}
+  </td>;
+}
+const smartMovingHeader = <th style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", background: "#f8fafc" }}>SmartMoving</th>;
+
 type MessageTab = "unanswered" | "ended";
 type QueueTab = "messages" | "calls" | "leads" | "followups" | "message-state" | "missed-call-state" | "stale-state" | "contact-history";
 type LeadTab = "new" | "overdue";
-type MessageRow = { channel: string; message_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
-type MissedCallRow = { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
-type FirstContactLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; created_at: string; age_minutes: number };
+type MessageRow = SmartMovingFields & { channel: string; message_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
+type MissedCallRow = SmartMovingFields & { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
+type FirstContactLead = SmartMovingFields & { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; created_at: string; age_minutes: number };
 type FollowupAttempt = { number?: number; kind: "call" | "message"; label: string; period: string; scheduled_start: string; scheduled_end: string; completed_at: string; status: "completed" | "not_sent" | "on_time" | "delayed" | "overdue" | "open" | "upcoming" };
-type FollowupLead = { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; priority: number; created_at: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
-type RawMessageState = { channel: string; message_id: string; lead_id: string | null; client_identifier: string; company_identifier: string; direction: string; conversation_ended: boolean; occurred_at: string };
-type RawMissedCallState = { client_identifier: string; company_identifier: string; call_id: string; lead_id: string | null; missed_count: number; first_missed_at: string; latest_missed_at: string };
+type FollowupLead = SmartMovingFields & { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; priority: number; created_at: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
+type RawMessageState = SmartMovingFields & { channel: string; message_id: string; lead_id: string | null; client_identifier: string; company_identifier: string; direction: string; conversation_ended: boolean; occurred_at: string };
+type RawMissedCallState = SmartMovingFields & { client_identifier: string; company_identifier: string; call_id: string; lead_id: string | null; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type NumberMenu = { number: string; x: number; y: number; connectTarget?: CommunicationTarget } | null;
 
 const displayPhone = (value: string) => {
@@ -110,9 +122,9 @@ export default function UnansweredMessagesPage() {
   const [globalFirstContactCounts, setGlobalFirstContactCounts] = useState({ new: 0, overdue: 0 });
   const [firstContactHasMore, setFirstContactHasMore] = useState(false);
   const [loadingLeads, setLoadingLeads] = useState(false);
-  const [staleStates, setStaleStates] = useState<{lead_id: string; client: string; phone: string; waiting_since: string}[]>([]);
+  const [staleStates, setStaleStates] = useState<(SmartMovingFields & {lead_id: string; client: string; phone: string; waiting_since: string})[]>([]);
   const [loadingStaleStates, setLoadingStaleStates] = useState(false);
-  const [contactHistory, setContactHistory] = useState<{lead_id: string; client: string; phone: string; contacted_at: string; recorded_at: string | null; outcome: string; evidence: Record<string, string>}[]>([]);
+  const [contactHistory, setContactHistory] = useState<(SmartMovingFields & {lead_id: string; client: string; phone: string; contacted_at: string; recorded_at: string | null; outcome: string; evidence: Record<string, string>})[]>([]);
   const [loadingContactHistory, setLoadingContactHistory] = useState(false);
   const [ignoringLead, setIgnoringLead] = useState<string | null>(null);
   const [reloadingContacts, setReloadingContacts] = useState(false);
@@ -939,10 +951,10 @@ export default function UnansweredMessagesPage() {
           <button type="button" className="slds-button" disabled={loadingContactHistory} onClick={() => void loadContactHistory()}>{loadingContactHistory ? "Loading..." : "Reload"}</button>
         </div>
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead><tr>{["Client", "Phone", "Outcome", "Contact time", "Recorded", "Channel", "Sender", "Direction", "Destination", "Call / Message ID", "Message", "Source", "Lead ID"].map(label => <th key={label} style={{ padding: 14, textAlign: "left", background: "#f8fafc" }}>{label}</th>)}</tr></thead>
-          <tbody>{contactHistory.map(row => <tr key={row.lead_id}>
+          <thead><tr>{smartMovingHeader}{["Client", "Phone", "Outcome", "Contact time", "Recorded", "Channel", "Sender", "Direction", "Destination", "Call / Message ID", "Message", "Source", "Lead ID"].map(label => <th key={label} style={{ padding: 14, textAlign: "left", background: "#f8fafc" }}>{label}</th>)}</tr></thead>
+          <tbody>{contactHistory.map(row => <tr key={row.lead_id}><SmartMovingCell row={row} />
             {[row.client, row.phone, row.outcome, new Date(row.contacted_at).toLocaleString(), row.recorded_at ? new Date(row.recorded_at).toLocaleString() : "Not recorded", row.evidence.channel, row.evidence.sender, row.evidence.direction, row.evidence.destination, row.evidence.record_id, row.evidence.message, row.evidence.source, row.lead_id].map((value, index) => <td key={index} style={{ padding: 14, borderTop: "1px solid #d8dde6", minWidth: index === 10 ? 240 : undefined, whiteSpace: "pre-wrap" }}>{index === 0 && row.lead_id ? <Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client || row.lead_id}</Link> : value || ""}</td>)}
-          </tr>)}{!loadingContactHistory && !contactHistory.length ? <tr><td colSpan={13} style={{ padding: 32, textAlign: "center" }}>No contact history recorded.</td></tr> : null}</tbody>
+          </tr>)}{!loadingContactHistory && !contactHistory.length ? <tr><td colSpan={14} style={{ padding: 32, textAlign: "center" }}>No contact history recorded.</td></tr> : null}</tbody>
         </table></div>
       </section> : null}
 
@@ -952,10 +964,10 @@ export default function UnansweredMessagesPage() {
           <button type="button" className="slds-button" disabled={loadingStaleStates} onClick={() => void loadStaleStates()}>{loadingStaleStates ? "Loading..." : "Reload"}</button>
         </div>
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead><tr>{["Client", "Phone", "Lead ID", "Waiting Since"].map(label => <th key={label} style={{ padding: 14, textAlign: "left", background: "#f8fafc" }}>{label}</th>)}</tr></thead>
-          <tbody>{staleStates.map(row => <tr key={row.lead_id}>
+          <thead><tr>{smartMovingHeader}{["Client", "Phone", "Lead ID", "Waiting Since"].map(label => <th key={label} style={{ padding: 14, textAlign: "left", background: "#f8fafc" }}>{label}</th>)}</tr></thead>
+          <tbody>{staleStates.map(row => <tr key={row.lead_id}><SmartMovingCell row={row} />
             {[row.client, row.phone, row.lead_id, new Date(row.waiting_since).toLocaleString()].map((value, index) => <td key={index} style={{ padding: 14, borderTop: "1px solid #d8dde6" }}>{value}</td>)}
-          </tr>)}{!loadingStaleStates && !staleStates.length ? <tr><td colSpan={4} style={{ padding: 32, textAlign: "center" }}>No saved stale lead rows.</td></tr> : null}</tbody>
+          </tr>)}{!loadingStaleStates && !staleStates.length ? <tr><td colSpan={5} style={{ padding: 32, textAlign: "center" }}>No saved stale lead rows.</td></tr> : null}</tbody>
         </table></div>
       </section> : null}
 
@@ -974,13 +986,13 @@ export default function UnansweredMessagesPage() {
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse" }}>
-            <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>
+            <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>{smartMovingHeader}
               {['Channel', 'Message ID', 'Lead ID', 'Client Identifier', 'Company Identifier', 'Direction', 'Ended', 'Occurred At'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
-              {loadingMessageStates && messageStates.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading message state table…</td></tr> : null}
-              {!loadingMessageStates && messageStates.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>The message state table is empty.</td></tr> : null}
-              {messageStates.map((row) => <tr key={`${row.channel}:${row.message_id}`}>
+              {loadingMessageStates && messageStates.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, textAlign: "center" }}>Loading message state table…</td></tr> : null}
+              {!loadingMessageStates && messageStates.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>The message state table is empty.</td></tr> : null}
+              {messageStates.map((row) => <tr key={`${row.channel}:${row.message_id}`}><SmartMovingCell row={row} />
                 <td style={cell}>{row.channel}</td>
                 <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.message_id}</td>
                 <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.lead_id || "—"}</td>
@@ -1002,13 +1014,13 @@ export default function UnansweredMessagesPage() {
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 1080, borderCollapse: "collapse" }}>
-            <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>
+            <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>{smartMovingHeader}
               {['Client Identifier', 'Company Identifier', 'Call ID', 'Lead ID', 'Missed Count', 'First Missed At', 'Latest Missed At'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
-              {loadingMissedCallStates && missedCallStates.length === 0 ? <tr><td colSpan={7} style={{ padding: 32, textAlign: "center" }}>Loading missed-call state table…</td></tr> : null}
-              {!loadingMissedCallStates && missedCallStates.length === 0 ? <tr><td colSpan={7} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>The missed-call state table is empty.</td></tr> : null}
-              {missedCallStates.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
+              {loadingMissedCallStates && missedCallStates.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading missed-call state table…</td></tr> : null}
+              {!loadingMissedCallStates && missedCallStates.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>The missed-call state table is empty.</td></tr> : null}
+              {missedCallStates.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}><SmartMovingCell row={row} />
                 <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.client_identifier}</td>
                 <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.company_identifier}</td>
                 <td style={{ ...cell, overflowWrap: "anywhere" }}>{row.call_id}</td>
@@ -1033,11 +1045,11 @@ export default function UnansweredMessagesPage() {
         </div>
         <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", minWidth: 1050, borderCollapse: "collapse", tableLayout: "fixed" }}>
-          <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>{headers.map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}</tr></thead>
+          <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>{smartMovingHeader}{headers.map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}</tr></thead>
           <tbody>
-            {loading ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading messages…</td></tr> : null}
-            {!loading && filteredItems.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{items.length ? "No messages match these filters." : tab === "unanswered" ? "No unanswered messages." : "No ended chats."}</td></tr> : null}
-            {!loading && filteredItems.map((row) => <tr key={`${row.channel}:${row.message_id}`}>
+            {loading ? <tr><td colSpan={9} style={{ padding: 32, textAlign: "center" }}>Loading messages…</td></tr> : null}
+            {!loading && filteredItems.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{items.length ? "No messages match these filters." : tab === "unanswered" ? "No unanswered messages." : "No ended chats."}</td></tr> : null}
+            {!loading && filteredItems.map((row) => <tr key={`${row.channel}:${row.message_id}`}><SmartMovingCell row={row} />
               <td style={cell} onContextMenu={!row.lead_id ? (event) => { event.preventDefault(); setNumberMenu({ number: row.client_number || row.client_identifier, x: event.clientX, y: event.clientY, connectTarget: { channel: row.channel, clientIdentifier: row.client_identifier, companyIdentifier: row.company_identifier } }); } : undefined} title={!row.lead_id ? "Right-click to connect this communication to a lead" : undefined}>
                 {row.lead_id ? <Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : row.channel === "messenger" || row.channel === "instagram" ? <a href={`https://www.facebook.com/latest/${encodeURIComponent(row.client)}`} target="_blank" rel="noopener noreferrer" style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</a> : null}
                 {row.channel === "sms" && row.client_number ? <div style={{ marginTop: row.lead_id ? 4 : 0 }}><IgnoreNumberTarget number={row.client_number} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></div> : null}
@@ -1061,13 +1073,13 @@ export default function UnansweredMessagesPage() {
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 920, borderCollapse: "collapse", tableLayout: "fixed" }}>
-            <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>
+            <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>{smartMovingHeader}
               {['Client', 'Rep', 'Company', 'Rang On', 'Missed Calls', 'First Missed', 'Latest Missed', 'Action'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
-              {loadingCalls ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
-              {!loadingCalls && filteredMissedCalls.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{missedCalls.length ? "No missed calls match these filters." : "No missed calls."}</td></tr> : null}
-              {!loadingCalls && filteredMissedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}>
+              {loadingCalls ? <tr><td colSpan={9} style={{ padding: 32, textAlign: "center" }}>Loading missed calls…</td></tr> : null}
+              {!loadingCalls && filteredMissedCalls.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{missedCalls.length ? "No missed calls match these filters." : "No missed calls."}</td></tr> : null}
+              {!loadingCalls && filteredMissedCalls.map((row) => <tr key={`${row.client_identifier}:${row.company_identifier}`}><SmartMovingCell row={row} />
                 <td style={cell} onContextMenu={!row.lead_id ? (event) => { event.preventDefault(); setNumberMenu({ number: row.client_identifier, x: event.clientX, y: event.clientY, connectTarget: { channel: "calls", clientIdentifier: row.client_identifier, companyIdentifier: row.company_identifier } }); } : undefined} title={!row.lead_id ? "Right-click to connect this call to a lead" : undefined}>{row.lead_id ? <Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link> : null}<div style={{ marginTop: row.lead_id ? 4 : 0 }}><IgnoreNumberTarget number={row.client_identifier} openMenu={(number, x, y) => setNumberMenu({ number, x, y })} /></div></td>
                 <td style={cell}>{row.rep}</td>
                 <td style={cell}>{row.company}</td>
@@ -1093,13 +1105,13 @@ export default function UnansweredMessagesPage() {
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 760, borderCollapse: "collapse", tableLayout: "fixed" }}>
-            <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>
+            <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>{smartMovingHeader}
               {['Client', 'Rep', 'Company', 'Status', 'Created', 'Waiting', 'Action'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
-              {loadingLeads && firstContactLeads.length === 0 ? <tr><td colSpan={7} style={{ padding: 32, textAlign: "center" }}>Loading leads…</td></tr> : null}
-              {!loadingLeads && filteredFirstContactLeads.length === 0 ? <tr><td colSpan={7} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{firstContactLeads.length ? "No leads match these filters." : "No leads awaiting first contact."}</td></tr> : null}
-              {filteredFirstContactLeads.map((row) => <tr key={row.lead_id}>
+              {loadingLeads && firstContactLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading leads…</td></tr> : null}
+              {!loadingLeads && filteredFirstContactLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{firstContactLeads.length ? "No leads match these filters." : "No leads awaiting first contact."}</td></tr> : null}
+              {filteredFirstContactLeads.map((row) => <tr key={row.lead_id}><SmartMovingCell row={row} />
                 <td style={cell}><Link to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</td>
                 <td style={cell}>{row.rep || "—"}</td>
                 <td style={cell}>{row.company || "—"}</td>
@@ -1123,12 +1135,12 @@ export default function UnansweredMessagesPage() {
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
-            <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>
+            <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>{smartMovingHeader}
               {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Created', 'Call Follow-ups', 'Message Follow-ups'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
-              {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
-              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={8} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "due" ? "No follow-ups due now." : "No overdue follow-ups."}</td></tr> : null}
+              {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
+              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "due" ? "No follow-ups due now." : "No overdue follow-ups."}</td></tr> : null}
               {filteredFollowupLeads.map((row) => {
                 const expanded = expandedFollowups.has(row.lead_id);
                 const toggleExpanded = () => setExpandedFollowups((current) => {
@@ -1145,6 +1157,7 @@ export default function UnansweredMessagesPage() {
                     aria-expanded={expanded}
                     style={{ cursor: "pointer", background: expanded ? "#f4f8fc" : "#fff" }}
                   >
+                    <SmartMovingCell row={row} />
                     <td style={cell}>
                       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
                         <span aria-hidden="true" style={{ color: "#0b5cab", fontSize: 14 }}>{expanded ? "▼" : "▶"}</span>
@@ -1160,7 +1173,7 @@ export default function UnansweredMessagesPage() {
                     <td style={cell}><strong>{row.completed_message_count || 0}/3</strong>{row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</td>
                   </tr>
                   {expanded ? <tr>
-                    <td colSpan={8} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
+                    <td colSpan={9} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
                         <div>
                           <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>Call Follow-ups</h3>
