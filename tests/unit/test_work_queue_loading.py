@@ -87,7 +87,6 @@ def test_creation_loads_smartmoving_details_before_tasks():
                        and any(isinstance(target, ast.Name) and target.id == 'suppress_new_lead_automation' for target in node.targets))
     terminal = next(node for node in tree.body if isinstance(node, ast.Assign)
                     and any(isinstance(target, ast.Name) and target.id == 'NO_MESSAGE_STATUSES' for target in node.targets))
-    from types import SimpleNamespace
     eligibility = compile(ast.Expression(duplication.test), str(source), 'eval')
     for status in ('new', 'contacted', 'quoted', 'booked', 'scheduled', 'completed', 'lost', 'cancelled'):
         for priority in (0, 1, 3):
