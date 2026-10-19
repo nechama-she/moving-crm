@@ -38,3 +38,10 @@
 .ic-material-row select { width: 100%; min-width: 0; height: 38px; margin-top: 6px; border: 1px solid #c9d3df; border-radius: 6px; background: white; font: inherit; }
 .ic-material-row button { height: 38px; padding: 6px; }
 @media (max-width: 480px) { .ic-card, .ic-dialog { padding: 16px; }.ic-measurements { grid-template-columns: 1fr; gap: 0; }.ic-table-wrap th, .ic-table-wrap td { padding: 8px; } }
+.ic-set-picker { display: grid; gap: 6px; min-width: 0; }
+.ic-set-selected, .ic-set-results button { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 10px; background: white; border: 1px solid #c9d3df; border-radius: 6px; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.ic-set-selected span:last-child, .ic-set-results small { flex-shrink: 0; color: #0b5cab; }
+.ic-set-results { max-height: 240px; overflow-y: auto; margin-top: 6px; border: 1px solid #c9d3df; border-radius: 6px; background: white; }
+.ic-set-results button { border: 0; border-bottom: 1px solid #eef1f6; border-radius: 0; }
+.ic-set-results button:hover, .ic-set-results button:focus-visible { background: #eef6ff; }
+.ic-set-results p { padding: 10px; margin: 0; color: #5c6b82; }

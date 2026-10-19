@@ -5,6 +5,38 @@ import { authHeaders, useAuth } from './AuthContext';
 export type CatalogSet = {id: string; name: string; components: {item_id: string; quantity: number}[]};
 type Item = {id: string; name: string; cuft: number; active: boolean};
 
+function SetItemPicker({items, value, excluded, disabled, onChange}: {
+  items: Item[]; value: string; excluded: string[]; disabled: boolean; onChange: (id: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(!value);
+  const selected = items.find(item => item.id === value);
+  const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const matches = items.filter(item => item.active && !excluded.includes(item.id)
+    && words.every(word => item.name.toLowerCase().includes(word)));
+  useEffect(() => {setQuery(''); setOpen(!value);}, [value]);
+  return <div className="ic-set-picker">
+    <span>Included item</span>
+    {value && <button type="button" className="ic-set-selected" disabled={disabled} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <span>{selected ? `${selected.name} (${selected.cuft} cu ft)` : 'Unavailable item'}</span><span>Change</span>
+    </button>}
+    {open && <div className="ic-set-search">
+      <input type="search" aria-label="Search included items" placeholder="Search items, e.g. king bed" value={query} disabled={disabled}
+        onChange={event => setQuery(event.target.value)} onKeyDown={event => {
+          if (event.key === 'Enter') {event.preventDefault(); if (matches.length === 1) onChange(matches[0].id);}
+          if (event.key === 'Escape' && value) {event.preventDefault(); setOpen(false);}
+        }}/>
+      <div className="ic-set-results" aria-label="Matching catalog items">
+        {matches.slice(0, 30).map(item => <button type="button" key={item.id} disabled={disabled} onClick={() => onChange(item.id)}>
+          <span>{item.name}</span><small>{item.cuft} cu ft</small>
+        </button>)}
+        {!matches.length && <p role="status">No matching items.</p>}
+        {matches.length > 30 && <p role="status">Keep typing to narrow {matches.length} matches.</p>}
+      </div>
+    </div>}
+  </div>;
+}
+
 export default function CatalogSets({items}: {items: Item[]}) {
   const {token} = useAuth();
   const [sets, setSets] = useState<CatalogSet[]>([]);
@@ -50,11 +82,8 @@ export default function CatalogSets({items}: {items: Item[]}) {
     {draft && <form className="ic-set-editor" onSubmit={event => {event.preventDefault(); void save();}}>
       <label>Set name<input required maxLength={200} value={draft.name} placeholder="King bedroom set" disabled={busy} onChange={event => setDraft({...draft, name: event.target.value})}/></label>
       {draft.components.map((part, index) => <div className="ic-set-piece" key={index}>
-        <label>Included item<select required disabled={busy} value={part.item_id} onChange={event => setDraft({...draft, components: draft.components.map((row, i) => i === index ? {...row, item_id: event.target.value} : row)})}>
-          <option value="">Choose an item</option>
-          {items.filter(item => item.active || item.id === part.item_id).map(item => <option key={item.id} value={item.id} disabled={draft.components.some((row, i) => i !== index && row.item_id === item.id)}>{item.name} ({item.cuft} cu ft)</option>)}
-          {part.item_id && !lookup.has(part.item_id) && <option value={part.item_id}>Unavailable item - choose a replacement</option>}
-        </select></label>
+        <SetItemPicker items={items} value={part.item_id} disabled={busy} excluded={draft.components.filter((_, i) => i !== index).map(row => row.item_id)}
+          onChange={id => setDraft({...draft, components: draft.components.map((row, i) => i === index ? {...row, item_id: id} : row)})}/>
         <label>Quantity<input required type="number" min="1" max="999" step="1" disabled={busy} value={part.quantity || ''} onChange={event => setDraft({...draft, components: draft.components.map((row, i) => i === index ? {...row, quantity: Number(event.target.value)} : row)})}/></label>
         <span>{((lookup.get(part.item_id)?.cuft || 0) * part.quantity).toLocaleString()} cu ft</span>
         <button type="button" className="slds-button" disabled={busy} aria-label={`Remove piece ${index + 1}`} onClick={() => setDraft({...draft, components: draft.components.filter((_, i) => i !== index)})}>Remove</button>
@@ -63,7 +92,7 @@ export default function CatalogSets({items}: {items: Item[]}) {
         <button type="button" className="slds-button slds-button_neutral" disabled={busy || draft.components.length >= 100} onClick={() => setDraft({...draft, components: [...draft.components, {item_id: '', quantity: 1}]})}>Add piece</button>
         <strong>Total: {total(draft).toLocaleString()} cu ft</strong>
         <button type="button" className="slds-button" disabled={busy} onClick={() => setDraft(null)}>Cancel</button>
-        <button className="slds-button slds-button_brand" disabled={busy || !draft.components.length}>{busy ? 'Saving...' : 'Save set'}</button>
+        <button className="slds-button slds-button_brand" disabled={busy || !draft.components.length || draft.components.some(part => !part.item_id)}>{busy ? 'Saving...' : 'Save set'}</button>
       </div>
     </form>}
     {loading ? <p>Loading sets...</p> : sets.length === 0 ? <p>No sets yet. Add one using existing catalog items.</p> :
