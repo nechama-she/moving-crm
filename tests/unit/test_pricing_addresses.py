@@ -105,7 +105,8 @@ def test_browser_city_coordinates_are_used_for_travel_without_server_lookup(goog
     google.assert_not_called()
 
 
-def test_oregon_long_distance_selects_book_with_destination_coverage():
+@pytest.mark.parametrize('legacy_route', [False, True])
+def test_oregon_long_distance_selects_book_with_destination_coverage(monkeypatch, legacy_route):
     from pickup_areas import select_pickup_plan
     from zip_state import delivery_location
     source = BACKEND / 'routes/pricing.py'
@@ -122,9 +123,18 @@ def test_oregon_long_distance_selects_book_with_destination_coverage():
     east = SimpleNamespace(company_id='co', pickup_regions='MD', name='East', rates=[SimpleNamespace(destination='GA')])
     west = SimpleNamespace(company_id='co', pickup_regions='MD', name='West', rates=[SimpleNamespace(destination='Oregon (970-979)')])
     job = SimpleNamespace(company_id='co', pickup_zip='Rockville, MD, USA', delivery_zip='Eugene, Oregon 97405')
+    route_reader = MagicMock(return_value=(job.pickup_zip, [], job.delivery_zip))
+    monkeypatch.setitem(sys.modules, 'routes.leads', SimpleNamespace(_read_job_route=route_reader))
+    if legacy_route:
+        job.pickup_zip = None
+        job.delivery_zip = None
     db = MagicMock()
     db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
     assert scope['infer_job_move_type'](SimpleNamespace(company_id='co'), job, db, [east,west]) == ('Long Distance', west)
+    if legacy_route:
+        route_reader.assert_called_once_with(db, job)
+    else:
+        route_reader.assert_not_called()
 
 
 @pytest.mark.parametrize('options,state,zip_code', [
