@@ -145,11 +145,6 @@ def infer_job_move_type(
 ) -> tuple[str | None, PricingPlan | None]:
     pickup_address = (job.pickup_zip or "").strip()
     delivery_address = (job.delivery_zip or "").strip()
-    if not pickup_address or not delivery_address:
-        # Older jobs retain their route in app settings. Resolve it exactly as
-        # the customer page does before choosing the item's pricing book.
-        from routes.leads import _read_job_route
-        pickup_address, _, delivery_address = _read_job_route(db, job)
     pickup_state, pickup_zip = delivery_location(pickup_address)
     delivery_state, delivery_zip = delivery_location(delivery_address)
     company_id = job.company_id or lead.company_id
@@ -1678,9 +1673,6 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
 
     pickup_addr = (job.pickup_zip or "").strip()
     delivery_addr = (job.delivery_zip or "").strip()
-    if not pickup_addr or not delivery_addr:
-        from routes.leads import _read_job_route
-        pickup_addr, _, delivery_addr = _read_job_route(db, job)
 
     pickup_state, pickup_zip = delivery_location(pickup_addr)
     delivery_state, delivery_zip = delivery_location(delivery_addr)
