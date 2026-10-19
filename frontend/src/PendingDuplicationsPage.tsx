@@ -14,6 +14,7 @@ type PendingDuplication = {
   fire_at: string;
   created_at: string;
   is_sample?: boolean;
+  error?: string;
 };
 
 type CompanyOption = {
@@ -142,6 +143,7 @@ export default function PendingDuplicationsPage() {
       setRunResult((responseBody?.result || {}) as Record<string, unknown>);
     } catch (err) {
       setRunError(err instanceof Error ? err.message : "Could not complete duplication");
+      await load();
     } finally {
       setRunning("");
     }
@@ -203,7 +205,7 @@ export default function PendingDuplicationsPage() {
       <div className="pending-dup-header" style={headerRow}>
         <div>
           <h1 style={title}>Pending Lead Duplications</h1>
-          <p style={subtitle}>Leads waiting for their scheduled copy to another company.</p>
+          <p style={subtitle}>Scheduled copies and failed duplications that need attention.</p>
         </div>
         <button className="slds-button" type="button" onClick={() => void load()} disabled={loading} style={secondaryButton}>
           {loading ? "Refreshing…" : "Refresh"}
@@ -249,6 +251,13 @@ export default function PendingDuplicationsPage() {
                         </Link>
                       ) : <strong>{item.lead_name || "Unknown lead"}</strong>}
                       {item.is_sample ? <span style={demoBadge}>DEV SAMPLE</span> : null}
+                      {item.error ? (
+                        <div role="status" style={{ marginTop: 8, padding: 8, borderLeft: "3px solid #ba0517", background: "#fef1ee", color: "#8e030f", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                          <strong>Duplication failed</strong><div>{item.error}</div>
+                        </div>
+                      ) : !item.is_sample && Date.parse(item.fire_at) < Date.now() - 5 * 60 * 1000 ? (
+                        <div style={{ marginTop: 8, color: "#825101" }}>No completion reported. Check whether the copy exists before retrying.</div>
+                      ) : null}
                       {item.lead_id ? (
                         <div style={idText}>
                           <Link to={`/leads/${item.lead_id}`} style={idLink}>
