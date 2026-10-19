@@ -382,7 +382,17 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   const weight = rooms.reduce((sum, room) => sum + total(room, 'weight'), 0);
   const room = rooms.find(r => r.id === selected);
   const catalogWords = catalogSearch.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const catalogMatches = (catalog?.items || []).filter(item => catalogWords.every(word => `${item.name} ${item.description}`.toLowerCase().includes(word)));
+  const catalogEntries: (CatalogItem & { set?: CatalogSet })[] = [
+    ...(catalog?.items || []),
+    ...(catalog?.sets || []).map(set => ({
+      id: `set:${set.id}`, name: set.name, set, weight: 0,
+      description: set.components.map(part => `${part.quantity} x ${items.get(part.item_id)?.name || 'Unavailable item'}`).join(', '),
+      cuft: set.components.reduce((sum, part) => sum + (items.get(part.item_id)?.cuft || 0) * part.quantity, 0),
+    })),
+  ];
+  const catalogMatches = catalogEntries
+    .filter(item => catalogWords.every(word => `${item.name} ${item.description}`.toLowerCase().includes(word)))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const visibleRooms = room ? [room] : rooms;
   const visibleCuft = visibleRooms.reduce((sum, value) => sum + total(value, 'cuft'), 0);
   const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -490,23 +500,6 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
           {Object.values(customDimensions).some(value => value.trim() && dimensionFeet(value) === null) && <p role="status">Use feet (2'), inches (24&quot;), or both (2' 6&quot;).</p>}
           {customCuft > 10000 && <p role="alert">Estimated volume must be 10,000 cu ft or less per item.</p>}
         </section>}
-          {!!catalog.sets?.length && <section className="mi-set-picker" aria-label="Suggested item sets">
-            <h3>Add a set</h3><p>Start with suggested pieces, then edit or remove anything you do not have.</p>
-            {catalog.sets.filter(set => set.name.toLowerCase().includes(catalogSearch.trim().toLowerCase())).map(set => {
-              const available = set.components.every(part => items.has(part.item_id));
-              return <div className="mi-set-option" key={set.id}>
-                <div><strong>{set.name}</strong><small>{set.components.map(part => `${part.quantity} x ${items.get(part.item_id)?.name || 'Unavailable item'}`).join(', ')}</small>
-                  <small>{number(set.components.reduce((sum, part) => sum + (items.get(part.item_id)?.cuft || 0) * part.quantity, 0))} cu ft</small></div>
-                <button type="button" className="slds-button" disabled={busy || !available || (room.custom_items?.length || 0) + set.components.length > 100} onClick={() => {
-                  const setId = crypto.randomUUID();
-                  setRooms(current => current.map(value => value.id === room.id ? {...value, custom_items: [...(value.custom_items || []), ...set.components.map(part => {
-                    const item = items.get(part.item_id)!;
-                    return {id: crypto.randomUUID(), catalog_item_id: item.id, name: item.name, cuft: item.cuft, unit_weight: item.weight, quantity: part.quantity, set_id: setId, set_name: set.name};
-                  })]} : value));
-                }}>{available ? 'Add set' : 'Unavailable'}</button>
-              </div>;
-            })}
-          </section>}
           <div className="mi-catalog-scroll" ref={catalogScroll} tabIndex={0} aria-label="Catalog items" onScroll={event => {
             const list = event.currentTarget;
             if (list.scrollHeight - list.scrollTop - list.clientHeight < 160) setCatalogLimit(limit => Math.min(limit + 60, catalogMatches.length));
@@ -514,13 +507,23 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
             {catalogMatches.slice(0, catalogLimit).map(item => <div className="mi-catalog-row" key={item.id}>
               <div><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</div>
               <span>{number(item.cuft)} cu ft</span>
-              <div className="mi-catalog-count" role="group" aria-label={`Quantity of ${item.name}`}>
+              {item.set ? <button type="button" className="slds-button mi-catalog-add-set"
+                aria-label={`Add ${item.name} to ${room.name}`}
+                disabled={busy || !item.set.components.every(part => items.has(part.item_id)) || (room.custom_items?.length || 0) + item.set.components.length > 100}
+                onClick={() => {
+                  const set = item.set!;
+                  const setId = crypto.randomUUID();
+                  setRooms(current => current.map(value => value.id === room.id ? {...value, custom_items: [...(value.custom_items || []), ...set.components.map(part => {
+                    const component = items.get(part.item_id)!;
+                    return {id: crypto.randomUUID(), catalog_item_id: component.id, name: component.name, cuft: component.cuft, unit_weight: component.weight, quantity: part.quantity, set_id: setId, set_name: set.name};
+                  })]} : value));
+                }}>{item.set.components.every(part => items.has(part.item_id)) ? 'Add set' : 'Unavailable'}</button> : <div className="mi-catalog-count" role="group" aria-label={`Quantity of ${item.name}`}>
                 <button type="button" disabled={busy || !catalogQuantity(room, item.id)} aria-label={`Remove ${item.name} from ${room.name}`} title="Remove item" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setCatalogQuantity(r, item.id, 0) : r))}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>
                 </button>
                 <input type="number" min="0" max="999" step="1" aria-label={`Count of ${item.name}`} disabled={busy} value={catalogQuantity(room, item.id) || ''} placeholder="0" onChange={event => {const value = Number(event.target.value); setRooms(current => current.map(r => r.id === room.id ? setCatalogQuantity(r, item.id, value) : r));}} />
                 <button type="button" disabled={busy || catalogQuantity(room, item.id) >= 999} aria-label={`Add one ${item.name} to ${room.name}`} title="Add one" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setCatalogQuantity(r, item.id, catalogQuantity(r, item.id) + 1) : r))}>+</button>
-              </div>
+              </div>}
             </div>)}
             {!catalogMatches.length && <p>No matching items. You can add a custom item above.</p>}
             {catalogMatches.length > catalogLimit && <p className="mi-catalog-more">Scroll for more items</p>}
