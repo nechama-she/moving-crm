@@ -399,6 +399,35 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   function quantity(id: string, value: number, roomId = selected) {
     setRooms(current => current.map(r => r.id === roomId ? { ...r, items: { ...r.items, [id]: Math.min(999, Math.max(0, Math.floor(value || 0))) } } : r));
   }
+  function setGroups(room: Room, set: CatalogSet) {
+    return [...new Set((room.custom_items || []).filter(item => item.set_id && item.set_name === set.name).map(item => item.set_id!))];
+  }
+  function entryQuantity(room: Room, item: CatalogItem & { set?: CatalogSet }) {
+    return item.set ? setGroups(room, item.set).length : catalogQuantity(room, item.id);
+  }
+  function entryLimit(room: Room, item: CatalogItem & { set?: CatalogSet }) {
+    if (!item.set) return 999;
+    if (!item.set.components.length || !item.set.components.every(part => items.has(part.item_id))) return entryQuantity(room, item);
+    return entryQuantity(room, item) + Math.max(0, Math.floor((100 - (room.custom_items?.length || 0)) / item.set.components.length));
+  }
+  function setEntryQuantity(room: Room, item: CatalogItem & { set?: CatalogSet }, value: number): Room {
+    if (!item.set) return setCatalogQuantity(room, item.id, value);
+    const set = item.set;
+    const groups = setGroups(room, set);
+    const count = Math.min(entryLimit(room, item), Math.max(0, Math.floor(value || 0)));
+    const removed = new Set(groups.slice(count));
+    const custom = (room.custom_items || []).filter(row => !removed.has(row.set_id || ''));
+    for (let index = groups.length; index < count; index++) {
+      const setId = crypto.randomUUID();
+      for (const part of set.components) {
+        const component = items.get(part.item_id)!;
+        custom.push({id: crypto.randomUUID(), catalog_item_id: component.id, name: component.name,
+          cuft: component.cuft, unit_weight: component.weight, quantity: part.quantity,
+          set_id: setId, set_name: set.name});
+      }
+    }
+    return {...room, custom_items: custom};
+  }
   async function download() {
     if (pdfBusy || !catalog) return;
     setPdfBusy(true); setError('');
@@ -507,23 +536,13 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
             {catalogMatches.slice(0, catalogLimit).map(item => <div className="mi-catalog-row" key={item.id}>
               <div><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</div>
               <span>{number(item.cuft)} cu ft</span>
-              {item.set ? <button type="button" className="slds-button mi-catalog-add-set"
-                aria-label={`Add ${item.name} to ${room.name}`}
-                disabled={busy || !item.set.components.every(part => items.has(part.item_id)) || (room.custom_items?.length || 0) + item.set.components.length > 100}
-                onClick={() => {
-                  const set = item.set!;
-                  const setId = crypto.randomUUID();
-                  setRooms(current => current.map(value => value.id === room.id ? {...value, custom_items: [...(value.custom_items || []), ...set.components.map(part => {
-                    const component = items.get(part.item_id)!;
-                    return {id: crypto.randomUUID(), catalog_item_id: component.id, name: component.name, cuft: component.cuft, unit_weight: component.weight, quantity: part.quantity, set_id: setId, set_name: set.name};
-                  })]} : value));
-                }}>{item.set.components.every(part => items.has(part.item_id)) ? 'Add set' : 'Unavailable'}</button> : <div className="mi-catalog-count" role="group" aria-label={`Quantity of ${item.name}`}>
-                <button type="button" disabled={busy || !catalogQuantity(room, item.id)} aria-label={`Remove ${item.name} from ${room.name}`} title="Remove item" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setCatalogQuantity(r, item.id, 0) : r))}>
+              <div className="mi-catalog-count" role="group" aria-label={`Quantity of ${item.name}`}>
+                <button type="button" disabled={busy || !entryQuantity(room, item)} aria-label={`Remove ${item.name} from ${room.name}`} title="Remove item" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setEntryQuantity(r, item, 0) : r))}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>
                 </button>
-                <input type="number" min="0" max="999" step="1" aria-label={`Count of ${item.name}`} disabled={busy} value={catalogQuantity(room, item.id) || ''} placeholder="0" onChange={event => {const value = Number(event.target.value); setRooms(current => current.map(r => r.id === room.id ? setCatalogQuantity(r, item.id, value) : r));}} />
-                <button type="button" disabled={busy || catalogQuantity(room, item.id) >= 999} aria-label={`Add one ${item.name} to ${room.name}`} title="Add one" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setCatalogQuantity(r, item.id, catalogQuantity(r, item.id) + 1) : r))}>+</button>
-              </div>}
+                <input type="number" min="0" max={entryLimit(room, item)} step="1" aria-label={`Count of ${item.name}`} disabled={busy} value={entryQuantity(room, item) || ''} placeholder="0" onChange={event => {const value = Number(event.target.value); setRooms(current => current.map(r => r.id === room.id ? setEntryQuantity(r, item, value) : r));}} />
+                <button type="button" disabled={busy || entryQuantity(room, item) >= entryLimit(room, item)} aria-label={`Add one ${item.name} to ${room.name}`} title="Add one" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setEntryQuantity(r, item, entryQuantity(r, item) + 1) : r))}>+</button>
+              </div>
             </div>)}
             {!catalogMatches.length && <p>No matching items. You can add a custom item above.</p>}
             {catalogMatches.length > catalogLimit && <p className="mi-catalog-more">Scroll for more items</p>}
