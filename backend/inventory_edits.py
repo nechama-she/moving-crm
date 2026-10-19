@@ -10,7 +10,7 @@ from sqlalchemy import select, func
 from models import (Lead, LeadJob, LeadLiveSwitch, LeadSparkInventoryItem, InventoryRoomType,
                     InventoryCatalogItem, InventoryEditState, InventoryEditRoom, InventoryEditItem)
 from spark_history import remember_report
-from item_selectors import inventory_selectors, ServiceSelections
+from item_selectors import inventory_selectors, ServiceSelections, default_selections
 
 
 class Fields(BaseModel):
@@ -36,6 +36,8 @@ class Addition(Fields):
     quantity: int = Field(ge=1, le=999, strict=True)
     catalog_item_id: str | None = Field(default=None, max_length=100)
     unit_weight: Decimal = Field(default=Decimal(0), ge=0, le=100000, allow_inf_nan=False)
+    set_id: UUID | None = None
+    set_name: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class RoomAddition(BaseModel):
@@ -77,7 +79,7 @@ def validated_selections(values, definitions, previous=None):
         selected_options = [value] if isinstance(value, str) else list(value)
         if any(option not in options.get(key, []) for option in selected_options):
             raise HTTPException(422, 'This item option is unavailable. Reopen the inventory to refresh its selectors.')
-    return json.dumps(values)
+    return json.dumps(default_selections({**(previous or {}), **values}, definitions))
 
 
 def source(details):
@@ -179,6 +181,7 @@ def load_inventory_editor(access, db):
                 unit_weight=Decimal(str(row.get('unit_weight') or float(row.get('weight') or 0)/qty)),
                 going=row.get('going') is not False, mover_pack=pack, sort_order=index,
                 selections=json.dumps(row.get('selections') or {}),
+                set_id=row.get('set_id'), set_name=row.get('set_name'),
                 inventory_record_id=record.id if record else None)
             pending_items.append(item)
         # Flush parents first, including databases that enforce foreign keys immediately.
@@ -193,10 +196,27 @@ def load_inventory_editor(access, db):
     rooms = db.query(InventoryEditRoom).filter_by(job_id=job.id).order_by(InventoryEditRoom.sort_order).all()
     result = {room.id: dict(id=room.id, name=room.name, room_type_id=room.room_type_id or '', items={}, custom_items=[]) for room in rooms}
     inventory_rows = joined_rows(job.id, db)
-    selectors = inventory_selectors(access, db)
+    selectors = inventory_selectors(access, db, {item.catalog_item_id for item, _ in inventory_rows if item.catalog_item_id})
+    defaults_saved = False
+    for item, _ in inventory_rows:
+        previous = json.loads(item.selections or '{}')
+        selections = default_selections(previous, selectors.get(item.catalog_item_id, []))
+        if selections != previous:
+            item.selections = json.dumps(selections)
+            defaults_saved = True
+    if defaults_saved:
+        project(job, access, details, inventory_rows, db)
+        if saved is None:
+            saved = LeadLiveSwitch(lead_id=access.lead_id)
+            db.add(saved)
+        saved.details = json.dumps(details)
+        state.source_hash = source_hash(details)
+        state.revision = str(uuid4())
+        db.commit()
     for item, name in inventory_rows:
         result[item.room_id]['custom_items'].append(dict(id=item.id, name=display_name(item, name),
             catalog_item_id=item.catalog_item_id, name_override=item.name is not None,
+            set_id=item.set_id, set_name=item.set_name,
             quantity=item.quantity, cuft=float(item.unit_cuft), unit_weight=float(item.unit_weight),
             going=item.going, mover_pack=item.mover_pack, selections=json.loads(item.selections or '{}'),
             selectors=selectors.get(item.catalog_item_id, [])))
@@ -205,7 +225,6 @@ def load_inventory_editor(access, db):
 
 def save_inventory_edits(body, access, db):
     job, saved, details, state = lock(access, db)
-    selectors = inventory_selectors(access, db)
     if state is None:
         raise HTTPException(409, 'Open the inventory before editing.')
     receipts = json.loads(state.receipts or '{}')
@@ -245,6 +264,9 @@ def save_inventory_edits(body, access, db):
     from sqlalchemy import or_
     targets = query.filter(or_(InventoryEditItem.id.in_(requested), InventoryEditItem.room_id.in_(deleted_rooms))).all() if requested or deleted_rooms else []
     target_map = {row.id:row for row in targets}
+    selectors = inventory_selectors(access, db,
+        {row.catalog_item_id for row in targets if row.catalog_item_id}
+        | {item.catalog_item_id for item in body.add if item.catalog_item_id})
     if not requested <= target_map.keys(): raise HTTPException(409, 'Inventory row does not belong to this move or was deleted.')
     deleted = {str(x) for x in body.delete} | {r.id for r in targets if r.room_id in deleted_rooms}
     changed = []
@@ -280,6 +302,7 @@ def save_inventory_edits(body, access, db):
             name=item.name.strip() if item.name else None, quantity=item.quantity, unit_cuft=cuft,
             unit_weight=catalog.weight if catalog else item.unit_weight, going=item.going is not False,
             mover_pack=item.mover_pack, sort_order=next_order,
+            set_id=str(item.set_id) if item.set_id else None, set_name=item.set_name,
             selections=validated_selections(item.selections, selectors.get(item.catalog_item_id, [])))
         next_order += 1
         db.add(row)
@@ -333,6 +356,7 @@ def project(job, access, details, joined, db):
         cuft=float(r.unit_cuft*r.quantity) if r.going else 0, weight=float(r.unit_weight*r.quantity) if r.going else 0,
         going=r.going, mover_pack=r.mover_pack, catalog_item_id=r.catalog_item_id, item_id=r.catalog_item_id or 'custom-'+r.id,
         name_override=r.name is not None, _inventory_record_id=r.inventory_record_id,
+        set_id=r.set_id, set_name=r.set_name,
         selections=json.loads(r.selections or '{}')) for r,name in joined]
     serialized_rooms = [dict(id=r.id, name=r.name, room_type_id=r.room_type_id or '', items=[x for x in rows if x['room_id']==r.id]) for r in rooms]
     volume, weight = sum(r['cuft'] for r in rows), sum(r['weight'] for r in rows)
@@ -363,6 +387,7 @@ def project(job, access, details, joined, db):
     if not report_id or details.get('inventory_draft'):
         input_rooms = [dict(name=r['name'],room_type_id=r['room_type_id'],items=[],custom_items=[dict(
             id=x['inventory_row_id'],name=x['name'],quantity=x['amount'],cuft=x['unit_cuft'],going=x['going'],
-            mover_pack=x['mover_pack'],selections=x['selections'],catalog_item_id=x['catalog_item_id'],name_override=x['name_override']) for x in r['items']]) for r in serialized_rooms]
+            mover_pack=x['mover_pack'],selections=x['selections'],catalog_item_id=x['catalog_item_id'],name_override=x['name_override'],
+            set_id=x['set_id'],set_name=x['set_name']) for x in r['items']]) for r in serialized_rooms]
         details['inventory_draft']=dict(body=dict(request_id=str(uuid4()),rooms=input_rooms),rows=rows,rooms=serialized_rooms,cuft=volume,weight=weight)
     if report_id: remember_report(details)

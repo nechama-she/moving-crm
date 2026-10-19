@@ -8,11 +8,21 @@ import { piecesPerItem } from './inventoryPieces';
 import QuestionReferenceImages from './QuestionReferenceImages';
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './ManualInventoryModal.css';
+import type { CatalogSet } from './CatalogSets';
 type CatalogItem = { id: string; name: string; description: string; cuft: number; weight: number; selectors?: ItemSelector[] };
 type RoomType = { id: string; name: string };
-type CustomItem = { id: string; catalog_item_id?: string; name_override?: boolean; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean; mover_pack?: boolean | null; unit_weight?: number; selectors?: ItemSelector[]; selections?: Record<string,ServiceSelection> };
+type CustomItem = { id: string; catalog_item_id?: string; name_override?: boolean; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean; mover_pack?: boolean | null; unit_weight?: number; selectors?: ItemSelector[]; selections?: Record<string,ServiceSelection>; set_id?: string | null; set_name?: string | null };
 type Room = { id: string; room_type_id: string; name: string; items: Record<string, number>; item_names?: Record<string,string>; custom_items?: CustomItem[] };
-type Catalog = { rooms: RoomType[]; items: CatalogItem[] };
+type Catalog = { rooms: RoomType[]; items: CatalogItem[]; sets?: CatalogSet[] };
+function itemGroups(items: CustomItem[]) {
+  const groups = new Map<string, CustomItem[]>();
+  for (const item of items) {
+    const key = item.set_id || '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(item);
+  }
+  return [...groups.entries()];
+}
 function packingItemName(name: string) {
   if (/\((?:cp|pbo)\)\s*$/i.test(name)) return name;
   return /\bbox(?:es)?\b|\bdish\s*pack\b/i.test(name) ? `${name} (PBO)` : name;
@@ -95,6 +105,7 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
     </> : <>
       <div className={`mi-inventory-name${selectors.length ? ' mi-name-with-services' : ''}`}><span className="mi-item-name-label"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name} disabled={busy || packingLocked || !going} onChange={onMoverPackChange}/>}</span>
         {!!selectors.length && <span className="mi-item-services">{selectors.map(selector => <ServiceChoice key={selector.id} selector={selector} name={name} value={selections[selector.id]} quantity={quantity} disabled={serviceBusy || !going} open={openService === `${serviceRowId}:${selector.id}`} setOpen={open => setOpenService(open ? `${serviceRowId}:${selector.id}` : '')} onChange={value => onSelectionChange?.(selector.id, value)}/>)}</span>}
+        {Object.entries(selections).filter(([id]) => !selectors.some(selector => selector.id === id)).map(([id, value]) => <span key={id} className="mi-item-services">{typeof value === 'string' ? value : Object.entries(value).filter(([, count]) => count > 0).map(([option, count]) => `${option} (${count})`).join(', ')}</span>)}
       </div>
       <span><span className="mi-mobile-label">Unit volume</span>{cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })}<span className="mi-mobile-unit"> cu ft</span></span>
       <span aria-label="Total volume in cubic feet"><span className="mi-mobile-label">Total volume</span>{totalVolumeLabel}<span className="mi-mobile-unit"> cu ft</span></span>
@@ -154,7 +165,33 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   onDone: () => Promise<void>;
 }) {
   const [catalog, setCatalog] = useState<Catalog>();
-  const [rooms, setRooms] = useState<Room[]>([]);
+  const [rooms, setRoomsState] = useState<Room[]>([]);
+  function setRooms(update: Room[] | ((current: Room[]) => Room[])) {
+    setRoomsState(current => {
+      const next = typeof update === 'function' ? update(current) : update;
+      if (!catalog) return next;
+      const definitions = new Map((catalog?.items || []).map(item => [item.id, item]));
+      return next.map(room => {
+        const items = {...room.items};
+        const custom = [...(room.custom_items || [])];
+        for (const [id, quantity] of Object.entries(items)) {
+          const item = definitions.get(id);
+          if (quantity <= 0 || !item?.selectors?.length) continue;
+          custom.push({id: catalogInventoryId(room, id), catalog_item_id: id,
+            name: room.item_names?.[id] || item.name, name_override: !!room.item_names?.[id],
+            cuft: item.cuft, unit_weight: item.weight, quantity});
+          delete items[id];
+        }
+        return {...room, items, custom_items: custom.map(item => {
+          const selections = {...item.selections};
+          for (const selector of definitions.get(item.catalog_item_id || '')?.selectors || []) {
+            if (!(selector.id in selections)) selections[selector.id] = selector.default || selector.options[0];
+          }
+          return {...item, selections};
+        })};
+      });
+    });
+  }
   const [selected, setSelected] = useState('');
   const [roomPickerOpen, setRoomPickerOpen] = useState(false);
   const addRoomButton = useRef<HTMLButtonElement>(null);
@@ -269,6 +306,8 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   }, []);
   const modal = useRef<HTMLDivElement>(null);
   const loader = useRef(loadCatalog);
+  loader.current = loadCatalog;
+  const [catalogRefreshError, setCatalogRefreshError] = useState('');
   const inventoryLoader = useRef(loadInventory);
   useEffect(() => {
     let active = true;
@@ -311,6 +350,19 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     return () => { active = false; };
   }, []);
   useEffect(() => {
+    // The first opening loads catalog and inventory together above. Later
+    // openings refresh services without replacing saved or unsaved item edits.
+    if (!visible || !loadedRooms.current) return;
+    let active = true;
+    setCatalogRefreshError('');
+    loader.current().then(value => {
+      if (active) setCatalog(value);
+    }).catch(() => {
+      if (active) setCatalogRefreshError('Could not refresh item services. Close and reopen the inventory to try again.');
+    });
+    return () => { active = false; };
+  }, [visible]);
+  useEffect(() => {
     if (!visible) return;
     const previous = document.activeElement as HTMLElement | null;
     const overflow = document.body.style.overflow;
@@ -330,12 +382,51 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   const weight = rooms.reduce((sum, room) => sum + total(room, 'weight'), 0);
   const room = rooms.find(r => r.id === selected);
   const catalogWords = catalogSearch.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const catalogMatches = (catalog?.items || []).filter(item => catalogWords.every(word => `${item.name} ${item.description}`.toLowerCase().includes(word)));
+  const catalogEntries: (CatalogItem & { set?: CatalogSet })[] = [
+    ...(catalog?.items || []),
+    ...(catalog?.sets || []).map(set => ({
+      id: `set:${set.id}`, name: set.name, set, weight: 0,
+      description: set.components.map(part => `${part.quantity} x ${items.get(part.item_id)?.name || 'Unavailable item'}`).join(', '),
+      cuft: set.components.reduce((sum, part) => sum + (items.get(part.item_id)?.cuft || 0) * part.quantity, 0),
+    })),
+  ];
+  const catalogMatches = catalogEntries
+    .filter(item => catalogWords.every(word => `${item.name} ${item.description}`.toLowerCase().includes(word)))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const visibleRooms = room ? [room] : rooms;
   const visibleCuft = visibleRooms.reduce((sum, value) => sum + total(value, 'cuft'), 0);
   const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   function quantity(id: string, value: number, roomId = selected) {
     setRooms(current => current.map(r => r.id === roomId ? { ...r, items: { ...r.items, [id]: Math.min(999, Math.max(0, Math.floor(value || 0))) } } : r));
+  }
+  function setGroups(room: Room, set: CatalogSet) {
+    return [...new Set((room.custom_items || []).filter(item => item.set_id && item.set_name === set.name).map(item => item.set_id!))];
+  }
+  function entryQuantity(room: Room, item: CatalogItem & { set?: CatalogSet }) {
+    return item.set ? setGroups(room, item.set).length : catalogQuantity(room, item.id);
+  }
+  function entryLimit(room: Room, item: CatalogItem & { set?: CatalogSet }) {
+    if (!item.set) return 999;
+    if (!item.set.components.length || !item.set.components.every(part => items.has(part.item_id))) return entryQuantity(room, item);
+    return entryQuantity(room, item) + Math.max(0, Math.floor((100 - (room.custom_items?.length || 0)) / item.set.components.length));
+  }
+  function setEntryQuantity(room: Room, item: CatalogItem & { set?: CatalogSet }, value: number): Room {
+    if (!item.set) return setCatalogQuantity(room, item.id, value);
+    const set = item.set;
+    const groups = setGroups(room, set);
+    const count = Math.min(entryLimit(room, item), Math.max(0, Math.floor(value || 0)));
+    const removed = new Set(groups.slice(count));
+    const custom = (room.custom_items || []).filter(row => !removed.has(row.set_id || ''));
+    for (let index = groups.length; index < count; index++) {
+      const setId = crypto.randomUUID();
+      for (const part of set.components) {
+        const component = items.get(part.item_id)!;
+        custom.push({id: crypto.randomUUID(), catalog_item_id: component.id, name: component.name,
+          cuft: component.cuft, unit_weight: component.weight, quantity: part.quantity,
+          set_id: setId, set_name: set.name});
+      }
+    }
+    return {...room, custom_items: custom};
   }
   async function download() {
     if (pdfBusy || !catalog) return;
@@ -384,6 +475,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     <div className="mi-totals" aria-live="polite"><span>{rooms.length} rooms</span><span>{rooms.reduce((sum, r) => sum + count(r), 0)} items &middot; {rooms.reduce((sum, r) => sum + pieces(r), 0)} pieces &middot; {totalBoxes} boxes</span><strong>{number(cuft)} cu ft</strong><span>{number(weight)} lb</span></div>
     {draftError && <p className="mi-error" role="alert">{draftError}</p>}
     {error && <p className="mi-error" role="alert">{error}</p>}
+    {catalogRefreshError && <p className="mi-error" role="alert">{catalogRefreshError}</p>}
     <div className="mi-body">
       {!catalog ? <p>Loading inventory...</p> : <>
         <div className="mi-room-toolbar">
@@ -445,11 +537,11 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
               <div><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</div>
               <span>{number(item.cuft)} cu ft</span>
               <div className="mi-catalog-count" role="group" aria-label={`Quantity of ${item.name}`}>
-                <button type="button" disabled={busy || !catalogQuantity(room, item.id)} aria-label={`Remove ${item.name} from ${room.name}`} title="Remove item" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setCatalogQuantity(r, item.id, 0) : r))}>
+                <button type="button" disabled={busy || !entryQuantity(room, item)} aria-label={`Remove ${item.name} from ${room.name}`} title="Remove item" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setEntryQuantity(r, item, 0) : r))}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>
                 </button>
-                <input type="number" min="0" max="999" step="1" aria-label={`Count of ${item.name}`} disabled={busy} value={catalogQuantity(room, item.id) || ''} placeholder="0" onChange={event => {const value = Number(event.target.value); setRooms(current => current.map(r => r.id === room.id ? setCatalogQuantity(r, item.id, value) : r));}} />
-                <button type="button" disabled={busy || catalogQuantity(room, item.id) >= 999} aria-label={`Add one ${item.name} to ${room.name}`} title="Add one" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setCatalogQuantity(r, item.id, catalogQuantity(r, item.id) + 1) : r))}>+</button>
+                <input type="number" min="0" max={entryLimit(room, item)} step="1" aria-label={`Count of ${item.name}`} disabled={busy} value={entryQuantity(room, item) || ''} placeholder="0" onChange={event => {const value = Number(event.target.value); setRooms(current => current.map(r => r.id === room.id ? setEntryQuantity(r, item, value) : r));}} />
+                <button type="button" disabled={busy || entryQuantity(room, item) >= entryLimit(room, item)} aria-label={`Add one ${item.name} to ${room.name}`} title="Add one" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setEntryQuantity(r, item, entryQuantity(r, item) + 1) : r))}>+</button>
               </div>
             </div>)}
             {!catalogMatches.length && <p>No matching items. You can add a custom item above.</p>}
@@ -477,7 +569,9 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
               selectors={items.get(id)?.selectors}
               onSelectionChange={(selectorId, choice) => setRooms(current => current.map(value => value.id === r.id ? {...value, items: {...value.items, [id]: 0}, custom_items: [...(value.custom_items || []), {id: catalogInventoryId(r, id), catalog_item_id: id, name: packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item'), name_override: !!r.item_names?.[id], cuft: items.get(id)?.cuft || 0.01, quantity: qty, selections: choice ? {[selectorId]: choice} : {}}]} : value))}
               onRemove={() => quantity(id, 0, r.id)} />)}
-            {(r.custom_items || []).map(item => <InventoryRow key={item.id} name={packingItemName(item.name)} cuft={item.cuft} quantity={item.quantity} busy={busy}
+            {itemGroups(r.custom_items || []).map(([setId, group]) => <div key={setId || 'individual'} className={setId ? 'mi-inventory-set' : undefined}>
+              {setId && <div className="mi-set-heading"><strong>{group[0].set_name}</strong><span>{number(group.reduce((sum, item) => sum + (item.going === false ? 0 : item.cuft * item.quantity), 0))} cu ft</span></div>}
+              {group.map(item => <InventoryRow key={item.id} name={packingItemName(item.name)} cuft={item.cuft} quantity={item.quantity} busy={busy}
               serviceBusy={closingBusy} serviceRowId={item.id} openService={openService} setOpenService={setOpenService}
               selectors={items.get(item.catalog_item_id || '')?.selectors || item.selectors} selections={item.selections}
               onSelectionChange={(selectorId, choice) => setRooms(current => current.map(value => value.id === r.id ? {...value, custom_items: value.custom_items?.map(entry => {
@@ -492,6 +586,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
               photo={imageEndpoint ? <QuestionReferenceImages active={visible} compact name={item.reference_name || item.name} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
               onSave={changes => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, name_override: entry.name_override || changes.name !== entry.name, reference_name: entry.reference_name || entry.name, ...changes } : entry) } : value))}
               onRemove={() => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.filter(entry => entry.id !== item.id) } : value))} />)}
+            </div>)}
           </details>)}
           <p><strong>{room ? 'Room total' : 'List total'}: {number(visibleCuft)} cu ft</strong></p>
         </section>

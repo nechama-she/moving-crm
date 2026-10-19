@@ -1,9 +1,9 @@
 import type {ServiceSelection} from './serviceQuantities';
-type Item = {id:string;catalog_item_id?:string|null;name_override?:boolean;name:string;cuft:number;quantity:number;going?:boolean;mover_pack?:boolean|null;unit_weight?:number};
+type Item = {id:string;catalog_item_id?:string|null;name_override?:boolean;name:string;cuft:number;quantity:number;going?:boolean;mover_pack?:boolean|null;unit_weight?:number;set_id?:string|null;set_name?:string|null};
 type Room = {id:string;room_type_id:string;name:string;items:Record<string,number>;item_names?:Record<string,string>;custom_items?:Item[]};
 type CatalogItem = {id:string;name:string;cuft:number;weight?:number};
 type Values = {room_id:string;name:string|null;quantity:number;cuft:number;going:boolean;mover_pack:boolean|null;selections:Record<string,ServiceSelection>};
-type Add = Omit<Values,'name'> & {id:string;name?:string;catalog_item_id?:string;unit_weight?:number};
+type Add = Omit<Values,'name'> & {id:string;name?:string;catalog_item_id?:string;unit_weight?:number;set_id?:string;set_name?:string};
 export type InventoryEdits = {update:{id:string;fields:Partial<Values>}[];delete:string[];add:Add[];rooms:{update:{id:string;name:string}[];delete:string[];add:{id:string;name:string;room_type_id:string}[]}};
 const catalogIds = new Map<string,string>();
 export function catalogInventoryId(room:Room,id:string):string {
@@ -14,7 +14,7 @@ export function catalogInventoryId(room:Room,id:string):string {
 const baseName = (name:string) => name.replace(/\s*\((?:CP|PBO)\)\s*$/i,'').trim();
 export function inventoryActions(before:Room[],after:Room[],catalog:CatalogItem[]):InventoryEdits {
   const lookup = new Map(catalog.map(item=>[item.id,item]));
-  const flatten = (rooms:Room[]) => new Map(rooms.flatMap(room=>[
+  const flatten = (rooms:Room[]): Map<string, Item & {room_id:string}> => new Map(rooms.flatMap(room=>[
     ...Object.entries(room.items).filter(([,qty])=>qty>0).map(([id,quantity])=>({id:catalogInventoryId(room,id),catalog_item_id:id,
       name:room.item_names?.[id]||lookup.get(id)?.name||'Item',name_override:!!room.item_names?.[id],quantity,cuft:lookup.get(id)?.cuft||0,
       unit_weight:lookup.get(id)?.weight||0,room_id:room.id})),
@@ -48,7 +48,7 @@ export function inventoryActions(before:Room[],after:Room[],catalog:CatalogItem[
   }
   for(const [id,item] of current) if(!previous.has(id)) {
     const {name,...value}=values(item);
-    edits.add.push({id,...value,...(name!==null?{name}:{}),...(item.catalog_item_id?{catalog_item_id:item.catalog_item_id}:{}),unit_weight:item.unit_weight||0});
+    edits.add.push({id,...value,...(name!==null?{name}:{}),...(item.catalog_item_id?{catalog_item_id:item.catalog_item_id}:{}),unit_weight:item.unit_weight||0,...(item.set_id?{set_id:item.set_id,set_name:item.set_name||'Set'}:{})});
   }
   return edits;
 }

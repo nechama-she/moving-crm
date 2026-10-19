@@ -34,6 +34,20 @@ OPEN_SALES_STATUSES = ("new", "contacted", "quoted")
 MIRIT_COMPANY_NAME = "mirit great american"
 
 
+def _with_smartmoving_links(payload, db):
+    """Attach link metadata in batches, including raw queue state rows."""
+    ids = list({row.get('lead_id') for row in payload['items'] if row.get('lead_id')})
+    links = {}
+    for start in range(0, len(ids), 500):
+        for lead_id, smartmoving_id, quote_number in db.query(
+            Lead.id, Lead.smartmoving_id, Lead.quote_number
+        ).filter(Lead.id.in_(ids[start:start + 500])).all():
+            links[lead_id] = {'smartmoving_id': str(smartmoving_id or '').strip(),
+                              'quote_number': str(quote_number or '').strip()}
+    payload['items'] = [{**row, **links.get(row.get('lead_id'), {})} for row in payload['items']]
+    return payload
+
+
 def _is_us_client_phone(value):
     from work_queue_rules import _is_us_client_phone as is_us_client_phone
     return is_us_client_phone(value)
@@ -149,9 +163,9 @@ def list_followup_calls(
     if leads:
         for task in db.query(Task).filter(Task.lead_id.in_(tasks_by_lead), Task.automatic_key.isnot(None)).all():
             tasks_by_lead[task.lead_id].append(task)
-    return {'items': [lead_row(lead, tasks_by_lead[lead.id], now) for lead in leads],
+    return _with_smartmoving_links({'items': [lead_row(lead, tasks_by_lead[lead.id], now) for lead in leads],
             'counts': counts, 'global_counts': global_counts,
-            'filter_options': {'reps': reps, 'companies': companies}, 'has_more': offset + len(leads) < count}
+            'filter_options': {'reps': reps, 'companies': companies}, 'has_more': offset + len(leads) < count}, db)
 
 
 @router.get("/followup-calls/export")
@@ -263,9 +277,9 @@ def list_all_first_contact_states(_: User = Depends(require_admin), db: Session 
     rows = db.query(FirstContactState, Lead.full_name, Lead.phone).outerjoin(
         Lead, Lead.id == FirstContactState.lead_id
     ).order_by(FirstContactState.waiting_since, FirstContactState.lead_id).all()
-    return {"items": [{"lead_id": state.lead_id, "client": name or "", "phone": phone or "",
+    return _with_smartmoving_links({"items": [{"lead_id": state.lead_id, "client": name or "", "phone": phone or "",
                        "waiting_since": state.waiting_since.isoformat()}
-                      for state, name, phone in rows], "count": len(rows)}
+                      for state, name, phone in rows], "count": len(rows)}, db)
 
 
 @router.get("/first-contact-history/all")
@@ -282,7 +296,7 @@ def list_first_contact_history(_: User = Depends(require_admin), db: Session = D
                       'contacted_at': resolution.contacted_at.isoformat(),
                       'recorded_at': resolution.recorded_at.isoformat() if resolution.recorded_at else None,
                       'outcome': outcome, 'evidence': evidence})
-    return {'items': items, 'count': len(items)}
+    return _with_smartmoving_links({'items': items, 'count': len(items)}, db)
 
 
 @router.get("/first-contact-reload")
@@ -340,8 +354,8 @@ def list_first_contact_leads(
             "client_phone": lead.phone or "", "rep": lead.assignee.name if lead.assignee else "",
             "company": lead.company.name if lead.company else "", "status": lead.status or "new",
             "created_at": created.isoformat(), "age_minutes": max(0, int((now-created).total_seconds()//60))})
-    return {"items": items, "counts": counts, "global_counts": global_counts,
-            "total": counts[category], "has_more": offset + len(items) < counts[category], "tracking_start": ""}
+    return _with_smartmoving_links({"items": items, "counts": counts, "global_counts": global_counts,
+            "total": counts[category], "has_more": offset + len(items) < counts[category], "tracking_start": ""}, db)
 
 
 def _ignored_call_numbers(db: Session) -> dict[str, set[str]]:
@@ -447,7 +461,7 @@ def list_missed_calls(
             "first_missed_at": state.first_missed_at.isoformat(),
             "latest_missed_at": state.latest_missed_at.isoformat(),
         })
-    return {"items": items, "count": len(states), "global_count": len(global_states)}
+    return _with_smartmoving_links({"items": items, "count": len(states), "global_count": len(global_states)}, db)
 
 
 class MessageCleanupRequest(BaseModel):
@@ -504,7 +518,7 @@ def list_all_message_states(
         .order_by(MessageState.occurred_at.desc(), MessageState.channel.asc(), MessageState.message_id.asc())
         .all()
     )
-    return {
+    return _with_smartmoving_links({
         "items": [
             {
                 "channel": state.channel,
@@ -519,7 +533,7 @@ def list_all_message_states(
             for state in states
         ],
         "count": len(states),
-    }
+    }, db)
 
 
 @router.get("/missed-call-states/all")
@@ -533,7 +547,7 @@ def list_all_missed_call_states(
         .order_by(MissedCallState.latest_missed_at.desc(), MissedCallState.client_identifier.asc())
         .all()
     )
-    return {
+    return _with_smartmoving_links({
         "items": [
             {
                 "client_identifier": state.client_identifier,
@@ -547,7 +561,7 @@ def list_all_missed_call_states(
             for state in states
         ],
         "count": len(states),
-    }
+    }, db)
 
 
 @router.get("/ignored-call-numbers")
@@ -820,13 +834,13 @@ def list_message_states(
         last = states[-1]
         payload = json.dumps({"occurred_at": last.occurred_at.isoformat(), "channel": last.channel, "message_id": last.message_id}, separators=(",", ":"))
         next_cursor = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
-    return {
+    return _with_smartmoving_links({
         "items": items,
         "counts": {"unanswered": unanswered_count, "ended": ended_count},
         "global_counts": {"unanswered": global_counts_by_ended.get(False, 0), "ended": global_counts_by_ended.get(True, 0)},
         "next_cursor": next_cursor,
         "has_more": has_more,
-    }
+    }, db)
 
 
 @router.patch("/end")

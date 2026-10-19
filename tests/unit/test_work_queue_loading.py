@@ -80,6 +80,23 @@ def test_creation_loads_smartmoving_details_before_tasks():
     exec(guarded_code, guarded_scope)
     lookup.assert_called_once_with('copied')
     assert guarded_scope['body'] == 'hydrated'
+    duplication = next(node for node in creation.body if isinstance(node, ast.If)
+                       and any(isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                               and call.func.id == '_enqueue_lead_for_duplication' for call in ast.walk(node)))
+    suppression = next(node for node in creation.body if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name) and target.id == 'suppress_new_lead_automation' for target in node.targets))
+    terminal = next(node for node in tree.body if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == 'NO_MESSAGE_STATUSES' for target in node.targets))
+    eligibility = compile(ast.Expression(duplication.test), str(source), 'eval')
+    for status in ('new', 'contacted', 'quoted', 'booked', 'scheduled', 'completed', 'lost', 'cancelled'):
+        for priority in (0, 1, 3):
+            scope = dict(lead=SimpleNamespace(status=status, priority=priority, referral_source='Facebook'))
+            exec(compile(ast.Module(body=[terminal, suppression], type_ignores=[]), str(source), 'exec'), scope)
+            assert bool(eval(eligibility, scope)) == (status in ('new', 'contacted', 'quoted', 'lost', 'cancelled'))
+            enqueue = next(node for node in ast.walk(duplication) if isinstance(node, ast.Call)
+                           and isinstance(node.func, ast.Name) and node.func.id == '_enqueue_lead_for_duplication')
+            approval = next(keyword.value for keyword in enqueue.keywords if keyword.arg == 'requires_approval')
+            assert eval(compile(ast.Expression(approval), str(source), 'eval'), scope) == (status in ('lost', 'cancelled'))
     assert any(item.arg == 'priority' and isinstance(item.value, ast.Attribute)
                and item.value.attr == 'priority' for item in lead_call.keywords)
 
@@ -282,7 +299,7 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
     source = Path(__file__).resolve().parents[2] / 'backend/routes/unanswered_messages.py'
     tree = ast.parse(source.read_text(encoding='utf-8'))
     tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef)
-                 and node.name in {'list_followup_calls', '_queue_lead_options', '_open_sales_status_filter', '_exclude_mirit_company_filter'}]
+                 and node.name in {'list_followup_calls', '_queue_lead_options', '_open_sales_status_filter', '_exclude_mirit_company_filter', '_with_smartmoving_links'}]
     for node in tree.body:
         node.decorator_list = []
         if node.name == 'list_followup_calls':
@@ -294,7 +311,9 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
                  OPEN_SALES_STATUSES=('new', 'contacted', 'quoted'), MIRIT_COMPANY_NAME='mirit great american')
     exec(compile(tree, str(source), 'exec'), scope)
     kwargs = dict(category='overdue', rep='', company='', refresh=False, limit=50, offset=0, _=None, db=db)
-    assert [row['lead_id'] for row in scope['list_followup_calls'](**kwargs)['items']] == ['lead']
+    result = scope['list_followup_calls'](**kwargs)
+    assert [row['lead_id'] for row in result['items']] == ['lead']
+    assert result['items'][0]['smartmoving_id'] == 'sm-1'
     assert scope['list_followup_calls'](**{**kwargs, 'company': 'Other'})['items'] == []
     task = db.query(Task).filter_by(task_type='call').first()
     task.due_at = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -405,7 +424,7 @@ def test_first_contact_page_reads_only_saved_pending_rows():
     source = Path(__file__).resolve().parents[2] / "backend/routes/unanswered_messages.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
     tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef)
-                 and node.name in {"list_first_contact_leads", "_queue_lead_options"}]
+                 and node.name in {"list_first_contact_leads", "_queue_lead_options", "_with_smartmoving_links"}]
     for node in tree.body:
         node.decorator_list = []
         if node.name == "list_first_contact_leads":
@@ -419,7 +438,7 @@ def test_first_contact_page_reads_only_saved_pending_rows():
     Base.metadata.create_all(engine)
     now = datetime.now(timezone.utc)
     with Session(engine) as db:
-        db.add_all([Lead(id="pending", full_name="Pending", created_at=now-timedelta(hours=1)),
+        db.add_all([Lead(id="pending", full_name="Pending", smartmoving_id="sm-pending", quote_number="27210", created_at=now-timedelta(hours=1)),
                     Lead(id="contacted", full_name="Contacted", created_at=now-timedelta(hours=1))])
         db.flush()
         waiting_since = now - timedelta(days=2)
@@ -428,6 +447,8 @@ def test_first_contact_page_reads_only_saved_pending_rows():
         result = scope["list_first_contact_leads"](category="overdue", rep="", company="", refresh=False,
                                                     limit=50, offset=0, _=None, db=db)
         assert [row["lead_id"] for row in result["items"]] == ["pending"]
+        assert result["items"][0]["smartmoving_id"] == "sm-pending"
+        assert result["items"][0]["quote_number"] == "27210"
         assert result["global_counts"] == {"new": 0, "overdue": 1}
         assert result["items"][0]["created_at"] == waiting_since.isoformat()
         assert result["items"][0]["age_minutes"] >= 2 * 24 * 60

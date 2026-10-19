@@ -15,6 +15,7 @@ type PendingDuplication = {
   created_at: string;
   is_sample?: boolean;
   error?: string;
+  requires_approval?: boolean;
 };
 
 type CompanyOption = {
@@ -160,7 +161,7 @@ export default function PendingDuplicationsPage() {
           <section className="pending-dup-modal" style={modal} role="dialog" aria-modal="true" aria-labelledby="duplicate-now-title" onClick={(event) => event.stopPropagation()}>
             <header style={modalHeader}>
               <div>
-                <h2 id="duplicate-now-title" style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Duplicate Now</h2>
+                <h2 id="duplicate-now-title" style={{ margin: 0, color: "#032d60", fontSize: 18 }}>{runItem.requires_approval ? 'Approve Duplication' : 'Duplicate Now'}</h2>
                 <p style={{ margin: "3px 0 0", color: "#706e6b", fontSize: 12 }}>{runItem.lead_name || runItem.lead_id}</p>
               </div>
               <button className="slds-button" type="button" aria-label="Close" disabled={Boolean(running)} onClick={() => setRunItem(null)} style={closeButton}>×</button>
@@ -195,7 +196,7 @@ export default function PendingDuplicationsPage() {
               <button className="slds-button" type="button" disabled={Boolean(running)} onClick={() => setRunItem(null)} style={secondaryButton}>{runResult ? "Close" : "Cancel"}</button>
               {!runResult ? (
                 <button className="slds-button" type="button" disabled={runItem.is_sample || Boolean(running) || !runCompanyId || !runReferralSource.trim()} onClick={() => void duplicateNow()} style={primaryButton}>
-                  {runItem.is_sample ? "Preview Only" : running ? "Waiting for responses..." : "Duplicate Now"}
+                  {runItem.is_sample ? "Preview Only" : running ? "Waiting for responses..." : runItem.requires_approval ? "Approve and Duplicate" : "Duplicate Now"}
                 </button>
               ) : null}
             </footer>
@@ -251,11 +252,12 @@ export default function PendingDuplicationsPage() {
                         </Link>
                       ) : <strong>{item.lead_name || "Unknown lead"}</strong>}
                       {item.is_sample ? <span style={demoBadge}>DEV SAMPLE</span> : null}
+                      {item.requires_approval && <div style={{ marginTop: 8, color: '#825101', fontWeight: 600 }}>Awaiting approval - will not duplicate automatically</div>}
                       {item.error ? (
                         <div role="status" style={{ marginTop: 8, padding: 8, borderLeft: "3px solid #ba0517", background: "#fef1ee", color: "#8e030f", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
                           <strong>Duplication failed</strong><div>{item.error}</div>
                         </div>
-                      ) : !item.is_sample && Date.parse(item.fire_at) < Date.now() - 5 * 60 * 1000 ? (
+                      ) : !item.is_sample && !item.requires_approval && Date.parse(item.fire_at) < Date.now() - 5 * 60 * 1000 ? (
                         <div style={{ marginTop: 8, color: "#825101" }}>No completion reported. Check whether the copy exists before retrying.</div>
                       ) : null}
                       {item.lead_id ? (
@@ -289,7 +291,7 @@ export default function PendingDuplicationsPage() {
                         disabled={running === item.schedule_name || deleting === item.schedule_name}
                         style={{ ...primaryButton, marginRight: 6 }}
                       >
-                        {running === item.schedule_name ? "Starting..." : "Duplicate Now"}
+                        {running === item.schedule_name ? "Starting..." : item.requires_approval ? "Approve Duplication" : "Duplicate Now"}
                       </button>
                       <button className="slds-button"
                         type="button"
@@ -298,7 +300,7 @@ export default function PendingDuplicationsPage() {
                         title={item.is_sample ? "Dev preview rows cannot be deleted" : "Delete pending duplication"}
                         style={dangerButton}
                       >
-                        {deleting === item.schedule_name ? "Deleting…" : "Delete"}
+                        {deleting === item.schedule_name ? "Cancelling..." : item.requires_approval ? "Cancel Duplication" : "Delete"}
                       </button>
                     </td>
                   </tr>

@@ -30,6 +30,8 @@ class CustomInventoryItemInput(BaseModel):
     selections: ServiceSelections = Field(default_factory=dict)
     going: bool = True
     reference_name: str | None = Field(default=None, max_length=200)
+    set_id: UUID | None = None
+    set_name: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class InventoryRoomInput(BaseModel):
@@ -196,8 +198,11 @@ def update_inventory_row(body, access, db):
 
 def catalog(db, access=None):
     from item_selectors import inventory_selectors
+    from models import InventoryCatalogSet
     selectors = inventory_selectors(access, db) if access else {}
     return {'rooms': [{'id': r.id, 'name': r.name} for r in db.query(InventoryRoomType).order_by(InventoryRoomType.sort_order).all()],
+            'sets': [{'id': row.id, 'name': row.name, 'components': json.loads(row.components)}
+                     for row in db.query(InventoryCatalogSet).order_by(InventoryCatalogSet.name).all()],
             'items': [{'id': r.id, 'name': r.name, 'description': r.description,
                        'cuft': float(r.cuft), 'weight': float(r.weight), 'selectors': selectors.get(r.id, [])}
                       for r in db.query(InventoryCatalogItem).filter_by(active=True, deleted=False).order_by(InventoryCatalogItem.name, InventoryCatalogItem.cuft).all()]}
@@ -248,7 +253,8 @@ def build_inventory(body, db, allow_empty=False):
                    'catalog_item_id': catalog_item.id if catalog_item else None, 'name_override': entry.name_override,
                    'amount': entry.quantity, 'cuft': float(volume), 'weight': 0,
                    'unit_cuft': float(entry.cuft), 'unit_weight': 0, 'custom': True, 'going': entry.going, 'mover_pack': entry.mover_pack,
-                   'reference_name': entry.reference_name or entry.name.strip(), 'selections': entry.selections}
+                   'reference_name': entry.reference_name or entry.name.strip(), 'selections': entry.selections,
+                   'set_id': str(entry.set_id) if entry.set_id else None, 'set_name': entry.set_name}
             rows.append(row)
             contents.append(row)
         rooms.append({'room_type_id': room.room_type_id, 'name': room.name.strip(), 'items': contents})
@@ -265,6 +271,7 @@ def build_inventory(body, db, allow_empty=False):
 def submit_inventory(body, access, db):
     from routes.liveswitch import apply_spark_results_to_lead
     rooms, rows, cuft, weight = build_inventory(body, db)
+    save_service_defaults(rows, access, db)
     return submit_inventory_snapshot(body.model_dump(mode='json'), rooms, rows, cuft, weight, access, db)
 
 
@@ -303,8 +310,16 @@ def submit_inventory_snapshot(list_body, rooms, rows, cuft, weight, access, db):
     return apply_spark_results_to_lead(access.lead_id, '', db, expected_report_id=report_id)
 
 
+def save_service_defaults(rows, access, db):
+    from item_selectors import inventory_selectors, default_selections
+    selectors = inventory_selectors(access, db, {row.get('catalog_item_id') or row.get('item_id') for row in rows})
+    for row in rows:
+        row['selections'] = default_selections(row.get('selections'), selectors.get(row.get('catalog_item_id') or row.get('item_id'), []))
+
+
 def save_inventory_draft(body, access, db):
     rooms, rows, cuft, weight = build_inventory(body, db, allow_empty=True)
+    save_service_defaults(rows, access, db)
     db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
     details = json.loads(saved.details or '{}') if saved else {}
@@ -322,6 +337,7 @@ def replace_current_inventory(body, access, db):
     """Replace the active report's editable inventory without replacing its media report."""
     from models import LeadSparkInventoryItem
     rooms, rows, cuft, weight = build_inventory(body, db, allow_empty=True)
+    save_service_defaults(rows, access, db)
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
     details = json.loads(saved.details or '{}') if saved else {}
     report_id = details.get('last_spark_id')

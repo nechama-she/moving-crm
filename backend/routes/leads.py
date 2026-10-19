@@ -621,6 +621,7 @@ def _enqueue_lead_for_duplication(
     target_company_name: str,
     target_referral_source: str,
     delay_minutes: int,
+    requires_approval: bool = False,
 ) -> None:
     """Schedule a one-time EventBridge Scheduler invocation of the lead-duplicate Lambda.
 
@@ -671,6 +672,8 @@ def _enqueue_lead_for_duplication(
             ScheduleExpressionTimezone="UTC",
             FlexibleTimeWindow={"Mode": "OFF"},
             ActionAfterCompletion="NONE",
+            State="DISABLED" if requires_approval else "ENABLED",
+            Description="Awaiting duplication approval" if requires_approval else "Scheduled lead duplication",
             Target={
                 "Arn": function_arn,
                 "RoleArn": role_arn,
@@ -705,7 +708,6 @@ def list_pending_lead_duplications(
             params = {
                 "GroupName": LEAD_DUPLICATE_SCHEDULE_GROUP,
                 "NamePrefix": LEAD_DUPLICATE_SCHEDULE_PREFIX,
-                "State": "ENABLED",
                 "MaxResults": 100,
             }
             if next_token:
@@ -752,6 +754,8 @@ def list_pending_lead_duplications(
             "target_company_name": payload.get("target_company_name") or "",
             "target_referral_source": payload.get("target_referral_source") or "",
             "fire_at": fire_at,
+            "requires_approval": detail.get("Description") == "Awaiting duplication approval"
+                                 or bool(lead and lead.status in {"lost", "cancelled"}),
             "created_at": detail.get("CreationDate") or schedule.get("CreationDate"),
             "error": (detail.get("Description") or "").removeprefix("Duplication failed: ")
                      if (detail.get("Description") or "").startswith("Duplication failed: ") else "",
@@ -854,6 +858,7 @@ def run_pending_lead_duplication_now(
     payload["target_company_name"] = target_company.name
     payload["target_referral_source"] = referral_source
     payload["schedule_name"] = schedule_name
+    payload["approved"] = True
 
     try:
         response = boto3.client("lambda", region_name=region).invoke(
@@ -5102,7 +5107,6 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
 
     raw_move_type = _clean_optional_text(body.move_type).lower()
     raw_status = _clean_optional_text(body.status).lower()
-    status_provided = bool(raw_status)
     if raw_status and raw_status not in ALLOWED_LEAD_STATUSES:
         raw_status = "new"
 
@@ -5341,7 +5345,7 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
         db.rollback()
         logger.warning("Non-fatal outreach event write failure for lead %s: %s", lead.id, exc)
 
-    if not status_provided and not suppress_new_lead_automation and lead.referral_source:
+    if lead.status not in {"booked", "scheduled", "completed"} and lead.referral_source:
         duplication_rules = (
             db.query(LeadDuplicationRule)
             .options(joinedload(LeadDuplicationRule.target_company))
@@ -5358,6 +5362,7 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
                 target_company_name=duplication_rule.target_company.name,
                 target_referral_source=duplication_rule.target_referral_source,
                 delay_minutes=duplication_rule.delay_minutes,
+                requires_approval=lead.status in {"lost", "cancelled"},
             )
 
     publish_realtime_event({

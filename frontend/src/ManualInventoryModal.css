@@ -84,3 +84,6 @@
   .mi-inventory-row>.mi-inventory-photo:empty{display:none}
   .mi-inventory-row:has(>.mi-inventory-photo:empty)>:nth-child(2){grid-column:1 / 9;padding-left:0}
 }
+.mi-inventory-set { margin-top: 12px; border-left: 3px solid var(--cm-border); padding-left: 10px; }
+.mi-set-heading { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 10px 0; }
+@media (max-width: 560px) { .mi-inventory-set { padding-left: 5px; } }
