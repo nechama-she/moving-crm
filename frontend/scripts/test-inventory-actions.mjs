@@ -21,6 +21,16 @@ assert.deepEqual(plain(counts),{Owner:9,Movers:1});
 assert.deepEqual(plain(quantities.serviceCounts(service,'Movers',2)),{Movers:2});
 assert.deepEqual(plain(quantities.serviceCounts(service,{Owner:3,Movers:7},2)),{Movers:2,Owner:0});
 const catalog=[{id:'chair',name:'Chair',cuft:30},{id:'box',name:'Small Box',cuft:2}];
+const groupedRoom = {id:'set-room',room_type_id:'bedroom',name:'Bedroom',items:{},custom_items:[
+  {id:'set-piece',catalog_item_id:'chair',name:'Chair',quantity:2,cuft:30,set_id:'group-1',set_name:'Bedroom set'},
+]};
+const groupAdd = plain(inventoryActions([], [groupedRoom], catalog));
+assert.equal(groupAdd.add[0].set_id, 'group-1');
+assert.equal(groupAdd.add[0].set_name, 'Bedroom set');
+const editedGroup = structuredClone(groupedRoom);
+editedGroup.custom_items[0].quantity = 3;
+assert.deepEqual(plain(inventoryActions([groupedRoom], [editedGroup], catalog)).update,
+  [{id:'set-piece',fields:{quantity:3}}]);
 const before=[{id:'room',room_type_id:'bedroom',name:'Bedroom',items:{},custom_items:[
  {id:'row-1',catalog_item_id:'chair',name:'Chair',quantity:1,cuft:30},
  {id:'row-2',catalog_item_id:'chair',name:'Chair',quantity:1,cuft:30},

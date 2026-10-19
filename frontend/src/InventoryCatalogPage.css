@@ -1,5 +1,16 @@
 .ic-page { padding: 20px clamp(12px, 3vw, 24px); overflow: auto; flex: 1; min-height: 0; color: #032d60; }
 .ic-card { margin-top: 16px; background: #fff; border: 1px solid #dddbda; border-radius: 8px; padding: 20px; }
+.ic-set-editor { display: grid; gap: 16px; margin: 20px 0; padding: 16px; background: #f5f8fc; border: 1px solid #c9d3df; border-radius: 10px; }
+.ic-set-editor label { display: grid; gap: 6px; min-width: 0; }
+.ic-set-editor input, .ic-set-editor select { width: 100%; min-width: 0; min-height: 44px; box-sizing: border-box; border: 1px solid #c9d3df; border-radius: 6px; padding: 8px; font: inherit; background: white; }
+.ic-set-piece { display: grid; grid-template-columns: minmax(0, 1fr) 90px 100px auto; align-items: end; gap: 12px; }
+.ic-set-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; margin-top: 16px; }
+.ic-set-list article { padding: 16px; border: 1px solid #dde4ee; border-radius: 10px; }
+.ic-set-list h3 { margin: 0 0 10px; font-size: 16px; }
+.ic-set-list ul { padding-left: 20px; line-height: 1.8; }
+.ic-set-list small { display: block; color: #5c6b82; }
+.ic-sets .slds-button { min-height: 44px; }
+@media (max-width: 600px) { .ic-set-piece { grid-template-columns: minmax(0, 1fr) 80px; } .ic-set-editor input, .ic-set-editor select { font-size: 16px; } }
 .ic-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
 .ic-transfer-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .ic-toolbar h1, .ic-toolbar h2 { font-size: 20px; margin: 0; }

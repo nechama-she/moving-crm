@@ -33,6 +33,37 @@ def body(editor, **edits):
 
 
 @pytest.mark.parametrize('active', [True, False])
+def test_set_pieces_keep_group_after_edit_delete_and_pdf_snapshot(manual_catalog, active):
+    from manual_inventory import ManualInventoryInput, build_inventory
+    db, lead, access, saved, editor = setup_inventory(manual_catalog, active)
+    room_id = editor['rooms'][0]['id']
+    group, first, second = map(str, (uuid4(), uuid4(), uuid4()))
+    save_inventory_edits(body(editor, add=[dict(id=first, room_id=room_id, catalog_item_id='chair',
+        quantity=2, set_id=group, set_name='Bedroom set'), dict(id=second, room_id=room_id,
+        catalog_item_id='chair', quantity=1, set_id=group, set_name='Bedroom set')]), access, db)
+    editor = load_inventory_editor(access, db)
+    pieces = [item for item in editor['rooms'][0]['custom_items'] if item.get('set_id') == group]
+    assert len(pieces) == 2
+    assert all(item['set_name'] == 'Bedroom set' for item in pieces)
+    save_inventory_edits(body(editor, update=[dict(id=first, fields={'quantity': 3})], delete=[second]), access, db)
+    editor = load_inventory_editor(access, db)
+    pieces = [item for item in editor['rooms'][0]['custom_items'] if item.get('set_id') == group]
+    assert len(pieces) == 1 and pieces[0]['quantity'] == 3
+    details = json.loads(saved.details)
+    snapshot = details['spark_inventory_snapshot'] if active else details['inventory_draft']['rows']
+    grouped = [row for row in snapshot if row.get('set_id') == group]
+    assert len(grouped) == 1 and grouped[0]['amount'] == 3
+    # The download uses the same custom-piece representation, without a second
+    # parent row that could add volume a second time.
+    piece = {key: value for key, value in pieces[0].items() if key not in ('selectors', 'unit_weight')}
+    request = ManualInventoryInput(request_id=uuid4(), rooms=[dict(room_type_id='bedroom', name='Bedroom', items=[], custom_items=[piece])])
+    rooms, rows, volume, _ = build_inventory(request, db)
+    assert len(rows) == 1 and rows[0]['set_id'] == group
+    assert rows[0]['set_name'] == 'Bedroom set'
+    assert volume == pieces[0]['cuft'] * 3
+
+
+@pytest.mark.parametrize('active', [True, False])
 def test_service_prices_use_configured_rate_quantity_and_default(manual_catalog, active):
     from types import SimpleNamespace
     from item_selectors import ItemSelectorsInput, add_service_charges

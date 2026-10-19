@@ -8,11 +8,21 @@ import { piecesPerItem } from './inventoryPieces';
 import QuestionReferenceImages from './QuestionReferenceImages';
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './ManualInventoryModal.css';
+import type { CatalogSet } from './CatalogSets';
 type CatalogItem = { id: string; name: string; description: string; cuft: number; weight: number; selectors?: ItemSelector[] };
 type RoomType = { id: string; name: string };
-type CustomItem = { id: string; catalog_item_id?: string; name_override?: boolean; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean; mover_pack?: boolean | null; unit_weight?: number; selectors?: ItemSelector[]; selections?: Record<string,ServiceSelection> };
+type CustomItem = { id: string; catalog_item_id?: string; name_override?: boolean; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean; mover_pack?: boolean | null; unit_weight?: number; selectors?: ItemSelector[]; selections?: Record<string,ServiceSelection>; set_id?: string | null; set_name?: string | null };
 type Room = { id: string; room_type_id: string; name: string; items: Record<string, number>; item_names?: Record<string,string>; custom_items?: CustomItem[] };
-type Catalog = { rooms: RoomType[]; items: CatalogItem[] };
+type Catalog = { rooms: RoomType[]; items: CatalogItem[]; sets?: CatalogSet[] };
+function itemGroups(items: CustomItem[]) {
+  const groups = new Map<string, CustomItem[]>();
+  for (const item of items) {
+    const key = item.set_id || '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(item);
+  }
+  return [...groups.entries()];
+}
 function packingItemName(name: string) {
   if (/\((?:cp|pbo)\)\s*$/i.test(name)) return name;
   return /\bbox(?:es)?\b|\bdish\s*pack\b/i.test(name) ? `${name} (PBO)` : name;
@@ -437,6 +447,23 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
           {Object.values(customDimensions).some(value => value.trim() && dimensionFeet(value) === null) && <p role="status">Use feet (2'), inches (24&quot;), or both (2' 6&quot;).</p>}
           {customCuft > 10000 && <p role="alert">Estimated volume must be 10,000 cu ft or less per item.</p>}
         </section>}
+          {!!catalog.sets?.length && <section className="mi-set-picker" aria-label="Suggested item sets">
+            <h3>Add a set</h3><p>Start with suggested pieces, then edit or remove anything you do not have.</p>
+            {catalog.sets.filter(set => set.name.toLowerCase().includes(catalogSearch.trim().toLowerCase())).map(set => {
+              const available = set.components.every(part => items.has(part.item_id));
+              return <div className="mi-set-option" key={set.id}>
+                <div><strong>{set.name}</strong><small>{set.components.map(part => `${part.quantity} x ${items.get(part.item_id)?.name || 'Unavailable item'}`).join(', ')}</small>
+                  <small>{number(set.components.reduce((sum, part) => sum + (items.get(part.item_id)?.cuft || 0) * part.quantity, 0))} cu ft</small></div>
+                <button type="button" className="slds-button" disabled={busy || !available || (room.custom_items?.length || 0) + set.components.length > 100} onClick={() => {
+                  const setId = crypto.randomUUID();
+                  setRooms(current => current.map(value => value.id === room.id ? {...value, custom_items: [...(value.custom_items || []), ...set.components.map(part => {
+                    const item = items.get(part.item_id)!;
+                    return {id: crypto.randomUUID(), catalog_item_id: item.id, name: item.name, cuft: item.cuft, unit_weight: item.weight, quantity: part.quantity, set_id: setId, set_name: set.name};
+                  })]} : value));
+                }}>{available ? 'Add set' : 'Unavailable'}</button>
+              </div>;
+            })}
+          </section>}
           <div className="mi-catalog-scroll" ref={catalogScroll} tabIndex={0} aria-label="Catalog items" onScroll={event => {
             const list = event.currentTarget;
             if (list.scrollHeight - list.scrollTop - list.clientHeight < 160) setCatalogLimit(limit => Math.min(limit + 60, catalogMatches.length));
@@ -477,7 +504,9 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
               selectors={items.get(id)?.selectors}
               onSelectionChange={(selectorId, choice) => setRooms(current => current.map(value => value.id === r.id ? {...value, items: {...value.items, [id]: 0}, custom_items: [...(value.custom_items || []), {id: catalogInventoryId(r, id), catalog_item_id: id, name: packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item'), name_override: !!r.item_names?.[id], cuft: items.get(id)?.cuft || 0.01, quantity: qty, selections: choice ? {[selectorId]: choice} : {}}]} : value))}
               onRemove={() => quantity(id, 0, r.id)} />)}
-            {(r.custom_items || []).map(item => <InventoryRow key={item.id} name={packingItemName(item.name)} cuft={item.cuft} quantity={item.quantity} busy={busy}
+            {itemGroups(r.custom_items || []).map(([setId, group]) => <div key={setId || 'individual'} className={setId ? 'mi-inventory-set' : undefined}>
+              {setId && <div className="mi-set-heading"><strong>{group[0].set_name}</strong><span>{number(group.reduce((sum, item) => sum + (item.going === false ? 0 : item.cuft * item.quantity), 0))} cu ft</span></div>}
+              {group.map(item => <InventoryRow key={item.id} name={packingItemName(item.name)} cuft={item.cuft} quantity={item.quantity} busy={busy}
               serviceBusy={closingBusy} serviceRowId={item.id} openService={openService} setOpenService={setOpenService}
               selectors={items.get(item.catalog_item_id || '')?.selectors || item.selectors} selections={item.selections}
               onSelectionChange={(selectorId, choice) => setRooms(current => current.map(value => value.id === r.id ? {...value, custom_items: value.custom_items?.map(entry => {
@@ -492,6 +521,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
               photo={imageEndpoint ? <QuestionReferenceImages active={visible} compact name={item.reference_name || item.name} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
               onSave={changes => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, name_override: entry.name_override || changes.name !== entry.name, reference_name: entry.reference_name || entry.name, ...changes } : entry) } : value))}
               onRemove={() => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.filter(entry => entry.id !== item.id) } : value))} />)}
+            </div>)}
           </details>)}
           <p><strong>{room ? 'Room total' : 'List total'}: {number(visibleCuft)} cu ft</strong></p>
         </section>

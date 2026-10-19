@@ -1195,6 +1195,13 @@ class InventoryCatalogItem(Base):
     packing_materials = Column(Text, nullable=False, default='[]')
 
 
+class InventoryCatalogSet(Base):
+    __tablename__ = 'inventory_catalog_sets'
+    id = Column(String(36), primary_key=True)
+    name = Column(String(200), nullable=False)
+    components = Column(Text, nullable=False, default='[]')
+
+
 class InventoryEditState(Base):
     __tablename__ = 'inventory_edit_states'
     job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), primary_key=True)
@@ -1229,3 +1236,5 @@ class InventoryEditItem(Base):
     selections = Column(Text, nullable=False, default='{}')
     sort_order = Column(Integer, nullable=False, default=0)
     inventory_record_id = Column(String(36))
+    set_id = Column(String(36))
+    set_name = Column(String(200))

@@ -149,7 +149,23 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
     for room in rooms:
         story.append(Paragraph(escape(room['name']), styles['Heading2']))
         body = [[p(value) for value in ['Photo', 'Item Name', 'Unit Volume\n(cu ft)', 'Total Volume\n(cu ft)', 'Qty', 'Going']]]
+        groups = {}
         for row in room['items']:
+            groups.setdefault(row.get('set_id') or '', []).append(row)
+        grouped_rows = [row for contents in groups.values() for row in contents]
+        seen_sets, set_styles = set(), []
+        for row in grouped_rows:
+            set_id = row.get('set_id')
+            if set_id and set_id not in seen_sets:
+                seen_sets.add(set_id)
+                total = sum(item['unit_cuft'] * item['amount'] for item in groups[set_id] if item.get('going') is not False)
+                index = len(body)
+                body.append([p(f"{row.get('set_name') or 'Set'} - {total:,.2f} cu ft going"), '', '', '', '', ''])
+                set_styles.extend([('SPAN', (0, index), (-1, index)),
+                                   ('NOSPLIT', (0, index), (-1, index + 1)),
+                                   ('BACKGROUND', (0, index), (-1, index), header_color)])
+            if set_id:
+                set_styles.append(('LEFTPADDING', (1, len(body)), (1, len(body)), 16))
             name = row['name']
             if re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b', name, re.I) and not re.search(r'\((CP|PBO)\)\s*$', name, re.I):
                 name += ' (PBO)'
@@ -174,7 +190,7 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
             story.append(p('No items in this room.'))
             continue
         table = Table(body, colWidths=[66, 201, 75, 75, 40, 55], repeatRows=1)
-        table.setStyle(TableStyle([
+        table.setStyle(TableStyle(set_styles + [
             ('BACKGROUND', (0, 0), (-1, 0), header_color),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('TOPPADDING', (0, 0), (-1, -1), 7),

@@ -5,6 +5,7 @@ import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 import CatalogItemDialog, { type CatalogItem } from "./CatalogItemDialog";
 import "./InventoryCatalogPage.css";
+import CatalogSets from './CatalogSets';
 
 export default function InventoryCatalogPage() {
   const { token } = useAuth();
@@ -77,6 +78,7 @@ export default function InventoryCatalogPage() {
     .sort((a, b) => a.name.localeCompare(b.name) || a.cuft - b.cuft);
   return <main className="ic-page">
     <Link to="/settings" className="slds-button">Back to Settings</Link>
+    {!loading && <CatalogSets items={items} />}
     <section className="ic-card">
       <header className="ic-toolbar"><div><h1>Inventory catalog</h1><p>Manage shared items used in customer inventories and moving terms.</p></div><div className="ic-transfer-actions">
         <button className="slds-button slds-button_neutral" disabled={transferring || loading} onClick={() => void transfer()}>Download CSV</button>

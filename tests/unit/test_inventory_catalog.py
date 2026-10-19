@@ -34,6 +34,23 @@ def catalog_api():
     engine.dispose()
 
 
+def test_catalog_sets_validate_pieces_and_publish_presets(catalog_api):
+    api, db = catalog_api
+    chair = api.create_item(api.CatalogItemInput(name='Chair', cuft=10, weight=70), None, db)
+    body = api.CatalogSetInput(name='Dining set', components=[{'item_id': chair['id'], 'quantity': 4}])
+    preset = api.create_set(body, None, db)
+    assert catalog(db)['sets'] == [preset]
+    assert len(catalog(db)['items']) == 1  # No extra billable parent item.
+    with pytest.raises(HTTPException):
+        api.create_set(api.CatalogSetInput(name='Invalid', components=[
+            {'item_id': chair['id'], 'quantity': 1}, {'item_id': chair['id'], 'quantity': 2}]), None, db)
+    with pytest.raises(HTTPException):
+        api.create_set(api.CatalogSetInput(name='Invalid', components=[{'item_id': 'missing', 'quantity': 1}]), None, db)
+    api.delete_set(preset['id'], None, db)
+    assert catalog(db)['sets'] == []
+    assert len(catalog(db)['items']) == 1
+
+
 def test_created_item_is_available_for_customer_inventory(catalog_api):
     api, db = catalog_api
     row = api.create_item(api.CatalogItemInput(name='  Massage   Chair ', cuft='45.25', weight='80'), None, db)

@@ -36,6 +36,8 @@ class Addition(Fields):
     quantity: int = Field(ge=1, le=999, strict=True)
     catalog_item_id: str | None = Field(default=None, max_length=100)
     unit_weight: Decimal = Field(default=Decimal(0), ge=0, le=100000, allow_inf_nan=False)
+    set_id: UUID | None = None
+    set_name: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class RoomAddition(BaseModel):
@@ -179,6 +181,7 @@ def load_inventory_editor(access, db):
                 unit_weight=Decimal(str(row.get('unit_weight') or float(row.get('weight') or 0)/qty)),
                 going=row.get('going') is not False, mover_pack=pack, sort_order=index,
                 selections=json.dumps(row.get('selections') or {}),
+                set_id=row.get('set_id'), set_name=row.get('set_name'),
                 inventory_record_id=record.id if record else None)
             pending_items.append(item)
         # Flush parents first, including databases that enforce foreign keys immediately.
@@ -197,6 +200,7 @@ def load_inventory_editor(access, db):
     for item, name in inventory_rows:
         result[item.room_id]['custom_items'].append(dict(id=item.id, name=display_name(item, name),
             catalog_item_id=item.catalog_item_id, name_override=item.name is not None,
+            set_id=item.set_id, set_name=item.set_name,
             quantity=item.quantity, cuft=float(item.unit_cuft), unit_weight=float(item.unit_weight),
             going=item.going, mover_pack=item.mover_pack, selections=json.loads(item.selections or '{}'),
             selectors=selectors.get(item.catalog_item_id, [])))
@@ -280,6 +284,7 @@ def save_inventory_edits(body, access, db):
             name=item.name.strip() if item.name else None, quantity=item.quantity, unit_cuft=cuft,
             unit_weight=catalog.weight if catalog else item.unit_weight, going=item.going is not False,
             mover_pack=item.mover_pack, sort_order=next_order,
+            set_id=str(item.set_id) if item.set_id else None, set_name=item.set_name,
             selections=validated_selections(item.selections, selectors.get(item.catalog_item_id, [])))
         next_order += 1
         db.add(row)
@@ -333,6 +338,7 @@ def project(job, access, details, joined, db):
         cuft=float(r.unit_cuft*r.quantity) if r.going else 0, weight=float(r.unit_weight*r.quantity) if r.going else 0,
         going=r.going, mover_pack=r.mover_pack, catalog_item_id=r.catalog_item_id, item_id=r.catalog_item_id or 'custom-'+r.id,
         name_override=r.name is not None, _inventory_record_id=r.inventory_record_id,
+        set_id=r.set_id, set_name=r.set_name,
         selections=json.loads(r.selections or '{}')) for r,name in joined]
     serialized_rooms = [dict(id=r.id, name=r.name, room_type_id=r.room_type_id or '', items=[x for x in rows if x['room_id']==r.id]) for r in rooms]
     volume, weight = sum(r['cuft'] for r in rows), sum(r['weight'] for r in rows)
@@ -363,6 +369,7 @@ def project(job, access, details, joined, db):
     if not report_id or details.get('inventory_draft'):
         input_rooms = [dict(name=r['name'],room_type_id=r['room_type_id'],items=[],custom_items=[dict(
             id=x['inventory_row_id'],name=x['name'],quantity=x['amount'],cuft=x['unit_cuft'],going=x['going'],
-            mover_pack=x['mover_pack'],selections=x['selections'],catalog_item_id=x['catalog_item_id'],name_override=x['name_override']) for x in r['items']]) for r in serialized_rooms]
+            mover_pack=x['mover_pack'],selections=x['selections'],catalog_item_id=x['catalog_item_id'],name_override=x['name_override'],
+            set_id=x['set_id'],set_name=x['set_name']) for x in r['items']]) for r in serialized_rooms]
         details['inventory_draft']=dict(body=dict(request_id=str(uuid4()),rooms=input_rooms),rows=rows,rooms=serialized_rooms,cuft=volume,weight=weight)
     if report_id: remember_report(details)

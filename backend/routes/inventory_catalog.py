@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from auth import require_admin
 from database import get_db
-from models import InventoryCatalogItem, User, PricingPlan
+from models import InventoryCatalogItem, InventoryCatalogSet, User, PricingPlan
 from long_distance_packing import packing_card
 from catalog_material_cleanup import remove_item_assignments
 
@@ -72,6 +72,70 @@ def item_dict(item):
     return {'id': item.id, 'name': item.name, 'description': item.description,
             'cuft': float(item.cuft), 'weight': float(item.weight), 'active': item.active,
             'packing_materials': json.loads(item.packing_materials or '[]')}
+
+
+class SetComponent(BaseModel):
+    item_id: str = Field(min_length=1, max_length=36)
+    quantity: int = Field(ge=1, le=999, strict=True)
+
+
+class CatalogSetInput(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    components: list[SetComponent] = Field(min_length=1, max_length=100)
+
+    @field_validator('name')
+    @classmethod
+    def clean_name(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError('Enter a set name')
+        return value
+
+
+def set_dict(row):
+    return {'id': row.id, 'name': row.name, 'components': json.loads(row.components)}
+
+
+@router.get('/sets')
+def list_sets(user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return {'sets': [set_dict(row) for row in db.query(InventoryCatalogSet).order_by(InventoryCatalogSet.name).all()]}
+
+
+def save_set(body, db, row):
+    ids = [part.item_id for part in body.components]
+    if len(ids) != len(set(ids)):
+        raise HTTPException(422, 'Add each item once and adjust its quantity.')
+    available = {item.id for item in available_items(db).filter(InventoryCatalogItem.active.is_(True), InventoryCatalogItem.id.in_(ids)).all()}
+    if available != set(ids):
+        raise HTTPException(422, 'Choose active catalog items for every piece in the set.')
+    row.name = body.name
+    row.components = json.dumps([part.model_dump() for part in body.components])
+    db.add(row)
+    db.commit()
+    return set_dict(row)
+
+
+@router.post('/sets', status_code=201)
+def create_set(body: CatalogSetInput, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return save_set(body, db, InventoryCatalogSet(id=str(uuid4())))
+
+
+@router.put('/sets/{set_id}')
+def update_set(set_id: str, body: CatalogSetInput, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    row = db.get(InventoryCatalogSet, set_id)
+    if not row:
+        raise HTTPException(404, 'Set not found')
+    return save_set(body, db, row)
+
+
+@router.delete('/sets/{set_id}')
+def delete_set(set_id: str, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    row = db.get(InventoryCatalogSet, set_id)
+    if not row:
+        raise HTTPException(404, 'Set not found')
+    db.delete(row)
+    db.commit()
+    return {'deleted': True}
 
 
 @router.get('/material-options')
