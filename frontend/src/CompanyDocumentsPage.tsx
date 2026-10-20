@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { API_BASE } from './apiConfig';
 import { authHeaders, useAuth } from './AuthContext';
@@ -26,9 +26,53 @@ export default function CompanyDocumentsPage() {
   const [mentionOpen, setMentionOpen] = useState(false);
   const [fieldIndex, setFieldIndex] = useState(0);
   const fieldResults = useRef<HTMLDivElement>(null);
+  const fieldMenu = useRef<HTMLElement>(null);
+  const fieldTrigger = useRef<HTMLButtonElement>(null);
+  const [menuPosition, setMenuPosition] = useState({ left: 12, top: 12, maxHeight: 320 });
   const editor = useRef<HTMLDivElement>(null);
   const selection = useRef<Range | null>(null);
   const base = `${API_BASE}/api/companies/${companyId}/documents`;
+  useLayoutEffect(() => {
+    if (!fieldOpen) return;
+    function position() {
+      const viewport = window.visualViewport;
+      const leftEdge = viewport?.offsetLeft || 0;
+      const topEdge = viewport?.offsetTop || 0;
+      const width = viewport?.width || window.innerWidth;
+      const height = viewport?.height || window.innerHeight;
+      const rect = mentionOpen ? selection.current?.getBoundingClientRect() : fieldTrigger.current?.getBoundingClientRect();
+      if (!rect) return;
+      const above = rect.top - topEdge - 8;
+      const below = topEdge + height - rect.bottom - 8;
+      const placeAbove = above >= 220 || above > below;
+      const maxHeight = Math.max(80, Math.min(320, (placeAbove ? above : below) - 12));
+      const menuHeight = Math.min(fieldMenu.current?.scrollHeight || 320, maxHeight);
+      setMenuPosition({
+        left: Math.max(leftEdge + 12, Math.min(rect.left, leftEdge + width - Math.min(380, width - 24) - 12)),
+        top: Math.max(topEdge + 12, placeAbove ? rect.top - menuHeight - 8 : rect.bottom + 8), maxHeight,
+      });
+    }
+    function outside(event: PointerEvent) {
+      const node = event.target as Node;
+      if (!fieldMenu.current?.contains(node) && !fieldTrigger.current?.contains(node)) {
+        setFieldOpen(false); setMentionOpen(false);
+      }
+    }
+    position();
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    window.visualViewport?.addEventListener('resize', position);
+    window.visualViewport?.addEventListener('scroll', position);
+    document.addEventListener('pointerdown', outside);
+    return () => {
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+      window.visualViewport?.removeEventListener('resize', position);
+      window.visualViewport?.removeEventListener('scroll', position);
+      document.removeEventListener('pointerdown', outside);
+    };
+  }, [fieldOpen, mentionOpen, fieldSearch]);
+  useEffect(() => { setFieldOpen(false); setMentionOpen(false); }, [draft?.key]);
   async function api(url: string, method = 'GET', body?: unknown, signal?: AbortSignal) {
     const response = await fetch(url, { method, headers: { ...authHeaders(token), 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal });
     const data = await response.json();
@@ -115,15 +159,15 @@ export default function CompanyDocumentsPage() {
           selection.current = current.getRangeAt(0).cloneRange(); setLinkUrl(''); setLinkOpen(true);
         }}>Add link</button>
         <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => command('unlink')}>Remove link</button>
-        <button type="button" disabled={busy} aria-expanded={fieldOpen} onMouseDown={e => e.preventDefault()} onClick={() => {
+        <button ref={fieldTrigger} type="button" disabled={busy} aria-expanded={fieldOpen} onMouseDown={e => e.preventDefault()} onClick={() => {
           const current = window.getSelection();
           selection.current = current?.rangeCount && editor.current?.contains(current.anchorNode) ? current.getRangeAt(0).cloneRange() : null;
           setFieldSearch(''); setFieldIndex(0); setMentionOpen(false); setFieldOpen(!fieldOpen); setLinkOpen(false);
         }}>Insert company detail</button>
       </div>
-      {fieldOpen && <section className="company-field-picker" aria-label="Insert company detail">
+      {fieldOpen && <section ref={fieldMenu} className="company-field-picker" style={menuPosition} aria-label="Insert company detail" onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); setFieldOpen(false); setMentionOpen(false); editor.current?.focus(); } }}>
+        <div className="company-field-menu-heading"><span>Company details</span><button type="button" aria-label="Close company details" onClick={() => { setFieldOpen(false); setMentionOpen(false); editor.current?.focus(); }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg></button></div>
         {!mentionOpen && <label>Find a detail<input autoFocus type="search" value={fieldSearch} placeholder="Search phone, email, address..." onChange={e => { setFieldSearch(e.target.value); setFieldIndex(0); }} /></label>}
-        <p>Choose a detail below. The example shows what will appear in the estimate.</p>
         <div className="company-field-results" ref={fieldResults} role="listbox" aria-label="Company fields">{fields.filter(field => `${field.label} ${field.key}`.toLowerCase().includes(fieldSearch.toLowerCase())).map((field, index) => <button type="button" role="option" aria-selected={index === fieldIndex} key={field.key} onMouseDown={e => e.preventDefault()} onClick={() => {
           editor.current?.focus(); const current = window.getSelection(); current?.removeAllRanges();
           if (selection.current && editor.current?.contains(selection.current.startContainer)) current?.addRange(selection.current);
@@ -131,9 +175,8 @@ export default function CompanyDocumentsPage() {
           const placeholder = `{{${field.key}}}`;
           command('insertHTML', field.key === 'company_phone' ? `<a href="tel:${placeholder}">${placeholder}</a>` : field.key === 'company_sender_email' ? `<a href="mailto:${placeholder}">${placeholder}</a>` : placeholder);
           setFieldOpen(false); setMentionOpen(false);
-        }}><strong>{field.label}</strong><small>{field.missing ? 'Not filled in yet - update company settings' : field.value.length > 100 ? field.value.slice(0, 100) + '...' : field.value}</small></button>)}</div>
+        }} title={`${field.label}: ${field.missing ? 'Not set' : field.value}`}><span className="company-field-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="4" y="3" width="16" height="18" rx="3" /><path d="M8 8h8M8 12h8M8 16h4" /></svg></span><strong>{field.label}</strong><small className={field.missing ? 'is-missing' : undefined}>{field.missing ? 'Not set' : field.value}</small></button>)}</div>
         {!fields.some(field => `${field.label} ${field.key}`.toLowerCase().includes(fieldSearch.toLowerCase())) && <p>No matching details.</p>}
-        <button type="button" onClick={() => { setFieldOpen(false); setMentionOpen(false); }}>Close</button>
       </section>}
       {linkOpen && <div className="company-documents-link"><label>Link URL<input autoFocus type="text" value={linkUrl} placeholder="https://example.com" onChange={e => setLinkUrl(e.target.value)} /></label><button type="button" onClick={() => {
         if (!/^(https?:\/\/|mailto:|tel:)/i.test(linkUrl.trim())) { setMessage('Use an https://, http://, mailto: or tel: link.'); return; }
