@@ -4,9 +4,43 @@ from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlsplit
+import re
 
 DEFAULT_KEY = 'ld-binding-estimate'
 DEFAULT_TITLE = 'LD Binding Estimate for Moving Services'
+
+FIELD_LABELS = {
+    'name': 'Company name', 'phone': 'Phone number', 'sender_email': 'Email address',
+    'office_address': 'Office address', 'dot_number': 'USDOT number', 'id': 'Company ID',
+    'samrtmoving_branch_id': 'SmartMoving branch ID', 'is_default_company': 'Default company',
+    'created_at': 'Company created date', 'logo': 'Logo data', 'color': 'Brand color',
+}
+PARAMETER = re.compile(r'\{\{\s*(company_[a-z_]+)\s*\}\}')
+
+
+def company_fields(company):
+    from models import Company
+    result = []
+    for column in Company.__table__.columns:
+        raw = getattr(company, column.name, None)
+        value = ('Yes' if raw else 'No') if isinstance(raw, bool) else raw.isoformat() if isinstance(raw, datetime) else str(raw or '')
+        result.append({'key': 'company_' + column.name,
+                       'label': FIELD_LABELS.get(column.name, column.name.replace('_', ' ').capitalize()),
+                       'value': value, 'missing': not bool(value.strip())})
+    return sorted(result, key=lambda row: (row['key'] not in {'company_name', 'company_phone', 'company_sender_email', 'company_office_address', 'company_dot_number'}, row['label']))
+
+
+def resolve_parameters(text, company, html=False):
+    values = {row['key']: row['value'] for row in company_fields(company)}
+    values['company_email'] = values.get('company_sender_email', '')
+    missing = set()
+    def replace(match):
+        key = match.group(1)
+        value = values.get(key, '')
+        if not value:
+            missing.add(key)
+        return escape(value, quote=True) if html else value
+    return PARAMETER.sub(replace, text), sorted(missing)
 
 
 def safe_link(value):
@@ -93,10 +127,18 @@ def default_body():
 
 def seed_documents(connection):
     """Insert defaults only; redeploying never overwrites company edits."""
-    from sqlalchemy import select
+    from sqlalchemy import select, update
     from sqlalchemy.dialects.postgresql import insert
     from models import Company, CompanyDocument
     body = default_body()
+    # Upgrade only the exact original seed, never a company's edited wording.
+    legacy = body.replace('<a href="tel:{{company_phone}}">{{company_phone}}</a>', '202-937-2625')
+    legacy = legacy.replace('{{company_sender_email}}', 'sales@gorillahaulers.com')
+    legacy = legacy.replace('contact dispatch at: <a href="mailto:sales@gorillahaulers.com">sales@gorillahaulers.com</a>',
+                            'contact dispatch at: <a href="mailto:gorillahaulers@gmail.com">gorillahaulers@gmail.com</a>')
+    connection.execute(update(CompanyDocument).where(CompanyDocument.key == DEFAULT_KEY,
+        CompanyDocument.body_html == legacy).values(body_html=body,
+        revision=CompanyDocument.revision + 1, updated_at=datetime.utcnow()))
     for company_id in connection.execute(select(Company.id)).scalars():
         connection.execute(insert(CompanyDocument).values(company_id=company_id, key=DEFAULT_KEY,
             title=DEFAULT_TITLE, body_html=body, move_type='Long Distance', enabled=True,
@@ -127,9 +169,11 @@ def estimate_documents(lead, job, db):
     result = []
     for row in rows:
         # Escape substituted values before parsing: names are text, never markup.
-        body = clean_html(row.body_html.replace('{{company_name}}', escape(company.name)))
+        body, _ = resolve_parameters(row.body_html, company, html=True)
+        title, _ = resolve_parameters(row.title, company)
+        body = clean_html(body)
         result.append({'key': row.key, 'revision': row.revision,
-                       'title': row.title.replace('{{company_name}}', company.name), 'body_html': body})
+                       'title': title, 'body_html': body})
     return result
 
 

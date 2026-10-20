@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
-from company_documents import clean_html, default_body, estimate_documents, new_company_document
+from company_documents import clean_html, default_body, estimate_documents, new_company_document, company_fields, resolve_parameters
 
 
 def test_document_formatting_and_links_are_sanitized():
@@ -19,10 +19,24 @@ def test_document_formatting_and_links_are_sanitized():
 def test_default_keeps_supplied_terms_and_company_parameter():
     body = default_body()
     assert '{{company_name}}' in body and 'Gorilla Haulers' not in body
-    assert 'mailto:sales@gorillahaulers.com' in body
+    assert 'mailto:{{company_sender_email}}' in body
+    assert 'tel:{{company_phone}}' in body
     assert 'href="https://www.insurmedixbrokers.com"' in body
     assert '$0.50/per cubic foot' in body
     assert 'CLAIMS &amp; CHARGEBACKS' in body
+
+
+def test_all_company_columns_are_parameters_and_values_are_escaped():
+    from models import Company
+    company = Company(name='A & B', phone='202-555-0100', sender_email='team@example.com', dot_number='1234')
+    fields = company_fields(company)
+    assert {field['key'] for field in fields} == {'company_' + column.name for column in Company.__table__.columns}
+    html, missing = resolve_parameters('<p>{{company_name}} {{company_dot_number}}</p><a href="mailto:{{company_sender_email}}">{{company_email}}</a>', company, html=True)
+    assert 'A &amp; B 1234' in html
+    assert 'mailto:team@example.com' in html
+    assert missing == []
+    _, missing = resolve_parameters('{{company_office_address}}', company)
+    assert missing == ['company_office_address']
 
 
 def test_estimate_documents_are_company_and_move_specific():

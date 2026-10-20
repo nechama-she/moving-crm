@@ -11,4 +11,9 @@
 .company-documents-editor:focus { outline: 2px solid #0b5cab; outline-offset: 2px; }
 .company-documents-editor a, .company-documents-preview a { color: #0b5cab; text-decoration: underline; }
 .company-documents-preview { margin-top: 20px; }
+.company-field-picker { padding: 16px; margin: 12px 0; background: #f0f7ff; border: 1px solid #b8c6d4; border-radius: 8px; }
+.company-field-results { display: grid; grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); gap: 8px; max-height: 300px; overflow-y: auto; margin-bottom: 12px; }
+.company-field-results button { text-align: left; overflow-wrap: anywhere; }
+.company-field-results small { display: block; color: #526473; margin-top: 5px; }
+.company-field-results button[aria-selected=true] { border-color: #0b5cab; background: #eaf4ff; }
 @media (max-width: 700px) { .company-documents { padding: 16px; } .company-documents-layout { grid-template-columns: 1fr; } .company-documents nav { max-height: 180px; overflow-y: auto; } .company-documents-editor { padding: 12px; } }
