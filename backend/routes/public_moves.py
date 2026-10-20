@@ -799,9 +799,7 @@ def _customer_pricing_options(lead, job, db):
     }
 
 
-@router.get('/api/public-moves/{access_id}/estimate.pdf')
-def download_estimate(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    from estimate_pdf import build_estimate_pdf
+def _estimate_document(access, db):
     data = _move_details(access, db, refresh_report=False)
     from estimate_questions import unanswered_questions
     missing = data.get('unanswered_questions', unanswered_questions(data))
@@ -816,6 +814,15 @@ def download_estimate(access: PublicMoveAccess = Depends(verified), db: Session 
         raise HTTPException(409, 'There is no inventory to include in this estimate.')
     from item_selectors import inventory_selectors
     data['item_services'] = inventory_selectors(access, db)
+    from company_documents import estimate_documents
+    data['documents'] = estimate_documents(db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id), db)
+    return data, rows
+
+
+@router.get('/api/public-moves/{access_id}/estimate.pdf')
+def download_estimate(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from estimate_pdf import build_estimate_pdf
+    data, rows = _estimate_document(access, db)
     return Response(build_estimate_pdf(data, rows), media_type='application/pdf', headers={
         'Content-Disposition': 'attachment; filename="moving-estimate.pdf"',
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
@@ -828,6 +835,88 @@ def select_customer_report(report_id: str, access: PublicMoveAccess = Depends(ve
     if not result.get('ok'):
         raise HTTPException(422, result.get('detail'))
     return result
+
+
+class EstimateSigningInput(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    consent: Literal[True]
+    strokes: list[list[tuple[float, float]]] = Field(min_length=1, max_length=100)
+
+    @field_validator('strokes')
+    @classmethod
+    def validate_strokes(cls, strokes):
+        import math
+        if sum(len(stroke) for stroke in strokes) > 10000:
+            raise ValueError('Signature is too large')
+        if any(len(stroke) < 2 for stroke in strokes):
+            raise ValueError('Draw your signature')
+        if any(not math.isfinite(v) or not 0 <= v <= 1 for stroke in strokes for point in stroke for v in point):
+            raise ValueError('Invalid signature coordinates')
+        if not any(len(set(stroke)) > 1 for stroke in strokes):
+            raise ValueError('Draw your signature')
+        return strokes
+
+
+def _signature_record(signature_id, access, db, lock=False):
+    from models import EstimateSignature
+    query = db.query(EstimateSignature).filter_by(id=signature_id, lead_id=access.lead_id, job_id=access.job_id)
+    record = (query.with_for_update() if lock else query).first()
+    if record is None:
+        raise HTTPException(404, 'Estimate not found')
+    return record
+
+
+@router.get('/api/public-moves/{access_id}/estimate-signatures')
+def list_estimate_signatures(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from models import EstimateSignature
+    rows = db.query(EstimateSignature.id, EstimateSignature.signer_name, EstimateSignature.signed_at).filter(
+        EstimateSignature.lead_id == access.lead_id, EstimateSignature.job_id == access.job_id,
+        EstimateSignature.signed_at.isnot(None)).order_by(EstimateSignature.signed_at.desc()).all()
+    return {'items': [{'id': row.id, 'name': row.signer_name, 'signed_at': row.signed_at.isoformat() + 'Z'} for row in rows]}
+
+
+@router.post('/api/public-moves/{access_id}/estimate-signatures')
+def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from fastapi.encoders import jsonable_encoder
+    from models import EstimateSignature
+    from estimate_pdf import build_estimate_pdf
+    data, rows = _estimate_document(access, db)
+    if data.get('list_changed') or data.get('files_changed') or any(c.get('pending') for c in data['estimate'].get('charges', [])):
+        raise HTTPException(409, 'Finish updating the inventory and pricing before signing.')
+    data['prepared_at'] = datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)')
+    record = EstimateSignature(id=str(uuid4()), lead_id=access.lead_id, job_id=access.job_id,
+        snapshot=json.dumps(jsonable_encoder({'data': data, 'rows': rows})), pdf=build_estimate_pdf(data, rows))
+    db.add(record)
+    db.commit()
+    return {'id': record.id}
+
+
+@router.get('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/pdf')
+def signature_pdf(signature_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    record = _signature_record(signature_id, access, db)
+    return Response(record.pdf, media_type='application/pdf', headers={
+        'Content-Disposition': 'inline; filename="estimate-' + record.id + '.pdf"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+@router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/sign')
+def sign_estimate(signature_id: str, body: EstimateSigningInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from estimate_pdf import build_estimate_pdf
+    record = _signature_record(signature_id, access, db, lock=True)
+    if record.signed_at:
+        return {'id': record.id, 'signed_at': record.signed_at.isoformat() + 'Z'}
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, 'Enter your full name')
+    snapshot = json.loads(record.snapshot)
+    signed_at = datetime.utcnow()
+    signature = {'name': name, 'signed_at': signed_at.isoformat() + 'Z', 'strokes': body.strokes, 'estimate_id': record.id}
+    snapshot['data']['signature'] = signature
+    record.pdf = build_estimate_pdf(snapshot['data'], snapshot['rows'])
+    record.signer_name, record.signed_at = name, signed_at
+    record.signature = json.dumps(signature)
+    db.commit()
+    return {'id': record.id, 'signed_at': signed_at.isoformat() + 'Z'}
 
 
 @router.get('/api/public-moves/{access_id}/inventory-catalog')

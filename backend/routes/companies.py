@@ -80,6 +80,70 @@ class CompanyCreate(CompanyLogo):
     timezone: str = "America/New_York"
 
 
+class CompanyDocumentInput(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    body_html: str = Field(max_length=100000)
+    move_type: str = Field(pattern=r'^(Long Distance|Local|All)$')
+    enabled: bool = True
+    revision: int = Field(default=0, ge=0)
+
+
+@router.get('/{company_id}/documents')
+def company_documents(company_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from sqlalchemy import case
+    from models import CompanyDocument
+    from company_documents import document_payload, DEFAULT_KEY
+    if db.get(Company, company_id) is None:
+        raise HTTPException(404, 'Company not found')
+    rows = db.query(CompanyDocument).filter_by(company_id=company_id).order_by(
+        case((CompanyDocument.key == DEFAULT_KEY, 0), else_=1), CompanyDocument.title).all()
+    return {'items': [document_payload(row) for row in rows]}
+
+
+@router.put('/{company_id}/documents/{document_key}')
+def save_company_document(company_id: str, document_key: str, body: CompanyDocumentInput,
+                          _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from datetime import datetime
+    from models import CompanyDocument
+    from company_documents import clean_html, document_payload
+    if not re.fullmatch(r'[a-zA-Z0-9-]{1,80}', document_key):
+        raise HTTPException(422, 'Invalid document key')
+    # Serialize additions and edits for this company, including first-time creates.
+    if db.query(Company).filter_by(id=company_id).with_for_update().first() is None:
+        raise HTTPException(404, 'Company not found')
+    row = db.query(CompanyDocument).filter_by(company_id=company_id, key=document_key).first()
+    if body.revision != (row.revision if row else 0):
+        raise HTTPException(409, 'This document changed. Reload it before saving again.')
+    if not body.title.strip():
+        raise HTTPException(422, 'Enter a document title')
+    try:
+        html = clean_html(body.body_html)
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+    if row is None:
+        row = CompanyDocument(company_id=company_id, key=document_key)
+        db.add(row)
+    row.title, row.body_html = body.title.strip(), html
+    row.move_type, row.enabled = body.move_type, body.enabled
+    row.revision, row.updated_at = body.revision + 1, datetime.utcnow()
+    db.commit()
+    return document_payload(row)
+
+
+@router.post('/{company_id}/documents/preview')
+def preview_company_document(company_id: str, body: CompanyDocumentInput,
+                             _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from html import escape
+    from company_documents import clean_html
+    company = db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(404, 'Company not found')
+    try:
+        return {'body_html': clean_html(body.body_html.replace('{{company_name}}', escape(company.name)))}
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+
+
 @router.get("/mine")
 def list_my_companies(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Return companies accessible to the current user."""
@@ -154,6 +218,9 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
         timezone=(body.timezone or "").strip() or "America/New_York",
     )
     db.add(company)
+    db.flush()
+    from company_documents import new_company_document
+    db.add(new_company_document(company.id))
     db.commit()
     db.refresh(company)
     return company.to_dict()

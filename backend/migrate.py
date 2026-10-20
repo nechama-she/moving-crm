@@ -13,7 +13,11 @@ logger = logging.getLogger("migrate")
 
 def migrate() -> None:
     with engine.begin() as connection:
-        from models import InventoryCatalogSet
+        from models import InventoryCatalogSet, EstimateSignature, CompanyDocument
+        CompanyDocument.__table__.create(connection, checkfirst=True)
+        from company_documents import seed_documents
+        seed_documents(connection)
+        EstimateSignature.__table__.create(connection, checkfirst=True)
         InventoryCatalogSet.__table__.create(connection, checkfirst=True)
         connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS set_id VARCHAR(36)'))
         connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS set_name VARCHAR(200)'))

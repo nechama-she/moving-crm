@@ -20,6 +20,7 @@ export default function SettingsPage() {
       ...(admin ? [
         entry("Inventory catalog", "/settings/inventory-catalog", "Shared items, volume and weight."),
         entry("Moving terms", "/settings/moving-terms", "Restrictions, preparation and customer acknowledgments."),
+        entry("Documents", "/settings/documents", "Company estimate documents, formatting and links."),
       ] : []),
     ] },
     { title: "Team & access", items: [

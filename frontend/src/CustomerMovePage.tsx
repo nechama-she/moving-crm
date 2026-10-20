@@ -14,6 +14,7 @@ import QuestionReferenceImages from "./QuestionReferenceImages";
 import ReportLinks from './ReportLinks';
 import { savedPhotos, storePhoto, removePhoto } from './photoDrafts';
 import ManualInventoryModal from "./ManualInventoryModal";
+import EstimateSigning from './EstimateSigning';
 import type { EditableReportFile } from "./ReportFileList";
 import ReportFileGallery from "./ReportFileGallery";
 import ReportHistory, { type ReportRun } from "./ReportHistory";
@@ -1211,6 +1212,8 @@ export default function CustomerMovePage() {
                 </>}
                 </div>
               )}
+              <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''}
+                disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
             </div>
 
