@@ -515,6 +515,7 @@ export default function CustomerMovePage() {
       setCalculatingPrice(false);
     }
   }
+  const [preparedEstimate, setPreparedEstimate] = useState('');
   async function openEstimate() {
     setPdfError('');
     if(data?.unanswered_questions?.length) {
@@ -533,7 +534,8 @@ export default function CustomerMovePage() {
     viewer.document.body.textContent = 'Preparing your estimate...';
     setPdfBusy(true);
     try {
-      const response = await fetch(base + '/estimate.pdf', { headers, cache: 'no-store' });
+      const prepared = await call('/estimate-signatures', {});
+      const response = await fetch(base + '/estimate-signatures/' + encodeURIComponent(prepared.id) + '/pdf', { headers, cache: 'no-store' });
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
         if(result.detail?.unanswered_questions?.length) {
@@ -549,6 +551,7 @@ export default function CustomerMovePage() {
       if (viewer.closed) { URL.revokeObjectURL(url); return; }
       previews.current.push(url);
       viewer.location.replace(url);
+      setPreparedEstimate(prepared.id);
     } catch (error) { viewer.close(); setPdfError((error as Error).message); }
     finally { setPdfBusy(false); }
   }
@@ -1223,7 +1226,7 @@ export default function CustomerMovePage() {
                 </>}
                 </div>
               )}
-              {pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''}
+              {pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} onClose={() => setPreparedEstimate('')}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
               {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}

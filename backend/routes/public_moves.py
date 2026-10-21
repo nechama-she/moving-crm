@@ -612,7 +612,7 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'prici
                     link_sms=customer_link_sms_notice(access), google_maps_browser_key=setting('GOOGLE_MAPS_BROWSER_KEY'))
     if section == 'inventory':
         return dict(inventory_draft=state.get('inventory_draft'), combined_inventory=resolve_catalog_names(state.get('spark_inventory_snapshot', []), db) if state.get('last_spark_status') == 'completed' else [],
-                    list_changed=(state.get('inventory_draft') or {}).get('body') != state.get('report_list_body'), report_history=report_history(state), pricing_required=_has_inventory_list(state))
+                    list_changed=bool(state.get('inventory_draft') and state['inventory_draft'].get('body') != state.get('report_list_body')), report_history=report_history(state), pricing_required=_has_inventory_list(state))
     if section == 'media':
         files = active_report_files(access, db)
         previous = {row['id'] for row in state.get('report_files', [])}
@@ -772,7 +772,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             'editable_files': file_list(files),
             'inventory_draft': conv_details.get('inventory_draft'),
             'combined_inventory': resolve_catalog_names(conv_details.get('spark_inventory_snapshot', []), db) if spark_info and spark_info.get('status') == 'completed' else [],
-            'list_changed': conv_details.get('inventory_draft', {}).get('body') != conv_details.get('report_list_body'),
+            'list_changed': bool(conv_details.get('inventory_draft') and conv_details['inventory_draft'].get('body') != conv_details.get('report_list_body')),
             'files_changed': {f.id for f in files} != {row['id'] for row in conv_details.get('report_files', [])},
             'new_file_count': sum(f.id not in {row['id'] for row in conv_details.get('report_files', [])} for f in files) if 'report_files' in conv_details else 0,
             'walkthrough': meeting_dict(meeting) if meeting else None,
@@ -881,8 +881,13 @@ def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db:
     from models import EstimateSignature
     from estimate_pdf import build_estimate_pdf
     data, rows = _estimate_document(access, db)
-    if data.get('list_changed') or data.get('files_changed') or any(c.get('pending') for c in data['estimate'].get('charges', [])):
-        raise HTTPException(409, 'Finish updating the inventory and pricing before signing.')
+    if data.get('list_changed'):
+        raise HTTPException(409, 'The saved inventory draft differs from the inventory used for this estimate. Update the estimate from that inventory first.')
+    if data.get('files_changed'):
+        raise HTTPException(409, 'The attached files differ from the files used for this inventory report. Update the report before signing.')
+    pending = [c.get('name') or 'Unnamed charge' for c in data['estimate'].get('charges', []) if c.get('pending')]
+    if pending:
+        raise HTTPException(409, 'These charges still need calculation: ' + ', '.join(pending) + '.')
     data['prepared_at'] = datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)')
     record = EstimateSignature(id=str(uuid4()), lead_id=access.lead_id, job_id=access.job_id,
         snapshot=json.dumps(jsonable_encoder({'data': data, 'rows': rows})), pdf=build_estimate_pdf(data, rows))

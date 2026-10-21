@@ -4,14 +4,12 @@ import './EstimateSigning.css';
 type Point = [number, number];
 type SignedEstimate = { id: string; name: string; signed_at: string };
 
-export default function EstimateSigning({ base, headers, customerName, disabled }: {
-  base: string; headers: Record<string, string>; customerName: string; disabled: boolean;
+export default function EstimateSigning({ base, headers, customerName, disabled, version, onClose }: {
+  base: string; headers: Record<string, string>; customerName: string; disabled: boolean; version: string; onClose: () => void;
 }) {
-  const [version, setVersion] = useState('');
   const [name, setName] = useState(customerName);
   const [strokes, setStrokes] = useState<Point[][]>([]);
   const active = useRef<number | null>(null);
-  const [reviewed, setReviewed] = useState(false);
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -35,7 +33,7 @@ export default function EstimateSigning({ base, headers, customerName, disabled 
       .catch(e => { if (live) setError(e.message); });
     return () => { live = false; urls.current.forEach(url => URL.revokeObjectURL(url)); };
   }, [base, headers['x-public-session']]);
-  async function preview(id: string, signing = false) {
+  async function preview(id: string) {
     const viewer = window.open('about:blank', '_blank');
     if (!viewer) { setError('Allow pop-ups to view the estimate.'); return; }
     viewer.opener = null;
@@ -45,24 +43,17 @@ export default function EstimateSigning({ base, headers, customerName, disabled 
       const response = await request('/' + id + '/pdf');
       const url = URL.createObjectURL(await response.blob());
       urls.current.push(url);
-      if (!viewer.closed) { viewer.location.replace(url); if (signing) setReviewed(true); }
+      if (!viewer.closed) { viewer.location.replace(url);  }
     } catch (e) { viewer.close(); setError((e as Error).message); }
     finally { setBusy(false); }
   }
-  async function prepare() {
-    setBusy(true); setError('');
-    try {
-      const data = await (await request('', {})).json();
-      setVersion(data.id); setStrokes([]); setReviewed(false); setConsent(false);
-    } catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }
+  useEffect(() => { setStrokes([]); setConsent(false); setError(''); }, [version]);
   async function sign() {
     setBusy(true); setError('');
     try {
       const result = await (await request('/' + version + '/sign', { name: name.trim(), consent, strokes })).json();
       setSigned(current => [{ id: result.id, name: name.trim(), signed_at: result.signed_at }, ...current.filter(row => row.id !== result.id)]);
-      setVersion(''); setStrokes([]);
+      onClose(); setStrokes([]);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
@@ -72,11 +63,11 @@ export default function EstimateSigning({ base, headers, customerName, disabled 
       Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height))];
   }
   const drawn = strokes.some(stroke => stroke.length > 1 && stroke.some(p => p[0] !== stroke[0][0] || p[1] !== stroke[0][1]));
+  if (!version && !signed.length && !error) return null;
   return <section className="estimate-signing" aria-label="Estimate signature">
-    <h3>Sign your estimate</h3>
-    {!version ? <button type="button" className="cm-secondary-btn" disabled={disabled || busy} onClick={() => void prepare()}>Review and sign estimate</button> : <>
+    {version && <h3>Sign your estimate</h3>}
+    {version && <>
       <p>This saves your signature with the estimate version you review here. Later changes will not change this signed copy.</p>
-      <button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => void preview(version, true)}>Review this estimate PDF</button>
       <label>Full name<input value={name} maxLength={200} disabled={busy} autoComplete="name" onChange={e => setName(e.target.value)} /></label>
       <p id="signature-help">Draw your signature below using your finger, mouse, or pen.</p>
       <svg viewBox="0 0 600 180" preserveAspectRatio="none" role="img" aria-label="Draw your signature" aria-describedby="signature-help"
@@ -87,10 +78,9 @@ export default function EstimateSigning({ base, headers, customerName, disabled 
         {strokes.map((stroke, i) => <polyline key={i} points={stroke.map(([x, y]) => `${x * 600},${y * 180}`).join(' ')} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />)}
       </svg>
       <button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => setStrokes([])}>Clear signature</button>
-      <label className="estimate-signing-consent"><input type="checkbox" checked={consent} disabled={busy || !reviewed} onChange={e => setConsent(e.target.checked)} />I have reviewed this estimate and agree to sign it electronically.</label>
-      {!reviewed && <p>Open the estimate PDF before signing.</p>}
-      <div className="estimate-signing-actions"><button type="button" className="cm-secondary-btn" disabled={busy || !reviewed || !consent || !name.trim() || !drawn} onClick={() => void sign()}>{busy ? 'Saving...' : 'Sign and save estimate'}</button>
-        <button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => setVersion('')}>Cancel</button></div>
+      <label className="estimate-signing-consent"><input type="checkbox" checked={consent} disabled={busy || disabled} onChange={e => setConsent(e.target.checked)} />I have reviewed this estimate and agree to sign it electronically.</label>
+      <div className="estimate-signing-actions"><button type="button" className="cm-secondary-btn" disabled={busy || disabled || !consent || !name.trim() || !drawn} onClick={() => void sign()}>{busy ? 'Saving...' : 'Sign and save estimate'}</button>
+        <button type="button" className="cm-secondary-btn" disabled={busy} onClick={onClose}>Cancel</button></div>
     </>}
     {error && <p role="alert">{error}</p>}
     {!!signed.length && <div aria-live="polite"><h4>Signed estimates</h4>{signed.map(row => <div key={row.id} className="estimate-signing-history"><span>{row.name} · {new Date(row.signed_at).toLocaleString()}</span><button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => void preview(row.id)}>Download signed PDF</button></div>)}</div>}
