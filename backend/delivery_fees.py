@@ -75,11 +75,35 @@ def driving_meters(origin_zip, destination):
         raise HTTPException(502, 'Google Maps could not calculate the mileage fee. Please retry; no approximate mileage was used.') from None
 
 
+def route_revision(origin_zip, address):
+    return hashlib.sha256(json.dumps([origin_zip, address.strip().lower(), 'DRIVE']).encode()).hexdigest()
+
+
+def browser_fee_routes(lead, job, db):
+    from routes.pricing import infer_job_move_type
+    move_type, plan = infer_job_move_type(lead, job, db)
+    if not plan or (move_type or '').lower() == 'local':
+        return []
+    selection = json.loads(job.customer_packing_package or '{}')
+    routes = []
+    for kind, address, prefix in [('origin', job.pickup_zip or '', ORIGIN_FEE_PREFIX),
+                                  ('delivery', job.delivery_zip or '', DELIVERY_FEE_PREFIX)]:
+        rule = matching_rule(delivery_fee_card(plan.services, prefix), address)
+        if not rule:
+            continue
+        revision = route_revision(rule.origin_zip, address)
+        saved = selection.get(kind + '_route') or {}
+        meters = saved.get('meters') if saved.get('revision') == revision else None
+        routes.append({'kind': kind, 'origin': rule.origin_zip, 'destination': address,
+                       'revision': revision, 'meters': meters if type(meters) is int and meters >= 0 else None})
+    return routes
+
+
 def delivery_fee(services, address, saved=None, *, prefix=DELIVERY_FEE_PREFIX, endpoint="delivery"):
     rule = matching_rule(delivery_fee_card(services, prefix), address)
     if not rule:
         return None
-    revision = hashlib.sha256(json.dumps([rule.origin_zip, address.strip().lower(), 'DRIVE']).encode()).hexdigest()
+    revision = route_revision(rule.origin_zip, address)
     # Reuse this estimate's route basis until either endpoint changes. No polling.
     saved = saved or {}
     meters = saved.get('meters') if saved.get('revision') == revision else None

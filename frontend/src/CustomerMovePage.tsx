@@ -496,6 +496,25 @@ export default function CustomerMovePage() {
     setTermsValidationAttempt(0);
   }
   const priceCalculationRunning = useRef(false);
+  type FeeRoute = {kind: 'origin' | 'delivery'; origin: string; destination: string; revision: string; meters: number | null};
+  const mileageAttempts = useRef(new Set<string>());
+  const mileageRequests = useRef(new Map<string, Promise<number>>());
+  async function saveBrowserMileage(routes: FeeRoute[], apiKey: string, retry = false) {
+    const missing = routes.filter(row => row.meters == null && (retry || !mileageAttempts.current.has(row.revision)));
+    if (!missing.length) return false;
+    missing.forEach(row => mileageAttempts.current.add(row.revision));
+    const distances = await Promise.all(missing.map(async row => {
+      let request = mileageRequests.current.get(row.revision);
+      if (!request) {
+        request = browserDrivingMeters(apiKey, row.origin, row.destination);
+        mileageRequests.current.set(row.revision, request);
+      }
+      try { return {kind: row.kind, revision: row.revision, meters: await request}; }
+      finally { mileageRequests.current.delete(row.revision); }
+    }));
+    await call('/mileage', {routes: distances});
+    return true;
+  }
   async function recalculatePrice() {
     if (priceCalculationRunning.current) return;
     priceCalculationRunning.current = true;
@@ -506,6 +525,8 @@ export default function CustomerMovePage() {
       if (failedAnswers.current.size || failedPricing.current.size) {
         throw new Error('Please retry saving your answers before calculating the price.');
       }
+      const mileage = await call('/mileage');
+      await saveBrowserMileage(mileage.routes, data?.google_maps_browser_key || '', true);
       await call('/recalculate-price', {});
       await refreshDetails();
     } catch (error) {
@@ -728,7 +749,14 @@ export default function CustomerMovePage() {
     const current = () => sectionRequests.current[section] === request && customerSessionActive(session) && !answerPending.current && revision === answerRevision.current;
     setSections(previous => ({...previous, [section]: {...previous[section], loading:!background || !previous[section].ready, error:''}}));
     try {
-      const next = await call(`/sections/${section}`);
+      let next = await call(`/sections/${section}`);
+      if (section === 'pricing' && current() && next.mileage_routes?.some((row: FeeRoute) => row.meters == null)) {
+        try {
+          if (await saveBrowserMileage(next.mileage_routes, next.google_maps_browser_key || '')) {
+            next = await call('/sections/pricing');
+          }
+        } catch (error) { if (current()) setCalculationError((error as Error).message); }
+      }
       if (!current()) return;
       setData(previous => ({...(previous || emptyDetails()), ...next}));
       if (next.company_details?.color) setThemeColor(next.company_details.color);

@@ -624,7 +624,11 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'prici
         from price_validity import refresh_expired_price
         refresh_expired_price(lead, job, db)
         db.refresh(access)
-    return _move_details(access, db, pricing_only=True)
+    result = _move_details(access, db, pricing_only=True)
+    from delivery_fees import browser_fee_routes
+    from price_validity import price_is_locked
+    result['mileage_routes'] = [] if price_is_locked(lead, job) else browser_fee_routes(lead, job, db)
+    return result
 
 
 def _move_details(access, db, *, refresh_report=True, include_pricing=True, pricing_only=False):
@@ -994,6 +998,46 @@ def patch_customer_inventory_actions(body: InventoryEdits | InventoryActionsInpu
     if isinstance(body, InventoryEdits):
         return save_inventory_edits(body, access, db)
     return save_inventory_actions(body, access, db)
+
+
+class BrowserFeeDistance(BaseModel):
+    kind: Literal['origin', 'delivery']
+    revision: str = Field(min_length=64, max_length=64)
+    meters: int = Field(ge=0, le=20000000, strict=True)
+
+
+class BrowserFeeDistances(BaseModel):
+    routes: list[BrowserFeeDistance] = Field(max_length=2)
+
+
+@router.get('/api/public-moves/{access_id}/mileage')
+def mileage_routes(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from delivery_fees import browser_fee_routes
+    from price_validity import price_is_locked
+    lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
+    return {'routes': [] if price_is_locked(lead, job) else browser_fee_routes(lead, job, db)}
+
+
+@router.post('/api/public-moves/{access_id}/mileage')
+def save_mileage(body: BrowserFeeDistances, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from delivery_fees import browser_fee_routes
+    from price_validity import price_is_locked
+    from routes.pricing import sync_origin_fee, sync_delivery_fee
+    job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
+    lead = db.get(Lead, access.lead_id)
+    if price_is_locked(lead, job):
+        raise HTTPException(409, 'The price is locked for this booked or closed move.')
+    current = {row['kind']: row for row in browser_fee_routes(lead, job, db)}
+    selection = json.loads(job.customer_packing_package or '{}')
+    for row in body.routes:
+        if row.kind not in current or current[row.kind]['revision'] != row.revision:
+            raise HTTPException(409, 'The mileage route changed. Retry with the current addresses.')
+        selection[row.kind + '_route'] = {'revision': row.revision, 'meters': row.meters}
+    job.customer_packing_package = json.dumps(selection)
+    for kind in {row.kind for row in body.routes}:
+        (sync_origin_fee if kind == 'origin' else sync_delivery_fee)(lead, job, db)
+    db.commit()
+    return {'saved': True}
 
 
 @router.post('/api/public-moves/{access_id}/recalculate-price')

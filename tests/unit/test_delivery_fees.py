@@ -30,6 +30,29 @@ def test_specific_rules_and_combined_ranges():
     assert fees.matching_rule(card,'20815') is None
 
 
+@pytest.mark.parametrize('move_type,configured,address,expected', [
+    ('Long Distance', True, '05401', 1),
+    ('Long Distance', True, '20815', 0),
+    ('Long Distance', False, '05401', 0),
+    ('Local', True, '05401', 0),
+])
+def test_browser_routes_only_for_matching_mileage_fees(move_type, configured, address, expected):
+    plan = SimpleNamespace(services=services([rule()]) if configured else [])
+    job = SimpleNamespace(pickup_zip='20815', delivery_zip=address, customer_packing_package='{}')
+    pricing = SimpleNamespace(infer_job_move_type=lambda *args: (move_type, plan))
+    with patch.dict(sys.modules, {'routes.pricing': pricing}):
+        routes = fees.browser_fee_routes(SimpleNamespace(), job, MagicMock())
+        assert len(routes) == expected
+        if expected:
+            assert routes[0]['kind'] == 'delivery'
+            assert routes[0]['meters'] is None
+            job.customer_packing_package = json.dumps({'delivery_route': {
+                'revision': routes[0]['revision'], 'meters': 160934}})
+            assert fees.browser_fee_routes(SimpleNamespace(), job, MagicMock())[0]['meters'] == 160934
+            job.delivery_zip = '05402'
+            assert fees.browser_fee_routes(SimpleNamespace(), job, MagicMock())[0]['meters'] is None
+
+
 @pytest.mark.parametrize('patches', [{'origin_zip':'2081'},{'origin_zip':'208XX'},{'rate_per_mile':'-1'},{'state':'XX'},{'zip_codes':['05999-05000']}])
 def test_invalid_rule_rejected(patches):
     with pytest.raises(ValueError): fees.DeliveryFeeRule(**rule(**patches))
