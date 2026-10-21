@@ -1637,11 +1637,16 @@ def add_customer_packing_charges(lead, job, db, plan, move_type):
 
 @with_job_locations
 def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> float | None:
-    if not lead or not job:
+    def no_price(reason):
+        if job is not None:
+            job.price_refresh_error = 'Your inventory is saved. Estimate unavailable: ' + reason
         return None
+
+    if not lead or not job:
+        return no_price('The lead or move record could not be found.')
     from price_validity import price_is_locked
     if price_is_locked(lead, job):
-        return float(job.price) if job.price is not None else None
+        return float(job.price) if job.price is not None else no_price('Pricing is locked for this booked or closed move, and no price is saved.')
     vol = _rounded_cubic_feet(lead.volume)
     if vol <= 0:
         # An empty inventory clears the estimate; it is not a pricing failure.
@@ -1669,7 +1674,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             if not job.company_id:
                 job.company_id = default_co.id
     if not company_id:
-        return None
+        return no_price('No company is assigned and no default company is configured.')
 
     pickup_addr = (job.pickup_zip or "").strip()
     delivery_addr = (job.delivery_zip or "").strip()
@@ -1684,13 +1689,15 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         .all()
     )
     if not plans:
-        return None
+        return no_price('There are no active pricing sheets for the move company.')
 
     move_type, matched_plan = infer_job_move_type(lead, job, db, plans)
     if move_type:
         lead.move_type = move_type
     if not move_type or not matched_plan:
-        return None
+        if not matched_plan:
+            return no_price(f'No active pricing sheet matches pickup "{pickup_addr or "not entered"}" (state: {pickup_state or "not recognized"}, ZIP: {pickup_zip or "not recognized"}).')
+        return no_price('The move type could not be determined from the saved move details.')
 
     if move_type.lower() == "local":
         from routes.local_pricing import calculate_book_price
@@ -1705,7 +1712,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             quote['charges'].append(pending_line('local-moving', 'Local moving', ValueError(quote.get('warning') or 'Hourly rate is not configured.')))
             quote['incomplete'] = True
         if (total is None or total <= 0) and not quote.get('incomplete'):
-            return None
+            return no_price(f'Local pricing sheet "{matched_plan.name}" returned no positive total for {vol} cu ft.')
 
         all_materials = (
             _material_item_names(job._estimated_materials_data(), db)
@@ -1773,7 +1780,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
     else:
         destination = _plan_destination_for_delivery(matched_plan, delivery_addr, delivery_state or "", delivery_zip or "")
         if not destination:
-            return None
+            return no_price(f'Pricing sheet "{matched_plan.name}" has no matching destination for "{delivery_addr or "not entered"}" (state: {delivery_state or "not recognized"}, ZIP: {delivery_zip or "not recognized"}).')
 
         all_materials = (
             _material_item_names(job._estimated_materials_data(), db)
@@ -1788,7 +1795,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         quote = compute_plan_calculation(matched_plan, calc_body)
         total = quote.get("total", 0.0)
         if total <= 0 and not quote.get("incomplete"):
-            return None
+            return no_price(f'Pricing sheet "{matched_plan.name}" returned no positive total for destination "{destination}" and {vol} cu ft.')
 
         lines = []
         if quote.get("base_price", 0) > 0:
@@ -1815,7 +1822,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
                     "total_cost": amt,
                 })
         if not lines:
-            return None
+            return no_price(f'Pricing sheet "{matched_plan.name}" returned no billable or pending charges for destination "{destination}" and {vol} cu ft.')
 
         from charge_updates import ChargeUpdates
         db = ChargeUpdates(db, db.query(LeadJobCharge).filter_by(job_id=job.id).all(), match_legacy_base=True, remove_missing=False)

@@ -5,11 +5,13 @@ export type StorageOption = { question: string; pickup_date: string; available_d
 const money = (value: number) => value.toLocaleString('en-US',{style:'currency',currency:'USD'});
 export default function CustomerStorageQuestion({ config, value, missing, onChange, onPickupChange, saving }: { config: StorageOption; value: string; missing: boolean; onChange: (date: string) => void; onPickupChange: (date: string) => Promise<void>; saving: boolean }) {
   const [pickupError, setPickupError] = useState('');
+  const [pickupSaving, setPickupSaving] = useState(false);
   async function savePickup(pickup: string) {
     if (!pickup) { setPickupError('Choose a pickup date.'); return; }
-    setPickupError('');
+    setPickupError(''); setPickupSaving(true);
     try { await onPickupChange(pickup); }
     catch (error) { setPickupError((error as Error).message); }
+    finally { setPickupSaving(false); }
   }
   const valid = Boolean(value && config.pickup_date && value >= config.pickup_date);
   const calculated = valid ? storagePeriods(config.pickup_date,value,config.free_days,config.period_days) : null;
@@ -22,7 +24,7 @@ export default function CustomerStorageQuestion({ config, value, missing, onChan
         onChange={event => { if (event.target.value !== config.pickup_date) void savePickup(event.target.value); }} />
       {pickupError && <p id="storage-pickup-error" className="cm-field-error" role="alert">{pickupError}</p>}
     </div>
-    <fieldset disabled={saving} className="cm-storage-delivery">
+    <fieldset disabled={pickupSaving} className="cm-storage-delivery">
     <h4>{config.question}</h4>
     <p>Your first <strong>{config.free_days} days</strong> after pickup are free. After that, storage costs <strong>{money(config.rate_per_cuft)} per cu ft</strong> for each additional <strong>{config.period_days} days or part thereof</strong>.</p>
     {config.pickup_date ? <DeliveryDateCalendar key={config.pickup_date} value={value} minDate={config.pickup_date} freeDays={config.free_days} onChange={onChange} /> : <p>Confirm your pickup date before choosing your earliest delivery date.</p>}

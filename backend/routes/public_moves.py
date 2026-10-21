@@ -1004,7 +1004,7 @@ def recalculate_current_price(access: PublicMoveAccess = Depends(verified), db: 
     with db.begin_nested():
         price = calculate_and_save_lead_job_price(lead, job, db)
         if price is None:
-            raise HTTPException(422, 'No price could be calculated from the current inventory and pricing settings.')
+            raise HTTPException(422, job.price_refresh_error or 'The pricing calculator returned no price without a reason.')
         selection = json.loads(job.customer_packing_package or '{}')
         selection.pop('pricing_pending', None)
         selection.pop('pricing_save_error', None)
@@ -1038,7 +1038,8 @@ def calculate_report_price(access: PublicMoveAccess = Depends(verified), db: Ses
     if not result.get('ok'):
         raise HTTPException(422, result.get('detail') or 'Could not process the report.')
     if result.get('price') is None:
-        raise HTTPException(422, 'The report was imported, but no price could be calculated. Please contact your moving team to check pricing.')
+        job = db.get(LeadJob, access.job_id)
+        raise HTTPException(422, job.price_refresh_error if job and job.price_refresh_error else 'The pricing calculator returned no price without a reason.')
     return result
 
 
@@ -1661,7 +1662,8 @@ def customer_generate_inventory_report(access: PublicMoveAccess = Depends(verifi
         if not result.get('ok'):
             raise HTTPException(422, result.get('detail'))
         if result.get('price') is None:
-            raise HTTPException(422, 'Your inventory is saved, but no estimate could be calculated. Your moving team needs to check the move volume, route, and pricing settings.')
+            job = db.get(LeadJob, access.job_id)
+            raise HTTPException(422, job.price_refresh_error if job and job.price_refresh_error else 'The pricing calculator returned no price without a reason.')
         return result
 
     from routes.liveswitch import trigger_lead_spark

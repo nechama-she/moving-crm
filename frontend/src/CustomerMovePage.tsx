@@ -163,7 +163,6 @@ export default function CustomerMovePage() {
     termsBody.current?.scrollTo({ top: 0 });
   }
   function nextTermsStep() {
-    if (answerPending.current) { setTermsError('Please wait for your answers to finish saving.'); return; }
     if (currentTerms.some(q => failedAnswers.current.has(q.id) || !q.saved || q.saved.pending ||
       (q.answers.find(a => a.id === q.saved?.answer_id)?.acknowledge && !q.saved.acknowledged))) {
       setTermsError(''); setTermsValidationAttempt(value => value + 1); return;
@@ -177,6 +176,12 @@ export default function CustomerMovePage() {
   const failedAnswers = useRef(new Set<string>());
   const [answersSaving, setAnswersSaving] = useState(false);
   const [answerSaveStarted, setAnswerSaveStarted] = useState(false);
+  useEffect(() => {
+    if (!answersSaving) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [answersSaving]);
   const [showInventoryList, setShowInventoryList] = useState(false);
   const [inventoryOpened, setInventoryOpened] = useState(false);
   useEffect(() => { if (showInventoryList) setInventoryOpened(true); }, [showInventoryList]);
@@ -224,7 +229,9 @@ export default function CustomerMovePage() {
   }
   type PricingChange = { kind: 'additional_protection' | 'material' | 'inventory_boxes' | 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; material_item?:import('./CustomerPackingOptions').AdditionalMaterialItem|null; box_quantities?:Record<string,number>; stop_change?:import('./CustomerExtraStopsQuestion').ExtraStopChange; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; access_unknown?: boolean; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
   const failedPricing = useRef(new Map<string, PricingChange>());
+  const pricingFullRefresh = useRef(false);
   function savePricingChange(change: PricingChange) {
+    if (['extra_stops', 'inventory_boxes', 'mode'].includes(change.kind)) pricingFullRefresh.current = true;
     const id = `pricing:${change.kind}:${change.location || change.item_id || ''}:${change.stop_change?.previous || change.stop_change?.address || ''}`;
     answerPending.current += 1;
     answerRevision.current += 1;
@@ -249,7 +256,12 @@ export default function CustomerMovePage() {
         setPackingError((error as Error).message);
       } finally {
         answerPending.current -= 1;
-        if (!answerPending.current) { setAnswersSaving(false); void refreshDetails(true); }
+        if (!answerPending.current) {
+          setAnswersSaving(false);
+          const pricingOnly = !pricingFullRefresh.current;
+          pricingFullRefresh.current = false;
+          void refreshDetails(true, pricingOnly);
+        }
       }
     });
     answerQueue.current = task.catch(() => {});
@@ -363,7 +375,6 @@ export default function CustomerMovePage() {
     }
     if(!currentActionSaved && packingStep === 'package' && packingSection === 'service' && data?.unanswered_questions?.includes('package')) {
       savePricingChange({kind:'mode',mode:packageSelection.mode});
-      await answerQueue.current;
     }
     if (packingStep === 'stops' && data?.extra_stops?.locations.some(group => stopsIncomplete[group.location] || group.answer == null || (group.answer && !group.stops.length))) { setStopsMissing(true); return; }
     if (packingStep === 'elevator' && data?.elevator?.locations.some(location => elevatorAnswers[location.location] == null)) { setElevatorMissing(true); return; }
@@ -373,7 +384,7 @@ export default function CustomerMovePage() {
     if (packingStep === 'storage' && (!storageDate || !data?.storage?.pickup_date || storageDate < data.storage.pickup_date)) { setStorageMissing(true); return; }
     if (packingStep === 'access' && data?.shuttle && !data.shuttle.automatic && shuttleAnswer === null) { setShuttleMissing(true); return; }
     if (packingStep === 'bulky' && Object.values(packingSelection).some(value => !value)) { setPackingError('Choose packing or crating for each checked item.'); return; }
-    if (answerPending.current || failedPricing.current.size) { setPackingError(answerPending.current ? 'Please wait for your choices to finish saving.' : 'Please retry the choices that could not be saved.'); return; }
+    if (failedPricing.current.size) { setPackingError('Please retry the choices that could not be saved.'); return; }
     setPackingError(''); setStairsMissing(false);
     if(packingStep==='package'&&nextPackingSection){setPackingSection(nextPackingSection);termsBody.current?.scrollTo({top:0});return;}
     if (nextPricing) setPackingStep(nextPricing); else setShowQuestions(false);
@@ -706,13 +717,13 @@ export default function CustomerMovePage() {
   const sectionRequests = useRef<Record<string, number>>({});
   const pricingLoading = sections.pricing.loading;
   const pricingLoadError = sections.pricing.error;
-  async function loadSection(section: PageSection) {
+  async function loadSection(section: PageSection, background = false) {
     if (!session || !customerSessionActive(session)) return;
     const request = (sectionRequests.current[section] || 0) + 1;
     sectionRequests.current[section] = request;
     const revision = answerRevision.current;
     const current = () => sectionRequests.current[section] === request && customerSessionActive(session) && !answerPending.current && revision === answerRevision.current;
-    setSections(previous => ({...previous, [section]: {...previous[section], loading:true, error:''}}));
+    setSections(previous => ({...previous, [section]: {...previous[section], loading:!background || !previous[section].ready, error:''}}));
     try {
       const next = await call(`/sections/${section}`);
       if (!current()) return;
@@ -720,7 +731,7 @@ export default function CustomerMovePage() {
       if (next.company_details?.color) setThemeColor(next.company_details.color);
       setSections(previous => ({...previous, [section]: {loading:false, error:'', ready:true}}));
       if (section === 'inventory') {
-        if (next.pricing_required) await loadSection('pricing');
+        if (next.pricing_required) await loadSection('pricing', background);
         else {
           sectionRequests.current.pricing = (sectionRequests.current.pricing || 0) + 1;
           setData(previous => previous ? {...previous, estimate:null, pricing_error:'', packing_items:[], packing_package:null, extra_stops:null, elevator:null, long_carry:null, stairs:null, storage:null, shuttle:null, item_questions:[], unanswered_questions:[]} : previous);
@@ -733,9 +744,9 @@ export default function CustomerMovePage() {
   }
   async function refreshDetails(background = false, retryPricing = false) {
     if (!session || !customerSessionActive(session) || (background && answerPending.current)) return;
-    if (retryPricing) { await loadSection('pricing'); return; }
+    if (retryPricing) { await loadSection('pricing', background); return; }
     setData(previous => previous || emptyDetails());
-    await Promise.allSettled(pageSections.filter(section => section !== 'pricing').map(section => loadSection(section)));
+    await Promise.allSettled(pageSections.filter(section => section !== 'pricing').map(section => loadSection(section, background)));
   }
   function sectionNotice(section: PageSection, label: string) {
     const state = sections[section];
@@ -1215,6 +1226,8 @@ export default function CustomerMovePage() {
               {pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
+              {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}
+              {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}
             </div>
 
             {(showInventoryList || inventoryOpened) && <ManualInventoryModal visible={showInventoryList} key={`${accessId}:${data.spark?.id || 'draft'}:${JSON.stringify(data.packing_package?.selection || {})}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full', boxes: (data.packing_package.box_items || []).map(box => ({ label: box.label, room: box.room, quantity: data.packing_package!.selection.box_quantities?.[box.id] || 0 })) } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}_${JSON.stringify(data.packing_package?.selection || {})}`} loadCatalog={() => call('/inventory-catalog')} downloadPdf={async body => {
@@ -1303,10 +1316,11 @@ export default function CustomerMovePage() {
                       answerRevision.current += 1;
                       setAnswersSaving(true);
                       setAnswerSaveStarted(true);
+                      // Keep navigation based on the latest choice, not the network response.
+                      setData(current=>current?{...current,item_questions:current.item_questions?.map(question=>question.id===answer.question_id?{...question,saved:{answer_id:answer.answer_id,acknowledged:answer.acknowledged,pending:answer.pending,selected_items:answer.selected_items}}:question)}:current);
                       const task = answerQueue.current.then(async () => {
                         try {
                           await call('/item-answer?compact=true', { ...answer, report_id: reportId });
-                          setData(current=>current?{...current,item_questions:current.item_questions?.map(question=>question.id===answer.question_id?{...question,saved:{answer_id:answer.answer_id,acknowledged:answer.acknowledged,pending:answer.pending,selected_items:answer.selected_items}}:question)}:current);
                           failedAnswers.current.delete(answer.question_id); setTermsError('');
                         }
                         catch (error) { failedAnswers.current.add(answer.question_id); setTermsError('Please retry the answer that could not be saved.'); throw error; }

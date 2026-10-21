@@ -791,13 +791,15 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
                 processing.mark('pricing', 'running')
                 from routes.pricing import calculate_and_save_lead_job_price
                 price = calculate_and_save_lead_job_price(lead, job, db) if cuft > 0 else None
-                if cuft <= 0: job.price = None
+                if cuft <= 0:
+                    job.price = None
+                    job.price_refresh_error = 'Your inventory is saved. Estimate unavailable: the inventory has no positive moving volume.'
             if not calculate_price:
                 processing.mark('pricing', 'skipped', 'Inventory saved; calculate the updated estimate separately')
             elif price is None:
-                job.price_refresh_error = 'Your inventory is saved, but no estimate could be calculated. Your moving team needs to check the move volume, route, and pricing settings.'
+                job.price_refresh_error = job.price_refresh_error or 'Your inventory is saved. The pricing calculator returned no price without a reason.'
                 processing.mark('pricing', 'error', 'No price returned - click to view details',
-                                'The pricing calculator returned no price. Check move volume, company, active pricing book, pickup/delivery matching, and configured rates.')
+                                job.price_refresh_error)
             else:
                 selection = json.loads(job.customer_packing_package or '{}')
                 selection.pop('pricing_pending', None)
