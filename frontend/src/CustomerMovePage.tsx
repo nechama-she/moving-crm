@@ -556,6 +556,9 @@ export default function CustomerMovePage() {
     setPdfBusy(true);
     setPreparedEstimate('');
     try {
+      viewer.document.body.textContent = 'Checking your latest inventory and estimate...';
+      const mileage = await call('/mileage');
+      await saveBrowserMileage(mileage.routes, data?.google_maps_browser_key || '', true);
       const prepared = await call('/estimate-signatures', {});
       const response = await fetch(base + '/estimate-signatures/' + encodeURIComponent(prepared.id) + '/pdf', { headers, cache: 'no-store' });
       if (!response.ok) {
@@ -567,6 +570,7 @@ export default function CustomerMovePage() {
       previews.current.push(url);
       viewer.location.replace(url);
       setPreparedEstimate(prepared.id);
+      void refreshDetails(true);
     } catch (error) {
       const failure = error as Error & {detail?: {unanswered_questions?: string[]}};
       const message = failure.message || 'Could not prepare the estimate. Please try again.';

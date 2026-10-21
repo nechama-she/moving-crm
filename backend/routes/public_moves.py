@@ -881,11 +881,52 @@ def list_estimate_signatures(access: PublicMoveAccess = Depends(verified), db: S
     return {'items': [{'id': row.id, 'name': row.signer_name, 'signed_at': row.signed_at.isoformat() + 'Z'} for row in rows]}
 
 
+def refresh_estimate_for_view(access, db):
+    from models import LeadJobCharge
+    from price_validity import price_is_locked, refresh_expired_price
+    lead = db.get(Lead, access.lead_id)
+    job = db.get(LeadJob, access.job_id)
+    if price_is_locked(lead, job):
+        return
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).first()
+    state = json.loads(saved.details or '{}') if saved else {}
+    # Never generate a replacement media report just to view an estimate.
+    if state.get('last_spark_status') != 'completed':
+        return
+    changed = inventory_draft_changed(state)
+    if changed:
+        from manual_inventory import replace_current_inventory
+        draft = state.get('inventory_draft') or {}
+        if not draft.get('body'):
+            raise HTTPException(409, 'The saved inventory draft is incomplete. Open the inventory and save it again.')
+        replace_current_inventory(ManualInventoryInput.model_validate(draft['body']), access, db)
+    selection = json.loads(job.customer_packing_package or '{}')
+    pending = db.query(LeadJobCharge.id).filter(
+        LeadJobCharge.job_id == job.id,
+        LeadJobCharge.description.startswith('Calculation pending: ')).first()
+    if changed or state.get('spark_pricing_ready') is False or job.price is None or job.price_refresh_error or selection.get('pricing_pending') or pending:
+        recalculate_current_price(access, db)
+        if changed:
+            # The draft was applied and priced successfully; it is now the
+            # report's inventory baseline, not an outstanding edit.
+            saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).with_for_update().one()
+            current = json.loads(saved.details or '{}')
+            if (current.get('inventory_draft') or {}).get('body') == draft['body']:
+                current['report_list_body'] = draft['body']
+                from spark_history import remember_report
+                remember_report(current)
+                saved.details = json.dumps(current)
+                db.commit()
+    else:
+        refresh_expired_price(lead, job, db)
+
+
 @router.post('/api/public-moves/{access_id}/estimate-signatures')
 def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from fastapi.encoders import jsonable_encoder
     from models import EstimateSignature
     from estimate_pdf import build_estimate_pdf
+    refresh_estimate_for_view(access, db)
     data, rows = _estimate_document(access, db)
     if data.get('list_changed'):
         raise HTTPException(409, 'The saved inventory draft differs from the inventory used for this estimate. Update the estimate from that inventory first.')

@@ -8,6 +8,30 @@ from pydantic import ValidationError
 from test_public_moves import portal
 
 
+@pytest.mark.parametrize('ready,locked,expected', [(False, False, 1), (True, False, 0), (False, True, 0)])
+def test_view_refreshes_stale_price_but_preserves_locked_price(portal, monkeypatch, ready, locked, expected):
+    from unittest.mock import Mock
+    from models import LeadJob, LeadLiveSwitch
+    import price_validity
+    mod, db, lead, access = portal
+    job = db.get(LeadJob, access.job_id)
+    job.price = 100
+    job.price_refresh_error = None
+    job.customer_packing_package = '{}'
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).first()
+    if saved is None:
+        saved = LeadLiveSwitch(lead_id=lead.id)
+        db.add(saved)
+    saved.details = json.dumps({'last_spark_status': 'completed', 'spark_pricing_ready': ready})
+    db.commit()
+    calculate = Mock()
+    monkeypatch.setattr(mod, 'recalculate_current_price', calculate)
+    monkeypatch.setattr(price_validity, 'price_is_locked', lambda *args: locked)
+    monkeypatch.setattr(price_validity, 'refresh_expired_price', Mock())
+    mod.refresh_estimate_for_view(access, db)
+    assert calculate.call_count == expected
+
+
 def test_signature_preserves_reviewed_version_and_cannot_be_overwritten(portal, monkeypatch):
     import estimate_pdf
     from models import EstimateSignature
