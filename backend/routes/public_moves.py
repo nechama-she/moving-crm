@@ -38,6 +38,8 @@ from public_move_sync import queue_files, sync_status
 from routes.leads import _get_visible_lead_or_404, _get_user_company_ids, _persist_job_route, _read_job_route, _upload_attachment_bytes_to_s3, _delete_s3_url, _safe_attachment_name
 
 router = APIRouter(tags=['Customer move portal'])
+from inventory_changes import inventory_draft_changed
+
 NOW = datetime.utcnow
 
 
@@ -612,7 +614,7 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'prici
                     link_sms=customer_link_sms_notice(access), google_maps_browser_key=setting('GOOGLE_MAPS_BROWSER_KEY'))
     if section == 'inventory':
         return dict(inventory_draft=state.get('inventory_draft'), combined_inventory=resolve_catalog_names(state.get('spark_inventory_snapshot', []), db) if state.get('last_spark_status') == 'completed' else [],
-                    list_changed=bool(state.get('inventory_draft') and state['inventory_draft'].get('body') != state.get('report_list_body')), report_history=report_history(state), pricing_required=_has_inventory_list(state))
+                    list_changed=inventory_draft_changed(state), report_history=report_history(state), pricing_required=_has_inventory_list(state))
     if section == 'media':
         files = active_report_files(access, db)
         previous = {row['id'] for row in state.get('report_files', [])}
@@ -776,7 +778,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             'editable_files': file_list(files),
             'inventory_draft': conv_details.get('inventory_draft'),
             'combined_inventory': resolve_catalog_names(conv_details.get('spark_inventory_snapshot', []), db) if spark_info and spark_info.get('status') == 'completed' else [],
-            'list_changed': bool(conv_details.get('inventory_draft') and conv_details['inventory_draft'].get('body') != conv_details.get('report_list_body')),
+            'list_changed': inventory_draft_changed(conv_details),
             'files_changed': {f.id for f in files} != {row['id'] for row in conv_details.get('report_files', [])},
             'new_file_count': sum(f.id not in {row['id'] for row in conv_details.get('report_files', [])} for f in files) if 'report_files' in conv_details else 0,
             'walkthrough': meeting_dict(meeting) if meeting else None,

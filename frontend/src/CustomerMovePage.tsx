@@ -554,26 +554,40 @@ export default function CustomerMovePage() {
     viewer.document.title = 'Preparing estimate';
     viewer.document.body.textContent = 'Preparing your estimate...';
     setPdfBusy(true);
+    setPreparedEstimate('');
     try {
       const prepared = await call('/estimate-signatures', {});
       const response = await fetch(base + '/estimate-signatures/' + encodeURIComponent(prepared.id) + '/pdf', { headers, cache: 'no-store' });
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
-        if(result.detail?.unanswered_questions?.length) {
-          viewer.close();
-          const latest=await call('/details');
-          setData(latest);
-          openRequiredQuestions(result.detail.unanswered_questions, latest);
-          return;
-        }
-        throw new Error(typeof result.detail === 'string' ? result.detail : result.detail?.message || 'Could not open the estimate. Please try again.');
+        throw Object.assign(new Error(typeof result.detail === 'string' ? result.detail : result.detail?.message || `Could not open the estimate (HTTP ${response.status}). Please try again.`), {detail: result.detail});
       }
       const url = URL.createObjectURL(new Blob([await response.blob()], {type:'application/pdf'}));
       if (viewer.closed) { URL.revokeObjectURL(url); return; }
       previews.current.push(url);
       viewer.location.replace(url);
       setPreparedEstimate(prepared.id);
-    } catch (error) { viewer.close(); setPdfError((error as Error).message); }
+    } catch (error) {
+      const failure = error as Error & {detail?: {unanswered_questions?: string[]}};
+      const message = failure.message || 'Could not prepare the estimate. Please try again.';
+      setPdfError(message);
+      if (!viewer.closed) {
+        viewer.document.title = 'Estimate could not be opened';
+        const body = viewer.document.body;
+        body.replaceChildren();
+        body.style.cssText = 'font:16px/1.6 system-ui,sans-serif;max-width:640px;margin:64px auto;padding:24px;color:#243746';
+        const heading = viewer.document.createElement('h1');
+        heading.textContent = 'Estimate could not be opened';
+        const explanation = viewer.document.createElement('p');
+        explanation.textContent = message;
+        const instruction = viewer.document.createElement('p');
+        instruction.textContent = 'Return to your move page to resolve this message, then select View estimate PDF again.';
+        body.append(heading, explanation, instruction);
+      }
+      if (failure.detail?.unanswered_questions?.length) {
+        openRequiredQuestions(failure.detail.unanswered_questions);
+      }
+    }
     finally { setPdfBusy(false); }
   }
 
