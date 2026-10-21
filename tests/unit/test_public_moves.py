@@ -3048,7 +3048,8 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
 
 
 @pytest.mark.parametrize('rep', [False, True])
-@pytest.mark.parametrize('suffix', ['summary', 'sections/move', 'sections/inventory', 'sections/media', 'sections/volume', 'sections/pricing'])
+@pytest.mark.parametrize('suffix', ['summary', 'sections/move', 'sections/inventory', 'sections/media', 'sections/volume', 'sections/pricing',
+                                  'estimate-signatures', 'estimate-signatures/missing/pdf', 'estimate-signatures/missing/sign'])
 def test_page_section_global_auth_accepts_scoped_sessions(portal, monkeypatch, rep, suffix):
     import ast
     import re
@@ -3073,10 +3074,15 @@ def test_page_section_global_auth_accepts_scoped_sessions(portal, monkeypatch, r
     key = mod.rep_link_token(access) if rep else link_token(access.id)
     with TestClient(app) as client:
         path = f'/api/public-moves/{access.id}/{suffix}'
-        response = client.get(path, headers={'x-public-link': key, 'x-public-session': 'section-session'})
-        assert response.status_code == 200, response.text
-        assert client.get(path, headers={'x-public-link': key}).status_code == 401
-        assert client.get(path).status_code == 404
+        def send(headers=None):
+            if suffix.endswith('/sign'):
+                return client.post(path, headers=headers, json={'name': 'Jane', 'consent': True,
+                                   'strokes': [[[0.1, 0.2], [0.3, 0.4]]]})
+            return client.get(path, headers=headers)
+        response = send({'x-public-link': key, 'x-public-session': 'section-session'})
+        assert response.status_code == (404 if '/missing/' in suffix else 200), response.text
+        assert send({'x-public-link': key}).status_code == 401
+        assert send().status_code == 404
 
 
 def test_plain_address_saves_without_selection_or_google(portal):

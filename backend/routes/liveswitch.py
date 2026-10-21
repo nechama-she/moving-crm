@@ -272,7 +272,6 @@ from auth import get_current_user
 from database import get_db
 from models import Lead, LeadLiveSwitch, PublicMoveAccess, SalesRep, Company
 from libs.aircall.client import send_sms, find_number_id
-from libs.smartmoving.client import get_opportunity
 from routes.leads import _get_visible_lead_or_404, _ensure_not_dispatch_write
 
 
@@ -1088,23 +1087,7 @@ def ensure_lead_conversation(lead: Lead, db: Session, fresh: bool = False) -> di
     if not company_phone:
         raise HTTPException(400, "Add a phone number to the sending company before starting LiveSwitch")
     quote_number = str(lead.quote_number or "").strip()
-    public_move = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
-    if public_move and not quote_number:
-        conversation_name = lead.full_name
-    else:
-        conversation_name = quote_number
-    if not quote_number and not public_move:
-        if not (lead.smartmoving_id or "").strip():
-            raise HTTPException(400, "Connect this lead to SmartMoving before starting LiveSwitch")
-        opportunity_result = get_opportunity(lead.smartmoving_id)
-        opportunity = opportunity_result.get("data")
-        if opportunity_result.get("error") or not isinstance(opportunity, dict):
-            raise HTTPException(502, "Could not retrieve the SmartMoving quote number. Please try again.")
-        quote_number = str(opportunity.get("quoteNumber") or "").strip()
-        if not quote_number:
-            raise HTTPException(400, "This SmartMoving lead does not have a quote number yet")
-        lead.quote_number = quote_number
-    conversation_name = quote_number or conversation_name
+    conversation_name = quote_number or str(lead.id)
     result = _api_post("conversations", {"type": "LiveConversation", "phone": company_phone, "name": conversation_name})
     if not result.get("id"):
         raise HTTPException(502, "LiveSwitch did not return a conversation ID")
