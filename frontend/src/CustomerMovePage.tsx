@@ -15,6 +15,7 @@ import ReportLinks from './ReportLinks';
 import { savedPhotos, storePhoto, removePhoto } from './photoDrafts';
 import ManualInventoryModal from "./ManualInventoryModal";
 import EstimateSigning from './EstimateSigning';
+import EstimateViewer from './EstimateViewer';
 import type { EditableReportFile } from "./ReportFileList";
 import ReportFileGallery from "./ReportFileGallery";
 import ReportHistory, { type ReportRun } from "./ReportHistory";
@@ -537,6 +538,8 @@ export default function CustomerMovePage() {
     }
   }
   const [preparedEstimate, setPreparedEstimate] = useState('');
+  const [estimateViewerOpen, setEstimateViewerOpen] = useState(false);
+  const [estimatePdfUrl, setEstimatePdfUrl] = useState('');
   async function openEstimate() {
     setPdfError('');
     if(data?.unanswered_questions?.length) {
@@ -548,15 +551,11 @@ export default function CustomerMovePage() {
       setPackingError('Please finish saving your answers before viewing the estimate.');
       return;
     }
-    const viewer = window.open('about:blank', '_blank');
-    if (!viewer) { setPdfError('Allow pop-ups to open your estimate.'); return; }
-    viewer.opener = null;
-    viewer.document.title = 'Preparing estimate';
-    viewer.document.body.textContent = 'Preparing your estimate...';
+    setEstimateViewerOpen(true);
+    setEstimatePdfUrl('');
     setPdfBusy(true);
     setPreparedEstimate('');
     try {
-      viewer.document.body.textContent = 'Checking your latest inventory and estimate...';
       const mileage = await call('/mileage');
       await saveBrowserMileage(mileage.routes, data?.google_maps_browser_key || '', true);
       const prepared = await call('/estimate-signatures', {});
@@ -566,29 +565,16 @@ export default function CustomerMovePage() {
         throw Object.assign(new Error(typeof result.detail === 'string' ? result.detail : result.detail?.message || `Could not open the estimate (HTTP ${response.status}). Please try again.`), {detail: result.detail});
       }
       const url = URL.createObjectURL(new Blob([await response.blob()], {type:'application/pdf'}));
-      if (viewer.closed) { URL.revokeObjectURL(url); return; }
       previews.current.push(url);
-      viewer.location.replace(url);
+      setEstimatePdfUrl(url);
       setPreparedEstimate(prepared.id);
       void refreshDetails(true);
     } catch (error) {
       const failure = error as Error & {detail?: {unanswered_questions?: string[]}};
       const message = failure.message || 'Could not prepare the estimate. Please try again.';
       setPdfError(message);
-      if (!viewer.closed) {
-        viewer.document.title = 'Estimate could not be opened';
-        const body = viewer.document.body;
-        body.replaceChildren();
-        body.style.cssText = 'font:16px/1.6 system-ui,sans-serif;max-width:640px;margin:64px auto;padding:24px;color:#243746';
-        const heading = viewer.document.createElement('h1');
-        heading.textContent = 'Estimate could not be opened';
-        const explanation = viewer.document.createElement('p');
-        explanation.textContent = message;
-        const instruction = viewer.document.createElement('p');
-        instruction.textContent = 'Return to your move page to resolve this message, then select View estimate PDF again.';
-        body.append(heading, explanation, instruction);
-      }
       if (failure.detail?.unanswered_questions?.length) {
+        setEstimateViewerOpen(false);
         openRequiredQuestions(failure.detail.unanswered_questions);
       }
     }
@@ -1272,8 +1258,9 @@ export default function CustomerMovePage() {
                 </>}
                 </div>
               )}
-              {pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} onClose={() => setPreparedEstimate('')}
+              {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
+              {estimateViewerOpen && <EstimateViewer base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => setEstimateViewerOpen(false)} />}
               <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
               {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}
               {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}

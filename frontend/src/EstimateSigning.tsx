@@ -4,8 +4,9 @@ import './EstimateSigning.css';
 type Point = [number, number];
 type SignedEstimate = { id: string; name: string; signed_at: string };
 
-export default function EstimateSigning({ base, headers, customerName, disabled, version, onClose }: {
+export default function EstimateSigning({ base, headers, customerName, disabled, version, onClose, onSigned, hideHistory = false }: {
   base: string; headers: Record<string, string>; customerName: string; disabled: boolean; version: string; onClose: () => void;
+  onSigned?: (id: string) => void; hideHistory?: boolean;
 }) {
   const [name, setName] = useState(customerName);
   const [strokes, setStrokes] = useState<Point[][]>([]);
@@ -28,11 +29,12 @@ export default function EstimateSigning({ base, headers, customerName, disabled,
     return response;
   }
   useEffect(() => {
+    if (hideHistory) return;
     let live = true;
     request('').then(r => r.json()).then(data => { if (live) setSigned(data.items); })
       .catch(e => { if (live) setError(e.message); });
     return () => { live = false; urls.current.forEach(url => URL.revokeObjectURL(url)); };
-  }, [base, headers['x-public-session']]);
+  }, [base, headers['x-public-session'], hideHistory]);
   async function preview(id: string) {
     const viewer = window.open('about:blank', '_blank');
     if (!viewer) { setError('Allow pop-ups to view the estimate.'); return; }
@@ -53,7 +55,8 @@ export default function EstimateSigning({ base, headers, customerName, disabled,
     try {
       const result = await (await request('/' + version + '/sign', { name: name.trim(), consent, strokes })).json();
       setSigned(current => [{ id: result.id, name: name.trim(), signed_at: result.signed_at }, ...current.filter(row => row.id !== result.id)]);
-      onClose(); setStrokes([]);
+      if (onSigned) onSigned(result.id); else onClose();
+      setStrokes([]);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
@@ -83,6 +86,6 @@ export default function EstimateSigning({ base, headers, customerName, disabled,
         <button type="button" className="cm-secondary-btn" disabled={busy} onClick={onClose}>Cancel</button></div>
     </>}
     {error && <p role="alert">{error}</p>}
-    {!!signed.length && <div aria-live="polite"><h4>Signed estimates</h4>{signed.map(row => <div key={row.id} className="estimate-signing-history"><span>{row.name} · {new Date(row.signed_at).toLocaleString()}</span><button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => void preview(row.id)}>Download signed PDF</button></div>)}</div>}
+    {!hideHistory && !!signed.length && <div aria-live="polite"><h4>Signed estimates</h4>{signed.map(row => <div key={row.id} className="estimate-signing-history"><span>{row.name} · {new Date(row.signed_at).toLocaleString()}</span><button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => void preview(row.id)}>Download signed PDF</button></div>)}</div>}
   </section>;
 }
