@@ -778,7 +778,7 @@ export default function UnansweredMessagesPage() {
     (!companyFilter || row.company === companyFilter)
   ), [followupLeads, repFilter, companyFilter]);
 
-  const validateCurrentTab = async () => {
+  const validateCurrentTab = async (crmOnly = false) => {
     if (validatingTab !== null || exportingFollowups) return;
     const rows = queueTab === "messages"
       ? filteredItems
@@ -819,7 +819,10 @@ export default function UnansweredMessagesPage() {
           const batchStarted = Date.now();
           await Promise.all(refreshIds.slice(index, index + 30).map(async (leadId) => {
             try {
-              const response = await fetch(`${API_BASE}/api/leads/${encodeURIComponent(leadId)}/refresh-smartmoving`, {
+              const endpoint = crmOnly
+                ? `${API_BASE}/api/unanswered-messages/followup-calls/${encodeURIComponent(leadId)}/refresh`
+                : `${API_BASE}/api/leads/${encodeURIComponent(leadId)}/refresh-smartmoving`;
+              const response = await fetch(endpoint, {
                 method: "POST", headers: authHeaders(token),
               });
               const data = await response.json().catch(() => ({}));
@@ -830,14 +833,14 @@ export default function UnansweredMessagesPage() {
               else refreshed++;
             } catch { failed++; }
           }));
-          setValidationNotice(`Refreshing SmartMoving: ${Math.min(index + 30, refreshIds.length)} of ${refreshIds.length} leads.`);
+          setValidationNotice(`Refreshing ${crmOnly ? "saved CRM activity" : "SmartMoving"}: ${Math.min(index + 30, refreshIds.length)} of ${refreshIds.length} leads.`);
           if (index + 30 < refreshIds.length) {
             await new Promise((resolve) => window.setTimeout(resolve, Math.max(0, 1000 - (Date.now() - batchStarted))));
           }
         }
         await loadFollowups(0, true);
-        setValidationNotice(`Refreshed ${refreshed} leads, including available quote numbers; removed ${removed} stale leads${skipped ? `; skipped ${skipped} without a SmartMoving ID` : ""}.`);
-        if (failed) setError(`${failed} SmartMoving refreshes failed. Please retry.`);
+        setValidationNotice(crmOnly ? `Rechecked saved calls and messages for ${refreshed} leads. Follow-up tasks now use the current cutoff.` : `Refreshed ${refreshed} leads, including available quote numbers; removed ${removed} stale leads${skipped ? `; skipped ${skipped} without a SmartMoving ID` : ""}.`);
+        if (failed) setError(`${failed} ${crmOnly ? "CRM" : "SmartMoving"} refreshes failed. Please retry.`);
         return;
       }
       let checked = 0;
@@ -1128,7 +1131,7 @@ export default function UnansweredMessagesPage() {
 
       {queueTab === "followups" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px 0" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button>{validationButton}</div></div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button><button type="button" className="slds-button" disabled={loadingFollowups || exportingFollowups || validatingTab !== null} onClick={() => void validateCurrentTab(true)}>Refresh from CRM</button>{validationButton}</div></div>
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {(["due", "overdue"] as const).map(category => <button key={category} type="button" className="slds-button" aria-pressed={followupTab === category} onClick={() => setFollowupTab(category)} style={{ color: "#032d60", padding: "10px 14px", minHeight: 44, fontWeight: followupTab === category ? 700 : 400, border: "none", borderBottom: followupTab === category ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0 }}>{category === "due" ? "Due" : "Overdue Items"} ({followupCounts[category] || 0})</button>)}
           </div>

@@ -168,6 +168,18 @@ def list_followup_calls(
             'filter_options': {'reps': reps, 'companies': companies}, 'has_more': offset + len(leads) < count}, db)
 
 
+@router.post("/followup-calls/{lead_id}/refresh")
+def refresh_saved_followups(lead_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Replay saved CRM communications without requesting SmartMoving data."""
+    from followup_tasks import sync
+    lead = db.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(404, "Lead not found")
+    sync(db, lead, reconcile=True)
+    db.commit()
+    return {"lead_id": lead_id}
+
+
 @router.get("/followup-calls/export")
 def export_followup_calls(
     category: str = Query("all", pattern="^(all|due|overdue)$"),
