@@ -76,14 +76,17 @@ def _priority_zero_schedule(created_at: datetime, timezone_name: str) -> list[tu
 
 
 def _call_period_key(call_at: datetime, timezone_name: str) -> tuple[str, str] | None:
-    """Identify the local call period; calls outside a required period do not count."""
+    """Count calls from 8 AM to 9 PM, keeping the scheduled deadlines unchanged."""
     try:
         tz = ZoneInfo(timezone_name or "America/New_York")
     except Exception:
         tz = ZoneInfo("America/New_York")
     local = call_at.astimezone(tz)
     for name, start_hour, end_hour in CALL_PERIODS:
-        if start_hour <= local.hour < end_hour:
+        # Late evening calls still complete the evening task until 9 PM.
+        # Keep them in one period so repeated calls cannot finish extra tasks.
+        counting_end = 21 if name == "evening" else end_hour
+        if start_hour <= local.hour < counting_end:
             return local.date().isoformat(), name
     return None
 
