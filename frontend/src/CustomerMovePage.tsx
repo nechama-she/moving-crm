@@ -581,6 +581,18 @@ export default function CustomerMovePage() {
     finally { setPdfBusy(false); }
   }
 
+  async function fetchSignedPdf(signatureId: string) {
+    const response = await fetch(`${base}/estimate-signatures/${encodeURIComponent(signatureId)}/pdf`, { headers, cache: 'no-store' });
+    if (!response.ok) throw new Error('Could not open the signed estimate. Please try again.');
+    return response.blob();
+  }
+  // Show a signature on its report row as soon as the estimate viewer closes.
+  async function refreshReportHistory() {
+    try {
+      const next = await call('/sections/inventory');
+      setData(previous => previous ? {...previous, report_history: next.report_history} : previous);
+    } catch { /* The history refreshes with the next page load. */ }
+  }
   async function call(path:string, body?:unknown, method?:string) {
     const httpMethod = method || (body===undefined ? 'GET' : 'POST');
     const controller = new AbortController();
@@ -1258,10 +1270,10 @@ export default function CustomerMovePage() {
                 </>}
                 </div>
               )}
-              {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}}
+              {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
-              {estimateViewerOpen && <EstimateViewer base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => setEstimateViewerOpen(false)} />}
-              <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
+              {estimateViewerOpen && <EstimateViewer base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => { setEstimateViewerOpen(false); void refreshReportHistory(); }} />}
+              <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} fetchSignedPdf={fetchSignedPdf} />
               {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}
               {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}
             </div>

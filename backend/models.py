@@ -32,6 +32,8 @@ class EstimateSignature(Base):
     pdf = Column(LargeBinary, nullable=False)
     signer_name = Column(String(200))
     signature = Column(Text)
+    # Inventory report used for this estimate (LeadLiveSwitch spark_history id).
+    report_id = Column(Text)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     signed_at = Column(DateTime)
 

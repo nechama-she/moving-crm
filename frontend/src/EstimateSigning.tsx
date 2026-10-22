@@ -2,11 +2,13 @@ import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import './EstimateSigning.css';
 
 type Point = [number, number];
-type SignedEstimate = { id: string; name: string; signed_at: string };
+type SignedEstimate = { id: string; name: string; signed_at: string; report_id?: string | null };
 
-export default function EstimateSigning({ base, headers, customerName, disabled, version, onClose, onSigned, hideHistory = false }: {
+export default function EstimateSigning({ base, headers, customerName, disabled, version, onClose, onSigned, hideHistory = false, reportIds }: {
   base: string; headers: Record<string, string>; customerName: string; disabled: boolean; version: string; onClose: () => void;
   onSigned?: (id: string) => void; hideHistory?: boolean;
+  /** Reports shown in report history; signatures for these appear on their report row instead of here. */
+  reportIds?: string[];
 }) {
   const [name, setName] = useState(customerName);
   const [strokes, setStrokes] = useState<Point[][]>([]);
@@ -66,7 +68,8 @@ export default function EstimateSigning({ base, headers, customerName, disabled,
       Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height))];
   }
   const drawn = strokes.some(stroke => stroke.length > 1 && stroke.some(p => p[0] !== stroke[0][0] || p[1] !== stroke[0][1]));
-  if (!version && !signed.length && !error) return null;
+  const unmatched = reportIds ? signed.filter(row => !row.report_id || !reportIds.includes(row.report_id)) : signed;
+  if (!version && !unmatched.length && !error) return null;
   return <section className="estimate-signing" aria-label="Estimate signature">
     {version && <h3>Sign your estimate</h3>}
     {version && <>
@@ -86,6 +89,6 @@ export default function EstimateSigning({ base, headers, customerName, disabled,
         <button type="button" className="cm-secondary-btn" disabled={busy} onClick={onClose}>Cancel</button></div>
     </>}
     {error && <p role="alert">{error}</p>}
-    {!hideHistory && !!signed.length && <div aria-live="polite"><h4>Signed estimates</h4>{signed.map(row => <div key={row.id} className="estimate-signing-history"><span>{row.name} · {new Date(row.signed_at).toLocaleString()}</span><button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => void preview(row.id)}>Download signed PDF</button></div>)}</div>}
+    {!hideHistory && !!unmatched.length && <div aria-live="polite"><h4>{reportIds ? 'Earlier signed estimates' : 'Signed estimates'}</h4>{unmatched.map(row => <div key={row.id} className="estimate-signing-history"><span>{row.name} · {new Date(row.signed_at).toLocaleString()}</span><button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => void preview(row.id)}>Download signed PDF</button></div>)}</div>}
   </section>;
 }

@@ -12,6 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 from spark_processing import SparkProcessingLog
 from spark_history import archive_report_for_new_media, remember_report, report_history, activate_report
+from estimate_signature_history import attach_signatures, signed_estimates
 from urllib.parse import urlencode, urlsplit
 
 import boto3
@@ -895,7 +896,21 @@ def select_spark_report(lead_id: str, report_id: str, db: Session):
 def get_report_history(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lead = _get_visible_lead_or_404(lead_id, user, db)
     saved = db.get(LeadLiveSwitch, lead.id)
-    return {'reports': report_history(json.loads(saved.details or '{}') if saved else {}, staff=True)}
+    reports = report_history(json.loads(saved.details or '{}') if saved else {}, staff=True)
+    return {'reports': attach_signatures(reports, signed_estimates(db, lead.id))}
+
+
+@router.get('/leads/{lead_id}/estimate-signatures/{signature_id}/pdf')
+def get_signed_estimate_pdf(lead_id: str, signature_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from models import EstimateSignature
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    record = db.query(EstimateSignature).filter(EstimateSignature.id == signature_id, EstimateSignature.lead_id == lead.id,
+                                                EstimateSignature.signed_at.isnot(None)).first()
+    if record is None:
+        raise HTTPException(404, 'Signed estimate not found')
+    return Response(record.pdf, media_type='application/pdf', headers={
+        'Content-Disposition': 'inline; filename="signed-estimate-' + record.id + '.pdf"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
 @router.post('/leads/{lead_id}/reports/{report_id}/select')

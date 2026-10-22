@@ -178,6 +178,11 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
     await loadSparkStatus();
   });
 
+  const fetchSignedPdf = useCallback(async (signatureId: string) => {
+    const response = await fetch(`${base}/estimate-signatures/${encodeURIComponent(signatureId)}/pdf`, { headers: authHeaders(token), cache: 'no-store' });
+    if (!response.ok) throw new Error('Could not open the signed estimate.');
+    return response.blob();
+  }, [base, token]);
   const loadReportHistory = useCallback(async () => {
     const response = await fetch(`${base}/report-history`, { headers: authHeaders(token), cache: 'no-store' });
     if (!response.ok) throw new Error('Could not load report history.');
@@ -553,7 +558,7 @@ export default function LiveSwitchPanel({ leadId, hasCustomerPage, onClose, onUp
             )}
           </div>
         )}
-        <ReportHistory reports={reportHistory} onSelect={selectReport} disabled={busy || sparkRunning || calculatingPrice} staff />
+        <ReportHistory reports={reportHistory} onSelect={selectReport} disabled={busy || sparkRunning || calculatingPrice} staff fetchSignedPdf={fetchSignedPdf} />
         </section>
         {Object.keys(conversation.report_question_answers || {}).length > 0 && <section className="ls-card"><h3>Customer item answers</h3>{Object.entries(conversation.report_question_answers || {}).map(([id, answer]) => <div key={id} style={{ borderBottom: "1px solid #d8e0eb", padding: "12px 0" }}><strong>{answer.name}{answer.room ? ` ? ${answer.room}` : ""}</strong><p>{answer.question} <strong>{answer.answer}</strong></p><p>{({ pending: "Awaiting customer acknowledgment", exclude: "Excluded from shipment", prepare: "Preparation required", review: "Staff review required", notice: "Instructions shown", none: "Included" } as Record<string, string>)[answer.action]}</p>{answer.selected_item_labels?.length ? <ul>{answer.selected_item_labels.map(label => <li key={label}>{label}</li>)}</ul> : null}{answer.notice && <p>{answer.notice}</p>}{answer.acknowledged && <small>Customer acknowledged</small>}</div>)}</section>}{customerPageReady && <CustomerPageControls leadId={leadId}/>}<section className="ls-card"><button className="slds-button ls-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "\u25be" : "\u25b8"} Conversation viewer</button>{expanded ? <>{conversation.conversationUrl ? <a href={conversation.conversationUrl} target="_blank" rel="noopener noreferrer">Open conversation in a new tab</a> : null}{conversation.embeddedConversationUrl ? <iframe title="LiveSwitch conversation" src={conversation.embeddedConversationUrl} style={{ pointerEvents: resizing ? "none" : undefined }} allow="camera; microphone; fullscreen; display-capture"/> : !conversation.conversationUrl ? <p>Conversation viewer unavailable.</p> : null}</> : null}</section>
       </> : null}<p className="ls-notice" role="status">{notice}</p></main>

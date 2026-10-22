@@ -75,3 +75,74 @@ def test_pending_estimate_cannot_be_prepared_for_signing(portal, monkeypatch):
     with pytest.raises(HTTPException) as error:
         mod.prepare_estimate_signature(access, db)
     assert error.value.status_code == 409
+
+def test_signature_records_report_and_appears_on_that_report_row(portal, monkeypatch):
+    import estimate_pdf
+    from datetime import datetime
+    from models import EstimateSignature
+    from estimate_signature_history import attach_signatures, signed_estimates
+    mod, db, lead, access = portal
+    data = {'estimate': {'price': 100, 'charges': []}, 'spark': {'id': 'report-2', 'status': 'completed'}}
+    monkeypatch.setattr(mod, '_estimate_document', lambda *args: (data, []))
+    monkeypatch.setattr(estimate_pdf, 'build_estimate_pdf', lambda snapshot, rows: b'pdf')
+    version = mod.prepare_estimate_signature(access, db)['id']
+    assert db.get(EstimateSignature, version).report_id == 'report-2'
+    # Unsigned versions are not listed.
+    assert signed_estimates(db, lead.id) == []
+    mod.sign_estimate(version, mod.EstimateSigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]]), access, db)
+    # A signature saved before report_id existed is matched through its snapshot.
+    legacy = EstimateSignature(id='legacy', lead_id=lead.id, job_id=access.job_id, pdf=b'old', signer_name='Jane',
+                               snapshot=json.dumps({'data': {'spark': {'id': 'report-1'}}, 'rows': []}),
+                               signed_at=datetime(2026, 1, 1))
+    unreadable = EstimateSignature(id='unreadable', lead_id=lead.id, job_id=access.job_id, pdf=b'old', signer_name='Jane',
+                                   snapshot='not json', signed_at=datetime(2025, 1, 1))
+    db.add_all([legacy, unreadable]); db.commit()
+    signatures = signed_estimates(db, lead.id, access.job_id)
+    assert [(row['id'], row['report_id']) for row in signatures] == [(version, 'report-2'), ('legacy', 'report-1'), ('unreadable', None)]
+    assert signed_estimates(db, lead.id, 'another-job') == []
+    reports = attach_signatures([{'id': 'report-2'}, {'id': 'report-1'}, {'id': 'report-0'}], signatures)
+    assert [row['id'] for row in reports[0]['signatures']] == [version]
+    assert reports[1]['signatures'] == [{'id': 'legacy', 'name': 'Jane', 'signed_at': '2026-01-01T00:00:00Z'}]
+    assert reports[2]['signatures'] == []
+    assert mod.list_estimate_signatures(access, db)['items'][0]['report_id'] == 'report-2'
+
+def test_staff_report_history_lists_signatures_and_serves_only_signed_pdfs(portal):
+    import ast
+    from datetime import datetime
+    from pathlib import Path
+    from unittest.mock import MagicMock
+    from fastapi import Response
+    from models import EstimateSignature, LeadLiveSwitch
+    from spark_history import report_history
+    from estimate_signature_history import attach_signatures, signed_estimates
+    _, db, lead, access = portal
+    source = Path(__file__).resolve().parents[2] / 'backend/routes/liveswitch.py'
+    names = {'get_report_history', 'get_signed_estimate_pdf'}
+    functions = [n for n in ast.parse(source.read_text(encoding='utf-8')).body if isinstance(n, ast.FunctionDef) and n.name in names]
+    for node in functions:
+        node.decorator_list = []
+        node.returns = None
+        node.args.defaults = []
+        for arg in node.args.args:
+            arg.annotation = None
+    visible = MagicMock(return_value=lead)
+    scope = {'json': json, 'HTTPException': HTTPException, 'Response': Response, 'LeadLiveSwitch': LeadLiveSwitch,
+             '_get_visible_lead_or_404': visible, 'report_history': report_history,
+             'attach_signatures': attach_signatures, 'signed_estimates': signed_estimates}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), 'exec'), scope)
+    db.add(LeadLiveSwitch(lead_id=lead.id, details=json.dumps({'last_spark_id': 'report-1', 'last_spark_status': 'completed', 'last_spark_at': 1})))
+    db.add_all([EstimateSignature(id='signed', lead_id=lead.id, job_id=access.job_id, report_id='report-1', pdf=b'signed-pdf',
+                                  snapshot='{}', signer_name='Jane', signed_at=datetime(2026, 10, 21)),
+                EstimateSignature(id='draft', lead_id=lead.id, job_id=access.job_id, report_id='report-1', pdf=b'draft', snapshot='{}')])
+    db.commit()
+    reports = scope['get_report_history'](lead.id, None, db)['reports']
+    assert [row['id'] for row in reports[0]['signatures']] == ['signed']
+    assert scope['get_signed_estimate_pdf'](lead.id, 'signed', None, db).body == b'signed-pdf'
+    for signature_id in ['draft', 'missing']:
+        with pytest.raises(HTTPException) as error:
+            scope['get_signed_estimate_pdf'](lead.id, signature_id, None, db)
+        assert error.value.status_code == 404
+    visible.side_effect = HTTPException(404, 'Lead not found')
+    with pytest.raises(HTTPException):
+        scope['get_signed_estimate_pdf'](lead.id, 'signed', None, db)
+

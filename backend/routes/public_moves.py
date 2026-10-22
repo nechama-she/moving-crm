@@ -4,6 +4,7 @@ from inventory_edits import InventoryEdits, load_inventory_editor, save_inventor
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
 from manual_inventory import ManualInventoryInput, InventoryRowPatch, update_inventory_row, catalog, submit_inventory, save_inventory_draft, replace_current_inventory
 from spark_history import archive_report_for_new_media, report_history
+from estimate_signature_history import attach_signatures, signed_estimates
 from pricing_addresses import with_job_locations
 from report_files import active_report_files, move_files, file_list, remove_report_file, preview_report_file
 import hmac
@@ -614,7 +615,7 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'prici
                     link_sms=customer_link_sms_notice(access), google_maps_browser_key=setting('GOOGLE_MAPS_BROWSER_KEY'))
     if section == 'inventory':
         return dict(inventory_draft=state.get('inventory_draft'), combined_inventory=resolve_catalog_names(state.get('spark_inventory_snapshot', []), db) if state.get('last_spark_status') == 'completed' else [],
-                    list_changed=inventory_draft_changed(state), report_history=report_history(state), pricing_required=_has_inventory_list(state))
+                    list_changed=inventory_draft_changed(state), report_history=attach_signatures(report_history(state), signed_estimates(db, access.lead_id, access.job_id)), pricing_required=_has_inventory_list(state))
     if section == 'media':
         files = active_report_files(access, db)
         previous = {row['id'] for row in state.get('report_files', [])}
@@ -774,7 +775,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             'link_sms': customer_link_sms_notice(access),
             'estimate': estimate,
             'spark': spark_info,
-            'report_history': report_history(conv_details),
+            'report_history': attach_signatures(report_history(conv_details), signed_estimates(db, access.lead_id, access.job_id)),
             'editable_files': file_list(files),
             'inventory_draft': conv_details.get('inventory_draft'),
             'combined_inventory': resolve_catalog_names(conv_details.get('spark_inventory_snapshot', []), db) if spark_info and spark_info.get('status') == 'completed' else [],
@@ -874,11 +875,7 @@ def _signature_record(signature_id, access, db, lock=False):
 
 @router.get('/api/public-moves/{access_id}/estimate-signatures')
 def list_estimate_signatures(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    from models import EstimateSignature
-    rows = db.query(EstimateSignature.id, EstimateSignature.signer_name, EstimateSignature.signed_at).filter(
-        EstimateSignature.lead_id == access.lead_id, EstimateSignature.job_id == access.job_id,
-        EstimateSignature.signed_at.isnot(None)).order_by(EstimateSignature.signed_at.desc()).all()
-    return {'items': [{'id': row.id, 'name': row.signer_name, 'signed_at': row.signed_at.isoformat() + 'Z'} for row in rows]}
+    return {'items': signed_estimates(db, access.lead_id, access.job_id)}
 
 
 def refresh_estimate_for_view(access, db):
@@ -937,6 +934,7 @@ def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db:
         raise HTTPException(409, 'These charges still need calculation: ' + ', '.join(pending) + '.')
     data['prepared_at'] = datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)')
     record = EstimateSignature(id=str(uuid4()), lead_id=access.lead_id, job_id=access.job_id,
+        report_id=(data.get('spark') or {}).get('id'),
         snapshot=json.dumps(jsonable_encoder({'data': data, 'rows': rows})), pdf=build_estimate_pdf(data, rows))
     db.add(record)
     db.commit()
