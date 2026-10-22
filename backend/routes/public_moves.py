@@ -637,7 +637,7 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'prici
 def _move_details(access, db, *, refresh_report=True, include_pricing=True, pricing_only=False):
     from math import ceil
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
-    pickup, stops, delivery = _read_job_route(db, job) if not pricing_only else ('', [], '')
+    pickup, stops, delivery = _read_job_route(db, job)
     typed = json.loads(job.stop_types or '[]')
     meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first() if not pricing_only else None
     files = active_report_files(access, db) if not pricing_only else []
@@ -764,9 +764,23 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
         packing_items=packing_items, item_questions=item_questions),
         package_saved='mode' in json.loads(job.customer_packing_package or '{}'))
     pricing_data = dict(pricing_error=pricing_error, extra_stops=extra_stops, elevator=elevator, long_carry=long_carry, stairs=stairs, storage=storage, shuttle=shuttle, item_questions=item_questions, packing_package=packing_package, packing_items=packing_items, packing_saved=job.customer_packing is not None, unanswered_questions=required_questions, pricing_required=pricing_required, estimate=estimate)
+    from estimate_signature_history import estimate_signature_status
+    from item_selectors import inventory_selectors
+    from company_documents import estimate_documents
+    signature_details = dict(pricing_data, name=lead.full_name, phone=lead.phone or '', email=lead.email or '',
+        move_date=job.move_date or '', pickup=pickup, delivery=delivery,
+        stops=[{'address': address, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == address else None} for i, address in enumerate(stops)],
+        company_details=company_data, item_services=inventory_selectors(access, db),
+        documents=estimate_documents(lead, job, db))
+    pricing_data['estimate_needs_update'] = inventory_draft_changed(conv_details) or conv_details.get('spark_pricing_ready') is False
+    pricing_data['signature_status'] = estimate_signature_status(
+        db, access.lead_id, access.job_id, signature_details,
+        inventory_rows=resolve_catalog_names(conv_details.get('question_original_rows', conv_details.get('spark_inventory_snapshot', [])), db),
+        inventory_pending=pricing_data['estimate_needs_update'])
+    pricing_data['signature_requires_resign'] = pricing_data['signature_status'] == 'changed'
     if pricing_only:
         return pricing_data
-    return {'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    return {'signature_status': pricing_data['signature_status'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'unanswered_questions': required_questions,
             'pricing_required': pricing_required,
@@ -959,6 +973,10 @@ def sign_estimate(signature_id: str, body: EstimateSigningInput, access: PublicM
     if not name:
         raise HTTPException(422, 'Enter your full name')
     snapshot = json.loads(record.snapshot)
+    from estimate_signature_history import estimate_state
+    current_data, current_rows = _estimate_document(access, db)
+    if current_data.get('estimate_needs_update') or estimate_state(current_data, current_rows) != estimate_state(snapshot['data'], snapshot['rows']):
+        raise HTTPException(409, 'The estimate changed while you were reviewing it. Close this viewer and open the current estimate to review and sign.')
     signed_at = datetime.utcnow()
     signature = {'name': name, 'signed_at': signed_at.isoformat() + 'Z', 'strokes': body.strokes, 'estimate_id': record.id}
     snapshot['data']['signature'] = signature

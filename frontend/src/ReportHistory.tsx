@@ -13,9 +13,11 @@ export type ReportRun = {
   signatures?: SignedReportEstimate[];
 };
 export type SignedReportEstimate = { id: string; name: string; signed_at: string };
-export default function ReportHistory({ reports, onSelect, disabled = false, staff = false, fetchSignedPdf }: {
+export default function ReportHistory({ reports, onSelect, disabled = false, staff = false, fetchSignedPdf, requiresResign = false, signatureStatus }: {
   reports: ReportRun[]; onSelect: (id: string) => Promise<void>; disabled?: boolean; staff?: boolean;
   fetchSignedPdf?: (signatureId: string) => Promise<Blob>;
+  requiresResign?: boolean;
+  signatureStatus?: 'unsigned' | 'signed' | 'changed';
 }) {
   const name = useId();
   const [pending, setPending] = useState('');
@@ -44,10 +46,13 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
   }
   const signedLabel = (signature: SignedReportEstimate) => `Signed ${new Date(signature.signed_at).toLocaleString()}`;
   function signatureCell(report: ReportRun) {
+    if (report.current && signatureStatus === 'signed' && !report.signatures?.length) return <div className="report-history-signature">Signed - estimate unchanged</div>;
+    if (report.current && signatureStatus === 'changed' && !report.signatures?.length) return <div className="report-history-signature report-history-unsigned">Estimate changed - sign again</div>;
     const latest = report.signatures?.[0];
     if (latest) return <div className="report-history-signature">
+      {report.current && requiresResign && <strong>Estimate changed - sign again</strong>}
       <span>{signedLabel(latest)}{(report.signatures?.length || 0) > 1 && <small> and {report.signatures!.length - 1} earlier</small>}</span>
-      {fetchSignedPdf && <button type="button" disabled={!!opening} onClick={() => void openSignedPdf(latest.id)} aria-label={`Open signed PDF, ${signedLabel(latest)}`}>{opening === latest.id ? 'Opening...' : 'Signed PDF'}</button>}
+      {fetchSignedPdf && <button type="button" disabled={!!opening} onClick={() => void openSignedPdf(latest.id)} aria-label={`Open signed PDF, ${signedLabel(latest)}`}>{opening === latest.id ? 'Opening...' : report.current && requiresResign ? 'Previously signed PDF' : 'Signed PDF'}</button>}
     </div>;
     if (report.current && report.status === 'completed') return <div className="report-history-signature report-history-unsigned">Not signed</div>;
     return <div className="report-history-signature report-history-signature-none" aria-label="No signature">{'—'}</div>;

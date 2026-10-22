@@ -41,10 +41,10 @@ def test_signature_preserves_reviewed_version_and_cannot_be_overwritten(portal, 
     monkeypatch.setattr(mod, '_estimate_document', lambda *args: (data, []))
     monkeypatch.setattr(estimate_pdf, 'build_estimate_pdf', lambda snapshot, rows: json.dumps(snapshot).encode())
     version = mod.prepare_estimate_signature(access, db)['id']
-    data['estimate']['price'] = 999
-    data['documents'][0]['body_html'] = '<p>Later wording</p>'
     body = mod.EstimateSigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]])
     mod.sign_estimate(version, body, access, db)
+    data['estimate']['price'] = 999
+    data['documents'][0]['body_html'] = '<p>Later wording</p>'
     record = db.get(EstimateSignature, version)
     saved_pdf = record.pdf
     assert json.loads(saved_pdf)['estimate']['price'] == 100
@@ -59,6 +59,21 @@ def test_signature_preserves_reviewed_version_and_cannot_be_overwritten(portal, 
         with pytest.raises(HTTPException) as error:
             mod.signature_pdf(version, other, db)
         assert error.value.status_code == 404
+
+
+def test_cannot_sign_estimate_changed_since_opening(portal, monkeypatch):
+    import estimate_pdf
+    from models import EstimateSignature
+    mod, db, lead, access = portal
+    data = {'estimate': {'price': 100, 'charges': []}, 'pickup': 'Original pickup'}
+    monkeypatch.setattr(mod, '_estimate_document', lambda *args: (data, []))
+    monkeypatch.setattr(estimate_pdf, 'build_estimate_pdf', lambda *args: b'pdf')
+    version = mod.prepare_estimate_signature(access, db)['id']
+    data['pickup'] = 'Changed through API'
+    with pytest.raises(HTTPException) as error:
+        mod.sign_estimate(version, mod.EstimateSigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]]), access, db)
+    assert error.value.status_code == 409
+    assert db.get(EstimateSignature, version).signed_at is None
 
 
 @pytest.mark.parametrize('strokes', [[], [[]], [[(.1, .1)]], [[(.1, .1), (.1, .1)]],
@@ -105,6 +120,47 @@ def test_signature_records_report_and_appears_on_that_report_row(portal, monkeyp
     assert reports[1]['signatures'] == [{'id': 'legacy', 'name': 'Jane', 'signed_at': '2026-01-01T00:00:00Z'}]
     assert reports[2]['signatures'] == []
     assert mod.list_estimate_signatures(access, db)['items'][0]['report_id'] == 'report-2'
+
+@pytest.mark.parametrize('field', [
+    'estimate', 'storage', 'stairs', 'elevator', 'long_carry', 'shuttle',
+    'extra_stops', 'packing_package', 'packing_items', 'item_questions',
+    'name', 'phone', 'email', 'move_date', 'pickup', 'delivery', 'stops',
+    'company_details', 'item_services', 'documents',
+])
+def test_signed_estimate_changes_require_new_signature(portal, field):
+    from datetime import datetime
+    from models import EstimateSignature
+    from estimate_signature_history import estimate_requires_signature
+    _, db, lead, access = portal
+    data = {'spark': {'id': 'report-1'}, field: 'original'}
+    db.add(EstimateSignature(id='comparison', lead_id=lead.id, job_id=access.job_id,
+                            report_id='report-1', pdf=b'original', signer_name='Jane',
+                            snapshot=json.dumps({'data': data, 'rows': []}), signed_at=datetime(2026, 10, 21)))
+    db.commit()
+    assert not estimate_requires_signature(db, lead.id, access.job_id, 'report-1', data, [])
+    assert estimate_requires_signature(db, lead.id, access.job_id, 'report-1', {**data, field: 'changed'}, [])
+    assert db.get(EstimateSignature, 'comparison').pdf == b'original'
+
+
+def test_signature_detects_inventory_edits_and_new_reports_without_price_change(portal):
+    from datetime import datetime
+    from models import EstimateSignature
+    from estimate_signature_history import estimate_requires_signature
+    _, db, lead, access = portal
+    data = {'spark': {'id': 'report-1'}, 'estimate': {'price': '100'}}
+    rows = [{'name': 'Chair', 'amount': 1, 'cuft': 10}]
+    db.add(EstimateSignature(id='comparison', lead_id=lead.id, job_id=access.job_id,
+                            report_id='report-1', pdf=b'original', signer_name='Jane',
+                            snapshot=json.dumps({'data': data, 'rows': rows}), signed_at=datetime(2026, 10, 21)))
+    db.commit()
+    check = lambda report, inventory, pending=False: estimate_requires_signature(
+        db, lead.id, access.job_id, report, data, inventory, pending)
+    assert not check('report-1', [{'name': 'Chair', 'amount': 1.0, 'cuft': 10.0}])
+    assert check('report-1', [{'name': 'Table', 'amount': 1, 'cuft': 10}])
+    assert check('report-1', rows, True)
+    # Regenerating identical contents does not invalidate a signature.
+    assert not check('report-2', rows)
+
 
 def test_staff_report_history_lists_signatures_and_serves_only_signed_pdfs(portal):
     import ast

@@ -45,6 +45,9 @@ type Details = {
   inventory_draft?: { body: { rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number }[] }[] }; rooms: { name: string; items: { name: string; amount: number; cuft: number }[] }[]; rows: unknown[]; cuft: number };
   combined_inventory?: {name:string;room?:string;amount?:number;quantity?:number;cuft?:number;unit_cuft?:number;reference_name?:string}[];
   report_history?: ReportRun[];
+  signature_status?: 'unsigned' | 'signed' | 'changed';
+  signature_requires_resign?: boolean;
+  estimate_needs_update?: boolean;
   new_file_count?: number;
   editable_files?: EditableReportFile[];
   files_changed?: boolean;
@@ -589,8 +592,8 @@ export default function CustomerMovePage() {
   // Show a signature on its report row as soon as the estimate viewer closes.
   async function refreshReportHistory() {
     try {
-      const next = await call('/sections/inventory');
-      setData(previous => previous ? {...previous, report_history: next.report_history} : previous);
+      const [next, history] = await Promise.all([call('/sections/pricing'), call('/sections/inventory')]);
+      setData(previous => previous ? {...previous, report_history: history.report_history, signature_status: next.signature_status, signature_requires_resign: next.signature_requires_resign} : previous);
     } catch { /* The history refreshes with the next page load. */ }
   }
   async function call(path:string, body?:unknown, method?:string) {
@@ -867,6 +870,8 @@ export default function CustomerMovePage() {
       '--cm-text-muted': `hsl(${h}, ${Math.min(25, Math.round(s * 0.35))}%, 38%)`,
     } as React.CSSProperties;
   }, [themeColor]);
+
+  const estimateNeedsSignature = data?.signature_status === 'unsigned' || data?.signature_status === 'changed';
 
   return (
     <div className="customer-move" style={paletteStyle}>
@@ -1265,7 +1270,9 @@ export default function CustomerMovePage() {
                   </button>
                   )}
                 {data.estimate && data.spark?.status === 'completed' && <>
-                <button type="button" className="cm-secondary-btn" disabled={pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : 'View estimate PDF'}</button>
+                <button type="button" className="cm-secondary-btn" disabled={pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : estimateNeedsSignature ? 'View and sign estimate' : 'View estimate PDF'}</button>
+                {estimateNeedsSignature && <div role="status" style={{ borderLeft: '3px solid var(--cm-primary)', padding: '8px 12px', color: 'var(--cm-text)', background: 'var(--cm-tint)', borderRadius: 4 }}><strong>Signature required</strong><div>This estimate is not signed. Please open it to review and sign.</div></div>}
+                {data.signature_status === 'signed' && <span role="status">Signed - current estimate</span>}
                 {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert" style={{ flexBasis: '100%', marginTop: 0 }}>{pdfError}</p>}
                 </>}
                 </div>
@@ -1273,7 +1280,8 @@ export default function CustomerMovePage() {
               {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
               {estimateViewerOpen && <EstimateViewer base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => { setEstimateViewerOpen(false); void refreshReportHistory(); }} />}
-              <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} fetchSignedPdf={fetchSignedPdf} />
+              {(data.estimate_needs_update || data.list_changed) && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}
+              <ReportHistory signatureStatus={data.signature_status} requiresResign={data.signature_status === 'changed'} reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} fetchSignedPdf={fetchSignedPdf} />
               {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}
               {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}
             </div>
@@ -1298,6 +1306,8 @@ export default function CustomerMovePage() {
             }} submitActions={async (requestId, edits, revision, reportId) => {
               const result = await call('/inventory/actions', {request_id:requestId, revision, report_id:reportId, ...edits}, 'PATCH');
               setCalculationError(''); setReportState('idle');
+              setData(previous => previous ? {...previous, estimate_needs_update: true, signature_status: undefined} : previous);
+              void refreshDetails(true, true);
               return result;
             }} onDone={async () => {
               await answerQueue.current;
