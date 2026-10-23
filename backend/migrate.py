@@ -24,6 +24,8 @@ def migrate() -> None:
         connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS set_name VARCHAR(200)'))
         from followup_tasks import install as install_followup_tasks
         install_followup_tasks(connection)
+        from smartmoving_task_migration import install as install_smartmoving_tasks
+        install_smartmoving_tasks(connection)
         from first_contact_state import install as install_first_contact
         install_first_contact(connection)
         # Clear the incorrectly backfilled queue once. The marker and delete

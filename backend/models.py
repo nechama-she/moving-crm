@@ -797,6 +797,7 @@ class Task(Base):
     __tablename__ = "tasks"
     __table_args__ = (
         Index('uq_tasks_followup', 'lead_id', 'automatic_key', unique=True),
+        Index('uq_tasks_smartmoving_followup', 'lead_id', 'smartmoving_followup_id', unique=True),
         Index('ix_tasks_pending_followup', 'due_at', 'lead_id',
               postgresql_where=text("automatic_key IS NOT NULL AND status <> 'done'")),
     )
@@ -808,6 +809,9 @@ class Task(Base):
     due_at = Column(DateTime(timezone=True))
     scheduled_start = Column(DateTime(timezone=True))
     automatic_key = Column(String(40))
+    smartmoving_followup_id = Column(String(36))
+    smartmoving_followup_type = Column(Integer)
+    smartmoving_assigned_to_id = Column(String(36))
     completed_at = Column(DateTime(timezone=True))
     completion_reason = Column(String(100))
     status = Column(String(20), nullable=False, default="open", index=True)
