@@ -452,7 +452,10 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
     task.status = 'open'
     task.scheduled_start = datetime.now(timezone.utc) + timedelta(minutes=30)
     db.commit()
-    assert scope['list_followup_calls'](**{**kwargs, 'category': 'due'})['items'] == []
+    # Other overdue tasks still keep this lead in the inclusive Due view.
+    result = scope['list_followup_calls'](**{**kwargs, 'category': 'due'})
+    assert [row['lead_id'] for row in result['items']] == ['lead']
+    assert result['counts']['due'] == 1
     lead.priority = 1
     db.commit()
     # Existing overdue tasks remain visible across priorities; the selected

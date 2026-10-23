@@ -162,8 +162,9 @@ def list_followup_calls(
     )
     pending = in_dates(pending)
     overdue = pending.filter(or_(Task.due_at < now, and_(or_(Lead.priority.is_(None), Lead.priority != 0), Task.due_at.is_(None), Task.due_date < now.date().isoformat()))).exists()
-    due = pending.filter(or_(and_(Task.scheduled_start <= now, Task.due_at >= now),
+    due_now = pending.filter(or_(and_(Task.scheduled_start <= now, Task.due_at >= now),
         and_(or_(Lead.priority.is_(None), Lead.priority != 0), Task.due_at.is_(None), Task.due_date == now.date().isoformat()))).exists()
+    due = or_(due_now, overdue)
     query = db.query(Lead).filter(pending.exists(), or_(Lead.priority.is_(None), Lead.priority != 0, and_(_open_sales_status_filter(), _exclude_mirit_company_filter())))
     priority_query = query
     if rep:
@@ -193,6 +194,9 @@ def list_followup_calls(
     if category != 'all':
         query = query.filter(due if category == 'due' else overdue)
     count = counts[category]
+    if category == 'due':
+        # Order before pagination so overdue-only leads follow all due-now leads.
+        query = query.order_by(due_now.desc())
     leads = query.options(*_queue_lead_options()).order_by(Lead.created_time.desc(), Lead.id).offset(offset).limit(limit).all()
     leads_by_id = {lead.id: lead for lead in leads}
     tasks_by_lead = {lead.id: [] for lead in leads}
