@@ -40,6 +40,24 @@ const TYPE_ICONS: Record<TaskType, string> = {
 
 const TYPE_OPTIONS: TaskType[] = ["call", "email", "text", "messenger", "instagram", "other"];
 
+const TASK_TIMES = Array.from({ length: 96 }, (_, index) =>
+  `${String(Math.floor(index / 4)).padStart(2, "0")}:${String((index % 4) * 15).padStart(2, "0")}`
+);
+
+function taskTimeLabel(value: string): string {
+  const [hour, minute] = value.split(":");
+  return `${Number(hour) % 12 || 12}:${minute} ${Number(hour) < 12 ? "AM" : "PM"}`;
+}
+
+function TaskTimeOptions({ value }: { value: string }) {
+  // Keep imported or previously saved times exact, even between quarter hours.
+  const times = value && !TASK_TIMES.includes(value) ? [...TASK_TIMES, value].sort() : TASK_TIMES;
+  return <>
+    <option value="">No time</option>
+    {times.map(time => <option key={time} value={time}>{taskTimeLabel(time)}</option>)}
+  </>;
+}
+
 const STATUS_LABELS: Record<string, string> = {
   open: "Open",
   in_progress: "In Progress",
@@ -286,7 +304,9 @@ export default function TasksPanel({ leadId, token }: Props) {
             </label>
             <label style={{ flex: 1, fontSize: 11, color: "#706e6b" }}>
               Due time (your timezone)
-              <input type="time" value={newDueTime} disabled={!newDueDate} onChange={(e) => setNewDueTime(e.target.value)} style={{ ...inputStyle, marginTop: 3 }} />
+              <select value={newDueTime} disabled={!newDueDate} onChange={(e) => setNewDueTime(e.target.value)} style={{ ...inputStyle, marginTop: 3 }}>
+                <TaskTimeOptions value={newDueTime} />
+              </select>
             </label>
           </div>
           <label style={{ display: "block", fontSize: 11, color: "#706e6b", marginTop: 8 }}>
@@ -462,7 +482,9 @@ export default function TasksPanel({ leadId, token }: Props) {
                   </label>
                   <label style={{ ...fieldLabel, flex: 1 }}>
                     Due time (your timezone)
-                    <input type="time" value={editDueTime} disabled={!editDueDate} onChange={(e) => setEditDueTime(e.target.value)} style={inputStyle} />
+                    <select value={editDueTime} disabled={!editDueDate} onChange={(e) => setEditDueTime(e.target.value)} style={inputStyle}>
+                      <TaskTimeOptions value={editDueTime} />
+                    </select>
                   </label>
                   <label style={{ ...fieldLabel, flex: 1 }}>
                     Status

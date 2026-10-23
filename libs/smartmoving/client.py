@@ -431,6 +431,21 @@ def download_opportunity_file(file_url: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def get_followups(opportunity_id: str) -> dict:
+    """Fetch the follow-ups for an opportunity."""
+    url = f"{SMARTMOVING_BASE_URL}/premium/opportunities/{opportunity_id}/followups"
+    try:
+        resp = _request(httpx.get, url, headers=_headers(), timeout=15)
+        resp.raise_for_status()
+        return {"data": resp.json()}
+    except httpx.HTTPError as exc:
+        response = getattr(exc, "response", None)
+        status = response.status_code if response is not None else None
+        return {"error": f"HTTP {status}: {str(exc)[:300]}"}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 def get_followup(opportunity_id: str, followup_id: str) -> dict:
     """Fetch one followup from SmartMoving.
 

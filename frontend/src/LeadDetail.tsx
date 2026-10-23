@@ -2263,6 +2263,7 @@ export default function LeadDetail() {
             }
             const updated = await res.json();
             setLead(updated);
+            setTaskRevision((revision) => revision + 1);
             setEditCompanyId(String(updated?.company_id || ""));
             await loadLeadJobs();
             if (activeJobTabId && activeJobTabId !== "__new__") {

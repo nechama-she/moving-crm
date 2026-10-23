@@ -4744,6 +4744,13 @@ def _refresh_lead_from_smartmoving(
         allow_dispatch_smartmoving_refresh=True,
         incoming_smartmoving_company=smartmoving_dispatch_company(db, opportunity),
     )
+    from smartmoving_followup_sync import sync as sync_smartmoving_followups
+    try:
+        followups_synced = sync_smartmoving_followups(db, lead)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if followups_synced:
+        publish_realtime_event({"type": "followup_tasks_changed", "lead_id": lead.id})
     sync_result = sync_smartmoving_files(lead, user, db, opportunity)
     request.state.audit_request_payload = {
         "smartmoving_id": smartmoving_id,
@@ -4752,6 +4759,7 @@ def _refresh_lead_from_smartmoving(
     }
     if isinstance(updated, dict):
         updated["smartmoving_document_links_synced"] = sync_result["created_links"]
+        updated["smartmoving_followup_tasks_synced"] = followups_synced
         updated["smartmoving_opportunity_files_saved"] = sync_result["created_s3_files"]
     return updated
 

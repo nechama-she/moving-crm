@@ -179,6 +179,55 @@ def test_new_lead_priority_still_rejects_invalid_values(new_lead_payload_model, 
         new_lead_payload_model.model_validate({'company_name': 'Movers', 'source': 'api', 'priority': priority})
 
 
+@pytest.mark.parametrize('priority', [0, None])
+def test_smartmoving_refresh_skips_followups_for_zero_and_unset(monkeypatch, priority):
+    import smartmoving_followup_sync as service
+    fetch = Mock()
+    monkeypatch.setattr(service, 'get_followups', fetch)
+    db = Mock()
+    assert service.sync(db, SimpleNamespace(priority=priority, smartmoving_id='sm-1')) == 0
+    fetch.assert_not_called()
+    assert db.mock_calls == []
+
+
+def test_smartmoving_refresh_upserts_remote_tasks(monkeypatch):
+    from unittest.mock import MagicMock
+    import smartmoving_followup_sync as service
+    remote = {'id': 'followup-1', 'type': 1, 'title': 'Discuss estimate',
+              'assignedToId': 'rep-1', 'dueDateTime': '2026-10-24T15:00:00Z',
+              'notes': 'Call after lunch', 'completed': False}
+    fetch = Mock(return_value={'data': [remote]})
+    monkeypatch.setattr(service, 'get_followups', fetch)
+    db = MagicMock()
+    lead = SimpleNamespace(priority=1, smartmoving_id='sm-1')
+    assert service.sync(db, lead) == 1
+    fetch.assert_called_once_with('sm-1')
+    statement, params = db.execute.call_args.args
+    assert 'ON CONFLICT (lead_id, smartmoving_followup_id) DO UPDATE' in str(statement)
+    assert 'l.priority IS NOT NULL AND l.priority <> 0' in str(statement)
+    assert params['note_id'] == 'followup-1'
+    assert params['title'] == 'Discuss estimate'
+    assert params['due_date_time_iso'] == remote['dueDateTime']
+    assert params['notes'] == 'Call after lunch'
+    assert params['completed'] is False
+    remote['completed'] = True
+    service.sync(db, lead)
+    assert db.execute.call_args.args[1]['note_id'] == 'followup-1'
+    assert db.execute.call_args.args[1]['completed'] is True
+    assert db.commit.call_count == 2
+
+
+@pytest.mark.parametrize('response', [{'error': 'HTTP 503'}, {'data': {}},
+                                     {'data': [{'id': 'bad'}]}])
+def test_smartmoving_refresh_failure_does_not_write_tasks(monkeypatch, response):
+    import smartmoving_followup_sync as service
+    monkeypatch.setattr(service, 'get_followups', Mock(return_value=response))
+    db = Mock()
+    with pytest.raises(ValueError, match='SmartMoving follow-up refresh'):
+        service.sync(db, SimpleNamespace(priority=2, smartmoving_id='sm-1'))
+    assert db.mock_calls == []
+
+
 
 @pytest.mark.parametrize('already_initialized', [False, True])
 def test_existing_communications_complete_initial_and_reconciled_tasks(task_queue, already_initialized):
