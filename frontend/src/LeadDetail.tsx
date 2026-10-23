@@ -1,4 +1,5 @@
 import LeadMeasurements from "./LeadMeasurements";
+import LeadSidePanel from './LeadSidePanel';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
@@ -343,11 +344,6 @@ export default function LeadDetail() {
   useEffect(() => {
     if (location.hash === '#tasks') setActiveTab('activity');
   }, [location.hash, leadId]);
-  useEffect(() => {
-    if (location.hash !== '#tasks' || loading || !lead || activeTab !== 'activity') return;
-    const frame = requestAnimationFrame(() => tasksSection.current?.scrollIntoView({ block: 'start' }));
-    return () => cancelAnimationFrame(frame);
-  }, [location.hash, leadId, loading, Boolean(lead), activeTab]);
   const [editingUser, setEditingUser] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
@@ -3633,8 +3629,9 @@ export default function LeadDetail() {
         renderSection("Other Info", [...META_FIELDS, ...otherFields])}
 
       {canViewLeadCommunications ? (
-        <div style={{ marginTop: 32, border: "1px solid #dddbda", borderRadius: 4, background: "#fff", overflow: "hidden" }}>
-          <div style={{ display: "flex", borderBottom: "1px solid #dddbda", background: "#f3f2f2" }}>
+        <>
+        <LeadSidePanel key={leadId} active={activeTab} onSelect={setActiveTab} tasksRequested={location.hash === '#tasks'}>
+          <div style={{ display: "none", borderBottom: "1px solid #dddbda", background: "#f3f2f2" }}>
             <button className="slds-button"
               onClick={() => setActiveTab("conversations")}
               style={{
@@ -3707,7 +3704,12 @@ export default function LeadDetail() {
               <LeadLogsPanel leadId={leadId!} token={token} />
             ) : null}
           </div>
-        </div>
+        </LeadSidePanel>
+        <section style={{ marginTop: 32, border: '1px solid #dddbda', borderRadius: 8, background: '#fff', padding: 16 }}>
+          <h2 style={{ margin: '0 0 16px', color: '#032d60', fontSize: 16 }}>Logs</h2>
+          <LeadLogsPanel leadId={leadId!} token={token} />
+        </section>
+        </>
       ) : null}
       </div>
     </div>

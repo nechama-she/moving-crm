@@ -1,0 +1,25 @@
+.lead-side-tools { position:fixed; right:12px; top:190px; z-index:50; }
+.lead-side-rail { display:flex; flex-direction:column; gap:8px; }
+.lead-side-rail button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; width:54px; height:62px; border:1px solid #cddded; border-radius:10px; color:#0b5cab; background:#fff; box-shadow:0 3px 12px #032d6014; cursor:pointer; font-size:10px; font-weight:600; }
+.lead-side-rail button:hover,.lead-side-rail button[aria-expanded=true] { background:#eaf4ff; border-color:#0176d3; }
+.lead-side-drawer { position:fixed; right:78px; top:78px; bottom:18px; width:min(680px,calc(100vw - 100px)); display:flex; flex-direction:column; background:#fff; border:1px solid #d8e3ef; border-radius:14px; box-shadow:0 14px 50px #032d6030; overflow:hidden; }
+.lead-side-drawer[hidden] { display:none; }
+.lead-side-drawer > header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; background:#f7faff; border-bottom:1px solid #e2eaf3; color:#032d60; }
+.lead-side-drawer small { display:block; color:#64748b; font-size:11px; margin-top:4px; }
+.lead-side-drawer > header button { display:grid; place-items:center; background:#fff; border:1px solid #d8e3ef; border-radius:6px; padding:7px; color:#0b5cab; cursor:pointer; }
+.lead-side-content { flex:1; min-height:0; min-width:0; overflow:auto; overscroll-behavior:contain; padding:16px; overflow-wrap:anywhere; }
+.lead-side-content input,.lead-side-content select,.lead-side-content textarea { min-width:0; max-width:100%; }
+.lead-side-content img,.lead-side-content video { max-width:100%; }
+.lead-side-drawer { box-sizing:border-box; }
+.lead-side-tools button:focus-visible { outline:2px solid #0176d3; outline-offset:3px; }
+@media(max-width:700px) {
+  .lead-side-tools { right:max(8px,env(safe-area-inset-right)); top:140px; }
+  .lead-side-rail button { width:44px; height:52px; }
+  .lead-side-drawer { inset:0; width:100%; height:100dvh; bottom:auto; border-radius:0; z-index:1; padding-top:env(safe-area-inset-top); }
+  .lead-side-drawer > header { padding:12px 16px; flex-shrink:0; }
+  .lead-side-drawer > header button { min-width:44px; min-height:44px; }
+  .lead-side-content { padding:8px 8px calc(12px + env(safe-area-inset-bottom)); }
+  .lead-side-content > div { padding:0 !important; }
+  .lead-side-content label { min-width:0; }
+}
+@media(max-height:500px) and (min-width:701px) { .lead-side-tools { top:90px; } .lead-side-drawer { top:8px; bottom:8px; } }
