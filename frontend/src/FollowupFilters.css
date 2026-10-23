@@ -1,0 +1,12 @@
+.followup-filters { margin-top: 18px; }
+.followup-priorities { display:flex; gap:6px; flex-wrap:wrap; }
+.followup-priorities .slds-button { border:1px solid #d8e3f0; border-radius:18px; padding:7px 14px; background:#f6f9fd; color:#032d60; }
+.followup-priorities .slds-button[aria-pressed=true] { background:#0176d3; border-color:#0176d3; color:#fff; }
+.followup-priority-description { color:#64748b; font-size:13px; margin:8px 0 14px; }
+.followup-calendar { display:flex; align-items:center; flex-wrap:wrap; gap:14px; padding:14px 16px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; color:#032d60; }
+.followup-calendar label { display:grid; gap:4px; font-size:12px; font-weight:600; }
+.followup-calendar input { border:1px solid #cbd5e1; border-radius:6px; padding:8px 10px; background:#fff; color:#032d60; font:inherit; min-height:38px; }
+.followup-date-shortcuts { display:flex; flex-wrap:wrap; gap:6px; margin-left:auto; }
+.followup-date-shortcuts .slds-button { background:#fff; border:1px solid #d8e3f0; border-radius:6px; }
+.followup-filters button:focus-visible, .followup-calendar input:focus-visible { outline:2px solid #0176d3; outline-offset:2px; }
+@media(max-width:600px) { .followup-date-shortcuts { margin-left:0; width:100%; } }

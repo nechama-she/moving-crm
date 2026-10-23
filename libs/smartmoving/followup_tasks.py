@@ -15,6 +15,7 @@ SELECT CAST(CAST(md5(l.id || ':' || :note_id) AS uuid) AS text), l.id,
        :note_id, :followup_type, :assigned_to_id, COALESCE(CAST(:created_at AS timestamptz), now()), now()
 FROM leads l LEFT JOIN companies c ON c.id = l.company_id
 WHERE l.smartmoving_id = :smartmoving_id
+  AND l.priority IS NOT NULL AND l.priority <> 0
 ON CONFLICT (lead_id, smartmoving_followup_id) DO UPDATE SET
     title = EXCLUDED.title, due_date = EXCLUDED.due_date, due_at = EXCLUDED.due_at,
     scheduled_start = EXCLUDED.scheduled_start, status = EXCLUDED.status,

@@ -305,9 +305,9 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
         if node.name == 'list_followup_calls':
             node.args.defaults = [ast.Constant(None) for _ in node.args.defaults]
     ast.fix_missing_locations(tree)
-    from sqlalchemy import func, or_
+    from sqlalchemy import func, or_, and_, cast, String
     scope = dict(Lead=Lead, Company=Company, User=User, Session=Session, Load=Load, joinedload=joinedload,
-                 datetime=datetime, timezone=timezone, func=func, or_=or_,
+                 datetime=datetime, timezone=timezone, func=func, or_=or_, and_=and_, cast=cast, String=String,
                  OPEN_SALES_STATUSES=('new', 'contacted', 'quoted'), MIRIT_COMPANY_NAME='mirit great american')
     exec(compile(tree, str(source), 'exec'), scope)
     kwargs = dict(category='overdue', rep='', company='', refresh=False, limit=50, offset=0, _=None, db=db)
@@ -315,6 +315,29 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
     assert [row['lead_id'] for row in result['items']] == ['lead']
     assert result['items'][0]['smartmoving_id'] == 'sm-1'
     assert scope['list_followup_calls'](**{**kwargs, 'company': 'Other'})['items'] == []
+    # Date filtering selects zero-priority leads without trimming their original schedule.
+    from followup_tasks import lead_row
+    tasks = db.query(Task).filter_by(lead_id=lead.id).all()
+    day = tasks[0].due_date
+    dated = scope['list_followup_calls'](**{**kwargs, 'category': 'all', 'priority': '0', 'date_from': day, 'date_to': day})
+    assert len(dated['items']) == 1
+    assert dated['items'][0]['timeline'] == lead_row(lead, tasks, datetime.now(timezone.utc))['timeline']
+    # Nonzero and unset priorities expose saved tasks without automatic-task generation.
+    future = datetime.now(timezone.utc) + timedelta(days=30)
+    manual = Task(lead_id=lead.id, title='Discuss estimate', task_type='other', status='open',
+                  notes='Customer requested a call', due_date=future.date().isoformat(), due_at=future)
+    db.add(manual)
+    for priority_value, tab in [(2, '2'), (None, 'none')]:
+        lead.priority = priority_value
+        db.commit()
+        result = scope['list_followup_calls'](**{**kwargs, 'category': 'all', 'priority': tab,
+            'date_from': future.date().isoformat(), 'date_to': future.date().isoformat()})
+        assert [row['lead_id'] for row in result['items']] == ['lead']
+        assert result['items'][0]['timeline'][0]['label'] == 'Discuss estimate'
+    db.delete(manual)
+    lead.priority = 0
+    db.commit()
+
     task = db.query(Task).filter_by(task_type='call').first()
     task.due_at = datetime.now(timezone.utc) + timedelta(hours=1)
     db.commit()

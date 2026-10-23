@@ -15,7 +15,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, or_, cast, String
 from sqlalchemy.orm import Load, Session, joinedload
 
 from auth import require_admin
@@ -114,9 +114,9 @@ def queue_summary(_: User = Depends(require_admin), db: Session = Depends(get_db
     overdue_task = Task.due_at < followup_now
     due_task = and_(Task.scheduled_start <= followup_now, Task.due_at >= followup_now)
     followup_query = db.query(func.count(func.distinct(Task.lead_id))).join(Lead, Lead.id == Task.lead_id).filter(
-        Task.automatic_key.isnot(None), Task.status != 'done', or_(overdue_task, due_task),
-        Lead.priority == 0,
-        _open_sales_status_filter(), _exclude_mirit_company_filter())
+        Task.status != 'done', or_(
+            and_(Lead.priority == 0, Task.automatic_key.isnot(None), _open_sales_status_filter(), _exclude_mirit_company_filter()),
+            and_(Lead.priority.is_(None), Task.smartmoving_followup_id.is_(None)), Lead.priority != 0))
     followups = followup_query.scalar()
     overdue_followups = followup_query.filter(overdue_task).scalar()
     return {"enabled": False, "ready": False,
@@ -132,18 +132,43 @@ def list_followup_calls(
     rep: str = Query(""), company: str = Query(""),
     refresh: bool = Query(False), limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    priority: str | None = None, date_from: str | None = None, date_to: str | None = None,
     _: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     from models import Task
-    from followup_tasks import lead_row
+    from followup_task_rows import calendar_lead_row
     now = datetime.now(timezone.utc)
+    if priority not in (None, 'all', 'none') and (not priority.isdigit() or int(priority) > 99):
+        raise HTTPException(400, 'Invalid priority')
+    if date_from or date_to:
+        try:
+            start_date = datetime.strptime(date_from or date_to, '%Y-%m-%d').date()
+            end_date = datetime.strptime(date_to or date_from, '%Y-%m-%d').date()
+        except ValueError:
+            raise HTTPException(400, 'Enter valid start and end dates')
+        if end_date < start_date:
+            raise HTTPException(400, 'End date must not precede start date')
+    def in_dates(query):
+        if date_from or date_to:
+            day = func.coalesce(Task.due_date, func.substr(cast(Task.due_at, String), 1, 10))
+            query = query.filter(day >= start_date.isoformat(), day <= end_date.isoformat())
+        return query
+    allowed_task = or_(
+        and_(Lead.priority == 0, Task.automatic_key.isnot(None)),
+        and_(Lead.priority.is_(None), Task.smartmoving_followup_id.is_(None)),
+        Lead.priority != 0)
     pending = db.query(Task.lead_id).filter(
-        Task.lead_id == Lead.id, Task.automatic_key.isnot(None), Task.status != 'done',
+        Task.lead_id == Lead.id, allowed_task, Task.status != 'done',
     )
-    overdue = pending.filter(Task.due_at < now).exists()
-    due = pending.filter(Task.scheduled_start <= now, Task.due_at >= now).exists()
-    query = db.query(Lead).filter(or_(overdue, due), Lead.priority == 0,
-        _open_sales_status_filter(), _exclude_mirit_company_filter())
+    pending = in_dates(pending)
+    overdue = pending.filter(or_(Task.due_at < now, and_(or_(Lead.priority.is_(None), Lead.priority != 0), Task.due_at.is_(None), Task.due_date < now.date().isoformat()))).exists()
+    due = pending.filter(or_(and_(Task.scheduled_start <= now, Task.due_at >= now),
+        and_(or_(Lead.priority.is_(None), Lead.priority != 0), Task.due_at.is_(None), Task.due_date == now.date().isoformat()))).exists()
+    query = db.query(Lead).filter(pending.exists(), or_(Lead.priority.is_(None), Lead.priority != 0, and_(_open_sales_status_filter(), _exclude_mirit_company_filter())))
+    if priority == 'none':
+        query = query.filter(Lead.priority.is_(None))
+    elif priority not in (None, 'all'):
+        query = query.filter(Lead.priority == int(priority))
     def counts_for(rows):
         return {'all': rows.count(), 'overdue': rows.filter(overdue).count(),
                 'due': rows.filter(due).count()}
@@ -159,11 +184,18 @@ def list_followup_calls(
         query = query.filter(due if category == 'due' else overdue)
     count = counts[category]
     leads = query.options(*_queue_lead_options()).order_by(Lead.created_time.desc(), Lead.id).offset(offset).limit(limit).all()
+    leads_by_id = {lead.id: lead for lead in leads}
     tasks_by_lead = {lead.id: [] for lead in leads}
     if leads:
-        for task in db.query(Task).filter(Task.lead_id.in_(tasks_by_lead), Task.automatic_key.isnot(None)).all():
+        for task in db.query(Task).join(Lead, Lead.id == Task.lead_id).filter(Task.lead_id.in_(tasks_by_lead), allowed_task).all():
+            # Priority zero keeps its original complete schedule; only lead selection is date-filtered.
+            lead = leads_by_id[task.lead_id]
+            if lead.priority != 0 and (date_from or date_to):
+                day = task.due_date or (task.due_at.date().isoformat() if task.due_at else '')
+                if not start_date.isoformat() <= day <= end_date.isoformat():
+                    continue
             tasks_by_lead[task.lead_id].append(task)
-    return _with_smartmoving_links({'items': [lead_row(lead, tasks_by_lead[lead.id], now) for lead in leads],
+    return _with_smartmoving_links({'items': [calendar_lead_row(lead, tasks_by_lead[lead.id], now) for lead in leads],
             'counts': counts, 'global_counts': global_counts,
             'filter_options': {'reps': reps, 'companies': companies}, 'has_more': offset + len(leads) < count}, db)
 
@@ -175,8 +207,9 @@ def refresh_saved_followups(lead_id: str, _: User = Depends(require_admin), db: 
     lead = db.get(Lead, lead_id)
     if lead is None:
         raise HTTPException(404, "Lead not found")
-    sync(db, lead, reconcile=True)
-    db.commit()
+    if lead.priority == 0:
+        sync(db, lead, reconcile=True)
+        db.commit()
     return {"lead_id": lead_id}
 
 
@@ -185,12 +218,13 @@ def export_followup_calls(
     category: str = Query("all", pattern="^(all|due|overdue)$"),
     rep: str = Query(""), company: str = Query(""),
     prepare: bool = Query(False),
+    priority: str | None = None, date_from: str | None = None, date_to: str | None = None,
     _: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     from followup_export import workbook_bytes
     # Export the same filtered, saved tasks as the overdue view.
     result = list_followup_calls(category=category, rep=rep, company=company,
-                                 refresh=False, limit=2**31-1, offset=0, _=_, db=db)
+                                 refresh=False, limit=2**31-1, offset=0, priority=priority, date_from=date_from, date_to=date_to, _=_, db=db)
     leads = {lead.id: lead for lead in db.query(Lead).filter(
         Lead.id.in_([row["lead_id"] for row in result["items"]])).all()}
     if prepare:
