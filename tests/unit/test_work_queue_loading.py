@@ -406,7 +406,12 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
     assert scope['list_followup_calls'](**{**kwargs, 'category': 'due'})['items'] == []
     lead.priority = 1
     db.commit()
-    assert scope['list_followup_calls'](**kwargs)['items'] == []
+    # Existing overdue tasks remain visible across priorities; the selected
+    # priority tab determines whether this lead is included.
+    for tab in ['all', '1']:
+        result = scope['list_followup_calls'](**{**kwargs, 'priority': tab})
+        assert [row['lead_id'] for row in result['items']] == ['lead']
+    assert scope['list_followup_calls'](**{**kwargs, 'priority': '0'})['items'] == []
     replay.assert_not_called()
 
 
