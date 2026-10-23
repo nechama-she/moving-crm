@@ -1152,7 +1152,7 @@ export default function UnansweredMessagesPage() {
         <div ref={leadLoadSentinel} style={{ minHeight: 1, padding: loadingLeads && firstContactLeads.length ? 14 : 0, color: "#64748b", textAlign: "center" }}>{loadingLeads && firstContactLeads.length ? "Loading more leads…" : null}</div>
       </section> : null}
 
-      {queueTab === "followups" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+      {queueTab === "followups" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "visible" }}>
         <div style={{ padding: "16px 18px 0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button><button type="button" className="slds-button" disabled={loadingFollowups || exportingFollowups || validatingTab !== null} onClick={() => void validateCurrentTab(true)}>Refresh from CRM</button>{validationButton}</div></div>
           <FollowupFilters priority={followupPriority} from={followupFrom} to={followupTo} onPriority={setFollowupPriority} onDates={(from, to) => {setFollowupFrom(from); setFollowupTo(to);}} />
