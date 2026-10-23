@@ -541,6 +541,7 @@ export default function CustomerMovePage() {
     }
   }
   const [preparedEstimate, setPreparedEstimate] = useState('');
+  const [preparedSigned, setPreparedSigned] = useState(false);
   const [estimateViewerOpen, setEstimateViewerOpen] = useState(false);
   const [estimatePdfUrl, setEstimatePdfUrl] = useState('');
   async function openEstimate() {
@@ -558,6 +559,7 @@ export default function CustomerMovePage() {
     setEstimatePdfUrl('');
     setPdfBusy(true);
     setPreparedEstimate('');
+    setPreparedSigned(false);
     try {
       const mileage = await call('/mileage');
       await saveBrowserMileage(mileage.routes, data?.google_maps_browser_key || '', true);
@@ -571,6 +573,7 @@ export default function CustomerMovePage() {
       previews.current.push(url);
       setEstimatePdfUrl(url);
       setPreparedEstimate(prepared.id);
+      setPreparedSigned(prepared.signed === true);
       void refreshDetails(true);
     } catch (error) {
       const failure = error as Error & {detail?: {unanswered_questions?: string[]}};
@@ -1279,7 +1282,7 @@ export default function CustomerMovePage() {
               )}
               {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
-              {estimateViewerOpen && <EstimateViewer base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => { setEstimateViewerOpen(false); void refreshReportHistory(); }} />}
+              {estimateViewerOpen && <EstimateViewer alreadySigned={preparedSigned} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => { setEstimateViewerOpen(false); void refreshReportHistory(); }} />}
               {(data.estimate_needs_update || data.list_changed) && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}
               <ReportHistory signatureStatus={data.signature_status} requiresResign={data.signature_status === 'changed'} reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} fetchSignedPdf={fetchSignedPdf} />
               {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}

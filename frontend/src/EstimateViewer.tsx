@@ -2,17 +2,32 @@ import { useEffect, useRef, useState } from 'react';
 import EstimateSigning from './EstimateSigning';
 import './EstimateViewer.css';
 
-export default function EstimateViewer({ base, headers, customerName, version, url, error, onClose }: {
+export default function EstimateViewer({ base, headers, customerName, version, url, error, onClose, alreadySigned = false }: {
   base: string; headers: Record<string, string>; customerName: string; version: string;
   url: string; error: string; onClose: () => void;
+  alreadySigned?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [signing, setSigning] = useState(false);
-  const [signed, setSigned] = useState(false);
+  const [savedHere, setSigned] = useState(false);
+  const [cleared, setCleared] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const signed = (!cleared && alreadySigned) || savedHere;
   const [signedUrl, setSignedUrl] = useState('');
   const [loadError, setLoadError] = useState('');
   useEffect(() => { dialog.current?.showModal(); }, []);
   useEffect(() => () => { if (signedUrl) URL.revokeObjectURL(signedUrl); }, [signedUrl]);
+  async function resign() {
+    setClearing(true); setLoadError('');
+    try {
+      const response = await fetch(`${base}/estimate-signatures/${encodeURIComponent(version)}/resign`, { method: 'POST', headers, cache: 'no-store' });
+      if (!response.ok) throw new Error('Could not remove the signature. Please try Re-sign again.');
+      const pdf = await response.blob();
+      setSignedUrl(URL.createObjectURL(pdf));
+      setCleared(true); setSigned(false); setSigning(true);
+    } catch (e) { setLoadError((e as Error).message); }
+    finally { setClearing(false); }
+  }
   async function showSigned(id: string) {
     setSigned(true); setSigning(false); setLoadError('');
     try {
@@ -21,19 +36,20 @@ export default function EstimateViewer({ base, headers, customerName, version, u
       setSignedUrl(URL.createObjectURL(await response.blob()));
     } catch (e) { setLoadError((e as Error).message); }
   }
-  return <dialog ref={dialog} className="estimate-viewer" aria-labelledby="estimate-viewer-title" onCancel={e => { e.preventDefault(); if (!signing) onClose(); }}>
+  return <dialog ref={dialog} className="estimate-viewer" aria-labelledby="estimate-viewer-title" onCancel={e => { e.preventDefault(); if (!signing && !clearing) onClose(); }}>
     <header className="estimate-viewer-header">
       <div><h2 id="estimate-viewer-title">Your estimate</h2><p>{signed ? 'Your signature has been saved.' : 'Review your estimate, then sign here.'}</p></div>
       <div className="estimate-viewer-actions">
+        {url && version && signed && <button className="cm-secondary-btn" disabled={clearing} onClick={() => void resign()} title="Remove the saved signature and sign this estimate again">{clearing ? 'Removing signature...' : 'Re-sign'}</button>}
         {url && version && !signed && <button className="cm-primary" onClick={() => setSigning(true)}>Sign estimate</button>}
-        {(signedUrl || (!signed && url)) && <a className="cm-secondary-btn" href={signedUrl || url} download={signed ? 'signed-estimate.pdf' : 'estimate.pdf'}>Download PDF</a>}
-        <button className="cm-secondary-btn" disabled={signing} onClick={onClose} aria-label="Close estimate">Close</button>
+        {(signedUrl || ((!signed || alreadySigned) && url)) && <a className="cm-secondary-btn" href={signedUrl || url} download={signed ? 'signed-estimate.pdf' : 'estimate.pdf'}>Download PDF</a>}
+        <button className="cm-secondary-btn" disabled={signing || clearing} onClick={onClose} aria-label="Close estimate">Close</button>
       </div>
     </header>
     {error && <p role="alert">{error}</p>}
     {loadError && <p role="alert">{loadError} <button className="cm-secondary-btn" onClick={() => void showSigned(version)}>Retry signed PDF</button></p>}
     <div className="estimate-viewer-content">
-      {url ? <iframe title={signedUrl ? 'Signed estimate PDF' : 'Estimate PDF'} src={signedUrl || url} /> : !error && <p role="status">Preparing your latest estimate...</p>}
+      {url ? <iframe title={signed ? 'Signed estimate PDF' : 'Estimate PDF'} src={signedUrl || url} /> : !error && <p role="status">Preparing your latest estimate...</p>}
       {signing && <aside><EstimateSigning base={base} headers={headers} customerName={customerName} disabled={false} version={version} hideHistory onClose={() => setSigning(false)} onSigned={id => void showSigned(id)} /></aside>}
     </div>
   </dialog>;

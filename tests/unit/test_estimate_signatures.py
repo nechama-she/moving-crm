@@ -43,6 +43,7 @@ def test_signature_preserves_reviewed_version_and_cannot_be_overwritten(portal, 
     version = mod.prepare_estimate_signature(access, db)['id']
     body = mod.EstimateSigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]])
     mod.sign_estimate(version, body, access, db)
+    assert mod.prepare_estimate_signature(access, db) == {'id': version, 'signed': True}
     data['estimate']['price'] = 999
     data['documents'][0]['body_html'] = '<p>Later wording</p>'
     record = db.get(EstimateSignature, version)
@@ -53,12 +54,34 @@ def test_signature_preserves_reviewed_version_and_cannot_be_overwritten(portal, 
     mod.sign_estimate(version, body.model_copy(update={'name': 'Changed'}), access, db)
     assert record.pdf == saved_pdf
     assert record.signer_name == 'Jane'
+    updated = mod.prepare_estimate_signature(access, db)
+    assert updated['id'] != version
+    assert updated['signed'] is False
     assert mod.list_estimate_signatures(access, db)['items'][0]['id'] == version
     for other in [SimpleNamespace(lead_id='another', job_id=access.job_id),
                   SimpleNamespace(lead_id=access.lead_id, job_id='another')]:
         with pytest.raises(HTTPException) as error:
             mod.signature_pdf(version, other, db)
         assert error.value.status_code == 404
+
+
+def test_resign_removes_signature_from_saved_pdf(portal, monkeypatch):
+    import estimate_pdf
+    from models import EstimateSignature
+    mod, db, lead, access = portal
+    data = {'estimate': {'price': 100, 'charges': []}}
+    monkeypatch.setattr(mod, '_estimate_document', lambda *args: (data, []))
+    monkeypatch.setattr(estimate_pdf, 'build_estimate_pdf', lambda snapshot, rows: json.dumps(snapshot).encode())
+    version = mod.prepare_estimate_signature(access, db)['id']
+    body = mod.EstimateSigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]])
+    mod.sign_estimate(version, body, access, db)
+    response = mod.clear_estimate_signature(version, access, db)
+    record = db.get(EstimateSignature, version)
+    assert record.signed_at is None and record.signer_name is None and record.signature is None
+    assert 'signature' not in json.loads(response.body)
+    assert record.pdf == response.body
+    mod.sign_estimate(version, body.model_copy(update={'name': 'Jane New'}), access, db)
+    assert record.signer_name == 'Jane New'
 
 
 def test_cannot_sign_estimate_changed_since_opening(portal, monkeypatch):

@@ -946,13 +946,25 @@ def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db:
     pending = [c.get('name') or 'Unnamed charge' for c in data['estimate'].get('charges', []) if c.get('pending')]
     if pending:
         raise HTTPException(409, 'These charges still need calculation: ' + ', '.join(pending) + '.')
+    from estimate_signature_history import estimate_state
+    signed = db.query(EstimateSignature.id, EstimateSignature.snapshot).filter(
+        EstimateSignature.lead_id == access.lead_id, EstimateSignature.job_id == access.job_id,
+        EstimateSignature.signed_at.isnot(None),
+    ).order_by(EstimateSignature.signed_at.desc()).first()
+    if signed and not data.get('estimate_needs_update'):
+        try:
+            snapshot = json.loads(signed.snapshot)
+            if estimate_state(snapshot['data'], snapshot.get('rows', [])) == estimate_state(data, rows):
+                return {'id': signed.id, 'signed': True}
+        except (ValueError, KeyError, TypeError, AttributeError):
+            pass
     data['prepared_at'] = datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)')
     record = EstimateSignature(id=str(uuid4()), lead_id=access.lead_id, job_id=access.job_id,
         report_id=(data.get('spark') or {}).get('id'),
         snapshot=json.dumps(jsonable_encoder({'data': data, 'rows': rows})), pdf=build_estimate_pdf(data, rows))
     db.add(record)
     db.commit()
-    return {'id': record.id}
+    return {'id': record.id, 'signed': False}
 
 
 @router.get('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/pdf')
@@ -985,6 +997,20 @@ def sign_estimate(signature_id: str, body: EstimateSigningInput, access: PublicM
     record.signature = json.dumps(signature)
     db.commit()
     return {'id': record.id, 'signed_at': signed_at.isoformat() + 'Z'}
+
+
+@router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/resign')
+def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from estimate_pdf import build_estimate_pdf
+    record = _signature_record(signature_id, access, db, lock=True)
+    snapshot = json.loads(record.snapshot)
+    snapshot['data'].pop('signature', None)
+    pdf = build_estimate_pdf(snapshot['data'], snapshot['rows'])
+    record.snapshot = json.dumps(snapshot)
+    record.pdf = pdf
+    record.signer_name = record.signed_at = record.signature = None
+    db.commit()
+    return Response(pdf, media_type='application/pdf', headers={'Cache-Control': 'private, no-store'})
 
 
 @router.get('/api/public-moves/{access_id}/inventory-catalog')
