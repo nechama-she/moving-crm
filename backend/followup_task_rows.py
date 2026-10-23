@@ -2,6 +2,7 @@
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 from followup_tasks import lead_row, utc, followup_created_at
+from work_queue_rules import CALL_PERIODS
 
 
 def calendar_lead_row(lead, tasks, now):
@@ -17,7 +18,17 @@ def calendar_lead_row(lead, tasks, now):
     for task in tasks:
         end = utc(task.due_at) if task.due_at else datetime.combine(datetime.fromisoformat(task.due_date).date(), time.max, tz) if task.due_date else None
         start = utc(task.scheduled_start) if task.scheduled_start else end
+        period_start, period_end = start, end
+        if end and task.due_at:
+            local_due = end.astimezone(tz)
+            for _, start_hour, end_hour in CALL_PERIODS:
+                if start_hour <= local_due.hour < end_hour:
+                    period_start = local_due.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+                    period_end = local_due.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+                    break
         status = 'completed' if task.status == 'done' else 'overdue' if end and end < now else 'open' if start and start <= now else 'upcoming'
+        if task.status != 'done' and period_start and period_end:
+            status = 'open' if period_start <= now < period_end else 'overdue' if period_end <= now else 'upcoming'
         entries.append(dict(number=None, kind='call' if task.task_type == 'call' else 'message',
             label=task.title, notes=task.notes or '', task_type=task.task_type, period='', status=status,
             scheduled_start=start.isoformat() if start else '', scheduled_end=end.isoformat() if end else '',

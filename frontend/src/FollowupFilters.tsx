@@ -1,5 +1,7 @@
 import './FollowupFilters.css';
-import CalendarDateRange from './CalendarDateRange';
+import ReportControls from './ReportControls';
+import './ReportsPage.css';
+import { useState } from 'react';
 
 export const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const priorities = [
@@ -13,6 +15,9 @@ export default function FollowupFilters({ priority, from, to, onPriority, onDate
   priority: string; from: string; to: string; onPriority: (value: string) => void;
   onDates: (from: string, to: string) => void;
 }) {
+  const [rangeLabel, setRangeLabel] = useState('');
+  const displayDate = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const label = rangeLabel || (from === localDate() && to === from ? 'Today' : from === to ? displayDate(from) : `${displayDate(from)} - ${displayDate(to)}`);
   return <div className="followup-filters">
     <div className="followup-priorities" role="group" aria-label="Priority">
       {priorities.map(([value, label]) => <button key={value} type="button" className="slds-button" aria-pressed={priority === value} title={label} onClick={() => onPriority(value)}>
@@ -20,12 +25,11 @@ export default function FollowupFilters({ priority, from, to, onPriority, onDate
         {value !== 'all' && value !== '4' && <span className="followup-priority-label">{label}</span>}
       </button>)}
     </div>
-    <CalendarDateRange key={`${from}:${to}`} value={{ from, to }} month={new Date(`${from}T00:00:00`)} onChange={range => {
-      if (range) onDates(range.from, range.to);
-      else {
-        const month = new Date(`${from}T00:00:00`);
-        onDates(localDate(new Date(month.getFullYear(), month.getMonth(), 1)), localDate(new Date(month.getFullYear(), month.getMonth() + 1, 0)));
-      }
-    }} />
+    <div className="reports-page" style={{ padding: 0, margin: 0, maxWidth: 'none' }}>
+      <ReportControls datesOnly range={{ start: from, end: to, label }} companies={[]} reps={[]} options={{ companies: [], reps: [] }} onApply={range => {
+        setRangeLabel(range.label === 'Custom range' ? '' : range.label);
+        onDates(range.start, range.end);
+      }} />
+    </div>
   </div>;
 }

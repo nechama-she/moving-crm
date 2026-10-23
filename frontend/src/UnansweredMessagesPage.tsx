@@ -72,6 +72,21 @@ function IgnoreNumberTarget({ number, name, showUnknown = false, openMenu }: { n
   </div>;
 }
 
+function FollowupTaskItem({ task }: { task: FollowupAttempt }) {
+  const completed = task.status === 'completed';
+  const due = task.status === 'open';
+  const color = completed ? '#2e844a' : due ? '#0176d3' : task.status === 'overdue' ? '#b91c1c' : '#64748b';
+  const timestamp = completed ? task.completed_at : task.scheduled_end;
+  const date = timestamp ? new Date(timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  return <div style={{ padding: '5px 8px', borderLeft: `3px solid ${due ? color : 'transparent'}`, borderRadius: 4, background: due ? '#eef6ff' : undefined, fontSize: 12 }}>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', alignItems: 'baseline' }}>
+      <span>{task.label}</span>
+      <span style={{ color }}><strong>{completed ? 'Completed' : due ? 'Due now' : task.status === 'overdue' ? 'Overdue' : 'Upcoming'}</strong>{date ? ` - ${date}` : ''}</span>
+    </div>
+    <div style={{ color: '#64748b', marginTop: 3 }}><span style={{ textTransform: 'capitalize' }}>{task.task_type === 'text' ? 'Text message' : task.task_type || 'Other'}</span>{task.notes && <div style={{ whiteSpace: 'pre-wrap', marginTop: 3 }}>{task.notes}</div>}</div>
+  </div>;
+}
+
 function FollowupStatus({ attempt }: { attempt: FollowupAttempt }) {
   const due = attempt.status === "open";
   const color = due ? "#075bad" : attempt.status === "overdue" ? "#b91c1c" : attempt.status === "delayed" ? "#b45309" : attempt.status === "on_time" || attempt.status === "completed" ? "#2e844a" : "#64748b";
@@ -1148,7 +1163,7 @@ export default function UnansweredMessagesPage() {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
             <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>{smartMovingHeader}
-              {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Created', 'Call Follow-ups', followupPriority === '0' ? 'Message Follow-ups' : 'Other Tasks'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+              {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Created', followupPriority === '0' ? 'Call Follow-ups' : 'Pending tasks / calls', followupPriority === '0' ? 'Message Follow-ups' : 'Overdue / messages'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
             </tr></thead>
             <tbody>
               {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
@@ -1182,22 +1197,21 @@ export default function UnansweredMessagesPage() {
                     <td style={{ ...cell, textTransform: "capitalize" }}>{row.status || "—"}</td>
                     <td style={cell}>{row.priority ?? "—"}</td>
                     <td style={cell}>{new Date(row.created_at).toLocaleString()}{row.created_time_source === "crm" ? <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>CRM time</div> : null}</td>
-                    <td style={cell}><strong>{row.completed_count}/{row.priority === 0 ? 6 : row.attempts.length}</strong>{row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</td>
-                    <td style={cell}><strong>{row.completed_message_count || 0}/{row.priority === 0 ? 3 : row.message_attempts.length}</strong>{row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</td>
+                    <td style={cell}><strong>{row.priority === 0 ? `${row.completed_count}/6` : `${row.timeline.filter(task => task.status !== 'completed').length} pending`}</strong>{row.priority === 0 && row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</td>
+                    <td style={cell}><strong>{row.priority === 0 ? `${row.completed_message_count || 0}/3` : `${(row.overdue_count || 0) + (row.overdue_message_count || 0)} overdue`}</strong>{row.priority === 0 && row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</td>
                   </tr>
                   {expanded || row.priority !== 0 ? <tr>
                     <td colSpan={9} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
-                      {row.priority !== 0 ? <table style={{ width: "100%", borderCollapse: "collapse", background: "#fff", textAlign: "left" }}>
-                        <caption style={{ textAlign: "left", padding: "10px 14px", color: "#475569", fontSize: 12 }}>Tasks by due date, earliest first</caption>
-                        <thead><tr>{['Due date / time', 'Type', 'Task', 'Notes', 'Status'].map(label => <th key={label} style={{ padding: "10px 14px", borderBottom: "1px solid #d8dde6", color: "#475569", fontSize: 12 }}>{label}</th>)}</tr></thead>
-                        <tbody>{[...row.timeline].sort((a, b) => (a.scheduled_end ? Date.parse(a.scheduled_end) : Infinity) - (b.scheduled_end ? Date.parse(b.scheduled_end) : Infinity)).map((attempt, index) => <tr key={`${attempt.label}-${index}`}>
-                          <td style={{ padding: "12px 14px", borderBottom: "1px solid #eef0f3", whiteSpace: "nowrap" }}>{attempt.scheduled_end ? new Date(attempt.scheduled_end).toLocaleString() : 'No due date'}</td>
-                          <td style={{ padding: "12px 14px", borderBottom: "1px solid #eef0f3", textTransform: "capitalize" }}>{attempt.task_type === 'text' ? 'Text message' : attempt.task_type || (attempt.kind === 'call' ? 'Call' : 'Other')}</td>
-                          <td style={{ padding: "12px 14px", borderBottom: "1px solid #eef0f3", fontWeight: 600 }}>{attempt.label}</td>
-                          <td style={{ padding: "12px 14px", borderBottom: "1px solid #eef0f3", whiteSpace: "pre-wrap" }}>{attempt.notes || ''}</td>
-                          <td style={{ padding: "12px 14px", borderBottom: "1px solid #eef0f3", textTransform: "capitalize", color: attempt.status === 'overdue' ? '#b91c1c' : '#475569' }}>{attempt.status === 'upcoming' ? 'Scheduled' : attempt.status}</td>
-                        </tr>)}</tbody>
-                      </table> : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
+                      {row.priority !== 0 ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20, padding: 16, background: '#fff', border: '1px solid #d8dde6', borderRadius: 8 }}>
+                        {[false, true].map(completed => {
+                          const tasks = row.timeline.filter(task => (task.status === 'completed') === completed).sort((a, b) => (a.scheduled_end ? Date.parse(a.scheduled_end) : Infinity) - (b.scheduled_end ? Date.parse(b.scheduled_end) : Infinity));
+                          return <div key={String(completed)}>
+                            <h3 style={{ margin: '0 0 10px', color: '#032d60', fontSize: 14 }}>{completed ? 'Completed' : 'Not completed'}</h3>
+                            <div style={{ display: 'grid', gap: 7 }}>{tasks.map((task, index) => <FollowupTaskItem key={`${task.label}-${index}`} task={task} />)}</div>
+                            {!tasks.length && <p style={{ color: '#64748b', fontSize: 12 }}>{completed ? 'No completed tasks.' : 'No pending tasks.'}</p>}
+                          </div>;
+                        })}
+                      </div> : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
                         <div>
                           <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>Call Follow-ups</h3>
                           <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "call").map((attempt, activityIndex) => <FollowupStatus key={`call-${attempt.number || attempt.label}-${activityIndex}`} attempt={attempt} />)}</div>
