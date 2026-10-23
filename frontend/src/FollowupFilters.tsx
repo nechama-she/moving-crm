@@ -25,7 +25,7 @@ export default function FollowupFilters({ priority, from, to, onPriority, onDate
         {value !== 'all' && value !== '4' && <span className="followup-priority-label">{label}</span>}
       </button>)}
     </div>
-    <div className="reports-page" style={{ padding: 0, margin: 0, maxWidth: 'none' }}>
+    <div className="reports-page followup-date-control" style={{ padding: 0, margin: 0, maxWidth: 'none' }}>
       <ReportControls datesOnly range={{ start: from, end: to, label }} companies={[]} reps={[]} options={{ companies: [], reps: [] }} onApply={range => {
         setRangeLabel(range.label === 'Custom range' ? '' : range.label);
         onDates(range.start, range.end);

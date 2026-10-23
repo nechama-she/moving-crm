@@ -338,7 +338,16 @@ export default function LeadDetail() {
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<"conversations" | "activity" | "logs">("conversations");
+  const [activeTab, setActiveTab] = useState<"conversations" | "activity" | "logs">(() => location.hash === '#tasks' ? 'activity' : 'conversations');
+  const tasksSection = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (location.hash === '#tasks') setActiveTab('activity');
+  }, [location.hash, leadId]);
+  useEffect(() => {
+    if (location.hash !== '#tasks' || loading || !lead || activeTab !== 'activity') return;
+    const frame = requestAnimationFrame(() => tasksSection.current?.scrollIntoView({ block: 'start' }));
+    return () => cancelAnimationFrame(frame);
+  }, [location.hash, leadId, loading, Boolean(lead), activeTab]);
   const [editingUser, setEditingUser] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
@@ -3691,7 +3700,9 @@ export default function LeadDetail() {
                 <p style={{ color: "#706e6b", fontSize: 13 }}>No conversation available for this lead.</p>
               )
             ) : activeTab === "activity" ? (
-              <TasksPanel key={`${leadId}:${taskRevision}`} leadId={leadId!} token={token} />
+              <div id="tasks" ref={tasksSection} style={{ scrollMarginTop: 80 }}>
+                <TasksPanel key={`${leadId}:${taskRevision}`} leadId={leadId!} token={token} />
+              </div>
             ) : activeTab === "logs" ? (
               <LeadLogsPanel leadId={leadId!} token={token} />
             ) : null}

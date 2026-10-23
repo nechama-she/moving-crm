@@ -146,7 +146,7 @@ export default function UnansweredMessagesPage() {
   const [ignoringLead, setIgnoringLead] = useState<string | null>(null);
   const [reloadingContacts, setReloadingContacts] = useState(false);
   const contactReloadRunning = useRef(false);
-  const [followupTab, setFollowupTab] = useState<"all" | "overdue" | "due">("all");
+  const [followupTab, setFollowupTab] = useState<"overdue" | "due">("due");
   const [followupPriority, setFollowupPriority] = useState('all');
   const [followupFrom, setFollowupFrom] = useState(() => localDate());
   const [followupTo, setFollowupTo] = useState(() => localDate());
@@ -1157,7 +1157,7 @@ export default function UnansweredMessagesPage() {
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button><button type="button" className="slds-button" disabled={loadingFollowups || exportingFollowups || validatingTab !== null} onClick={() => void validateCurrentTab(true)}>Refresh from CRM</button>{validationButton}</div></div>
           <FollowupFilters priority={followupPriority} from={followupFrom} to={followupTo} onPriority={setFollowupPriority} onDates={(from, to) => {setFollowupFrom(from); setFollowupTo(to);}} />
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
-            {(["all", "due", "overdue"] as const).map(category => <button key={category} type="button" className="slds-button" aria-pressed={followupTab === category} onClick={() => setFollowupTab(category)} style={{ color: "#032d60", padding: "10px 14px", minHeight: 44, fontWeight: followupTab === category ? 700 : 400, border: "none", borderBottom: followupTab === category ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0 }}>{category === "all" ? "Scheduled" : category === "due" ? "Due" : "Overdue Items"} ({followupCounts[category] || 0})</button>)}
+            {(["due", "overdue"] as const).map(category => <button key={category} type="button" className="slds-button" aria-pressed={followupTab === category} onClick={() => setFollowupTab(category)} style={{ color: "#032d60", padding: "10px 14px", minHeight: 44, fontWeight: followupTab === category ? 700 : 400, border: "none", borderBottom: followupTab === category ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0 }}>{category === "due" ? "Due" : "Overdue Items"} ({followupCounts[category] || 0})</button>)}
           </div>
         </div>
         <div style={{ overflowX: "auto" }}>
@@ -1189,7 +1189,7 @@ export default function UnansweredMessagesPage() {
                     <td style={cell}>
                       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
                         {row.priority === 0 && <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ color: "#0b5cab", transform: expanded ? "rotate(90deg)" : undefined }}><path d="M5 3l6 5-6 5z" /></svg>}
-                        <div><Link onClick={(event) => event.stopPropagation()} to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</div>
+                        <div><Link onClick={(event) => event.stopPropagation()} to={`/leads/${row.lead_id}#tasks`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</div>
                       </div>
                     </td>
                     <td style={cell}>{row.rep || "—"}</td>
