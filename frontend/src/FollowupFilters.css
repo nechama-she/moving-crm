@@ -1,7 +1,8 @@
 .followup-filters { display:grid; grid-template-columns:1fr; gap:12px; margin-top:18px; padding:14px 0 8px; border-top:1px solid #eef1f6; }
 .followup-priorities { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; }
 .followup-priorities .slds-button { display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:4px; min-height:76px; padding:10px 14px; border:1px solid #d8e3f0; border-radius:8px; background:#f8fafd; color:#032d60; font-size:13px; line-height:18px; white-space:normal; text-align:left; margin:0; }
-.followup-priority-title { font-weight:600; }
+.followup-priority-title { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; font-weight:600; }
+.followup-priority-count { background:#e4edf8; color:#014486; border-radius:12px; min-width:26px; padding:1px 7px; text-align:center; font-size:12px; font-variant-numeric:tabular-nums; }
 .followup-priority-label { font-size:12px; font-weight:400; }
 .followup-priorities .slds-button:hover { background:#f1f6fc; color:#014486; }
 .followup-priorities .slds-button[aria-pressed=true] { background:#eaf4ff; border-color:#b8d8fa; color:#014486; box-shadow:inset 0 -2px #0176d3; }

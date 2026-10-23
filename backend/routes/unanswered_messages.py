@@ -165,6 +165,16 @@ def list_followup_calls(
     due = pending.filter(or_(and_(Task.scheduled_start <= now, Task.due_at >= now),
         and_(or_(Lead.priority.is_(None), Lead.priority != 0), Task.due_at.is_(None), Task.due_date == now.date().isoformat()))).exists()
     query = db.query(Lead).filter(pending.exists(), or_(Lead.priority.is_(None), Lead.priority != 0, and_(_open_sales_status_filter(), _exclude_mirit_company_filter())))
+    priority_query = query
+    if rep:
+        priority_query = priority_query.filter(Lead.assigned_to.is_(None)) if rep == 'Unassigned' else priority_query.filter(Lead.assignee.has(User.name == rep))
+    if company:
+        priority_query = priority_query.filter(Lead.company.has(Company.name == company))
+    if category != 'all':
+        priority_query = priority_query.filter(due if category == 'due' else overdue)
+    priority_counts = {str(value) if value is not None else 'none': total
+                      for value, total in priority_query.with_entities(Lead.priority, func.count(Lead.id)).group_by(Lead.priority).all()}
+    priority_counts['all'] = sum(priority_counts.values())
     if priority == 'none':
         query = query.filter(Lead.priority.is_(None))
     elif priority not in (None, 'all'):
@@ -196,7 +206,7 @@ def list_followup_calls(
                     continue
             tasks_by_lead[task.lead_id].append(task)
     return _with_smartmoving_links({'items': [calendar_lead_row(lead, tasks_by_lead[lead.id], now) for lead in leads],
-            'counts': counts, 'global_counts': global_counts,
+            'counts': counts, 'global_counts': global_counts, 'priority_counts': priority_counts,
             'filter_options': {'reps': reps, 'companies': companies}, 'has_more': offset + len(leads) < count}, db)
 
 
