@@ -461,6 +461,15 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
         result = scope['list_followup_calls'](**{**kwargs, 'priority': tab})
         assert [row['lead_id'] for row in result['items']] == ['lead']
     assert scope['list_followup_calls'](**{**kwargs, 'priority': '0'})['items'] == []
+    for category in ['all', 'due', 'overdue']:
+        result = scope['list_followup_calls'](**{**kwargs, 'category': category, 'priority': '1'})
+        assert result['priority_counts'] == {'1': 1, 'all': 1}
+    for saved_task in db.query(Task).filter_by(lead_id=lead.id).all():
+        saved_task.status = 'done'
+    db.commit()
+    result = scope['list_followup_calls'](**kwargs)
+    assert result['priority_counts'] == {'all': 0}
+    assert result['counts'] == {'all': 0, 'due': 0, 'overdue': 0}
     replay.assert_not_called()
 
 

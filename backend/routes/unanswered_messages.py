@@ -170,8 +170,8 @@ def list_followup_calls(
         priority_query = priority_query.filter(Lead.assigned_to.is_(None)) if rep == 'Unassigned' else priority_query.filter(Lead.assignee.has(User.name == rep))
     if company:
         priority_query = priority_query.filter(Lead.company.has(Company.name == company))
-    if category != 'all':
-        priority_query = priority_query.filter(due if category == 'due' else overdue)
+    # Priority badges count all pending leads in the date range, independent
+    # of the Due/Overdue subtab. Completed tasks never qualify a lead.
     priority_counts = {str(value) if value is not None else 'none': total
                       for value, total in priority_query.with_entities(Lead.priority, func.count(Lead.id)).group_by(Lead.priority).all()}
     priority_counts['all'] = sum(priority_counts.values())
