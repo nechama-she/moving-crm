@@ -132,6 +132,53 @@ def test_tasks_use_saved_priority_for_every_lead(task_queue, smartmoving_id, mon
     assert db.query(Task).count() == 9
 
 
+@pytest.fixture
+def new_lead_payload_model():
+    # Load the real request models without importing route-level AWS clients.
+    from typing import Any
+    from pydantic import BaseModel, ConfigDict, Field, field_validator
+    source = Path(__file__).resolve().parents[2] / 'backend/routes/leads.py'
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    names = {'NewLead', 'LeadJobChargePayload', 'EstimatedTotalPayload',
+             'LeadPaymentPayload', 'ExternalLeadUpdateLog',
+             'ExternalLeadUpdateLogRequest', 'ExternalLeadUpdateLogResponse'}
+    models = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name in names]
+    scope = dict(BaseModel=BaseModel, ConfigDict=ConfigDict, Field=Field,
+                 field_validator=field_validator, Any=Any)
+    exec(compile(ast.Module(body=models, type_ignores=[]), str(source), 'exec'), scope)
+    return scope['NewLead']
+
+
+@pytest.mark.parametrize('priority_fields,expected', [({}, 0), ({'priority': None}, 0),
+                                                    ({'priority': 0}, 0), ({'priority': 2}, 2)])
+def test_new_lead_priority_normalizes_before_persistence(task_queue, new_lead_payload_model,
+                                                       priority_fields, expected):
+    _, db, existing, _, _ = task_queue
+    body = new_lead_payload_model.model_validate({
+        'company_name': 'Movers', 'source': 'api', 'full_name': 'New client', **priority_fields})
+    assert body.priority == expected
+    # Use the same priority expression as the real creation handler.
+    source = Path(__file__).resolve().parents[2] / 'backend/routes/leads.py'
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    creation = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_create_lead')
+    constructor = next(node for node in ast.walk(creation) if isinstance(node, ast.Call)
+                       and isinstance(node.func, ast.Name) and node.func.id == 'Lead')
+    priority = next(keyword.value for keyword in constructor.keywords if keyword.arg == 'priority')
+    saved = Lead(id='new-client', company_id=existing.company_id, full_name=body.full_name,
+                 priority=eval(compile(ast.Expression(priority), str(source), 'eval'), {'body': body}))
+    db.add(saved)
+    db.commit()
+    db.refresh(saved)
+    assert saved.priority == expected
+
+
+@pytest.mark.parametrize('priority', [-1, 'invalid'])
+def test_new_lead_priority_still_rejects_invalid_values(new_lead_payload_model, priority):
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        new_lead_payload_model.model_validate({'company_name': 'Movers', 'source': 'api', 'priority': priority})
+
+
 
 @pytest.mark.parametrize('already_initialized', [False, True])
 def test_existing_communications_complete_initial_and_reconciled_tasks(task_queue, already_initialized):
@@ -322,18 +369,21 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
     dated = scope['list_followup_calls'](**{**kwargs, 'category': 'all', 'priority': '0', 'date_from': day, 'date_to': day})
     assert len(dated['items']) == 1
     assert dated['items'][0]['timeline'] == lead_row(lead, tasks, datetime.now(timezone.utc))['timeline']
-    # Nonzero and unset priorities expose saved tasks without automatic-task generation.
+    # Nonzero priorities expose saved tasks without automatic-task generation.
     future = datetime.now(timezone.utc) + timedelta(days=30)
     manual = Task(lead_id=lead.id, title='Discuss estimate', task_type='other', status='open',
                   notes='Customer requested a call', due_date=future.date().isoformat(), due_at=future)
     db.add(manual)
-    for priority_value, tab in [(2, '2'), (None, 'none')]:
-        lead.priority = priority_value
-        db.commit()
+    lead.priority = 2
+    db.commit()
+    for tab in ['2', 'all']:
         result = scope['list_followup_calls'](**{**kwargs, 'category': 'all', 'priority': tab,
             'date_from': future.date().isoformat(), 'date_to': future.date().isoformat()})
         assert [row['lead_id'] for row in result['items']] == ['lead']
         assert result['items'][0]['timeline'][0]['label'] == 'Discuss estimate'
+    # The model requires a priority; filtering for unset priorities must not
+    # require inserting invalid data or include a lead with a numeric priority.
+    assert scope['list_followup_calls'](**{**kwargs, 'category': 'all', 'priority': 'none'})['items'] == []
     db.delete(manual)
     lead.priority = 0
     db.commit()

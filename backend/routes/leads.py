@@ -20,7 +20,7 @@ from botocore.exceptions import ClientError
 from dateutil import parser as date_parser
 from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File, Request
 from fastapi.responses import Response, RedirectResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, cast, text, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
@@ -4902,6 +4902,11 @@ ALLOWED_LEAD_STATUSES = {
 
 class NewLead(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def default_missing_priority(cls, value):
+        return 0 if value is None else value
 
     full_name: str = ""
     email: str | None = None
