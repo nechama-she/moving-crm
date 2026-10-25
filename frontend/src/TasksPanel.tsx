@@ -71,6 +71,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 interface Props {
+  selectedTaskId?: string;
   leadId: string;
   token: string | null;
 }
@@ -123,7 +124,7 @@ function dateHeaderColor(key: string): string {
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────
-export default function TasksPanel({ leadId, token }: Props) {
+export default function TasksPanel({ leadId, token, selectedTaskId }: Props) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -155,6 +156,17 @@ export default function TasksPanel({ leadId, token }: Props) {
   }
 
   useEffect(() => { load(); }, [leadId]);
+  useEffect(() => {
+    if (loading || !selectedTaskId || !tasks.some(task => task.id === selectedTaskId)) return;
+    setExpandedId(selectedTaskId);
+    setCompletedCollapsed(false);
+    setCollapsedDates({});
+  }, [loading, selectedTaskId, leadId]);
+  useEffect(() => {
+    if (!selectedTaskId || expandedId !== selectedTaskId || loading) return;
+    const frame = requestAnimationFrame(() => document.getElementById(`task-${selectedTaskId}`)?.scrollIntoView({ block: 'nearest' }));
+    return () => cancelAnimationFrame(frame);
+  }, [selectedTaskId, expandedId, loading, completedCollapsed, collapsedDates]);
 
   async function addTask(e: FormEvent) {
     e.preventDefault();
@@ -421,7 +433,7 @@ export default function TasksPanel({ leadId, token }: Props) {
     const isEditing = editingId === task.id;
     const isOverdue = task.status !== "done" && (task.due_at ? Date.parse(task.due_at) < Date.now() : dateKey !== "No Due Date" && dateKey < todayISO());
     return (
-      <div key={task.id} style={taskRow(isExpanded)}>
+      <div id={`task-${task.id}`} key={task.id} style={taskRow(isExpanded)}>
         <div
           style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 16px", cursor: "pointer" }}
           onClick={() => { if (!isEditing) setExpandedId(isExpanded ? null : task.id); }}

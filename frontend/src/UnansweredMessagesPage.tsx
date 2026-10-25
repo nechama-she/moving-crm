@@ -26,7 +26,7 @@ type LeadTab = "new" | "overdue";
 type MessageRow = SmartMovingFields & { channel: string; message_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = SmartMovingFields & { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type FirstContactLead = SmartMovingFields & { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; created_at: string; age_minutes: number };
-type FollowupAttempt = { notes?: string; task_type?: string; number?: number; kind: "call" | "message"; label: string; period: string; scheduled_start: string; scheduled_end: string; completed_at: string; status: "completed" | "not_sent" | "on_time" | "delayed" | "overdue" | "open" | "upcoming" };
+type FollowupAttempt = { task_id?: string; notes?: string; task_type?: string; number?: number; kind: "call" | "message"; label: string; period: string; scheduled_start: string; scheduled_end: string; completed_at: string; status: "completed" | "not_sent" | "on_time" | "delayed" | "overdue" | "open" | "upcoming" };
 type FollowupLead = SmartMovingFields & { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; priority: number; created_at: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; message_attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
 type RawMessageState = SmartMovingFields & { channel: string; message_id: string; lead_id: string | null; client_identifier: string; company_identifier: string; direction: string; conversation_ended: boolean; occurred_at: string };
 type RawMissedCallState = SmartMovingFields & { client_identifier: string; company_identifier: string; call_id: string; lead_id: string | null; missed_count: number; first_missed_at: string; latest_missed_at: string };
@@ -72,7 +72,7 @@ function IgnoreNumberTarget({ number, name, showUnknown = false, openMenu }: { n
   </div>;
 }
 
-function FollowupTaskItem({ task }: { task: FollowupAttempt }) {
+function FollowupTaskItem({ task, leadId }: { task: FollowupAttempt; leadId: string }) {
   const completed = task.status === 'completed';
   const due = task.status === 'open';
   const color = completed ? '#2e844a' : due ? '#0176d3' : task.status === 'overdue' ? '#b91c1c' : '#64748b';
@@ -80,21 +80,21 @@ function FollowupTaskItem({ task }: { task: FollowupAttempt }) {
   const date = timestamp ? new Date(timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
   return <div style={{ padding: '5px 8px', borderLeft: `3px solid ${due ? color : 'transparent'}`, borderRadius: 4, background: due ? '#eef6ff' : undefined, fontSize: 12 }}>
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', alignItems: 'baseline' }}>
-      <span>{task.label}</span>
+      <Link onClick={event => event.stopPropagation()} to={`/leads/${leadId}${task.task_id ? `?task=${encodeURIComponent(task.task_id)}` : ''}#tasks`} target="_blank" rel="noopener noreferrer">{task.label}</Link>
       <span style={{ color }}><strong>{completed ? 'Completed' : due ? 'Due now' : task.status === 'overdue' ? 'Overdue' : 'Upcoming'}</strong>{date ? ` - ${date}` : ''}</span>
     </div>
     <div style={{ color: '#64748b', marginTop: 3 }}><span style={{ textTransform: 'capitalize' }}>{task.task_type === 'text' ? 'Text message' : task.task_type || 'Other'}</span>{task.notes && <div style={{ whiteSpace: 'pre-wrap', marginTop: 3 }}>{task.notes}</div>}</div>
   </div>;
 }
 
-function FollowupStatus({ attempt }: { attempt: FollowupAttempt }) {
+function FollowupStatus({ attempt, leadId }: { attempt: FollowupAttempt; leadId: string }) {
   const due = attempt.status === "open";
   const color = due ? "#075bad" : attempt.status === "overdue" ? "#b91c1c" : attempt.status === "delayed" ? "#b45309" : attempt.status === "on_time" || attempt.status === "completed" ? "#2e844a" : "#64748b";
   const label = attempt.status === "on_time" || attempt.status === "completed" ? "Completed" : attempt.status === "delayed" ? "Delayed" : attempt.status === "overdue" ? "Overdue" : attempt.status === "open" ? "Open" : attempt.status === "not_sent" ? "Not sent" : "Upcoming";
   const isCall = attempt.kind === "call";
   return <div style={{ display: "grid", gridTemplateColumns: isCall ? "22px 90px minmax(0, 1fr)" : "140px minmax(0, 1fr)", gap: 6, alignItems: "baseline", fontSize: 12, padding: "2px 6px", borderRadius: 4, background: due ? "#eef6ff" : undefined, borderLeft: due ? "3px solid #0176d3" : "3px solid transparent" }}>
     {isCall ? <strong>{attempt.number ? `${attempt.number}.` : ""}</strong> : null}
-    <span style={{ overflowWrap: "anywhere" }}>{attempt.label}</span>
+    <Link style={{ overflowWrap: "anywhere" }} onClick={event => event.stopPropagation()} to={`/leads/${leadId}${attempt.task_id ? `?task=${encodeURIComponent(attempt.task_id)}` : ''}#tasks`} target="_blank" rel="noopener noreferrer">{attempt.label}</Link>
     <span style={{ color }}><strong>{label}</strong>{attempt.completed_at ? ` - ${new Date(attempt.completed_at).toLocaleString()}` : ` - due by ${new Date(attempt.scheduled_end).toLocaleString()}`}</span>
     {attempt.notes && <div style={{gridColumn:"1 / -1", whiteSpace:"pre-wrap", color:"#64748b"}}>{attempt.notes}</div>}
   </div>;
@@ -1210,18 +1210,18 @@ export default function UnansweredMessagesPage() {
                           const tasks = row.timeline.filter(task => (task.status === 'completed') === completed).sort((a, b) => (a.scheduled_end ? Date.parse(a.scheduled_end) : Infinity) - (b.scheduled_end ? Date.parse(b.scheduled_end) : Infinity));
                           return <div key={String(completed)}>
                             <h3 style={{ margin: '0 0 10px', color: '#032d60', fontSize: 14 }}>{completed ? 'Completed' : 'Not completed'}</h3>
-                            <div style={{ display: 'grid', gap: 7 }}>{tasks.map((task, index) => <FollowupTaskItem key={`${task.label}-${index}`} task={task} />)}</div>
+                            <div style={{ display: 'grid', gap: 7 }}>{tasks.map((task, index) => <FollowupTaskItem key={`${task.label}-${index}`} task={task} leadId={row.lead_id} />)}</div>
                             {!tasks.length && <p style={{ color: '#64748b', fontSize: 12 }}>{completed ? 'No completed tasks.' : 'No pending tasks.'}</p>}
                           </div>;
                         })}
                       </div> : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
                         <div>
                           <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>Call Follow-ups</h3>
-                          <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "call").map((attempt, activityIndex) => <FollowupStatus key={`call-${attempt.number || attempt.label}-${activityIndex}`} attempt={attempt} />)}</div>
+                          <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "call").map((attempt, activityIndex) => <FollowupStatus key={`call-${attempt.number || attempt.label}-${activityIndex}`} attempt={attempt} leadId={row.lead_id} />)}</div>
                         </div>
                         <div>
                           <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>{row.priority === 0 ? "Message Follow-ups" : "Other Follow-up Tasks"}</h3>
-                          <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "message").map((attempt, activityIndex) => <FollowupStatus key={`message-${attempt.label}-${activityIndex}`} attempt={attempt} />)}</div>
+                          <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "message").map((attempt, activityIndex) => <FollowupStatus key={`message-${attempt.label}-${activityIndex}`} attempt={attempt} leadId={row.lead_id} />)}</div>
                         </div>
                       </div>}
                     </td>

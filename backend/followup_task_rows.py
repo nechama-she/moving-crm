@@ -29,7 +29,7 @@ def calendar_lead_row(lead, tasks, now):
         status = 'completed' if task.status == 'done' else 'overdue' if end and end < now else 'open' if start and start <= now else 'upcoming'
         if task.status != 'done' and period_start and period_end:
             status = 'open' if period_start <= now < period_end else 'overdue' if period_end <= now else 'upcoming'
-        entries.append(dict(number=None, kind='call' if task.task_type == 'call' else 'message',
+        entries.append(dict(task_id=task.id, number=None, kind='call' if task.task_type == 'call' else 'message',
             label=task.title, notes=task.notes or '', task_type=task.task_type, period='', status=status,
             scheduled_start=start.isoformat() if start else '', scheduled_end=end.isoformat() if end else '',
             completed_at=utc(task.completed_at).isoformat() if task.completed_at else ''))

@@ -3698,7 +3698,7 @@ export default function LeadDetail() {
               )
             ) : activeTab === "activity" ? (
               <div id="tasks" ref={tasksSection} style={{ scrollMarginTop: 80 }}>
-                <TasksPanel key={`${leadId}:${taskRevision}`} leadId={leadId!} token={token} />
+                <TasksPanel key={`${leadId}:${taskRevision}`} leadId={leadId!} token={token} selectedTaskId={new URLSearchParams(location.search).get('task') || undefined} />
               </div>
             ) : activeTab === "logs" ? (
               <LeadLogsPanel leadId={leadId!} token={token} />
