@@ -197,6 +197,15 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   const addRoomButton = useRef<HTMLButtonElement>(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const inventorySummary = useRef<HTMLElement>(null);
+  const viewInventoryRequested = useRef(false);
+  useLayoutEffect(() => {
+    if (!catalogOpen && viewInventoryRequested.current) {
+      viewInventoryRequested.current = false;
+      inventorySummary.current?.scrollIntoView({ block: 'nearest' });
+      inventorySummary.current?.focus({ preventScroll: true });
+    }
+  }, [catalogOpen]);
   const [catalogSearch, setCatalogSearch] = useState('');
   const [catalogLimit, setCatalogLimit] = useState(60);
   const catalogScroll = useRef<HTMLDivElement>(null);
@@ -502,7 +511,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
           onDelete={() => { setRooms(current => current.filter(value => value.id !== r.id)); if (selected === r.id) { setSelected(''); setCustomOpen(false); } }} />)}</div>
         {room &&
         <section className="mi-room-editor">
-        <button type="button" className="slds-button" style={{ marginTop: 12 }} disabled={busy} aria-expanded={catalogOpen} aria-controls="mi-add-item-catalog" onClick={() => { setCatalogOpen(open => !open); setCustomOpen(false); }}>+ Add item</button>
+        <button type="button" className="slds-button" style={{ marginTop: 12 }} disabled={busy} aria-expanded={catalogOpen} aria-controls="mi-add-item-catalog" onClick={() => { viewInventoryRequested.current = catalogOpen; setCatalogOpen(open => !open); setCustomOpen(false); }}>{catalogOpen ? 'View my inventory' : '+ Add items'}</button>
         {catalogOpen && <section className="mi-catalog-card" id="mi-add-item-catalog" aria-label="Add inventory items">
           <div className="mi-catalog-toolbar">
             <div className="mi-catalog-search">
@@ -555,9 +564,9 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
           </div>
         </section>}
         </section>}
-        <section className="mi-room-summary">
+        <section className="mi-room-summary" ref={inventorySummary} tabIndex={-1} aria-label="Your inventory">
           <h3>Your inventory</h3>
-          {!visibleRooms.some(r => count(r) > 0) && <p>{room ? 'No items in this room yet. Click Add item to get started.' : 'No items yet. Choose a room to add an item.'}</p>}
+          {!visibleRooms.some(r => count(r) > 0) && <p>{room ? 'No items in this room yet. Click Add items to get started.' : 'No items yet. Choose a room to add an item.'}</p>}
           {visibleRooms.filter(r => count(r) > 0).map(r => <details key={r.id} open>
             <summary><strong>{r.name}</strong> &middot; {count(r)} items &middot; {pieces(r)} pieces &middot; {boxes(r)} boxes</summary>
             <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span>Going</span><span className="mi-inventory-actions-heading">Actions</span></div>
