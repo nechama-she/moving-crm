@@ -1125,6 +1125,60 @@ def save_mileage(body: BrowserFeeDistances, access: PublicMoveAccess = Depends(v
     return {'saved': True}
 
 
+class RepDiscountInput(BaseModel):
+    charge_id: str
+    title: str = Field(default='Rep discount', min_length=1, max_length=120)
+    type: Literal['amount', 'percent', 'rate'] = 'amount'
+    value: Decimal = Field(default=0, ge=0, max_digits=12, decimal_places=2)
+    remove: bool = False
+
+
+@router.get('/api/public-moves/{access_id}/rep-discounts')
+def rep_discount_options(request: Request, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    if not is_rep_request(access, request):
+        raise HTTPException(403, 'Rep access required.')
+    from routes.pricing import infer_job_move_type
+    lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
+    if not lead or not job or job.lead_id != lead.id:
+        raise HTTPException(404, 'Move not found.')
+    _, plan = infer_job_move_type(lead, job, db)
+    settings = json.loads(job.customer_packing_package or '{}').get('rep_discounts', {})
+    return {'presets': [{'title': r.title, 'type': r.category[9:], 'value': float(r.description)} for r in (plan.rules if plan else []) if r.category in ('discount_amount', 'discount_percent', 'discount_rate')],
+            'charges': [{'id': c.id, 'name': c.name, 'total': float(c.total_cost or 0), 'transportation': c.name == 'Transportation charge', 'discount': settings.get(c.id)} for c in job.charges]}
+
+
+@router.post('/api/public-moves/{access_id}/rep-discounts')
+def save_rep_discount(body: RepDiscountInput, request: Request, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    if not is_rep_request(access, request):
+        raise HTTPException(403, 'Rep access required.')
+    from models import LeadJobCharge
+    from price_validity import price_is_locked
+    from routes.leads import _refresh_lead_estimated_total
+    lead = db.get(Lead, access.lead_id)
+    job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().first()
+    if not lead or not job:
+        raise HTTPException(404, 'Move not found.')
+    if price_is_locked(lead, job):
+        raise HTTPException(409, 'The price is locked for this booked or closed move.')
+    charge = db.query(LeadJobCharge).filter_by(id=body.charge_id, job_id=job.id).first()
+    if not charge:
+        raise HTTPException(404, 'Charge not found.')
+    if body.type == 'percent' and body.value > 100:
+        raise HTTPException(422, 'Percentage cannot exceed 100.')
+    if body.type == 'rate' and charge.name != 'Transportation charge':
+        raise HTTPException(422, 'Cu-ft rate discounts apply to transportation only.')
+    selection = json.loads(job.customer_packing_package or '{}')
+    settings = selection.setdefault('rep_discounts', {})
+    if body.remove:
+        settings.pop(charge.id, None)
+    else:
+        settings[charge.id] = {'title': body.title.strip() or 'Rep discount', 'type': body.type, 'value': str(body.value), 'volume': ceil(lead.volume or 0)}
+    job.customer_packing_package = json.dumps(selection)
+    _refresh_lead_estimated_total(lead.id, db)
+    db.commit()
+    return {'saved': True}
+
+
 @router.post('/api/public-moves/{access_id}/recalculate-price')
 def recalculate_current_price(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from routes.pricing import calculate_and_save_lead_job_price

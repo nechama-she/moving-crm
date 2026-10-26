@@ -200,6 +200,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   const [catalogSearch, setCatalogSearch] = useState('');
   const [catalogLimit, setCatalogLimit] = useState(60);
   const catalogScroll = useRef<HTMLDivElement>(null);
+  const catalogSearchInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     setCatalogOpen(false); setCustomOpen(false); setCatalogSearch(''); setCatalogLimit(60);
   }, [selected]);
@@ -504,7 +505,12 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
         <button type="button" className="slds-button" style={{ marginTop: 12 }} disabled={busy} aria-expanded={catalogOpen} aria-controls="mi-add-item-catalog" onClick={() => { setCatalogOpen(open => !open); setCustomOpen(false); }}>+ Add item</button>
         {catalogOpen && <section className="mi-catalog-card" id="mi-add-item-catalog" aria-label="Add inventory items">
           <div className="mi-catalog-toolbar">
-            <input type="search" placeholder="Search items..." aria-label="Search catalog items" value={catalogSearch} disabled={busy} onChange={event => { setCatalogSearch(event.target.value); setCatalogLimit(60); catalogScroll.current?.scrollTo({ top: 0 }); }} />
+            <div className="mi-catalog-search">
+              <input ref={catalogSearchInput} type="search" placeholder="Search items..." aria-label="Search catalog items" value={catalogSearch} disabled={busy} onChange={event => { setCatalogSearch(event.target.value); setCatalogLimit(60); catalogScroll.current?.scrollTo({ top: 0 }); }} />
+              {catalogSearch && <button type="button" className="mi-search-clear" aria-label="Clear item search" title="Clear search" disabled={busy} onClick={() => {
+                setCatalogSearch(''); setCatalogLimit(60); catalogScroll.current?.scrollTo({ top: 0 }); catalogSearchInput.current?.focus();
+              }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>}
+            </div>
             <button type="button" className="slds-button" disabled={busy} aria-expanded={customOpen} onClick={() => setCustomOpen(open => !open)}>+ Add custom item</button>
           </div>
         {customOpen && <section className="mi-custom-item">

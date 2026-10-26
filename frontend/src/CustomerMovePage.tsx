@@ -26,6 +26,7 @@ import { browserDrivingMeters, browserPricingLocation } from './googlePlaces';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
+import RepDiscounts from './RepDiscounts';
 import "./CustomerMovePage.css";
 
 type LinkSms = { sent_at: string; phone_last4: string };
@@ -1190,6 +1191,7 @@ export default function CustomerMovePage() {
                     disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running' || data.spark?.status === 'running' || data.spark?.status === 'queued'}
                     onClick={() => void recalculatePrice()}
                   >{calculatingPrice ? 'Re-rating...' : 'Re-rate'}</button>}
+                  {repPage && data.estimate && <RepDiscounts base={base} headers={headers} onSaved={refreshDetails} />}
                 </div>
                 {data.spark && (
                   <div className="cm-spark-card cm-spark-estimate-card">

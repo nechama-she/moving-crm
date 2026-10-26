@@ -2684,6 +2684,12 @@ def _refresh_lead_estimated_total(lead_id: str, db: Session) -> None:
     discounts = Decimal(0)
     for job in db.query(LeadJob).filter(LeadJob.lead_id == lead_id).all():
         db.expire(job, ['charges'])
+        from rep_discounts import apply as apply_rep_discounts
+        if apply_rep_discounts(job, job.charges, lead.volume):
+            job.price = sum((Decimal(str(charge.total_cost or 0)) for charge in job.charges), Decimal(0))
+            from models import PublicMoveAccess
+            for access in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+                access.published_price = job.price
         if job.price is not None:
             final_before_tax += _to_money_decimal(job.price, 'price')
         else:

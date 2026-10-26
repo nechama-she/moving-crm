@@ -87,3 +87,11 @@
 .mi-inventory-set { margin-top: 12px; border-left: 3px solid var(--cm-border); padding-left: 10px; }
 .mi-set-heading { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 10px 0; }
 @media (max-width: 560px) { .mi-inventory-set { padding-left: 5px; } }
+.mi-catalog-search { position: relative; flex: 1; min-width: 0; }
+.mi-catalog-search input[type="search"] { width: 100%; box-sizing: border-box; min-height: 44px; padding-right: 48px; appearance: none; -webkit-appearance: none; }
+.mi-catalog-search input::-webkit-search-cancel-button,
+.mi-catalog-search input::-webkit-search-decoration { display: none; -webkit-appearance: none; }
+.mi-modal .mi-search-clear { position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: #d33530; cursor: pointer; touch-action: manipulation; }
+.mi-modal .mi-search-clear:hover { background: #d3353010; }
+.mi-modal .mi-search-clear:disabled { opacity: .5; cursor: default; }
+@media (max-width: 560px) { .mi-catalog-search { flex-basis: 100%; } .mi-catalog-search input[type="search"] { font-size: 16px; } }

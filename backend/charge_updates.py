@@ -31,6 +31,16 @@ class ChargeUpdates:
             return
         if current.job_id != row.job_id:
             raise ValueError('Cannot update a charge belonging to another job')
+        # This is a fresh calculator result, not the previously discounted value.
+        import json
+        from models import LeadJob
+        job = self.db.get(LeadJob, row.job_id)
+        if job:
+            selection = json.loads(job.customer_packing_package or '{}')
+            snapshots = selection.get('rep_discount_bases', {})
+            if current.id in snapshots:
+                snapshots.pop(current.id)
+                job.customer_packing_package = json.dumps(selection)
         for field in ('name', 'description', 'sort_order', 'subtotal', 'discount_amount', 'total_cost'):
             setattr(current, field, getattr(row, field))
         self.used.add(current.id)
