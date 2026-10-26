@@ -1216,12 +1216,6 @@ def panel_upload_context(lead_id, body, user, db):
 def prepare_panel_upload(lead_id: str, body: PanelUpload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lead, existing, bucket, key, name = panel_upload_context(lead_id, body, user, db)
     if existing:
-        if not existing.liveswitch_panel_visible:
-            saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).with_for_update().first()
-            if saved:
-                details = json.loads(saved.details or '{}')
-                if archive_report_for_new_media(details):
-                    saved.details = json.dumps(details)
         existing.liveswitch_panel_visible = True
         db.commit()
         return {"completed": True, "id": existing.id}
@@ -1252,11 +1246,8 @@ def finish_panel_upload(lead_id: str, body: PanelUpload, user: User = Depends(ge
         is_external_link=True, external_source="crm_s3", uploaded_by=user.id)
     try:
         db.add(row)
-        saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).with_for_update().first()
-        if saved:
-            details = json.loads(saved.details or '{}')
-            if archive_report_for_new_media(details):
-                saved.details = json.dumps(details)
+        # Adding media must not deactivate the customer's current inventory.
+        # Report generation handles history when a replacement is requested.
         db.commit()
     except Exception:
         db.rollback()
