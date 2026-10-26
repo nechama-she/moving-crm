@@ -2061,6 +2061,90 @@ def update_pricing_plan(
     return plan.to_dict()
 
 
+@router.put('/{plan_id}/discounts')
+def update_discounts(plan_id: str, body: list[RuleInput], user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    plan = _plan_or_404(db, user, plan_id)
+    if any(row.category not in {'discount_amount', 'discount_percent', 'discount_rate'} for row in body):
+        raise HTTPException(422, 'Only transportation discounts can be saved here.')
+    from pricing_row_updates import prepare_row_updates
+    existing = [row for row in plan.rules if row.category.startswith('discount_')]
+    updates = prepare_row_updates(existing, body, ('category', 'title'), ('description',))
+    retained = [row for row in plan.rules if not row.category.startswith('discount_')]
+    for index, (current, value) in enumerate(updates):
+        row = current if current is not None else PricingRule()
+        row.category, row.title, row.description = value.category, value.title.strip(), value.description.strip()
+        row.sort_order = len(retained) + index
+        retained.append(row)
+    plan.rules[:] = retained
+    db.commit()
+    return [row.to_dict() for row in plan.rules if row.category.startswith('discount_')]
+
+
+class SectionUpdate(BaseModel):
+    model_config = {'extra': 'forbid'}
+    services: list[ServiceInput] | None = None
+    rates: list[RateInput] | None = None
+    pickup_areas: list[PickupArea] | None = None
+
+
+@router.put('/{plan_id}/sections/{section}')
+def update_pricing_section(plan_id: str, section: str, body: SectionUpdate, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    plan = _plan_or_404(db, user, plan_id)
+    from pricing_row_updates import prepare_row_updates
+    from pricing_service_updates import prepare_service_updates
+    prefixes = {'extraStops': EXTRA_STOPS_PREFIX, 'elevator': ELEVATOR_PREFIX,
+                'longCarry': LONG_CARRY_PREFIX, 'stairs': STAIRS_PREFIX, 'storage': STORAGE_PREFIX,
+                'originFees': ORIGIN_FEE_PREFIX, 'deliveryFees': DELIVERY_FEE_PREFIX,
+                'shuttle': SHUTTLE_PREFIX, 'packing': PACKING_CARD_PREFIX, 'materials': PACKING_CARD_PREFIX,
+                'bulkyItems': BULKY_ITEM_MARKER}
+    field = 'rates' if section == 'rates' else 'pickup_areas' if section == 'pickup' else 'services'
+    if section not in {'rates', 'pickup', *prefixes} or body.model_fields_set != {field}:
+        raise HTTPException(422, 'Send only the fields for this pricing section.')
+    if section == 'pickup':
+        areas = body.pickup_areas
+        if areas is None or len({area.state for area in areas}) != len(areas):
+            raise HTTPException(422, 'Add each pickup state only once.')
+        plan.pickup_regions = json.dumps([area.model_dump() for area in areas])
+    elif section == 'rates':
+        if not body.rates:
+            raise HTTPException(422, 'At least one pricing rate is required.')
+        updates = prepare_row_updates(list(plan.rates), body.rates, ('destination', 'band_label'), ('destination', 'band_label'))
+        retained = []
+        for index, (current, value) in enumerate(updates):
+            row = current if current is not None else PricingRate()
+            for key, val in value.model_dump(exclude={'id'}).items():
+                setattr(row, key, val.strip() if isinstance(val, str) else val)
+            row.sort_order = index
+            retained.append(row)
+        plan.rates[:] = retained
+    else:
+        prefix = prefixes[section]
+        belongs = lambda row: row.comments.startswith(prefix)
+        if body.services is None or any(not belongs(row) for row in body.services):
+            raise HTTPException(422, 'Service belongs to a different pricing section.')
+        existing = [row for row in plan.services if belongs(row)]
+        updates = prepare_service_updates(existing, body.services)
+        retained = [row for row in plan.services if not belongs(row)]
+        if section in {'packing', 'materials'} and len(updates) != 1:
+            raise HTTPException(422, 'One packing configuration is required.')
+        for current, value in updates:
+            row = current if current is not None else PricingService()
+            comments = value.comments
+            if section in {'packing', 'materials'}:
+                from pricing_section_merge import merge_packing
+                comments = PACKING_CARD_PREFIX + json.dumps(merge_packing(
+                    json.loads(current.comments[len(prefix):]) if current else {},
+                    json.loads(value.comments[len(prefix):]), section))
+            row.name, row.rate_text, row.comments = value.name.strip(), value.rate_text.strip(), comments
+            if current is None:
+                row.sort_order = max((r.sort_order for r in plan.services), default=-1) + 1
+            retained.append(row)
+        plan.services[:] = retained
+    db.commit()
+    db.refresh(plan)
+    return plan.to_dict()
+
+
 @router.get('/{plan_id}/item-materials')
 def get_item_materials(plan_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return material_setup(_plan_or_404(db, user, plan_id), db)
