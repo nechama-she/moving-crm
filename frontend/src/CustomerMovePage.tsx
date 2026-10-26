@@ -1198,6 +1198,13 @@ export default function CustomerMovePage() {
                     onClick={() => void recalculatePrice()}
                   >{calculatingPrice ? 'Re-rating...' : 'Re-rate'}</button>}
                 </div>
+                <div className="cm-estimate-header-actions">
+                  {data.estimate && data.spark?.status === 'completed' && <div className="cm-estimate-sign-action">
+                    <button type="button" className="cm-primary" disabled={pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : estimateNeedsSignature ? 'View and sign estimate' : 'View estimate PDF'}</button>
+                    {estimateNeedsSignature && <small role="status">Signature required</small>}
+                    {data.signature_status === 'signed' && <small role="status">Signed - current estimate</small>}
+                    {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert">{pdfError}</p>}
+                  </div>}
                 {data.spark && (
                   <div className="cm-spark-card cm-spark-estimate-card">
                     <div className="cm-spark-status-row">
@@ -1212,11 +1219,39 @@ export default function CustomerMovePage() {
 
                   </div>
                 )}
+                </div>
               </div>
               <div ref={estimateFeedback}>
               {pricingLoadError && <p role="alert">We couldn't load your estimate. <button type="button" className="cm-secondary-btn" disabled={pricingLoading} onClick={() => void loadSection('pricing')}>Try again</button></p>}
               {calculationError && <p role="alert">{calculationError}</p>}
               {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Try again</button></p>}
+              </div>
+              <div className="cm-services-toolbar">
+                  {(data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) && (
+                  <button
+                    type="button"
+                    className="cm-secondary-btn cm-services-button"
+                    disabled={pricingLoading || !!pricingLoadError}
+                    onClick={() => {
+                      setPackingSelection(Object.fromEntries(data.packing_items.filter(item => item.selected).map(item => [item.id, item.selected_service || ''])));
+                      setShuttleAnswer(data.shuttle?.answer ?? null); setShuttleMissing(false);
+                      setStorageDate(data.storage?.available_date || ''); setStorageMissing(false);
+                      setStopsIncomplete({});setStopsMissing(false);
+                      setElevatorAnswers(Object.fromEntries((data.elevator?.locations || []).map(row => [row.location,row.unknown ? 'unknown' : row.uses_elevator]))); setElevatorMissing(false);
+                      setCarryAnswers(Object.fromEntries((data.long_carry?.locations || []).map(row => [row.location,row.unknown && row.acknowledged ? 'unknown' : row.distance_feet]))); setCarryMissing(false);
+                      setStairsAnswers(Object.fromEntries((data.stairs?.locations || []).map(row => [row.location, row.unknown ? 'unknown' : row.flights]))); setStairsMissing(false);
+                      setPackingStep(pricingSteps[0] || 'items');
+                      setPackingSection('service');
+                      setPackageSelection(data.packing_package?.selection || { mode: 'none', unpacking: false, item_ids: [] });
+                      setPackingError('');
+                      setTermsStep(0);
+                      setTermsValidationAttempt(0);
+                      setShowQuestions(true);
+                    }}
+                  >
+                    Extra services &amp; details
+                  </button>
+                  )}
               </div>
               {data.estimate?.charges && data.estimate.charges.length > 0 && (
                 <div className="cm-estimate-breakdown">
@@ -1237,7 +1272,6 @@ export default function CustomerMovePage() {
                             <div>
                               <span>{child.displayName || child.name}</span>
                               {child.description && <small>{child.description}</small>}
-                              {(child.discount_amount || 0) > 0 && <small>Before discount: {money(child.subtotal || 0)}; Discount ({child.discount_percent}%): -{money(child.discount_amount || 0)}</small>}
                             </div>
                             <div className="cm-line-price">
                               {(child.discount_amount || 0) > 0 && <del>{money(child.subtotal || 0)}</del>}
@@ -1246,7 +1280,6 @@ export default function CustomerMovePage() {
                             </div>
                             </div>
                           </div>)}
-                          {(charge.discount_amount || 0) > 0 && <small>Before discount: {money(charge.subtotal || 0)}; Discount ({charge.discount_percent}%): -{money(charge.discount_amount || 0)}</small>}
                         </div>
                         <div className="cm-line-price">
                           {!charge.children && (charge.discount_amount || 0) > 0 && <del>{money(charge.subtotal || 0)}</del>}
@@ -1259,41 +1292,6 @@ export default function CustomerMovePage() {
                 </div>
               )}
 
-              {((data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) || (data.estimate && data.spark?.status === 'completed')) && (
-                <div className="cm-estimate-extra-actions" style={{flexWrap: 'wrap'}}>
-                  {(data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) && (
-                  <button
-                    type="button"
-                    className="cm-estimate-action"
-                    disabled={pricingLoading || !!pricingLoadError}
-                    onClick={() => {
-                      setPackingSelection(Object.fromEntries(data.packing_items.filter(item => item.selected).map(item => [item.id, item.selected_service || ''])));
-                      setShuttleAnswer(data.shuttle?.answer ?? null); setShuttleMissing(false);
-                      setStorageDate(data.storage?.available_date || ''); setStorageMissing(false);
-                      setStopsIncomplete({});setStopsMissing(false);
-                      setElevatorAnswers(Object.fromEntries((data.elevator?.locations || []).map(row => [row.location,row.unknown ? 'unknown' : row.uses_elevator]))); setElevatorMissing(false);
-                      setCarryAnswers(Object.fromEntries((data.long_carry?.locations || []).map(row => [row.location,row.unknown && row.acknowledged ? 'unknown' : row.distance_feet]))); setCarryMissing(false);
-                      setStairsAnswers(Object.fromEntries((data.stairs?.locations || []).map(row => [row.location, row.unknown ? 'unknown' : row.flights]))); setStairsMissing(false);
-                      setPackingStep(pricingSteps[0] || 'items');
-                      setPackingSection('service');
-                      setPackageSelection(data.packing_package?.selection || { mode: 'none', unpacking: false, item_ids: [] });
-                      setPackingError('');
-                      setTermsStep(0);
-                      setTermsValidationAttempt(0);
-                      setShowQuestions(true);
-                    }}
-                  >
-                    {data.packing_saved ? '✓ Review services & details' : '+ Add services & details'}
-                  </button>
-                  )}
-                {data.estimate && data.spark?.status === 'completed' && <>
-                <button type="button" className="cm-primary" disabled={pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : estimateNeedsSignature ? 'View and sign estimate' : 'View estimate PDF'}</button>
-                {estimateNeedsSignature && <div role="status" style={{ borderLeft: '3px solid var(--cm-primary)', padding: '8px 12px', color: 'var(--cm-text)', background: 'var(--cm-tint)', borderRadius: 4 }}><strong>Signature required</strong><div>This estimate is not signed. Please open it to review and sign.</div></div>}
-                {data.signature_status === 'signed' && <span role="status">Signed - current estimate</span>}
-                {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert" style={{ flexBasis: '100%', marginTop: 0 }}>{pdfError}</p>}
-                </>}
-                </div>
-              )}
               {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
               {estimateViewerOpen && <EstimateViewer alreadySigned={preparedSigned} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => { setEstimateViewerOpen(false); void refreshReportHistory(); }} />}
