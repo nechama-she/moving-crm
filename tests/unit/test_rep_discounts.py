@@ -21,7 +21,21 @@ class RepDiscountTests(unittest.TestCase):
         apply(job, [row], 200)
         self.assertEqual(row.total_cost, 900)
         self.assertEqual(row.discount_amount, 100)
-        self.assertEqual(row.description, 'Transportation | Military')
+        self.assertEqual(row.description, 'Transportation | Military: -$100.00')
+
+    def test_new_total_is_a_discount_and_preserves_original(self):
+        job, row = self.setup_discount('total', 700)
+        apply(job, [row])
+        apply(job, [row])
+        self.assertEqual(row.total_cost, 700)
+        self.assertEqual(row.discount_amount, 300)
+        self.assertIn('Military: -$300.00', row.description)
+
+    def test_higher_total_does_not_increase_price(self):
+        job, row = self.setup_discount('total', 1500)
+        apply(job, [row])
+        self.assertEqual(row.total_cost, 1000)
+        self.assertEqual(row.discount_amount, 0)
 
     def test_remove_restores_base(self):
         job, row = self.setup_discount()

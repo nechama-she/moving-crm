@@ -3049,7 +3049,7 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
 
 @pytest.mark.parametrize('rep', [False, True])
 @pytest.mark.parametrize('suffix', ['summary', 'sections/move', 'sections/inventory', 'sections/media', 'sections/volume', 'sections/pricing',
-                                  'estimate-signatures', 'estimate-signatures/missing/pdf', 'estimate-signatures/missing/sign'])
+                                  'estimate-signatures', 'estimate-signatures/missing/pdf', 'estimate-signatures/missing/sign', 'rep-discounts'])
 def test_page_section_global_auth_accepts_scoped_sessions(portal, monkeypatch, rep, suffix):
     import ast
     import re
@@ -3080,7 +3080,7 @@ def test_page_section_global_auth_accepts_scoped_sessions(portal, monkeypatch, r
                                    'strokes': [[[0.1, 0.2], [0.3, 0.4]]]})
             return client.get(path, headers=headers)
         response = send({'x-public-link': key, 'x-public-session': 'section-session'})
-        assert response.status_code == (404 if '/missing/' in suffix else 200), response.text
+        assert response.status_code == (403 if suffix == 'rep-discounts' and not rep else 404 if '/missing/' in suffix else 200), response.text
         assert send({'x-public-link': key}).status_code == 401
         assert send().status_code == 404
 

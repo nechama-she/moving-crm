@@ -76,7 +76,7 @@ type Details = {
     minimum_cuft?: number | null;
     price: string;
     cuft: string;
-    charges?: { pending?: boolean; name: string; description: string; total: number; subtotal?: number; discount_amount?: number; discount_percent?: number }[];
+    charges?: { id?: string; pending?: boolean; name: string; description: string; total: number; subtotal?: number; discount_amount?: number; discount_percent?: number }[];
   } | null;
   spark?: { id: string; status: string; source?: string; shareUrl?: string; cuft?: number; update_error?: string } | null;
   walkthrough: { status: string; availability: string; scheduled_at: string | null; timezone: string } | null;
@@ -1164,7 +1164,14 @@ export default function CustomerMovePage() {
                     <div className="cm-estimate-summary">
                       <div className="cm-estimate-detail-item">
                         <span>Price</span>
-                        <strong>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(data.estimate.price))}</strong>
+                        <div className="cm-price-refresh-row">
+                          <strong>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(data.estimate.price))}</strong>
+                          <button type="button" className="cm-price-refresh" aria-label={calculatingPrice ? 'Recalculating price' : 'Recalculate price'} title={calculatingPrice ? 'Recalculating price...' : 'Recalculate price'} aria-busy={calculatingPrice}
+                            disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running' || data.spark?.status === 'running' || data.spark?.status === 'queued'}
+                            onClick={() => void recalculatePrice()}>
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M5.5 7a7 7 0 0 1 12-2L20 8M4 16l2.5 3a7 7 0 0 0 12-2"/></svg>
+                          </button>
+                        </div>
                       </div>
                       <div className="cm-estimate-detail-item">
                         <span>Inventory volume</span>
@@ -1184,14 +1191,13 @@ export default function CustomerMovePage() {
                   <strong>{data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'?'Your report is ready. Pricing is pending.':'Start by adding your inventory.'}</strong>
                   <p className="cm-estimate-desc">{data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
                   </>}
-                  {(data.estimate || data.spark?.status === 'completed') && <button
+                  {!data.estimate && data.spark?.status === 'completed' && <button
                     type="button"
                     className="cm-secondary-btn cm-rerate-btn"
                     aria-busy={calculatingPrice}
-                    disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running' || data.spark?.status === 'running' || data.spark?.status === 'queued'}
+                    disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running'}
                     onClick={() => void recalculatePrice()}
                   >{calculatingPrice ? 'Re-rating...' : 'Re-rate'}</button>}
-                  {repPage && data.estimate && <RepDiscounts base={base} headers={headers} onSaved={refreshDetails} />}
                 </div>
                 {data.spark && (
                   <div className="cm-spark-card cm-spark-estimate-card">
@@ -1216,7 +1222,9 @@ export default function CustomerMovePage() {
               </div>
               {data.estimate?.charges && data.estimate.charges.length > 0 && (
                 <div className="cm-estimate-breakdown">
-                  <div className="cm-estimate-breakdown-title">Price Breakdown</div>
+                  <div className="cm-estimate-toolbar">
+                    <div className="cm-estimate-breakdown-title">Price breakdown</div>
+                  </div>
                   <div className="cm-estimate-charges-grid">
                     {groupedCharges().map((charge, idx) => {
                       const target = charge.target;
@@ -1233,14 +1241,20 @@ export default function CustomerMovePage() {
                               {child.description && <small>{child.description}</small>}
                               {(child.discount_amount || 0) > 0 && <small>Before discount: {money(child.subtotal || 0)}; Discount ({child.discount_percent}%): -{money(child.discount_amount || 0)}</small>}
                             </div>
-                            <strong>{child.pending ? 'Pending' : money(child.total)}</strong>
+                            <div className="cm-line-price">
+                              {(child.discount_amount || 0) > 0 && <del>{money(child.subtotal || 0)}</del>}
+                              <strong>{child.pending ? 'Pending' : money(child.total)}</strong>
+                              {repPage && child.id && !child.pending && <RepDiscounts base={base} headers={headers} onSaved={refreshDetails} chargeId={child.id} chargeName={child.displayName || child.name} />}
+                            </div>
                             </div>
                           </div>)}
                           {(charge.discount_amount || 0) > 0 && <small>Before discount: {money(charge.subtotal || 0)}; Discount ({charge.discount_percent}%): -{money(charge.discount_amount || 0)}</small>}
                         </div>
-                        <span>
+                        <div className="cm-line-price">
+                          {!charge.children && (charge.discount_amount || 0) > 0 && <del>{money(charge.subtotal || 0)}</del>}
                           {charge.pending && !charge.children ? 'Pending' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charge.total)}{charge.children && charge.pending && <small> + pending</small>}
-                        </span>
+                          {repPage && charge.id && !charge.children && !charge.pending && <RepDiscounts base={base} headers={headers} onSaved={refreshDetails} chargeId={charge.id} chargeName={charge.name} />}
+                        </div>
                       </div>
                     );})}
                   </div>
@@ -1252,7 +1266,7 @@ export default function CustomerMovePage() {
                   {(data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) && (
                   <button
                     type="button"
-                    className="slds-button cm-primary cm-extra-services-btn"
+                    className="cm-estimate-action"
                     disabled={pricingLoading || !!pricingLoadError}
                     onClick={() => {
                       setPackingSelection(Object.fromEntries(data.packing_items.filter(item => item.selected).map(item => [item.id, item.selected_service || ''])));
@@ -1275,7 +1289,7 @@ export default function CustomerMovePage() {
                   </button>
                   )}
                 {data.estimate && data.spark?.status === 'completed' && <>
-                <button type="button" className="cm-secondary-btn" disabled={pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : estimateNeedsSignature ? 'View and sign estimate' : 'View estimate PDF'}</button>
+                <button type="button" className="cm-primary" disabled={pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : estimateNeedsSignature ? 'View and sign estimate' : 'View estimate PDF'}</button>
                 {estimateNeedsSignature && <div role="status" style={{ borderLeft: '3px solid var(--cm-primary)', padding: '8px 12px', color: 'var(--cm-text)', background: 'var(--cm-tint)', borderRadius: 4 }}><strong>Signature required</strong><div>This estimate is not signed. Please open it to review and sign.</div></div>}
                 {data.signature_status === 'signed' && <span role="status">Signed - current estimate</span>}
                 {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert" style={{ flexBasis: '100%', marginTop: 0 }}>{pdfError}</p>}

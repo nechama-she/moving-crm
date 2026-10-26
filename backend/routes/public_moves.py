@@ -549,6 +549,10 @@ def _group_box_packing_charges(charges):
 def _customer_charge_description(name: str, desc: str) -> str:
     if not desc:
         return ''
+    original, separator, adjustment = desc.rpartition(' | ')
+    if separator and re.search(r': -\$\d', adjustment):
+        cleaned = _customer_charge_description(name, original)
+        return ' | '.join(part for part in (cleaned, adjustment) if part)
     text_val = desc.strip()
     # Strip internal bulky matching text / local discount notes
     if 'matched from report' in text_val.lower() or 'bulky item' in text_val.lower():
@@ -580,7 +584,7 @@ def _has_inventory_list(state):
 
 
 @router.get('/api/public-moves/{access_id}/details')
-def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
     from price_validity import refresh_expired_price
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
     conversation = db.get(LeadLiveSwitch, access.lead_id)
@@ -588,7 +592,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
     if lead and job and _has_inventory_list(state):
         refresh_expired_price(lead, job, db)
         db.refresh(access)
-    return _move_details(access, db)
+    return _move_details(access, db, individual_charges=is_rep_request(access, request))
 
 
 @router.get('/api/public-moves/{access_id}/summary')
@@ -598,7 +602,7 @@ def move_summary(access: PublicMoveAccess = Depends(verified), db: Session = Dep
 
 
 @router.get('/api/public-moves/{access_id}/sections/{section}')
-def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'pricing'], access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'pricing'], access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
     conversation = db.get(LeadLiveSwitch, lead.id)
     state = json.loads(conversation.details or '{}') if conversation else {}
@@ -627,14 +631,14 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'prici
         from price_validity import refresh_expired_price
         refresh_expired_price(lead, job, db)
         db.refresh(access)
-    result = _move_details(access, db, pricing_only=True)
+    result = _move_details(access, db, pricing_only=True, individual_charges=is_rep_request(access, request))
     from delivery_fees import browser_fee_routes
     from price_validity import price_is_locked
     result['mileage_routes'] = [] if price_is_locked(lead, job) else browser_fee_routes(lead, job, db)
     return result
 
 
-def _move_details(access, db, *, refresh_report=True, include_pricing=True, pricing_only=False):
+def _move_details(access, db, *, refresh_report=True, include_pricing=True, pricing_only=False, individual_charges=False):
     from math import ceil
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
     pickup, stops, delivery = _read_job_route(db, job)
@@ -669,6 +673,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     saved_package = json.loads(job.customer_packing_package or '{}')
     charges_list = [
         {
+            'id': c.id,
             'name': re.sub(r'^Extra (?=(?:pickup|delivery) stop)', 'Additional ', c.name or ''),
             'description': _customer_charge_description(c.name, c.description or ''),
             'pending': (c.description or '').startswith('Calculation pending: '),
@@ -682,7 +687,9 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             ((c.description or '').startswith('Calculation pending: ')) or (c.total_cost and float(c.total_cost) > 0) or (c.discount_amount and float(c.discount_amount) > 0)
         )
     ]
-    charges_list = _group_box_packing_charges(charges_list)
+    # Keep individual charge IDs on rep pages for precise inline adjustments.
+    if not individual_charges:
+        charges_list = _group_box_packing_charges(charges_list)
     report_import_pending = bool(spark_info and conv_details.get('spark_extracted_id') != spark_info['id'])
     if not is_spark_pending and not report_import_pending and conv_details.get('spark_pricing_ready') is not False:
         if access.published_at and access.published_price is not None:
@@ -1127,8 +1134,8 @@ def save_mileage(body: BrowserFeeDistances, access: PublicMoveAccess = Depends(v
 
 class RepDiscountInput(BaseModel):
     charge_id: str
-    title: str = Field(default='Rep discount', min_length=1, max_length=120)
-    type: Literal['amount', 'percent', 'rate'] = 'amount'
+    title: str = Field(default='Discount', min_length=1, max_length=120)
+    type: Literal['amount', 'percent', 'rate', 'total'] = 'amount'
     value: Decimal = Field(default=0, ge=0, max_digits=12, decimal_places=2)
     remove: bool = False
 
@@ -1172,7 +1179,7 @@ def save_rep_discount(body: RepDiscountInput, request: Request, access: PublicMo
     if body.remove:
         settings.pop(charge.id, None)
     else:
-        settings[charge.id] = {'title': body.title.strip() or 'Rep discount', 'type': body.type, 'value': str(body.value), 'volume': ceil(lead.volume or 0)}
+        settings[charge.id] = {'title': body.title.strip() or 'Discount', 'type': body.type, 'value': str(body.value), 'volume': ceil(lead.volume or 0)}
     job.customer_packing_package = json.dumps(selection)
     _refresh_lead_estimated_total(lead.id, db)
     db.commit()

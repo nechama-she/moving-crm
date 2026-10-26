@@ -20,6 +20,8 @@ def apply(job, rows, volume=0):
         base = max(Decimal(0), Decimal(str(row.total_cost or 0)))
         value = Decimal(str(rule['value']))
         amount = value if rule['type'] == 'amount' else base * value / 100
+        if rule['type'] == 'total':
+            amount = base - value
         if rule['type'] == 'rate':
             from math import ceil
             amount = base - value * Decimal(ceil(volume or 0))
@@ -28,7 +30,11 @@ def apply(job, rows, volume=0):
         description = row.description or ''
         row.total_cost = base - amount
         row.discount_amount = original_discount + amount
-        row.description = description + ' | ' + rule['title']
+        title = 'Discount' if rule['title'] == 'Rep discount' else rule['title']
+        detail = f'{title}: -${amount:,.2f}'
+        if rule['type'] == 'rate':
+            detail += f' (new rate ${value:,.2f} per cu ft)'
+        row.description = description + ' | ' + detail
         snapshots[row.id] = {'base': str(base), 'base_discount': str(original_discount), 'description': description,
                              'total': str(row.total_cost), 'discount': str(row.discount_amount)}
     selection['rep_discount_bases'] = snapshots
