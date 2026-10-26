@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
+const source = readFileSync(new URL('../src/pricingDiscounts.ts', import.meta.url), 'utf8');
+const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText;
+const { calculateDiscounts } = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+const row = (type, value, targetId = 'transportation') => ({ id: 'test', targetId, title: 'Test', type, value });
+const targets = { transportation: 1875, fee: 300 };
+assert.equal(calculateDiscounts([row('percent', 10)], targets, 300)[0].amount, 187.5);
+assert.equal(calculateDiscounts([row('rate', 5)], targets, 300)[0].amount, 375);
+assert.equal(calculateDiscounts([row('rate', 10)], targets, 300)[0].amount, 0);
+assert.equal(calculateDiscounts([row('amount', 9999)], targets, 300)[0].amount, 1875);
+assert.equal(calculateDiscounts([row('percent', 100, 'fee')], targets, 300)[0].amount, 300);
+assert.equal(calculateDiscounts([row('amount', 50, 'fee')], targets, 300)[0].amount, 50);
+assert.equal(calculateDiscounts([row('amount', 50, 'missing')], targets, 300)[0].amount, 0);
+assert.equal(calculateDiscounts([row('amount', 1800), row('amount', 200)], targets, 300).reduce((sum, d) => sum + d.amount, 0), 1875);
+assert.equal(calculateDiscounts([row('amount', -20)], targets, 300)[0].amount, 0);
+console.log('Pricing discount checks passed');

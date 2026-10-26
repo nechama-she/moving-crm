@@ -953,6 +953,14 @@ input, select, textarea, button {
 .pricing-line-discount-value small, .pricing-line-discount-value b { display: block; }
 .pricing-line-discount-value small { color: #706e6b; font-size: 10px; }
 .pricing-line-discount-value b { margin-top: 2px; color: #ba0517; font-size: 13px; }
+.pricing-discount-catalog { border: 1px solid #d8e2ef; border-radius: 8px; padding: 16px; background: #fff; margin: 16px 0; }
+.pricing-discount-catalog h3 { margin: 0 0 6px; }
+.pricing-discount-catalog p { color: #52657e; margin-bottom: 12px; }
+.pricing-discount-catalog .pricing-line-discount { background: #f5f9ff; margin-bottom: 8px; grid-template-columns: minmax(120px, 1fr) minmax(150px, 1fr) 100px auto; }
+.pricing-discount-choice { display: grid; gap: 6px; padding: 12px; background: #f5f9ff; }
+.pricing-discount-choice select { max-width: 360px; min-height: 36px; border: 1px solid #c9d6e7; border-radius: 4px; padding: 6px; background: white; }
+.pricing-discount-choice small { color: #52657e; }
+@media (max-width: 600px) { .pricing-discount-catalog .pricing-line-discount { grid-template-columns: 1fr; } }
 .pricing-quote-total { min-height: 45px; display: flex; align-items: center; justify-content: space-between; gap: 14px; color: #032d60; font-size: 16px; }
 .pricing-quote-total b { color: #2e844a; font-size: 18px; }
 .pricing-quote > p { margin: 0; padding: 9px 13px; border-top: 1px solid #fecaca; background: #fef2f2; color: #8e030f; font-size: 12px; }

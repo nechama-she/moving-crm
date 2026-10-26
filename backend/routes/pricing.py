@@ -205,6 +205,22 @@ class RuleInput(BaseModel):
     title: str = "Pricing rule"
     description: str
 
+    @field_validator('description')
+    @classmethod
+    def validate_discount(cls, value, info):
+        category = info.data.get('category', '')
+        if category.startswith('discount_'):
+            if category not in {'discount_amount', 'discount_percent', 'discount_rate'}:
+                raise ValueError('Unknown discount type')
+            if not info.data.get('title', '').strip():
+                raise ValueError('Enter a discount name')
+            amount = float(value)
+            if not math.isfinite(amount) or amount < 0:
+                raise ValueError('Discount must be a nonnegative number')
+            if category == 'discount_percent' and amount > 100:
+                raise ValueError('Discount percentage cannot exceed 100')
+        return value
+
 
 class RateInput(BaseModel):
     id: str | None = Field(default=None, max_length=100)
@@ -345,6 +361,8 @@ def _seasonal_charge(plan: PricingPlan, move_date: date | None) -> dict | None:
     if not move_date:
         return None
     for rule in plan.rules:
+        if rule.category.startswith('discount_'):
+            continue
         description = rule.description
         match = re.search(
             r"(?:after|of)\s+(Sep(?:tember)?|Oct(?:ober)?)\s+(\d{1,2})(?:st|nd|rd|th)?"
@@ -885,6 +903,8 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
         collect(f'packing:{service.id}', service.name, lambda service=service: _packing_service_charges([service], service_volume, body.quantities))
         collect(f'bulky:{service.id}', service.name, lambda service=service: _bulky_item_charges([service], body.bulky_items))
     for rule in plan.rules:
+        if rule.category.startswith('discount_'):
+            continue
         collect(f'rule:{rule.id}', getattr(rule, 'name', None) or 'Pricing rule', lambda rule=rule: _rule_charges(rule))
 
     deduped: list[dict] = []

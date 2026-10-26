@@ -17,6 +17,7 @@ import ItemMaterialsCard from './ItemMaterialsCard';
 import ItemSelectorsCard from './ItemSelectorsCard';
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
+import { calculateDiscounts, type Discount as CustomDiscount } from './pricingDiscounts';
 
 type PlanSummary = {
   id: string; company_name: string; name: string; pickup_regions: string; pickup_areas?: PickupArea[];
@@ -57,7 +58,7 @@ type Calculation = {
   total: number; warning: string;
 };
 type CustomCharge = { id: string; title: string; amount: number };
-type CustomDiscount = { id: string; targetId: string; title: string; type: "amount" | "percent"; value: number };
+const isDiscountRule = (rule: Rule) => rule.category.startsWith('discount_');
 type JobMaterial = { name: string; quantity?: number };
 type JobContext = {
   lead: { id: string; full_name: string; volume: number | null; weight: number | null };
@@ -401,6 +402,7 @@ export default function PricingPage() {
     if (!active || !active.rules) return [];
     const serviceNames = ((editing ? plan : active)?.services || []).map((service) => (service.name || "").toLowerCase());
     return (active.rules || []).filter((rule) => {
+      if (isDiscountRule(rule)) return false;
       const reference = editing ? plan?.rules.find(original => !!rule.id && original.id === rule.id) : rule;
       // Keep an edited rule visible until Save, even if its text changes category.
       if (!reference) return true;
@@ -428,16 +430,8 @@ export default function PricingPage() {
     return targets;
   }, [quote, customCharges]);
   const calculatedDiscounts = useMemo(
-    () => customDiscounts.map((discount) => {
-      const targetExists = Object.prototype.hasOwnProperty.call(discountTargets, discount.targetId);
-      return {
-        ...discount,
-        amount: !targetExists ? 0 : discount.type === "percent"
-          ? (discountTargets[discount.targetId] || 0) * Math.max(0, Number(discount.value) || 0) / 100
-          : Math.max(0, Number(discount.value) || 0),
-      };
-    }),
-    [customDiscounts, discountTargets],
+    () => calculateDiscounts(customDiscounts, discountTargets, cubicFeetValue(cubicFeet)),
+    [customDiscounts, discountTargets, cubicFeet],
   );
   const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
   const detailedTotal = Math.max(0, discountBase - discountTotal);
@@ -466,7 +460,7 @@ export default function PricingPage() {
     setDraft((current) => current ? { ...current, ...patch } : current);
   }
   function addLineDiscount(targetId: string) {
-    setCustomDiscounts((rows) => [...rows, {
+    setCustomDiscounts((rows) => [...rows.filter(row => row.targetId !== targetId), {
       id: crypto.randomUUID(), targetId, title: "", type: "amount", value: 0,
     }]);
   }
@@ -802,6 +796,20 @@ export default function PricingPage() {
                           </div>
                           <div className="pricing-line-price"><b>{money(quote.base_price)}</b><button className="slds-button" type="button" onClick={() => addLineDiscount("transportation")}>+ Discount</button></div>
                         </div>
+                        <label className="pricing-discount-choice">Transportation discount
+                          <select aria-label="Transportation discount" value="" onChange={event => {
+                            const rule = active.rules[Number(event.target.value)];
+                            if (!rule) return;
+                            setCustomDiscounts(rows => [...rows.filter(row => row.targetId !== 'transportation'), {
+                              id: crypto.randomUUID(), targetId: 'transportation', title: rule.title,
+                              type: rule.category.slice(9) as CustomDiscount['type'], value: Number(rule.description) || 0,
+                            }]);
+                          }}>
+                            <option value="" disabled>Choose a price sheet discount</option>
+                            {active.rules.map((rule, index) => isDiscountRule(rule) && <option key={rule.id || index} value={index}>{rule.title}</option>)}
+                          </select>
+                          <small>Applies to transportation only, including below the minimum. Fees and fuel stay unchanged. Use + Discount for a custom reduction.</small>
+                        </label>
                         {lineDiscounts("transportation").map((discount) => (
                           <DiscountRow key={discount.id} discount={discount} originalAmount={discountTargets.transportation || 0} setDiscounts={setCustomDiscounts} />
                         ))}
@@ -1017,6 +1025,20 @@ export default function PricingPage() {
                 </div>
               </PricingSection>
 
+              <section className="pricing-discount-catalog">
+                <h3>Transportation discounts</h3>
+                <p>Named discounts for reps to apply to an estimate. Fees are adjusted separately.</p>
+                {active.rules.map((rule, index) => isDiscountRule(rule) && <div className="pricing-line-discount" key={rule.id || index}>
+                  <label>Name<input disabled={!editing} value={rule.title} placeholder="Military, Senior, Seasonal..." onChange={event => patchRule(index, { title: event.target.value })} /></label>
+                  <label>Discount type<select disabled={!editing} value={rule.category} onChange={event => patchRule(index, { category: event.target.value })}>
+                    <option value="discount_amount">Amount off ($)</option><option value="discount_percent">Percent off (%)</option><option value="discount_rate">Reduced rate ($/cu ft)</option>
+                  </select></label>
+                  <label>Value<input disabled={!editing} type="number" min="0" max={rule.category === 'discount_percent' ? 100 : undefined} step="0.01" value={rule.description} onChange={event => patchRule(index, { description: event.target.value })} /></label>
+                  {editing && <button className="slds-button text-danger" onClick={() => patchDraft({ rules: active.rules.filter((_, i) => i !== index) })}>Remove</button>}
+                </div>)}
+                {editing ? <button className="slds-button" onClick={() => patchDraft({ rules: [...active.rules, { category: 'discount_amount', title: '', description: '0' }] })}>+ Add discount</button>
+                  : user?.role === 'admin' && <button className="slds-button" onClick={() => setEditing(true)}>Edit discounts</button>}
+              </section>
               <PricingSection title="Additional services & adjustments" count={pricingServices.length + catalogRules.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))}>
                 <div className="pricing-services pricing-services-editor">
                   {pricingServices.map((service) => {
@@ -1085,20 +1107,22 @@ function DiscountRow({
       </label>
       <label>
         Type
-        <select value={discount.type} onChange={(event) => patch({ type: event.target.value as "amount" | "percent" })}>
+        <select value={discount.type} onChange={(event) => patch({ type: event.target.value as CustomDiscount['type'] })}>
           <option value="amount">Amount ($)</option>
           <option value="percent">Percentage (%)</option>
+          {discount.targetId === 'transportation' && <option value="rate">Reduced rate ($/cu ft)</option>}
         </select>
       </label>
       <label>
-        {discount.type === "percent" ? "Percent" : "Amount"}
+        {discount.type === "percent" ? "Percent" : discount.type === 'rate' ? 'New cu-ft rate' : "Amount off"}
         <input type="number" min="0" step="0.01" value={discount.value || ""} placeholder="0.00" onChange={(event) => patch({ value: Number(event.target.value) })} />
       </label>
       <div className="pricing-line-discount-value">
-        <small>{discount.type === "percent" ? `${Number(discount.value) || 0}% of original ${money(originalAmount)}` : "Fixed discount"}</small>
+        <small>{discount.type === "percent" ? `${Number(discount.value) || 0}% of original ${money(originalAmount)}` : discount.type === 'rate' ? 'Lower transportation rate' : "Fixed discount"}</small>
         <b>−{money(discount.amount)}</b>
       </div>
       <button type="button" className="slds-button text-danger" aria-label="Remove discount" onClick={() => setDiscounts((rows) => rows.filter((row) => row.id !== discount.id))}>Remove</button>
+      {discount.targetId !== 'transportation' && <button type="button" className="slds-button" onClick={() => patch({ type: 'percent', value: 100, title: discount.title || 'Fee waived' })}>Waive fee</button>}
     </div>
   );
 }
