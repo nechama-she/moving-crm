@@ -1195,6 +1195,7 @@ def rep_discount_options(request: Request, access: PublicMoveAccess = Depends(ve
 
 @router.post('/api/public-moves/{access_id}/rep-discounts')
 def save_rep_discount(body: RepDiscountInput, request: Request, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from math import ceil
     if not is_rep_request(access, request):
         raise HTTPException(403, 'Rep access required.')
     from models import LeadJobCharge

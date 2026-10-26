@@ -772,7 +772,7 @@ export default function CustomerMovePage() {
   }
 
   const [sections, setSections] = useState(() => ({...initialSections(), ...(bootstrap ? {move: {ready:true, loading:false, error:''}} : {})}));
-  const pageReadOnly = pageSections.some(section => !sections[section].ready || sections[section].loading || !!sections[section].error);
+  const sectionReady = (...names: PageSection[]) => names.every(name => sections[name].ready && !sections[name].error);
   const sectionRequests = useRef<Record<string, number>>({});
   const pricingLoading = sections.pricing.loading;
   const pricingLoadError = sections.pricing.error;
@@ -812,7 +812,7 @@ export default function CustomerMovePage() {
   }
   function sectionNotice(section: PageSection, label: string) {
     const state = sections[section];
-    return state.loading && !state.ready ? <p role="status">Loading {label}...</p> : state.error ? <p role="alert" className="cm-error">Could not load {label}. {state.error} <button type="button" className="cm-secondary-btn" onClick={() => void loadSection(section)}>Retry</button></p> : null;
+    return state.loading && !state.ready ? <p role="status" className="cm-section-loading"><span className="cm-loading-spinner" aria-hidden="true" />Loading {label}...</p> : state.error ? <p role="alert" className="cm-error">Could not load {label}. <button type="button" className="cm-secondary-btn" onClick={() => void loadSection(section)}>Retry</button></p> : null;
   }
 
   const updatesUnavailable = useCustomerUpdates(base, key, session, initial => refreshDetails(true, false, initial));
@@ -929,18 +929,6 @@ export default function CustomerMovePage() {
           </div>
         ) : (
           <>
-            {pageReadOnly && <div role="status" className="cm-readonly-notice">
-              <p>Read-only while page sections load. Editing becomes available when all sections are ready.</p>
-              {pageSections.filter(section => sections[section].error).map(section => <p key={section}>
-                Could not load {section === 'move' ? 'move details' : section}.
-                {' '}<button type="button" className="cm-secondary-btn" disabled={sections[section].loading} onClick={() => void loadSection(section)}>Retry {section === 'move' ? 'move details' : section}</button>
-              </p>)}
-            </div>}
-            <fieldset disabled={pageReadOnly} style={{border:0, padding:0, margin:0, minWidth:0}} onClickCapture={event => {
-              if (pageReadOnly && (event.target as HTMLElement).closest('[role="button"], .cm-editable-stop')) { event.preventDefault(); event.stopPropagation(); }
-            }} onKeyDownCapture={event => {
-              if (pageReadOnly && (event.key === 'Enter' || event.key === ' ') && (event.target as HTMLElement).closest('[role="button"], .cm-editable-stop')) { event.preventDefault(); event.stopPropagation(); }
-            }}>
             <header className="cm-company-header">
               <div className="cm-company-header-left">
                 <div className="cm-company-logo-placeholder" style={data.company_details?.logo ? { border: 0, background: "transparent", overflow: "hidden", flexShrink: 0 } : undefined}>
@@ -1046,9 +1034,9 @@ export default function CustomerMovePage() {
                 <p>Upload photos, videos, or documents, create an item list, or schedule a live virtual walkthrough with our team.</p>
                 <p>Your saved item list and uploaded media stay together. Generate one report to combine both into your inventory and estimate.</p>
                 <div className="cm-inventory-actions">
-                  <button type="button" className="slds-button cm-add-list-button" onClick={() => setShowInventoryList(true)}>{data.combined_inventory?.length||data.inventory_draft ? 'Update inventory' : 'Add a list'}</button>
+                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('inventory', 'pricing')} onClick={() => setShowInventoryList(true)}>{!sectionReady('inventory', 'pricing') ? 'Loading inventory...' : data.combined_inventory?.length||data.inventory_draft ? 'Update inventory' : 'Add a list'}</button>
                   <button type="button" className="slds-button cm-add-list-button" disabled={busy || !photosRestored} onClick={() => filePicker.current?.click()} aria-busy={files.some(f => f.status === 'Uploading')}>{files.some(f => f.status === 'Uploading') ? 'Uploading...' : 'Upload files'}</button>
-                  <button type="button" className="slds-button cm-add-list-button" onClick={() => meetingDialog.current?.showModal()}>Virtual estimate</button>
+                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('media')} onClick={() => meetingDialog.current?.showModal()}>Virtual estimate</button>
                   <input ref={filePicker} type="file" multiple hidden disabled={busy || !photosRestored} onChange={e=>{void choose(e.target.files);e.target.value='';}}/>
                   {files.some(f => f.status === 'Try again') && <button className="slds-button cm-primary cm-upload-btn" disabled={busy} onClick={()=>void upload()}>Retry upload</button>}
                 </div>
@@ -1067,7 +1055,7 @@ export default function CustomerMovePage() {
                   ))}
                 </div>
                 {sectionNotice('inventory', 'inventory')}
-                {data.inventory_draft?.rows.length ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open saved item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
+                {sectionReady('inventory', 'pricing') && data.inventory_draft?.rows.length ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open saved item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
                   <div>
                     <strong>Saved item list</strong>
                     <span>{data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((roomTotal, item) => roomTotal + Number(item.amount || 0), 0), 0)} items &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + Number(item.amount || 0) * piecesPerItem(item.name), 0), 0)} pieces &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + boxQuantity(item.name, Number(item.amount || 0)), 0), 0)} boxes &middot; {data.inventory_draft.cuft.toLocaleString()} cu ft</span>
@@ -1075,7 +1063,7 @@ export default function CustomerMovePage() {
                   </div>
                 </section> : null}
                 {sectionNotice('media', 'media')}
-                <ReportFileGallery newFileIds={(data.editable_files || data.files).filter(file => !(data.report_history?.find(report => report.current)?.files || []).some(previous => previous.id === file.id)).map(file => file.id)} files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={busy || reportState === 'running'} />
+                <ReportFileGallery newFileIds={(data.editable_files || data.files).filter(file => !(data.report_history?.find(report => report.current)?.files || []).some(previous => previous.id === file.id)).map(file => file.id)} files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={!sectionReady('media') || busy || reportState === 'running'} />
                 {data.walkthrough && <div className="cm-meeting-summary">
                   <div><strong>Virtual estimate</strong><span>{meetingTime(data.walkthrough)}</span><small>{({requested:'Requested',scheduled:'Confirmed',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status] || data.walkthrough.status}</small></div>
                   <div className="cm-walkthrough-actions">
@@ -1090,7 +1078,7 @@ export default function CustomerMovePage() {
                     <button
                       type="button"
                       className="slds-button cm-primary cm-spark-btn"
-                      disabled={busy || startingReport || data.spark?.status === 'queued' || data.spark?.status === 'running' || files.some(file => file.status !== 'Uploaded')}
+                      disabled={!sectionReady('inventory', 'media') || busy || startingReport || data.spark?.status === 'queued' || data.spark?.status === 'running' || files.some(file => file.status !== 'Uploaded')}
                       onClick={async () => {
                         if (reportStartPending.current || data.spark?.status === 'queued' || data.spark?.status === 'running') return;
                         reportStartPending.current = true;
@@ -1167,7 +1155,10 @@ export default function CustomerMovePage() {
               {sectionNotice('volume', 'volume')}
               <div className="cm-estimate-top">
                 <div className="cm-estimate-main-info" ref={estimateResult} aria-live="polite">
-                  {data.estimate ? <>
+                  {!sections.pricing.ready && !data.estimate ? <>
+                    <span className="cm-estimate-eyebrow">Your estimate</span>
+                    {!pricingLoadError && <p role="status" className="cm-section-loading"><span className="cm-loading-spinner" aria-hidden="true" />Loading your estimate...</p>}
+                  </> : data.estimate ? <>
                     <span className="cm-estimate-eyebrow" style={{marginBottom: 12}}>Your estimate</span>
                     <div className="cm-estimate-summary">
                       <div className="cm-estimate-detail-item">
@@ -1177,7 +1168,7 @@ export default function CustomerMovePage() {
                           <button type="button" className="cm-price-refresh" aria-label={calculatingPrice ? 'Recalculating price' : 'Recalculate price'} title={calculatingPrice ? 'Recalculating price...' : 'Recalculate price'} aria-busy={calculatingPrice}
                             disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running' || data.spark?.status === 'running' || data.spark?.status === 'queued'}
                             onClick={() => void recalculatePrice()}>
-                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M5.5 7a7 7 0 0 1 12-2L20 8M4 16l2.5 3a7 7 0 0 0 12-2"/></svg>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                           </button>
                         </div>
                       </div>
@@ -1199,7 +1190,7 @@ export default function CustomerMovePage() {
                   <strong>{data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'?'Your report is ready. Pricing is pending.':'Start by adding your inventory.'}</strong>
                   <p className="cm-estimate-desc">{data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
                   </>}
-                  {!data.estimate && data.spark?.status === 'completed' && <button
+                  {sections.pricing.ready && !data.estimate && data.spark?.status === 'completed' && <button
                     type="button"
                     className="cm-secondary-btn cm-rerate-btn"
                     aria-busy={calculatingPrice}
@@ -1223,10 +1214,9 @@ export default function CustomerMovePage() {
                 )}
               </div>
               <div ref={estimateFeedback}>
-              {pricingLoading && !sections.pricing.ready && data.pricing_required === true && <p role="status">Loading pricing and service options...</p>}
-              {pricingLoadError && <p role="alert">Pricing could not be loaded. {pricingLoadError} <button type="button" className="cm-secondary-btn" disabled={pricingLoading} onClick={() => void loadSection('pricing')}>Retry pricing</button></p>}
+              {pricingLoadError && <p role="alert">We couldn't load your estimate. <button type="button" className="cm-secondary-btn" disabled={pricingLoading} onClick={() => void loadSection('pricing')}>Try again</button></p>}
               {calculationError && <p role="alert">{calculationError}</p>}
-              {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Retry pricing</button></p>}
+              {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Try again</button></p>}
               </div>
               {data.estimate?.charges && data.estimate.charges.length > 0 && (
                 <div className="cm-estimate-breakdown">
@@ -1458,7 +1448,7 @@ export default function CustomerMovePage() {
               </div>
             )}
             <footer className="cm-footer">Your move. Your pace. We're here to help.</footer>
-            </fieldset>
+
           </>
         )}
       </div>

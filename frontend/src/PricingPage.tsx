@@ -850,8 +850,8 @@ export default function PricingPage() {
                           </div>
                           <div className="pricing-line-price"><b>{money(quote.base_price)}</b><button className="slds-button" type="button" onClick={() => addLineDiscount("transportation")}>+ Discount</button></div>
                         </div>
-                        <label className="pricing-discount-choice">Transportation discount
-                          <select aria-label="Transportation discount" value="" onChange={event => {
+                        <label className="pricing-discount-choice">Discount
+                          <select aria-label="Discount" value="" onChange={event => {
                             const rule = active.rules[Number(event.target.value)];
                             if (!rule) return;
                             setCustomDiscounts(rows => [...rows.filter(row => row.targetId !== 'transportation'), {
@@ -1079,10 +1079,10 @@ export default function PricingPage() {
                 </div>
               </PricingSection>
 
-              <PricingSection title="Transportation discounts" count={(discountDraft || plan?.rules.filter(isDiscountRule) || []).length} open={discountOpen} toggle={() => setDiscountOpen(value => !value)} actions={user?.role === 'admin' && (discountDraft ? <>
+              <PricingSection title="Discount" count={(discountDraft || plan?.rules.filter(isDiscountRule) || []).length} open={discountOpen} toggle={() => setDiscountOpen(value => !value)} actions={user?.role === 'admin' && (discountDraft ? <>
                 <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={savingDiscounts} onClick={() => { setDiscountDraft(null); setDiscountError(''); }}>Cancel changes</button>
                 <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={savingDiscounts} onClick={() => void saveDiscounts()}>{savingDiscounts ? 'Saving...' : 'Save changes'}</button>
-              </> : <button type="button" className="slds-button pricing-section-action" aria-label="Edit transportation discounts" title="Edit" onClick={() => { setDiscountDraft(structuredClone(plan?.rules.filter(isDiscountRule) || [])); setDiscountError(''); setDiscountOpen(true); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>)}>
+              </> : <button type="button" className="slds-button pricing-section-action" aria-label="Edit discount" title="Edit" onClick={() => { setDiscountDraft(structuredClone(plan?.rules.filter(isDiscountRule) || [])); setDiscountError(''); setDiscountOpen(true); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>)}>
                 <div className="pricing-discount-catalog">
                 <p>Named discounts for reps to apply to an estimate. Fees are adjusted separately.</p>
                 {discountError && <p role="alert">{discountError}</p>}

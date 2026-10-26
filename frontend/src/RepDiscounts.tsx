@@ -1,6 +1,11 @@
 import { useState } from 'react';
 type Rule = {title: string; type: 'amount' | 'percent' | 'rate' | 'total'; value: number};
 type Charge = {id: string; name: string; total: number; transportation: boolean; discount?: Rule};
+async function discountResponse(response: Response, fallback: string) {
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data) throw new Error(typeof data?.detail === 'string' ? data.detail : fallback);
+  return data;
+}
 export default function RepDiscounts({base, headers, onSaved, chargeId, chargeName}: {base: string; headers: Record<string,string>; onSaved: () => Promise<unknown>; chargeId: string; chargeName: string}) {
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<{presets: Rule[]; charges: Charge[]}>({presets: [], charges: []});
@@ -11,8 +16,7 @@ export default function RepDiscounts({base, headers, onSaved, chargeId, chargeNa
   const charge = options.charges.find(c => c.id === id);
   async function load() {
     const response = await fetch(base + '/rep-discounts', {headers, cache: 'no-store'});
-    const data = await response.json();
-    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not load discounts.');
+    const data = await discountResponse(response, 'Could not load discounts. Please try again.');
     setOptions(data);
     return data as typeof options;
   }
@@ -21,8 +25,7 @@ export default function RepDiscounts({base, headers, onSaved, chargeId, chargeNa
     setBusy(true); setError('');
     try {
       const response = await fetch(base + '/rep-discounts', {method: 'POST', headers: {...headers, 'Content-Type': 'application/json'}, body: JSON.stringify({...rule, charge_id: id, remove})});
-      const result = await response.json();
-      if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : 'Check the discount values.');
+      await discountResponse(response, 'Could not save the discount. Your entries are still here. Please try again.');
       await onSaved();
       const next = await load();
       const selected = next.charges.find(c => c.id === id);

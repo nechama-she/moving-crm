@@ -1,15 +1,41 @@
 import json
+import ast
 import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from decimal import Decimal
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
 from rep_discounts import apply
 
 
 class RepDiscountTests(unittest.TestCase):
+    def test_save_rate_discount_handler(self):
+        source = Path(__file__).resolve().parents[2] / 'backend/routes/public_moves.py'
+        handler = next(node for node in ast.parse(source.read_text(encoding='utf-8')).body if isinstance(node, ast.FunctionDef) and node.name == 'save_rep_discount')
+        handler.decorator_list = []
+        handler.args.defaults = []
+        scope = {'is_rep_request': lambda *args: True, 'Lead': object(), 'LeadJob': object(), 'json': json}
+        future = ast.parse('from __future__ import annotations').body[0]
+        exec(compile(ast.Module(body=[future, handler], type_ignores=[]), str(source), 'exec'), scope)
+        lead = SimpleNamespace(id='lead', volume=Decimal('543'))
+        job = SimpleNamespace(id='job', customer_packing_package='{}')
+        charge = SimpleNamespace(id='charge', name='Transportation charge')
+        db = Mock()
+        db.get.return_value = lead
+        db.query.return_value.filter_by.return_value.with_for_update.return_value.first.return_value = job
+        db.query.return_value.filter_by.return_value.first.return_value = charge
+        refresh = Mock()
+        with patch.dict(sys.modules, {'models': SimpleNamespace(LeadJobCharge=object()), 'price_validity': SimpleNamespace(price_is_locked=lambda *args: False), 'routes.leads': SimpleNamespace(_refresh_lead_estimated_total=refresh)}):
+            result = scope['save_rep_discount'](SimpleNamespace(charge_id='charge', title='Discount', type='rate', value=Decimal('3.52'), remove=False), None, SimpleNamespace(lead_id='lead', job_id='job'), db)
+        self.assertEqual(result, {'saved': True})
+        saved = json.loads(job.customer_packing_package)['rep_discounts']['charge']
+        self.assertEqual((saved['value'], saved['volume']), ('3.52', 543))
+        refresh.assert_called_once_with('lead', db)
+        db.commit.assert_called_once()
+
     def test_no_discounts_leaves_job_untouched_and_skips_rows(self):
         class UnusedRows:
             def __iter__(self):

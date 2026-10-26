@@ -285,3 +285,7 @@
 .cm-estimate-toolbar .cm-rep-discounts>p{flex-basis:100%}
 @media(max-width:560px){.cm-estimate-toolbar>.cm-estimate-breakdown-title{flex-basis:100%}.customer-move .cm-estimate-toolbar{gap:4px 16px}}
 .cm-rep-discounts{margin-top:12px}.cm-rep-discount-editor{margin-top:12px;padding:18px;border:1px solid var(--cm-border);border-radius:12px;background:#fff;max-width:650px}.cm-rep-discount-editor p{font-size:13px}.cm-rep-discount-editor label{display:grid;gap:6px;margin:12px 0;font-size:13px}.cm-rep-discount-editor input,.cm-rep-discount-editor select{width:100%;min-width:0;box-sizing:border-box;min-height:44px;padding:8px;border:1px solid var(--cm-border);border-radius:6px;background:#fff;color:inherit;font:inherit}.cm-rep-discount-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.cm-rep-discount-actions{display:flex;gap:10px;flex-wrap:wrap}.cm-rep-discount-actions button{min-height:44px}@media(max-width:560px){.cm-rep-discount-fields{grid-template-columns:1fr;gap:0}.cm-rep-discount-editor input,.cm-rep-discount-editor select{font-size:16px}}
+.cm-section-loading { display: flex; align-items: center; gap: 10px; min-height: 28px; color: #596773; font-size: 14px; }
+.cm-loading-spinner { width: 16px; height: 16px; flex: 0 0 16px; border: 2px solid #d7dde2; border-top-color: currentColor; border-radius: 50%; animation: cm-section-spin 0.8s linear infinite; }
+@keyframes cm-section-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .cm-loading-spinner { animation: none; } }
