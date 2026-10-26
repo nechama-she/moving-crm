@@ -167,10 +167,11 @@ export default function PricingPage() {
   const [draft, setDraft] = useState<Plan | null>(null);
   const [editing, setEditing] = useState(false);
   const [sectionEditing, setSectionEditing] = useState<string[]>([]);
+  const [discountOpen, setDiscountOpen] = useState(false);
   const [discountDraft, setDiscountDraft] = useState<Rule[] | null>(null);
   const [savingDiscounts, setSavingDiscounts] = useState(false);
   const [discountError, setDiscountError] = useState('');
-  useEffect(() => { setDiscountDraft(null); setDiscountError(''); }, [plan?.id]);
+  useEffect(() => { setDiscountOpen(false); setDiscountDraft(null); setDiscountError(''); }, [plan?.id]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingPrice, setSavingPrice] = useState(false);
@@ -313,7 +314,7 @@ export default function PricingPage() {
 
   const hasPendingRateGroups = pendingRateGroups.length > 0;
   const active = editing || sectionEditing.length > 0 || hasPendingRateGroups ? draft : plan;
-  const editingSection = (section: string) => editing || sectionEditing.includes(section);
+  const editingSection = (section: string) => sectionEditing.includes(section);
   useEffect(() => { setSectionEditing([]); }, [plan?.id]);
   const destinations = useMemo(
     () => Array.from(new Set((active?.rates || []).map((row) => row.destination).filter(Boolean))),
@@ -410,7 +411,7 @@ export default function PricingPage() {
     const serviceNames = ((editing ? plan : active)?.services || []).map((service) => (service.name || "").toLowerCase());
     return (active.rules || []).filter((rule) => {
       if (isDiscountRule(rule)) return false;
-      const reference = editing ? plan?.rules.find(original => !!rule.id && original.id === rule.id) : rule;
+      const reference = sectionEditing.includes('services') ? plan?.rules.find(original => !!rule.id && original.id === rule.id) : rule;
       // Keep an edited rule visible until Save, even if its text changes category.
       if (!reference) return true;
       const text = (reference.description || "").toLowerCase();
@@ -420,7 +421,7 @@ export default function PricingPage() {
       if (/^(rates period|exceptions?)$/i.test((reference.description || "").trim())) return false;
       return true;
     });
-  }, [active, plan, editing]);
+  }, [active, plan, editing, sectionEditing]);
   const originalService = (service: Service) => editing
     ? plan?.services.find(original => !!service.id && original.id === service.id) || service : service;
   const bulkyItems = (active?.services || []).filter(service => isBulkyItem(originalService(service)));
@@ -443,17 +444,17 @@ export default function PricingPage() {
   const discountTotal = calculatedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
   const detailedTotal = Math.max(0, discountBase - discountTotal);
 
-  function startServiceEdit(section: 'materials' | 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'originFees' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems') {
+  function startServiceEdit(section: 'materials' | 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'originFees' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems' | 'services') {
     if (user?.role !== 'admin' || saving) return;
     setOpenSections(current => ({ ...current, [section]: true }));
     setSectionEditing(current => [...new Set([...current, section])]);
   }
-  function serviceEditActions(section: 'materials' | 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'originFees' | 'deliveryFees' | 'shuttle' | 'pickup' | 'packing' | 'bulkyItems') {
+  function serviceEditActions(section: 'materials' | 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'originFees' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems' | 'services') {
     if (user?.role !== 'admin') return null;
     return editingSection(section) ? <>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => cancelSection(section)}>Cancel changes</button>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void saveSection(section)}>{saving ? 'Saving...' : 'Save changes'}</button>
-    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'extraStops' ? 'Edit additional stop pricing' : section === 'elevator' ? 'Edit elevator pricing' : section === 'longCarry' ? 'Edit long carry pricing' : section === 'stairs' ? 'Edit stairs pricing' : section === 'storage' ? 'Edit storage pricing' : section === 'originFees' ? 'Edit origin fees' : section === 'deliveryFees' ? 'Edit destination fees' : section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'packing' ? 'Edit packing rates' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
+    </> : <button type="button" className="slds-button pricing-section-action" aria-label={section === 'extraStops' ? 'Edit additional stop pricing' : section === 'elevator' ? 'Edit elevator pricing' : section === 'longCarry' ? 'Edit long carry pricing' : section === 'stairs' ? 'Edit stairs pricing' : section === 'storage' ? 'Edit storage pricing' : section === 'originFees' ? 'Edit origin fees' : section === 'deliveryFees' ? 'Edit destination fees' : section === 'shuttle' ? 'Edit shuttle' : section === 'pickup' ? 'Edit pickup areas' : section === 'rates' ? 'Edit transportation rates' : section === 'packing' ? 'Edit packing rates' : section === 'services' ? 'Edit additional services and adjustments' : 'Edit bulky item rates'} title="Edit" onClick={() => startServiceEdit(section)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>;
   }
 
   function patchDraft(patch: Partial<Plan>) {
@@ -464,8 +465,10 @@ export default function PricingPage() {
     stairs: isStairsCard, storage: isStorageCard, originFees: isOriginFeesCard,
     deliveryFees: isDeliveryFeesCard, shuttle: isShuttleCard, packing: isPackingCard,
     materials: isPackingCard, bulkyItems: isBulkyItem,
+    services: service => ![isExtraStopsCard, isElevatorCard, isLongCarryCard, isStairsCard, isStorageCard, isOriginFeesCard, isDeliveryFeesCard, isShuttleCard, isPackingCard, isBulkyItem].some(matches => matches(service)),
   };
   function mergeSection(current: Plan, saved: Plan, section: string): Plan {
+    if (section === 'services') return {...current, services: [...current.services.filter(row => !serviceSection.services(row)), ...structuredClone(saved.services.filter(serviceSection.services))], rules: [...current.rules.filter(isDiscountRule), ...structuredClone(saved.rules.filter(row => !isDiscountRule(row)))]};
     if (section === 'rates') return {...current, rates: structuredClone(saved.rates)};
     if (section === 'pickup') return {...current, pickup_areas: structuredClone(saved.pickup_areas), pickup_regions: saved.pickup_regions};
     const matches = serviceSection[section];
@@ -493,6 +496,7 @@ export default function PricingPage() {
     setSaving(true); setError(''); setNotice('');
     const body = section === 'rates' ? {rates: draft.rates.map(row => ({...row, id: pendingRateGroups.some(ids => row.id && ids.includes(row.id)) ? undefined : row.id}))}
       : section === 'pickup' ? {pickup_areas: draft.pickup_areas || []}
+      : section === 'services' ? {services: draft.services.filter(serviceSection.services), rules: draft.rules.filter(row => !isDiscountRule(row))}
       : {services: (section === 'materials' ? withMaterials(draft.services) : draft.services).filter(serviceSection[section]).map(row => {
         if (section !== 'materials' && section !== 'packing') return row;
         const config = JSON.parse(row.comments.slice(PACKING_CARD_PREFIX.length));
@@ -637,39 +641,18 @@ export default function PricingPage() {
 
   async function save() {
     if (!draft) return;
-    setSaving(true);
-    setError("");
-    setNotice("");
+    setSaving(true); setError('');
     try {
-      const response = await fetch(`${API_BASE}/api/pricing/${draft.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", ...authHeaders(token) },
-        body: JSON.stringify({
-          name: draft.name, pickup_regions: draft.pickup_regions,
-          pickup_areas: draft.pickup_areas?.map(area => ({ ...area, zip_codes: area.zip_codes.map(zip => zip.trim()).filter(Boolean) })),
-          fuel_percent: draft.fuel_percent, active: draft.active,
-          price_valid_days: draft.price_valid_days ?? 7,
-          rules: draft.rules,
-          rates: draft.rates.map(row => ({ ...row, id: pendingRateGroups.some(ids => row.id && ids.includes(row.id)) ? undefined : row.id })),
-          services: withMaterials(draft.services),
-        }),
+      const response = await fetch(`${API_BASE}/api/pricing/${draft.id}/sections/details`, {
+        method: 'PUT', headers: {...authHeaders(token), 'Content-Type': 'application/json'},
+        body: JSON.stringify({name: draft.name, fuel_percent: draft.fuel_percent, price_valid_days: draft.price_valid_days ?? 7}),
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(formatApiError(body, "Failed to save pricing"));
-      }
-      const saved: Plan = await response.json();
-      setPlan(saved);
-      setDraft(structuredClone(saved));
-      setPendingRateGroups([]);
-      setEditing(false);
-      setSectionEditing([]);
-      setNotice("Pricing changes saved.");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Failed to save pricing");
-    } finally {
-      setSaving(false);
-    }
+      const result = await response.json();
+      if (!response.ok) throw new Error(formatApiError(result, 'Could not save price sheet details'));
+      const merge = (current: Plan | null) => current ? {...current, name: result.name, fuel_percent: result.fuel_percent, price_valid_days: result.price_valid_days} : current;
+      setPlan(merge); setDraft(merge); setEditing(false);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save details'); }
+    finally { setSaving(false); }
   }
 
   function elevatorValue(place: 'pickup' | 'delivery') {
@@ -742,16 +725,7 @@ export default function PricingPage() {
           <h1>Pricing</h1>
           <p>Local hourly rates and long-distance pricing books.</p>
         </div>
-        {user?.role === "admin" && active && pricingMode === "long-distance" ? (
-          <div className="pricing-actions">
-            {editing ? (
-              <>
-                <button className="slds-button secondary" onClick={() => { setDraft(plan ? structuredClone(plan) : null); setPendingRateGroups([]); setSectionEditing([]); setEditing(false); }}>Cancel entire edit</button>
-                <button className="slds-button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save entire price sheet"}</button>
-              </>
-            ) : <button className="slds-button primary" onClick={() => setEditing(true)}>Edit pricing</button>}
-          </div>
-        ) : null}
+
       </header>
 
       {error ? <div className="pricing-alert error">{error}</div> : null}
@@ -815,8 +789,18 @@ export default function PricingPage() {
                   {editing ? <input className="pricing-title-input" value={active.name} onChange={(e) => patchDraft({ name: e.target.value })} /> : <h2>{active.name}</h2>}
                   <p>{active.pickup_regions || "Pickup coverage is described in the rules below."}</p>
                 </div>
+                {user?.role === "admin" && active && pricingMode === "long-distance" ? (
+          <div className="pricing-actions">
+            {editing ? (
+              <>
+                <button className="slds-button secondary" onClick={() => { setDraft(current => current && plan ? {...current, name: plan.name, fuel_percent: plan.fuel_percent, price_valid_days: plan.price_valid_days} : current); setEditing(false); }}>Cancel changes</button>
+                <button className="slds-button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save changes"}</button>
+              </>
+            ) : <button className="slds-button primary" onClick={() => setEditing(true)}>Edit details</button>}
+          </div>
+        ) : null}
                 <div className="pricing-kpis">
-                  <div><span>Price valid for (days)</span>{editing ? <input aria-label="Price valid for (days)" type="number" min="1" max="3650" step="1" value={active.price_valid_days ?? 7} onChange={event => patchDraft({ price_valid_days: Number(event.target.value) })} /> : <strong>{active.price_valid_days ?? 7}</strong>}</div>
+<div><span>Price valid for (days)</span>{editing ? <input aria-label="Price valid for (days)" type="number" min="1" max="3650" step="1" value={active.price_valid_days ?? 7} onChange={event => patchDraft({ price_valid_days: Number(event.target.value) })} /> : <strong>{active.price_valid_days ?? 7}</strong>}</div>
                   <div><span>Fuel</span>{editing ? <input type="number" step="0.1" value={active.fuel_percent ?? ""} onChange={(e) => patchDraft({ fuel_percent: e.target.value === "" ? null : Number(e.target.value) })} /> : <strong>{active.fuel_percent == null ? "See rules" : `${active.fuel_percent}%`}</strong>}</div>
                   <div><span>Destinations</span><strong>{destinations.length}</strong></div>
                   <div><span>Services</span><strong>{active.services.length}</strong></div>
@@ -1001,7 +985,7 @@ export default function PricingPage() {
                 ) : null}
               </section>
 
-              <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))} onDoubleClick={() => startServiceEdit('rates')} actions={user?.role === "admin" && pricingMode === "long-distance" ? <>{!editingSection('rates') ? <button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={addDestination}>+ Add destination</button> : null}{editingSection('rates') ? <><button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => cancelSection('rates')}>Cancel rates</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={addDestination}>+ Add destination</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void saveSection('rates')}>{saving ? "Saving rates" : "Save rates"}</button></> : hasPendingRateGroups ? <><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => cancelSection('rates')}>Discard new rows</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void saveSection('rates')}>{saving ? "Saving new rows" : "Save new rows"}</button><button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => startServiceEdit('rates')}>Edit rates</button></> : <button type="button" className="slds-button pricing-section-action pricing-section-text-action" onClick={() => startServiceEdit('rates')}>Edit rates</button>}</> : null}>
+              <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))} onDoubleClick={() => startServiceEdit('rates')} actions={<>{serviceEditActions('rates')}{user?.role === 'admin' && <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => { startServiceEdit('rates'); addDestination(); }}>+ Add destination</button>}</>}>
                 <div className="pricing-table-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search destination or ZIP area" /><span>{bands.length} cubic-foot bands</span></div>
                 <div className="pricing-rate-table-wrap">
                   <table className="pricing-rate-table">
@@ -1067,8 +1051,8 @@ export default function PricingPage() {
                 <LongDistanceMaterialsCard services={active.services} editing={editingSection('materials')} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
-              <ItemMaterialsCard key={active.id} planId={active.id} blocked={editing || saving} />
-              <ItemSelectorsCard key={`selectors-${active.id}`} planId={active.id} blocked={editing || saving} />
+              <ItemMaterialsCard key={active.id} planId={active.id} blocked={saving} />
+              <ItemSelectorsCard key={`selectors-${active.id}`} planId={active.id} blocked={saving} />
 
               <PricingSection title="Bulky items rates" count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))} onDoubleClick={() => startServiceEdit('bulkyItems')} actions={serviceEditActions('bulkyItems')}>
                 <div className="pricing-services pricing-bulky-rates">
@@ -1095,14 +1079,11 @@ export default function PricingPage() {
                 </div>
               </PricingSection>
 
-              <section className="pricing-discount-catalog">
-                <div className="pricing-discount-heading">
-                  <h3>Transportation discounts</h3>
-                  {discountDraft && user?.role === 'admin' && <div className="pricing-discount-actions">
-                    <button type="button" className="slds-button" disabled={savingDiscounts} onClick={() => { setDiscountDraft(null); setDiscountError(''); }}>Cancel changes</button>
-                    <button type="button" className="slds-button slds-button_brand" disabled={savingDiscounts} onClick={() => void saveDiscounts()}>{savingDiscounts ? 'Saving...' : 'Save discounts'}</button>
-                  </div>}
-                </div>
+              <PricingSection title="Transportation discounts" count={(discountDraft || plan?.rules.filter(isDiscountRule) || []).length} open={discountOpen} toggle={() => setDiscountOpen(value => !value)} actions={user?.role === 'admin' && (discountDraft ? <>
+                <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={savingDiscounts} onClick={() => { setDiscountDraft(null); setDiscountError(''); }}>Cancel changes</button>
+                <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={savingDiscounts} onClick={() => void saveDiscounts()}>{savingDiscounts ? 'Saving...' : 'Save changes'}</button>
+              </> : <button type="button" className="slds-button pricing-section-action" aria-label="Edit transportation discounts" title="Edit" onClick={() => { setDiscountDraft(structuredClone(plan?.rules.filter(isDiscountRule) || [])); setDiscountError(''); setDiscountOpen(true); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>)}>
+                <div className="pricing-discount-catalog">
                 <p>Named discounts for reps to apply to an estimate. Fees are adjusted separately.</p>
                 {discountError && <p role="alert">{discountError}</p>}
                 {(discountDraft || plan?.rules.filter(isDiscountRule) || []).map((rule, index) => <div className="pricing-line-discount" key={rule.id || index}>
@@ -1113,16 +1094,16 @@ export default function PricingPage() {
                   <label>Value<input disabled={!discountDraft || savingDiscounts} type="number" min="0" max={rule.category === 'discount_percent' ? 100 : undefined} step="0.01" value={rule.description} onChange={event => patchDiscount(index, { description: event.target.value })} /></label>
                   {discountDraft && <button className="slds-button text-danger" disabled={savingDiscounts} onClick={() => setDiscountDraft(rows => rows?.filter((_, i) => i !== index) || [])}>Remove</button>}
                 </div>)}
-                {discountDraft ? <button className="slds-button" disabled={savingDiscounts} onClick={() => setDiscountDraft(rows => [...(rows || []), { category: 'discount_amount', title: '', description: '0' }])}>+ Add discount</button>
-                  : user?.role === 'admin' && <button className="slds-button" onClick={() => { setDiscountDraft(structuredClone(plan?.rules.filter(isDiscountRule) || [])); setDiscountError(''); }}>Edit discounts</button>}
-              </section>
-              <PricingSection title="Additional services & adjustments" count={pricingServices.length + catalogRules.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))}>
+                {discountDraft && <button type="button" className="slds-button add-row" disabled={savingDiscounts} onClick={() => setDiscountDraft(rows => [...(rows || []), { category: 'discount_amount', title: '', description: '0' }])}>+ Add discount</button>}
+                </div>
+              </PricingSection>
+              <PricingSection title="Additional services & adjustments" count={pricingServices.length + catalogRules.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))} actions={serviceEditActions('services')}>
                 <div className="pricing-services pricing-services-editor">
                   {pricingServices.map((service) => {
                     const index = (active.services || []).indexOf(service);
                     return (
                     <article key={service.id || index}>
-                      {editing ? (
+                      {editingSection('services') ? (
                         <>
                           <input value={service.name} onChange={(e) => patchService(index, { name: e.target.value })} />
                           <input value={service.rate_text} onChange={(e) => patchService(index, { rate_text: e.target.value })} />
@@ -1137,7 +1118,7 @@ export default function PricingPage() {
                     const index = (active.rules || []).indexOf(rule);
                     return (
                     <article key={rule.id || `rule-${index}`} className="pricing-service-rule">
-                      {editing ? (
+                      {editingSection('services') ? (
                         <>
                           <input value={rule.title} onChange={(e) => patchRule(index, { title: e.target.value })} />
                           <textarea value={rule.description} onChange={(e) => patchRule(index, { description: e.target.value })} />
@@ -1152,8 +1133,8 @@ export default function PricingPage() {
                     </article>
                     );
                   })}
-                  {editing ? <button className="slds-button add-row" onClick={() => patchDraft({ services: [...(draft?.services || []), { name: "", rate_text: "", comments: "" }] })}>+ Add service</button> : null}
-                  {editing ? <button className="slds-button add-row" onClick={() => patchDraft({ rules: [...(draft?.rules || []), { category: "general", title: "Pricing adjustment", description: "" }] })}>+ Add adjustment</button> : null}
+                  {editingSection('services') ? <button className="slds-button add-row" onClick={() => patchDraft({ services: [...(draft?.services || []), { name: "", rate_text: "", comments: "" }] })}>+ Add service</button> : null}
+                  {editingSection('services') ? <button className="slds-button add-row" onClick={() => patchDraft({ rules: [...(draft?.rules || []), { category: "general", title: "Pricing adjustment", description: "" }] })}>+ Add adjustment</button> : null}
                 </div>
               </PricingSection>
             </>

@@ -2085,6 +2085,10 @@ class SectionUpdate(BaseModel):
     services: list[ServiceInput] | None = None
     rates: list[RateInput] | None = None
     pickup_areas: list[PickupArea] | None = None
+    rules: list[RuleInput] | None = None
+    name: str | None = Field(default=None, min_length=1)
+    fuel_percent: float | None = Field(default=None, ge=0, le=100)
+    price_valid_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 @router.put('/{plan_id}/sections/{section}')
@@ -2098,9 +2102,33 @@ def update_pricing_section(plan_id: str, section: str, body: SectionUpdate, user
                 'shuttle': SHUTTLE_PREFIX, 'packing': PACKING_CARD_PREFIX, 'materials': PACKING_CARD_PREFIX,
                 'bulkyItems': BULKY_ITEM_MARKER}
     field = 'rates' if section == 'rates' else 'pickup_areas' if section == 'pickup' else 'services'
-    if section not in {'rates', 'pickup', *prefixes} or body.model_fields_set != {field}:
+    fields = {'services', 'rules'} if section == 'services' else {'name', 'fuel_percent', 'price_valid_days'} if section == 'details' else {field}
+    if section not in {'rates', 'pickup', 'services', 'details', *prefixes} or body.model_fields_set != fields:
         raise HTTPException(422, 'Send only the fields for this pricing section.')
-    if section == 'pickup':
+    if section == 'details':
+        if not body.name or not body.name.strip() or body.price_valid_days is None:
+            raise HTTPException(422, 'Name and price validity are required.')
+        plan.name = body.name.strip()
+        plan.fuel_percent = body.fuel_percent
+        plan.price_valid_days = body.price_valid_days
+    elif section == 'services':
+        belongs = lambda row: not row.comments.startswith(tuple(prefixes.values()))
+        is_discount = lambda row: row.category in {'discount_amount', 'discount_percent', 'discount_rate'}
+        if body.services is None or body.rules is None or any(not belongs(row) for row in body.services) or any(is_discount(row) for row in body.rules):
+            raise HTTPException(422, 'Send only additional services and adjustments.')
+        service_updates = prepare_service_updates([row for row in plan.services if belongs(row)], body.services)
+        rule_updates = prepare_row_updates([row for row in plan.rules if not is_discount(row)], body.rules, ('category', 'title'), ('category', 'title'))
+        for collection, updates, keep, row_type in [(plan.services, service_updates, lambda row: not belongs(row), PricingService), (plan.rules, rule_updates, is_discount, PricingRule)]:
+            retained = [row for row in collection if keep(row)]
+            for current, value in updates:
+                row = current if current is not None else row_type()
+                for key, val in value.model_dump(exclude={'id'}).items():
+                    setattr(row, key, val.strip() if isinstance(val, str) else val)
+                if current is None:
+                    row.sort_order = max((r.sort_order for r in collection), default=-1) + 1
+                retained.append(row)
+            collection[:] = retained
+    elif section == 'pickup':
         areas = body.pickup_areas
         if areas is None or len({area.state for area in areas}) != len(areas):
             raise HTTPException(422, 'Add each pickup state only once.')

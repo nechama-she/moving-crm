@@ -31,7 +31,7 @@ class SectionSaveTests(unittest.TestCase):
         handler.args.defaults = []
         future = ast.parse('from __future__ import annotations').body[0]
         self.scope = {'_plan_or_404': lambda *args: self.plan, 'HTTPException': HttpError, 'json': json,
-                      'PricingService': Row, 'PricingRate': Row}
+                      'PricingService': Row, 'PricingRate': Row, 'PricingRule': Row}
         for key in ['EXTRA_STOPS', 'ELEVATOR', 'LONG_CARRY', 'STAIRS', 'STORAGE', 'ORIGIN_FEE', 'DELIVERY_FEE', 'SHUTTLE', 'PACKING_CARD']:
             self.scope[key + '_PREFIX'] = key + ':'
         self.scope['BULKY_ITEM_MARKER'] = 'BULKY:'
@@ -58,6 +58,31 @@ class SectionSaveTests(unittest.TestCase):
                 self.assertEqual(self.plan.pickup_regions, 'original')
                 self.assertEqual(self.plan.fuel_percent, 13)
                 self.assertEqual(self.plan.rules[0].description, 'keep')
+
+    def test_details_save_preserves_all_rows(self):
+        services, rules, rates = self.plan.services, self.plan.rules, self.plan.rates
+        self.save('details', name='Updated', fuel_percent=10, price_valid_days=14)
+        self.assertEqual((self.plan.name, self.plan.fuel_percent, self.plan.price_valid_days), ('Updated', 10, 14))
+        self.assertIs(self.plan.services, services)
+        self.assertIs(self.plan.rules, rules)
+        self.assertIs(self.plan.rates, rates)
+        self.assertEqual(self.plan.pickup_regions, 'original')
+
+    def test_adjustments_save_preserves_discounts_and_other_cards(self):
+        fee = Row(id='fee', name='Stairs', comments='STAIRS:config', rate_text='99', sort_order=0)
+        service = Row(id='service', name='Extra', comments='', rate_text='10', sort_order=1)
+        discount = Row(id='discount', category='discount_percent', title='Senior', description='10', sort_order=0)
+        rule = Row(id='rule', category='general', title='Adjustment', description='old', sort_order=1)
+        self.plan.services = [fee, service]
+        self.plan.rules = [discount, rule]
+        self.save('services', services=[Row(id='service', name='Extra', comments='', rate_text='20')], rules=[Row(id='rule', category='general', title='Adjustment', description='new')])
+        self.assertEqual(service.rate_text, '20')
+        self.assertEqual(rule.description, 'new')
+        self.assertEqual(fee.rate_text, '99')
+        self.assertEqual(discount.description, '10')
+        self.assertEqual(self.plan.fuel_percent, 13)
+        with self.assertRaises(HttpError):
+            self.save('services', services=[], rules=[discount])
 
     def test_materials_and_packing_do_not_overwrite_each_other(self):
         for section, expected in [('materials', {'full':'2', 'materials':['new']}), ('packing', {'full':'8', 'materials':['old']})]:
