@@ -11,7 +11,6 @@ import type { SelectedAddress } from "./googlePlaces";
 import CustomerItemQuestions, { type ItemQuestion } from "./CustomerItemQuestions";
 import { groupTerms, needsTermAnswer, requiredQuestionTarget } from './customerQuestionNavigation';
 import QuestionReferenceImages from "./QuestionReferenceImages";
-import ReportLinks from './ReportLinks';
 import { savedPhotos, storePhoto, removePhoto } from './photoDrafts';
 import ManualInventoryModal from "./ManualInventoryModal";
 import EstimateSigning from './EstimateSigning';
@@ -84,6 +83,9 @@ type Details = {
   participant_url: string;
   files: { id: string; name: string; size: number; content_type?: string }[];
 };
+function CompletionIcon({complete, label}: {complete: boolean; label: string}) {
+  return <svg className={`cm-completion-icon ${complete ? 'is-complete' : 'needs-attention'}`} width="20" height="20" viewBox="0 0 24 24" role="img" aria-label={label}><title>{label}</title><circle cx="12" cy="12" r="11" fill="currentColor"/>{complete ? <path d="m7 12 3 3 7-7" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/> : <><path d="M12 6v7" stroke="white" strokeWidth="2" strokeLinecap="round"/><circle cx="12" cy="17" r="1.2" fill="white"/></>}</svg>;
+}
 const emptyDetails = (): Details => ({name:'', phone:'', email:'', move_date:'', pickup:'', delivery:'', company:'', stops:[], estimate:null, packing_package:null, packing_items:[], packing_saved:false, walkthrough:null, participant_url:'', files:[]});
 const pageSections = ['move', 'inventory', 'media', 'volume', 'pricing'] as const;
 type PageSection = typeof pageSections[number];
@@ -401,7 +403,7 @@ export default function CustomerMovePage() {
     if(packingStep==='package'&&nextPackingSection){setPackingSection(nextPackingSection);termsBody.current?.scrollTo({top:0});return;}
     if (nextPricing) setPackingStep(nextPricing); else setShowQuestions(false);
   }
-  const [themeColor, setThemeColor] = useState<string>('#214c3e');
+  const [themeColor, setThemeColor] = useState<string>(() => bootstrap?.move?.company_details?.color || '#214c3e');
   const previews=useRef<string[]>([]);
   const base=`${API_BASE}/api/public-moves/${accessId}`;
   const headers={'x-public-link':key,'x-public-session':session};
@@ -1198,35 +1200,13 @@ export default function CustomerMovePage() {
                     onClick={() => void recalculatePrice()}
                   >{calculatingPrice ? 'Re-rating...' : 'Re-rate'}</button>}
                 </div>
-                <div className="cm-estimate-header-actions">
-                  {data.estimate && data.spark?.status === 'completed' && <div className="cm-estimate-sign-action">
-                    <button type="button" className="cm-primary" disabled={pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : estimateNeedsSignature ? 'View and sign estimate' : 'View estimate PDF'}</button>
-                    {estimateNeedsSignature && <small role="status">Signature required</small>}
-                    {data.signature_status === 'signed' && <small role="status">Signed - current estimate</small>}
-                    {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert">{pdfError}</p>}
-                  </div>}
-                {data.spark && (
-                  <div className="cm-spark-card cm-spark-estimate-card">
-                    <div className="cm-spark-status-row">
-                      <span className="cm-spark-pill">
-                        <span className={`cm-spark-dot ${data.spark.status === 'completed' ? 'dot-complete' : data.spark.status === 'failed' ? 'dot-failed' : 'dot-pulse'}`} />
-                        {data.spark.status === 'completed' ? (data.spark.source === 'manual' ? 'Inventory list ready' : 'Report ready') : data.spark.status === 'running' ? 'Analyzing media...' : data.spark.status === 'failed' ? 'Report failed' : 'Queued'}
-                      </span>
-
-                      {!data.estimate && data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{Math.ceil(data.spark.cuft)} cu ft</strong> : null}
-                    </div>
-                    {data.report_history?.find(report => report.current) && <ReportLinks report={data.report_history.find(report => report.current)!} onEditInventory={()=>setShowInventoryList(true)} />}
-
-                  </div>
-                )}
-                </div>
               </div>
               <div ref={estimateFeedback}>
               {pricingLoadError && <p role="alert">We couldn't load your estimate. <button type="button" className="cm-secondary-btn" disabled={pricingLoading} onClick={() => void loadSection('pricing')}>Try again</button></p>}
               {calculationError && <p role="alert">{calculationError}</p>}
               {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Try again</button></p>}
               </div>
-              <div className="cm-services-toolbar">
+              <div className="cm-estimate-button-row">
                   {(data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) && (
                   <button
                     type="button"
@@ -1249,10 +1229,17 @@ export default function CustomerMovePage() {
                       setShowQuestions(true);
                     }}
                   >
-                    Extra services &amp; details
+                    {sectionReady('pricing') && <CompletionIcon complete={data.unanswered_questions?.length === 0 && !answersSaving} label={data.unanswered_questions?.length === 0 && !answersSaving ? 'All required service answers complete' : answersSaving ? 'Saving service answers' : 'Required service answers missing'}/>}
+                    Add extra services
                   </button>
                   )}
+                  {data.estimate && data.spark?.status === 'completed' && <button type="button" className="cm-primary" disabled={pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}>{sectionReady('pricing') && <CompletionIcon complete={data.signature_status === 'signed'} label={data.signature_status === 'signed' ? 'Current estimate signed' : 'Signature required'}/>} {pdfBusy ? 'Preparing PDF...' : estimateNeedsSignature ? 'View & sign estimate' : 'View estimate'}</button>}
+                  <button type="button" className="cm-secondary-btn cm-services-button" disabled={!sectionReady('inventory', 'pricing')} onClick={() => setShowInventoryList(true)}>{sectionReady('inventory', 'pricing') && <CompletionIcon complete label="Inventory ready"/>}View &amp; edit inventory</button>
               </div>
+              {estimateNeedsSignature && <small className="cm-estimate-button-status" role="status">Signature required</small>}
+              {data.signature_status === 'signed' && <small className="cm-estimate-button-status" role="status">Signed - current estimate</small>}
+              {data.spark && data.spark.status !== 'completed' && <p role="status">{data.spark.status === 'running' ? 'Analyzing your inventory...' : data.spark.status === 'failed' ? 'Inventory report failed.' : 'Inventory report queued.'}</p>}
+              {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert">{pdfError}</p>}
               {data.estimate?.charges && data.estimate.charges.length > 0 && (
                 <div className="cm-estimate-breakdown">
                   <div className="cm-estimate-toolbar">

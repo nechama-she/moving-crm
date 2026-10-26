@@ -297,3 +297,11 @@
 .cm-services-toolbar{display:flex;justify-content:flex-start;margin:20px 0 12px}
 .customer-move .cm-services-button{border:1px solid var(--cm-primary);color:var(--cm-primary);background:#fff;min-height:44px;font-weight:600}
 @media(max-width:600px){.cm-estimate-header-actions,.cm-estimate-sign-action{width:100%;align-items:stretch;margin-left:0}.cm-estimate-sign-action>small{text-align:center}.cm-services-toolbar>.cm-services-button{width:100%}}
+.cm-estimate-button-row{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0 8px;align-items:stretch}
+.customer-move .cm-estimate-button-row>button{min-height:44px;margin:0;font-size:13px;border-radius:8px;padding:12px 18px}
+.cm-estimate-button-status{display:block;color:var(--cm-text-muted);font-size:12px;margin-bottom:12px}
+@media(max-width:600px){.cm-estimate-button-row{flex-direction:column}.cm-estimate-button-row>button{width:100%}}
+.cm-completion-icon{flex-shrink:0;vertical-align:middle}
+.cm-completion-icon.is-complete{color:#218739}
+.cm-completion-icon.needs-attention{color:#a85b00}
+.customer-move .cm-estimate-button-row>button{display:inline-flex;align-items:center;justify-content:center;gap:8px}

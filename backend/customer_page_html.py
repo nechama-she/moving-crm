@@ -1,6 +1,8 @@
 """Initial move card and safely encoded bootstrap data for verified visitors."""
 import html
 import json
+import colorsys
+from company_colors import normalize_company_color
 
 
 def render(template, bootstrap=None):
@@ -9,15 +11,22 @@ def render(template, bootstrap=None):
     move = bootstrap['move']
     esc = lambda value: html.escape(str(value or ''), quote=True)
     company = move.get('company_details') or {}
+    color = normalize_company_color(company.get('color')) or '#214c3e'
+    hue, _, saturation = colorsys.rgb_to_hls(*(int(color[i:i+2], 16) / 255 for i in (1, 3, 5)))
+    hue = int(hue * 360 + .5)
+    saturation = int(saturation * 100 + .5)
+    text_color = f'hsl({hue}, {min(40, int(saturation * .5 + .5))}%, 15%)'
+    muted_color = f'hsl({hue}, {min(25, int(saturation * .35 + .5))}%, 38%)'
+    border_color = f'hsl({hue}, {min(30, int(saturation * .35 + .5))}%, 80%)'
     payload = json.dumps(bootstrap).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026').replace('\u2028', '\\u2028').replace('\u2029', '\\u2029')
     stops = ''.join(f'<dt>Stop</dt><dd>{esc(stop.get("address"))}</dd>' for stop in move.get('stops', []))
     shell = f'''<style id="move-first-style">
     #root{{display:none}}body{{margin:0;background:#f5f3ec}}
-    #move-first{{max-width:1060px;margin:auto;padding:40px 24px;font-family:Arial,sans-serif;color:#30231f}}
-    #move-first header{{padding:20px 0;border-bottom:1px solid #ddd;font-size:24px;font-weight:bold}}
+    #move-first{{max-width:1060px;margin:auto;padding:40px 24px;font-family:Arial,sans-serif;color:{text_color}}}
+    #move-first header{{padding:20px 0;border-bottom:1px solid {border_color};font-size:24px;font-weight:bold}}
     #move-first main{{display:flex;align-items:center;gap:60px;padding:56px 0}}
-    #move-first h1{{font-size:36px;line-height:1.2}}#move-first article{{background:white;border:1px solid #ddd;border-radius:18px;padding:30px;flex:1;min-width:0}}
-    #move-first dt{{font-size:12px;text-transform:uppercase;margin-top:20px;color:#735b50}}#move-first dd{{margin:8px 0;overflow-wrap:anywhere}}
+    #move-first h1{{font-size:36px;line-height:1.2}}#move-first article{{background:white;border:1px solid {border_color};border-radius:18px;padding:30px;flex:1;min-width:0}}
+    #move-first dt{{font-size:12px;text-transform:uppercase;margin-top:20px;color:{muted_color}}}#move-first dd{{margin:8px 0;overflow-wrap:anywhere}}#move-first article>small{{color:{color}}}
     @media(max-width:650px){{#move-first main{{display:block;padding:24px 0}}#move-first h1{{font-size:28px}}}}
     </style><div id="move-first"><header>{esc(company.get('name') or move.get('company'))}</header>
     <main><div><h1>Hi {esc(move.get('name'))},<br>you're in the right place.</h1><p>Share a little more about your home.</p></div>
