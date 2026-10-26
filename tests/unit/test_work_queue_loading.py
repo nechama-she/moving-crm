@@ -101,6 +101,77 @@ def test_creation_loads_smartmoving_details_before_tasks():
                and item.value.attr == 'priority' for item in lead_call.keywords)
 
 
+@pytest.mark.parametrize('status,expected', [(4, 'booked'), (20, 'cancelled'), (3, 'quoted')])
+def test_followup_backfill_refreshes_remote_state_before_import(status, expected):
+    from smartmoving_followup_backfill import refresh_one
+    db = Mock()
+    lead = SimpleNamespace(smartmoving_id='sm-1', priority=0, status='new')
+    check = Mock(return_value={'ok': True, 'exists': True, 'status': status, 'lead_status': 'Priority 2'})
+    def import_tasks(session, refreshed, *, commit):
+        assert session is db
+        assert (refreshed.priority, refreshed.status) == (2, expected)
+        assert commit is False
+        db.flush.assert_called_once()
+        return 2
+    assert refresh_one(db, lead, check, import_tasks) == 'imported:2'
+    db.commit.assert_not_called()
+
+
+def test_smartmoving_bulk_requests_honor_retry_after_and_reset(monkeypatch):
+    import httpx
+    from libs.smartmoving import client
+    request = httpx.Request('GET', 'https://example.test/followups')
+    limited = httpx.Response(429, headers={'Retry-After': '12'}, request=request)
+    success = httpx.Response(200, request=request)
+    send = Mock(side_effect=[limited, limited, success])
+    sleep = Mock()
+    monkeypatch.setattr(client.time, 'sleep', sleep)
+    monkeypatch.setattr(client, '_log_http_request', Mock())
+    with client.bulk_requests():
+        assert client._request(send) is success
+    assert [call.args[0] for call in sleep.call_args_list] == [1, 17, 1, 17, 1]
+    assert client._BULK_REQUESTS.get() is False
+
+
+def test_smartmoving_bulk_requests_follow_response_waits_beyond_six_attempts(monkeypatch):
+    import httpx
+    from libs.smartmoving import client
+    request = httpx.Request('GET', 'https://example.test/followups')
+    delays = [12, 25, 8, 60, 30, 90, 15]
+    responses = [httpx.Response(429, json={'message': f'Try again in {delay} seconds'}, request=request) for delay in delays]
+    send = Mock(side_effect=[*responses, httpx.Response(200, request=request)])
+    sleep = Mock()
+    monkeypatch.setattr(client.time, 'sleep', sleep)
+    monkeypatch.setattr(client, '_log_http_request', Mock())
+    with client.bulk_requests():
+        assert client._request(send).status_code == 200
+    assert send.call_count == 8
+    assert [call.args[0] for call in sleep.call_args_list if call.args[0] != 1] == [delay + 5 for delay in delays]
+
+
+@pytest.mark.parametrize('priority', [None, '', 0, '0'])
+def test_followup_backfill_skips_tasks_for_remote_zero_or_unset(priority):
+    from smartmoving_followup_backfill import refresh_one
+    lead = SimpleNamespace(smartmoving_id='sm-1', priority=2, status='new')
+    importer = Mock()
+    check = Mock(return_value={'ok': True, 'exists': True, 'status': 20, 'lead_status': priority})
+    assert refresh_one(Mock(), lead, check, importer) == 'skipped_priority_zero'
+    assert (lead.priority, lead.status) == (0, 'cancelled')
+    importer.assert_not_called()
+
+
+@pytest.mark.parametrize('response', [{'ok': False}, {'ok': True, 'status': 999, 'lead_status': 2},
+                                     {'ok': True, 'status': 4, 'lead_status': 'invalid'}])
+def test_followup_backfill_does_not_import_on_refresh_failure(response):
+    from smartmoving_followup_backfill import refresh_one
+    lead = SimpleNamespace(smartmoving_id='sm-1', priority=2, status='new')
+    importer = Mock()
+    with pytest.raises(ValueError):
+        refresh_one(Mock(), lead, Mock(return_value=response), importer)
+    assert (lead.priority, lead.status) == (2, 'new')
+    importer.assert_not_called()
+
+
 @pytest.fixture
 def task_queue(monkeypatch):
     import followup_tasks

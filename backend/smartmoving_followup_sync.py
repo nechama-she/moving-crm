@@ -5,7 +5,7 @@ from libs.smartmoving.client import get_followups
 from libs.smartmoving.followup_tasks import UPSERT_TASK
 
 
-def sync(db, lead):
+def sync(db, lead, *, commit=True):
     if lead.priority is None or lead.priority == 0:
         return 0
     if not lead.smartmoving_id:
@@ -37,5 +37,6 @@ def sync(db, lead):
     with db.begin_nested():
         for values in params:
             db.execute(text(UPSERT_TASK), values)
-    db.commit()
+    if commit:
+        db.commit()
     return len(params)

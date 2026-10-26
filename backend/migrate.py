@@ -39,6 +39,8 @@ def migrate() -> None:
             cleared = connection.execute(text("DELETE FROM first_contact_states")).rowcount
             logger.info("Cleared %s first-contact state rows", cleared)
     logger.info("Follow-up task and first-contact state setup complete")
+    from smartmoving_followup_backfill import run as import_smartmoving_followups
+    import_smartmoving_followups(engine)
 
 
 if __name__ == "__main__":
