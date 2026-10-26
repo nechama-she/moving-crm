@@ -8,6 +8,8 @@ def apply(job, rows, volume=0):
     settings = selection.get('rep_discounts', {})
     snapshots = selection.get('rep_discount_bases', {})
     changed = bool(settings or snapshots)
+    if not changed:
+        return False
     for row in rows:
         previous = snapshots.pop(row.id, None)
         if previous and Decimal(str(row.total_cost or 0)) == Decimal(previous['total']) and Decimal(str(row.discount_amount or 0)) == Decimal(previous['discount']):
@@ -38,5 +40,7 @@ def apply(job, rows, volume=0):
         snapshots[row.id] = {'base': str(base), 'base_discount': str(original_discount), 'description': description,
                              'total': str(row.total_cost), 'discount': str(row.discount_amount)}
     selection['rep_discount_bases'] = snapshots
-    job.customer_packing_package = json.dumps(selection)
+    serialized = json.dumps(selection)
+    if serialized != job.customer_packing_package:
+        job.customer_packing_package = serialized
     return changed

@@ -61,6 +61,7 @@ phases:
       - rm -rf ./package/boto3* ./package/botocore* ./package/s3transfer* ./package/jmespath* ./package/sqlalchemy/dialects/mssql ./package/sqlalchemy/dialects/mysql ./package/sqlalchemy/dialects/oracle ./package/sqlalchemy/dialects/sqlite
       - find ./package \( -type d \( -name __pycache__ -o -name tests \) -exec rm -rf {} + \) -o \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.pyx' \) -delete 2>/dev/null || true
       - cp *.py ./package/
+      - cp $CODEBUILD_SRC_DIR/frontend/dist/index.html ./package/customer-page.html
       - cp -r routes ./package/
       - cp -r data ./package/
       - cp -r $CODEBUILD_SRC_DIR/libs ./package/libs

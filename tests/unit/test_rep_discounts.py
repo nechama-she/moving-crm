@@ -10,6 +10,14 @@ from rep_discounts import apply
 
 
 class RepDiscountTests(unittest.TestCase):
+    def test_no_discounts_leaves_job_untouched_and_skips_rows(self):
+        class UnusedRows:
+            def __iter__(self):
+                raise AssertionError('No discounts should not scan charges')
+        job = SimpleNamespace(customer_packing_package='{"mode":"none"}')
+        self.assertFalse(apply(job, UnusedRows()))
+        self.assertEqual(job.customer_packing_package, '{"mode":"none"}')
+
     def setup_discount(self, kind='amount', value=100):
         job = SimpleNamespace(customer_packing_package=json.dumps({'rep_discounts': {'transport': {'title': 'Military', 'type': kind, 'value': value}}}))
         row = SimpleNamespace(id='transport', total_cost=Decimal('1000'), discount_amount=Decimal('0'), description='Transportation')

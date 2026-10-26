@@ -23,7 +23,8 @@ import CustomerPackingOptions, { type PackingPackage, type PackingSelection } fr
 import MeetingTimePicker from "./MeetingTimePicker";
 import { useCustomerUpdates } from './useCustomerUpdates';
 import { browserDrivingMeters, browserPricingLocation } from './googlePlaces';
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { readCustomerBootstrap } from './customerBootstrap';
 import { useParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import RepDiscounts from './RepDiscounts';
@@ -91,10 +92,16 @@ const initialSections = () => Object.fromEntries(pageSections.map(key => [key, {
 type Pending = {id:string;file:File;status:string;progress:number;preview?:string;error?:string};
 export default function CustomerMovePage() {
   const {accessId}=useParams();
+  const [bootstrap] = useState(() => readCustomerBootstrap(accessId));
+  const preloadedMove = useRef(!!bootstrap);
+  useLayoutEffect(() => {
+    document.getElementById('move-first')?.remove();
+    document.getElementById('move-first-style')?.remove();
+  }, []);
   const [linkSms, setLinkSms] = useState<LinkSms | null>(null);
-  const [repPage, setRepPage] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('audience') === 'rep');
+  const [repPage, setRepPage] = useState(() => bootstrap?.rep ?? new URLSearchParams(window.location.hash.slice(1)).get('audience') === 'rep');
   const sessionKey = `cm_session_${accessId}${repPage ? '_rep' : ''}`;
-  const [key]=useState(()=>new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
+  const [key]=useState(()=>bootstrap?.key || new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
   const [session,setSession]=useState(()=>loadCustomerSession(sessionKey));
   useEffect(() => {
     if (!session) return;
@@ -122,7 +129,7 @@ export default function CustomerMovePage() {
   }, [session, sessionKey]);
   const [options,setOptions]=useState<{channel:string;destination:string;label?:string}[]>([]),[channel,setChannel]=useState('');
   const [code,setCode]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
-  const [data,setData]=useState<Details | undefined>(emptyDetails),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
+  const [data,setData]=useState<Details | undefined>(() => ({...emptyDetails(), ...bootstrap?.move})),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
   const uploadLock = useRef(false);
   const filePicker = useRef<HTMLInputElement>(null);
   const meetingDialog = useRef<HTMLDialogElement>(null);
@@ -647,6 +654,11 @@ export default function CustomerMovePage() {
       registerCustomerSession(value.session, expiresAt);
       sessionStorage.setItem(sessionKey + ':expiresAt', String(expiresAt));
       sessionStorage.setItem(sessionKey, value.session);
+      if (value.move) {
+        preloadedMove.current = true;
+        setData(previous => ({...(previous || emptyDetails()), ...value.move}));
+        setSections(previous => ({...previous, move: {ready:true, loading:false, error:''}}));
+      }
       setSession(value.session);
       setCode('');
     }catch(e){
@@ -759,7 +771,7 @@ export default function CustomerMovePage() {
     }
   }
 
-  const [sections, setSections] = useState(initialSections);
+  const [sections, setSections] = useState(() => ({...initialSections(), ...(bootstrap ? {move: {ready:true, loading:false, error:''}} : {})}));
   const pageReadOnly = pageSections.some(section => !sections[section].ready || sections[section].loading || !!sections[section].error);
   const sectionRequests = useRef<Record<string, number>>({});
   const pricingLoading = sections.pricing.loading;
@@ -784,30 +796,26 @@ export default function CustomerMovePage() {
       setData(previous => ({...(previous || emptyDetails()), ...next}));
       if (next.company_details?.color) setThemeColor(next.company_details.color);
       setSections(previous => ({...previous, [section]: {loading:false, error:'', ready:true}}));
-      if (section === 'inventory') {
-        if (next.pricing_required) await loadSection('pricing', background);
-        else {
-          sectionRequests.current.pricing = (sectionRequests.current.pricing || 0) + 1;
-          setData(previous => previous ? {...previous, estimate:null, pricing_error:'', packing_items:[], packing_package:null, extra_stops:null, elevator:null, long_carry:null, stairs:null, storage:null, shuttle:null, item_questions:[], unanswered_questions:[]} : previous);
-          setSections(previous => ({...previous, pricing:{loading:false, error:'', ready:true}}));
-        }
-      }
     } catch (error) {
       if (current()) setSections(previous => ({...previous, [section]: {...previous[section], loading:false, error:(error as Error).message}}));
     }
   }
-  async function refreshDetails(background = false, retryPricing = false) {
+  async function refreshDetails(background = false, retryPricing = false, initial = false) {
     if (!session || !customerSessionActive(session) || (background && answerPending.current)) return;
     if (retryPricing) { await loadSection('pricing', background); return; }
     setData(previous => previous || emptyDetails());
-    await Promise.allSettled(pageSections.filter(section => section !== 'pricing').map(section => loadSection(section, background)));
+    // Start move details first, without making any section wait for another.
+    // Each loadSection renders its own response immediately on arrival.
+    const moveRequest = initial && preloadedMove.current ? Promise.resolve() : loadSection('move', background);
+    const backgroundRequests = pageSections.filter(section => section !== 'move').map(section => loadSection(section, background));
+    await Promise.allSettled([moveRequest, ...backgroundRequests]);
   }
   function sectionNotice(section: PageSection, label: string) {
     const state = sections[section];
     return state.loading && !state.ready ? <p role="status">Loading {label}...</p> : state.error ? <p role="alert" className="cm-error">Could not load {label}. {state.error} <button type="button" className="cm-secondary-btn" onClick={() => void loadSection(section)}>Retry</button></p> : null;
   }
 
-  const updatesUnavailable = useCustomerUpdates(base, key, session, () => refreshDetails(true));
+  const updatesUnavailable = useCustomerUpdates(base, key, session, initial => refreshDetails(true, false, initial));
   const estimateResult = useRef<HTMLDivElement>(null);
   const reportMessage = useRef<HTMLParagraphElement>(null);
   const pdfMessage = useRef<HTMLParagraphElement>(null);
@@ -970,7 +978,7 @@ export default function CustomerMovePage() {
                 <div className="cm-route-header">
                   <div className="cm-eyebrow">YOUR MOVE</div>
                   <div className="cm-route-actions-top">
-                    <button type="button" className="slds-button cm-refresh-btn" aria-label="Refresh move details" title="Refresh move details" disabled={busy} onClick={()=>void refreshDetails()}>&#8635;</button>
+                    <button type="button" className="slds-button cm-refresh-btn" aria-label="Refresh move details" title="Refresh move details" disabled={busy || sections.move.loading} onClick={()=>void loadSection('move')}>&#8635;</button>
                     {!editingMove && (
                       <button type="button" className="slds-button cm-edit-button" disabled={!sections.move.ready} onClick={startEditMove}>Edit</button>
                     )}

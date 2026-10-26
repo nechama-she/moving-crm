@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CUSTOMER_SESSION_EXPIRED, customerSessionActive, expireCustomerSession } from './customerSession';
 
 /** One authenticated socket; requests happen on events, never on a polling timer. */
-export function useCustomerUpdates(base: string, key: string, session: string, refresh: () => Promise<void>) {
+export function useCustomerUpdates(base: string, key: string, session: string, refresh: (initial?: boolean) => Promise<void>) {
   const callback = useRef(refresh);
   callback.current = refresh;
   const [unavailable, setUnavailable] = useState(false);
@@ -27,9 +27,10 @@ export function useCustomerUpdates(base: string, key: string, session: string, r
       if (!valid()) return;
       if (loading) { pending = true; return; }
       loading = true;
+      let initial = !initialized;
       initialized = true;
       try {
-        do { pending = false; await callback.current(); } while (pending && valid());
+        do { pending = false; await callback.current(initial); initial = false; } while (pending && valid());
       } finally { loading = false; }
     };
     const fallback = () => { if (!initialized && valid()) void update(); };

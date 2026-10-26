@@ -115,12 +115,47 @@ def verification_state(access, db, request):
     return state
 
 
-def verified(access: PublicMoveAccess = Depends(public_access), request: Request = None, db: Session = Depends(get_db)):
+def verified(access: PublicMoveAccess = Depends(public_access), request: Request = None, db: Session = Depends(get_db), response: Response = None):
     session = db.get(PublicMoveSession, digest(request.headers.get('x-public-session', '')))
     lead = db.get(Lead, access.lead_id)
     if not session or session.access_id != access.id or session.expires_at < NOW() or session.contact_hash != verification_fingerprint(access, db, request):
         raise HTTPException(401, 'Please verify your phone or email to continue.')
+    set_move_page_cookie(response, access, request.headers.get('x-public-session', ''), min(session.expires_at, access.expires_at), is_rep_request(access, request))
     return access
+
+
+def set_move_page_cookie(response, access, token, expires_at, rep=False):
+    if response is not None:
+        response.set_cookie('cm_rep' if rep else 'cm_customer', token,
+                            max_age=max(0, int((expires_at - NOW()).total_seconds())),
+                            path=f'/move/{access.id}', secure=True, httponly=True, samesite='lax')
+
+
+@router.get('/move/{access_id}', include_in_schema=False)
+def initial_move_page(access_id: str, request: Request, db: Session = Depends(get_db)):
+    from pathlib import Path
+    from fastapi.responses import HTMLResponse
+    from customer_page_html import render
+    template_path = Path(__file__).resolve().parents[1] / 'customer-page.html'
+    if not template_path.exists():
+        template_path = Path(__file__).resolve().parents[2] / 'frontend/dist/index.html'
+    template = template_path.read_text(encoding='utf-8')
+    rep = request.query_params.get('audience') == 'rep'
+    token = request.cookies.get('cm_rep' if rep else 'cm_customer', '')
+    bootstrap = None
+    if token:
+        access = db.get(PublicMoveAccess, access_id)
+        session = db.get(PublicMoveSession, digest(token))
+        if access and not access.revoked and access.expires_at > NOW() and session and session.access_id == access.id and session.expires_at > NOW():
+            key = rep_link_token(access) if rep else link_token(access.id)
+            scoped_request = Request({**request.scope, 'headers': [(b'x-public-link', key.encode())]})
+            if hmac.compare_digest(session.contact_hash, verification_fingerprint(access, db, scoped_request)):
+                bootstrap = {'accessId': access.id, 'rep': rep, 'key': key, 'session': token,
+                             'expiresAt': min(session.expires_at, access.expires_at).replace(tzinfo=timezone.utc).timestamp() * 1000,
+                             'move': move_section('move', access, db, scoped_request)}
+    return HTMLResponse(render(template, bootstrap), headers={
+        'Cache-Control': 'no-store, private', 'Referrer-Policy': 'no-referrer',
+        'X-Content-Type-Options': 'nosniff', 'Vary': 'Cookie'})
 
 
 @router.post('/api/public-moves/{access_id}/realtime-token')
@@ -192,7 +227,7 @@ def public_url(row, rep=False):
         valid = False
     if not valid:
         raise HTTPException(503, 'The customer website origin is not configured')
-    return f'{origin}/move/{row.id}#key={rep_link_token(row) if rep else link_token(row.id)}' + ('&audience=rep' if rep else '')
+    return f'{origin}/move/{row.id}' + ('?audience=rep' if rep else '') + f'#key={rep_link_token(row) if rep else link_token(row.id)}' + ('&audience=rep' if rep else '')
 
 
 def create_customer_page_access(db, lead, job, key_hash, request_hash):
@@ -469,7 +504,8 @@ class VerifyCode(BaseModel):
 
 
 @router.post('/api/public-moves/{access_id}/verify')
-def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db), request: Request = None):
+def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db), request: Request = None, response: Response = None):
+    page_access = access
     access = db.query(PublicMoveAccess).filter_by(id=access.id).with_for_update().one()
     link_expires_at = access.expires_at
     fingerprint = verification_fingerprint(access, db, request)
@@ -484,8 +520,9 @@ def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_acce
     expires_at = min(link_expires_at, NOW()+timedelta(hours=8))
     db.add(PublicMoveSession(token_hash=digest(token), access_id=access.id, expires_at=expires_at, contact_hash=fingerprint))
     db.commit()
+    set_move_page_cookie(response, page_access, token, expires_at, is_rep_request(page_access, request))
     return {'session': token, 'expires_in': max(0, int((expires_at - NOW()).total_seconds())),
-            'expires_at': expires_at.isoformat() + 'Z'}
+            'expires_at': expires_at.isoformat() + 'Z', 'move': move_section('move', page_access, db, request)}
 
 
 def _parse_availability_stamps(value: str) -> list[datetime]:
@@ -604,26 +641,28 @@ def move_summary(access: PublicMoveAccess = Depends(verified), db: Session = Dep
 @router.get('/api/public-moves/{access_id}/sections/{section}')
 def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'pricing'], access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
-    conversation = db.get(LeadLiveSwitch, lead.id)
-    state = json.loads(conversation.details or '{}') if conversation else {}
     if section == 'move':
         pickup, stops, delivery = _read_job_route(db, job)
         typed = json.loads(job.stop_types or '[]')
         company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
-        meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first()
         return dict(name=lead.full_name, phone=lead.phone or '', email=lead.email or '', move_date=job.move_date or '', pickup=pickup, delivery=delivery,
                     stops=[{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i, s in enumerate(stops)],
                     company=company.name if company else 'Your moving team',
                     company_details={'name': company.name if company else 'Your moving team', 'phone': company.phone or '' if company else '', 'office_address': company.office_address or '' if company else '', 'logo': company.logo if company else '', 'color': company.color if company and company.color else resolve_company_color(company.name if company else None, None)},
-                    walkthrough=meeting_dict(meeting) if meeting else None, participant_url=state.get('participantJoinUrl', '') if meeting and meeting.status == 'scheduled' else '',
-                    link_sms=customer_link_sms_notice(access), google_maps_browser_key=setting('GOOGLE_MAPS_BROWSER_KEY'))
+                    link_sms=customer_link_sms_notice(access))
+    conversation = db.get(LeadLiveSwitch, lead.id)
+    state = json.loads(conversation.details or '{}') if conversation else {}
     if section == 'inventory':
         return dict(inventory_draft=state.get('inventory_draft'), combined_inventory=resolve_catalog_names(state.get('spark_inventory_snapshot', []), db) if state.get('last_spark_status') == 'completed' else [],
                     list_changed=inventory_draft_changed(state), report_history=attach_signatures(report_history(state), signed_estimates(db, access.lead_id, access.job_id)), pricing_required=_has_inventory_list(state))
     if section == 'media':
+        meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first()
         files = active_report_files(access, db)
         previous = {row['id'] for row in state.get('report_files', [])}
-        return dict(editable_files=file_list(files), files=state.get('report_files', file_list(files)), files_changed={f.id for f in files} != previous,
+        return dict(walkthrough=meeting_dict(meeting) if meeting else None,
+                    participant_url=state.get('participantJoinUrl', '') if meeting and meeting.status == 'scheduled' else '',
+                    google_maps_browser_key=setting('GOOGLE_MAPS_BROWSER_KEY'),
+                    editable_files=file_list(files), files=state.get('report_files', file_list(files)), files_changed={f.id for f in files} != previous,
                     new_file_count=sum(f.id not in previous for f in files) if 'report_files' in state else 0)
     if section == 'volume':
         return {'spark': {'id': state['last_spark_id'], 'source': state.get('report_source', 'liveswitch'), 'status': state.get('last_spark_status', 'queued'), 'shareUrl': state.get('last_spark_share_url'), 'cuft': state.get('spark_extracted_cuft'), 'update_error': state.get('notification_error')} if state.get('last_spark_id') else None}
@@ -1950,7 +1989,7 @@ def staff_access(lead_id, user, db):
 
 
 @router.post('/api/leads/{lead_id}/customer-page/rep-session')
-def open_rep_session(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def open_rep_session(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db), response: Response = None):
     _, access = staff_access(lead_id, user, db)
     if access.revoked or access.expires_at <= NOW():
         raise HTTPException(403, 'This move link is revoked or expired.')
@@ -1959,6 +1998,7 @@ def open_rep_session(lead_id: str, user: User = Depends(get_current_user), db: S
     db.add(PublicMoveSession(token_hash=digest(token), access_id=access.id,
                             expires_at=expires_at, contact_hash=rep_contacts(access, db)[1]))
     db.commit()
+    set_move_page_cookie(response, access, token, expires_at, True)
     return {'url': public_url(access, rep=True), 'access_id': access.id,
             'session': token, 'expires_at': expires_at.isoformat() + 'Z'}
 

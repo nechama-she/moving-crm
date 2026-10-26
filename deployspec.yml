@@ -34,6 +34,8 @@ phases:
 
   build:
     commands:
+      - echo "Publishing assets before server-rendered customer pages reference them"
+      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/assets/ s3://${FRONTEND_BUCKET}/assets/ --cache-control "public,max-age=31536000,immutable"
       - echo "Updating lead-followup Lambda function code"
       - aws lambda update-function-code --function-name moving-crm-lead-followup-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key lead-followup/package.zip
 

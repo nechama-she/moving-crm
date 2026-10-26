@@ -19,6 +19,10 @@ def refresh_expired_price(lead, job, db, now=None):
     now = now or datetime.utcnow()
     if job.price is None or (job.price <= 0 and not job.price_calculated_at) or price_is_locked(lead, job):
         return False
+    # Every sheet is valid for at least a day. Opening a fresh estimate needs
+    # no write locks; retain the locked recheck for possible expired quotes.
+    if job.price_calculated_at and now < utc_naive(job.price_calculated_at) + timedelta(days=1):
+        return False
     # Serialize concurrent page opens and recheck the saved calculation time.
     db.refresh(lead, with_for_update=True)
     db.refresh(job, with_for_update=True)

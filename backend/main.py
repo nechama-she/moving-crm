@@ -99,6 +99,8 @@ def _check_system_user_permission(actor: User, request: Request) -> bool:
 
 
 async def enforce_authentication(request: Request) -> None:
+    if request.method in {'GET', 'HEAD'} and re.fullmatch(r'/move/[0-9a-f-]{36}', request.url.path):
+        return  # HTML endpoint validates the scoped verified-session cookie.
     if request.method == "OPTIONS":
         return  # CORS preflight - handled by CORSMiddleware
     if request.url.path == "/api/inventory" and request.method == "POST":
