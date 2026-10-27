@@ -86,6 +86,25 @@ function CollapsibleNotes({ notes, style }: { notes: string; style?: React.CSSPr
   </div>;
 }
 
+function CollapsibleHeight({ children, maxHeight = 160 }: { children: React.ReactNode; maxHeight?: number }) {
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const measure = () => setOverflows(element.scrollHeight > maxHeight + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [maxHeight]);
+  return <div>
+    <div ref={ref} style={{ maxHeight: open ? undefined : maxHeight, overflow: 'hidden', ...(overflows && !open ? { WebkitMaskImage: 'linear-gradient(#000 70%, transparent)', maskImage: 'linear-gradient(#000 70%, transparent)' } : {}) }}>{children}</div>
+    {overflows && <button type="button" onClick={event => { event.stopPropagation(); setOpen(value => !value); }} style={{ padding: '6px 0 0', border: 'none', background: 'none', color: '#0b5cab', fontSize: 12, cursor: 'pointer' }}>{open ? 'Show less' : 'Show more'}</button>}
+  </div>;
+}
+
 function FollowupTaskItem({ task, leadId }: { task: FollowupAttempt; leadId: string }) {
   const completed = task.status === 'completed';
   const due = task.status === 'open';
@@ -1221,16 +1240,19 @@ export default function UnansweredMessagesPage() {
                   </tr>
                   {expanded || row.priority !== 0 ? <tr>
                     <td colSpan={9} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
-                      {row.priority !== 0 ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20, padding: 16, background: '#fff', border: '1px solid #d8dde6', borderRadius: 8 }}>
+                      {row.priority !== 0 ? <div style={{ padding: 16, background: '#fff', border: '1px solid #d8dde6', borderRadius: 8 }}><CollapsibleHeight><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
                         {[false, true].map(completed => {
-                          const tasks = row.timeline.filter(task => (task.status === 'completed') === completed).sort((a, b) => (a.scheduled_end ? Date.parse(a.scheduled_end) : Infinity) - (b.scheduled_end ? Date.parse(b.scheduled_end) : Infinity));
+                          // Pending tasks show the soonest due first; completed tasks show the most recent first.
+                          const tasks = row.timeline.filter(task => (task.status === 'completed') === completed).sort(completed
+                            ? (a, b) => Date.parse(b.completed_at || b.scheduled_end || '') - Date.parse(a.completed_at || a.scheduled_end || '')
+                            : (a, b) => (a.scheduled_end ? Date.parse(a.scheduled_end) : Infinity) - (b.scheduled_end ? Date.parse(b.scheduled_end) : Infinity));
                           return <div key={String(completed)}>
                             <h3 style={{ margin: '0 0 10px', color: '#032d60', fontSize: 14 }}>{completed ? 'Completed' : 'Not completed'}</h3>
                             <div style={{ display: 'grid', gap: 7 }}>{tasks.map((task, index) => <FollowupTaskItem key={`${task.label}-${index}`} task={task} leadId={row.lead_id} />)}</div>
                             {!tasks.length && <p style={{ color: '#64748b', fontSize: 12 }}>{completed ? 'No completed tasks.' : 'No pending tasks.'}</p>}
                           </div>;
                         })}
-                      </div> : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
+                      </div></CollapsibleHeight></div> : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
                         <div>
                           <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>Call Follow-ups</h3>
                           <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "call").map((attempt, activityIndex) => <FollowupStatus key={`call-${attempt.number || attempt.label}-${activityIndex}`} attempt={attempt} leadId={row.lead_id} />)}</div>
