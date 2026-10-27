@@ -72,6 +72,20 @@ function IgnoreNumberTarget({ number, name, showUnknown = false, openMenu }: { n
   </div>;
 }
 
+function CollapsibleNotes({ notes, style }: { notes: string; style?: React.CSSProperties }) {
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const element = ref.current;
+    if (element && !open) setOverflows(element.scrollHeight > element.clientHeight + 1);
+  }, [notes, open]);
+  return <div style={style}>
+    <div ref={ref} style={{ whiteSpace: 'pre-wrap', ...(open ? {} : { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden' }) }}>{notes}</div>
+    {overflows && <button type="button" onClick={event => { event.stopPropagation(); setOpen(value => !value); }} style={{ padding: 0, marginTop: 2, border: 'none', background: 'none', color: '#0b5cab', fontSize: 12, cursor: 'pointer' }}>{open ? 'Show less' : 'Show more'}</button>}
+  </div>;
+}
+
 function FollowupTaskItem({ task, leadId }: { task: FollowupAttempt; leadId: string }) {
   const completed = task.status === 'completed';
   const due = task.status === 'open';
@@ -83,7 +97,7 @@ function FollowupTaskItem({ task, leadId }: { task: FollowupAttempt; leadId: str
       <Link onClick={event => event.stopPropagation()} to={`/leads/${leadId}${task.task_id ? `?task=${encodeURIComponent(task.task_id)}` : ''}#tasks`} target="_blank" rel="noopener noreferrer">{task.label}</Link>
       <span style={{ color }}><strong>{completed ? 'Completed' : due ? 'Due now' : task.status === 'overdue' ? 'Overdue' : 'Upcoming'}</strong>{date ? ` - ${date}` : ''}</span>
     </div>
-    <div style={{ color: '#64748b', marginTop: 3 }}><span style={{ textTransform: 'capitalize' }}>{task.task_type === 'text' ? 'Text message' : task.task_type || 'Other'}</span>{task.notes && <div style={{ whiteSpace: 'pre-wrap', marginTop: 3 }}>{task.notes}</div>}</div>
+    <div style={{ color: '#64748b', marginTop: 3 }}><span style={{ textTransform: 'capitalize' }}>{task.task_type === 'text' ? 'Text message' : task.task_type || 'Other'}</span>{task.notes && <CollapsibleNotes notes={task.notes} style={{ marginTop: 3 }} />}</div>
   </div>;
 }
 
@@ -96,7 +110,7 @@ function FollowupStatus({ attempt, leadId }: { attempt: FollowupAttempt; leadId:
     {isCall ? <strong>{attempt.number ? `${attempt.number}.` : ""}</strong> : null}
     <Link style={{ overflowWrap: "anywhere" }} onClick={event => event.stopPropagation()} to={`/leads/${leadId}${attempt.task_id ? `?task=${encodeURIComponent(attempt.task_id)}` : ''}#tasks`} target="_blank" rel="noopener noreferrer">{attempt.label}</Link>
     <span style={{ color }}><strong>{label}</strong>{attempt.completed_at ? ` - ${new Date(attempt.completed_at).toLocaleString()}` : ` - due by ${new Date(attempt.scheduled_end).toLocaleString()}`}</span>
-    {attempt.notes && <div style={{gridColumn:"1 / -1", whiteSpace:"pre-wrap", color:"#64748b"}}>{attempt.notes}</div>}
+    {attempt.notes && <CollapsibleNotes notes={attempt.notes} style={{ gridColumn: "1 / -1", color: "#64748b" }} />}
   </div>;
 }
 
