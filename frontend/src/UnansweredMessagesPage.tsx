@@ -153,7 +153,6 @@ export default function UnansweredMessagesPage() {
   const [followupLeads, setFollowupLeads] = useState<FollowupLead[]>([]);
   const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
   const [priorityCounts, setPriorityCounts] = useState<Record<string, number>>({});
-  const [globalFollowupCounts, setGlobalFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
   const [followupFilterOptions, setFollowupFilterOptions] = useState({ reps: [] as string[], companies: [] as string[] });
   const [followupHasMore, setFollowupHasMore] = useState(false);
   const [loadingFollowups, setLoadingFollowups] = useState(false);
@@ -277,7 +276,6 @@ export default function UnansweredMessagesPage() {
       setGlobalCounts(data.messages);
       setGlobalMissedCallCount(data.missed_calls);
       if (data.first_contact) setGlobalFirstContactCounts(data.first_contact);
-      if (data.followups) setGlobalFollowupCounts(data.followups);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load queue counts");
     }
@@ -479,7 +477,6 @@ export default function UnansweredMessagesPage() {
       setFollowupLeads((current) => offset ? [...current, ...(data.items || [])] : (data.items || []));
       setFollowupCounts(data.counts || { all: 0, overdue: 0, due: 0 });
       setPriorityCounts(data.priority_counts || {});
-      setGlobalFollowupCounts(data.global_counts || data.counts || { all: 0, overdue: 0, due: 0 });
       setFollowupFilterOptions(data.filter_options || { reps: [], companies: [] });
       setFollowupHasMore(Boolean(data.has_more));
     } catch (reason) {
@@ -534,7 +531,7 @@ export default function UnansweredMessagesPage() {
       await Promise.allSettled([
         queueLoaders.current.loadSummary(),
         firstContact && queueLoaders.current.queueTab === "leads" ? queueLoaders.current.loadFirstContactLeads(0, false, true) : Promise.resolve(),
-        followups && queueLoaders.current.queueTab === "followups" ? queueLoaders.current.loadFollowups(0, false, true) : Promise.resolve(),
+        followups ? queueLoaders.current.loadFollowups(0, false, true) : Promise.resolve(),
       ]);
     });
     queueRefreshScheduler.current = scheduler;
@@ -947,7 +944,7 @@ export default function UnansweredMessagesPage() {
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("followups")} style={{ ...queueCard, ...(queueTab === "followups" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Follow-ups</span>
-          <strong style={queueCardCount}>{queueStatus?.ready || queueStatus?.enabled === false ? globalFollowupCounts.all : "Loading..."}</strong>
+          <strong style={queueCardCount}>{loadingFollowups && !followupLeads.length ? "Loading..." : priorityCounts.all || 0}</strong>
           <span style={queueCardDescription}>Tasks scheduled across all priorities</span>
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>
@@ -1170,7 +1167,7 @@ export default function UnansweredMessagesPage() {
             </tr></thead>
             <tbody>
               {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
-              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "due" ? "No follow-ups due now." : "No follow-ups for the selected dates."}</td></tr> : null}
+              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "due" ? "No follow-ups for the selected dates." : "No overdue follow-ups for the selected dates."}</td></tr> : null}
               {filteredFollowupLeads.map((row) => {
                 const expanded = expandedFollowups.has(row.lead_id);
                 const toggleExpanded = () => setExpandedFollowups((current) => {
