@@ -607,6 +607,14 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
         </section>
       </>}
     </div>
-    <footer><span role="status">{finishing ? 'Updating your estimate...' : busy ? 'Saving your list...' : saveStatus || 'Changes save automatically. Done updates your estimate.'}</span><button type="button" className="slds-button cm-primary" disabled={busy || !catalog || rooms.some(r => !r.name.trim())} onClick={() => void save()}>{finishing ? 'Updating estimate...' : 'Done'}</button></footer>
+    <footer><span role="status">{finishing ? 'Updating your estimate...' : busy ? 'Saving your list...' : saveStatus || 'Changes save automatically. Done updates your estimate.'}</span><button type="button" className="slds-button cm-primary" disabled={catalogOpen ? finishing : busy || !catalog || rooms.some(r => !r.name.trim())} onClick={() => {
+      if (catalogOpen) {
+        viewInventoryRequested.current = true;
+        setCatalogOpen(false);
+        setCustomOpen(false);
+      } else {
+        void save();
+      }
+    }}>{finishing ? 'Updating estimate...' : catalogOpen ? 'View my inventory' : 'Done'}</button></footer>
   </div></div>;
 }
