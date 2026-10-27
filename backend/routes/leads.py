@@ -4365,6 +4365,19 @@ def _apply_lead_update(
                         )
                         .first()
                     )
+                    if not existing_job:
+                        # Leads are created without a SmartMoving job id; link that job
+                        # instead of creating a copy and deleting the original.
+                        existing_job = (
+                            db.query(LeadJob)
+                            .filter(
+                                LeadJob.lead_id == lead.id,
+                                or_(LeadJob.smartmoving_job_id.is_(None), LeadJob.smartmoving_job_id == ""),
+                                ~LeadJob.id.in_(incoming_job_ids),
+                            )
+                            .order_by(LeadJob.job_order.asc(), LeadJob.created_at.asc())
+                            .first()
+                        )
                     if existing_job:
                         target_job = existing_job
                     else:
