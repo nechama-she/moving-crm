@@ -47,3 +47,89 @@ def test_picker_searches_message_text_and_excludes_other_platforms_companies_and
         assert result['next_cursor'] == 'next-page'
         assert result['has_more'] is True
     engine.dispose()
+
+
+# Load the route logic without initializing database credentials or AWS clients.
+def connection_functions():
+    from datetime import datetime, timezone
+    from fastapi import HTTPException
+    from sqlalchemy.dialects.postgresql import insert
+    from communication_associations import normalized_key
+    namespace = dict(Company=Company, Lead=Lead, CommunicationAssociation=CommunicationAssociation,
+                     datetime=datetime, timezone=timezone, HTTPException=HTTPException,
+                     insert=insert, normalized_key=normalized_key,
+                     _destination_scope=lambda db, channel, page: ({'company'}, set(), 'Test'))
+    tree = ast.parse((BACKEND / 'routes/communication_associations.py').read_text())
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in ('connect', 'disconnect', 'lead_meta_links'):
+            node.decorator_list = []
+            node.args.defaults = []
+            node.returns = None
+            for arg in node.args.args:
+                arg.annotation = None
+            exec(compile(ast.Module(body=[node], type_ignores=[]), '<connection>', 'exec'), namespace)
+    return namespace
+
+
+def test_connect_persists_link_rejects_reassignment_and_disconnects():
+    from datetime import datetime, timezone
+    import pytest
+    from fastapi import HTTPException
+    from models import MessageState
+    functions = connection_functions()
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        lead = Lead(id='target', full_name='Target', company_id='company')
+        db.add_all([Company(id='company', name='Test', facebook_page_id='page'), lead,
+                    Lead(id='other', full_name='Other', company_id='company')])
+        state = MessageState(channel='messenger', message_id='message', client_identifier='client',
+                             company_identifier='page', direction='inbound', occurred_at=datetime.now(timezone.utc))
+        db.add(state)
+        db.commit()
+        body = SimpleNamespace(channel='messenger', client_identifier='client', company_identifier='page',
+                               lead_id='target', only_if_unconnected=True)
+        admin = SimpleNamespace(id='admin')
+        assert functions['connect'](body, admin, db)['ok']
+        db.refresh(state)
+        assert state.lead_id == 'target'
+        body.lead_id = 'other'
+        with pytest.raises(HTTPException) as error:
+            functions['connect'](body, admin, db)
+        assert error.value.status_code == 409
+        assert db.query(CommunicationAssociation).one().lead_id == 'target'
+        body.lead_id = 'target'
+        with patch.dict(sys.modules, {'routes.leads': SimpleNamespace(_get_visible_lead_or_404=lambda *args: lead)}):
+            assert functions['lead_meta_links']('target', admin, db)['items'] == [
+                dict(channel='messenger', client_identifier='client', company_identifier='page')]
+            assert functions['disconnect'](body, admin, db)['ok']
+        db.refresh(state)
+        assert state.lead_id is None
+        assert db.query(CommunicationAssociation).count() == 0
+    engine.dispose()
+
+
+def test_connect_rejects_wrong_company_and_legacy_link():
+    import pytest
+    from fastapi import HTTPException
+    functions = connection_functions()
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add_all([Company(id='company', name='Test', facebook_page_id='page'),
+                    Company(id='outside', name='Outside', facebook_page_id='other-page'),
+                    Lead(id='target', full_name='Target', company_id='company'),
+                    Lead(id='legacy', full_name='Legacy', company_id='company', facebook_user_id='client'),
+                    Lead(id='wrong', full_name='Wrong', company_id='outside')])
+        db.commit()
+        body = SimpleNamespace(channel='messenger', client_identifier='client', company_identifier='page',
+                               lead_id='wrong', only_if_unconnected=True)
+        with pytest.raises(HTTPException) as error:
+            functions['connect'](body, SimpleNamespace(id='admin'), db)
+        assert error.value.status_code == 400
+        body.lead_id = 'target'
+        with pytest.raises(HTTPException) as error:
+            functions['connect'](body, SimpleNamespace(id='admin'), db)
+        assert error.value.status_code == 409
+        assert db.query(CommunicationAssociation).count() == 0
+    engine.dispose()

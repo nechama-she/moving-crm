@@ -11,6 +11,7 @@ export default function ConnectChatModal({ leadId, channel, token, onClose, onCo
   onClose: () => void; onConnected: (client: string, messages: Message[], company: string) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [search, setSearch] = useState("");
   const [chats, setChats] = useState<Chat[]>([]);
   const [selected, setSelected] = useState<Chat | null>(null);
@@ -44,7 +45,7 @@ export default function ConnectChatModal({ leadId, channel, token, onClose, onCo
       finally { if (!controller.signal.aborted) setLoading(false); }
     }, 300);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [leadId, channel, token, search]);
+  }, [leadId, channel, token, search, refreshKey]);
   useEffect(() => {
     const controller = new AbortController();
     setMessages([]);
@@ -90,10 +91,10 @@ export default function ConnectChatModal({ leadId, channel, token, onClose, onCo
       {error && <p role="alert" className="crm-chat-picker-error">{error}</p>}
       <div className={`crm-chat-picker-body${selected ? " has-selection" : ""}`}>
         <aside className="crm-chat-picker-sidebar">
-          <div className="crm-chat-picker-search"><label htmlFor="chat-picker-search">Search messages, names, or IDs</label><input id="chat-picker-search" className="slds-input" type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search this platform" /><small>Newest first</small></div>
+          <div className="crm-chat-picker-search"><label htmlFor="chat-picker-search">Search messages, names, or IDs</label><input id="chat-picker-search" className="slds-input" type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search this platform" /><small>Newest first</small><button type="button" className="slds-button slds-button_neutral" disabled={loading || saving} onClick={() => setRefreshKey(value => value + 1)}>Refresh chats</button></div>
           <div className="crm-chat-picker-results">
             {chats.map(chat => <button type="button" className={`crm-chat-picker-result${selected?.client_identifier === chat.client_identifier ? " is-selected" : ""}`} aria-pressed={selected?.client_identifier === chat.client_identifier} key={chat.client_identifier} disabled={saving} onClick={() => setSelected(chat)}><strong>{chat.name}</strong><time>{new Date(chat.timestamp * 1000).toLocaleString()}</time><span>{chat.preview || "Attachment or empty message"}</span></button>)}
-            <p role="status" className="crm-chat-picker-status">{loading ? "Searching messages..." : chats.length ? `${chats.length} chats` : "No unconnected chats found."}</p>
+            <p role="status" className="crm-chat-picker-status">{loading ? "Searching messages..." : chats.length ? `${chats.length} chats` : "No unconnected chats found. If the message just arrived, refresh in a minute."}</p>
           </div>
         </aside>
         <section className="crm-chat-picker-preview" aria-label="Conversation preview">

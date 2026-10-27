@@ -127,9 +127,10 @@ def test_settings_routes_require_admin(setup):
 def test_fetch_and_extract_spark_report(monkeypatch):
     source = Path(__file__).resolve().parents[2] / "backend/routes/liveswitch.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
-    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "fetch_and_extract_spark_report")
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name in {"_safe_float", "fetch_and_extract_spark_report"}]
     scope = {"httpx": MagicMock(), "re": re}
-    exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"), scope)
+    exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), "exec"), scope)
     fetch_func = scope["fetch_and_extract_spark_report"]
 
     sample_data = {
@@ -147,6 +148,9 @@ def test_fetch_and_extract_spark_report(monkeypatch):
         }
     }
     scope["httpx"].get.return_value = SimpleNamespace(status_code=200, json=lambda: sample_data)
-    cuft, weight = fetch_func("https://app.scribe.liveswitch.com/public/reports/test-123")
+    cuft, weight, inventory = fetch_func("https://app.scribe.liveswitch.com/public/reports/test-123")
     assert cuft == 25.5
     assert weight == 125.0
+    assert len(inventory) == 3
+    assert inventory[1]['going'] is False
+    assert inventory[1]['cuft'] == 0

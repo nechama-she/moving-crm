@@ -60,7 +60,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
   const [callNumberTab, setCallNumberTab] = useState<"company" | "rep">("company");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<string>("");
+  const [activeTab, setActiveTab] = useState<string>("messenger");
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -161,7 +161,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
           setMessages(previous => [...new Map([...previous, ...history].map(message => [message.message_id, message])).values()]);
           if (link.channel === "messenger") setConnectedUserId(link.client_identifier);
         }
-      } catch (reason) { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Could not load connected chats"); }
+      } catch (reason) { if (!controller.signal.aborted) setConnectionError(reason instanceof Error ? reason.message : "Could not load connected chats"); }
     })();
     return () => controller.abort();
   }, [leadId, token, user?.role]);
@@ -290,8 +290,9 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
     (activeTab === "messenger" && !!(connectedUserId || userId)) ||
     (activeTab === "messages" && !!phoneNumber && !!(smsNumberTab === "company" ? aircallNumberId : repAircallNumberId));
 
-  // Extract page_id from the first messenger message (needed for Messenger replies)
-  const messengerPageId = messages.find((m) => m.platform === "messenger" && m.page_id)?.page_id || "";
+  // Use the page belonging to the manually connected recipient for replies.
+  const messengerPageId = chatLinks.find(link => link.channel === "messenger" && link.client_identifier === connectedUserId)?.company_identifier
+    || messages.find((m) => m.platform === "messenger" && m.page_id)?.page_id || "";
 
   const handleSendReply = async () => {
     if (!replyText.trim() || sending) return;
@@ -354,7 +355,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
     <div>
       {connectChannel && <ConnectChatModal leadId={leadId} channel={connectChannel} token={token} onClose={() => setConnectChannel(null)} onConnected={(client, history, company) => {
         setChatLinks(previous => [...previous, { channel: connectChannel, client_identifier: client, company_identifier: company }]);
-        setMessages(previous => [...previous.filter(message => message.platform !== connectChannel), ...history.map(message => ({ ...message, text: message.text || "", message_id: message.message_id || `${message.timestamp}`, platform: connectChannel }))]);
+        setMessages(previous => [...previous.filter(message => message.platform !== connectChannel), ...history.map(message => ({ ...message, text: message.text || "", message_id: message.message_id || `${message.timestamp}`, user_id: client, page_id: company, platform: connectChannel }))]);
         if (connectChannel === "messenger") setConnectedUserId(client);
         setConnectChannel(null);
       }} />}
