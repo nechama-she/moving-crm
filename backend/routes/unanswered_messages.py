@@ -122,6 +122,7 @@ def list_followup_calls(
     refresh: bool = Query(False), limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     priority: str | None = None, date_from: str | None = None, date_to: str | None = None,
+    sort: str | None = Query("desc", pattern="^(asc|desc)$"),
     _: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     from models import Task
@@ -186,22 +187,28 @@ def list_followup_calls(
     if category != 'all':
         query = query.filter(due if category == 'due' else overdue)
     count = counts[category]
-    if category == 'due':
-        # Order before pagination so overdue-only leads follow all due-now leads.
-        query = query.order_by(due_now.desc())
-    leads = query.options(*_queue_lead_options()).order_by(Lead.created_time.desc(), Lead.id).offset(offset).limit(limit).all()
+    # Each lead's due time is its earliest open task in the date range; sort in
+    # SQL before pagination. Date-only tasks sort as the start of their day.
+    task_due = func.coalesce(func.substr(cast(Task.due_at, String), 1, 19), Task.due_date)
+    next_due = pending.with_entities(func.min(task_due)).scalar_subquery()
+    next_due_order = next_due.asc() if sort == 'asc' else next_due.desc()
+    leads = query.options(*_queue_lead_options()).order_by(next_due_order.nulls_last(), Lead.id).offset(offset).limit(limit).all()
     leads_by_id = {lead.id: lead for lead in leads}
     tasks_by_lead = {lead.id: [] for lead in leads}
+    next_due_by_lead = {}
     if leads:
         for task in db.query(Task).join(Lead, Lead.id == Task.lead_id).filter(Task.lead_id.in_(tasks_by_lead), allowed_task).all():
+            day = task.due_date or (task.due_at.date().isoformat() if task.due_at else '')
+            in_range = not (date_from or date_to) or start_date.isoformat() <= day <= end_date.isoformat()
+            if task.status != 'done' and in_range and (task.due_at or task.due_date):
+                due_value = (task.due_at if task.due_at.tzinfo else task.due_at.replace(tzinfo=timezone.utc)).isoformat() if task.due_at else task.due_date
+                if task.lead_id not in next_due_by_lead or due_value < next_due_by_lead[task.lead_id]:
+                    next_due_by_lead[task.lead_id] = due_value
             # Priority zero keeps its original complete schedule; only lead selection is date-filtered.
-            lead = leads_by_id[task.lead_id]
-            if lead.priority != 0 and (date_from or date_to):
-                day = task.due_date or (task.due_at.date().isoformat() if task.due_at else '')
-                if not start_date.isoformat() <= day <= end_date.isoformat():
-                    continue
+            if leads_by_id[task.lead_id].priority != 0 and not in_range:
+                continue
             tasks_by_lead[task.lead_id].append(task)
-    return _with_smartmoving_links({'items': [calendar_lead_row(lead, tasks_by_lead[lead.id], now) for lead in leads],
+    return _with_smartmoving_links({'items': [{**calendar_lead_row(lead, tasks_by_lead[lead.id], now), 'next_due': next_due_by_lead.get(lead.id, '')} for lead in leads],
             'counts': counts, 'priority_counts': priority_counts,
             'filter_options': {'reps': reps, 'companies': companies}, 'has_more': offset + len(leads) < count}, db)
 
@@ -225,12 +232,13 @@ def export_followup_calls(
     rep: str = Query(""), company: str = Query(""),
     prepare: bool = Query(False),
     priority: str | None = None, date_from: str | None = None, date_to: str | None = None,
+    sort: str = Query("desc", pattern="^(asc|desc)$"),
     _: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     from followup_export import workbook_bytes
     # Export the same filtered, saved tasks as the overdue view.
     result = list_followup_calls(category=category, rep=rep, company=company,
-                                 refresh=False, limit=2**31-1, offset=0, priority=priority, date_from=date_from, date_to=date_to, _=_, db=db)
+                                 refresh=False, limit=2**31-1, offset=0, priority=priority, date_from=date_from, date_to=date_to, sort=sort, _=_, db=db)
     leads = {lead.id: lead for lead in db.query(Lead).filter(
         Lead.id.in_([row["lead_id"] for row in result["items"]])).all()}
     if prepare:

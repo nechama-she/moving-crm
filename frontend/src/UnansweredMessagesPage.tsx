@@ -27,7 +27,7 @@ type MessageRow = SmartMovingFields & { channel: string; message_id: string; lea
 type MissedCallRow = SmartMovingFields & { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type FirstContactLead = SmartMovingFields & { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; created_at: string; age_minutes: number };
 type FollowupAttempt = { task_id?: string; notes?: string; task_type?: string; number?: number; kind: "call" | "message"; label: string; period: string; scheduled_start: string; scheduled_end: string; completed_at: string; status: "completed" | "not_sent" | "on_time" | "delayed" | "overdue" | "open" | "upcoming" };
-type FollowupLead = SmartMovingFields & { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; priority: number; created_at: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; message_attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
+type FollowupLead = SmartMovingFields & { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; priority: number; created_at: string; next_due: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; message_attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
 type RawMessageState = SmartMovingFields & { channel: string; message_id: string; lead_id: string | null; client_identifier: string; company_identifier: string; direction: string; conversation_ended: boolean; occurred_at: string };
 type RawMissedCallState = SmartMovingFields & { client_identifier: string; company_identifier: string; call_id: string; lead_id: string | null; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type NumberMenu = { number: string; x: number; y: number; connectTarget?: CommunicationTarget } | null;
@@ -164,6 +164,7 @@ export default function UnansweredMessagesPage() {
   const [followupPriority, setFollowupPriority] = useState('all');
   const [followupFrom, setFollowupFrom] = useState(() => localDate());
   const [followupTo, setFollowupTo] = useState(() => localDate());
+  const [followupSort, setFollowupSort] = useState<"asc" | "desc">("desc");
   const [followupLeads, setFollowupLeads] = useState<FollowupLead[]>([]);
   const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
   const [priorityCounts, setPriorityCounts] = useState<Record<string, number>>({});
@@ -201,7 +202,7 @@ export default function UnansweredMessagesPage() {
   const followupInFlight = useRef(Promise.resolve());
   const loadedSizes = useRef({ leads: 0, followups: 0 });
   loadedSizes.current = { leads: firstContactLeads.length, followups: followupLeads.length };
-  const queueFilterKey = `${token}|${leadTab}|${followupTab}|${followupPriority}|${followupFrom}|${followupTo}|${repFilter}|${companyFilter}`;
+  const queueFilterKey = `${token}|${leadTab}|${followupTab}|${followupPriority}|${followupFrom}|${followupTo}|${followupSort}|${repFilter}|${companyFilter}`;
   const currentQueueFilterKey = useRef(queueFilterKey);
   currentQueueFilterKey.current = queueFilterKey;
 
@@ -481,7 +482,7 @@ export default function UnansweredMessagesPage() {
     if (!silent) setLoadingFollowups(true);
     try {
       const params = new URLSearchParams({ category: followupTab, limit: "50", offset: String(offset) });
-      params.set('date_from', followupFrom); params.set('date_to', followupTo); params.set('priority', followupPriority);
+      params.set('date_from', followupFrom); params.set('date_to', followupTo); params.set('priority', followupPriority); params.set('sort', followupSort);
       if (refresh) params.set("refresh", "true");
       if (repFilter) params.set("rep", repFilter);
       if (companyFilter) params.set("company", companyFilter);
@@ -499,14 +500,14 @@ export default function UnansweredMessagesPage() {
       if (request === followupRequest.current) setLoadingFollowups(false);
       release();
     }
-  }, [followupTab, followupPriority, followupFrom, followupTo, repFilter, companyFilter, token]);
+  }, [followupTab, followupPriority, followupFrom, followupTo, followupSort, repFilter, companyFilter, token]);
 
   const downloadFollowups = async () => {
     if (exportingFollowups || validatingTab !== null) return;
     setExportingFollowups(true);
     try {
       const params = new URLSearchParams({ category: followupTab });
-      params.set('date_from', followupFrom); params.set('date_to', followupTo); params.set('priority', followupPriority);
+      params.set('date_from', followupFrom); params.set('date_to', followupTo); params.set('priority', followupPriority); params.set('sort', followupSort);
       if (repFilter) params.set("rep", repFilter);
       if (companyFilter) params.set("company", companyFilter);
       const preparation = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls/export?${params}&prepare=true`, { headers: authHeaders(token), cache: "no-store" });
@@ -1177,7 +1178,11 @@ export default function UnansweredMessagesPage() {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
             <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>{smartMovingHeader}
-              {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Created', followupPriority === '0' ? 'Call Follow-ups' : 'Pending tasks / calls', followupPriority === '0' ? 'Message Follow-ups' : 'Overdue / messages'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+              {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Due', followupPriority === '0' ? 'Call Follow-ups' : 'Pending tasks / calls', followupPriority === '0' ? 'Message Follow-ups' : 'Overdue / messages'].map((header) => <th key={header} aria-sort={header === 'Due' ? (followupSort === 'asc' ? 'ascending' : 'descending') : undefined} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>
+                {header === 'Due' ? <button type="button" onClick={() => setFollowupSort((current) => current === 'desc' ? 'asc' : 'desc')} title={followupSort === 'desc' ? 'Latest first - click for earliest first' : 'Earliest first - click for latest first'} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: 0, border: "none", background: "none", color: "inherit", font: "inherit", textTransform: "inherit", cursor: "pointer" }}>
+                  Due<svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10" fill="currentColor" style={{ transform: followupSort === 'asc' ? "rotate(180deg)" : undefined }}><path d="M1 3h8L5 8z" /></svg>
+                </button> : header}
+              </th>)}
             </tr></thead>
             <tbody>
               {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
@@ -1210,7 +1215,7 @@ export default function UnansweredMessagesPage() {
                     <td style={cell}>{row.company || "—"}</td>
                     <td style={{ ...cell, textTransform: "capitalize" }}>{row.status || "—"}</td>
                     <td style={cell}>{row.priority ?? "—"}</td>
-                    <td style={cell}>{new Date(row.created_at).toLocaleString()}{row.created_time_source === "crm" ? <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>CRM time</div> : null}</td>
+                    <td style={cell}>{!row.next_due ? "—" : row.next_due.length === 10 ? new Date(`${row.next_due}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : new Date(row.next_due).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</td>
                     <td style={cell}><strong>{row.priority === 0 ? `${row.completed_count}/6` : `${row.timeline.filter(task => task.status !== 'completed').length} pending`}</strong>{row.priority === 0 && row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</td>
                     <td style={cell}><strong>{row.priority === 0 ? `${row.completed_message_count || 0}/3` : `${(row.overdue_count || 0) + (row.overdue_message_count || 0)} overdue`}</strong>{row.priority === 0 && row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</td>
                   </tr>
