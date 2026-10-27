@@ -1205,12 +1205,28 @@ export default function CustomerMovePage() {
               {calculationError && <p role="alert">{calculationError}</p>}
               {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Try again</button></p>}
               </div>
-              <ol className="cm-estimate-flow" aria-label="Complete your estimate">
-                <li><button type="button" className="cm-flow-step" disabled={!sectionReady('inventory', 'pricing')} onClick={() => setShowInventoryList(true)}><span className="cm-flow-number">1</span><span className="cm-flow-label">View &amp; edit inventory</span>{sectionReady('inventory', 'pricing') && <CompletionIcon complete label="Inventory ready"/>}</button></li>
+              {(() => {
+                const hasInventory = !!(data.combined_inventory?.length || data.inventory_draft?.rows.length);
+                const servicesDone = data.unanswered_questions?.length === 0;
+                const signed = data.signature_status === 'signed';
+                // Only the first unfinished step gets the big call-to-action; the others show a small text action.
+                const nextStep = !hasInventory ? 1 : !servicesDone ? 2 : !signed ? 3 : 0;
+                const status = (step: number, done: boolean, pending = 'Action required') => <small className="cm-flow-status">{done ? 'Completed' : nextStep === step ? pending : 'Not started'}</small>;
+                // A busy label replaces the action and shows a spinner instead of the arrow.
+                const action = (step: number, label: string, ctaLabel: string, busyLabel = '') => {
+                  const current = nextStep === step;
+                  const icon = busyLabel
+                    ? <svg className="cm-flow-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"/></svg>
+                    : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{current ? <path d="M5 12h14M13 6l6 6-6 6"/> : <path d="m9 6 6 6-6 6"/>}</svg>;
+                  return <span className={`${current ? 'cm-flow-action' : 'cm-flow-link'}${busyLabel ? ' is-busy' : ''}`} aria-live="polite">{busyLabel || (current ? ctaLabel : label)}{icon}</span>;
+                };
+                const sparkBusy = !!data.spark && data.spark.status !== 'completed' && data.spark.status !== 'failed';
+                return <ol className="cm-estimate-flow" aria-label="Complete your estimate">
+                <li><button type="button" className={`cm-flow-step${nextStep === 1 ? ' is-current' : ''}`} disabled={!sectionReady('inventory', 'pricing')} onClick={() => setShowInventoryList(true)}><span className="cm-flow-head"><span className="cm-flow-number">1</span><span className="cm-flow-label">Inventory{status(1, hasInventory)}</span>{sectionReady('inventory', 'pricing') && <CompletionIcon complete={hasInventory} label={hasInventory ? 'Inventory added' : 'Inventory missing'}/>}</span>{action(1, hasInventory ? 'Edit' : 'Add', 'Add inventory', !sectionReady('inventory', 'pricing') ? 'Loading...' : '')}</button></li>
                 <li>
                   <button
                     type="button"
-                    className="cm-flow-step"
+                    className={`cm-flow-step${nextStep === 2 ? ' is-current' : ''}`}
                     disabled={pricingLoading || !!pricingLoadError || !sectionReady('pricing') || !(data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length || data.packing_package || data.item_questions?.length)}
                     onClick={() => {
                       setPackingSelection(Object.fromEntries(data.packing_items.filter(item => item.selected).map(item => [item.id, item.selected_service || ''])));
@@ -1229,12 +1245,15 @@ export default function CustomerMovePage() {
                       setShowQuestions(true);
                     }}
                   >
-                    <span className="cm-flow-number">2</span><span className="cm-flow-label">Add extra services</span>
-                    {sectionReady('pricing') && <CompletionIcon complete={data.unanswered_questions?.length === 0 && !answersSaving} label={data.unanswered_questions?.length === 0 && !answersSaving ? 'All required service answers complete' : answersSaving ? 'Saving service answers' : 'Required service answers missing'}/>}
+                    <span className="cm-flow-head"><span className="cm-flow-number">2</span><span className="cm-flow-label">Extra services{status(2, servicesDone)}</span>
+                    {sectionReady('pricing') && <CompletionIcon complete={servicesDone} label={servicesDone ? 'All required service answers complete' : answersSaving ? 'Saving service answers' : 'Required service answers missing'}/>}</span>
+                    {action(2, servicesDone ? 'Edit' : 'Add', 'Add extra services', answersSaving ? 'Saving...' : pricingLoading || !sectionReady('pricing') ? 'Loading...' : '')}
                   </button>
                 </li>
-                <li><button type="button" className="cm-flow-step" disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}><span className="cm-flow-number">3</span><span className="cm-flow-label">{pdfBusy ? 'Preparing PDF...' : 'View & sign estimate'}</span>{sectionReady('pricing') && <CompletionIcon complete={data.signature_status === 'signed'} label={data.signature_status === 'signed' ? 'Current estimate signed' : 'Signature required'}/>}</button></li>
-              </ol>
+                <li><button type="button" className={`cm-flow-step${nextStep === 3 ? ' is-current' : ''}`} disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}><span className="cm-flow-head"><span className="cm-flow-number">3</span><span className="cm-flow-label">Estimate{status(3, signed, data.signature_status === 'changed' ? 'Changed - sign again' : 'Action required')}</span>{sectionReady('pricing') && <CompletionIcon complete={signed} label={signed ? 'Current estimate signed' : 'Signature required'}/>}</span>{action(3, signed ? 'View' : data.signature_status === 'changed' ? 'Re-sign' : 'Sign', data.signature_status === 'changed' ? 'Re-sign estimate' : 'Sign estimate',
+                  pdfBusy ? 'Preparing PDF...' : sparkBusy ? 'Analyzing inventory...' : calculatingPrice ? 'Updating price...' : answersSaving ? 'Saving...' : pricingLoading || busy ? 'Loading...' : '')}</button></li>
+              </ol>;
+              })()}
               {data.signature_status === 'signed' && <small className="cm-estimate-button-status" role="status">Signed - current estimate</small>}
               {data.spark && data.spark.status !== 'completed' && <p role="status">{data.spark.status === 'running' ? 'Analyzing your inventory...' : data.spark.status === 'failed' ? 'Inventory report failed.' : 'Inventory report queued.'}</p>}
               {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert">{pdfError}</p>}
