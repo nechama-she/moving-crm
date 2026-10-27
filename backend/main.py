@@ -99,11 +99,13 @@ def _check_system_user_permission(actor: User, request: Request) -> bool:
 
 
 async def enforce_authentication(request: Request) -> None:
+    if request.method in {'GET', 'HEAD'} and re.fullmatch(r'/move/[0-9a-f-]{36}', request.url.path):
+        return  # HTML endpoint validates the scoped verified-session cookie.
     if request.method == "OPTIONS":
         return  # CORS preflight - handled by CORSMiddleware
     if request.url.path == "/api/inventory" and request.method == "POST":
         return  # Middleware validates the inventory key before body parsing.
-    if re.fullmatch(r"/api/public-moves/[0-9a-f-]{36}/(verify-options|send-code|verify|details|summary|sections/(?:move|inventory|media|volume|pricing)|estimate\.pdf|inventory\.pdf|generate-inventory-report|walkthrough|reschedule|availability|files|prepare-upload|finish-upload|packing|item-answer|question-images|realtime-token|address-search|address-resolve|file-preview/[^/]+|inventory-catalog|manual-inventory|inventory|inventory/row|inventory/editor|inventory/actions|files/[^/]+|calculate-price|recalculate-price|reports/[^/]+/select)", request.url.path):
+    if re.fullmatch(r"/api/public-moves/[0-9a-f-]{36}/(verify-options|send-code|verify|details|summary|sections/(?:move|inventory|media|volume|pricing)|estimate\.pdf|inventory\.pdf|generate-inventory-report|walkthrough|reschedule|availability|files|prepare-upload|finish-upload|packing|item-answer|question-images|realtime-token|address-search|address-resolve|file-preview/[^/]+|inventory-catalog|manual-inventory|inventory|inventory/row|inventory/editor|inventory/actions|files/[^/]+|calculate-price|recalculate-price|rep-discounts|mileage|reports/[^/]+/select|estimate-signatures(?:/[^/]+/(?:pdf|sign|resign))?)", request.url.path):
         return  # Each endpoint requires a scoped link and, where needed, verified session.
     if request.url.path in PUBLIC_PATHS:
         return

@@ -13,12 +13,19 @@ logger = logging.getLogger("migrate")
 
 def migrate() -> None:
     with engine.begin() as connection:
-        from models import InventoryCatalogSet
+        from models import InventoryCatalogSet, EstimateSignature, CompanyDocument
+        CompanyDocument.__table__.create(connection, checkfirst=True)
+        from company_documents import seed_documents
+        seed_documents(connection)
+        EstimateSignature.__table__.create(connection, checkfirst=True)
+        connection.execute(text('ALTER TABLE estimate_signatures ADD COLUMN IF NOT EXISTS report_id TEXT'))
         InventoryCatalogSet.__table__.create(connection, checkfirst=True)
         connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS set_id VARCHAR(36)'))
         connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS set_name VARCHAR(200)'))
         from followup_tasks import install as install_followup_tasks
         install_followup_tasks(connection)
+        from smartmoving_task_migration import install as install_smartmoving_tasks
+        install_smartmoving_tasks(connection)
         from first_contact_state import install as install_first_contact
         install_first_contact(connection)
         # Clear the incorrectly backfilled queue once. The marker and delete

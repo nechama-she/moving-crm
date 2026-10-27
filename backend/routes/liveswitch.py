@@ -12,6 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 from spark_processing import SparkProcessingLog
 from spark_history import archive_report_for_new_media, remember_report, report_history, activate_report
+from estimate_signature_history import attach_signatures, signed_estimates
 from urllib.parse import urlencode, urlsplit
 
 import boto3
@@ -272,7 +273,6 @@ from auth import get_current_user
 from database import get_db
 from models import Lead, LeadLiveSwitch, PublicMoveAccess, SalesRep, Company
 from libs.aircall.client import send_sms, find_number_id
-from libs.smartmoving.client import get_opportunity
 from routes.leads import _get_visible_lead_or_404, _ensure_not_dispatch_write
 
 
@@ -792,13 +792,15 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
                 processing.mark('pricing', 'running')
                 from routes.pricing import calculate_and_save_lead_job_price
                 price = calculate_and_save_lead_job_price(lead, job, db) if cuft > 0 else None
-                if cuft <= 0: job.price = None
+                if cuft <= 0:
+                    job.price = None
+                    job.price_refresh_error = 'Your inventory is saved. Estimate unavailable: the inventory has no positive moving volume.'
             if not calculate_price:
                 processing.mark('pricing', 'skipped', 'Inventory saved; calculate the updated estimate separately')
             elif price is None:
-                job.price_refresh_error = 'Your inventory is saved, but no estimate could be calculated. Your moving team needs to check the move volume, route, and pricing settings.'
+                job.price_refresh_error = job.price_refresh_error or 'Your inventory is saved. The pricing calculator returned no price without a reason.'
                 processing.mark('pricing', 'error', 'No price returned - click to view details',
-                                'The pricing calculator returned no price. Check move volume, company, active pricing book, pickup/delivery matching, and configured rates.')
+                                job.price_refresh_error)
             else:
                 selection = json.loads(job.customer_packing_package or '{}')
                 selection.pop('pricing_pending', None)
@@ -894,7 +896,21 @@ def select_spark_report(lead_id: str, report_id: str, db: Session):
 def get_report_history(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lead = _get_visible_lead_or_404(lead_id, user, db)
     saved = db.get(LeadLiveSwitch, lead.id)
-    return {'reports': report_history(json.loads(saved.details or '{}') if saved else {}, staff=True)}
+    reports = report_history(json.loads(saved.details or '{}') if saved else {}, staff=True)
+    return {'reports': attach_signatures(reports, signed_estimates(db, lead.id))}
+
+
+@router.get('/leads/{lead_id}/estimate-signatures/{signature_id}/pdf')
+def get_signed_estimate_pdf(lead_id: str, signature_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from models import EstimateSignature
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    record = db.query(EstimateSignature).filter(EstimateSignature.id == signature_id, EstimateSignature.lead_id == lead.id,
+                                                EstimateSignature.signed_at.isnot(None)).first()
+    if record is None:
+        raise HTTPException(404, 'Signed estimate not found')
+    return Response(record.pdf, media_type='application/pdf', headers={
+        'Content-Disposition': 'inline; filename="signed-estimate-' + record.id + '.pdf"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
 @router.post('/leads/{lead_id}/reports/{report_id}/select')
@@ -1088,23 +1104,7 @@ def ensure_lead_conversation(lead: Lead, db: Session, fresh: bool = False) -> di
     if not company_phone:
         raise HTTPException(400, "Add a phone number to the sending company before starting LiveSwitch")
     quote_number = str(lead.quote_number or "").strip()
-    public_move = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
-    if public_move and not quote_number:
-        conversation_name = lead.full_name
-    else:
-        conversation_name = quote_number
-    if not quote_number and not public_move:
-        if not (lead.smartmoving_id or "").strip():
-            raise HTTPException(400, "Connect this lead to SmartMoving before starting LiveSwitch")
-        opportunity_result = get_opportunity(lead.smartmoving_id)
-        opportunity = opportunity_result.get("data")
-        if opportunity_result.get("error") or not isinstance(opportunity, dict):
-            raise HTTPException(502, "Could not retrieve the SmartMoving quote number. Please try again.")
-        quote_number = str(opportunity.get("quoteNumber") or "").strip()
-        if not quote_number:
-            raise HTTPException(400, "This SmartMoving lead does not have a quote number yet")
-        lead.quote_number = quote_number
-    conversation_name = quote_number or conversation_name
+    conversation_name = quote_number or str(lead.id)
     result = _api_post("conversations", {"type": "LiveConversation", "phone": company_phone, "name": conversation_name})
     if not result.get("id"):
         raise HTTPException(502, "LiveSwitch did not return a conversation ID")
@@ -1216,12 +1216,6 @@ def panel_upload_context(lead_id, body, user, db):
 def prepare_panel_upload(lead_id: str, body: PanelUpload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lead, existing, bucket, key, name = panel_upload_context(lead_id, body, user, db)
     if existing:
-        if not existing.liveswitch_panel_visible:
-            saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).with_for_update().first()
-            if saved:
-                details = json.loads(saved.details or '{}')
-                if archive_report_for_new_media(details):
-                    saved.details = json.dumps(details)
         existing.liveswitch_panel_visible = True
         db.commit()
         return {"completed": True, "id": existing.id}
@@ -1252,11 +1246,8 @@ def finish_panel_upload(lead_id: str, body: PanelUpload, user: User = Depends(ge
         is_external_link=True, external_source="crm_s3", uploaded_by=user.id)
     try:
         db.add(row)
-        saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).with_for_update().first()
-        if saved:
-            details = json.loads(saved.details or '{}')
-            if archive_report_for_new_media(details):
-                saved.details = json.dumps(details)
+        # Adding media must not deactivate the customer's current inventory.
+        # Report generation handles history when a replacement is requested.
         db.commit()
     except Exception:
         db.rollback()

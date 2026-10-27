@@ -98,7 +98,7 @@ def build_estimate_pdf(data, rows):
     story = [p(company.get('name') or data.get('company'), 'SectionEstimate'),
              p(' | '.join(filter(None, [company.get('phone'), company.get('office_address')])), 'NoteEstimate'),
              Spacer(1, 12), Paragraph('MOVING ESTIMATE', styles['Title']),
-             p('Prepared ' + datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)'), 'NoteEstimate')]
+             p('Prepared ' + (data.get('prepared_at') or datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)')), 'NoteEstimate')]
     story.append(table([[p('CUSTOMER\n' + data.get('name', '')), p('MOVE DATE\n' + str(data.get('move_date') or 'Not scheduled'))],
                         [p('\n'.join(filter(None, [data.get('phone'), data.get('email')]))), p(('PARTIAL ESTIMATE\n' if any(c.get('pending') for c in estimate.get('charges', [])) else 'ESTIMATED TOTAL\n') + money(estimate['price']))],
                         [p('PICKUP\n' + data.get('pickup', '')), p('DELIVERY\n' + data.get('delivery', ''))]], [261, 261]))
@@ -266,6 +266,21 @@ def build_estimate_pdf(data, rows):
                          p(money(material.get('material_price')), 'RightEstimate'),
                          p(money(material.get('packing_price')), 'RightEstimate')])
         story.append(table(body, [228, 104, 95, 95], header=True))
+    from company_documents import pdf_document_flowables
+    for document in data.get('documents', []):
+        story.append(PageBreak())
+        story.extend(pdf_document_flowables(document, styles))
+    signature = data.get('signature')
+    if signature:
+        from reportlab.graphics.shapes import Drawing, PolyLine
+        drawing = Drawing(480, 150)
+        for stroke in signature['strokes']:
+            drawing.add(PolyLine([coordinate for x, y in stroke for coordinate in (x * 480, (1 - y) * 150)],
+                                strokeColor=navy, strokeWidth=1.5))
+        story += [PageBreak(), p('Client Signature', 'SectionEstimate'),
+                  p('I have reviewed this estimate and agree to sign it electronically.'), drawing,
+                  p(signature['name']), p('Signed: ' + signature['signed_at'], 'NoteEstimate'),
+                  p('Estimate version: ' + signature['estimate_id'], 'NoteEstimate')]
     def footer(canvas, doc):
         canvas.saveState()
         canvas.setStrokeColor(colors.HexColor('#dce4e8'))

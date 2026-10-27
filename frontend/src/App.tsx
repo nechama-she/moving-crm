@@ -20,6 +20,7 @@ const CompanyTemplatesPage = lazy(() => import("./CompanyTemplatesPage"));
 const InventoryCatalogPage = lazy(() => import("./InventoryCatalogPage"));
 const MovingTermsPage = lazy(() => import("./MovingTermsPage"));
 const SettingsPage = lazy(() => import("./SettingsPage"));
+const CompanyDocumentsPage = lazy(() => import('./CompanyDocumentsPage'));
 const AutoAssignTrackerPage = lazy(() => import("./AutoAssignTrackerPage"));
 const AdminUsersPage = lazy(() => import("./AdminUsersPage"));
 const SystemUsersPage = lazy(() => import("./SystemUsersPage"));
@@ -169,6 +170,7 @@ function ProtectedRoutes() {
           <Route path="/dispatch-users" element={<DispatchPage mode="manage" />} />
           <Route path="/foremen" element={<ForemenPage />} />
           <Route path="/settings/companies" element={<CompaniesPage />} />
+          <Route path="/settings/documents" element={user?.role === 'admin' ? <CompanyDocumentsPage /> : <Navigate to="/settings" replace />} />
           <Route path="/settings/inventory-catalog" element={user?.role === "admin" ? <InventoryCatalogPage /> : <Navigate to="/settings" replace />} />
           <Route path="/settings/moving-terms" element={user?.role === "admin" ? <MovingTermsPage /> : <Navigate to="/settings" replace />} />
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />

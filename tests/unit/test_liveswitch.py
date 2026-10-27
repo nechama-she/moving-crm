@@ -13,18 +13,18 @@ from fastapi import HTTPException
 def api():
     source = Path(__file__).resolve().parents[2] / 'backend/routes/liveswitch.py'
     tree = ast.parse(source.read_text())
-    names = {'ensure_conversation', 'upload_urls', 'send_participant_sms'}
+    names = {'ensure_lead_conversation', 'ensure_conversation', 'upload_urls', 'send_participant_sms'}
     functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     for node in functions:
         node.decorator_list = []
         node.returns = None
-        node.args.defaults = node.args.defaults[-2:] if node.name == 'apply_spark_results_to_lead' else []
+        node.args.defaults = [ast.Constant(False)] if node.name == 'ensure_lead_conversation' else []
         for arg in node.args.args:
             arg.annotation = None
     lead = SimpleNamespace(id='lead-1', smartmoving_id='sm-1', quote_number=None, phone=' 1112223333 ', assignee=None, company=SimpleNamespace(phone=' 2405707987 ', aircall_number_id='company-number'))
     scope = {'get_opportunity': MagicMock(return_value={'data': {'quoteNumber': 23985}}), 'json': json, 'HTTPException': HTTPException, 'Lead': SimpleNamespace(id='id'),
              'Company': MagicMock(), 'PublicMoveAccess': MagicMock(), 'LeadLiveSwitch': MagicMock(), '_get_visible_lead_or_404': MagicMock(return_value=lead),
-             '_ensure_not_dispatch_write': MagicMock(), '_api_post': MagicMock(),
+             '_can_get_spark_result': MagicMock(return_value=False), '_ensure_not_dispatch_write': MagicMock(), '_api_post': MagicMock(),
              'SalesRep': SimpleNamespace(name='name'), 'func': MagicMock(),
              'send_sms': MagicMock(return_value={'ok': True, 'message_id': 'sms-1'}),
              'find_number_id': MagicMock(return_value=None)}
@@ -44,12 +44,12 @@ def test_creates_and_saves_all_links(api):
     db = MagicMock(); db.get.return_value = None; db.query.return_value.filter_by.return_value.first.return_value = None
     details = dict(id='new', hostJoinUrl='host', participantJoinUrl='guest', conversationUrl='page', embeddedConversationUrl='embed')
     api['_api_post'].return_value = details
-    assert api['ensure_conversation']('lead-1', object(), db) == {**details, 'name': '23985'}
-    assert json.loads(api['LeadLiveSwitch'].call_args.kwargs['details']) == {**details, 'name': '23985'}
-    assert api['_api_post'].call_args.args[1]['name'] == '23985'
+    assert api['ensure_conversation']('lead-1', object(), db) == {**details, 'name': 'lead-1', 'canGetResult': False}
+    assert json.loads(api['LeadLiveSwitch'].call_args.kwargs['details']) == {**details, 'name': 'lead-1'}
+    assert api['_api_post'].call_args.args[1]['name'] == 'lead-1'
     assert api['_api_post'].call_args.args[1]['phone'] == '2405707987'
-    api['get_opportunity'].assert_called_once_with('sm-1')
-    assert api['_get_visible_lead_or_404'].return_value.quote_number == '23985'
+    api['get_opportunity'].assert_not_called()
+    assert api['_get_visible_lead_or_404'].return_value.quote_number is None
     db.commit.assert_called_once()
 
 
@@ -102,13 +102,14 @@ def test_missing_company_phone_never_uses_customer_phone(api):
     api['_api_post'].assert_not_called()
 
 
-def test_missing_quote_number_does_not_create_conversation(api):
-    db = MagicMock(); db.get.return_value = None; db.query.return_value.filter_by.return_value.first.return_value = None
-    api['get_opportunity'].return_value = {'data': {}}
-    with pytest.raises(HTTPException) as exc:
-        api['ensure_conversation']('lead-1', object(), db)
-    assert exc.value.status_code == 400
-    api['_api_post'].assert_not_called()
+@pytest.mark.parametrize('smartmoving_id', [None, 'sm-1'])
+def test_missing_quote_uses_crm_id_without_smartmoving(api, smartmoving_id):
+    db = MagicMock(); db.get.return_value = None
+    api['_get_visible_lead_or_404'].return_value.smartmoving_id = smartmoving_id
+    api['get_opportunity'].side_effect = AssertionError('SmartMoving must not block LiveSwitch')
+    api['_api_post'].return_value = {'id': 'new'}
+    assert api['ensure_conversation']('lead-1', object(), db)['name'] == 'lead-1'
+    api['get_opportunity'].assert_not_called()
 
 
 @pytest.mark.parametrize('sender', ['assigned-rep', 'sales-reps-table', 'company', 'company-no-rep-match', 'company-phone'])
@@ -240,13 +241,13 @@ def test_configured_bearer_token_does_not_require_oauth():
     settings.assert_not_called()
 
 
-def test_public_intake_uses_customer_name_without_smartmoving(api):
+def test_public_intake_uses_crm_id_without_smartmoving(api):
     db = MagicMock(); db.get.return_value = None
     lead = api['_get_visible_lead_or_404'].return_value
     lead.full_name = 'Jane Smith'; lead.quote_number = None; lead.smartmoving_id = None
     db.query.return_value.filter_by.return_value.first.return_value = object()
     api['_api_post'].return_value = {'id': 'new'}
-    assert api['ensure_conversation']('lead-1', object(), db)['name'] == 'Jane Smith'
+    assert api['ensure_conversation']('lead-1', object(), db)['name'] == 'lead-1'
     api['get_opportunity'].assert_not_called()
     assert lead.quote_number is None
 
@@ -316,7 +317,7 @@ def reports():
     for node in functions:
         node.decorator_list = []
         node.returns = None
-        node.args.defaults = node.args.defaults[-2:] if node.name == 'apply_spark_results_to_lead' else []
+        node.args.defaults = [ast.Constant(False)] if node.name == 'ensure_lead_conversation' else []
         for arg in node.args.args: arg.annotation = None
     import sys
     sys.path.insert(0, str(source.parents[1]))
@@ -325,7 +326,7 @@ def reports():
              'LeadLiveSwitch': object(), 'Lead': object(), '_connection_config': lambda: {'spark_template_id': 'template'},
              '_api_post': MagicMock(return_value={'id': 'new-report', 'status': 'queued'}),
              '_api_get': MagicMock(return_value={'id': 'new-report', 'status': 'completed', 'shareUrl': 'new-url'}),
-             '_ensure_not_dispatch_write': MagicMock(), '_get_visible_lead_or_404': MagicMock(return_value=SimpleNamespace(id='lead')),
+             '_can_get_spark_result': MagicMock(return_value=False), '_ensure_not_dispatch_write': MagicMock(), '_get_visible_lead_or_404': MagicMock(return_value=SimpleNamespace(id='lead')),
              'fetch_and_extract_spark_report': MagicMock(return_value=(1200, 8400, []))}
     exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), 'exec'), scope)
     return scope

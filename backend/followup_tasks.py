@@ -185,7 +185,7 @@ def lead_row(lead, tasks, now):
         start, end = utc(task.scheduled_start), utc(task.due_at)
         status = ('completed' if completed else 'not_sent') if task.status == 'done' else 'overdue' if end < now else 'open' if start <= now else 'upcoming'
         call = task.task_type == 'call'
-        entry = {'number': int(task.automatic_key.rsplit(':', 1)[1]), 'kind': 'call' if call else 'message',
+        entry = {'task_id': task.id, 'number': int(task.automatic_key.rsplit(':', 1)[1]), 'kind': 'call' if call else 'message',
                  'label': task.title, 'period': task.title.split()[0].lower() if call else 'message',
                  'scheduled_start': start.isoformat(), 'scheduled_end': end.isoformat(), 'completed_at': completed, 'status': status}
         (attempts if call else messages).append(entry)

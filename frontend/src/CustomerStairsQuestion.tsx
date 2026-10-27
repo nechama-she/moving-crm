@@ -19,9 +19,9 @@ export default function CustomerStairsQuestion({ config, location, value, missin
       <button type="button" aria-label="Decrease flights" disabled={typeof value !== 'number' || value === 0} onClick={() => onChange(Math.max(0,(typeof value === 'number' ? value : 0)-1))}>−</button>
       <input id={`stairs-${location.location}`} type="number" inputMode="numeric" min="0" max="1000" step="1" value={typeof value === 'number' ? value : ''} placeholder="Choose" onChange={e => { const raw=e.target.value; const n=Number(raw); if (raw === '') onChange(null); else if (Number.isInteger(n) && n>=0 && n<=1000) onChange(n); }} />
       <button type="button" aria-label="Increase flights" disabled={value === 1000} onClick={() => onChange((typeof value === 'number' ? value : 0)+1)}>+</button>
-      <button type="button" className="cm-stairs-none" aria-pressed={value === 0} onClick={() => onChange(0)}>No stairs</button>
+      <button type="button" className="cm-secondary-btn cm-stairs-none" aria-pressed={value === 0} onClick={() => onChange(0)}>No stairs</button>
+      <button type="button" className="cm-secondary-btn cm-stairs-none" aria-pressed={value === 'unknown'} onClick={() => onChange('unknown')}>I don&apos;t know</button>
     </div>
-    <button type="button" className="cm-stairs-none" aria-pressed={value === 'unknown'} onClick={() => onChange('unknown')}>I don&apos;t know</button>
     {value === 'unknown' && <p>Stairs are unknown. Any applicable charge will be confirmed later.</p>}
     {missing && <p className="cm-field-error" role="alert">Enter the number of flights, choose No stairs, or I don&apos;t know.</p>}
     <p>{config.free_flights} flight{config.free_flights === 1 ? '' : 's'} included at this address. Each additional flight costs {money(config.rate_per_cuft)} per cu ft.</p>

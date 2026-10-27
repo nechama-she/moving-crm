@@ -205,6 +205,22 @@ class RuleInput(BaseModel):
     title: str = "Pricing rule"
     description: str
 
+    @field_validator('description')
+    @classmethod
+    def validate_discount(cls, value, info):
+        category = info.data.get('category', '')
+        if category.startswith('discount_'):
+            if category not in {'discount_amount', 'discount_percent', 'discount_rate'}:
+                raise ValueError('Unknown discount type')
+            if not info.data.get('title', '').strip():
+                raise ValueError('Enter a discount name')
+            amount = float(value)
+            if not math.isfinite(amount) or amount < 0:
+                raise ValueError('Discount must be a nonnegative number')
+            if category == 'discount_percent' and amount > 100:
+                raise ValueError('Discount percentage cannot exceed 100')
+        return value
+
 
 class RateInput(BaseModel):
     id: str | None = Field(default=None, max_length=100)
@@ -345,6 +361,8 @@ def _seasonal_charge(plan: PricingPlan, move_date: date | None) -> dict | None:
     if not move_date:
         return None
     for rule in plan.rules:
+        if rule.category.startswith('discount_'):
+            continue
         description = rule.description
         match = re.search(
             r"(?:after|of)\s+(Sep(?:tember)?|Oct(?:ober)?)\s+(\d{1,2})(?:st|nd|rd|th)?"
@@ -885,6 +903,8 @@ def compute_plan_calculation(plan: PricingPlan, body: CalculationInput) -> dict:
         collect(f'packing:{service.id}', service.name, lambda service=service: _packing_service_charges([service], service_volume, body.quantities))
         collect(f'bulky:{service.id}', service.name, lambda service=service: _bulky_item_charges([service], body.bulky_items))
     for rule in plan.rules:
+        if rule.category.startswith('discount_'):
+            continue
         collect(f'rule:{rule.id}', getattr(rule, 'name', None) or 'Pricing rule', lambda rule=rule: _rule_charges(rule))
 
     deduped: list[dict] = []
@@ -1637,11 +1657,16 @@ def add_customer_packing_charges(lead, job, db, plan, move_type):
 
 @with_job_locations
 def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> float | None:
-    if not lead or not job:
+    def no_price(reason):
+        if job is not None:
+            job.price_refresh_error = 'Your inventory is saved. Estimate unavailable: ' + reason
         return None
+
+    if not lead or not job:
+        return no_price('The lead or move record could not be found.')
     from price_validity import price_is_locked
     if price_is_locked(lead, job):
-        return float(job.price) if job.price is not None else None
+        return float(job.price) if job.price is not None else no_price('Pricing is locked for this booked or closed move, and no price is saved.')
     vol = _rounded_cubic_feet(lead.volume)
     if vol <= 0:
         # An empty inventory clears the estimate; it is not a pricing failure.
@@ -1669,7 +1694,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             if not job.company_id:
                 job.company_id = default_co.id
     if not company_id:
-        return None
+        return no_price('No company is assigned and no default company is configured.')
 
     pickup_addr = (job.pickup_zip or "").strip()
     delivery_addr = (job.delivery_zip or "").strip()
@@ -1684,13 +1709,15 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         .all()
     )
     if not plans:
-        return None
+        return no_price('There are no active pricing sheets for the move company.')
 
     move_type, matched_plan = infer_job_move_type(lead, job, db, plans)
     if move_type:
         lead.move_type = move_type
     if not move_type or not matched_plan:
-        return None
+        if not matched_plan:
+            return no_price(f'No active pricing sheet matches pickup "{pickup_addr or "not entered"}" (state: {pickup_state or "not recognized"}, ZIP: {pickup_zip or "not recognized"}).')
+        return no_price('The move type could not be determined from the saved move details.')
 
     if move_type.lower() == "local":
         from routes.local_pricing import calculate_book_price
@@ -1705,7 +1732,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             quote['charges'].append(pending_line('local-moving', 'Local moving', ValueError(quote.get('warning') or 'Hourly rate is not configured.')))
             quote['incomplete'] = True
         if (total is None or total <= 0) and not quote.get('incomplete'):
-            return None
+            return no_price(f'Local pricing sheet "{matched_plan.name}" returned no positive total for {vol} cu ft.')
 
         all_materials = (
             _material_item_names(job._estimated_materials_data(), db)
@@ -1773,7 +1800,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
     else:
         destination = _plan_destination_for_delivery(matched_plan, delivery_addr, delivery_state or "", delivery_zip or "")
         if not destination:
-            return None
+            return no_price(f'Pricing sheet "{matched_plan.name}" has no matching destination for "{delivery_addr or "not entered"}" (state: {delivery_state or "not recognized"}, ZIP: {delivery_zip or "not recognized"}).')
 
         all_materials = (
             _material_item_names(job._estimated_materials_data(), db)
@@ -1788,7 +1815,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         quote = compute_plan_calculation(matched_plan, calc_body)
         total = quote.get("total", 0.0)
         if total <= 0 and not quote.get("incomplete"):
-            return None
+            return no_price(f'Pricing sheet "{matched_plan.name}" returned no positive total for destination "{destination}" and {vol} cu ft.')
 
         lines = []
         if quote.get("base_price", 0) > 0:
@@ -1815,7 +1842,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
                     "total_cost": amt,
                 })
         if not lines:
-            return None
+            return no_price(f'Pricing sheet "{matched_plan.name}" returned no billable or pending charges for destination "{destination}" and {vol} cu ft.')
 
         from charge_updates import ChargeUpdates
         db = ChargeUpdates(db, db.query(LeadJobCharge).filter_by(job_id=job.id).all(), match_legacy_base=True, remove_missing=False)
@@ -2029,6 +2056,118 @@ def update_pricing_plan(
         service.sort_order = index
         retained_services.append(service)
     plan.services[:] = retained_services
+    db.commit()
+    db.refresh(plan)
+    return plan.to_dict()
+
+
+@router.put('/{plan_id}/discounts')
+def update_discounts(plan_id: str, body: list[RuleInput], user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    plan = _plan_or_404(db, user, plan_id)
+    if any(row.category not in {'discount_amount', 'discount_percent', 'discount_rate'} for row in body):
+        raise HTTPException(422, 'Only transportation discounts can be saved here.')
+    from pricing_row_updates import prepare_row_updates
+    existing = [row for row in plan.rules if row.category.startswith('discount_')]
+    updates = prepare_row_updates(existing, body, ('category', 'title'), ('description',))
+    retained = [row for row in plan.rules if not row.category.startswith('discount_')]
+    for index, (current, value) in enumerate(updates):
+        row = current if current is not None else PricingRule()
+        row.category, row.title, row.description = value.category, value.title.strip(), value.description.strip()
+        row.sort_order = len(retained) + index
+        retained.append(row)
+    plan.rules[:] = retained
+    db.commit()
+    return [row.to_dict() for row in plan.rules if row.category.startswith('discount_')]
+
+
+class SectionUpdate(BaseModel):
+    model_config = {'extra': 'forbid'}
+    services: list[ServiceInput] | None = None
+    rates: list[RateInput] | None = None
+    pickup_areas: list[PickupArea] | None = None
+    rules: list[RuleInput] | None = None
+    name: str | None = Field(default=None, min_length=1)
+    fuel_percent: float | None = Field(default=None, ge=0, le=100)
+    price_valid_days: int | None = Field(default=None, ge=1, le=3650)
+
+
+@router.put('/{plan_id}/sections/{section}')
+def update_pricing_section(plan_id: str, section: str, body: SectionUpdate, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    plan = _plan_or_404(db, user, plan_id)
+    from pricing_row_updates import prepare_row_updates
+    from pricing_service_updates import prepare_service_updates
+    prefixes = {'extraStops': EXTRA_STOPS_PREFIX, 'elevator': ELEVATOR_PREFIX,
+                'longCarry': LONG_CARRY_PREFIX, 'stairs': STAIRS_PREFIX, 'storage': STORAGE_PREFIX,
+                'originFees': ORIGIN_FEE_PREFIX, 'deliveryFees': DELIVERY_FEE_PREFIX,
+                'shuttle': SHUTTLE_PREFIX, 'packing': PACKING_CARD_PREFIX, 'materials': PACKING_CARD_PREFIX,
+                'bulkyItems': BULKY_ITEM_MARKER}
+    field = 'rates' if section == 'rates' else 'pickup_areas' if section == 'pickup' else 'services'
+    fields = {'services', 'rules'} if section == 'services' else {'name', 'fuel_percent', 'price_valid_days'} if section == 'details' else {field}
+    if section not in {'rates', 'pickup', 'services', 'details', *prefixes} or body.model_fields_set != fields:
+        raise HTTPException(422, 'Send only the fields for this pricing section.')
+    if section == 'details':
+        if not body.name or not body.name.strip() or body.price_valid_days is None:
+            raise HTTPException(422, 'Name and price validity are required.')
+        plan.name = body.name.strip()
+        plan.fuel_percent = body.fuel_percent
+        plan.price_valid_days = body.price_valid_days
+    elif section == 'services':
+        belongs = lambda row: not row.comments.startswith(tuple(prefixes.values()))
+        is_discount = lambda row: row.category in {'discount_amount', 'discount_percent', 'discount_rate'}
+        if body.services is None or body.rules is None or any(not belongs(row) for row in body.services) or any(is_discount(row) for row in body.rules):
+            raise HTTPException(422, 'Send only additional services and adjustments.')
+        service_updates = prepare_service_updates([row for row in plan.services if belongs(row)], body.services)
+        rule_updates = prepare_row_updates([row for row in plan.rules if not is_discount(row)], body.rules, ('category', 'title'), ('category', 'title'))
+        for collection, updates, keep, row_type in [(plan.services, service_updates, lambda row: not belongs(row), PricingService), (plan.rules, rule_updates, is_discount, PricingRule)]:
+            retained = [row for row in collection if keep(row)]
+            for current, value in updates:
+                row = current if current is not None else row_type()
+                for key, val in value.model_dump(exclude={'id'}).items():
+                    setattr(row, key, val.strip() if isinstance(val, str) else val)
+                if current is None:
+                    row.sort_order = max((r.sort_order for r in collection), default=-1) + 1
+                retained.append(row)
+            collection[:] = retained
+    elif section == 'pickup':
+        areas = body.pickup_areas
+        if areas is None or len({area.state for area in areas}) != len(areas):
+            raise HTTPException(422, 'Add each pickup state only once.')
+        plan.pickup_regions = json.dumps([area.model_dump() for area in areas])
+    elif section == 'rates':
+        if not body.rates:
+            raise HTTPException(422, 'At least one pricing rate is required.')
+        updates = prepare_row_updates(list(plan.rates), body.rates, ('destination', 'band_label'), ('destination', 'band_label'))
+        retained = []
+        for index, (current, value) in enumerate(updates):
+            row = current if current is not None else PricingRate()
+            for key, val in value.model_dump(exclude={'id'}).items():
+                setattr(row, key, val.strip() if isinstance(val, str) else val)
+            row.sort_order = index
+            retained.append(row)
+        plan.rates[:] = retained
+    else:
+        prefix = prefixes[section]
+        belongs = lambda row: row.comments.startswith(prefix)
+        if body.services is None or any(not belongs(row) for row in body.services):
+            raise HTTPException(422, 'Service belongs to a different pricing section.')
+        existing = [row for row in plan.services if belongs(row)]
+        updates = prepare_service_updates(existing, body.services)
+        retained = [row for row in plan.services if not belongs(row)]
+        if section in {'packing', 'materials'} and len(updates) != 1:
+            raise HTTPException(422, 'One packing configuration is required.')
+        for current, value in updates:
+            row = current if current is not None else PricingService()
+            comments = value.comments
+            if section in {'packing', 'materials'}:
+                from pricing_section_merge import merge_packing
+                comments = PACKING_CARD_PREFIX + json.dumps(merge_packing(
+                    json.loads(current.comments[len(prefix):]) if current else {},
+                    json.loads(value.comments[len(prefix):]), section))
+            row.name, row.rate_text, row.comments = value.name.strip(), value.rate_text.strip(), comments
+            if current is None:
+                row.sort_order = max((r.sort_order for r in plan.services), default=-1) + 1
+            retained.append(row)
+        plan.services[:] = retained
     db.commit()
     db.refresh(plan)
     return plan.to_dict()

@@ -751,6 +751,13 @@ Resources:
             - EventType: viewer-request
               FunctionARN: !GetAtt SpaRoutingFunction.FunctionMetadata.FunctionARN
         CacheBehaviors:
+          - PathPattern: /move/*
+            TargetOriginId: ApiOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            ResponseHeadersPolicyId: !Ref CustomerPageResponseHeaders
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
           - PathPattern: /api/*
             TargetOriginId: ApiOrigin
             ViewerProtocolPolicy: redirect-to-https

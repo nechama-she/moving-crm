@@ -49,7 +49,8 @@ export default function ItemSelectorsCard({planId, blocked}:{planId:string; bloc
         {editing ? <>
           <button type="button" className="slds-button" disabled={busy} onClick={() => {setRows(data?.rows || []); setEditing(false); setError('');}}>Cancel changes</button>
           <button type="button" className="slds-button" disabled={busy || blocked} onClick={() => void save()}>{busy ? 'Saving...' : 'Save changes'}</button>
-        </> : <button type="button" className="slds-button" disabled={!data || blocked} onClick={() => {setEditing(true); setOpen(true);}}>Edit</button>}
+        </> : <button type="button" className="slds-button pricing-section-action" aria-label="Edit item services" title="Edit" disabled={!data || blocked} onClick={() => {setEditing(true); setOpen(true);}}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>}
+        <button type="button" className="slds-button pricing-section-toggle" aria-label={open ? 'Collapse item services' : 'Expand item services'} onClick={() => setOpen(!open)}><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M5 12h14" />{!open && <path d="M12 5v14" />}</svg></button>
       </div>}
     </div>
     {error && <p role="alert">{error}</p>}

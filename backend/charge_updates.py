@@ -10,6 +10,7 @@ class ChargeUpdates:
         self.used = set()
         self.match_legacy_base = match_legacy_base
         self.remove_missing = remove_missing
+        self.recalculated = {}
 
     def __getattr__(self, name):
         return getattr(self.db, name)
@@ -31,11 +32,26 @@ class ChargeUpdates:
             return
         if current.job_id != row.job_id:
             raise ValueError('Cannot update a charge belonging to another job')
+        self.recalculated.setdefault(row.job_id, set()).add(current.id)
         for field in ('name', 'description', 'sort_order', 'subtotal', 'discount_amount', 'total_cost'):
             setattr(current, field, getattr(row, field))
         self.used.add(current.id)
 
     def finish(self):
+        # Invalidate discount snapshots once per job rather than loading and
+        # rewriting the same job for every recalculated charge.
+        import json
+        from models import LeadJob
+        for job_id, charge_ids in self.recalculated.items():
+            job = self.db.get(LeadJob, job_id)
+            if job:
+                selection = json.loads(job.customer_packing_package or '{}')
+                snapshots = selection.get('rep_discount_bases', {})
+                if charge_ids.intersection(snapshots):
+                    for charge_id in charge_ids:
+                        snapshots.pop(charge_id, None)
+                    job.customer_packing_package = json.dumps(selection)
+        self.recalculated.clear()
         # Repricing can make a charge free; retain its identity for later recalculations.
         # Customer deselection uses remove_missing=True to remove that selected service.
         for row in self.existing:

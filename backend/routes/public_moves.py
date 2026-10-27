@@ -4,6 +4,7 @@ from inventory_edits import InventoryEdits, load_inventory_editor, save_inventor
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
 from manual_inventory import ManualInventoryInput, InventoryRowPatch, update_inventory_row, catalog, submit_inventory, save_inventory_draft, replace_current_inventory
 from spark_history import archive_report_for_new_media, report_history
+from estimate_signature_history import attach_signatures, signed_estimates
 from pricing_addresses import with_job_locations
 from report_files import active_report_files, move_files, file_list, remove_report_file, preview_report_file
 import hmac
@@ -38,6 +39,8 @@ from public_move_sync import queue_files, sync_status
 from routes.leads import _get_visible_lead_or_404, _get_user_company_ids, _persist_job_route, _read_job_route, _upload_attachment_bytes_to_s3, _delete_s3_url, _safe_attachment_name
 
 router = APIRouter(tags=['Customer move portal'])
+from inventory_changes import inventory_draft_changed
+
 NOW = datetime.utcnow
 
 
@@ -112,12 +115,47 @@ def verification_state(access, db, request):
     return state
 
 
-def verified(access: PublicMoveAccess = Depends(public_access), request: Request = None, db: Session = Depends(get_db)):
+def verified(access: PublicMoveAccess = Depends(public_access), request: Request = None, db: Session = Depends(get_db), response: Response = None):
     session = db.get(PublicMoveSession, digest(request.headers.get('x-public-session', '')))
     lead = db.get(Lead, access.lead_id)
     if not session or session.access_id != access.id or session.expires_at < NOW() or session.contact_hash != verification_fingerprint(access, db, request):
         raise HTTPException(401, 'Please verify your phone or email to continue.')
+    set_move_page_cookie(response, access, request.headers.get('x-public-session', ''), min(session.expires_at, access.expires_at), is_rep_request(access, request))
     return access
+
+
+def set_move_page_cookie(response, access, token, expires_at, rep=False):
+    if response is not None:
+        response.set_cookie('cm_rep' if rep else 'cm_customer', token,
+                            max_age=max(0, int((expires_at - NOW()).total_seconds())),
+                            path=f'/move/{access.id}', secure=True, httponly=True, samesite='lax')
+
+
+@router.get('/move/{access_id}', include_in_schema=False)
+def initial_move_page(access_id: str, request: Request, db: Session = Depends(get_db)):
+    from pathlib import Path
+    from fastapi.responses import HTMLResponse
+    from customer_page_html import render
+    template_path = Path(__file__).resolve().parents[1] / 'customer-page.html'
+    if not template_path.exists():
+        template_path = Path(__file__).resolve().parents[2] / 'frontend/dist/index.html'
+    template = template_path.read_text(encoding='utf-8')
+    rep = request.query_params.get('audience') == 'rep'
+    token = request.cookies.get('cm_rep' if rep else 'cm_customer', '')
+    bootstrap = None
+    if token:
+        access = db.get(PublicMoveAccess, access_id)
+        session = db.get(PublicMoveSession, digest(token))
+        if access and not access.revoked and access.expires_at > NOW() and session and session.access_id == access.id and session.expires_at > NOW():
+            key = rep_link_token(access) if rep else link_token(access.id)
+            scoped_request = Request({**request.scope, 'headers': [(b'x-public-link', key.encode())]})
+            if hmac.compare_digest(session.contact_hash, verification_fingerprint(access, db, scoped_request)):
+                bootstrap = {'accessId': access.id, 'rep': rep, 'key': key, 'session': token,
+                             'expiresAt': min(session.expires_at, access.expires_at).replace(tzinfo=timezone.utc).timestamp() * 1000,
+                             'move': move_section('move', access, db, scoped_request)}
+    return HTMLResponse(render(template, bootstrap), headers={
+        'Cache-Control': 'no-store, private', 'Referrer-Policy': 'no-referrer',
+        'X-Content-Type-Options': 'nosniff', 'Vary': 'Cookie'})
 
 
 @router.post('/api/public-moves/{access_id}/realtime-token')
@@ -189,7 +227,7 @@ def public_url(row, rep=False):
         valid = False
     if not valid:
         raise HTTPException(503, 'The customer website origin is not configured')
-    return f'{origin}/move/{row.id}#key={rep_link_token(row) if rep else link_token(row.id)}' + ('&audience=rep' if rep else '')
+    return f'{origin}/move/{row.id}' + ('?audience=rep' if rep else '') + f'#key={rep_link_token(row) if rep else link_token(row.id)}' + ('&audience=rep' if rep else '')
 
 
 def create_customer_page_access(db, lead, job, key_hash, request_hash):
@@ -466,7 +504,8 @@ class VerifyCode(BaseModel):
 
 
 @router.post('/api/public-moves/{access_id}/verify')
-def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db), request: Request = None):
+def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db), request: Request = None, response: Response = None):
+    page_access = access
     access = db.query(PublicMoveAccess).filter_by(id=access.id).with_for_update().one()
     link_expires_at = access.expires_at
     fingerprint = verification_fingerprint(access, db, request)
@@ -481,8 +520,9 @@ def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_acce
     expires_at = min(link_expires_at, NOW()+timedelta(hours=8))
     db.add(PublicMoveSession(token_hash=digest(token), access_id=access.id, expires_at=expires_at, contact_hash=fingerprint))
     db.commit()
+    set_move_page_cookie(response, page_access, token, expires_at, is_rep_request(page_access, request))
     return {'session': token, 'expires_in': max(0, int((expires_at - NOW()).total_seconds())),
-            'expires_at': expires_at.isoformat() + 'Z'}
+            'expires_at': expires_at.isoformat() + 'Z', 'move': move_section('move', page_access, db, request)}
 
 
 def _parse_availability_stamps(value: str) -> list[datetime]:
@@ -546,6 +586,10 @@ def _group_box_packing_charges(charges):
 def _customer_charge_description(name: str, desc: str) -> str:
     if not desc:
         return ''
+    original, separator, adjustment = desc.rpartition(' | ')
+    if separator and re.search(r': -\$\d', adjustment):
+        cleaned = _customer_charge_description(name, original)
+        return ' | '.join(part for part in (cleaned, adjustment) if part)
     text_val = desc.strip()
     # Strip internal bulky matching text / local discount notes
     if 'matched from report' in text_val.lower() or 'bulky item' in text_val.lower():
@@ -577,7 +621,7 @@ def _has_inventory_list(state):
 
 
 @router.get('/api/public-moves/{access_id}/details')
-def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
     from price_validity import refresh_expired_price
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
     conversation = db.get(LeadLiveSwitch, access.lead_id)
@@ -585,7 +629,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
     if lead and job and _has_inventory_list(state):
         refresh_expired_price(lead, job, db)
         db.refresh(access)
-    return _move_details(access, db)
+    return _move_details(access, db, individual_charges=is_rep_request(access, request))
 
 
 @router.get('/api/public-moves/{access_id}/summary')
@@ -595,28 +639,30 @@ def move_summary(access: PublicMoveAccess = Depends(verified), db: Session = Dep
 
 
 @router.get('/api/public-moves/{access_id}/sections/{section}')
-def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'pricing'], access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'pricing'], access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
-    conversation = db.get(LeadLiveSwitch, lead.id)
-    state = json.loads(conversation.details or '{}') if conversation else {}
     if section == 'move':
         pickup, stops, delivery = _read_job_route(db, job)
         typed = json.loads(job.stop_types or '[]')
         company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
-        meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first()
         return dict(name=lead.full_name, phone=lead.phone or '', email=lead.email or '', move_date=job.move_date or '', pickup=pickup, delivery=delivery,
                     stops=[{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i, s in enumerate(stops)],
                     company=company.name if company else 'Your moving team',
                     company_details={'name': company.name if company else 'Your moving team', 'phone': company.phone or '' if company else '', 'office_address': company.office_address or '' if company else '', 'logo': company.logo if company else '', 'color': company.color if company and company.color else resolve_company_color(company.name if company else None, None)},
-                    walkthrough=meeting_dict(meeting) if meeting else None, participant_url=state.get('participantJoinUrl', '') if meeting and meeting.status == 'scheduled' else '',
-                    link_sms=customer_link_sms_notice(access), google_maps_browser_key=setting('GOOGLE_MAPS_BROWSER_KEY'))
+                    link_sms=customer_link_sms_notice(access))
+    conversation = db.get(LeadLiveSwitch, lead.id)
+    state = json.loads(conversation.details or '{}') if conversation else {}
     if section == 'inventory':
         return dict(inventory_draft=state.get('inventory_draft'), combined_inventory=resolve_catalog_names(state.get('spark_inventory_snapshot', []), db) if state.get('last_spark_status') == 'completed' else [],
-                    list_changed=(state.get('inventory_draft') or {}).get('body') != state.get('report_list_body'), report_history=report_history(state), pricing_required=_has_inventory_list(state))
+                    list_changed=inventory_draft_changed(state), report_history=attach_signatures(report_history(state), signed_estimates(db, access.lead_id, access.job_id)), pricing_required=_has_inventory_list(state))
     if section == 'media':
+        meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first()
         files = active_report_files(access, db)
         previous = {row['id'] for row in state.get('report_files', [])}
-        return dict(editable_files=file_list(files), files=state.get('report_files', file_list(files)), files_changed={f.id for f in files} != previous,
+        return dict(walkthrough=meeting_dict(meeting) if meeting else None,
+                    participant_url=state.get('participantJoinUrl', '') if meeting and meeting.status == 'scheduled' else '',
+                    google_maps_browser_key=setting('GOOGLE_MAPS_BROWSER_KEY'),
+                    editable_files=file_list(files), files=state.get('report_files', file_list(files)), files_changed={f.id for f in files} != previous,
                     new_file_count=sum(f.id not in previous for f in files) if 'report_files' in state else 0)
     if section == 'volume':
         return {'spark': {'id': state['last_spark_id'], 'source': state.get('report_source', 'liveswitch'), 'status': state.get('last_spark_status', 'queued'), 'shareUrl': state.get('last_spark_share_url'), 'cuft': state.get('spark_extracted_cuft'), 'update_error': state.get('notification_error')} if state.get('last_spark_id') else None}
@@ -624,13 +670,17 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'prici
         from price_validity import refresh_expired_price
         refresh_expired_price(lead, job, db)
         db.refresh(access)
-    return _move_details(access, db, pricing_only=True)
+    result = _move_details(access, db, pricing_only=True, individual_charges=is_rep_request(access, request))
+    from delivery_fees import browser_fee_routes
+    from price_validity import price_is_locked
+    result['mileage_routes'] = [] if price_is_locked(lead, job) else browser_fee_routes(lead, job, db)
+    return result
 
 
-def _move_details(access, db, *, refresh_report=True, include_pricing=True, pricing_only=False):
+def _move_details(access, db, *, refresh_report=True, include_pricing=True, pricing_only=False, individual_charges=False):
     from math import ceil
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
-    pickup, stops, delivery = _read_job_route(db, job) if not pricing_only else ('', [], '')
+    pickup, stops, delivery = _read_job_route(db, job)
     typed = json.loads(job.stop_types or '[]')
     meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first() if not pricing_only else None
     files = active_report_files(access, db) if not pricing_only else []
@@ -662,6 +712,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     saved_package = json.loads(job.customer_packing_package or '{}')
     charges_list = [
         {
+            'id': c.id,
             'name': re.sub(r'^Extra (?=(?:pickup|delivery) stop)', 'Additional ', c.name or ''),
             'description': _customer_charge_description(c.name, c.description or ''),
             'pending': (c.description or '').startswith('Calculation pending: '),
@@ -675,7 +726,9 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             ((c.description or '').startswith('Calculation pending: ')) or (c.total_cost and float(c.total_cost) > 0) or (c.discount_amount and float(c.discount_amount) > 0)
         )
     ]
-    charges_list = _group_box_packing_charges(charges_list)
+    # Keep individual charge IDs on rep pages for precise inline adjustments.
+    if not individual_charges:
+        charges_list = _group_box_packing_charges(charges_list)
     report_import_pending = bool(spark_info and conv_details.get('spark_extracted_id') != spark_info['id'])
     if not is_spark_pending and not report_import_pending and conv_details.get('spark_pricing_ready') is not False:
         if access.published_at and access.published_price is not None:
@@ -757,9 +810,23 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
         packing_items=packing_items, item_questions=item_questions),
         package_saved='mode' in json.loads(job.customer_packing_package or '{}'))
     pricing_data = dict(pricing_error=pricing_error, extra_stops=extra_stops, elevator=elevator, long_carry=long_carry, stairs=stairs, storage=storage, shuttle=shuttle, item_questions=item_questions, packing_package=packing_package, packing_items=packing_items, packing_saved=job.customer_packing is not None, unanswered_questions=required_questions, pricing_required=pricing_required, estimate=estimate)
+    from estimate_signature_history import estimate_signature_status
+    from item_selectors import inventory_selectors
+    from company_documents import estimate_documents
+    signature_details = dict(pricing_data, name=lead.full_name, phone=lead.phone or '', email=lead.email or '',
+        move_date=job.move_date or '', pickup=pickup, delivery=delivery,
+        stops=[{'address': address, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == address else None} for i, address in enumerate(stops)],
+        company_details=company_data, item_services=inventory_selectors(access, db),
+        documents=estimate_documents(lead, job, db))
+    pricing_data['estimate_needs_update'] = inventory_draft_changed(conv_details) or conv_details.get('spark_pricing_ready') is False
+    pricing_data['signature_status'] = estimate_signature_status(
+        db, access.lead_id, access.job_id, signature_details,
+        inventory_rows=resolve_catalog_names(conv_details.get('question_original_rows', conv_details.get('spark_inventory_snapshot', [])), db),
+        inventory_pending=pricing_data['estimate_needs_update'])
+    pricing_data['signature_requires_resign'] = pricing_data['signature_status'] == 'changed'
     if pricing_only:
         return pricing_data
-    return {'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    return {'signature_status': pricing_data['signature_status'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': [{'address': s, 'type': typed[i].get('type') if i < len(typed) and typed[i].get('address') == s else None} for i,s in enumerate(stops)],
             'unanswered_questions': required_questions,
             'pricing_required': pricing_required,
@@ -768,11 +835,11 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             'link_sms': customer_link_sms_notice(access),
             'estimate': estimate,
             'spark': spark_info,
-            'report_history': report_history(conv_details),
+            'report_history': attach_signatures(report_history(conv_details), signed_estimates(db, access.lead_id, access.job_id)),
             'editable_files': file_list(files),
             'inventory_draft': conv_details.get('inventory_draft'),
             'combined_inventory': resolve_catalog_names(conv_details.get('spark_inventory_snapshot', []), db) if spark_info and spark_info.get('status') == 'completed' else [],
-            'list_changed': conv_details.get('inventory_draft', {}).get('body') != conv_details.get('report_list_body'),
+            'list_changed': inventory_draft_changed(conv_details),
             'files_changed': {f.id for f in files} != {row['id'] for row in conv_details.get('report_files', [])},
             'new_file_count': sum(f.id not in {row['id'] for row in conv_details.get('report_files', [])} for f in files) if 'report_files' in conv_details else 0,
             'walkthrough': meeting_dict(meeting) if meeting else None,
@@ -799,9 +866,7 @@ def _customer_pricing_options(lead, job, db):
     }
 
 
-@router.get('/api/public-moves/{access_id}/estimate.pdf')
-def download_estimate(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    from estimate_pdf import build_estimate_pdf
+def _estimate_document(access, db):
     data = _move_details(access, db, refresh_report=False)
     from estimate_questions import unanswered_questions
     missing = data.get('unanswered_questions', unanswered_questions(data))
@@ -816,6 +881,15 @@ def download_estimate(access: PublicMoveAccess = Depends(verified), db: Session 
         raise HTTPException(409, 'There is no inventory to include in this estimate.')
     from item_selectors import inventory_selectors
     data['item_services'] = inventory_selectors(access, db)
+    from company_documents import estimate_documents
+    data['documents'] = estimate_documents(db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id), db)
+    return data, rows
+
+
+@router.get('/api/public-moves/{access_id}/estimate.pdf')
+def download_estimate(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from estimate_pdf import build_estimate_pdf
+    data, rows = _estimate_document(access, db)
     return Response(build_estimate_pdf(data, rows), media_type='application/pdf', headers={
         'Content-Disposition': 'attachment; filename="moving-estimate.pdf"',
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
@@ -828,6 +902,161 @@ def select_customer_report(report_id: str, access: PublicMoveAccess = Depends(ve
     if not result.get('ok'):
         raise HTTPException(422, result.get('detail'))
     return result
+
+
+class EstimateSigningInput(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    consent: Literal[True]
+    strokes: list[list[tuple[float, float]]] = Field(min_length=1, max_length=100)
+
+    @field_validator('strokes')
+    @classmethod
+    def validate_strokes(cls, strokes):
+        import math
+        if sum(len(stroke) for stroke in strokes) > 10000:
+            raise ValueError('Signature is too large')
+        if any(len(stroke) < 2 for stroke in strokes):
+            raise ValueError('Draw your signature')
+        if any(not math.isfinite(v) or not 0 <= v <= 1 for stroke in strokes for point in stroke for v in point):
+            raise ValueError('Invalid signature coordinates')
+        if not any(len(set(stroke)) > 1 for stroke in strokes):
+            raise ValueError('Draw your signature')
+        return strokes
+
+
+def _signature_record(signature_id, access, db, lock=False):
+    from models import EstimateSignature
+    query = db.query(EstimateSignature).filter_by(id=signature_id, lead_id=access.lead_id, job_id=access.job_id)
+    record = (query.with_for_update() if lock else query).first()
+    if record is None:
+        raise HTTPException(404, 'Estimate not found')
+    return record
+
+
+@router.get('/api/public-moves/{access_id}/estimate-signatures')
+def list_estimate_signatures(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    return {'items': signed_estimates(db, access.lead_id, access.job_id)}
+
+
+def refresh_estimate_for_view(access, db):
+    from models import LeadJobCharge
+    from price_validity import price_is_locked, refresh_expired_price
+    lead = db.get(Lead, access.lead_id)
+    job = db.get(LeadJob, access.job_id)
+    if price_is_locked(lead, job):
+        return
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).first()
+    state = json.loads(saved.details or '{}') if saved else {}
+    # Never generate a replacement media report just to view an estimate.
+    if state.get('last_spark_status') != 'completed':
+        return
+    changed = inventory_draft_changed(state)
+    if changed:
+        from manual_inventory import replace_current_inventory
+        draft = state.get('inventory_draft') or {}
+        if not draft.get('body'):
+            raise HTTPException(409, 'The saved inventory draft is incomplete. Open the inventory and save it again.')
+        replace_current_inventory(ManualInventoryInput.model_validate(draft['body']), access, db)
+    selection = json.loads(job.customer_packing_package or '{}')
+    pending = db.query(LeadJobCharge.id).filter(
+        LeadJobCharge.job_id == job.id,
+        LeadJobCharge.description.startswith('Calculation pending: ')).first()
+    if changed or state.get('spark_pricing_ready') is False or job.price is None or job.price_refresh_error or selection.get('pricing_pending') or pending:
+        recalculate_current_price(access, db)
+        if changed:
+            # The draft was applied and priced successfully; it is now the
+            # report's inventory baseline, not an outstanding edit.
+            saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead.id).with_for_update().one()
+            current = json.loads(saved.details or '{}')
+            if (current.get('inventory_draft') or {}).get('body') == draft['body']:
+                current['report_list_body'] = draft['body']
+                from spark_history import remember_report
+                remember_report(current)
+                saved.details = json.dumps(current)
+                db.commit()
+    else:
+        refresh_expired_price(lead, job, db)
+
+
+@router.post('/api/public-moves/{access_id}/estimate-signatures')
+def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from fastapi.encoders import jsonable_encoder
+    from models import EstimateSignature
+    from estimate_pdf import build_estimate_pdf
+    refresh_estimate_for_view(access, db)
+    data, rows = _estimate_document(access, db)
+    if data.get('list_changed'):
+        raise HTTPException(409, 'The saved inventory draft differs from the inventory used for this estimate. Update the estimate from that inventory first.')
+    if data.get('files_changed'):
+        raise HTTPException(409, 'The attached files differ from the files used for this inventory report. Update the report before signing.')
+    pending = [c.get('name') or 'Unnamed charge' for c in data['estimate'].get('charges', []) if c.get('pending')]
+    if pending:
+        raise HTTPException(409, 'These charges still need calculation: ' + ', '.join(pending) + '.')
+    from estimate_signature_history import estimate_state
+    signed = db.query(EstimateSignature.id, EstimateSignature.snapshot).filter(
+        EstimateSignature.lead_id == access.lead_id, EstimateSignature.job_id == access.job_id,
+        EstimateSignature.signed_at.isnot(None),
+    ).order_by(EstimateSignature.signed_at.desc()).first()
+    if signed and not data.get('estimate_needs_update'):
+        try:
+            snapshot = json.loads(signed.snapshot)
+            if estimate_state(snapshot['data'], snapshot.get('rows', [])) == estimate_state(data, rows):
+                return {'id': signed.id, 'signed': True}
+        except (ValueError, KeyError, TypeError, AttributeError):
+            pass
+    data['prepared_at'] = datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)')
+    record = EstimateSignature(id=str(uuid4()), lead_id=access.lead_id, job_id=access.job_id,
+        report_id=(data.get('spark') or {}).get('id'),
+        snapshot=json.dumps(jsonable_encoder({'data': data, 'rows': rows})), pdf=build_estimate_pdf(data, rows))
+    db.add(record)
+    db.commit()
+    return {'id': record.id, 'signed': False}
+
+
+@router.get('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/pdf')
+def signature_pdf(signature_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    record = _signature_record(signature_id, access, db)
+    return Response(record.pdf, media_type='application/pdf', headers={
+        'Content-Disposition': 'inline; filename="estimate-' + record.id + '.pdf"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+@router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/sign')
+def sign_estimate(signature_id: str, body: EstimateSigningInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from estimate_pdf import build_estimate_pdf
+    record = _signature_record(signature_id, access, db, lock=True)
+    if record.signed_at:
+        return {'id': record.id, 'signed_at': record.signed_at.isoformat() + 'Z'}
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, 'Enter your full name')
+    snapshot = json.loads(record.snapshot)
+    from estimate_signature_history import estimate_state
+    current_data, current_rows = _estimate_document(access, db)
+    if current_data.get('estimate_needs_update') or estimate_state(current_data, current_rows) != estimate_state(snapshot['data'], snapshot['rows']):
+        raise HTTPException(409, 'The estimate changed while you were reviewing it. Close this viewer and open the current estimate to review and sign.')
+    signed_at = datetime.utcnow()
+    signature = {'name': name, 'signed_at': signed_at.isoformat() + 'Z', 'strokes': body.strokes, 'estimate_id': record.id}
+    snapshot['data']['signature'] = signature
+    record.pdf = build_estimate_pdf(snapshot['data'], snapshot['rows'])
+    record.signer_name, record.signed_at = name, signed_at
+    record.signature = json.dumps(signature)
+    db.commit()
+    return {'id': record.id, 'signed_at': signed_at.isoformat() + 'Z'}
+
+
+@router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/resign')
+def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from estimate_pdf import build_estimate_pdf
+    record = _signature_record(signature_id, access, db, lock=True)
+    snapshot = json.loads(record.snapshot)
+    snapshot['data'].pop('signature', None)
+    pdf = build_estimate_pdf(snapshot['data'], snapshot['rows'])
+    record.snapshot = json.dumps(snapshot)
+    record.pdf = pdf
+    record.signer_name = record.signed_at = record.signature = None
+    db.commit()
+    return Response(pdf, media_type='application/pdf', headers={'Cache-Control': 'private, no-store'})
 
 
 @router.get('/api/public-moves/{access_id}/inventory-catalog')
@@ -902,6 +1131,101 @@ def patch_customer_inventory_actions(body: InventoryEdits | InventoryActionsInpu
     return save_inventory_actions(body, access, db)
 
 
+class BrowserFeeDistance(BaseModel):
+    kind: Literal['origin', 'delivery']
+    revision: str = Field(min_length=64, max_length=64)
+    meters: int = Field(ge=0, le=20000000, strict=True)
+
+
+class BrowserFeeDistances(BaseModel):
+    routes: list[BrowserFeeDistance] = Field(max_length=2)
+
+
+@router.get('/api/public-moves/{access_id}/mileage')
+def mileage_routes(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from delivery_fees import browser_fee_routes
+    from price_validity import price_is_locked
+    lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
+    return {'routes': [] if price_is_locked(lead, job) else browser_fee_routes(lead, job, db)}
+
+
+@router.post('/api/public-moves/{access_id}/mileage')
+def save_mileage(body: BrowserFeeDistances, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from delivery_fees import browser_fee_routes
+    from price_validity import price_is_locked
+    from routes.pricing import sync_origin_fee, sync_delivery_fee
+    job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
+    lead = db.get(Lead, access.lead_id)
+    if price_is_locked(lead, job):
+        raise HTTPException(409, 'The price is locked for this booked or closed move.')
+    current = {row['kind']: row for row in browser_fee_routes(lead, job, db)}
+    selection = json.loads(job.customer_packing_package or '{}')
+    for row in body.routes:
+        if row.kind not in current or current[row.kind]['revision'] != row.revision:
+            raise HTTPException(409, 'The mileage route changed. Retry with the current addresses.')
+        selection[row.kind + '_route'] = {'revision': row.revision, 'meters': row.meters}
+    job.customer_packing_package = json.dumps(selection)
+    for kind in {row.kind for row in body.routes}:
+        (sync_origin_fee if kind == 'origin' else sync_delivery_fee)(lead, job, db)
+    db.commit()
+    return {'saved': True}
+
+
+class RepDiscountInput(BaseModel):
+    charge_id: str
+    title: str = Field(default='Discount', min_length=1, max_length=120)
+    type: Literal['amount', 'percent', 'rate', 'total'] = 'amount'
+    value: Decimal = Field(default=0, ge=0, max_digits=12, decimal_places=2)
+    remove: bool = False
+
+
+@router.get('/api/public-moves/{access_id}/rep-discounts')
+def rep_discount_options(request: Request, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    if not is_rep_request(access, request):
+        raise HTTPException(403, 'Rep access required.')
+    from routes.pricing import infer_job_move_type
+    lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
+    if not lead or not job or job.lead_id != lead.id:
+        raise HTTPException(404, 'Move not found.')
+    _, plan = infer_job_move_type(lead, job, db)
+    settings = json.loads(job.customer_packing_package or '{}').get('rep_discounts', {})
+    return {'presets': [{'title': r.title, 'type': r.category[9:], 'value': float(r.description)} for r in (plan.rules if plan else []) if r.category in ('discount_amount', 'discount_percent', 'discount_rate')],
+            'charges': [{'id': c.id, 'name': c.name, 'total': float(c.total_cost or 0), 'transportation': c.name == 'Transportation charge', 'discount': settings.get(c.id)} for c in job.charges]}
+
+
+@router.post('/api/public-moves/{access_id}/rep-discounts')
+def save_rep_discount(body: RepDiscountInput, request: Request, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    from math import ceil
+    if not is_rep_request(access, request):
+        raise HTTPException(403, 'Rep access required.')
+    from models import LeadJobCharge
+    from price_validity import price_is_locked
+    from routes.leads import _refresh_lead_estimated_total
+    lead = db.get(Lead, access.lead_id)
+    job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().first()
+    if not lead or not job:
+        raise HTTPException(404, 'Move not found.')
+    if price_is_locked(lead, job):
+        raise HTTPException(409, 'The price is locked for this booked or closed move.')
+    charge = db.query(LeadJobCharge).filter_by(id=body.charge_id, job_id=job.id).first()
+    if not charge:
+        raise HTTPException(404, 'Charge not found.')
+    if body.type == 'percent' and body.value > 100:
+        raise HTTPException(422, 'Percentage cannot exceed 100.')
+    if body.type == 'rate' and charge.name != 'Transportation charge':
+        raise HTTPException(422, 'Cu-ft rate discounts apply to transportation only.')
+    selection = json.loads(job.customer_packing_package or '{}')
+    settings = selection.setdefault('rep_discounts', {})
+    if body.remove:
+        settings.pop(charge.id, None)
+    else:
+        settings[charge.id] = {'title': body.title.strip() or 'Discount', 'type': body.type, 'value': str(body.value), 'volume': ceil(lead.volume or 0)}
+    job.customer_packing_package = json.dumps(selection)
+    _refresh_lead_estimated_total(lead.id, db)
+    db.commit()
+    return {'saved': True}
+
+
 @router.post('/api/public-moves/{access_id}/recalculate-price')
 def recalculate_current_price(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from routes.pricing import calculate_and_save_lead_job_price
@@ -915,7 +1239,7 @@ def recalculate_current_price(access: PublicMoveAccess = Depends(verified), db: 
     with db.begin_nested():
         price = calculate_and_save_lead_job_price(lead, job, db)
         if price is None:
-            raise HTTPException(422, 'No price could be calculated from the current inventory and pricing settings.')
+            raise HTTPException(422, job.price_refresh_error or 'The pricing calculator returned no price without a reason.')
         selection = json.loads(job.customer_packing_package or '{}')
         selection.pop('pricing_pending', None)
         selection.pop('pricing_save_error', None)
@@ -949,7 +1273,8 @@ def calculate_report_price(access: PublicMoveAccess = Depends(verified), db: Ses
     if not result.get('ok'):
         raise HTTPException(422, result.get('detail') or 'Could not process the report.')
     if result.get('price') is None:
-        raise HTTPException(422, 'The report was imported, but no price could be calculated. Please contact your moving team to check pricing.')
+        job = db.get(LeadJob, access.job_id)
+        raise HTTPException(422, job.price_refresh_error if job and job.price_refresh_error else 'The pricing calculator returned no price without a reason.')
     return result
 
 
@@ -1572,7 +1897,8 @@ def customer_generate_inventory_report(access: PublicMoveAccess = Depends(verifi
         if not result.get('ok'):
             raise HTTPException(422, result.get('detail'))
         if result.get('price') is None:
-            raise HTTPException(422, 'Your inventory is saved, but no estimate could be calculated. Your moving team needs to check the move volume, route, and pricing settings.')
+            job = db.get(LeadJob, access.job_id)
+            raise HTTPException(422, job.price_refresh_error if job and job.price_refresh_error else 'The pricing calculator returned no price without a reason.')
         return result
 
     from routes.liveswitch import trigger_lead_spark
@@ -1664,7 +1990,7 @@ def staff_access(lead_id, user, db):
 
 
 @router.post('/api/leads/{lead_id}/customer-page/rep-session')
-def open_rep_session(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def open_rep_session(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db), response: Response = None):
     _, access = staff_access(lead_id, user, db)
     if access.revoked or access.expires_at <= NOW():
         raise HTTPException(403, 'This move link is revoked or expired.')
@@ -1673,6 +1999,7 @@ def open_rep_session(lead_id: str, user: User = Depends(get_current_user), db: S
     db.add(PublicMoveSession(token_hash=digest(token), access_id=access.id,
                             expires_at=expires_at, contact_hash=rep_contacts(access, db)[1]))
     db.commit()
+    set_move_page_cookie(response, access, token, expires_at, True)
     return {'url': public_url(access, rep=True), 'access_id': access.id,
             'session': token, 'expires_at': expires_at.isoformat() + 'Z'}
 

@@ -1,0 +1,29 @@
+.company-documents { max-width: 1200px; margin: auto; padding: 24px; color: #16324a; }
+.company-documents label { display: block; font-weight: 600; }
+.company-documents input:not([type=checkbox]), .company-documents select { box-sizing: border-box; display: block; width: 100%; max-width: 650px; padding: 10px; margin: 6px 0 16px; border: 1px solid #b8c6d4; border-radius: 6px; font: inherit; }
+.company-documents-layout { display: grid; grid-template-columns: 230px minmax(0,1fr); gap: 24px; margin-top: 24px; }
+.company-documents nav { display: flex; flex-direction: column; gap: 8px; }
+.company-documents button { padding: 10px 12px; min-height: 44px; border: 1px solid #b8c6d4; border-radius: 6px; background: white; color: #0b5cab; cursor: pointer; font: inherit; }
+.company-documents button:disabled { opacity: .55; cursor: default; }
+.company-documents button[aria-current=page] { background: #eaf4ff; border-color: #0b5cab; font-weight: 700; }
+.company-documents-options, .company-documents-toolbar, .company-documents-actions, .company-documents-link { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.company-documents-editor, .company-documents-preview { min-height: 360px; padding: 20px; background: white; border: 1px solid #b8c6d4; border-radius: 8px; overflow-wrap: anywhere; line-height: 1.5; }
+.company-documents-editor:focus { outline: 2px solid #0b5cab; outline-offset: 2px; }
+.company-documents-editor a, .company-documents-preview a { color: #0b5cab; text-decoration: underline; }
+.company-documents-preview { margin-top: 20px; }
+.company-field-picker { position: fixed; z-index: 1000; box-sizing: border-box; width: min(380px, calc(100vw - 24px)); padding: 6px; margin: 0; background: #fff; border: 1px solid #e1e5eb; border-radius: 14px; box-shadow: 0 12px 36px #16324a24, 0 2px 6px #16324a12; display: flex; flex-direction: column; overflow: hidden; }
+.company-field-menu-heading { display: flex; align-items: center; justify-content: space-between; padding: 2px 8px 4px; color: #64748b; font-size: 12px; }
+.company-field-picker .company-field-menu-heading button { display: grid; place-items: center; border: 0; min-height: 28px; padding: 6px; color: #64748b; background: transparent; }
+.company-field-picker > label { padding: 0 8px; font-size: 12px; }
+.company-field-picker input[type=search] { margin: 4px 0 8px; padding: 8px; }
+.company-field-results { overflow-y: auto; overscroll-behavior: contain; min-height: 0; scrollbar-width: thin; }
+.company-field-results button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 7px; min-height: 38px; padding: 8px; color: #243447; background: transparent; font-size: 13px; }
+.company-field-results strong { font-weight: 500; flex-shrink: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.company-field-results small { color: #748091; font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.company-field-icon { display: flex; color: #8493a5; flex-shrink: 0; }
+.company-field-results small.is-missing { color: #98a1ae; }
+.company-field-results button[aria-selected=true], .company-field-results button:hover { background: #f0f4f8; }
+.company-field-results button:focus-visible { outline: 2px solid #0b5cab; outline-offset: -2px; }
+.company-field-picker > p { font-size: 13px; color: #64748b; margin: 10px; }
+@media (pointer: coarse) { .company-field-results button { min-height: 44px; } }
+@media (max-width: 700px) { .company-documents { padding: 16px; } .company-documents-layout { grid-template-columns: 1fr; } .company-documents nav { max-height: 180px; overflow-y: auto; } .company-documents-editor { padding: 12px; } }

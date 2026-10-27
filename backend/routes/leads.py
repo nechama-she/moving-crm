@@ -20,7 +20,7 @@ from botocore.exceptions import ClientError
 from dateutil import parser as date_parser
 from fastapi import APIRouter, HTTPException, Query, Depends, Header, UploadFile, File, Request
 from fastapi.responses import Response, RedirectResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, cast, text, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
@@ -2684,6 +2684,12 @@ def _refresh_lead_estimated_total(lead_id: str, db: Session) -> None:
     discounts = Decimal(0)
     for job in db.query(LeadJob).filter(LeadJob.lead_id == lead_id).all():
         db.expire(job, ['charges'])
+        from rep_discounts import apply as apply_rep_discounts
+        if apply_rep_discounts(job, job.charges, lead.volume):
+            job.price = sum((Decimal(str(charge.total_cost or 0)) for charge in job.charges), Decimal(0))
+            from models import PublicMoveAccess
+            for access in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+                access.published_price = job.price
         if job.price is not None:
             final_before_tax += _to_money_decimal(job.price, 'price')
         else:
@@ -4744,6 +4750,13 @@ def _refresh_lead_from_smartmoving(
         allow_dispatch_smartmoving_refresh=True,
         incoming_smartmoving_company=smartmoving_dispatch_company(db, opportunity),
     )
+    from smartmoving_followup_sync import sync as sync_smartmoving_followups
+    try:
+        followups_synced = sync_smartmoving_followups(db, lead)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if followups_synced:
+        publish_realtime_event({"type": "followup_tasks_changed", "lead_id": lead.id})
     sync_result = sync_smartmoving_files(lead, user, db, opportunity)
     request.state.audit_request_payload = {
         "smartmoving_id": smartmoving_id,
@@ -4752,6 +4765,7 @@ def _refresh_lead_from_smartmoving(
     }
     if isinstance(updated, dict):
         updated["smartmoving_document_links_synced"] = sync_result["created_links"]
+        updated["smartmoving_followup_tasks_synced"] = followups_synced
         updated["smartmoving_opportunity_files_saved"] = sync_result["created_s3_files"]
     return updated
 
@@ -4902,6 +4916,11 @@ ALLOWED_LEAD_STATUSES = {
 
 class NewLead(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def default_missing_priority(cls, value):
+        return 0 if value is None else value
 
     full_name: str = ""
     email: str | None = None

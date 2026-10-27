@@ -194,12 +194,24 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   }
   const [selected, setSelected] = useState('');
   const [roomPickerOpen, setRoomPickerOpen] = useState(false);
+  // Bumped when the inactive Add items button is clicked; the key restarts the hint highlight.
+  const [roomHintFlash, setRoomHintFlash] = useState(0);
   const addRoomButton = useRef<HTMLButtonElement>(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const inventorySummary = useRef<HTMLElement>(null);
+  const viewInventoryRequested = useRef(false);
+  useLayoutEffect(() => {
+    if (!catalogOpen && viewInventoryRequested.current) {
+      viewInventoryRequested.current = false;
+      inventorySummary.current?.scrollIntoView({ block: 'nearest' });
+      inventorySummary.current?.focus({ preventScroll: true });
+    }
+  }, [catalogOpen]);
   const [catalogSearch, setCatalogSearch] = useState('');
   const [catalogLimit, setCatalogLimit] = useState(60);
   const catalogScroll = useRef<HTMLDivElement>(null);
+  const catalogSearchInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     setCatalogOpen(false); setCustomOpen(false); setCatalogSearch(''); setCatalogLimit(60);
   }, [selected]);
@@ -479,7 +491,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     <div className="mi-body">
       {!catalog ? <p>Loading inventory...</p> : <>
         <div className="mi-room-toolbar">
-          <p>Choose a room to update its inventory, or add a room.</p>
+          <p key={roomHintFlash} id="mi-room-hint" className={roomHintFlash ? 'mi-hint-flash' : undefined}>{rooms.length ? 'Choose a room to add items to it, or add a room.' : 'Add a room to start adding items.'}</p>
           <div className="mi-room-picker" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setRoomPickerOpen(false); }} onKeyDown={event => {
             if (event.key === 'Escape' && roomPickerOpen) { event.preventDefault(); event.stopPropagation(); setRoomPickerOpen(false); addRoomButton.current?.focus(); }
           }}>
@@ -499,12 +511,18 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
           onSelect={() => { setSelected(current => current === r.id ? '' : r.id); setCustomOpen(false); }}
           onRename={name => setRooms(current => current.map(value => value.id === r.id ? { ...value, name } : value))}
           onDelete={() => { setRooms(current => current.filter(value => value.id !== r.id)); if (selected === r.id) { setSelected(''); setCustomOpen(false); } }} />)}</div>
+        {!room && <button type="button" className="slds-button mi-add-items-inactive" style={{ marginTop: 12 }} aria-disabled="true" aria-describedby="mi-room-hint" onClick={() => setRoomHintFlash(value => value + 1)}>+ Add items</button>}
         {room &&
         <section className="mi-room-editor">
-        <button type="button" className="slds-button" style={{ marginTop: 12 }} disabled={busy} aria-expanded={catalogOpen} aria-controls="mi-add-item-catalog" onClick={() => { setCatalogOpen(open => !open); setCustomOpen(false); }}>+ Add item</button>
+        <button type="button" className="slds-button" style={{ marginTop: 12 }} disabled={busy} aria-expanded={catalogOpen} aria-controls="mi-add-item-catalog" onClick={() => { viewInventoryRequested.current = catalogOpen; setCatalogOpen(open => !open); setCustomOpen(false); }}>{catalogOpen ? 'View my inventory' : '+ Add items'}</button>
         {catalogOpen && <section className="mi-catalog-card" id="mi-add-item-catalog" aria-label="Add inventory items">
           <div className="mi-catalog-toolbar">
-            <input type="search" placeholder="Search items..." aria-label="Search catalog items" value={catalogSearch} disabled={busy} onChange={event => { setCatalogSearch(event.target.value); setCatalogLimit(60); catalogScroll.current?.scrollTo({ top: 0 }); }} />
+            <div className="mi-catalog-search">
+              <input ref={catalogSearchInput} type="search" placeholder="Search items..." aria-label="Search catalog items" value={catalogSearch} disabled={busy} onChange={event => { setCatalogSearch(event.target.value); setCatalogLimit(60); catalogScroll.current?.scrollTo({ top: 0 }); }} />
+              {catalogSearch && <button type="button" className="mi-search-clear" aria-label="Clear item search" title="Clear search" disabled={busy} onClick={() => {
+                setCatalogSearch(''); setCatalogLimit(60); catalogScroll.current?.scrollTo({ top: 0 }); catalogSearchInput.current?.focus();
+              }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>}
+            </div>
             <button type="button" className="slds-button" disabled={busy} aria-expanded={customOpen} onClick={() => setCustomOpen(open => !open)}>+ Add custom item</button>
           </div>
         {customOpen && <section className="mi-custom-item">
@@ -549,9 +567,9 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
           </div>
         </section>}
         </section>}
-        <section className="mi-room-summary">
+        <section className="mi-room-summary" ref={inventorySummary} tabIndex={-1} aria-label="Your inventory">
           <h3>Your inventory</h3>
-          {!visibleRooms.some(r => count(r) > 0) && <p>{room ? 'No items in this room yet. Click Add item to get started.' : 'No items yet. Choose a room to add an item.'}</p>}
+          {!visibleRooms.some(r => count(r) > 0) && <p>{room ? 'No items in this room yet. Click Add items to get started.' : 'No items yet. Choose a room to add an item.'}</p>}
           {visibleRooms.filter(r => count(r) > 0).map(r => <details key={r.id} open>
             <summary><strong>{r.name}</strong> &middot; {count(r)} items &middot; {pieces(r)} pieces &middot; {boxes(r)} boxes</summary>
             <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span>Going</span><span className="mi-inventory-actions-heading">Actions</span></div>
@@ -592,6 +610,14 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
         </section>
       </>}
     </div>
-    <footer><span role="status">{finishing ? 'Updating your estimate...' : busy ? 'Saving your list...' : saveStatus || 'Changes save automatically. Done updates your estimate.'}</span><button type="button" className="slds-button cm-primary" disabled={busy || !catalog || rooms.some(r => !r.name.trim())} onClick={() => void save()}>{finishing ? 'Updating estimate...' : 'Done'}</button></footer>
+    <footer><span role="status">{finishing ? 'Updating your estimate...' : busy ? 'Saving your list...' : saveStatus || 'Changes save automatically. Done updates your estimate.'}</span><button type="button" className="slds-button cm-primary" disabled={catalogOpen ? finishing : busy || !catalog || rooms.some(r => !r.name.trim())} onClick={() => {
+      if (catalogOpen) {
+        viewInventoryRequested.current = true;
+        setCatalogOpen(false);
+        setCustomOpen(false);
+      } else {
+        void save();
+      }
+    }}>{finishing ? 'Updating estimate...' : catalogOpen ? 'View my inventory' : 'Done'}</button></footer>
   </div></div>;
 }

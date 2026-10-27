@@ -6,6 +6,9 @@ import re
 import time
 import json
 from contextvars import ContextVar, Token
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urlparse
 from collections import defaultdict
@@ -153,14 +156,31 @@ def _headers() -> dict:
     return {"x-api-key": SMARTMOVING_API_KEY, "Cache-Control": "no-cache"}
 
 
+_BULK_REQUESTS = ContextVar('smartmoving_bulk_requests', default=False)
+
+
+@contextmanager
+def bulk_requests():
+    """Conservative pacing and retries only for the one-time importer."""
+    token = _BULK_REQUESTS.set(True)
+    try:
+        yield
+    finally:
+        _BULK_REQUESTS.reset(token)
+
+
 def _request(method_fn, *args, **kwargs) -> httpx.Response:
-    """Execute an httpx request, retrying once on 429 using the server-specified wait."""
-    for attempt in range(2):
+    """Honor rate-limit waits; bulk imports keep retrying the same request."""
+    bulk = _BULK_REQUESTS.get()
+    attempt = 0
+    while True:
+        if bulk:
+            time.sleep(1)  # Serial importer: at most one request per second.
         resp = method_fn(*args, **kwargs)
         _log_http_request(resp)
-        if resp.status_code != 429 or attempt == 1:
+        if resp.status_code != 429 or (not bulk and attempt >= 1):
             return resp
-        wait = 60
+        wait = min(60 * (2 ** min(attempt, 4)), 900) if bulk else 60
         try:
             msg = resp.json().get("message", "")
             m = re.search(r"Try again in (\d+) seconds", msg, re.IGNORECASE)
@@ -168,10 +188,22 @@ def _request(method_fn, *args, **kwargs) -> httpx.Response:
                 wait = int(m.group(1))
         except Exception:
             pass
+        retry_after = resp.headers.get('Retry-After')
+        if retry_after:
+            try:
+                wait = max(0, float(retry_after))
+            except ValueError:
+                try:
+                    retry_date = parsedate_to_datetime(retry_after)
+                    if retry_date.tzinfo is None:
+                        retry_date = retry_date.replace(tzinfo=timezone.utc)
+                    wait = max(0, (retry_date - datetime.now(timezone.utc)).total_seconds())
+                except (ValueError, TypeError, OverflowError):
+                    pass
         wait += 5
         logger.warning("SmartMoving rate limit hit — waiting %ds before retry", wait)
         time.sleep(wait)
-    return resp  # type: ignore[return-value]  # covered by loop above
+        attempt += 1
 
 
 def get_opportunity(opportunity_id: str) -> dict:
@@ -429,6 +461,21 @@ def download_opportunity_file(file_url: str) -> dict:
         return {"ok": False, "error": f"HTTP {status}: {str(exc)[:300]}"}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+def get_followups(opportunity_id: str) -> dict:
+    """Fetch the follow-ups for an opportunity."""
+    url = f"{SMARTMOVING_BASE_URL}/premium/opportunities/{opportunity_id}/followups"
+    try:
+        resp = _request(httpx.get, url, headers=_headers(), timeout=15)
+        resp.raise_for_status()
+        return {"data": resp.json()}
+    except httpx.HTTPError as exc:
+        response = getattr(exc, "response", None)
+        status = response.status_code if response is not None else None
+        return {"error": f"HTTP {status}: {str(exc)[:300]}"}
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 def get_followup(opportunity_id: str, followup_id: str) -> dict:

@@ -1,3 +1,4 @@
+import FollowupFilters, { localDate } from './FollowupFilters';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
@@ -25,8 +26,8 @@ type LeadTab = "new" | "overdue";
 type MessageRow = SmartMovingFields & { channel: string; message_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = SmartMovingFields & { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type FirstContactLead = SmartMovingFields & { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; created_at: string; age_minutes: number };
-type FollowupAttempt = { number?: number; kind: "call" | "message"; label: string; period: string; scheduled_start: string; scheduled_end: string; completed_at: string; status: "completed" | "not_sent" | "on_time" | "delayed" | "overdue" | "open" | "upcoming" };
-type FollowupLead = SmartMovingFields & { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; priority: number; created_at: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
+type FollowupAttempt = { task_id?: string; notes?: string; task_type?: string; number?: number; kind: "call" | "message"; label: string; period: string; scheduled_start: string; scheduled_end: string; completed_at: string; status: "completed" | "not_sent" | "on_time" | "delayed" | "overdue" | "open" | "upcoming" };
+type FollowupLead = SmartMovingFields & { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; priority: number; created_at: string; next_due: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; message_attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
 type RawMessageState = SmartMovingFields & { channel: string; message_id: string; lead_id: string | null; client_identifier: string; company_identifier: string; direction: string; conversation_ended: boolean; occurred_at: string };
 type RawMissedCallState = SmartMovingFields & { client_identifier: string; company_identifier: string; call_id: string; lead_id: string | null; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type NumberMenu = { number: string; x: number; y: number; connectTarget?: CommunicationTarget } | null;
@@ -71,15 +72,64 @@ function IgnoreNumberTarget({ number, name, showUnknown = false, openMenu }: { n
   </div>;
 }
 
-function FollowupStatus({ attempt }: { attempt: FollowupAttempt }) {
+function CollapsibleNotes({ notes, style }: { notes: string; style?: React.CSSProperties }) {
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const element = ref.current;
+    if (element && !open) setOverflows(element.scrollHeight > element.clientHeight + 1);
+  }, [notes, open]);
+  return <div style={style}>
+    <div ref={ref} style={{ whiteSpace: 'pre-wrap', ...(open ? {} : { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden' }) }}>{notes}</div>
+    {overflows && <button type="button" onClick={event => { event.stopPropagation(); setOpen(value => !value); }} style={{ padding: 0, marginTop: 2, border: 'none', background: 'none', color: '#0b5cab', fontSize: 12, cursor: 'pointer' }}>{open ? 'Show less' : 'Show more'}</button>}
+  </div>;
+}
+
+function CollapsibleHeight({ children, maxHeight = 160 }: { children: React.ReactNode; maxHeight?: number }) {
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const measure = () => setOverflows(element.scrollHeight > maxHeight + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [maxHeight]);
+  return <div>
+    <div ref={ref} style={{ maxHeight: open ? undefined : maxHeight, overflow: 'hidden', ...(overflows && !open ? { WebkitMaskImage: 'linear-gradient(#000 70%, transparent)', maskImage: 'linear-gradient(#000 70%, transparent)' } : {}) }}>{children}</div>
+    {overflows && <button type="button" onClick={event => { event.stopPropagation(); setOpen(value => !value); }} style={{ padding: '6px 0 0', border: 'none', background: 'none', color: '#0b5cab', fontSize: 12, cursor: 'pointer' }}>{open ? 'Show less' : 'Show more'}</button>}
+  </div>;
+}
+
+function FollowupTaskItem({ task, leadId }: { task: FollowupAttempt; leadId: string }) {
+  const completed = task.status === 'completed';
+  const due = task.status === 'open';
+  const color = completed ? '#2e844a' : due ? '#0176d3' : task.status === 'overdue' ? '#b91c1c' : '#64748b';
+  const timestamp = completed ? task.completed_at : task.scheduled_end;
+  const date = timestamp ? new Date(timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  return <div style={{ padding: '5px 8px', borderLeft: `3px solid ${due ? color : 'transparent'}`, borderRadius: 4, background: due ? '#eef6ff' : undefined, fontSize: 12 }}>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', alignItems: 'baseline' }}>
+      <Link onClick={event => event.stopPropagation()} to={`/leads/${leadId}${task.task_id ? `?task=${encodeURIComponent(task.task_id)}` : ''}#tasks`} target="_blank" rel="noopener noreferrer">{task.label}</Link>
+      <span style={{ color }}><strong>{completed ? 'Completed' : due ? 'Due now' : task.status === 'overdue' ? 'Overdue' : 'Upcoming'}</strong>{date ? ` - ${date}` : ''}</span>
+    </div>
+    <div style={{ color: '#64748b', marginTop: 3 }}><span style={{ textTransform: 'capitalize' }}>{task.task_type === 'text' ? 'Text message' : task.task_type || 'Other'}</span>{task.notes && <CollapsibleNotes notes={task.notes} style={{ marginTop: 3 }} />}</div>
+  </div>;
+}
+
+function FollowupStatus({ attempt, leadId }: { attempt: FollowupAttempt; leadId: string }) {
   const due = attempt.status === "open";
   const color = due ? "#075bad" : attempt.status === "overdue" ? "#b91c1c" : attempt.status === "delayed" ? "#b45309" : attempt.status === "on_time" || attempt.status === "completed" ? "#2e844a" : "#64748b";
   const label = attempt.status === "on_time" || attempt.status === "completed" ? "Completed" : attempt.status === "delayed" ? "Delayed" : attempt.status === "overdue" ? "Overdue" : attempt.status === "open" ? "Open" : attempt.status === "not_sent" ? "Not sent" : "Upcoming";
   const isCall = attempt.kind === "call";
   return <div style={{ display: "grid", gridTemplateColumns: isCall ? "22px 90px minmax(0, 1fr)" : "140px minmax(0, 1fr)", gap: 6, alignItems: "baseline", fontSize: 12, padding: "2px 6px", borderRadius: 4, background: due ? "#eef6ff" : undefined, borderLeft: due ? "3px solid #0176d3" : "3px solid transparent" }}>
     {isCall ? <strong>{attempt.number ? `${attempt.number}.` : ""}</strong> : null}
-    <span style={{ whiteSpace: "nowrap" }}>{attempt.label}</span>
+    <Link style={{ overflowWrap: "anywhere" }} onClick={event => event.stopPropagation()} to={`/leads/${leadId}${attempt.task_id ? `?task=${encodeURIComponent(attempt.task_id)}` : ''}#tasks`} target="_blank" rel="noopener noreferrer">{attempt.label}</Link>
     <span style={{ color }}><strong>{label}</strong>{attempt.completed_at ? ` - ${new Date(attempt.completed_at).toLocaleString()}` : ` - due by ${new Date(attempt.scheduled_end).toLocaleString()}`}</span>
+    {attempt.notes && <CollapsibleNotes notes={attempt.notes} style={{ gridColumn: "1 / -1", color: "#64748b" }} />}
   </div>;
 }
 
@@ -130,9 +180,13 @@ export default function UnansweredMessagesPage() {
   const [reloadingContacts, setReloadingContacts] = useState(false);
   const contactReloadRunning = useRef(false);
   const [followupTab, setFollowupTab] = useState<"overdue" | "due">("due");
+  const [followupPriority, setFollowupPriority] = useState('all');
+  const [followupFrom, setFollowupFrom] = useState(() => localDate());
+  const [followupTo, setFollowupTo] = useState(() => localDate());
+  const [followupSort, setFollowupSort] = useState<"asc" | "desc">("desc");
   const [followupLeads, setFollowupLeads] = useState<FollowupLead[]>([]);
   const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
-  const [globalFollowupCounts, setGlobalFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
+  const [priorityCounts, setPriorityCounts] = useState<Record<string, number>>({});
   const [followupFilterOptions, setFollowupFilterOptions] = useState({ reps: [] as string[], companies: [] as string[] });
   const [followupHasMore, setFollowupHasMore] = useState(false);
   const [loadingFollowups, setLoadingFollowups] = useState(false);
@@ -167,7 +221,7 @@ export default function UnansweredMessagesPage() {
   const followupInFlight = useRef(Promise.resolve());
   const loadedSizes = useRef({ leads: 0, followups: 0 });
   loadedSizes.current = { leads: firstContactLeads.length, followups: followupLeads.length };
-  const queueFilterKey = `${token}|${leadTab}|${followupTab}|${repFilter}|${companyFilter}`;
+  const queueFilterKey = `${token}|${leadTab}|${followupTab}|${followupPriority}|${followupFrom}|${followupTo}|${followupSort}|${repFilter}|${companyFilter}`;
   const currentQueueFilterKey = useRef(queueFilterKey);
   currentQueueFilterKey.current = queueFilterKey;
 
@@ -256,7 +310,6 @@ export default function UnansweredMessagesPage() {
       setGlobalCounts(data.messages);
       setGlobalMissedCallCount(data.missed_calls);
       if (data.first_contact) setGlobalFirstContactCounts(data.first_contact);
-      if (data.followups) setGlobalFollowupCounts(data.followups);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load queue counts");
     }
@@ -448,6 +501,7 @@ export default function UnansweredMessagesPage() {
     if (!silent) setLoadingFollowups(true);
     try {
       const params = new URLSearchParams({ category: followupTab, limit: "50", offset: String(offset) });
+      params.set('date_from', followupFrom); params.set('date_to', followupTo); params.set('priority', followupPriority); params.set('sort', followupSort);
       if (refresh) params.set("refresh", "true");
       if (repFilter) params.set("rep", repFilter);
       if (companyFilter) params.set("company", companyFilter);
@@ -456,7 +510,7 @@ export default function UnansweredMessagesPage() {
       loadedSizes.current.followups = offset + data.items.length;
       setFollowupLeads((current) => offset ? [...current, ...(data.items || [])] : (data.items || []));
       setFollowupCounts(data.counts || { all: 0, overdue: 0, due: 0 });
-      setGlobalFollowupCounts(data.global_counts || data.counts || { all: 0, overdue: 0, due: 0 });
+      setPriorityCounts(data.priority_counts || {});
       setFollowupFilterOptions(data.filter_options || { reps: [], companies: [] });
       setFollowupHasMore(Boolean(data.has_more));
     } catch (reason) {
@@ -465,13 +519,14 @@ export default function UnansweredMessagesPage() {
       if (request === followupRequest.current) setLoadingFollowups(false);
       release();
     }
-  }, [followupTab, repFilter, companyFilter, token]);
+  }, [followupTab, followupPriority, followupFrom, followupTo, followupSort, repFilter, companyFilter, token]);
 
   const downloadFollowups = async () => {
     if (exportingFollowups || validatingTab !== null) return;
     setExportingFollowups(true);
     try {
       const params = new URLSearchParams({ category: followupTab });
+      params.set('date_from', followupFrom); params.set('date_to', followupTo); params.set('priority', followupPriority); params.set('sort', followupSort);
       if (repFilter) params.set("rep", repFilter);
       if (companyFilter) params.set("company", companyFilter);
       const preparation = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls/export?${params}&prepare=true`, { headers: authHeaders(token), cache: "no-store" });
@@ -510,7 +565,7 @@ export default function UnansweredMessagesPage() {
       await Promise.allSettled([
         queueLoaders.current.loadSummary(),
         firstContact && queueLoaders.current.queueTab === "leads" ? queueLoaders.current.loadFirstContactLeads(0, false, true) : Promise.resolve(),
-        followups && queueLoaders.current.queueTab === "followups" ? queueLoaders.current.loadFollowups(0, false, true) : Promise.resolve(),
+        followups ? queueLoaders.current.loadFollowups(0, false, true) : Promise.resolve(),
       ]);
     });
     queueRefreshScheduler.current = scheduler;
@@ -799,6 +854,7 @@ export default function UnansweredMessagesPage() {
         setValidationNotice("Loading filtered leads...");
         while (true) {
           const params = new URLSearchParams({ category: followupTab, limit: "100", offset: String(offset) });
+      params.set('date_from', followupFrom); params.set('date_to', followupTo); params.set('priority', followupPriority);
           if (repFilter) params.set("rep", repFilter);
           if (companyFilter) params.set("company", companyFilter);
           const response = await fetch(`${API_BASE}/api/unanswered-messages/followup-calls?${params}`, { headers: authHeaders(token) });
@@ -921,9 +977,9 @@ export default function UnansweredMessagesPage() {
           <span style={queueCardDescription}>New leads with no call attempt</span>
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("followups")} style={{ ...queueCard, ...(queueTab === "followups" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Priority 0 Follow-ups</span>
-          <strong style={queueCardCount}>{queueStatus?.ready || queueStatus?.enabled === false ? globalFollowupCounts.all : "Loading..."}</strong>
-          <span style={queueCardDescription}>Six call periods and three required messages</span>
+          <span style={queueCardLabel}>Follow-ups</span>
+          <strong style={queueCardCount}>{loadingFollowups && !followupLeads.length ? "Loading..." : priorityCounts.all || 0}</strong>
+          <span style={queueCardDescription}>Tasks scheduled across all priorities</span>
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Message State Table</span>
@@ -980,6 +1036,7 @@ export default function UnansweredMessagesPage() {
         <select aria-label="Filter work queue by rep" value={repFilter} onChange={(event) => setRepFilter(event.target.value)} style={filterSelect}><option value="">All reps</option>{filterOptions.reps.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         <select aria-label="Filter work queue by company" value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} style={filterSelect}><option value="">All companies</option>{filterOptions.companies.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         {queueTab !== "leads" ? <select aria-label="Filter work queue by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select> : null}
+        {queueTab === 'followups' && <FollowupFilters datesOnly counts={priorityCounts} loading={loadingFollowups} priority={followupPriority} from={followupFrom} to={followupTo} onPriority={setFollowupPriority} onDates={(from, to) => { setFollowupFrom(from); setFollowupTo(to); }} />}
       </div> : null}
 
       {queueTab === "message-state" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
@@ -1129,9 +1186,10 @@ export default function UnansweredMessagesPage() {
         <div ref={leadLoadSentinel} style={{ minHeight: 1, padding: loadingLeads && firstContactLeads.length ? 14 : 0, color: "#64748b", textAlign: "center" }}>{loadingLeads && firstContactLeads.length ? "Loading more leads…" : null}</div>
       </section> : null}
 
-      {queueTab === "followups" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+      {queueTab === "followups" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "visible" }}>
         <div style={{ padding: "16px 18px 0" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Priority 0 Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button><button type="button" className="slds-button" disabled={loadingFollowups || exportingFollowups || validatingTab !== null} onClick={() => void validateCurrentTab(true)}>Refresh from CRM</button>{validationButton}</div></div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button><button type="button" className="slds-button" disabled={loadingFollowups || exportingFollowups || validatingTab !== null} onClick={() => void validateCurrentTab(true)}>Refresh from CRM</button>{validationButton}</div></div>
+          <FollowupFilters counts={priorityCounts} loading={loadingFollowups} priority={followupPriority} from={followupFrom} to={followupTo} onPriority={setFollowupPriority} onDates={(from, to) => {setFollowupFrom(from); setFollowupTo(to);}} />
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {(["due", "overdue"] as const).map(category => <button key={category} type="button" className="slds-button" aria-pressed={followupTab === category} onClick={() => setFollowupTab(category)} style={{ color: "#032d60", padding: "10px 14px", minHeight: 44, fontWeight: followupTab === category ? 700 : 400, border: "none", borderBottom: followupTab === category ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0 }}>{category === "due" ? "Due" : "Overdue Items"} ({followupCounts[category] || 0})</button>)}
           </div>
@@ -1139,14 +1197,19 @@ export default function UnansweredMessagesPage() {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
             <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>{smartMovingHeader}
-              {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Created', 'Call Follow-ups', 'Message Follow-ups'].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+              {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Due', followupPriority === '0' ? 'Call Follow-ups' : 'Pending tasks / calls', followupPriority === '0' ? 'Message Follow-ups' : 'Overdue / messages'].map((header) => <th key={header} aria-sort={header === 'Due' ? (followupSort === 'asc' ? 'ascending' : 'descending') : undefined} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>
+                {header === 'Due' ? <button type="button" onClick={() => setFollowupSort((current) => current === 'desc' ? 'asc' : 'desc')} title={followupSort === 'desc' ? 'Latest first - click for earliest first' : 'Earliest first - click for latest first'} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: 0, border: "none", background: "none", color: "inherit", font: "inherit", textTransform: "inherit", cursor: "pointer" }}>
+                  Due<svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10" fill="currentColor" style={{ transform: followupSort === 'asc' ? "rotate(180deg)" : undefined }}><path d="M1 3h8L5 8z" /></svg>
+                </button> : header}
+              </th>)}
             </tr></thead>
             <tbody>
               {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
-              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "due" ? "No follow-ups due now." : "No overdue follow-ups."}</td></tr> : null}
+              {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "due" ? "No follow-ups for the selected dates." : "No overdue follow-ups for the selected dates."}</td></tr> : null}
               {filteredFollowupLeads.map((row) => {
                 const expanded = expandedFollowups.has(row.lead_id);
                 const toggleExpanded = () => setExpandedFollowups((current) => {
+                  if (row.priority !== 0) return current;
                   const next = new Set(current);
                   if (next.has(row.lead_id)) next.delete(row.lead_id);
                   else next.add(row.lead_id);
@@ -1156,37 +1219,49 @@ export default function UnansweredMessagesPage() {
                   <tr
                     onClick={toggleExpanded}
                     onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleExpanded(); } }}
-                    tabIndex={0}
-                    aria-expanded={expanded}
-                    style={{ cursor: "pointer", background: expanded ? "#f4f8fc" : "#fff" }}
+                    tabIndex={row.priority === 0 ? 0 : undefined}
+                    aria-expanded={row.priority === 0 ? expanded : undefined}
+                    style={{ cursor: row.priority === 0 ? "pointer" : "default", background: expanded ? "#f4f8fc" : "#fff" }}
                   >
                     <SmartMovingCell row={row} />
                     <td style={cell}>
                       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                        <span aria-hidden="true" style={{ color: "#0b5cab", fontSize: 14 }}>{expanded ? "▼" : "▶"}</span>
-                        <div><Link onClick={(event) => event.stopPropagation()} to={`/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</div>
+                        {row.priority === 0 && <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ color: "#0b5cab", transform: expanded ? "rotate(90deg)" : undefined }}><path d="M5 3l6 5-6 5z" /></svg>}
+                        <div><Link onClick={(event) => event.stopPropagation()} to={`/leads/${row.lead_id}#tasks`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</div>
                       </div>
                     </td>
                     <td style={cell}>{row.rep || "—"}</td>
                     <td style={cell}>{row.company || "—"}</td>
                     <td style={{ ...cell, textTransform: "capitalize" }}>{row.status || "—"}</td>
                     <td style={cell}>{row.priority ?? "—"}</td>
-                    <td style={cell}>{new Date(row.created_at).toLocaleString()}{row.created_time_source === "crm" ? <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>CRM time</div> : null}</td>
-                    <td style={cell}><strong>{row.completed_count}/6</strong>{row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</td>
-                    <td style={cell}><strong>{row.completed_message_count || 0}/3</strong>{row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</td>
+                    <td style={cell}>{!row.next_due ? "—" : row.next_due.length === 10 ? new Date(`${row.next_due}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : new Date(row.next_due).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</td>
+                    <td style={cell}><strong>{row.priority === 0 ? `${row.completed_count}/6` : `${row.timeline.filter(task => task.status !== 'completed').length} pending`}</strong>{row.priority === 0 && row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</td>
+                    <td style={cell}><strong>{row.priority === 0 ? `${row.completed_message_count || 0}/3` : `${(row.overdue_count || 0) + (row.overdue_message_count || 0)} overdue`}</strong>{row.priority === 0 && row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</td>
                   </tr>
-                  {expanded ? <tr>
+                  {expanded || row.priority !== 0 ? <tr>
                     <td colSpan={9} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
+                      {row.priority !== 0 ? <div style={{ padding: 16, background: '#fff', border: '1px solid #d8dde6', borderRadius: 8 }}><CollapsibleHeight><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
+                        {[false, true].map(completed => {
+                          // Pending tasks show the soonest due first; completed tasks show the most recent first.
+                          const tasks = row.timeline.filter(task => (task.status === 'completed') === completed).sort(completed
+                            ? (a, b) => Date.parse(b.completed_at || b.scheduled_end || '') - Date.parse(a.completed_at || a.scheduled_end || '')
+                            : (a, b) => (a.scheduled_end ? Date.parse(a.scheduled_end) : Infinity) - (b.scheduled_end ? Date.parse(b.scheduled_end) : Infinity));
+                          return <div key={String(completed)}>
+                            <h3 style={{ margin: '0 0 10px', color: '#032d60', fontSize: 14 }}>{completed ? 'Completed' : 'Not completed'}</h3>
+                            <div style={{ display: 'grid', gap: 7 }}>{tasks.map((task, index) => <FollowupTaskItem key={`${task.label}-${index}`} task={task} leadId={row.lead_id} />)}</div>
+                            {!tasks.length && <p style={{ color: '#64748b', fontSize: 12 }}>{completed ? 'No completed tasks.' : 'No pending tasks.'}</p>}
+                          </div>;
+                        })}
+                      </div></CollapsibleHeight></div> : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
                         <div>
                           <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>Call Follow-ups</h3>
-                          <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "call").map((attempt, activityIndex) => <FollowupStatus key={`call-${attempt.number || attempt.label}-${activityIndex}`} attempt={attempt} />)}</div>
+                          <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "call").map((attempt, activityIndex) => <FollowupStatus key={`call-${attempt.number || attempt.label}-${activityIndex}`} attempt={attempt} leadId={row.lead_id} />)}</div>
                         </div>
                         <div>
-                          <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>Message Follow-ups</h3>
-                          <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "message").map((attempt, activityIndex) => <FollowupStatus key={`message-${attempt.label}-${activityIndex}`} attempt={attempt} />)}</div>
+                          <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>{row.priority === 0 ? "Message Follow-ups" : "Other Follow-up Tasks"}</h3>
+                          <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "message").map((attempt, activityIndex) => <FollowupStatus key={`message-${attempt.label}-${activityIndex}`} attempt={attempt} leadId={row.lead_id} />)}</div>
                         </div>
-                      </div>
+                      </div>}
                     </td>
                   </tr> : null}
                 </Fragment>;

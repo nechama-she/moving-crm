@@ -1,0 +1,8 @@
+.estimate-signing { margin-top: 20px; padding: 18px; border: 1px solid var(--cm-border, #d8dde6); border-radius: 12px; }
+.estimate-signing h3 { margin-top: 0; }
+.estimate-signing > label { display: block; margin: 16px 0; }
+.estimate-signing label > input:not([type=checkbox]) { display: block; box-sizing: border-box; width: 100%; padding: 12px; margin-top: 6px; border: 1px solid #94a3b8; border-radius: 6px; font: inherit; }
+.estimate-signing svg { display: block; width: 100%; height: 180px; margin-bottom: 12px; background: white; color: #15354b; border: 1px solid #94a3b8; border-radius: 8px; touch-action: none; }
+.estimate-signing .estimate-signing-consent { display: flex; gap: 10px; align-items: flex-start; }
+.estimate-signing button { min-height: 44px; }
+.estimate-signing-actions, .estimate-signing-history { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }

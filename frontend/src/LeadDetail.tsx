@@ -1,4 +1,5 @@
 import LeadMeasurements from "./LeadMeasurements";
+import LeadSidePanel from './LeadSidePanel';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
@@ -338,7 +339,11 @@ export default function LeadDetail() {
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<"conversations" | "activity" | "logs">("conversations");
+  const [activeTab, setActiveTab] = useState<"conversations" | "activity" | "logs">(() => location.hash === '#tasks' ? 'activity' : 'conversations');
+  const tasksSection = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (location.hash === '#tasks') setActiveTab('activity');
+  }, [location.hash, leadId]);
   const [editingUser, setEditingUser] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
@@ -2263,6 +2268,7 @@ export default function LeadDetail() {
             }
             const updated = await res.json();
             setLead(updated);
+            setTaskRevision((revision) => revision + 1);
             setEditCompanyId(String(updated?.company_id || ""));
             await loadLeadJobs();
             if (activeJobTabId && activeJobTabId !== "__new__") {
@@ -3623,8 +3629,9 @@ export default function LeadDetail() {
         renderSection("Other Info", [...META_FIELDS, ...otherFields])}
 
       {canViewLeadCommunications ? (
-        <div style={{ marginTop: 32, border: "1px solid #dddbda", borderRadius: 4, background: "#fff", overflow: "hidden" }}>
-          <div style={{ display: "flex", borderBottom: "1px solid #dddbda", background: "#f3f2f2" }}>
+        <>
+        <LeadSidePanel key={leadId} active={activeTab} onSelect={setActiveTab} tasksRequested={location.hash === '#tasks'}>
+          <div style={{ display: "none", borderBottom: "1px solid #dddbda", background: "#f3f2f2" }}>
             <button className="slds-button"
               onClick={() => setActiveTab("conversations")}
               style={{
@@ -3691,12 +3698,19 @@ export default function LeadDetail() {
                 <p style={{ color: "#706e6b", fontSize: 13 }}>No conversation available for this lead.</p>
               )
             ) : activeTab === "activity" ? (
-              <TasksPanel key={`${leadId}:${taskRevision}`} leadId={leadId!} token={token} />
+              <div id="tasks" ref={tasksSection} style={{ scrollMarginTop: 80 }}>
+                <TasksPanel key={`${leadId}:${taskRevision}`} leadId={leadId!} token={token} selectedTaskId={new URLSearchParams(location.search).get('task') || undefined} />
+              </div>
             ) : activeTab === "logs" ? (
               <LeadLogsPanel leadId={leadId!} token={token} />
             ) : null}
           </div>
-        </div>
+        </LeadSidePanel>
+        <section style={{ marginTop: 32, border: '1px solid #dddbda', borderRadius: 8, background: '#fff', padding: 16 }}>
+          <h2 style={{ margin: '0 0 16px', color: '#032d60', fontSize: 16 }}>Logs</h2>
+          <LeadLogsPanel leadId={leadId!} token={token} />
+        </section>
+        </>
       ) : null}
       </div>
     </div>

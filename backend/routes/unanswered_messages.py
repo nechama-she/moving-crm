@@ -15,7 +15,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, or_, cast, String
 from sqlalchemy.orm import Load, Session, joinedload
 
 from auth import require_admin
@@ -109,21 +109,10 @@ def queue_summary(_: User = Depends(require_admin), db: Session = Depends(get_db
         func.count().filter(FirstContactState.waiting_since > cutoff),
         func.count().filter(FirstContactState.waiting_since <= cutoff),
     ).one()
-    from models import Task
-    followup_now = datetime.now(timezone.utc)
-    overdue_task = Task.due_at < followup_now
-    due_task = and_(Task.scheduled_start <= followup_now, Task.due_at >= followup_now)
-    followup_query = db.query(func.count(func.distinct(Task.lead_id))).join(Lead, Lead.id == Task.lead_id).filter(
-        Task.automatic_key.isnot(None), Task.status != 'done', or_(overdue_task, due_task),
-        Lead.priority == 0,
-        _open_sales_status_filter(), _exclude_mirit_company_filter())
-    followups = followup_query.scalar()
-    overdue_followups = followup_query.filter(overdue_task).scalar()
+    # The Follow-ups card reads its count from the follow-up list response.
     return {"enabled": False, "ready": False,
             "messages": {"unanswered": message_counts.get(False, 0), "ended": message_counts.get(True, 0)},
-            "missed_calls": calls, "first_contact": {"new": first_new, "overdue": first_overdue},
-            "followups": {"all": followups, "overdue": overdue_followups,
-                          "due": followup_query.filter(due_task).scalar()}}
+            "missed_calls": calls, "first_contact": {"new": first_new, "overdue": first_overdue}}
 
 
 @router.get("/followup-calls")
@@ -132,39 +121,95 @@ def list_followup_calls(
     rep: str = Query(""), company: str = Query(""),
     refresh: bool = Query(False), limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    priority: str | None = None, date_from: str | None = None, date_to: str | None = None,
+    sort: str | None = Query("desc", pattern="^(asc|desc)$"),
     _: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     from models import Task
-    from followup_tasks import lead_row
+    from followup_task_rows import calendar_lead_row
     now = datetime.now(timezone.utc)
+    if priority not in (None, 'all', 'none') and (not priority.isdigit() or int(priority) > 99):
+        raise HTTPException(400, 'Invalid priority')
+    if date_from or date_to:
+        try:
+            start_date = datetime.strptime(date_from or date_to, '%Y-%m-%d').date()
+            end_date = datetime.strptime(date_to or date_from, '%Y-%m-%d').date()
+        except ValueError:
+            raise HTTPException(400, 'Enter valid start and end dates')
+        if end_date < start_date:
+            raise HTTPException(400, 'End date must not precede start date')
+    def in_dates(query):
+        if date_from or date_to:
+            day = func.coalesce(Task.due_date, func.substr(cast(Task.due_at, String), 1, 10))
+            query = query.filter(day >= start_date.isoformat(), day <= end_date.isoformat())
+        return query
+    allowed_task = or_(
+        and_(Lead.priority == 0, Task.automatic_key.isnot(None)),
+        and_(Lead.priority.is_(None), Task.smartmoving_followup_id.is_(None)),
+        Lead.priority != 0)
     pending = db.query(Task.lead_id).filter(
-        Task.lead_id == Lead.id, Task.automatic_key.isnot(None), Task.status != 'done',
+        Task.lead_id == Lead.id, allowed_task, Task.status != 'done',
     )
-    overdue = pending.filter(Task.due_at < now).exists()
-    due = pending.filter(Task.scheduled_start <= now, Task.due_at >= now).exists()
-    query = db.query(Lead).filter(or_(overdue, due), Lead.priority == 0,
-        _open_sales_status_filter(), _exclude_mirit_company_filter())
-    def counts_for(rows):
-        return {'all': rows.count(), 'overdue': rows.filter(overdue).count(),
-                'due': rows.filter(due).count()}
-    global_counts = counts_for(query)
+    pending = in_dates(pending)
+    overdue = pending.filter(or_(Task.due_at < now, and_(or_(Lead.priority.is_(None), Lead.priority != 0), Task.due_at.is_(None), Task.due_date < now.date().isoformat()))).exists()
+    due_now = pending.filter(or_(and_(Task.scheduled_start <= now, Task.due_at >= now),
+        and_(or_(Lead.priority.is_(None), Lead.priority != 0), Task.due_at.is_(None), Task.due_date == now.date().isoformat()))).exists()
+    # A picked date range asks for every open task on those days, matching the priority badges.
+    due = pending.exists() if date_from or date_to else or_(due_now, overdue)
+    query =db.query(Lead).filter(pending.exists(), or_(Lead.priority.is_(None), Lead.priority != 0, and_(_open_sales_status_filter(), _exclude_mirit_company_filter())))
+    priority_query = query
+    if rep:
+        priority_query = priority_query.filter(Lead.assigned_to.is_(None)) if rep == 'Unassigned' else priority_query.filter(Lead.assignee.has(User.name == rep))
+    if company:
+        priority_query = priority_query.filter(Lead.company.has(Company.name == company))
+    # One grouped query yields the priority badges (all pending leads in the
+    # date range, independent of the subtab) and the selected priority's
+    # Due/Overdue totals. Completed tasks never qualify a lead.
+    grouped = priority_query.with_entities(Lead.priority, func.count(Lead.id), func.count(Lead.id).filter(overdue),
+                                           func.count(Lead.id).filter(due)).group_by(Lead.priority).all()
+    priority_counts = {str(value) if value is not None else 'none': total for value, total, _, _ in grouped}
+    priority_counts['all'] = sum(priority_counts.values())
+    selected = None if priority in (None, 'all') else priority
+    if priority == 'none':
+        query = query.filter(Lead.priority.is_(None))
+    elif selected is not None:
+        query = query.filter(Lead.priority == int(priority))
+    counts = {'all': 0, 'overdue': 0, 'due': 0}
+    for value, total, overdue_total, due_total in grouped:
+        if selected is None or selected == (str(value) if value is not None else 'none'):
+            counts = {'all': counts['all'] + total, 'overdue': counts['overdue'] + overdue_total, 'due': counts['due'] + due_total}
     reps = [name for name, in query.join(User, Lead.assigned_to == User.id).with_entities(User.name).distinct().order_by(User.name)]
     companies = [name for name, in query.join(Company, Lead.company_id == Company.id).with_entities(Company.name).distinct().order_by(Company.name)]
     if rep:
         query = query.filter(Lead.assigned_to.is_(None)) if rep == 'Unassigned' else query.filter(Lead.assignee.has(User.name == rep))
     if company:
         query = query.filter(Lead.company.has(Company.name == company))
-    counts = counts_for(query)
     if category != 'all':
         query = query.filter(due if category == 'due' else overdue)
     count = counts[category]
-    leads = query.options(*_queue_lead_options()).order_by(Lead.created_time.desc(), Lead.id).offset(offset).limit(limit).all()
+    # Each lead's due time is its earliest open task in the date range; sort in
+    # SQL before pagination. Date-only tasks sort as the start of their day.
+    task_due = func.coalesce(func.substr(cast(Task.due_at, String), 1, 19), Task.due_date)
+    next_due = pending.with_entities(func.min(task_due)).scalar_subquery()
+    next_due_order = next_due.asc() if sort == 'asc' else next_due.desc()
+    leads = query.options(*_queue_lead_options()).order_by(next_due_order.nulls_last(), Lead.id).offset(offset).limit(limit).all()
+    leads_by_id = {lead.id: lead for lead in leads}
     tasks_by_lead = {lead.id: [] for lead in leads}
+    next_due_by_lead = {}
     if leads:
-        for task in db.query(Task).filter(Task.lead_id.in_(tasks_by_lead), Task.automatic_key.isnot(None)).all():
+        for task in db.query(Task).join(Lead, Lead.id == Task.lead_id).filter(Task.lead_id.in_(tasks_by_lead), allowed_task).all():
+            day = task.due_date or (task.due_at.date().isoformat() if task.due_at else '')
+            in_range = not (date_from or date_to) or start_date.isoformat() <= day <= end_date.isoformat()
+            if task.status != 'done' and in_range and (task.due_at or task.due_date):
+                due_value = (task.due_at if task.due_at.tzinfo else task.due_at.replace(tzinfo=timezone.utc)).isoformat() if task.due_at else task.due_date
+                if task.lead_id not in next_due_by_lead or due_value < next_due_by_lead[task.lead_id]:
+                    next_due_by_lead[task.lead_id] = due_value
+            # Priority zero keeps its original complete schedule; only lead selection is date-filtered.
+            if leads_by_id[task.lead_id].priority != 0 and not in_range:
+                continue
             tasks_by_lead[task.lead_id].append(task)
-    return _with_smartmoving_links({'items': [lead_row(lead, tasks_by_lead[lead.id], now) for lead in leads],
-            'counts': counts, 'global_counts': global_counts,
+    return _with_smartmoving_links({'items': [{**calendar_lead_row(lead, tasks_by_lead[lead.id], now), 'next_due': next_due_by_lead.get(lead.id, '')} for lead in leads],
+            'counts': counts, 'priority_counts': priority_counts,
             'filter_options': {'reps': reps, 'companies': companies}, 'has_more': offset + len(leads) < count}, db)
 
 
@@ -175,8 +220,9 @@ def refresh_saved_followups(lead_id: str, _: User = Depends(require_admin), db: 
     lead = db.get(Lead, lead_id)
     if lead is None:
         raise HTTPException(404, "Lead not found")
-    sync(db, lead, reconcile=True)
-    db.commit()
+    if lead.priority == 0:
+        sync(db, lead, reconcile=True)
+        db.commit()
     return {"lead_id": lead_id}
 
 
@@ -185,12 +231,14 @@ def export_followup_calls(
     category: str = Query("all", pattern="^(all|due|overdue)$"),
     rep: str = Query(""), company: str = Query(""),
     prepare: bool = Query(False),
+    priority: str | None = None, date_from: str | None = None, date_to: str | None = None,
+    sort: str = Query("desc", pattern="^(asc|desc)$"),
     _: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     from followup_export import workbook_bytes
     # Export the same filtered, saved tasks as the overdue view.
     result = list_followup_calls(category=category, rep=rep, company=company,
-                                 refresh=False, limit=2**31-1, offset=0, _=_, db=db)
+                                 refresh=False, limit=2**31-1, offset=0, priority=priority, date_from=date_from, date_to=date_to, sort=sort, _=_, db=db)
     leads = {lead.id: lead for lead in db.query(Lead).filter(
         Lead.id.in_([row["lead_id"] for row in result["items"]])).all()}
     if prepare:

@@ -11,6 +11,9 @@ phases:
 
   pre_build:
     commands:
+      # Public browser key shared by dev and prod. Upsert before the API code
+      # update so new Lambda instances read it from Parameter Store.
+      - aws ssm put-parameter --name "/moving-crm/${ENVIRONMENT:-dev}/GOOGLE_MAPS_BROWSER_KEY" --value "AIzaSyDx5bz0q8NHI-dBbtx87yBUvLn7c94qts4" --type String --overwrite
       - echo "Applying pending schema changes to the existing database"
       - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
       - |
@@ -31,6 +34,8 @@ phases:
 
   build:
     commands:
+      - echo "Publishing assets before server-rendered customer pages reference them"
+      - aws s3 sync $CODEBUILD_SRC_DIR/frontend/dist/assets/ s3://${FRONTEND_BUCKET}/assets/ --cache-control "public,max-age=31536000,immutable"
       - echo "Updating lead-followup Lambda function code"
       - aws lambda update-function-code --function-name moving-crm-lead-followup-${ENVIRONMENT:-dev} --s3-bucket ${FRONTEND_BUCKET} --s3-key lead-followup/package.zip
 

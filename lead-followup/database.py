@@ -114,23 +114,26 @@ def get_due_followups(smartmoving_id: str | None = None):
     """Get followups that are due (not completed, due today) joined with lead info."""
     engine = get_engine()
     sql = """
-        SELECT f.note_id, f.smartmoving_id, f.type, f.title, f.assigned_to_id,
-               f.due_date_time, f.completed_at_utc, f.notes, f.completed,
+        SELECT f.smartmoving_followup_id AS note_id, l.smartmoving_id,
+               f.smartmoving_followup_type AS type, f.title,
+               f.smartmoving_assigned_to_id AS assigned_to_id,
+               f.due_at AS due_date_time, f.completed_at AS completed_at_utc,
+               f.notes, (f.status = 'done') AS completed,
                l.id as lead_id, l.company_id, l.full_name, l.phone, l.facebook_user_id,
                l.email, c.name as company_name, c.phone as company_phone,
                c.aircall_number_id, c.timezone as company_timezone
-        FROM followups f
-        JOIN leads l ON l.smartmoving_id = f.smartmoving_id::text
+        FROM tasks f
+        JOIN leads l ON l.id = f.lead_id
         JOIN companies c ON l.company_id = c.id
-        WHERE f.completed = false
+        WHERE f.status <> 'done' AND f.smartmoving_followup_id IS NOT NULL
                     AND lower(coalesce(l.status, '')) NOT IN ('booked', 'scheduled', 'completed', 'lost', 'cancelled')
-          AND f.due_date_time::date = CURRENT_DATE
+          AND f.due_at::date = CURRENT_DATE
     """
     params = {}
     if smartmoving_id:
-        sql += "          AND f.smartmoving_id = :smartmoving_id\n"
+        sql += "          AND l.smartmoving_id = :smartmoving_id\n"
         params["smartmoving_id"] = smartmoving_id
-    sql += "        ORDER BY f.due_date_time DESC"
+    sql += "        ORDER BY f.due_at DESC"
     logger.info("SQL get_due_followups (smartmoving_id=%s): %s", smartmoving_id, sql.strip())
     with engine.connect() as conn:
         rows = conn.execute(text(sql), params).fetchall()
@@ -255,37 +258,28 @@ def sync_followup_from_smartmoving(
     notes: str,
     completed: bool,
 ) -> dict:
-    """Sync refreshed followup data back to the local followups table."""
+    """Create or update the corresponding CRM task, keyed by remote follow-up ID."""
+    from libs.smartmoving.followup_tasks import UPSERT_TASK
     engine = get_engine()
-    sql = text(
-        """
-        UPDATE followups
-        SET type = :followup_type,
-            title = :title,
-            assigned_to_id = :assigned_to_id,
-            due_date_time = CAST(:due_date_time_iso AS timestamptz),
-            notes = :notes,
-            completed = :completed
-        WHERE smartmoving_id::text = :smartmoving_id
-          AND note_id = :note_id
-        """
-    )
+    sql = text(UPSERT_TASK)
     params = {
         "smartmoving_id": smartmoving_id,
         "note_id": str(note_id),
-        "followup_type": followup_type,
+        "followup_type": int(followup_type) if followup_type is not None else None,
         "title": title,
-        "assigned_to_id": str(assigned_to_id),
+        "assigned_to_id": str(assigned_to_id) if assigned_to_id else None,
         "due_date_time_iso": due_date_time_iso,
         "notes": notes,
         "completed": bool(completed),
+        "completed_at": None,
+        "created_at": None,
     }
     logger.info("SQL sync_followup_from_smartmoving(%s, %s)", smartmoving_id, note_id)
     with engine.connect() as conn:
         result = conn.execute(sql, params)
         conn.commit()
         if result.rowcount == 0:
-            return {"ok": False, "error": "followup_row_not_found"}
+            return {"ok": False, "error": "lead_not_found"}
         return {"ok": True}
 
 

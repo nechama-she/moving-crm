@@ -7,7 +7,7 @@
 .cm-stairs-counter button { min-width:44px; padding:8px 12px; cursor:pointer; }
 .cm-stairs-counter input { width:90px; padding:8px; text-align:center; }
 .cm-stairs-counter button:disabled { opacity:.4; cursor:default; }
-.cm-stairs-counter button[aria-pressed=true] { background:var(--cm-primary,#214c3e); color:white; }
+.cm-stairs-counter button[aria-pressed=true],.cm-stairs-counter button[aria-pressed=true]:hover { background:var(--cm-primary,#214c3e); border-color:var(--cm-primary,#214c3e); color:white; }
 .cm-stairs-counter :focus-visible { outline:3px solid var(--cm-primary,#214c3e); outline-offset:2px; }
 .cm-stairs-total { display:flex; flex-direction:column; gap:8px; padding:16px; margin-top:20px; border-radius:10px; background:var(--cm-tint,#f6f5f2); }
 .cm-stairs-total strong { font-size:18px; }

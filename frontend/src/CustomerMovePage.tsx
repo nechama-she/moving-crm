@@ -11,9 +11,10 @@ import type { SelectedAddress } from "./googlePlaces";
 import CustomerItemQuestions, { type ItemQuestion } from "./CustomerItemQuestions";
 import { groupTerms, needsTermAnswer, requiredQuestionTarget } from './customerQuestionNavigation';
 import QuestionReferenceImages from "./QuestionReferenceImages";
-import ReportLinks from './ReportLinks';
 import { savedPhotos, storePhoto, removePhoto } from './photoDrafts';
 import ManualInventoryModal from "./ManualInventoryModal";
+import EstimateSigning from './EstimateSigning';
+import EstimateViewer from './EstimateViewer';
 import type { EditableReportFile } from "./ReportFileList";
 import ReportFileGallery from "./ReportFileGallery";
 import ReportHistory, { type ReportRun } from "./ReportHistory";
@@ -21,9 +22,11 @@ import CustomerPackingOptions, { type PackingPackage, type PackingSelection } fr
 import MeetingTimePicker from "./MeetingTimePicker";
 import { useCustomerUpdates } from './useCustomerUpdates';
 import { browserDrivingMeters, browserPricingLocation } from './googlePlaces';
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { readCustomerBootstrap } from './customerBootstrap';
 import { useParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
+import RepDiscounts from './RepDiscounts';
 import "./CustomerMovePage.css";
 
 type LinkSms = { sent_at: string; phone_last4: string };
@@ -43,6 +46,9 @@ type Details = {
   inventory_draft?: { body: { rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number }[] }[] }; rooms: { name: string; items: { name: string; amount: number; cuft: number }[] }[]; rows: unknown[]; cuft: number };
   combined_inventory?: {name:string;room?:string;amount?:number;quantity?:number;cuft?:number;unit_cuft?:number;reference_name?:string}[];
   report_history?: ReportRun[];
+  signature_status?: 'unsigned' | 'signed' | 'changed';
+  signature_requires_resign?: boolean;
+  estimate_needs_update?: boolean;
   new_file_count?: number;
   editable_files?: EditableReportFile[];
   files_changed?: boolean;
@@ -70,13 +76,16 @@ type Details = {
     minimum_cuft?: number | null;
     price: string;
     cuft: string;
-    charges?: { pending?: boolean; name: string; description: string; total: number; subtotal?: number; discount_amount?: number; discount_percent?: number }[];
+    charges?: { id?: string; pending?: boolean; name: string; description: string; total: number; subtotal?: number; discount_amount?: number; discount_percent?: number }[];
   } | null;
   spark?: { id: string; status: string; source?: string; shareUrl?: string; cuft?: number; update_error?: string } | null;
   walkthrough: { status: string; availability: string; scheduled_at: string | null; timezone: string } | null;
   participant_url: string;
   files: { id: string; name: string; size: number; content_type?: string }[];
 };
+function CompletionIcon({complete, label}: {complete: boolean; label: string}) {
+  return <svg className={`cm-completion-icon ${complete ? 'is-complete' : 'needs-attention'}`} width="20" height="20" viewBox="0 0 24 24" role="img" aria-label={label}><title>{label}</title><circle cx="12" cy="12" r="11" fill="currentColor"/>{complete ? <path d="m7 12 3 3 7-7" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/> : <><path d="M12 6v7" stroke="white" strokeWidth="2" strokeLinecap="round"/><circle cx="12" cy="17" r="1.2" fill="white"/></>}</svg>;
+}
 const emptyDetails = (): Details => ({name:'', phone:'', email:'', move_date:'', pickup:'', delivery:'', company:'', stops:[], estimate:null, packing_package:null, packing_items:[], packing_saved:false, walkthrough:null, participant_url:'', files:[]});
 const pageSections = ['move', 'inventory', 'media', 'volume', 'pricing'] as const;
 type PageSection = typeof pageSections[number];
@@ -85,10 +94,16 @@ const initialSections = () => Object.fromEntries(pageSections.map(key => [key, {
 type Pending = {id:string;file:File;status:string;progress:number;preview?:string;error?:string};
 export default function CustomerMovePage() {
   const {accessId}=useParams();
+  const [bootstrap] = useState(() => readCustomerBootstrap(accessId));
+  const preloadedMove = useRef(!!bootstrap);
+  useLayoutEffect(() => {
+    document.getElementById('move-first')?.remove();
+    document.getElementById('move-first-style')?.remove();
+  }, []);
   const [linkSms, setLinkSms] = useState<LinkSms | null>(null);
-  const [repPage, setRepPage] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('audience') === 'rep');
+  const [repPage, setRepPage] = useState(() => bootstrap?.rep ?? new URLSearchParams(window.location.hash.slice(1)).get('audience') === 'rep');
   const sessionKey = `cm_session_${accessId}${repPage ? '_rep' : ''}`;
-  const [key]=useState(()=>new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
+  const [key]=useState(()=>bootstrap?.key || new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
   const [session,setSession]=useState(()=>loadCustomerSession(sessionKey));
   useEffect(() => {
     if (!session) return;
@@ -116,7 +131,7 @@ export default function CustomerMovePage() {
   }, [session, sessionKey]);
   const [options,setOptions]=useState<{channel:string;destination:string;label?:string}[]>([]),[channel,setChannel]=useState('');
   const [code,setCode]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
-  const [data,setData]=useState<Details | undefined>(emptyDetails),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
+  const [data,setData]=useState<Details | undefined>(() => ({...emptyDetails(), ...bootstrap?.move})),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
   const uploadLock = useRef(false);
   const filePicker = useRef<HTMLInputElement>(null);
   const meetingDialog = useRef<HTMLDialogElement>(null);
@@ -162,7 +177,6 @@ export default function CustomerMovePage() {
     termsBody.current?.scrollTo({ top: 0 });
   }
   function nextTermsStep() {
-    if (answerPending.current) { setTermsError('Please wait for your answers to finish saving.'); return; }
     if (currentTerms.some(q => failedAnswers.current.has(q.id) || !q.saved || q.saved.pending ||
       (q.answers.find(a => a.id === q.saved?.answer_id)?.acknowledge && !q.saved.acknowledged))) {
       setTermsError(''); setTermsValidationAttempt(value => value + 1); return;
@@ -176,6 +190,12 @@ export default function CustomerMovePage() {
   const failedAnswers = useRef(new Set<string>());
   const [answersSaving, setAnswersSaving] = useState(false);
   const [answerSaveStarted, setAnswerSaveStarted] = useState(false);
+  useEffect(() => {
+    if (!answersSaving) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [answersSaving]);
   const [showInventoryList, setShowInventoryList] = useState(false);
   const [inventoryOpened, setInventoryOpened] = useState(false);
   useEffect(() => { if (showInventoryList) setInventoryOpened(true); }, [showInventoryList]);
@@ -223,7 +243,9 @@ export default function CustomerMovePage() {
   }
   type PricingChange = { kind: 'additional_protection' | 'material' | 'inventory_boxes' | 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; material_item?:import('./CustomerPackingOptions').AdditionalMaterialItem|null; box_quantities?:Record<string,number>; stop_change?:import('./CustomerExtraStopsQuestion').ExtraStopChange; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; access_unknown?: boolean; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
   const failedPricing = useRef(new Map<string, PricingChange>());
+  const pricingFullRefresh = useRef(false);
   function savePricingChange(change: PricingChange) {
+    if (['extra_stops', 'inventory_boxes', 'mode'].includes(change.kind)) pricingFullRefresh.current = true;
     const id = `pricing:${change.kind}:${change.location || change.item_id || ''}:${change.stop_change?.previous || change.stop_change?.address || ''}`;
     answerPending.current += 1;
     answerRevision.current += 1;
@@ -248,7 +270,12 @@ export default function CustomerMovePage() {
         setPackingError((error as Error).message);
       } finally {
         answerPending.current -= 1;
-        if (!answerPending.current) { setAnswersSaving(false); void refreshDetails(true); }
+        if (!answerPending.current) {
+          setAnswersSaving(false);
+          const pricingOnly = !pricingFullRefresh.current;
+          pricingFullRefresh.current = false;
+          void refreshDetails(true, pricingOnly);
+        }
       }
     });
     answerQueue.current = task.catch(() => {});
@@ -362,7 +389,6 @@ export default function CustomerMovePage() {
     }
     if(!currentActionSaved && packingStep === 'package' && packingSection === 'service' && data?.unanswered_questions?.includes('package')) {
       savePricingChange({kind:'mode',mode:packageSelection.mode});
-      await answerQueue.current;
     }
     if (packingStep === 'stops' && data?.extra_stops?.locations.some(group => stopsIncomplete[group.location] || group.answer == null || (group.answer && !group.stops.length))) { setStopsMissing(true); return; }
     if (packingStep === 'elevator' && data?.elevator?.locations.some(location => elevatorAnswers[location.location] == null)) { setElevatorMissing(true); return; }
@@ -372,12 +398,12 @@ export default function CustomerMovePage() {
     if (packingStep === 'storage' && (!storageDate || !data?.storage?.pickup_date || storageDate < data.storage.pickup_date)) { setStorageMissing(true); return; }
     if (packingStep === 'access' && data?.shuttle && !data.shuttle.automatic && shuttleAnswer === null) { setShuttleMissing(true); return; }
     if (packingStep === 'bulky' && Object.values(packingSelection).some(value => !value)) { setPackingError('Choose packing or crating for each checked item.'); return; }
-    if (answerPending.current || failedPricing.current.size) { setPackingError(answerPending.current ? 'Please wait for your choices to finish saving.' : 'Please retry the choices that could not be saved.'); return; }
+    if (failedPricing.current.size) { setPackingError('Please retry the choices that could not be saved.'); return; }
     setPackingError(''); setStairsMissing(false);
     if(packingStep==='package'&&nextPackingSection){setPackingSection(nextPackingSection);termsBody.current?.scrollTo({top:0});return;}
     if (nextPricing) setPackingStep(nextPricing); else setShowQuestions(false);
   }
-  const [themeColor, setThemeColor] = useState<string>('#214c3e');
+  const [themeColor, setThemeColor] = useState<string>(() => bootstrap?.move?.company_details?.color || '#214c3e');
   const previews=useRef<string[]>([]);
   const base=`${API_BASE}/api/public-moves/${accessId}`;
   const headers={'x-public-link':key,'x-public-session':session};
@@ -484,6 +510,25 @@ export default function CustomerMovePage() {
     setTermsValidationAttempt(0);
   }
   const priceCalculationRunning = useRef(false);
+  type FeeRoute = {kind: 'origin' | 'delivery'; origin: string; destination: string; revision: string; meters: number | null};
+  const mileageAttempts = useRef(new Set<string>());
+  const mileageRequests = useRef(new Map<string, Promise<number>>());
+  async function saveBrowserMileage(routes: FeeRoute[], apiKey: string, retry = false) {
+    const missing = routes.filter(row => row.meters == null && (retry || !mileageAttempts.current.has(row.revision)));
+    if (!missing.length) return false;
+    missing.forEach(row => mileageAttempts.current.add(row.revision));
+    const distances = await Promise.all(missing.map(async row => {
+      let request = mileageRequests.current.get(row.revision);
+      if (!request) {
+        request = browserDrivingMeters(apiKey, row.origin, row.destination);
+        mileageRequests.current.set(row.revision, request);
+      }
+      try { return {kind: row.kind, revision: row.revision, meters: await request}; }
+      finally { mileageRequests.current.delete(row.revision); }
+    }));
+    await call('/mileage', {routes: distances});
+    return true;
+  }
   async function recalculatePrice() {
     if (priceCalculationRunning.current) return;
     priceCalculationRunning.current = true;
@@ -494,6 +539,8 @@ export default function CustomerMovePage() {
       if (failedAnswers.current.size || failedPricing.current.size) {
         throw new Error('Please retry saving your answers before calculating the price.');
       }
+      const mileage = await call('/mileage');
+      await saveBrowserMileage(mileage.routes, data?.google_maps_browser_key || '', true);
       await call('/recalculate-price', {});
       await refreshDetails();
     } catch (error) {
@@ -503,6 +550,10 @@ export default function CustomerMovePage() {
       setCalculatingPrice(false);
     }
   }
+  const [preparedEstimate, setPreparedEstimate] = useState('');
+  const [preparedSigned, setPreparedSigned] = useState(false);
+  const [estimateViewerOpen, setEstimateViewerOpen] = useState(false);
+  const [estimatePdfUrl, setEstimatePdfUrl] = useState('');
   async function openEstimate() {
     setPdfError('');
     if(data?.unanswered_questions?.length) {
@@ -514,33 +565,50 @@ export default function CustomerMovePage() {
       setPackingError('Please finish saving your answers before viewing the estimate.');
       return;
     }
-    const viewer = window.open('about:blank', '_blank');
-    if (!viewer) { setPdfError('Allow pop-ups to open your estimate.'); return; }
-    viewer.opener = null;
-    viewer.document.title = 'Preparing estimate';
-    viewer.document.body.textContent = 'Preparing your estimate...';
+    setEstimateViewerOpen(true);
+    setEstimatePdfUrl('');
     setPdfBusy(true);
+    setPreparedEstimate('');
+    setPreparedSigned(false);
     try {
-      const response = await fetch(base + '/estimate.pdf', { headers, cache: 'no-store' });
+      const mileage = await call('/mileage');
+      await saveBrowserMileage(mileage.routes, data?.google_maps_browser_key || '', true);
+      const prepared = await call('/estimate-signatures', {});
+      const response = await fetch(base + '/estimate-signatures/' + encodeURIComponent(prepared.id) + '/pdf', { headers, cache: 'no-store' });
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
-        if(result.detail?.unanswered_questions?.length) {
-          viewer.close();
-          const latest=await call('/details');
-          setData(latest);
-          openRequiredQuestions(result.detail.unanswered_questions, latest);
-          return;
-        }
-        throw new Error(typeof result.detail === 'string' ? result.detail : result.detail?.message || 'Could not open the estimate. Please try again.');
+        throw Object.assign(new Error(typeof result.detail === 'string' ? result.detail : result.detail?.message || `Could not open the estimate (HTTP ${response.status}). Please try again.`), {detail: result.detail});
       }
       const url = URL.createObjectURL(new Blob([await response.blob()], {type:'application/pdf'}));
-      if (viewer.closed) { URL.revokeObjectURL(url); return; }
       previews.current.push(url);
-      viewer.location.replace(url);
-    } catch (error) { viewer.close(); setPdfError((error as Error).message); }
+      setEstimatePdfUrl(url);
+      setPreparedEstimate(prepared.id);
+      setPreparedSigned(prepared.signed === true);
+      void refreshDetails(true);
+    } catch (error) {
+      const failure = error as Error & {detail?: {unanswered_questions?: string[]}};
+      const message = failure.message || 'Could not prepare the estimate. Please try again.';
+      setPdfError(message);
+      if (failure.detail?.unanswered_questions?.length) {
+        setEstimateViewerOpen(false);
+        openRequiredQuestions(failure.detail.unanswered_questions);
+      }
+    }
     finally { setPdfBusy(false); }
   }
 
+  async function fetchSignedPdf(signatureId: string) {
+    const response = await fetch(`${base}/estimate-signatures/${encodeURIComponent(signatureId)}/pdf`, { headers, cache: 'no-store' });
+    if (!response.ok) throw new Error('Could not open the signed estimate. Please try again.');
+    return response.blob();
+  }
+  // Show a signature on its report row as soon as the estimate viewer closes.
+  async function refreshReportHistory() {
+    try {
+      const [next, history] = await Promise.all([call('/sections/pricing'), call('/sections/inventory')]);
+      setData(previous => previous ? {...previous, report_history: history.report_history, signature_status: next.signature_status, signature_requires_resign: next.signature_requires_resign} : previous);
+    } catch { /* The history refreshes with the next page load. */ }
+  }
   async function call(path:string, body?:unknown, method?:string) {
     const httpMethod = method || (body===undefined ? 'GET' : 'POST');
     const controller = new AbortController();
@@ -588,6 +656,11 @@ export default function CustomerMovePage() {
       registerCustomerSession(value.session, expiresAt);
       sessionStorage.setItem(sessionKey + ':expiresAt', String(expiresAt));
       sessionStorage.setItem(sessionKey, value.session);
+      if (value.move) {
+        preloadedMove.current = true;
+        setData(previous => ({...(previous || emptyDetails()), ...value.move}));
+        setSections(previous => ({...previous, move: {ready:true, loading:false, error:''}}));
+      }
       setSession(value.session);
       setCode('');
     }catch(e){
@@ -700,48 +773,51 @@ export default function CustomerMovePage() {
     }
   }
 
-  const [sections, setSections] = useState(initialSections);
-  const pageReadOnly = pageSections.some(section => !sections[section].ready || sections[section].loading || !!sections[section].error);
+  const [sections, setSections] = useState(() => ({...initialSections(), ...(bootstrap ? {move: {ready:true, loading:false, error:''}} : {})}));
+  const sectionReady = (...names: PageSection[]) => names.every(name => sections[name].ready && !sections[name].error);
   const sectionRequests = useRef<Record<string, number>>({});
   const pricingLoading = sections.pricing.loading;
   const pricingLoadError = sections.pricing.error;
-  async function loadSection(section: PageSection) {
+  async function loadSection(section: PageSection, background = false) {
     if (!session || !customerSessionActive(session)) return;
     const request = (sectionRequests.current[section] || 0) + 1;
     sectionRequests.current[section] = request;
     const revision = answerRevision.current;
     const current = () => sectionRequests.current[section] === request && customerSessionActive(session) && !answerPending.current && revision === answerRevision.current;
-    setSections(previous => ({...previous, [section]: {...previous[section], loading:true, error:''}}));
+    setSections(previous => ({...previous, [section]: {...previous[section], loading:!background || !previous[section].ready, error:''}}));
     try {
-      const next = await call(`/sections/${section}`);
+      let next = await call(`/sections/${section}`);
+      if (section === 'pricing' && current() && next.mileage_routes?.some((row: FeeRoute) => row.meters == null)) {
+        try {
+          if (await saveBrowserMileage(next.mileage_routes, next.google_maps_browser_key || '')) {
+            next = await call('/sections/pricing');
+          }
+        } catch (error) { if (current()) setCalculationError((error as Error).message); }
+      }
       if (!current()) return;
       setData(previous => ({...(previous || emptyDetails()), ...next}));
       if (next.company_details?.color) setThemeColor(next.company_details.color);
       setSections(previous => ({...previous, [section]: {loading:false, error:'', ready:true}}));
-      if (section === 'inventory') {
-        if (next.pricing_required) await loadSection('pricing');
-        else {
-          sectionRequests.current.pricing = (sectionRequests.current.pricing || 0) + 1;
-          setData(previous => previous ? {...previous, estimate:null, pricing_error:'', packing_items:[], packing_package:null, extra_stops:null, elevator:null, long_carry:null, stairs:null, storage:null, shuttle:null, item_questions:[], unanswered_questions:[]} : previous);
-          setSections(previous => ({...previous, pricing:{loading:false, error:'', ready:true}}));
-        }
-      }
     } catch (error) {
       if (current()) setSections(previous => ({...previous, [section]: {...previous[section], loading:false, error:(error as Error).message}}));
     }
   }
-  async function refreshDetails(background = false, retryPricing = false) {
+  async function refreshDetails(background = false, retryPricing = false, initial = false) {
     if (!session || !customerSessionActive(session) || (background && answerPending.current)) return;
-    if (retryPricing) { await loadSection('pricing'); return; }
+    if (retryPricing) { await loadSection('pricing', background); return; }
     setData(previous => previous || emptyDetails());
-    await Promise.allSettled(pageSections.filter(section => section !== 'pricing').map(section => loadSection(section)));
+    // Start move details first, without making any section wait for another.
+    // Each loadSection renders its own response immediately on arrival.
+    const moveRequest = initial && preloadedMove.current ? Promise.resolve() : loadSection('move', background);
+    const backgroundRequests = pageSections.filter(section => section !== 'move').map(section => loadSection(section, background));
+    await Promise.allSettled([moveRequest, ...backgroundRequests]);
   }
   function sectionNotice(section: PageSection, label: string) {
     const state = sections[section];
-    return state.loading && !state.ready ? <p role="status">Loading {label}...</p> : state.error ? <p role="alert" className="cm-error">Could not load {label}. {state.error} <button type="button" className="cm-secondary-btn" onClick={() => void loadSection(section)}>Retry</button></p> : null;
+    return state.loading && !state.ready ? <p role="status" className="cm-section-loading"><span className="cm-loading-spinner" aria-hidden="true" />Loading {label}...</p> : state.error ? <p role="alert" className="cm-error">Could not load {label}. <button type="button" className="cm-secondary-btn" onClick={() => void loadSection(section)}>Retry</button></p> : null;
   }
 
-  const updatesUnavailable = useCustomerUpdates(base, key, session, () => refreshDetails(true));
+  const updatesUnavailable = useCustomerUpdates(base, key, session, initial => refreshDetails(true, false, initial));
   const estimateResult = useRef<HTMLDivElement>(null);
   const reportMessage = useRef<HTMLParagraphElement>(null);
   const pdfMessage = useRef<HTMLParagraphElement>(null);
@@ -809,6 +885,7 @@ export default function CustomerMovePage() {
     } as React.CSSProperties;
   }, [themeColor]);
 
+
   return (
     <div className="customer-move" style={paletteStyle}>
       <div className="cm-wrap">
@@ -853,18 +930,6 @@ export default function CustomerMovePage() {
           </div>
         ) : (
           <>
-            {pageReadOnly && <div role="status" className="cm-readonly-notice">
-              <p>Read-only while page sections load. Editing becomes available when all sections are ready.</p>
-              {pageSections.filter(section => sections[section].error).map(section => <p key={section}>
-                Could not load {section === 'move' ? 'move details' : section}.
-                {' '}<button type="button" className="cm-secondary-btn" disabled={sections[section].loading} onClick={() => void loadSection(section)}>Retry {section === 'move' ? 'move details' : section}</button>
-              </p>)}
-            </div>}
-            <fieldset disabled={pageReadOnly} style={{border:0, padding:0, margin:0, minWidth:0}} onClickCapture={event => {
-              if (pageReadOnly && (event.target as HTMLElement).closest('[role="button"], .cm-editable-stop')) { event.preventDefault(); event.stopPropagation(); }
-            }} onKeyDownCapture={event => {
-              if (pageReadOnly && (event.key === 'Enter' || event.key === ' ') && (event.target as HTMLElement).closest('[role="button"], .cm-editable-stop')) { event.preventDefault(); event.stopPropagation(); }
-            }}>
             <header className="cm-company-header">
               <div className="cm-company-header-left">
                 <div className="cm-company-logo-placeholder" style={data.company_details?.logo ? { border: 0, background: "transparent", overflow: "hidden", flexShrink: 0 } : undefined}>
@@ -902,7 +967,7 @@ export default function CustomerMovePage() {
                 <div className="cm-route-header">
                   <div className="cm-eyebrow">YOUR MOVE</div>
                   <div className="cm-route-actions-top">
-                    <button type="button" className="slds-button cm-refresh-btn" aria-label="Refresh move details" title="Refresh move details" disabled={busy} onClick={()=>void refreshDetails()}>&#8635;</button>
+                    <button type="button" className="slds-button cm-refresh-btn" aria-label="Refresh move details" title="Refresh move details" disabled={busy || sections.move.loading} onClick={()=>void loadSection('move')}>&#8635;</button>
                     {!editingMove && (
                       <button type="button" className="slds-button cm-edit-button" disabled={!sections.move.ready} onClick={startEditMove}>Edit</button>
                     )}
@@ -970,9 +1035,9 @@ export default function CustomerMovePage() {
                 <p>Upload photos, videos, or documents, create an item list, or schedule a live virtual walkthrough with our team.</p>
                 <p>Your saved item list and uploaded media stay together. Generate one report to combine both into your inventory and estimate.</p>
                 <div className="cm-inventory-actions">
-                  <button type="button" className="slds-button cm-add-list-button" onClick={() => setShowInventoryList(true)}>{data.combined_inventory?.length||data.inventory_draft ? 'Update inventory' : 'Add a list'}</button>
+                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('inventory', 'pricing')} onClick={() => setShowInventoryList(true)}>{!sectionReady('inventory', 'pricing') ? 'Loading inventory...' : data.combined_inventory?.length||data.inventory_draft ? 'Update inventory' : 'Add a list'}</button>
                   <button type="button" className="slds-button cm-add-list-button" disabled={busy || !photosRestored} onClick={() => filePicker.current?.click()} aria-busy={files.some(f => f.status === 'Uploading')}>{files.some(f => f.status === 'Uploading') ? 'Uploading...' : 'Upload files'}</button>
-                  <button type="button" className="slds-button cm-add-list-button" onClick={() => meetingDialog.current?.showModal()}>Virtual estimate</button>
+                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('media')} onClick={() => meetingDialog.current?.showModal()}>Virtual estimate</button>
                   <input ref={filePicker} type="file" multiple hidden disabled={busy || !photosRestored} onChange={e=>{void choose(e.target.files);e.target.value='';}}/>
                   {files.some(f => f.status === 'Try again') && <button className="slds-button cm-primary cm-upload-btn" disabled={busy} onClick={()=>void upload()}>Retry upload</button>}
                 </div>
@@ -991,7 +1056,7 @@ export default function CustomerMovePage() {
                   ))}
                 </div>
                 {sectionNotice('inventory', 'inventory')}
-                {data.inventory_draft?.rows.length ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open saved item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
+                {sectionReady('inventory', 'pricing') && data.inventory_draft?.rows.length ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open saved item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
                   <div>
                     <strong>Saved item list</strong>
                     <span>{data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((roomTotal, item) => roomTotal + Number(item.amount || 0), 0), 0)} items &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + Number(item.amount || 0) * piecesPerItem(item.name), 0), 0)} pieces &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + boxQuantity(item.name, Number(item.amount || 0)), 0), 0)} boxes &middot; {data.inventory_draft.cuft.toLocaleString()} cu ft</span>
@@ -999,7 +1064,7 @@ export default function CustomerMovePage() {
                   </div>
                 </section> : null}
                 {sectionNotice('media', 'media')}
-                <ReportFileGallery newFileIds={(data.editable_files || data.files).filter(file => !(data.report_history?.find(report => report.current)?.files || []).some(previous => previous.id === file.id)).map(file => file.id)} files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={busy || reportState === 'running'} />
+                <ReportFileGallery newFileIds={(data.editable_files || data.files).filter(file => !(data.report_history?.find(report => report.current)?.files || []).some(previous => previous.id === file.id)).map(file => file.id)} files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={!sectionReady('media') || busy || reportState === 'running'} />
                 {data.walkthrough && <div className="cm-meeting-summary">
                   <div><strong>Virtual estimate</strong><span>{meetingTime(data.walkthrough)}</span><small>{({requested:'Requested',scheduled:'Confirmed',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status] || data.walkthrough.status}</small></div>
                   <div className="cm-walkthrough-actions">
@@ -1014,7 +1079,7 @@ export default function CustomerMovePage() {
                     <button
                       type="button"
                       className="slds-button cm-primary cm-spark-btn"
-                      disabled={busy || startingReport || data.spark?.status === 'queued' || data.spark?.status === 'running' || files.some(file => file.status !== 'Uploaded')}
+                      disabled={!sectionReady('inventory', 'media') || busy || startingReport || data.spark?.status === 'queued' || data.spark?.status === 'running' || files.some(file => file.status !== 'Uploaded')}
                       onClick={async () => {
                         if (reportStartPending.current || data.spark?.status === 'queued' || data.spark?.status === 'running') return;
                         reportStartPending.current = true;
@@ -1091,12 +1156,22 @@ export default function CustomerMovePage() {
               {sectionNotice('volume', 'volume')}
               <div className="cm-estimate-top">
                 <div className="cm-estimate-main-info" ref={estimateResult} aria-live="polite">
-                  {data.estimate ? <>
+                  {!sections.pricing.ready && !data.estimate ? <>
+                    <span className="cm-estimate-eyebrow">Your estimate</span>
+                    {!pricingLoadError && <p role="status" className="cm-section-loading"><span className="cm-loading-spinner" aria-hidden="true" />Loading your estimate...</p>}
+                  </> : data.estimate ? <>
                     <span className="cm-estimate-eyebrow" style={{marginBottom: 12}}>Your estimate</span>
                     <div className="cm-estimate-summary">
                       <div className="cm-estimate-detail-item">
                         <span>Price</span>
-                        <strong>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(data.estimate.price))}</strong>
+                        <div className="cm-price-refresh-row">
+                          <strong>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(data.estimate.price))}</strong>
+                          <button type="button" className="cm-price-refresh" aria-label={calculatingPrice ? 'Recalculating price' : 'Recalculate price'} title={calculatingPrice ? 'Recalculating price...' : 'Recalculate price'} aria-busy={calculatingPrice}
+                            disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running' || data.spark?.status === 'running' || data.spark?.status === 'queued'}
+                            onClick={() => void recalculatePrice()}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                          </button>
+                        </div>
                       </div>
                       <div className="cm-estimate-detail-item">
                         <span>Inventory volume</span>
@@ -1116,75 +1191,43 @@ export default function CustomerMovePage() {
                   <strong>{data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'?'Your report is ready. Pricing is pending.':'Start by adding your inventory.'}</strong>
                   <p className="cm-estimate-desc">{data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
                   </>}
-                  {(data.estimate || data.spark?.status === 'completed') && <button
+                  {sections.pricing.ready && !data.estimate && data.spark?.status === 'completed' && <button
                     type="button"
                     className="cm-secondary-btn cm-rerate-btn"
                     aria-busy={calculatingPrice}
-                    disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running' || data.spark?.status === 'running' || data.spark?.status === 'queued'}
+                    disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running'}
                     onClick={() => void recalculatePrice()}
                   >{calculatingPrice ? 'Re-rating...' : 'Re-rate'}</button>}
                 </div>
-                {data.spark && (
-                  <div className="cm-spark-card cm-spark-estimate-card">
-                    <div className="cm-spark-status-row">
-                      <span className="cm-spark-pill">
-                        <span className={`cm-spark-dot ${data.spark.status === 'completed' ? 'dot-complete' : data.spark.status === 'failed' ? 'dot-failed' : 'dot-pulse'}`} />
-                        {data.spark.status === 'completed' ? (data.spark.source === 'manual' ? 'Inventory list ready' : 'Report ready') : data.spark.status === 'running' ? 'Analyzing media...' : data.spark.status === 'failed' ? 'Report failed' : 'Queued'}
-                      </span>
-
-                      {!data.estimate && data.spark.status === 'completed' && data.spark.cuft ? <strong className="cm-spark-volume">{Math.ceil(data.spark.cuft)} cu ft</strong> : null}
-                    </div>
-                    {data.report_history?.find(report => report.current) && <ReportLinks report={data.report_history.find(report => report.current)!} onEditInventory={()=>setShowInventoryList(true)} />}
-
-                  </div>
-                )}
               </div>
               <div ref={estimateFeedback}>
-              {pricingLoading && !sections.pricing.ready && data.pricing_required === true && <p role="status">Loading pricing and service options...</p>}
-              {pricingLoadError && <p role="alert">Pricing could not be loaded. {pricingLoadError} <button type="button" className="cm-secondary-btn" disabled={pricingLoading} onClick={() => void loadSection('pricing')}>Retry pricing</button></p>}
+              {pricingLoadError && <p role="alert">We couldn't load your estimate. <button type="button" className="cm-secondary-btn" disabled={pricingLoading} onClick={() => void loadSection('pricing')}>Try again</button></p>}
               {calculationError && <p role="alert">{calculationError}</p>}
-              {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Retry pricing</button></p>}
+              {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Try again</button></p>}
               </div>
-              {data.estimate?.charges && data.estimate.charges.length > 0 && (
-                <div className="cm-estimate-breakdown">
-                  <div className="cm-estimate-breakdown-title">Price Breakdown</div>
-                  <div className="cm-estimate-charges-grid">
-                    {groupedCharges().map((charge, idx) => {
-                      const target = charge.target;
-                      return (
-                      <div key={idx} className="cm-estimate-charge-row">
-                        <div>
-                          <strong>{charge.name}{target && <button type="button" className="cm-charge-edit" aria-label={`Edit ${charge.name}`} title={`Edit ${charge.name}`} onClick={() => openChargeQuestion(target)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z M13 6l5 5"/></svg></button>}</strong>
-                          {charge.description && <small>{charge.description}</small>}
-                          {charge.children?.map((child, index) => <div key={index}>
-                            {child.heading && <strong className="cm-charge-subheading">{child.heading}</strong>}
-                            <div className="cm-stop-charge-detail" style={{paddingLeft: 12}}>
-                            <div>
-                              <span>{child.displayName || child.name}</span>
-                              {child.description && <small>{child.description}</small>}
-                              {(child.discount_amount || 0) > 0 && <small>Before discount: {money(child.subtotal || 0)}; Discount ({child.discount_percent}%): -{money(child.discount_amount || 0)}</small>}
-                            </div>
-                            <strong>{child.pending ? 'Pending' : money(child.total)}</strong>
-                            </div>
-                          </div>)}
-                          {(charge.discount_amount || 0) > 0 && <small>Before discount: {money(charge.subtotal || 0)}; Discount ({charge.discount_percent}%): -{money(charge.discount_amount || 0)}</small>}
-                        </div>
-                        <span>
-                          {charge.pending && !charge.children ? 'Pending' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charge.total)}{charge.children && charge.pending && <small> + pending</small>}
-                        </span>
-                      </div>
-                    );})}
-                  </div>
-                </div>
-              )}
-
-              {((data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) || (data.estimate && data.spark?.status === 'completed')) && (
-                <div className="cm-estimate-extra-actions" style={{flexWrap: 'wrap'}}>
-                  {(data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length > 0 || data.packing_package || !!data.item_questions?.length) && (
+              {(() => {
+                const hasInventory = !!(data.combined_inventory?.length || data.inventory_draft?.rows.length);
+                const servicesDone = data.unanswered_questions?.length === 0;
+                const signed = data.signature_status === 'signed';
+                // Only the first unfinished step gets the big call-to-action; the others show a small text action.
+                const nextStep = !hasInventory ? 1 : !servicesDone ? 2 : !signed ? 3 : 0;
+                const status = (step: number, done: boolean, pending = 'Action required') => <small className="cm-flow-status">{done ? 'Completed' : nextStep === step ? pending : 'Not started'}</small>;
+                // A busy label replaces the action and shows a spinner instead of the arrow.
+                const action = (step: number, label: string, ctaLabel: string, busyLabel = '') => {
+                  const current = nextStep === step;
+                  const icon = busyLabel
+                    ? <svg className="cm-flow-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"/></svg>
+                    : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{current ? <path d="M5 12h14M13 6l6 6-6 6"/> : <path d="m9 6 6 6-6 6"/>}</svg>;
+                  return <span className={`${current ? 'cm-flow-action' : 'cm-flow-link'}${busyLabel ? ' is-busy' : ''}`} aria-live="polite">{busyLabel || (current ? ctaLabel : label)}{icon}</span>;
+                };
+                const sparkBusy = !!data.spark && data.spark.status !== 'completed' && data.spark.status !== 'failed';
+                return <ol className="cm-estimate-flow" aria-label="Complete your estimate">
+                <li><button type="button" className={`cm-flow-step${nextStep === 1 ? ' is-current' : ''}`} disabled={!sectionReady('inventory', 'pricing')} onClick={() => setShowInventoryList(true)}><span className="cm-flow-head"><span className="cm-flow-number">1</span><span className="cm-flow-label">Inventory{status(1, hasInventory)}</span>{sectionReady('inventory', 'pricing') && <CompletionIcon complete={hasInventory} label={hasInventory ? 'Inventory added' : 'Inventory missing'}/>}</span>{action(1, hasInventory ? 'Edit' : 'Add', 'Add', !sectionReady('inventory', 'pricing') ? 'Loading...' : '')}</button></li>
+                <li>
                   <button
                     type="button"
-                    className="slds-button cm-primary cm-extra-services-btn"
-                    disabled={pricingLoading || !!pricingLoadError}
+                    className={`cm-flow-step${nextStep === 2 ? ' is-current' : ''}`}
+                    disabled={pricingLoading || !!pricingLoadError || !sectionReady('pricing') || !(data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length || data.packing_package || data.item_questions?.length)}
                     onClick={() => {
                       setPackingSelection(Object.fromEntries(data.packing_items.filter(item => item.selected).map(item => [item.id, item.selected_service || ''])));
                       setShuttleAnswer(data.shuttle?.answer ?? null); setShuttleMissing(false);
@@ -1202,16 +1245,64 @@ export default function CustomerMovePage() {
                       setShowQuestions(true);
                     }}
                   >
-                    {data.packing_saved ? '✓ Review services & details' : '+ Add services & details'}
+                    <span className="cm-flow-head"><span className="cm-flow-number">2</span><span className="cm-flow-label">Extra services{status(2, servicesDone)}</span>
+                    {sectionReady('pricing') && <CompletionIcon complete={servicesDone} label={servicesDone ? 'All required service answers complete' : answersSaving ? 'Saving service answers' : 'Required service answers missing'}/>}</span>
+                    {action(2, servicesDone ? 'Edit' : 'Add', 'Add', answersSaving ? 'Saving...' : pricingLoading || !sectionReady('pricing') ? 'Loading...' : '')}
                   </button>
-                  )}
-                {data.estimate && data.spark?.status === 'completed' && <>
-                <button type="button" className="cm-secondary-btn" disabled={pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}>{pdfBusy ? 'Preparing PDF...' : 'View estimate PDF'}</button>
-                {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert" style={{ flexBasis: '100%', marginTop: 0 }}>{pdfError}</p>}
-                </>}
+                </li>
+                <li><button type="button" className={`cm-flow-step${nextStep === 3 ? ' is-current' : ''}`} disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}><span className="cm-flow-head"><span className="cm-flow-number">3</span><span className="cm-flow-label">Estimate{status(3, signed, data.signature_status === 'changed' ? 'Changed - sign again' : 'Action required')}</span>{sectionReady('pricing') && <CompletionIcon complete={signed} label={signed ? 'Current estimate signed' : 'Signature required'}/>}</span>{action(3, signed ? 'View' : data.signature_status === 'changed' ? 'Re-sign' : 'Sign', data.signature_status === 'changed' ? 'Re-sign' : 'Sign',
+                  pdfBusy ? 'Preparing PDF...' : sparkBusy ? 'Analyzing inventory...' : calculatingPrice ? 'Updating price...' : answersSaving ? 'Saving...' : pricingLoading || busy ? 'Loading...' : '')}</button></li>
+              </ol>;
+              })()}
+              {data.signature_status === 'signed' && <small className="cm-estimate-button-status" role="status">Signed - current estimate</small>}
+              {data.spark && data.spark.status !== 'completed' && <p role="status">{data.spark.status === 'running' ? 'Analyzing your inventory...' : data.spark.status === 'failed' ? 'Inventory report failed.' : 'Inventory report queued.'}</p>}
+              {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert">{pdfError}</p>}
+              {data.estimate?.charges && data.estimate.charges.length > 0 && (
+                <div className="cm-estimate-breakdown">
+                  <div className="cm-estimate-toolbar">
+                    <div className="cm-estimate-breakdown-title">Price breakdown</div>
+                  </div>
+                  <div className="cm-estimate-charges-grid">
+                    {groupedCharges().map((charge, idx) => {
+                      const target = charge.target;
+                      return (
+                      <div key={idx} className="cm-estimate-charge-row">
+                        <div>
+                          <strong>{charge.name}{target && <button type="button" className="cm-charge-edit" aria-label={`Edit ${charge.name}`} title={`Edit ${charge.name}`} onClick={() => openChargeQuestion(target)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z M13 6l5 5"/></svg></button>}</strong>
+                          {charge.description && <small>{charge.description}</small>}
+                          {charge.children?.map((child, index) => <div key={index}>
+                            {child.heading && <strong className="cm-charge-subheading">{child.heading}</strong>}
+                            <div className="cm-stop-charge-detail" style={{paddingLeft: 12}}>
+                            <div>
+                              <span>{child.displayName || child.name}</span>
+                              {child.description && <small>{child.description}</small>}
+                            </div>
+                            <div className="cm-line-price">
+                              {(child.discount_amount || 0) > 0 && <del>{money(child.subtotal || 0)}</del>}
+                              <strong>{child.pending ? 'Pending' : money(child.total)}</strong>
+                              {repPage && child.id && !child.pending && <RepDiscounts base={base} headers={headers} onSaved={refreshDetails} chargeId={child.id} chargeName={child.displayName || child.name} />}
+                            </div>
+                            </div>
+                          </div>)}
+                        </div>
+                        <div className="cm-line-price">
+                          {!charge.children && (charge.discount_amount || 0) > 0 && <del>{money(charge.subtotal || 0)}</del>}
+                          {charge.pending && !charge.children ? 'Pending' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charge.total)}{charge.children && charge.pending && <small> + pending</small>}
+                          {repPage && charge.id && !charge.children && !charge.pending && <RepDiscounts base={base} headers={headers} onSaved={refreshDetails} chargeId={charge.id} chargeName={charge.name} />}
+                        </div>
+                      </div>
+                    );})}
+                  </div>
                 </div>
               )}
-              <ReportHistory reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} />
+
+              {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
+                disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
+              {estimateViewerOpen && <EstimateViewer alreadySigned={preparedSigned} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => { setEstimateViewerOpen(false); void refreshReportHistory(); }} />}
+              {(data.estimate_needs_update || data.list_changed) && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}
+              <ReportHistory signatureStatus={data.signature_status} requiresResign={data.signature_status === 'changed'} reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} fetchSignedPdf={fetchSignedPdf} />
+              {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}
+              {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}
             </div>
 
             {(showInventoryList || inventoryOpened) && <ManualInventoryModal visible={showInventoryList} key={`${accessId}:${data.spark?.id || 'draft'}:${JSON.stringify(data.packing_package?.selection || {})}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full', boxes: (data.packing_package.box_items || []).map(box => ({ label: box.label, room: box.room, quantity: data.packing_package!.selection.box_quantities?.[box.id] || 0 })) } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}_${JSON.stringify(data.packing_package?.selection || {})}`} loadCatalog={() => call('/inventory-catalog')} downloadPdf={async body => {
@@ -1234,6 +1325,8 @@ export default function CustomerMovePage() {
             }} submitActions={async (requestId, edits, revision, reportId) => {
               const result = await call('/inventory/actions', {request_id:requestId, revision, report_id:reportId, ...edits}, 'PATCH');
               setCalculationError(''); setReportState('idle');
+              setData(previous => previous ? {...previous, estimate_needs_update: true, signature_status: undefined} : previous);
+              void refreshDetails(true, true);
               return result;
             }} onDone={async () => {
               await answerQueue.current;
@@ -1300,10 +1393,11 @@ export default function CustomerMovePage() {
                       answerRevision.current += 1;
                       setAnswersSaving(true);
                       setAnswerSaveStarted(true);
+                      // Keep navigation based on the latest choice, not the network response.
+                      setData(current=>current?{...current,item_questions:current.item_questions?.map(question=>question.id===answer.question_id?{...question,saved:{answer_id:answer.answer_id,acknowledged:answer.acknowledged,pending:answer.pending,selected_items:answer.selected_items}}:question)}:current);
                       const task = answerQueue.current.then(async () => {
                         try {
                           await call('/item-answer?compact=true', { ...answer, report_id: reportId });
-                          setData(current=>current?{...current,item_questions:current.item_questions?.map(question=>question.id===answer.question_id?{...question,saved:{answer_id:answer.answer_id,acknowledged:answer.acknowledged,pending:answer.pending,selected_items:answer.selected_items}}:question)}:current);
                           failedAnswers.current.delete(answer.question_id); setTermsError('');
                         }
                         catch (error) { failedAnswers.current.add(answer.question_id); setTermsError('Please retry the answer that could not be saved.'); throw error; }
@@ -1356,7 +1450,7 @@ export default function CustomerMovePage() {
               </div>
             )}
             <footer className="cm-footer">Your move. Your pace. We're here to help.</footer>
-            </fieldset>
+
           </>
         )}
       </div>

@@ -101,6 +101,77 @@ def test_creation_loads_smartmoving_details_before_tasks():
                and item.value.attr == 'priority' for item in lead_call.keywords)
 
 
+@pytest.mark.parametrize('status,expected', [(4, 'booked'), (20, 'cancelled'), (3, 'quoted')])
+def test_followup_backfill_refreshes_remote_state_before_import(status, expected):
+    from smartmoving_followup_backfill import refresh_one
+    db = Mock()
+    lead = SimpleNamespace(smartmoving_id='sm-1', priority=0, status='new')
+    check = Mock(return_value={'ok': True, 'exists': True, 'status': status, 'lead_status': 'Priority 2'})
+    def import_tasks(session, refreshed, *, commit):
+        assert session is db
+        assert (refreshed.priority, refreshed.status) == (2, expected)
+        assert commit is False
+        db.flush.assert_called_once()
+        return 2
+    assert refresh_one(db, lead, check, import_tasks) == 'imported:2'
+    db.commit.assert_not_called()
+
+
+def test_smartmoving_bulk_requests_honor_retry_after_and_reset(monkeypatch):
+    import httpx
+    from libs.smartmoving import client
+    request = httpx.Request('GET', 'https://example.test/followups')
+    limited = httpx.Response(429, headers={'Retry-After': '12'}, request=request)
+    success = httpx.Response(200, request=request)
+    send = Mock(side_effect=[limited, limited, success])
+    sleep = Mock()
+    monkeypatch.setattr(client.time, 'sleep', sleep)
+    monkeypatch.setattr(client, '_log_http_request', Mock())
+    with client.bulk_requests():
+        assert client._request(send) is success
+    assert [call.args[0] for call in sleep.call_args_list] == [1, 17, 1, 17, 1]
+    assert client._BULK_REQUESTS.get() is False
+
+
+def test_smartmoving_bulk_requests_follow_response_waits_beyond_six_attempts(monkeypatch):
+    import httpx
+    from libs.smartmoving import client
+    request = httpx.Request('GET', 'https://example.test/followups')
+    delays = [12, 25, 8, 60, 30, 90, 15]
+    responses = [httpx.Response(429, json={'message': f'Try again in {delay} seconds'}, request=request) for delay in delays]
+    send = Mock(side_effect=[*responses, httpx.Response(200, request=request)])
+    sleep = Mock()
+    monkeypatch.setattr(client.time, 'sleep', sleep)
+    monkeypatch.setattr(client, '_log_http_request', Mock())
+    with client.bulk_requests():
+        assert client._request(send).status_code == 200
+    assert send.call_count == 8
+    assert [call.args[0] for call in sleep.call_args_list if call.args[0] != 1] == [delay + 5 for delay in delays]
+
+
+@pytest.mark.parametrize('priority', [None, '', 0, '0'])
+def test_followup_backfill_skips_tasks_for_remote_zero_or_unset(priority):
+    from smartmoving_followup_backfill import refresh_one
+    lead = SimpleNamespace(smartmoving_id='sm-1', priority=2, status='new')
+    importer = Mock()
+    check = Mock(return_value={'ok': True, 'exists': True, 'status': 20, 'lead_status': priority})
+    assert refresh_one(Mock(), lead, check, importer) == 'skipped_priority_zero'
+    assert (lead.priority, lead.status) == (0, 'cancelled')
+    importer.assert_not_called()
+
+
+@pytest.mark.parametrize('response', [{'ok': False}, {'ok': True, 'status': 999, 'lead_status': 2},
+                                     {'ok': True, 'status': 4, 'lead_status': 'invalid'}])
+def test_followup_backfill_does_not_import_on_refresh_failure(response):
+    from smartmoving_followup_backfill import refresh_one
+    lead = SimpleNamespace(smartmoving_id='sm-1', priority=2, status='new')
+    importer = Mock()
+    with pytest.raises(ValueError):
+        refresh_one(Mock(), lead, Mock(return_value=response), importer)
+    assert (lead.priority, lead.status) == (2, 'new')
+    importer.assert_not_called()
+
+
 @pytest.fixture
 def task_queue(monkeypatch):
     import followup_tasks
@@ -130,6 +201,102 @@ def test_tasks_use_saved_priority_for_every_lead(task_queue, smartmoving_id, mon
     monkeypatch.setitem(sys.modules, 'realtime', SimpleNamespace(publish_realtime_event=Mock()))
     service.sync_saved_lead(lead.id)
     assert db.query(Task).count() == 9
+
+
+@pytest.fixture
+def new_lead_payload_model():
+    # Load the real request models without importing route-level AWS clients.
+    from typing import Any
+    from pydantic import BaseModel, ConfigDict, Field, field_validator
+    source = Path(__file__).resolve().parents[2] / 'backend/routes/leads.py'
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    names = {'NewLead', 'LeadJobChargePayload', 'EstimatedTotalPayload',
+             'LeadPaymentPayload', 'ExternalLeadUpdateLog',
+             'ExternalLeadUpdateLogRequest', 'ExternalLeadUpdateLogResponse'}
+    models = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name in names]
+    scope = dict(BaseModel=BaseModel, ConfigDict=ConfigDict, Field=Field,
+                 field_validator=field_validator, Any=Any)
+    exec(compile(ast.Module(body=models, type_ignores=[]), str(source), 'exec'), scope)
+    return scope['NewLead']
+
+
+@pytest.mark.parametrize('priority_fields,expected', [({}, 0), ({'priority': None}, 0),
+                                                    ({'priority': 0}, 0), ({'priority': 2}, 2)])
+def test_new_lead_priority_normalizes_before_persistence(task_queue, new_lead_payload_model,
+                                                       priority_fields, expected):
+    _, db, existing, _, _ = task_queue
+    body = new_lead_payload_model.model_validate({
+        'company_name': 'Movers', 'source': 'api', 'full_name': 'New client', **priority_fields})
+    assert body.priority == expected
+    # Use the same priority expression as the real creation handler.
+    source = Path(__file__).resolve().parents[2] / 'backend/routes/leads.py'
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    creation = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_create_lead')
+    constructor = next(node for node in ast.walk(creation) if isinstance(node, ast.Call)
+                       and isinstance(node.func, ast.Name) and node.func.id == 'Lead')
+    priority = next(keyword.value for keyword in constructor.keywords if keyword.arg == 'priority')
+    saved = Lead(id='new-client', company_id=existing.company_id, full_name=body.full_name,
+                 priority=eval(compile(ast.Expression(priority), str(source), 'eval'), {'body': body}))
+    db.add(saved)
+    db.commit()
+    db.refresh(saved)
+    assert saved.priority == expected
+
+
+@pytest.mark.parametrize('priority', [-1, 'invalid'])
+def test_new_lead_priority_still_rejects_invalid_values(new_lead_payload_model, priority):
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        new_lead_payload_model.model_validate({'company_name': 'Movers', 'source': 'api', 'priority': priority})
+
+
+@pytest.mark.parametrize('priority', [0, None])
+def test_smartmoving_refresh_skips_followups_for_zero_and_unset(monkeypatch, priority):
+    import smartmoving_followup_sync as service
+    fetch = Mock()
+    monkeypatch.setattr(service, 'get_followups', fetch)
+    db = Mock()
+    assert service.sync(db, SimpleNamespace(priority=priority, smartmoving_id='sm-1')) == 0
+    fetch.assert_not_called()
+    assert db.mock_calls == []
+
+
+def test_smartmoving_refresh_upserts_remote_tasks(monkeypatch):
+    from unittest.mock import MagicMock
+    import smartmoving_followup_sync as service
+    remote = {'id': 'followup-1', 'type': 1, 'title': 'Discuss estimate',
+              'assignedToId': 'rep-1', 'dueDateTime': '2026-10-24T15:00:00Z',
+              'notes': 'Call after lunch', 'completed': False}
+    fetch = Mock(return_value={'data': [remote]})
+    monkeypatch.setattr(service, 'get_followups', fetch)
+    db = MagicMock()
+    lead = SimpleNamespace(priority=1, smartmoving_id='sm-1')
+    assert service.sync(db, lead) == 1
+    fetch.assert_called_once_with('sm-1')
+    statement, params = db.execute.call_args.args
+    assert 'ON CONFLICT (lead_id, smartmoving_followup_id) DO UPDATE' in str(statement)
+    assert 'l.priority IS NOT NULL AND l.priority <> 0' in str(statement)
+    assert params['note_id'] == 'followup-1'
+    assert params['title'] == 'Discuss estimate'
+    assert params['due_date_time_iso'] == remote['dueDateTime']
+    assert params['notes'] == 'Call after lunch'
+    assert params['completed'] is False
+    remote['completed'] = True
+    service.sync(db, lead)
+    assert db.execute.call_args.args[1]['note_id'] == 'followup-1'
+    assert db.execute.call_args.args[1]['completed'] is True
+    assert db.commit.call_count == 2
+
+
+@pytest.mark.parametrize('response', [{'error': 'HTTP 503'}, {'data': {}},
+                                     {'data': [{'id': 'bad'}]}])
+def test_smartmoving_refresh_failure_does_not_write_tasks(monkeypatch, response):
+    import smartmoving_followup_sync as service
+    monkeypatch.setattr(service, 'get_followups', Mock(return_value=response))
+    db = Mock()
+    with pytest.raises(ValueError, match='SmartMoving follow-up refresh'):
+        service.sync(db, SimpleNamespace(priority=2, smartmoving_id='sm-1'))
+    assert db.mock_calls == []
 
 
 
@@ -305,9 +472,9 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
         if node.name == 'list_followup_calls':
             node.args.defaults = [ast.Constant(None) for _ in node.args.defaults]
     ast.fix_missing_locations(tree)
-    from sqlalchemy import func, or_
+    from sqlalchemy import func, or_, and_, cast, String
     scope = dict(Lead=Lead, Company=Company, User=User, Session=Session, Load=Load, joinedload=joinedload,
-                 datetime=datetime, timezone=timezone, func=func, or_=or_,
+                 datetime=datetime, timezone=timezone, func=func, or_=or_, and_=and_, cast=cast, String=String,
                  OPEN_SALES_STATUSES=('new', 'contacted', 'quoted'), MIRIT_COMPANY_NAME='mirit great american')
     exec(compile(tree, str(source), 'exec'), scope)
     kwargs = dict(category='overdue', rep='', company='', refresh=False, limit=50, offset=0, _=None, db=db)
@@ -315,6 +482,32 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
     assert [row['lead_id'] for row in result['items']] == ['lead']
     assert result['items'][0]['smartmoving_id'] == 'sm-1'
     assert scope['list_followup_calls'](**{**kwargs, 'company': 'Other'})['items'] == []
+    # Date filtering selects zero-priority leads without trimming their original schedule.
+    from followup_tasks import lead_row
+    tasks = db.query(Task).filter_by(lead_id=lead.id).all()
+    day = tasks[0].due_date
+    dated = scope['list_followup_calls'](**{**kwargs, 'category': 'all', 'priority': '0', 'date_from': day, 'date_to': day})
+    assert len(dated['items']) == 1
+    assert dated['items'][0]['timeline'] == lead_row(lead, tasks, datetime.now(timezone.utc))['timeline']
+    # Nonzero priorities expose saved tasks without automatic-task generation.
+    future = datetime.now(timezone.utc) + timedelta(days=30)
+    manual = Task(lead_id=lead.id, title='Discuss estimate', task_type='other', status='open',
+                  notes='Customer requested a call', due_date=future.date().isoformat(), due_at=future)
+    db.add(manual)
+    lead.priority = 2
+    db.commit()
+    for tab in ['2', 'all']:
+        result = scope['list_followup_calls'](**{**kwargs, 'category': 'all', 'priority': tab,
+            'date_from': future.date().isoformat(), 'date_to': future.date().isoformat()})
+        assert [row['lead_id'] for row in result['items']] == ['lead']
+        assert result['items'][0]['timeline'][0]['label'] == 'Discuss estimate'
+    # The model requires a priority; filtering for unset priorities must not
+    # require inserting invalid data or include a lead with a numeric priority.
+    assert scope['list_followup_calls'](**{**kwargs, 'category': 'all', 'priority': 'none'})['items'] == []
+    db.delete(manual)
+    lead.priority = 0
+    db.commit()
+
     task = db.query(Task).filter_by(task_type='call').first()
     task.due_at = datetime.now(timezone.utc) + timedelta(hours=1)
     db.commit()
@@ -330,10 +523,27 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
     task.status = 'open'
     task.scheduled_start = datetime.now(timezone.utc) + timedelta(minutes=30)
     db.commit()
-    assert scope['list_followup_calls'](**{**kwargs, 'category': 'due'})['items'] == []
+    # Other overdue tasks still keep this lead in the inclusive Due view.
+    result = scope['list_followup_calls'](**{**kwargs, 'category': 'due'})
+    assert [row['lead_id'] for row in result['items']] == ['lead']
+    assert result['counts']['due'] == 1
     lead.priority = 1
     db.commit()
-    assert scope['list_followup_calls'](**kwargs)['items'] == []
+    # Existing overdue tasks remain visible across priorities; the selected
+    # priority tab determines whether this lead is included.
+    for tab in ['all', '1']:
+        result = scope['list_followup_calls'](**{**kwargs, 'priority': tab})
+        assert [row['lead_id'] for row in result['items']] == ['lead']
+    assert scope['list_followup_calls'](**{**kwargs, 'priority': '0'})['items'] == []
+    for category in ['all', 'due', 'overdue']:
+        result = scope['list_followup_calls'](**{**kwargs, 'category': category, 'priority': '1'})
+        assert result['priority_counts'] == {'1': 1, 'all': 1}
+    for saved_task in db.query(Task).filter_by(lead_id=lead.id).all():
+        saved_task.status = 'done'
+    db.commit()
+    result = scope['list_followup_calls'](**kwargs)
+    assert result['priority_counts'] == {'all': 0}
+    assert result['counts'] == {'all': 0, 'due': 0, 'overdue': 0}
     replay.assert_not_called()
 
 

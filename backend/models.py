@@ -11,6 +11,33 @@ from move_types import normalize_move_type
 Base = declarative_base()
 
 
+class CompanyDocument(Base):
+    __tablename__ = 'company_documents'
+    company_id = Column(String(36), ForeignKey('companies.id', ondelete='CASCADE'), primary_key=True)
+    key = Column(String(80), primary_key=True)
+    title = Column(String(200), nullable=False)
+    body_html = Column(Text, nullable=False)
+    move_type = Column(String(30), nullable=False, default='Long Distance')
+    enabled = Column(Boolean, nullable=False, default=True)
+    revision = Column(Integer, nullable=False, default=1)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EstimateSignature(Base):
+    __tablename__ = 'estimate_signatures'
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    lead_id = Column(String(36), ForeignKey('leads.id'), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id'), nullable=False, index=True)
+    snapshot = Column(Text, nullable=False)
+    pdf = Column(LargeBinary, nullable=False)
+    signer_name = Column(String(200))
+    signature = Column(Text)
+    # Inventory report used for this estimate (LeadLiveSwitch spark_history id).
+    report_id = Column(Text)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    signed_at = Column(DateTime)
+
+
 def _uuid() -> str:
     return str(uuid.uuid4())
 
@@ -770,6 +797,7 @@ class Task(Base):
     __tablename__ = "tasks"
     __table_args__ = (
         Index('uq_tasks_followup', 'lead_id', 'automatic_key', unique=True),
+        Index('uq_tasks_smartmoving_followup', 'lead_id', 'smartmoving_followup_id', unique=True),
         Index('ix_tasks_pending_followup', 'due_at', 'lead_id',
               postgresql_where=text("automatic_key IS NOT NULL AND status <> 'done'")),
     )
@@ -781,6 +809,9 @@ class Task(Base):
     due_at = Column(DateTime(timezone=True))
     scheduled_start = Column(DateTime(timezone=True))
     automatic_key = Column(String(40))
+    smartmoving_followup_id = Column(String(36))
+    smartmoving_followup_type = Column(Integer)
+    smartmoving_assigned_to_id = Column(String(36))
     completed_at = Column(DateTime(timezone=True))
     completion_reason = Column(String(100))
     status = Column(String(20), nullable=False, default="open", index=True)

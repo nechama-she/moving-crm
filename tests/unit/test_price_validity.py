@@ -64,6 +64,18 @@ def test_default_seven_days_refreshes_once_and_preserves_answers(quote):
     assert db.query(models.LeadJobCharge).one().id == 'charge'
 
 
+def test_fresh_price_does_not_take_write_locks(quote, monkeypatch):
+    db, lead, job, plan, pricing, now = quote
+    job.price_calculated_at = now - timedelta(hours=1)
+    db.commit()
+    assert job.price == 100
+    refresh = MagicMock(side_effect=AssertionError('Fresh quote must not lock'))
+    monkeypatch.setattr(db, 'refresh', refresh)
+    assert not refresh_expired_price(lead, job, db, now)
+    refresh.assert_not_called()
+    pricing.calculate_and_save_lead_job_price.assert_not_called()
+
+
 def test_custom_validity_and_exact_expiry_boundary(quote):
     db,lead,job,plan,pricing,now = quote
     plan.price_valid_days = 14

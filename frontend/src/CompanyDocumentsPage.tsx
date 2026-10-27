@@ -1,0 +1,207 @@
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { API_BASE } from './apiConfig';
+import { authHeaders, useAuth } from './AuthContext';
+import './CompanyDocumentsPage.css';
+
+type Company = { id: string; name: string };
+type CompanyField = { key: string; label: string; value: string; missing: boolean };
+type CompanyDocument = { key: string; title: string; body_html: string; move_type: string; enabled: boolean; revision: number };
+
+export default function CompanyDocumentsPage() {
+  const { token } = useAuth();
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [companyId, setCompanyId] = useState('');
+  const [documents, setDocuments] = useState<CompanyDocument[]>([]);
+  const [draft, setDraft] = useState<CompanyDocument>();
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [preview, setPreview] = useState<string | null>(null);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [fields, setFields] = useState<CompanyField[]>([]);
+  const [fieldOpen, setFieldOpen] = useState(false);
+  const [fieldSearch, setFieldSearch] = useState('');
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [fieldIndex, setFieldIndex] = useState(0);
+  const fieldResults = useRef<HTMLDivElement>(null);
+  const fieldMenu = useRef<HTMLElement>(null);
+  const fieldTrigger = useRef<HTMLButtonElement>(null);
+  const [menuPosition, setMenuPosition] = useState({ left: 12, top: 12, maxHeight: 320 });
+  const editor = useRef<HTMLDivElement>(null);
+  const selection = useRef<Range | null>(null);
+  const base = `${API_BASE}/api/companies/${companyId}/documents`;
+  useLayoutEffect(() => {
+    if (!fieldOpen) return;
+    function position() {
+      const viewport = window.visualViewport;
+      const leftEdge = viewport?.offsetLeft || 0;
+      const topEdge = viewport?.offsetTop || 0;
+      const width = viewport?.width || window.innerWidth;
+      const height = viewport?.height || window.innerHeight;
+      const rect = mentionOpen ? selection.current?.getBoundingClientRect() : fieldTrigger.current?.getBoundingClientRect();
+      if (!rect) return;
+      const above = rect.top - topEdge - 8;
+      const below = topEdge + height - rect.bottom - 8;
+      const placeAbove = above >= 220 || above > below;
+      const maxHeight = Math.max(80, Math.min(320, (placeAbove ? above : below) - 12));
+      const menuHeight = Math.min(fieldMenu.current?.scrollHeight || 320, maxHeight);
+      setMenuPosition({
+        left: Math.max(leftEdge + 12, Math.min(rect.left, leftEdge + width - Math.min(380, width - 24) - 12)),
+        top: Math.max(topEdge + 12, placeAbove ? rect.top - menuHeight - 8 : rect.bottom + 8), maxHeight,
+      });
+    }
+    function outside(event: PointerEvent) {
+      const node = event.target as Node;
+      if (!fieldMenu.current?.contains(node) && !fieldTrigger.current?.contains(node)) {
+        setFieldOpen(false); setMentionOpen(false);
+      }
+    }
+    position();
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    window.visualViewport?.addEventListener('resize', position);
+    window.visualViewport?.addEventListener('scroll', position);
+    document.addEventListener('pointerdown', outside);
+    return () => {
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+      window.visualViewport?.removeEventListener('resize', position);
+      window.visualViewport?.removeEventListener('scroll', position);
+      document.removeEventListener('pointerdown', outside);
+    };
+  }, [fieldOpen, mentionOpen, fieldSearch]);
+  useEffect(() => { setFieldOpen(false); setMentionOpen(false); }, [draft?.key]);
+  async function api(url: string, method = 'GET', body?: unknown, signal?: AbortSignal) {
+    const response = await fetch(url, { method, headers: { ...authHeaders(token), 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal });
+    const data = await response.json();
+    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Unable to save or load the document.');
+    return data;
+  }
+  useEffect(() => {
+    const controller = new AbortController();
+    api(`${API_BASE}/api/companies`, 'GET', undefined, controller.signal).then(rows => { setCompanies(rows); setCompanyId(rows[0]?.id || ''); })
+      .catch(e => { if (!controller.signal.aborted) setMessage(e.message); });
+    return () => controller.abort();
+  }, [token]);
+  useEffect(() => {
+    if (!companyId) return;
+    const controller = new AbortController();
+    setBusy(true); setDraft(undefined); setDocuments([]); setFields([]); setFieldOpen(false); setPreview(null); setLinkOpen(false); setMessage('');
+    api(base, 'GET', undefined, controller.signal).then(data => { setDocuments(data.items); setFields(data.fields); setDraft(data.items[0]); setDirty(false); })
+      .catch(e => { if (!controller.signal.aborted) setMessage(e.message); })
+      .finally(() => { if (!controller.signal.aborted) setBusy(false); });
+    return () => controller.abort();
+  }, [companyId, token]);
+  useEffect(() => {
+    if (editor.current) editor.current.innerHTML = draft?.body_html || '';
+  }, [draft?.key, draft?.revision]);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ''; } };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+  function maySwitch() { return !dirty || window.confirm('Discard your unsaved document changes?'); }
+  function update(values: Partial<CompanyDocument>) {
+    setDraft(current => current ? { ...current, ...values } : current); setDirty(true); setPreview(null); setMessage('');
+  }
+  function command(name: string, value?: string) {
+    editor.current?.focus(); document.execCommand(name, false, value);
+    update({ body_html: editor.current?.innerHTML || '' });
+  }
+  function editorInput() {
+    update({ body_html: editor.current?.innerHTML || '' });
+    const current = window.getSelection();
+    if (!current?.isCollapsed || !current.rangeCount || current.anchorNode?.nodeType !== Node.TEXT_NODE) return;
+    const node = current.anchorNode;
+    const before = (node.textContent || '').slice(0, current.anchorOffset);
+    const match = /(?:^|\s)@([\w ]{0,40})$/.exec(before);
+    if (!match) { if (mentionOpen) { setFieldOpen(false); setMentionOpen(false); } return; }
+    const range = current.getRangeAt(0).cloneRange();
+    range.setStart(node, before.length - match[1].length - 1);
+    selection.current = range;
+    setFieldSearch(match[1]); setFieldIndex(0); setFieldOpen(true); setMentionOpen(true); setLinkOpen(false);
+  }
+  async function save() {
+    if (!draft) return;
+    setBusy(true); setMessage('');
+    try {
+      const saved = await api(`${base}/${draft.key}`, 'PUT', draft);
+      setDocuments(current => [...current.filter(row => row.key !== saved.key), saved]);
+      setDraft(saved); setDirty(false); setMessage('Document saved.');
+    } catch (e) { setMessage((e as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <main className="company-documents">
+    <Link to="/settings">Back to Settings</Link><h1>Company documents</h1>
+    <p>Documents are appended to matching estimates. Signed copies keep the wording originally reviewed.</p>
+    <label>Company<select value={companyId} disabled={busy} onChange={e => { if (maySwitch()) setCompanyId(e.target.value); }}>
+      {companies.map(company => <option key={company.id} value={company.id}>{company.name}</option>)}
+    </select></label>
+    <div className="company-documents-layout"><nav aria-label="Company documents">
+      {documents.map(row => <button key={row.key} type="button" disabled={busy} aria-current={draft?.key === row.key ? 'page' : undefined} onClick={() => { if (maySwitch()) { setDraft(row); setDirty(false); setPreview(null); setLinkOpen(false); } }}>{row.title}{!row.enabled && ' (disabled)'}</button>)}
+      <button type="button" disabled={!companyId || busy} onClick={() => { if (maySwitch()) { setDraft({ key: crypto.randomUUID(), title: 'New document', body_html: '', move_type: 'Long Distance', enabled: true, revision: 0 }); setDirty(true); setPreview(null); setLinkOpen(false); } }}>Add document</button>
+    </nav>
+    {draft && <section>
+      <label>Document name<input value={draft.title} maxLength={200} disabled={busy} onChange={e => update({ title: e.target.value })} /></label>
+      <div className="company-documents-options"><label>Include for<select value={draft.move_type} disabled={busy} onChange={e => update({ move_type: e.target.value })}><option>Long Distance</option><option>Local</option><option value="All">All moves</option></select></label>
+        <label><input type="checkbox" checked={draft.enabled} disabled={busy} onChange={e => update({ enabled: e.target.checked })} /> Include in estimate</label></div>
+      <p>Type <strong>@</strong> to insert a company detail. Keep typing to search, then choose a field. Each suggestion shows this company's saved value.</p>
+      {fields.some(field => field.missing && (draft.body_html + draft.title).includes(`{{${field.key}}}`)) && <p role="alert">Missing company details: {fields.filter(field => field.missing && (draft.body_html + draft.title).includes(`{{${field.key}}}`)).map(field => field.label).join(', ')}. <Link to="/settings/companies" target="_blank" rel="noopener noreferrer">Fill them in under Companies</Link> before using this document.</p>}
+      <div className="company-documents-toolbar" role="toolbar" aria-label="Document formatting">
+        {[['Bold', 'bold'], ['Italic', 'italic'], ['Underline', 'underline'], ['Bullets', 'insertUnorderedList'], ['Numbered list', 'insertOrderedList']].map(([label, action]) => <button type="button" key={action} disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => command(action)}>{label}</button>)}
+        <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => command('formatBlock', 'h3')}>Heading</button>
+        <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => command('formatBlock', 'p')}>Paragraph</button>
+        <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => {
+          const current = window.getSelection();
+          if (!current?.rangeCount || !editor.current?.contains(current.anchorNode)) { setMessage('Select the text to turn into a link first.'); return; }
+          selection.current = current.getRangeAt(0).cloneRange(); setLinkUrl(''); setLinkOpen(true);
+        }}>Add link</button>
+        <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => command('unlink')}>Remove link</button>
+        <button ref={fieldTrigger} type="button" disabled={busy} aria-expanded={fieldOpen} onMouseDown={e => e.preventDefault()} onClick={() => {
+          const current = window.getSelection();
+          selection.current = current?.rangeCount && editor.current?.contains(current.anchorNode) ? current.getRangeAt(0).cloneRange() : null;
+          setFieldSearch(''); setFieldIndex(0); setMentionOpen(false); setFieldOpen(!fieldOpen); setLinkOpen(false);
+        }}>Insert company detail</button>
+      </div>
+      {fieldOpen && <section ref={fieldMenu} className="company-field-picker" style={menuPosition} aria-label="Insert company detail" onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); setFieldOpen(false); setMentionOpen(false); editor.current?.focus(); } }}>
+        <div className="company-field-menu-heading"><span>Company details</span><button type="button" aria-label="Close company details" onClick={() => { setFieldOpen(false); setMentionOpen(false); editor.current?.focus(); }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg></button></div>
+        {!mentionOpen && <label>Find a detail<input autoFocus type="search" value={fieldSearch} placeholder="Search phone, email, address..." onChange={e => { setFieldSearch(e.target.value); setFieldIndex(0); }} /></label>}
+        <div className="company-field-results" ref={fieldResults} role="listbox" aria-label="Company fields">{fields.filter(field => `${field.label} ${field.key}`.toLowerCase().includes(fieldSearch.toLowerCase())).map((field, index) => <button type="button" role="option" aria-selected={index === fieldIndex} key={field.key} onMouseDown={e => e.preventDefault()} onClick={() => {
+          editor.current?.focus(); const current = window.getSelection(); current?.removeAllRanges();
+          if (selection.current && editor.current?.contains(selection.current.startContainer)) current?.addRange(selection.current);
+          else if (editor.current) { const range = document.createRange(); range.selectNodeContents(editor.current); range.collapse(false); current?.addRange(range); }
+          const placeholder = `{{${field.key}}}`;
+          command('insertHTML', field.key === 'company_phone' ? `<a href="tel:${placeholder}">${placeholder}</a>` : field.key === 'company_sender_email' ? `<a href="mailto:${placeholder}">${placeholder}</a>` : placeholder);
+          setFieldOpen(false); setMentionOpen(false);
+        }} title={`${field.label}: ${field.missing ? 'Not set' : field.value}`}><span className="company-field-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="4" y="3" width="16" height="18" rx="3" /><path d="M8 8h8M8 12h8M8 16h4" /></svg></span><strong>{field.label}</strong><small className={field.missing ? 'is-missing' : undefined}>{field.missing ? 'Not set' : field.value}</small></button>)}</div>
+        {!fields.some(field => `${field.label} ${field.key}`.toLowerCase().includes(fieldSearch.toLowerCase())) && <p>No matching details.</p>}
+      </section>}
+      {linkOpen && <div className="company-documents-link"><label>Link URL<input autoFocus type="text" value={linkUrl} placeholder="https://example.com" onChange={e => setLinkUrl(e.target.value)} /></label><button type="button" onClick={() => {
+        if (!/^(https?:\/\/|mailto:|tel:)/i.test(linkUrl.trim())) { setMessage('Use an https://, http://, mailto: or tel: link.'); return; }
+        editor.current?.focus(); const current = window.getSelection(); current?.removeAllRanges(); if (selection.current) current?.addRange(selection.current);
+        command('createLink', linkUrl.trim()); setLinkOpen(false);
+      }}>Apply link</button><button type="button" onClick={() => setLinkOpen(false)}>Cancel</button></div>}
+      <div ref={editor} contentEditable={!busy} suppressContentEditableWarning role="textbox" aria-label="Document text" aria-multiline="true" className="company-documents-editor"
+        onInput={editorInput}
+        onKeyDown={e => {
+          if (!fieldOpen || !mentionOpen) return;
+          const options = fieldResults.current?.querySelectorAll<HTMLButtonElement>('[role=option]');
+          if (e.key === 'Escape') { e.preventDefault(); setFieldOpen(false); setMentionOpen(false); }
+          if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && options?.length) {
+            e.preventDefault(); const index = (fieldIndex + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
+            setFieldIndex(index); options[index].scrollIntoView({ block: 'nearest' });
+          }
+          if (e.key === 'Enter' && options?.length) { e.preventDefault(); options[fieldIndex]?.click(); }
+        }}
+        onPaste={e => { e.preventDefault(); command('insertText', e.clipboardData.getData('text/plain')); }}
+        onDrop={e => e.preventDefault()} />
+      <div className="company-documents-actions"><button type="button" disabled={busy || !dirty || !draft.title.trim()} onClick={() => void save()}>{busy ? 'Working...' : 'Save document'}</button>
+        <button type="button" disabled={busy || !draft.title.trim()} onClick={async () => { setBusy(true); try { const result = await api(`${base}/preview`, 'POST', draft); setPreview(result.body_html); } catch (e) { setMessage((e as Error).message); } finally { setBusy(false); } }}>Preview</button>
+        {dirty && <span>Unsaved changes</span>}</div>
+      {preview !== null && <article className="company-documents-preview"><h2>Preview</h2><div dangerouslySetInnerHTML={{ __html: preview }} /></article>}
+    </section>}
+    </div><p role="status">{message || (busy ? 'Loading...' : '')}</p>
+  </main>;
+}
