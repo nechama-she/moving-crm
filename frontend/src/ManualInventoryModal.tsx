@@ -194,6 +194,8 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   }
   const [selected, setSelected] = useState('');
   const [roomPickerOpen, setRoomPickerOpen] = useState(false);
+  // Bumped when the inactive Add items button is clicked; the key restarts the hint highlight.
+  const [roomHintFlash, setRoomHintFlash] = useState(0);
   const addRoomButton = useRef<HTMLButtonElement>(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
@@ -489,7 +491,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     <div className="mi-body">
       {!catalog ? <p>Loading inventory...</p> : <>
         <div className="mi-room-toolbar">
-          <p>Choose a room to update its inventory, or add a room.</p>
+          <p key={roomHintFlash} id="mi-room-hint" className={roomHintFlash ? 'mi-hint-flash' : undefined}>{rooms.length ? 'Choose a room to add items to it, or add a room.' : 'Add a room to start adding items.'}</p>
           <div className="mi-room-picker" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setRoomPickerOpen(false); }} onKeyDown={event => {
             if (event.key === 'Escape' && roomPickerOpen) { event.preventDefault(); event.stopPropagation(); setRoomPickerOpen(false); addRoomButton.current?.focus(); }
           }}>
@@ -509,6 +511,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
           onSelect={() => { setSelected(current => current === r.id ? '' : r.id); setCustomOpen(false); }}
           onRename={name => setRooms(current => current.map(value => value.id === r.id ? { ...value, name } : value))}
           onDelete={() => { setRooms(current => current.filter(value => value.id !== r.id)); if (selected === r.id) { setSelected(''); setCustomOpen(false); } }} />)}</div>
+        {!room && <button type="button" className="slds-button mi-add-items-inactive" style={{ marginTop: 12 }} aria-disabled="true" aria-describedby="mi-room-hint" onClick={() => setRoomHintFlash(value => value + 1)}>+ Add items</button>}
         {room &&
         <section className="mi-room-editor">
         <button type="button" className="slds-button" style={{ marginTop: 12 }} disabled={busy} aria-expanded={catalogOpen} aria-controls="mi-add-item-catalog" onClick={() => { viewInventoryRequested.current = catalogOpen; setCatalogOpen(open => !open); setCustomOpen(false); }}>{catalogOpen ? 'View my inventory' : '+ Add items'}</button>
