@@ -1324,8 +1324,7 @@ Resources:
           Subnets: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
           SecurityGroupIds: [!Ref LambdaSecurityGroup]
         - !Ref "AWS::NoValue"
-      # Room for the one-time SmartMoving follow-up report (backend/sm_followups_due.py).
-      TimeoutInMinutes: 120
+      TimeoutInMinutes: 20
       Source:
         Type: CODEPIPELINE
         BuildSpec: deployspec.yml

@@ -39,12 +39,6 @@ def migrate() -> None:
             cleared = connection.execute(text("DELETE FROM first_contact_states")).rowcount
             logger.info("Cleared %s first-contact state rows", cleared)
     logger.info("Follow-up task and first-contact state setup complete")
-    # A failed import must not block the deployment; it resumes on the next deploy.
-    try:
-        from sm_followups_due import run as import_open_followups
-        import_open_followups(engine)
-    except Exception:
-        logger.exception("SmartMoving open follow-up import failed")
 
 
 if __name__ == "__main__":
