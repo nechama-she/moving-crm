@@ -11,9 +11,10 @@ import { createQueueRefreshScheduler } from "./queueRefreshScheduler";
 type SmartMovingFields = { smartmoving_id?: string; quote_number?: string };
 function SmartMovingCell({ row }: { row: SmartMovingFields }) {
   const id = row.smartmoving_id?.trim();
-  const label = row.quote_number?.trim() || id;
-  return <td style={{ padding: "14px 16px", borderBottom: "1px solid #eef1f4", overflowWrap: "anywhere" }}>
-    {id ? <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(id)}/sales`}
+  // Without a quote number, a short link label instead of the long opportunity id.
+  const label = row.quote_number?.trim() || (id ? "Open" : "");
+  return <td style={{ padding: "14px 16px", borderBottom: "1px solid #eef1f4", whiteSpace: "nowrap" }}>
+    {id ? <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(id)}/sales`} title={`SmartMoving opportunity ${id}`}
       target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()}
       onKeyDown={event => event.stopPropagation()} style={{ color: "#0b5cab", fontWeight: 700 }}>{label}</a> : label || "-"}
   </td>;
@@ -817,6 +818,7 @@ export default function UnansweredMessagesPage() {
 
   const headers = ["Client", "Platform", "Message", "Rep", "Company", "Sent To", "Message Time", "Action"];
   const cell = { padding: "13px 16px", borderBottom: "1px solid #e2e8f0", color: "#334155" } as const;
+  const overdueNote = { color: "#b91c1c", fontSize: 12, marginTop: 3 } as const;
   const filterOptions = useMemo(() => {
     const rows = queueTab === "messages" ? items : queueTab === "calls" ? missedCalls : queueTab === "leads" ? firstContactLeads : queueTab === "followups" ? followupLeads : [];
     return {
@@ -1209,7 +1211,7 @@ export default function UnansweredMessagesPage() {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
             <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>{smartMovingHeader}
-              {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Due', followupPriority === '0' ? 'Call Follow-ups' : 'Calls', followupPriority === '0' ? 'Message Follow-ups' : 'Messages / other tasks'].map((header) => <th key={header} aria-sort={header === 'Due' ? (followupSort === 'asc' ? 'ascending' : 'descending') : undefined} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>
+              {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Due', followupPriority === '0' ? 'Call Follow-ups' : 'Calls', followupPriority === '0' ? 'Message Follow-ups' : 'Messages'].map((header) => <th key={header} aria-sort={header === 'Due' ? (followupSort === 'asc' ? 'ascending' : 'descending') : undefined} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase", whiteSpace: "nowrap" }}>
                 {header === 'Due' ? <button type="button" onClick={() => setFollowupSort((current) => current === 'desc' ? 'asc' : 'desc')} title={followupSort === 'desc' ? 'Latest first - click for earliest first' : 'Earliest first - click for latest first'} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: 0, border: "none", background: "none", color: "inherit", font: "inherit", textTransform: "inherit", cursor: "pointer" }}>
                   Due<svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10" fill="currentColor" style={{ transform: followupSort === 'asc' ? "rotate(180deg)" : undefined }}><path d="M1 3h8L5 8z" /></svg>
                 </button> : header}
@@ -1249,8 +1251,8 @@ export default function UnansweredMessagesPage() {
                     <td style={cell}>{row.priority ?? "—"}</td>
                     <td style={cell}>{!row.next_due ? "—" : row.next_due.length === 10 ? new Date(`${row.next_due}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : new Date(row.next_due).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</td>
                     {/* Calls, then messages/other tasks: completed out of planned for priority 0, open count otherwise, each with the red overdue count. */}
-                    <td style={cell}><strong>{row.priority === 0 ? `${row.completed_count}/6` : `${row.timeline.filter(task => task.kind === 'call' && task.status !== 'completed').length} pending`}</strong>{row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</td>
-                    <td style={cell}><strong>{row.priority === 0 ? `${row.completed_message_count || 0}/3` : `${row.timeline.filter(task => task.kind !== 'call' && task.status !== 'completed').length} pending`}</strong>{row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</td>
+                    <td style={{ ...cell, whiteSpace: "nowrap" }}><strong>{row.priority === 0 ? `${row.completed_count}/6` : `${row.timeline.filter(task => task.kind === 'call' && task.status !== 'completed').length} pending`}</strong>{row.overdue_count ? <div style={overdueNote}>{row.overdue_count} overdue</div> : null}</td>
+                    <td style={{ ...cell, whiteSpace: "nowrap" }}><strong>{row.priority === 0 ? `${row.completed_message_count || 0}/3` : `${row.timeline.filter(task => task.kind !== 'call' && task.status !== 'completed').length} pending`}</strong>{row.overdue_message_count ? <div style={overdueNote}>{row.overdue_message_count} overdue</div> : null}</td>
                   </tr>
                   {expanded ? <tr>
                     <td colSpan={9} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
