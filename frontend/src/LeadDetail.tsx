@@ -1,4 +1,5 @@
 import LeadMeasurements from "./LeadMeasurements";
+import "./LeadHeader.css";
 import LeadSidePanel from './LeadSidePanel';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -349,7 +350,10 @@ export default function LeadDetail() {
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editMoveSize, setEditMoveSize] = useState("");
+  const [editingMoveSize, setEditingMoveSize] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
   const [refreshingSmartmoving, setRefreshingSmartmoving] = useState(false);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [users, setUsers] = useState<UserOption[]>([]);
@@ -1079,6 +1083,9 @@ export default function LeadDetail() {
       if (assignMenuRef.current && !assignMenuRef.current.contains(target)) {
         setAssignMenuOpen(false);
       }
+      if (moreMenuRef.current && !moreMenuRef.current.contains(target)) {
+        setMoreMenuOpen(false);
+      }
       if (
         statusMenuRef.current
         && !statusMenuRef.current.contains(target)
@@ -1271,7 +1278,8 @@ export default function LeadDetail() {
   }
 
   function renderRow(key: string) {
-    if (key === "meta_platform") return null;
+    // Priority is edited in the lead header.
+    if (key === "meta_platform" || key === "priority") return null;
     const isQuoteNumber = key === "quote_number";
     const val = lead![key];
     if (key === "leadgen_id" && lead?.smartmoving_id) return null;
@@ -1284,37 +1292,7 @@ export default function LeadDetail() {
       <tr key={key}>
         <td style={cellLabel}>{key === "user_id" ? (lead?.meta_platform === "instagram" ? "Instagram ID" : lead?.meta_platform === "facebook" ? "Facebook ID" : "Meta ID") : isQuoteNumber ? "SmartMoving Quote Number" : formatLabel(key)}</td>
         <td style={cellValue}>
-          {key === "priority" && canViewLeadCommunications ? (
-            <form onSubmit={async (event) => {
-              event.preventDefault();
-              if (savingPriority) return;
-              const priority = Number(new FormData(event.currentTarget).get("priority"));
-              if (!Number.isSafeInteger(priority) || priority < 0) return;
-              setSavingPriority(true);
-              setPriorityError("");
-              try {
-                const response = await fetch(`${API_BASE}/api/leads/${leadId}`, {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json", ...authHeaders(token) },
-                  body: JSON.stringify({ priority }),
-                });
-                const updated = await response.json();
-                if (!response.ok) throw new Error(typeof updated.detail === "string" ? updated.detail : `HTTP ${response.status}`);
-                setLead(updated);
-                setTaskRevision((revision) => revision + 1);
-              } catch (reason) {
-                setPriorityError(reason instanceof Error ? reason.message : "Could not save priority");
-              } finally {
-                setSavingPriority(false);
-              }
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <input key={`${leadId}:${String(val)}`} aria-label="Priority" name="priority" type="number" min="0" step="1" required defaultValue={String(val)} disabled={savingPriority} style={{ width: 80, padding: "5px 8px", border: "1px solid #dddbda", borderRadius: 4 }} />
-                <button className="slds-button" type="submit" disabled={savingPriority}>{savingPriority ? "Saving..." : "Save"}</button>
-              </div>
-              {priorityError ? <div role="alert" style={{ color: "#ba0517", marginTop: 6 }}>{priorityError}</div> : null}
-            </form>
-          ) : isInbox ? (
+          {isInbox ? (
             <a href={String(val)} target="_blank" rel="noopener noreferrer">
               Open Inbox
             </a>
@@ -1686,25 +1664,6 @@ export default function LeadDetail() {
         >
           {backLabel}
         </button>
-        {user?.role === "admin" ? (
-          <button className="slds-button"
-            type="button"
-            onClick={() => void deleteLead()}
-            disabled={deletingLead}
-            style={{
-              padding: "6px 12px",
-              border: "1px solid #fca5a5",
-              borderRadius: 6,
-              background: "#fff1f2",
-              color: "#b91c1c",
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: deletingLead ? "default" : "pointer",
-            }}
-          >
-            {deletingLead ? "Deleting..." : "Delete Lead"}
-          </button>
-        ) : null}
       </div>
 
       {previewOpen ? (
@@ -2144,32 +2103,53 @@ export default function LeadDetail() {
           setEditName(name);
           setEditPhone(phone);
           setEditEmail(email);
-          setEditMoveSize(moveSize);
           setEditingUser(true);
         }
 
-        async function saveUser() {
+        function startEditMoveSize() {
+          setEditMoveSize(moveSize);
+          setEditingMoveSize(true);
+        }
+
+        async function saveLeadFields(fields: Record<string, string>, done: () => void) {
           if (!canEditLead) return;
           setSavingUser(true);
           try {
             const res = await fetch(`${API_BASE}/api/leads/${leadId}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json", ...authHeaders(token) },
-              body: JSON.stringify({
-                full_name: editName,
-                phone_number: editPhone,
-                email: editEmail,
-                move_size: editMoveSize,
-              }),
+              body: JSON.stringify(fields),
             });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const updated = await res.json();
             setLead(updated);
-            setEditingUser(false);
+            done();
           } catch (e) {
             alert(`Failed to save: ${e instanceof Error ? e.message : "error"}`);
           } finally {
             setSavingUser(false);
+          }
+        }
+
+        async function savePriority(nextPriority: number) {
+          if (savingPriority || !Number.isSafeInteger(nextPriority) || nextPriority < 0) return;
+          if (nextPriority === Number(lead?.priority)) return;
+          setSavingPriority(true);
+          setPriorityError("");
+          try {
+            const response = await fetch(`${API_BASE}/api/leads/${leadId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", ...authHeaders(token) },
+              body: JSON.stringify({ priority: nextPriority }),
+            });
+            const updated = await response.json();
+            if (!response.ok) throw new Error(typeof updated.detail === "string" ? updated.detail : `HTTP ${response.status}`);
+            setLead(updated);
+            setTaskRevision((revision) => revision + 1);
+          } catch (reason) {
+            setPriorityError(reason instanceof Error ? reason.message : "Could not save priority");
+          } finally {
+            setSavingPriority(false);
           }
         }
 
@@ -2281,24 +2261,6 @@ export default function LeadDetail() {
           }
         }
 
-        const tile: React.CSSProperties = {
-          flex: 1,
-          minWidth: 200,
-          padding: "12px 14px",
-          background: "#f3f6f9",
-          border: "1px solid #e5e9ed",
-          borderRadius: 6,
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-        };
-        const tileLabel: React.CSSProperties = {
-          fontSize: 10,
-          fontWeight: 700,
-          color: "#706e6b",
-          textTransform: "uppercase",
-          letterSpacing: 0.5,
-        };
         const statusStyles: Record<string, React.CSSProperties> = {
           new: { background: "#eef2ff", color: "#3730a3", border: "1px solid #c7d2fe" },
           contacted: { background: "#fff7ed", color: "#c2410c", border: "1px solid #fed7aa" },
@@ -2312,471 +2274,385 @@ export default function LeadDetail() {
         const statusStyle = statusStyles[statusValue] || { background: "#f1f5f9", color: "#334155", border: "1px solid #cbd5e1" };
         const selectedCompanyName = companies.find((c) => c.id === editCompanyId)?.name || String(lead.company_name || "-");
         const assignedToName = String(lead.assigned_to_name || "").trim() || "Unassigned";
+        const priorityValue = lead.priority == null || lead.priority === "" ? "" : String(lead.priority);
+        const menuStyle: React.CSSProperties = {
+          position: "absolute",
+          top: "calc(100% + 4px)",
+          left: 0,
+          minWidth: 260,
+          maxHeight: 220,
+          overflowY: "auto",
+          background: "#fff",
+          border: "1px solid #cbd5e1",
+          borderRadius: 12,
+          boxShadow: "0 20px 50px rgba(15,23,42,.22)",
+          zIndex: 20,
+        };
+        const menuTitle: React.CSSProperties = { padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" };
+        const menuItem = (current: boolean): React.CSSProperties => ({
+          width: "100%",
+          textAlign: "left",
+          border: "none",
+          background: current ? "#f8fafc" : "#fff",
+          color: current ? "#0f172a" : "#1e293b",
+          padding: "10px 12px",
+          fontSize: 13,
+          cursor: "pointer",
+        });
+        const pencilIcon = (
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m16 3 5 5-12 12-6 1 1-6Z M13 6l5 5" /></svg>
+        );
+        const caretIcon = (
+          <svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M1 3h8L5 8z" /></svg>
+        );
 
         return (
-          <div className="lead-profile-card" style={{ ...sectionStyle, padding: 18, overflow: "visible", position: "relative" }}>
-            <div className="lead-profile-header" style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
-              <div
-                style={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: "50%",
-                  background: "#0176d3",
-                  color: "#fff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontWeight: 700,
-                  fontSize: 18,
-                  flexShrink: 0,
-                }}
-              >
-                {initials}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="lead-header" style={{ ...sectionStyle, overflow: "visible", position: "relative" }}>
+            <section className="lead-header-group lead-header-contact" aria-label="Contact">
+              <div className="lead-header-avatar" aria-hidden="true">{initials}</div>
+              <div className="lead-header-contact-body">
                 {editingUser ? (
-                  <input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    placeholder="Full name"
-                    style={{
-                      width: "100%",
-                      fontSize: 18,
-                      fontWeight: 700,
-                      color: "#032d60",
-                      padding: "4px 8px",
-                      border: "1px solid #dddbda",
-                      borderRadius: 4,
+                  <form
+                    className="lead-header-edit"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void saveLeadFields({ full_name: editName, phone_number: editPhone, email: editEmail }, () => setEditingUser(false));
                     }}
-                  />
-                ) : (
-                  <div style={{ display: "grid", gap: 4 }}>
-                    <div className="lead-profile-meta" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <div className="lead-profile-name" style={{ fontSize: 18, fontWeight: 700, color: "#032d60" }}>
-                        {name || "—"}
-                      </div>
-                      <div className="lead-profile-selector" ref={statusMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-                        <button className="slds-button"
-                          ref={statusButtonRef}
-                          type="button"
-                          aria-haspopup="menu"
-                          aria-expanded={statusMenuOpen}
-                          onClick={() => canEditLead && setStatusMenuOpen((v) => !v)}
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 6,
-                            padding: "4px 11px",
-                            borderRadius: 999,
-                            border: "none",
-                            fontSize: 11,
-                            fontWeight: 700,
-                            letterSpacing: "0.04em",
-                            textTransform: "uppercase",
-                            whiteSpace: "nowrap",
-                            cursor: canEditLead ? "pointer" : "default",
-                            boxShadow: "0 1px 2px rgba(15,23,42,.08)",
-                            ...statusStyle,
-                          }}
-                        >
-                          {statusLabel}
-                          {canEditLead ? <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.9 }}>▾</span> : null}
-                        </button>
-                      </div>
-                      {canEditLead && statusMenuOpen && statusMenuRect ? createPortal(
-                        <div
-                          ref={statusMenuPopoverRef}
-                          role="menu"
-                          onMouseDown={(e) => e.stopPropagation()}
-                          style={{
-                            position: "fixed",
-                            top: statusMenuRect.top,
-                            left: statusMenuRect.left,
-                            minWidth: Math.max(statusMenuRect.width, 220),
-                            background: "#fff",
-                            border: "1px solid #d8dde6",
-                            borderRadius: 12,
-                            boxShadow: "0 20px 50px rgba(15,23,42,.22)",
-                            overflow: "hidden",
-                            zIndex: 99999,
-                          }}
-                        >
-                          <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                            Change status
-                          </div>
-                          {LEAD_STATUS_OPTIONS.map((option) => {
-                            const optionLabel = option.charAt(0).toUpperCase() + option.slice(1);
-                            const active = option === statusValue;
-                            const optionColor = String((statusStyles[option] || {}).color || "#64748b");
-                            return (
-                              <button className="slds-button"
-                                key={option}
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={active}
-                                disabled={savingStatus}
-                                onClick={() => {
-                                  void saveStatus(option);
-                                }}
-                                style={{
-                                  width: "100%",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "space-between",
-                                  gap: 10,
-                                  border: "none",
-                                  background: active ? "#f8fafc" : "#fff",
-                                  padding: "10px 12px",
-                                  textAlign: "left",
-                                  cursor: savingStatus ? "default" : "pointer",
-                                  color: "#0f172a",
-                                }}
-                              >
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                                  <span style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: optionColor }} />
-                                  <span style={{ fontSize: 13, fontWeight: 600 }}>{optionLabel}</span>
-                                </span>
-                                {active ? <span style={{ fontSize: 12, color: "#0176d3", fontWeight: 700 }}>Current</span> : null}
-                              </button>
-                            );
-                          })}
-                          {savingStatus ? <div style={{ padding: "8px 12px", fontSize: 12, color: "#64748b", borderTop: "1px solid #eef2f7" }}>Saving...</div> : null}
-                        </div>,
-                        document.body
-                      ) : null}
-                      <div className="lead-profile-selector" ref={companyMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-                      <button className="slds-button"
-                        type="button"
-                        onClick={() => canEditCompany && setCompanyMenuOpen((v) => !v)}
-                        disabled={!canEditCompany || savingCompany}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 6,
-                          maxWidth: 240,
-                          padding: "4px 11px",
-                          borderRadius: 999,
-                          border: "1px solid #cbd5e1",
-                          background: "#f8fafc",
-                          color: "#334155",
-                          fontSize: 11,
-                          fontWeight: 700,
-                          letterSpacing: "0.04em",
-                          textTransform: "uppercase",
-                          whiteSpace: "nowrap",
-                          cursor: canEditCompany ? "pointer" : "default",
-                          boxShadow: "0 1px 2px rgba(15,23,42,.08)",
-                        }}
-                        title={savingCompany ? "Updating company" : selectedCompanyName}
-                      >
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {savingCompany ? "Updating..." : selectedCompanyName}
-                        </span>
-                        <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.9 }}>▾</span>
-                      </button>
-
-                      {canEditCompany && companyMenuOpen ? (
-                        <div
-                          style={{
-                            position: "absolute",
-                            top: "calc(100% + 4px)",
-                            left: 0,
-                            right: 0,
-                            minWidth: 260,
-                            maxHeight: 220,
-                            overflowY: "auto",
-                            background: "#fff",
-                            border: "1px solid #cbd5e1",
-                            borderRadius: 12,
-                            boxShadow: "0 20px 50px rgba(15,23,42,.22)",
-                            zIndex: 20,
-                          }}
-                        >
-                          <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                            Change company
-                          </div>
-                          {companies.map((company) => {
-                            const isCurrent = company.id === String(lead.company_id || "");
-                            return (
-                              <button className="slds-button"
-                                key={company.id}
-                                type="button"
-                                onClick={() => {
-                                  setEditCompanyId(company.id);
-                                  void saveCompany(company.id);
-                                }}
-                                disabled={savingCompany}
-                                style={{
-                                  width: "100%",
-                                  textAlign: "left",
-                                  border: "none",
-                                  background: isCurrent ? "#f8fafc" : "#fff",
-                                  color: isCurrent ? "#0f172a" : "#1e293b",
-                                  padding: "10px 12px",
-                                  fontSize: 13,
-                                  cursor: "pointer",
-                                }}
-                              >
-                                {company.name}{isCurrent ? " (current)" : ""}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : null}
-                      </div>
-                      <div className="lead-profile-selector lead-profile-assignee" ref={assignMenuRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-                        <button className="slds-button"
-                          type="button"
-                          onClick={() => user?.role === "admin" && setAssignMenuOpen((v) => !v)}
-                          disabled={user?.role !== "admin" || savingAssignedTo}
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 6,
-                            maxWidth: 280,
-                            padding: "4px 11px",
-                            borderRadius: 999,
-                            border: "1px solid #cbd5e1",
-                            background: "#f8fafc",
-                            color: "#334155",
-                            fontSize: 11,
-                            fontWeight: 700,
-                            letterSpacing: "0.04em",
-                            textTransform: "uppercase",
-                            whiteSpace: "nowrap",
-                            cursor: user?.role === "admin" ? "pointer" : "default",
-                            boxShadow: "0 1px 2px rgba(15,23,42,.08)",
-                          }}
-                          title={assignedToName}
-                        >
-                          <span className="lead-profile-assignee-label" style={{ color: "#64748b" }}>Assign To</span>
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1e293b" }}>
-                            {savingAssignedTo ? "Updating..." : assignedToName}
-                          </span>
-                          <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.9 }}>▾</span>
-                        </button>
-                        {user?.role === "admin" && assignMenuOpen ? (
-                          <div
-                            style={{
-                              position: "absolute",
-                              top: "calc(100% + 4px)",
-                              left: 0,
-                              right: 0,
-                              minWidth: 260,
-                              maxHeight: 220,
-                              overflowY: "auto",
-                              background: "#fff",
-                              border: "1px solid #cbd5e1",
-                              borderRadius: 12,
-                              boxShadow: "0 20px 50px rgba(15,23,42,.22)",
-                              zIndex: 20,
-                            }}
-                          >
-                            <div style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "#64748b", borderBottom: "1px solid #eef2f7", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                              Change assignee
-                            </div>
-                            <button className="slds-button"
-                              type="button"
-                              onClick={() => void saveAssignedTo("")}
-                              disabled={savingAssignedTo}
-                              style={{
-                                width: "100%",
-                                textAlign: "left",
-                                border: "none",
-                                background: !lead.assigned_to ? "#f8fafc" : "#fff",
-                                color: !lead.assigned_to ? "#0f172a" : "#1e293b",
-                                padding: "10px 12px",
-                                fontSize: 13,
-                                cursor: "pointer",
-                              }}
-                            >
-                              Unassigned{!lead.assigned_to ? " (current)" : ""}
-                            </button>
-                            {users.map((option) => {
-                              const isCurrent = option.id === String(lead.assigned_to || "");
-                              return (
-                                <button className="slds-button"
-                                  key={option.id}
-                                  type="button"
-                                  onClick={() => void saveAssignedTo(option.id)}
-                                  disabled={savingAssignedTo}
-                                  style={{
-                                    width: "100%",
-                                    textAlign: "left",
-                                    border: "none",
-                                    background: isCurrent ? "#f8fafc" : "#fff",
-                                    color: isCurrent ? "#0f172a" : "#1e293b",
-                                    padding: "10px 12px",
-                                    fontSize: 13,
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  {option.name}{isCurrent ? " (current)" : ""}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
+                  >
+                    <label>Name<input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Full name" /></label>
+                    <label>Phone<input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="Phone number" /></label>
+                    <label>Email<input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="Email address" /></label>
+                    <div className="lead-header-edit-buttons">
+                      <button className="slds-button" type="button" onClick={() => setEditingUser(false)} disabled={savingUser}>Cancel</button>
+                      <button className="slds-button lead-header-save" type="submit" disabled={savingUser}>{savingUser ? "Saving…" : "Save"}</button>
                     </div>
-                    {companiesError ? <div style={{ color: "#ba0517", fontSize: 12 }}>{companiesError}</div> : null}
-                  </div>
+                  </form>
+                ) : (
+                  <>
+                    <div className="lead-header-name-row">
+                      <div className="lead-header-name">{name || "—"}</div>
+                      {canEditLead ? <button className="slds-button lead-header-pencil" type="button" onClick={startEditUser} title="Edit name, phone and email" aria-label="Edit name, phone and email">{pencilIcon}</button> : null}
+                    </div>
+                    <div className="lead-header-contact-line">
+                      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z" /></svg>
+                      {phone ? <a href={`tel:${phone}`}>{phone}</a> : <span className="lead-header-empty">No phone</span>}
+                    </div>
+                    <div className="lead-header-contact-line">
+                      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-10 6L2 7" /></svg>
+                      {email ? <a href={`mailto:${email}`}>{email}</a> : <span className="lead-header-empty">No email</span>}
+                    </div>
+                  </>
                 )}
               </div>
-              {editingUser ? (
-                <div className="lead-profile-edit-actions" style={{ display: "flex", gap: 6 }}>
-                  <button className="slds-button"
-                    type="button"
-                    onClick={() => setEditingUser(false)}
-                    disabled={savingUser}
-                    style={{ padding: "5px 12px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, cursor: "pointer" }}
-                  >
-                    Cancel
-                  </button>
-                  <button className="slds-button"
-                    type="button"
-                    onClick={saveUser}
-                    disabled={savingUser}
-                    style={{ padding: "5px 12px", border: "1px solid #0176d3", borderRadius: 4, background: "#0176d3", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
-                  >
-                    {savingUser ? "Saving…" : "Save"}
-                  </button>
-                </div>
-              ) : (
-                <div className="lead-profile-actions lead-profile-view-actions" style={{ display: "flex", gap: 6 }}>
-                  {user?.role === "admin" ? <button
-                    type="button"
-                    className="slds-button lead-profile-action-button lead-profile-copy-button"
-                    onClick={() => {
-                      setCopyCompanyId("");
-                      setCopyReferralSource("");
-                      setCopyReferralEdited(false);
-                      setCopyAssignedTo("");
-                      setCopyConflicts([]);
-                      setCopyLeadError("");
-                      setCopyLeadResult(null);
-                      setCopyModalOpen(true);
-                    }}
-                    title="Copy lead to another company"
-                    style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: "pointer" }}
-                  >
-                    <svg className="lead-profile-action-icon" aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="8" y="8" width="12" height="12" rx="2" />
-                      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
-                    </svg>
-                    <span className="lead-profile-action-label"> Copy Lead</span>
-                  </button> : null}
-                  <button
-                    type="button"
-                    className="slds-button lead-profile-action-button lead-profile-files-button"
-                    onClick={() => {
-                      setFilesModalOpen(true);
-                      void loadAllJobAttachments();
-                    }}
-                    title="Files"
-                    aria-label="Files grouped by job"
-                    style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: "pointer" }}
-                  >
-                    <span aria-hidden="true">📎</span>
-                    <span className="lead-profile-action-label"> Files</span>
-                  </button>
-                  <button type="button" className="slds-button lead-profile-action-button" onClick={() => setLiveSwitchOpen(true)} style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", color: "#0176d3", cursor: "pointer" }}>Start a LiveSwitch</button>
-                  {liveSwitchOpen && leadId && <LiveSwitchPanel key={leadId} leadId={leadId} hasCustomerPage={lead?.has_customer_page === true} onClose={() => setLiveSwitchOpen(false)} onUploaded={() => { void loadAllJobAttachments(); void loadLead(); }} />}
-                  {canRefreshSmartMoving ? <button
-                    type="button"
-                    className="slds-button lead-profile-action-button lead-profile-refresh-button"
-                    onClick={() => void refreshFromSmartmoving()}
-                    disabled={refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
-                    title="Refresh from SmartMoving"
-                    style={{ padding: "5px 10px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", fontSize: 12, color: "#334155", cursor: refreshingSmartmoving ? "default" : "pointer" }}
-                  >
-                    {refreshingSmartmoving ? "Refreshing..." : "Refresh SmartMoving"}
-                  </button> : null}
-                  {canEditLead ? <button
-                    type="button"
-                    className="slds-button lead-profile-action-button lead-profile-edit-button"
-                    onClick={startEditUser}
-                    title="Edit"
-                    style={{ padding: "5px 10px", border: "1px solid #dddbda", borderRadius: 4, background: "#fff", fontSize: 12, color: "#0176d3", cursor: "pointer" }}
-                  >
-                    ✎ Edit
-                  </button> : null}
-                </div>
-              )}
-            </div>
+            </section>
 
-            <div className="lead-contact-tiles" style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              <div className="lead-info-tile" style={tile}>
-                <span style={{ fontSize: 18 }}>📞</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={tileLabel}>Phone</div>
-                  {editingUser ? (
+            <section className="lead-header-group lead-header-move" aria-label="Move">
+              <div className="lead-header-field">
+                <div className="lead-header-label">Move size</div>
+                {editingMoveSize ? (
+                  <form
+                    className="lead-header-edit"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void saveLeadFields({ move_size: editMoveSize }, () => setEditingMoveSize(false));
+                    }}
+                  >
+                    <input autoFocus aria-label="Move size" value={editMoveSize} onChange={(e) => setEditMoveSize(e.target.value)} placeholder="Move size" />
+                    <div className="lead-header-edit-buttons">
+                      <button className="slds-button" type="button" onClick={() => setEditingMoveSize(false)} disabled={savingUser}>Cancel</button>
+                      <button className="slds-button lead-header-save" type="submit" disabled={savingUser}>{savingUser ? "Saving…" : "Save"}</button>
+                    </div>
+                  </form>
+                ) : (
+                  <button className="slds-button lead-header-value-button" type="button" disabled={!canEditLead} onClick={startEditMoveSize} title={canEditLead ? "Edit move size" : undefined}>
+                    {moveSize || <span className="lead-header-empty">Not set</span>}
+                    {canEditLead ? pencilIcon : null}
+                  </button>
+                )}
+              </div>
+              <div className="lead-header-field">
+                <div className="lead-header-label">Volume / Weight</div>
+                <LeadMeasurements volume={hasVolume ? volume : 0} weight={hasWeight ? weight : 0} editable={user?.role === "admin" || user?.role === "sales_rep"} onSave={async (values) => {
+                  const response = await fetch(`${API_BASE}/api/leads/${leadId}`, {method:"PATCH",headers:{...authHeaders(token),"Content-Type":"application/json"},body:JSON.stringify(values)});
+                  const updated = await response.json();
+                  if (!response.ok) throw new Error(updated.detail || "Could not save measurements");
+                  setLead(updated);
+                }} />
+              </div>
+            </section>
+
+            <section className="lead-header-group lead-header-details" aria-label="Details">
+              <div className="lead-header-row">
+                <div className="lead-header-label">Company</div>
+                <div className="lead-header-selector" ref={companyMenuRef}>
+                  <button className="slds-button lead-header-select"
+                    type="button"
+                    onClick={() => canEditCompany && setCompanyMenuOpen((v) => !v)}
+                    disabled={!canEditCompany || savingCompany}
+                    title={savingCompany ? "Updating company" : selectedCompanyName}
+                  >
+                    <span>{savingCompany ? "Updating..." : selectedCompanyName}</span>
+                    {canEditCompany ? caretIcon : null}
+                  </button>
+                  {canEditCompany && companyMenuOpen ? (
+                    <div style={menuStyle}>
+                      <div style={menuTitle}>Change company</div>
+                      {companies.map((company) => {
+                        const isCurrent = company.id === String(lead.company_id || "");
+                        return (
+                          <button className="slds-button"
+                            key={company.id}
+                            type="button"
+                            onClick={() => {
+                              setEditCompanyId(company.id);
+                              void saveCompany(company.id);
+                            }}
+                            disabled={savingCompany}
+                            style={menuItem(isCurrent)}
+                          >
+                            {company.name}{isCurrent ? " (current)" : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="lead-header-row">
+                <div className="lead-header-label">Status</div>
+                <div className="lead-header-selector" ref={statusMenuRef}>
+                  <button className="slds-button lead-header-select lead-header-status"
+                    ref={statusButtonRef}
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={statusMenuOpen}
+                    onClick={() => canEditLead && setStatusMenuOpen((v) => !v)}
+                    disabled={!canEditLead}
+                    style={statusStyle}
+                  >
+                    <span>{statusLabel}</span>
+                    {canEditLead ? caretIcon : null}
+                  </button>
+                </div>
+                {canEditLead && statusMenuOpen && statusMenuRect ? createPortal(
+                  <div
+                    ref={statusMenuPopoverRef}
+                    role="menu"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    style={{
+                      position: "fixed",
+                      top: statusMenuRect.top,
+                      left: statusMenuRect.left,
+                      minWidth: Math.max(statusMenuRect.width, 220),
+                      background: "#fff",
+                      border: "1px solid #d8dde6",
+                      borderRadius: 12,
+                      boxShadow: "0 20px 50px rgba(15,23,42,.22)",
+                      overflow: "hidden",
+                      zIndex: 99999,
+                    }}
+                  >
+                    <div style={menuTitle}>Change status</div>
+                    {LEAD_STATUS_OPTIONS.map((option) => {
+                      const optionLabel = option.charAt(0).toUpperCase() + option.slice(1);
+                      const active = option === statusValue;
+                      const optionColor = String((statusStyles[option] || {}).color || "#64748b");
+                      return (
+                        <button className="slds-button"
+                          key={option}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={active}
+                          disabled={savingStatus}
+                          onClick={() => {
+                            void saveStatus(option);
+                          }}
+                          style={{
+                            width: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            border: "none",
+                            background: active ? "#f8fafc" : "#fff",
+                            padding: "10px 12px",
+                            textAlign: "left",
+                            cursor: savingStatus ? "default" : "pointer",
+                            color: "#0f172a",
+                          }}
+                        >
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                            <span style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: optionColor }} />
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>{optionLabel}</span>
+                          </span>
+                          {active ? <span style={{ fontSize: 12, color: "#0176d3", fontWeight: 700 }}>Current</span> : null}
+                        </button>
+                      );
+                    })}
+                    {savingStatus ? <div style={{ padding: "8px 12px", fontSize: 12, color: "#64748b", borderTop: "1px solid #eef2f7" }}>Saving...</div> : null}
+                  </div>,
+                  document.body
+                ) : null}
+              </div>
+
+              <div className="lead-header-row">
+                <div className="lead-header-label">Priority</div>
+                {canViewLeadCommunications ? (
+                  <form
+                    className="lead-header-priority"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void savePriority(Number(new FormData(event.currentTarget).get("priority")));
+                    }}
+                  >
                     <input
-                      value={editPhone}
-                      onChange={(e) => setEditPhone(e.target.value)}
-                      placeholder="Phone number"
-                      style={{ width: "100%", fontSize: 14, padding: "3px 6px", border: "1px solid #dddbda", borderRadius: 4 }}
+                      key={`${leadId}:${priorityValue}`}
+                      aria-label="Priority"
+                      name="priority"
+                      type="number"
+                      min="0"
+                      step="1"
+                      required
+                      defaultValue={priorityValue}
+                      disabled={savingPriority}
+                      onBlur={(event) => {
+                        if (event.currentTarget.value !== priorityValue) event.currentTarget.form?.requestSubmit();
+                      }}
                     />
-                  ) : phone ? (
-                    <a href={`tel:${phone}`} style={{ fontSize: 14, color: "#0176d3", fontWeight: 600, textDecoration: "none" }}>
-                      {phone}
-                    </a>
-                  ) : (
-                    <span style={{ fontSize: 14, color: "#706e6b" }}>—</span>
-                  )}
+                    {savingPriority ? <span className="lead-header-empty">Saving...</span> : null}
+                  </form>
+                ) : (
+                  <span className="lead-header-text">{priorityValue || "—"}</span>
+                )}
+              </div>
+              {priorityError ? <div role="alert" className="lead-header-error">{priorityError}</div> : null}
+
+              <div className="lead-header-row">
+                <div className="lead-header-label">Assign to</div>
+                <div className="lead-header-selector" ref={assignMenuRef}>
+                  <button className="slds-button lead-header-select"
+                    type="button"
+                    onClick={() => user?.role === "admin" && setAssignMenuOpen((v) => !v)}
+                    disabled={user?.role !== "admin" || savingAssignedTo}
+                    title={assignedToName}
+                  >
+                    <span>{savingAssignedTo ? "Updating..." : assignedToName}</span>
+                    {user?.role === "admin" ? caretIcon : null}
+                  </button>
+                  {user?.role === "admin" && assignMenuOpen ? (
+                    <div style={menuStyle}>
+                      <div style={menuTitle}>Change assignee</div>
+                      <button className="slds-button"
+                        type="button"
+                        onClick={() => void saveAssignedTo("")}
+                        disabled={savingAssignedTo}
+                        style={menuItem(!lead.assigned_to)}
+                      >
+                        Unassigned{!lead.assigned_to ? " (current)" : ""}
+                      </button>
+                      {users.map((option) => {
+                        const isCurrent = option.id === String(lead.assigned_to || "");
+                        return (
+                          <button className="slds-button"
+                            key={option.id}
+                            type="button"
+                            onClick={() => void saveAssignedTo(option.id)}
+                            disabled={savingAssignedTo}
+                            style={menuItem(isCurrent)}
+                          >
+                            {option.name}{isCurrent ? " (current)" : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                 </div>
               </div>
-              <div className="lead-info-tile" style={tile}>
-                <span style={{ fontSize: 18 }}>✉️</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={tileLabel}>Email</div>
-                  {editingUser ? (
-                    <input
-                      value={editEmail}
-                      onChange={(e) => setEditEmail(e.target.value)}
-                      placeholder="Email address"
-                      style={{ width: "100%", fontSize: 14, padding: "3px 6px", border: "1px solid #dddbda", borderRadius: 4 }}
-                    />
-                  ) : email ? (
-                    <a href={`mailto:${email}`} style={{ fontSize: 14, color: "#0176d3", fontWeight: 600, textDecoration: "none", wordBreak: "break-all" }}>
-                      {email}
-                    </a>
-                  ) : (
-                    <span style={{ fontSize: 14, color: "#706e6b" }}>—</span>
-                  )}
-                </div>
+              {companiesError ? <div className="lead-header-error">{companiesError}</div> : null}
+            </section>
+
+            <section className="lead-header-group lead-header-actions" aria-label="Actions">
+              {canRefreshSmartMoving ? <button
+                type="button"
+                className="slds-button lead-header-action"
+                onClick={() => void refreshFromSmartmoving()}
+                disabled={refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
+                title="Refresh from SmartMoving"
+              >
+                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
+                {refreshingSmartmoving ? "Refreshing..." : "Refresh SmartMoving"}
+              </button> : null}
+              <button type="button" className="slds-button lead-header-action" onClick={() => setLiveSwitchOpen(true)}>
+                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m23 7-7 5 7 5V7z" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
+                Start a LiveSwitch
+              </button>
+              {liveSwitchOpen && leadId && <LiveSwitchPanel key={leadId} leadId={leadId} hasCustomerPage={lead?.has_customer_page === true} onClose={() => setLiveSwitchOpen(false)} onUploaded={() => { void loadAllJobAttachments(); void loadLead(); }} />}
+              <div className="lead-header-action-pair">
+                {user?.role === "admin" ? <button
+                  type="button"
+                  className="slds-button lead-header-action"
+                  onClick={() => {
+                    setCopyCompanyId("");
+                    setCopyReferralSource("");
+                    setCopyReferralEdited(false);
+                    setCopyAssignedTo("");
+                    setCopyConflicts([]);
+                    setCopyLeadError("");
+                    setCopyLeadResult(null);
+                    setCopyModalOpen(true);
+                  }}
+                  title="Copy lead to another company"
+                >
+                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>
+                  Copy lead
+                </button> : null}
+                <button
+                  type="button"
+                  className="slds-button lead-header-action"
+                  onClick={() => {
+                    setFilesModalOpen(true);
+                    void loadAllJobAttachments();
+                  }}
+                  title="Files grouped by job"
+                >
+                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>
+                  Files
+                </button>
+                {user?.role === "admin" ? (
+                  <div className="lead-header-more" ref={moreMenuRef}>
+                    <button
+                      type="button"
+                      className="slds-button lead-header-action lead-header-more-button"
+                      aria-haspopup="menu"
+                      aria-expanded={moreMenuOpen}
+                      aria-label="More actions"
+                      title="More actions"
+                      onClick={() => setMoreMenuOpen((v) => !v)}
+                    >
+                      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
+                    </button>
+                    {moreMenuOpen ? (
+                      <div role="menu" style={{ ...menuStyle, left: "auto", right: 0, minWidth: 180 }}>
+                        <button
+                          className="slds-button"
+                          type="button"
+                          role="menuitem"
+                          disabled={deletingLead}
+                          onClick={() => {
+                            setMoreMenuOpen(false);
+                            void deleteLead();
+                          }}
+                          style={{ ...menuItem(false), color: "#b91c1c", fontWeight: 600 }}
+                        >
+                          {deletingLead ? "Deleting..." : "Delete lead"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
-              <div className="lead-info-tile" style={tile}>
-                <span style={{ fontSize: 18 }}>📦</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={tileLabel}>Move Size</div>
-                  {editingUser ? (
-                    <input
-                      value={editMoveSize}
-                      onChange={(e) => setEditMoveSize(e.target.value)}
-                      placeholder="Move size"
-                      style={{ width: "100%", fontSize: 14, padding: "3px 6px", border: "1px solid #dddbda", borderRadius: 4 }}
-                    />
-                  ) : moveSize ? (
-                    <span style={{ fontSize: 14, color: "#334155", fontWeight: 600 }}>{moveSize}</span>
-                  ) : (
-                    <span style={{ fontSize: 14, color: "#706e6b" }}>—</span>
-                  )}
-                </div>
-              </div>
-              <div className="lead-info-tile" style={tile}>
-                <span style={{ fontSize: 18 }}>⚖️</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={tileLabel}>Volume / Weight</div>
-                  <LeadMeasurements volume={hasVolume ? volume : 0} weight={hasWeight ? weight : 0} editable={user?.role === "admin" || user?.role === "sales_rep"} onSave={async (values) => {
-                    const response = await fetch(`${API_BASE}/api/leads/${leadId}`, {method:"PATCH",headers:{...authHeaders(token),"Content-Type":"application/json"},body:JSON.stringify(values)});
-                    const updated = await response.json();
-                    if (!response.ok) throw new Error(updated.detail || "Could not save measurements");
-                    setLead(updated);
-                  }} />
-                </div>
-              </div>
-            </div>
+            </section>
           </div>
         );
       })()}
