@@ -23,3 +23,6 @@
   .lead-side-content label { min-width:0; }
 }
 @media(max-height:500px) and (min-width:701px) { .lead-side-tools { top:90px; } .lead-side-drawer { top:8px; bottom:8px; } }
+/* Keep the floating rail from covering the lead page once the page is no longer centered with room beside it. */
+@media(max-width:1290px) { .lead-detail-page:has(.lead-side-tools) { padding-right:78px !important; } }
+@media(max-width:700px) { .lead-detail-page:has(.lead-side-tools) { padding-right:58px !important; } }

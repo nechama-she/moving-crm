@@ -1,6 +1,6 @@
 .lead-header {
   display: grid;
-  grid-template-columns: minmax(240px, 1.25fr) minmax(170px, 0.8fr) minmax(260px, 1.1fr) minmax(180px, auto);
+  grid-template-columns: minmax(240px, 1.3fr) minmax(170px, 0.8fr) minmax(280px, 1.2fr) auto;
 }
 
 .lead-header-group {
@@ -246,6 +246,8 @@
 .lead-header-priority input {
   box-sizing: border-box;
   width: 72px;
+  height: 28px;
+  min-height: 0;
   padding: 4px 8px;
   border: 1px solid #d8dde6;
   border-radius: 6px;
@@ -266,48 +268,54 @@
 }
 
 .lead-header-actions {
-  display: grid;
-  align-content: start;
-  gap: 6px;
-}
-
-.lead-header-action-pair {
   display: flex;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 4px;
 }
 
-.lead-header-action-pair > .lead-header-action {
-  flex: 1;
-}
-
-.lead-header-action {
-  display: inline-flex;
+.lead-header-tool {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #fff;
-  color: #0176d3;
-  font-size: 12px;
+  gap: 4px;
+  width: 58px;
+  padding: 8px 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: #0b5cab;
+  font-size: 11px;
   font-weight: 600;
-  white-space: nowrap;
   cursor: pointer;
 }
 
-.lead-header-action:disabled {
+.lead-header-tool:hover {
+  border-color: #cddded;
+  background: #eef6ff;
+}
+
+.lead-header-tool:disabled {
   color: #94a3b8;
+  background: none;
+  border-color: transparent;
   cursor: default;
 }
 
-.lead-header-more {
-  position: relative;
-  display: flex;
+.lead-header-tool-danger {
+  color: #b91c1c;
 }
 
-.lead-header-more-button {
-  padding: 6px 9px;
+.lead-header-tool-danger:hover {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.lead-header-tool .is-spinning {
+  animation: lead-header-spin 0.8s linear infinite;
+}
+
+@keyframes lead-header-spin {
+  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 1100px) {
@@ -339,12 +347,6 @@
   }
 
   .lead-header-actions {
-    display: flex;
-    flex-wrap: wrap;
-  }
-
-  .lead-header-actions > .lead-header-action,
-  .lead-header-action-pair {
-    flex: 1 1 auto;
+    justify-content: flex-start;
   }
 }

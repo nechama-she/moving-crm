@@ -1,7 +1,7 @@
 import LeadMeasurements from "./LeadMeasurements";
 import "./LeadHeader.css";
 import { forgetRecentLead, rememberRecentLead } from "./recentLeads";
-import LeadSidePanel from './LeadSidePanel';
+import LeadSidePanel, { type LeadSideAction } from './LeadSidePanel';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
@@ -353,8 +353,6 @@ export default function LeadDetail() {
   const [editMoveSize, setEditMoveSize] = useState("");
   const [editingMoveSize, setEditingMoveSize] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  const moreMenuRef = useRef<HTMLDivElement | null>(null);
   const [refreshingSmartmoving, setRefreshingSmartmoving] = useState(false);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [users, setUsers] = useState<UserOption[]>([]);
@@ -1086,9 +1084,6 @@ export default function LeadDetail() {
       if (assignMenuRef.current && !assignMenuRef.current.contains(target)) {
         setAssignMenuOpen(false);
       }
-      if (moreMenuRef.current && !moreMenuRef.current.contains(target)) {
-        setMoreMenuOpen(false);
-      }
       if (
         statusMenuRef.current
         && !statusMenuRef.current.contains(target)
@@ -1647,6 +1642,26 @@ export default function LeadDetail() {
       setCheckingCopyConflicts(false);
     }
   }
+
+  const sideActions: LeadSideAction[] = [
+    {
+      key: "estimate",
+      label: "Estimate",
+      title: "Start a LiveSwitch video estimate",
+      icon: <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m22 8-6 4 6 4V8Z" /><rect x="2" y="6" width="14" height="12" rx="2" /></svg>,
+      onClick: () => setLiveSwitchOpen(true),
+    },
+    {
+      key: "files",
+      label: "Files",
+      title: "Files grouped by job",
+      icon: <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>,
+      onClick: () => {
+        setFilesModalOpen(true);
+        void loadAllJobAttachments();
+      },
+    },
+  ];
 
   return (
     <div className="lead-detail-page" style={{ width: "100%", height: "calc(100vh - 52px)", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "24px clamp(16px, 3vw, 28px) 40px", background: "#f6f8fb", fontFamily: "inherit" }}>
@@ -2423,6 +2438,48 @@ export default function LeadDetail() {
               </div>
 
               <div className="lead-header-row">
+                <div className="lead-header-label">Assign to</div>
+                <div className="lead-header-selector" ref={assignMenuRef}>
+                  <button className="slds-button lead-header-select"
+                    type="button"
+                    onClick={() => user?.role === "admin" && setAssignMenuOpen((v) => !v)}
+                    disabled={user?.role !== "admin" || savingAssignedTo}
+                    title={assignedToName}
+                  >
+                    <span>{savingAssignedTo ? "Updating..." : assignedToName}</span>
+                    {user?.role === "admin" ? caretIcon : null}
+                  </button>
+                  {user?.role === "admin" && assignMenuOpen ? (
+                    <div style={menuStyle}>
+                      <div style={menuTitle}>Change assignee</div>
+                      <button className="slds-button"
+                        type="button"
+                        onClick={() => void saveAssignedTo("")}
+                        disabled={savingAssignedTo}
+                        style={menuItem(!lead.assigned_to)}
+                      >
+                        Unassigned{!lead.assigned_to ? " (current)" : ""}
+                      </button>
+                      {users.map((option) => {
+                        const isCurrent = option.id === String(lead.assigned_to || "");
+                        return (
+                          <button className="slds-button"
+                            key={option.id}
+                            type="button"
+                            onClick={() => void saveAssignedTo(option.id)}
+                            disabled={savingAssignedTo}
+                            style={menuItem(isCurrent)}
+                          >
+                            {option.name}{isCurrent ? " (current)" : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="lead-header-row">
                 <div className="lead-header-label">Status</div>
                 <div className="lead-header-selector" ref={statusMenuRef}>
                   <button className="slds-button lead-header-select lead-header-status"
@@ -2531,70 +2588,24 @@ export default function LeadDetail() {
               </div>
               {priorityError ? <div role="alert" className="lead-header-error">{priorityError}</div> : null}
 
-              <div className="lead-header-row">
-                <div className="lead-header-label">Assign to</div>
-                <div className="lead-header-selector" ref={assignMenuRef}>
-                  <button className="slds-button lead-header-select"
-                    type="button"
-                    onClick={() => user?.role === "admin" && setAssignMenuOpen((v) => !v)}
-                    disabled={user?.role !== "admin" || savingAssignedTo}
-                    title={assignedToName}
-                  >
-                    <span>{savingAssignedTo ? "Updating..." : assignedToName}</span>
-                    {user?.role === "admin" ? caretIcon : null}
-                  </button>
-                  {user?.role === "admin" && assignMenuOpen ? (
-                    <div style={menuStyle}>
-                      <div style={menuTitle}>Change assignee</div>
-                      <button className="slds-button"
-                        type="button"
-                        onClick={() => void saveAssignedTo("")}
-                        disabled={savingAssignedTo}
-                        style={menuItem(!lead.assigned_to)}
-                      >
-                        Unassigned{!lead.assigned_to ? " (current)" : ""}
-                      </button>
-                      {users.map((option) => {
-                        const isCurrent = option.id === String(lead.assigned_to || "");
-                        return (
-                          <button className="slds-button"
-                            key={option.id}
-                            type="button"
-                            onClick={() => void saveAssignedTo(option.id)}
-                            disabled={savingAssignedTo}
-                            style={menuItem(isCurrent)}
-                          >
-                            {option.name}{isCurrent ? " (current)" : ""}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
               {companiesError ? <div className="lead-header-error">{companiesError}</div> : null}
             </section>
 
-            <section className="lead-header-group lead-header-actions" aria-label="Actions">
-              {canRefreshSmartMoving ? <button
-                type="button"
-                className="slds-button lead-header-action"
-                onClick={() => void refreshFromSmartmoving()}
-                disabled={refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
-                title="Refresh from SmartMoving"
-              >
-                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
-                {refreshingSmartmoving ? "Refreshing..." : "Refresh SmartMoving"}
-              </button> : null}
-              <button type="button" className="slds-button lead-header-action" onClick={() => setLiveSwitchOpen(true)}>
-                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m23 7-7 5 7 5V7z" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
-                Start a LiveSwitch
-              </button>
-              {liveSwitchOpen && leadId && <LiveSwitchPanel key={leadId} leadId={leadId} hasCustomerPage={lead?.has_customer_page === true} onClose={() => setLiveSwitchOpen(false)} onUploaded={() => { void loadAllJobAttachments(); void loadLead(); }} />}
-              <div className="lead-header-action-pair">
+            {canRefreshSmartMoving || user?.role === "admin" ? (
+              <section className="lead-header-group lead-header-actions" aria-label="Lead actions">
+                {canRefreshSmartMoving ? <button
+                  type="button"
+                  className="slds-button lead-header-tool"
+                  onClick={() => void refreshFromSmartmoving()}
+                  disabled={refreshingSmartmoving || !String(lead.smartmoving_id || "").trim()}
+                  title="Refresh from SmartMoving"
+                >
+                  <svg className={refreshingSmartmoving ? "is-spinning" : undefined} aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
+                  <span>{refreshingSmartmoving ? "Refreshing" : "Refresh"}</span>
+                </button> : null}
                 {user?.role === "admin" ? <button
                   type="button"
-                  className="slds-button lead-header-action"
+                  className="slds-button lead-header-tool"
                   onClick={() => {
                     setCopyCompanyId("");
                     setCopyReferralSource("");
@@ -2607,55 +2618,21 @@ export default function LeadDetail() {
                   }}
                   title="Copy lead to another company"
                 >
-                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>
-                  Copy lead
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>
+                  <span>Copy</span>
                 </button> : null}
-                <button
+                {user?.role === "admin" ? <button
                   type="button"
-                  className="slds-button lead-header-action"
-                  onClick={() => {
-                    setFilesModalOpen(true);
-                    void loadAllJobAttachments();
-                  }}
-                  title="Files grouped by job"
+                  className="slds-button lead-header-tool lead-header-tool-danger"
+                  onClick={() => void deleteLead()}
+                  disabled={deletingLead}
+                  title="Delete lead"
                 >
-                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>
-                  Files
-                </button>
-                {user?.role === "admin" ? (
-                  <div className="lead-header-more" ref={moreMenuRef}>
-                    <button
-                      type="button"
-                      className="slds-button lead-header-action lead-header-more-button"
-                      aria-haspopup="menu"
-                      aria-expanded={moreMenuOpen}
-                      aria-label="More actions"
-                      title="More actions"
-                      onClick={() => setMoreMenuOpen((v) => !v)}
-                    >
-                      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
-                    </button>
-                    {moreMenuOpen ? (
-                      <div role="menu" style={{ ...menuStyle, left: "auto", right: 0, minWidth: 180 }}>
-                        <button
-                          className="slds-button"
-                          type="button"
-                          role="menuitem"
-                          disabled={deletingLead}
-                          onClick={() => {
-                            setMoreMenuOpen(false);
-                            void deleteLead();
-                          }}
-                          style={{ ...menuItem(false), color: "#b91c1c", fontWeight: 600 }}
-                        >
-                          {deletingLead ? "Deleting..." : "Delete lead"}
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            </section>
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6" /></svg>
+                  <span>{deletingLead ? "Deleting" : "Delete"}</span>
+                </button> : null}
+              </section>
+            ) : null}
           </div>
         );
       })()}
@@ -3509,7 +3486,7 @@ export default function LeadDetail() {
 
       {canViewLeadCommunications ? (
         <>
-        <LeadSidePanel key={leadId} active={activeTab} onSelect={setActiveTab} tasksRequested={location.hash === '#tasks'}>
+        <LeadSidePanel key={leadId} active={activeTab} onSelect={setActiveTab} tasksRequested={location.hash === '#tasks'} actions={sideActions}>
           <div style={{ display: "none", borderBottom: "1px solid #dddbda", background: "#f3f2f2" }}>
             <button className="slds-button"
               onClick={() => setActiveTab("conversations")}
@@ -3590,7 +3567,10 @@ export default function LeadDetail() {
           <LeadLogsPanel leadId={leadId!} token={token} />
         </section>
         </>
-      ) : null}
+      ) : (
+        <LeadSidePanel key={leadId} active={activeTab} onSelect={setActiveTab} tasksRequested={false} showTabs={false} actions={sideActions} />
+      )}
+      {liveSwitchOpen && leadId && <LiveSwitchPanel key={leadId} leadId={leadId} hasCustomerPage={lead?.has_customer_page === true} onClose={() => setLiveSwitchOpen(false)} onUploaded={() => { void loadAllJobAttachments(); void loadLead(); }} />}
       </div>
     </div>
   );
