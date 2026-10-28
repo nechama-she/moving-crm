@@ -2364,41 +2364,6 @@ export default function LeadDetail() {
               </div>
             </section>
 
-            <section className="lead-header-group lead-header-move" aria-label="Move">
-              <div className="lead-header-field">
-                <div className="lead-header-label">Move size</div>
-                {editingMoveSize ? (
-                  <form
-                    className="lead-header-edit"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void saveLeadFields({ move_size: editMoveSize }, () => setEditingMoveSize(false));
-                    }}
-                  >
-                    <input autoFocus aria-label="Move size" value={editMoveSize} onChange={(e) => setEditMoveSize(e.target.value)} placeholder="Move size" />
-                    <div className="lead-header-edit-buttons">
-                      <button className="slds-button" type="button" onClick={() => setEditingMoveSize(false)} disabled={savingUser}>Cancel</button>
-                      <button className="slds-button lead-header-save" type="submit" disabled={savingUser}>{savingUser ? "Saving…" : "Save"}</button>
-                    </div>
-                  </form>
-                ) : (
-                  <button className="slds-button lead-header-value-button" type="button" disabled={!canEditLead} onClick={startEditMoveSize} title={canEditLead ? "Edit move size" : undefined}>
-                    {moveSize || <span className="lead-header-empty">Not set</span>}
-                    {canEditLead ? pencilIcon : null}
-                  </button>
-                )}
-              </div>
-              <div className="lead-header-field">
-                <div className="lead-header-label">Volume / Weight</div>
-                <LeadMeasurements volume={hasVolume ? volume : 0} weight={hasWeight ? weight : 0} editable={user?.role === "admin" || user?.role === "sales_rep"} onSave={async (values) => {
-                  const response = await fetch(`${API_BASE}/api/leads/${leadId}`, {method:"PATCH",headers:{...authHeaders(token),"Content-Type":"application/json"},body:JSON.stringify(values)});
-                  const updated = await response.json();
-                  if (!response.ok) throw new Error(updated.detail || "Could not save measurements");
-                  setLead(updated);
-                }} />
-              </div>
-            </section>
-
             <section className="lead-header-group lead-header-details" aria-label="Details">
               <div className="lead-header-row">
                 <div className="lead-header-label">Company</div>
@@ -2589,6 +2554,41 @@ export default function LeadDetail() {
               {priorityError ? <div role="alert" className="lead-header-error">{priorityError}</div> : null}
 
               {companiesError ? <div className="lead-header-error">{companiesError}</div> : null}
+            </section>
+
+            <section className="lead-header-group lead-header-move" aria-label="Move">
+              <div className="lead-header-field">
+                <div className="lead-header-label">Move size</div>
+                {editingMoveSize ? (
+                  <form
+                    className="lead-header-edit"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void saveLeadFields({ move_size: editMoveSize }, () => setEditingMoveSize(false));
+                    }}
+                  >
+                    <input autoFocus aria-label="Move size" value={editMoveSize} onChange={(e) => setEditMoveSize(e.target.value)} placeholder="Move size" />
+                    <div className="lead-header-edit-buttons">
+                      <button className="slds-button" type="button" onClick={() => setEditingMoveSize(false)} disabled={savingUser}>Cancel</button>
+                      <button className="slds-button lead-header-save" type="submit" disabled={savingUser}>{savingUser ? "Saving…" : "Save"}</button>
+                    </div>
+                  </form>
+                ) : (
+                  <button className="slds-button lead-header-value-button" type="button" disabled={!canEditLead} onClick={startEditMoveSize} title={canEditLead ? "Edit move size" : undefined}>
+                    {moveSize || <span className="lead-header-empty">Not set</span>}
+                    {canEditLead ? pencilIcon : null}
+                  </button>
+                )}
+              </div>
+              <div className="lead-header-field">
+                <div className="lead-header-label">Volume / Weight</div>
+                <LeadMeasurements volume={hasVolume ? volume : 0} weight={hasWeight ? weight : 0} editable={user?.role === "admin" || user?.role === "sales_rep"} onSave={async (values) => {
+                  const response = await fetch(`${API_BASE}/api/leads/${leadId}`, {method:"PATCH",headers:{...authHeaders(token),"Content-Type":"application/json"},body:JSON.stringify(values)});
+                  const updated = await response.json();
+                  if (!response.ok) throw new Error(updated.detail || "Could not save measurements");
+                  setLead(updated);
+                }} />
+              </div>
             </section>
 
             {canRefreshSmartMoving || user?.role === "admin" ? (
