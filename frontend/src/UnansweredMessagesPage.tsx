@@ -86,6 +86,8 @@ function CollapsibleNotes({ notes, style }: { notes: string; style?: React.CSSPr
   </div>;
 }
 
+const FOLLOWUPS_COLLAPSED_KEY = "salesWorkQueue.followupsCollapsed";
+
 function CollapsibleHeight({ children, maxHeight = 160 }: { children: React.ReactNode; maxHeight?: number }) {
   const [open, setOpen] = useState(false);
   const [overflows, setOverflows] = useState(false);
@@ -192,6 +194,15 @@ export default function UnansweredMessagesPage() {
   const [loadingFollowups, setLoadingFollowups] = useState(false);
   const [exportingFollowups, setExportingFollowups] = useState(false);
   const [expandedFollowups, setExpandedFollowups] = useState<Set<string>>(() => new Set());
+  const [followupsCollapsed, setFollowupsCollapsed] = useState(() => {
+    try { return localStorage.getItem(FOLLOWUPS_COLLAPSED_KEY) === "1"; } catch { return false; }
+  });
+  const toggleFollowupsCollapsed = () => {
+    const next = !followupsCollapsed;
+    setFollowupsCollapsed(next);
+    setExpandedFollowups(new Set());
+    try { localStorage.setItem(FOLLOWUPS_COLLAPSED_KEY, next ? "1" : "0"); } catch { /* storage unavailable */ }
+  };
   const [loading, setLoading] = useState(true);
   const [loadingCalls, setLoadingCalls] = useState(true);
   const [queueStatus, setQueueStatus] = useState<{ enabled: boolean; ready: boolean; stale: boolean; updated_at: string | null } | null>(null);
@@ -1188,7 +1199,7 @@ export default function UnansweredMessagesPage() {
 
       {queueTab === "followups" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "visible" }}>
         <div style={{ padding: "16px 18px 0" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button><button type="button" className="slds-button" disabled={loadingFollowups || exportingFollowups || validatingTab !== null} onClick={() => void validateCurrentTab(true)}>Refresh from CRM</button>{validationButton}</div></div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" aria-pressed={followupsCollapsed} onClick={toggleFollowupsCollapsed} title={followupsCollapsed ? "Show task details under each lead" : "Show only one line per lead"}>{followupsCollapsed ? "Expand all" : "Collapse all"}</button><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button><button type="button" className="slds-button" disabled={loadingFollowups || exportingFollowups || validatingTab !== null} onClick={() => void validateCurrentTab(true)}>Refresh from CRM</button>{validationButton}</div></div>
           <FollowupFilters counts={priorityCounts} loading={loadingFollowups} priority={followupPriority} from={followupFrom} to={followupTo} onPriority={setFollowupPriority} onDates={(from, to) => {setFollowupFrom(from); setFollowupTo(to);}} />
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {(["due", "overdue"] as const).map(category => <button key={category} type="button" className="slds-button" aria-pressed={followupTab === category} onClick={() => setFollowupTab(category)} style={{ color: "#032d60", padding: "10px 14px", minHeight: 44, fontWeight: followupTab === category ? 700 : 400, border: "none", borderBottom: followupTab === category ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0 }}>{category === "due" ? "Due" : "Overdue Items"} ({followupCounts[category] || 0})</button>)}
@@ -1207,9 +1218,10 @@ export default function UnansweredMessagesPage() {
               {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
               {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "due" ? "No follow-ups for the selected dates." : "No overdue follow-ups for the selected dates."}</td></tr> : null}
               {filteredFollowupLeads.map((row) => {
-                const expanded = expandedFollowups.has(row.lead_id);
+                // Priority 0 rows start closed; other rows start open unless "Collapse all" is on.
+                // expandedFollowups holds the rows the user flipped from that default.
+                const expanded = (row.priority !== 0 && !followupsCollapsed) !== expandedFollowups.has(row.lead_id);
                 const toggleExpanded = () => setExpandedFollowups((current) => {
-                  if (row.priority !== 0) return current;
                   const next = new Set(current);
                   if (next.has(row.lead_id)) next.delete(row.lead_id);
                   else next.add(row.lead_id);
@@ -1219,14 +1231,14 @@ export default function UnansweredMessagesPage() {
                   <tr
                     onClick={toggleExpanded}
                     onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleExpanded(); } }}
-                    tabIndex={row.priority === 0 ? 0 : undefined}
-                    aria-expanded={row.priority === 0 ? expanded : undefined}
-                    style={{ cursor: row.priority === 0 ? "pointer" : "default", background: expanded ? "#f4f8fc" : "#fff" }}
+                    tabIndex={0}
+                    aria-expanded={expanded}
+                    style={{ cursor: "pointer", background: expanded ? "#f4f8fc" : "#fff" }}
                   >
                     <SmartMovingCell row={row} />
                     <td style={cell}>
                       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                        {row.priority === 0 && <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ color: "#0b5cab", transform: expanded ? "rotate(90deg)" : undefined }}><path d="M5 3l6 5-6 5z" /></svg>}
+                        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ color: "#0b5cab", transform: expanded ? "rotate(90deg)" : undefined }}><path d="M5 3l6 5-6 5z" /></svg>
                         <div><Link onClick={(event) => event.stopPropagation()} to={`/leads/${row.lead_id}#tasks`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</div>
                       </div>
                     </td>
@@ -1238,7 +1250,7 @@ export default function UnansweredMessagesPage() {
                     <td style={cell}><strong>{row.priority === 0 ? `${row.completed_count}/6` : `${row.timeline.filter(task => task.status !== 'completed').length} pending`}</strong>{row.priority === 0 && row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</td>
                     <td style={cell}><strong>{row.priority === 0 ? `${row.completed_message_count || 0}/3` : `${(row.overdue_count || 0) + (row.overdue_message_count || 0)} overdue`}</strong>{row.priority === 0 && row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</td>
                   </tr>
-                  {expanded || row.priority !== 0 ? <tr>
+                  {expanded ? <tr>
                     <td colSpan={9} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
                       {row.priority !== 0 ? <div style={{ padding: 16, background: '#fff', border: '1px solid #d8dde6', borderRadius: 8 }}><CollapsibleHeight><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
                         {[false, true].map(completed => {
