@@ -259,9 +259,9 @@ def sync_followup_from_smartmoving(
     completed: bool,
 ) -> dict:
     """Create or update the corresponding CRM task, keyed by remote follow-up ID."""
-    from libs.smartmoving.followup_tasks import UPSERT_TASK
+    from libs.smartmoving.followup_tasks import SMARTMOVING_UPSERT_TASK
     engine = get_engine()
-    sql = text(UPSERT_TASK)
+    sql = text(SMARTMOVING_UPSERT_TASK)
     params = {
         "smartmoving_id": smartmoving_id,
         "note_id": str(note_id),
@@ -279,7 +279,8 @@ def sync_followup_from_smartmoving(
         result = conn.execute(sql, params)
         conn.commit()
         if result.rowcount == 0:
-            return {"ok": False, "error": "lead_not_found"}
+            # No lead, a zero priority, or a rep whose follow-ups are managed in the CRM.
+            return {"ok": False, "error": "lead_not_found_or_crm_managed"}
         return {"ok": True}
 
 

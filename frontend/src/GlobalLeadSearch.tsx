@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
 import { displayPhone } from "./leadUtils";
@@ -124,20 +124,29 @@ export default function GlobalLeadSearch() {
     inputRef.current?.blur();
   }
 
-  function openLead(lead: SearchLead) {
+  const leadUrl = (lead: SearchLead) => `/leads/${lead.id}`;
+  const allResultsUrl = `/?${new URLSearchParams({ search: text })}`;
+
+  // Results are real links, so Ctrl/Cmd+click, middle-click and "Open in new tab" work natively.
+  function go(url: string, newTab: boolean) {
+    if (newTab) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
     close();
-    navigate(`/leads/${lead.id}`);
+    navigate(url);
   }
 
-  function openAllResults() {
-    const search = text;
-    close();
-    navigate(`/?${new URLSearchParams({ search })}`);
+  // A plain click navigates in place and closes the panel; modified clicks are left to the browser.
+  function onLinkClick(event: React.MouseEvent, url: string) {
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    go(url, false);
   }
 
-  function choose(index: number) {
-    if (index < items.length) openLead(items[index]);
-    else if (showAll) openAllResults();
+  function choose(index: number, newTab: boolean) {
+    if (index < items.length) go(leadUrl(items[index]), newTab);
+    else if (showAll) go(allResultsUrl, newTab);
   }
 
   const showPanel = open && (searching || recent.length > 0);
@@ -166,8 +175,9 @@ export default function GlobalLeadSearch() {
           else if (event.key === "ArrowUp") { event.preventDefault(); setActive((i) => Math.max(i - 1, 0)); }
           else if (event.key === "Enter") {
             event.preventDefault();
-            if (optionCount) choose(active);
-            else if (searching) openAllResults();
+            const newTab = event.ctrlKey || event.metaKey;
+            if (optionCount) choose(active, newTab);
+            else if (searching) go(allResultsUrl, newTab);
           }
         }}
       />
@@ -193,15 +203,15 @@ export default function GlobalLeadSearch() {
               lead.company_name || "",
             ].filter(Boolean);
             return (
-              <button
+              <Link
                 key={lead.id}
                 id={`global-search-option-${index}`}
-                type="button"
+                to={leadUrl(lead)}
                 role="option"
                 aria-selected={index === active}
                 className={`global-search-result${index === active ? " is-active" : ""}`}
                 onMouseEnter={() => setActive(index)}
-                onClick={() => openLead(lead)}
+                onClick={(event) => onLinkClick(event, leadUrl(lead))}
               >
                 <span className="global-search-name"><Highlight text={lead.full_name || "Unnamed lead"} query={searching ? text : ""} /></span>
                 {lead.status ? <span className={`global-search-status is-${lead.status}`}>{lead.status}</span> : null}
@@ -215,26 +225,27 @@ export default function GlobalLeadSearch() {
                     ))}
                   </span>
                 ) : null}
-              </button>
+              </Link>
             );
           })}
           {showAll ? (
-            <button
+            <Link
               id={`global-search-option-${items.length}`}
-              type="button"
+              to={allResultsUrl}
               role="option"
               aria-selected={active === items.length}
               className={`global-search-all${active === items.length ? " is-active" : ""}`}
               onMouseEnter={() => setActive(items.length)}
-              onClick={openAllResults}
+              onClick={(event) => onLinkClick(event, allResultsUrl)}
             >
               See all {total.toLocaleString()} {total === 1 ? "result" : "results"} for "{text}"
               <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 2l4 4-4 4" /></svg>
-            </button>
+            </Link>
           ) : null}
           <div className="global-search-footer" aria-hidden="true">
             <span><kbd>&uarr;</kbd><kbd>&darr;</kbd> to move</span>
             <span><kbd>Enter</kbd> to open</span>
+            <span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> new tab</span>
             <span><kbd>Esc</kbd> to close</span>
           </div>
         </div>

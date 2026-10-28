@@ -25,3 +25,11 @@ ON CONFLICT (lead_id, smartmoving_followup_id) DO UPDATE SET
     smartmoving_followup_type = EXCLUDED.smartmoving_followup_type,
     smartmoving_assigned_to_id = EXCLUDED.smartmoving_assigned_to_id, updated_at = now()
 """
+
+# For writes that come from SmartMoving: leave leads alone when their rep manages follow-ups in the CRM.
+SMARTMOVING_UPSERT_TASK = UPSERT_TASK.replace(
+    "  AND l.priority IS NOT NULL AND l.priority <> 0\n",
+    "  AND l.priority IS NOT NULL AND l.priority <> 0\n"
+    "  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = l.assigned_to AND u.crm_managed_followups)\n",
+)
+assert SMARTMOVING_UPSERT_TASK != UPSERT_TASK
