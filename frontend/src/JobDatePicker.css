@@ -60,14 +60,13 @@
 }
 
 /* Popover dialog */
+/* Rendered on document.body; JobDatePicker sets top/left next to the field. */
 .job-date-calendar-popover {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 200;
+  position: fixed;
+  z-index: 10000;
   display: flex;
   width: 440px;
-  max-width: calc(100vw - 32px);
+  max-width: calc(100vw - 16px);
   background: #ffffff;
   border: 1px solid #ccd5df;
   border-radius: 8px;
@@ -75,11 +74,6 @@
   padding: 14px;
   box-sizing: border-box;
   user-select: none;
-}
-
-.job-date-calendar-popover.align-right {
-  left: auto;
-  right: 0;
 }
 
 /* Sidebar presets */

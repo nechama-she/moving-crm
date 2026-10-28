@@ -1649,17 +1649,21 @@ export default function LeadDetail() {
       label: "Estimate",
       title: "Start a LiveSwitch video estimate",
       icon: <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m22 8-6 4 6 4V8Z" /><rect x="2" y="6" width="14" height="12" rx="2" /></svg>,
-      onClick: () => setLiveSwitchOpen(true),
+      open: () => setLiveSwitchOpen(true),
+      close: () => setLiveSwitchOpen(false),
+      panelSelector: ".ls-panel",
     },
     {
       key: "files",
       label: "Files",
       title: "Files grouped by job",
       icon: <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>,
-      onClick: () => {
+      open: () => {
         setFilesModalOpen(true);
         void loadAllJobAttachments();
       },
+      close: () => setFilesModalOpen(false),
+      panelSelector: ".lead-files-panel",
     },
   ];
 
@@ -1824,6 +1828,7 @@ export default function LeadDetail() {
           style={{ position: "fixed", inset: 0, zIndex: 85 }}
         >
           <div
+            className="lead-files-panel"
             role="dialog"
             aria-modal="true"
             onClick={(e) => e.stopPropagation()}
