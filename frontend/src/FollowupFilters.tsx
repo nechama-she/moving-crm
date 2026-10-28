@@ -18,11 +18,22 @@ export default function FollowupFilters({ priority, from, to, onPriority, onDate
   onDates: (from: string, to: string) => void;
 }) {
   const [rangeLabel, setRangeLabel] = useState('');
+  // `priority` is "all" or a comma-separated selection such as "1,3,none".
+  const selected = new Set(priority === 'all' ? [] : priority.split(',').filter(Boolean));
+  const toggle = (value: string) => {
+    if (value === 'all') return onPriority('all');
+    const next = new Set(selected);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    const ordered = priorities.map(([option]) => option).filter(option => next.has(option));
+    onPriority(ordered.length ? ordered.join(',') : 'all');
+  };
+  const isPressed = (value: string) => value === 'all' ? selected.size === 0 : selected.has(value);
   const displayDate = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   const label = rangeLabel || (from === localDate() && to === from ? 'Today' : from === to ? displayDate(from) : `${displayDate(from)} - ${displayDate(to)}`);
   return <div className={datesOnly ? 'followup-date-toolbar' : 'followup-filters'}>
-    {!datesOnly && <div className="followup-priorities" role="group" aria-label="Priority">
-      {priorities.map(([value, label]) => <button key={value} type="button" className="slds-button" aria-pressed={priority === value} title={label} onClick={() => onPriority(value)}>
+    {!datesOnly && <div className="followup-priorities" role="group" aria-label="Priority (pick one or more)">
+      {priorities.map(([value, label]) => <button key={value} type="button" className="slds-button" aria-pressed={isPressed(value)} title={value === 'all' ? 'Show every priority' : `${label} - click to add or remove`} onClick={() => toggle(value)}>
         <span className="followup-priority-title">{value === 'all' ? 'All priorities' : value === 'none' ? 'No priority' : `Priority ${value}`}<span className="followup-priority-count" aria-label={loading ? 'Loading count' : `${counts[value] || 0} leads`}>{loading ? '...' : (counts[value] || 0).toLocaleString()}</span></span>
         {value !== 'all' && <span className="followup-priority-label">{label}</span>}
       </button>)}

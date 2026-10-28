@@ -181,11 +181,12 @@ export default function UnansweredMessagesPage() {
   const [ignoringLead, setIgnoringLead] = useState<string | null>(null);
   const [reloadingContacts, setReloadingContacts] = useState(false);
   const contactReloadRunning = useRef(false);
-  const [followupTab, setFollowupTab] = useState<"overdue" | "due">("due");
+  const [followupTab, setFollowupTab] = useState<"overdue" | "due">("overdue");
   const [followupPriority, setFollowupPriority] = useState('all');
   const [followupFrom, setFollowupFrom] = useState(() => localDate());
   const [followupTo, setFollowupTo] = useState(() => localDate());
-  const [followupSort, setFollowupSort] = useState<"asc" | "desc">("desc");
+  // Oldest due first, so the day starts with what is most late.
+  const [followupSort, setFollowupSort] = useState<"asc" | "desc">("asc");
   const [followupLeads, setFollowupLeads] = useState<FollowupLead[]>([]);
   const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
   const [priorityCounts, setPriorityCounts] = useState<Record<string, number>>({});

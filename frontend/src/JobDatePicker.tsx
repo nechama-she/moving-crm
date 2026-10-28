@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import "./JobDatePicker.css";
 
 interface JobDatePickerProps {
@@ -53,6 +53,26 @@ export default function JobDatePicker({
   const [selectedDate, setSelectedDate] = useState(value || "");
   const [viewDate, setViewDate] = useState<Date>(() => parseIso(value));
   const containerRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [openRight, setOpenRight] = useState(alignRight);
+
+  // Open toward whichever side has room, so the calendar is not cut off at the page edge.
+  // Measured once per opening; the preferred side wins when neither side fits.
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      setOpenRight(alignRight);
+      return;
+    }
+    const container = containerRef.current;
+    const popover = popoverRef.current;
+    if (!container || !popover) return;
+    const anchor = container.getBoundingClientRect();
+    const width = popover.offsetWidth;
+    const margin = 8;
+    const fitsLeftAligned = anchor.left + width <= window.innerWidth - margin;
+    const fitsRightAligned = anchor.right - width >= margin;
+    setOpenRight(alignRight ? fitsRightAligned || !fitsLeftAligned : !fitsLeftAligned && fitsRightAligned);
+  }, [isOpen, alignRight]);
 
   // Sync state when external value changes or dropdown opens
   useEffect(() => {
@@ -181,7 +201,8 @@ export default function JobDatePicker({
 
       {isOpen && (
         <div
-          className={`job-date-calendar-popover ${alignRight ? "align-right" : ""}`}
+          ref={popoverRef}
+          className={`job-date-calendar-popover ${openRight ? "align-right" : ""}`}
           role="dialog"
           aria-label="Choose date"
         >

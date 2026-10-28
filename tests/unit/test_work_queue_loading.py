@@ -500,7 +500,10 @@ def test_overdue_view_only_reads_saved_tasks_and_applies_filters_in_sql(task_que
         result = scope['list_followup_calls'](**{**kwargs, 'category': 'all', 'priority': tab,
             'date_from': future.date().isoformat(), 'date_to': future.date().isoformat()})
         assert [row['lead_id'] for row in result['items']] == ['lead']
-        assert result['items'][0]['timeline'][0]['label'] == 'Discuss estimate'
+        labels = [item['label'] for item in result['items'][0]['timeline']]
+        assert 'Discuss estimate' in labels
+        # Tasks still late before the end date stay listed with the picked day's tasks.
+        assert 'Morning call' in labels
     # The model requires a priority; filtering for unset priorities must not
     # require inserting invalid data or include a lead with a numeric priority.
     assert scope['list_followup_calls'](**{**kwargs, 'category': 'all', 'priority': 'none'})['items'] == []
