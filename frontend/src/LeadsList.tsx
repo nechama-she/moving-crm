@@ -85,8 +85,15 @@ export default function LeadsList() {
   const [error, setError] = useState("");
   const [hasMore, setHasMore] = useState(false);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
-  const [search, setSearch] = useState("");
-  const [searchInput, setSearchInput] = useState("");
+  const urlSearch = searchParams.get("search") || "";
+  const [search, setSearch] = useState(urlSearch);
+  const [searchInput, setSearchInput] = useState(urlSearch);
+  // The global search's "See all results" links here with ?search=.
+  useEffect(() => {
+    if (!urlSearch) return;
+    setSearch(urlSearch);
+    setSearchInput(urlSearch);
+  }, [urlSearch]);
   const [statusFilter, setStatusFilter] = useState("");
   const [companyFilter, setCompanyFilter] = useState("");
   const [assignedToFilter, setAssignedToFilter] = useState("");

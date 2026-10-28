@@ -55,3 +55,20 @@ export function formatValue(key: string, value: unknown): string {
   }
   return str;
 }
+
+export function displayPhone(value: string): string {
+  const digits = String(value || "").replace(/\D/g, "");
+  const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  return local.length === 10 ? `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}` : value;
+}
+
+// Lead priority meanings, shared by the lead page and the follow-up filters.
+export const PRIORITY_LABELS: Record<string, string> = {
+  "0": "New lead - not yet contacted",
+  "1": "Estimate sent - likely to book",
+  "2": "Estimate sent - unlikely to book",
+  "3": "Contacted - estimate not yet sent",
+  "4": "Online estimate - no calls",
+  "5": "Home for sale - awaiting contract",
+  "6": "Unqualified lead",
+};

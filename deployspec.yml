@@ -16,6 +16,8 @@ phases:
       - aws ssm put-parameter --name "/moving-crm/${ENVIRONMENT:-dev}/GOOGLE_MAPS_BROWSER_KEY" --value "AIzaSyDx5bz0q8NHI-dBbtx87yBUvLn7c94qts4" --type String --overwrite
       - echo "Applying pending schema changes to the existing database"
       - cd $CODEBUILD_SRC_DIR/backend && python migrate.py
+      # One-time: dev publishes its imported follow-up tasks, prod copies them (no SmartMoving calls).
+      - cd $CODEBUILD_SRC_DIR/backend && python followup_task_transfer.py
       - |
         SSM_KEY="/moving-crm/${ENVIRONMENT:-dev}/API_SECRET"
         if ! aws ssm get-parameter --name "$SSM_KEY" --with-decryption > /dev/null 2>&1; then

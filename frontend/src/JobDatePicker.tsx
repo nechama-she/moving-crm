@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import "./JobDatePicker.css";
 
 interface JobDatePickerProps {
@@ -53,6 +54,37 @@ export default function JobDatePicker({
   const [selectedDate, setSelectedDate] = useState(value || "");
   const [viewDate, setViewDate] = useState<Date>(() => parseIso(value));
   const containerRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+
+  // The calendar renders on document.body with fixed positioning so it floats over the page
+  // and no scrolling or clipping container can block it. It follows the field and stays on screen.
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      setPosition(null);
+      return;
+    }
+    const place = () => {
+      const container = containerRef.current;
+      const popover = popoverRef.current;
+      if (!container || !popover) return;
+      const anchor = container.getBoundingClientRect();
+      const margin = 8;
+      const width = popover.offsetWidth;
+      const preferred = alignRight ? anchor.right - width : anchor.left;
+      setPosition({
+        top: anchor.bottom + 4,
+        left: Math.max(margin, Math.min(preferred, window.innerWidth - width - margin)),
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [isOpen, alignRight]);
 
   // Sync state when external value changes or dropdown opens
   useEffect(() => {
@@ -66,7 +98,8 @@ export default function JobDatePicker({
   useEffect(() => {
     if (!isOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (!containerRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
         setIsOpen(false);
       }
     };
@@ -179,9 +212,11 @@ export default function JobDatePicker({
         </svg>
       </button>
 
-      {isOpen && (
+      {isOpen && createPortal(
         <div
-          className={`job-date-calendar-popover ${alignRight ? "align-right" : ""}`}
+          ref={popoverRef}
+          className="job-date-calendar-popover"
+          style={position ? { top: position.top, left: position.left } : { visibility: "hidden" }}
           role="dialog"
           aria-label="Choose date"
         >
@@ -297,7 +332,8 @@ export default function JobDatePicker({
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

@@ -122,13 +122,15 @@ def list_followup_calls(
     refresh: bool = Query(False), limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     priority: str | None = None, date_from: str | None = None, date_to: str | None = None,
-    sort: str | None = Query("desc", pattern="^(asc|desc)$"),
+    sort: str | None = Query("asc", pattern="^(asc|desc)$"),
     _: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     from models import Task
     from followup_task_rows import calendar_lead_row
     now = datetime.now(timezone.utc)
-    if priority not in (None, 'all', 'none') and (not priority.isdigit() or int(priority) > 99):
+    # Comma-separated priorities, e.g. "1,3,none"; empty or "all" means every priority.
+    selected_priorities = {value.strip() for value in (priority or '').split(',') if value.strip()} - {'all'}
+    if any(value != 'none' and (not value.isdigit() or int(value) > 99) for value in selected_priorities):
         raise HTTPException(400, 'Invalid priority')
     if date_from or date_to:
         try:
@@ -138,24 +140,29 @@ def list_followup_calls(
             raise HTTPException(400, 'Enter valid start and end dates')
         if end_date < start_date:
             raise HTTPException(400, 'End date must not precede start date')
-    def in_dates(query):
-        if date_from or date_to:
-            day = func.coalesce(Task.due_date, func.substr(cast(Task.due_at, String), 1, 10))
-            query = query.filter(day >= start_date.isoformat(), day <= end_date.isoformat())
-        return query
+    has_range = bool(date_from or date_to)
+    task_day = func.coalesce(Task.due_date, func.substr(cast(Task.due_at, String), 1, 10))
     allowed_task = or_(
         and_(Lead.priority == 0, Task.automatic_key.isnot(None)),
         and_(Lead.priority.is_(None), Task.smartmoving_followup_id.is_(None)),
         Lead.priority != 0)
-    pending = db.query(Task.lead_id).filter(
+    open_tasks = db.query(Task.lead_id).filter(
         Task.lead_id == Lead.id, allowed_task, Task.status != 'done',
     )
-    pending = in_dates(pending)
-    overdue = pending.filter(or_(Task.due_at < now, and_(or_(Lead.priority.is_(None), Lead.priority != 0), Task.due_at.is_(None), Task.due_date < now.date().isoformat()))).exists()
-    due_now = pending.filter(or_(and_(Task.scheduled_start <= now, Task.due_at >= now),
+    past_due = or_(Task.due_at < now, and_(or_(Lead.priority.is_(None), Lead.priority != 0), Task.due_at.is_(None), Task.due_date < now.date().isoformat()))
+    if has_range:
+        in_range = and_(task_day >= start_date.isoformat(), task_day <= end_date.isoformat())
+        # Overdue is every open, late task up to the end date, not only the picked days.
+        overdue_tasks = open_tasks.filter(past_due, task_day <= end_date.isoformat())
+        pending = open_tasks.filter(or_(in_range, and_(past_due, task_day <= end_date.isoformat())))
+    else:
+        overdue_tasks = open_tasks.filter(past_due)
+        pending = open_tasks
+    overdue = overdue_tasks.exists()
+    due_now = open_tasks.filter(or_(and_(Task.scheduled_start <= now, Task.due_at >= now),
         and_(or_(Lead.priority.is_(None), Lead.priority != 0), Task.due_at.is_(None), Task.due_date == now.date().isoformat()))).exists()
     # A picked date range asks for every open task on those days, matching the priority badges.
-    due = pending.exists() if date_from or date_to else or_(due_now, overdue)
+    due = open_tasks.filter(in_range).exists() if has_range else or_(due_now, overdue)
     query =db.query(Lead).filter(pending.exists(), or_(Lead.priority.is_(None), Lead.priority != 0, and_(_open_sales_status_filter(), _exclude_mirit_company_filter())))
     priority_query = query
     if rep:
@@ -169,14 +176,15 @@ def list_followup_calls(
                                            func.count(Lead.id).filter(due)).group_by(Lead.priority).all()
     priority_counts = {str(value) if value is not None else 'none': total for value, total, _, _ in grouped}
     priority_counts['all'] = sum(priority_counts.values())
-    selected = None if priority in (None, 'all') else priority
-    if priority == 'none':
-        query = query.filter(Lead.priority.is_(None))
-    elif selected is not None:
-        query = query.filter(Lead.priority == int(priority))
+    if selected_priorities:
+        numbers = [int(value) for value in selected_priorities if value != 'none']
+        conditions = [Lead.priority.in_(numbers)] if numbers else []
+        if 'none' in selected_priorities:
+            conditions.append(Lead.priority.is_(None))
+        query = query.filter(or_(*conditions))
     counts = {'all': 0, 'overdue': 0, 'due': 0}
     for value, total, overdue_total, due_total in grouped:
-        if selected is None or selected == (str(value) if value is not None else 'none'):
+        if not selected_priorities or (str(value) if value is not None else 'none') in selected_priorities:
             counts = {'all': counts['all'] + total, 'overdue': counts['overdue'] + overdue_total, 'due': counts['due'] + due_total}
     reps = [name for name, in query.join(User, Lead.assigned_to == User.id).with_entities(User.name).distinct().order_by(User.name)]
     companies = [name for name, in query.join(Company, Lead.company_id == Company.id).with_entities(Company.name).distinct().order_by(Company.name)]
@@ -199,7 +207,12 @@ def list_followup_calls(
     if leads:
         for task in db.query(Task).join(Lead, Lead.id == Task.lead_id).filter(Task.lead_id.in_(tasks_by_lead), allowed_task).all():
             day = task.due_date or (task.due_at.date().isoformat() if task.due_at else '')
-            in_range = not (date_from or date_to) or start_date.isoformat() <= day <= end_date.isoformat()
+            task_due_at = task.due_at.replace(tzinfo=timezone.utc) if task.due_at and not task.due_at.tzinfo else task.due_at
+            late = task.status != 'done' and (
+                (task_due_at is not None and task_due_at < now)
+                or (task_due_at is None and leads_by_id[task.lead_id].priority != 0 and bool(task.due_date) and task.due_date < now.date().isoformat()))
+            # Same rule as the SQL above: picked days, plus anything still late up to the end date.
+            in_range = not has_range or start_date.isoformat() <= day <= end_date.isoformat() or (late and day <= end_date.isoformat())
             if task.status != 'done' and in_range and (task.due_at or task.due_date):
                 due_value = (task.due_at if task.due_at.tzinfo else task.due_at.replace(tzinfo=timezone.utc)).isoformat() if task.due_at else task.due_date
                 if task.lead_id not in next_due_by_lead or due_value < next_due_by_lead[task.lead_id]:
@@ -232,7 +245,7 @@ def export_followup_calls(
     rep: str = Query(""), company: str = Query(""),
     prepare: bool = Query(False),
     priority: str | None = None, date_from: str | None = None, date_to: str | None = None,
-    sort: str = Query("desc", pattern="^(asc|desc)$"),
+    sort: str = Query("asc", pattern="^(asc|desc)$"),
     _: User = Depends(require_admin), db: Session = Depends(get_db),
 ):
     from followup_export import workbook_bytes

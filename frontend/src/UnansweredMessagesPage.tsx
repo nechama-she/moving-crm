@@ -11,9 +11,10 @@ import { createQueueRefreshScheduler } from "./queueRefreshScheduler";
 type SmartMovingFields = { smartmoving_id?: string; quote_number?: string };
 function SmartMovingCell({ row }: { row: SmartMovingFields }) {
   const id = row.smartmoving_id?.trim();
-  const label = row.quote_number?.trim() || id;
-  return <td style={{ padding: "14px 16px", borderBottom: "1px solid #eef1f4", overflowWrap: "anywhere" }}>
-    {id ? <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(id)}/sales`}
+  // Without a quote number, a short link label instead of the long opportunity id.
+  const label = row.quote_number?.trim() || (id ? "Open" : "");
+  return <td style={{ padding: "14px 16px", borderBottom: "1px solid #eef1f4", whiteSpace: "nowrap" }}>
+    {id ? <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(id)}/sales`} title={`SmartMoving opportunity ${id}`}
       target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()}
       onKeyDown={event => event.stopPropagation()} style={{ color: "#0b5cab", fontWeight: 700 }}>{label}</a> : label || "-"}
   </td>;
@@ -85,6 +86,8 @@ function CollapsibleNotes({ notes, style }: { notes: string; style?: React.CSSPr
     {overflows && <button type="button" onClick={event => { event.stopPropagation(); setOpen(value => !value); }} style={{ padding: 0, marginTop: 2, border: 'none', background: 'none', color: '#0b5cab', fontSize: 12, cursor: 'pointer' }}>{open ? 'Show less' : 'Show more'}</button>}
   </div>;
 }
+
+const FOLLOWUPS_COLLAPSED_KEY = "salesWorkQueue.followupsCollapsed";
 
 function CollapsibleHeight({ children, maxHeight = 160 }: { children: React.ReactNode; maxHeight?: number }) {
   const [open, setOpen] = useState(false);
@@ -179,11 +182,12 @@ export default function UnansweredMessagesPage() {
   const [ignoringLead, setIgnoringLead] = useState<string | null>(null);
   const [reloadingContacts, setReloadingContacts] = useState(false);
   const contactReloadRunning = useRef(false);
-  const [followupTab, setFollowupTab] = useState<"overdue" | "due">("due");
+  const [followupTab, setFollowupTab] = useState<"overdue" | "due">("overdue");
   const [followupPriority, setFollowupPriority] = useState('all');
   const [followupFrom, setFollowupFrom] = useState(() => localDate());
   const [followupTo, setFollowupTo] = useState(() => localDate());
-  const [followupSort, setFollowupSort] = useState<"asc" | "desc">("desc");
+  // Oldest due first, so the day starts with what is most late.
+  const [followupSort, setFollowupSort] = useState<"asc" | "desc">("asc");
   const [followupLeads, setFollowupLeads] = useState<FollowupLead[]>([]);
   const [followupCounts, setFollowupCounts] = useState({ all: 0, overdue: 0, due: 0 });
   const [priorityCounts, setPriorityCounts] = useState<Record<string, number>>({});
@@ -192,6 +196,15 @@ export default function UnansweredMessagesPage() {
   const [loadingFollowups, setLoadingFollowups] = useState(false);
   const [exportingFollowups, setExportingFollowups] = useState(false);
   const [expandedFollowups, setExpandedFollowups] = useState<Set<string>>(() => new Set());
+  const [followupsCollapsed, setFollowupsCollapsed] = useState(() => {
+    try { return localStorage.getItem(FOLLOWUPS_COLLAPSED_KEY) === "1"; } catch { return false; }
+  });
+  const toggleFollowupsCollapsed = () => {
+    const next = !followupsCollapsed;
+    setFollowupsCollapsed(next);
+    setExpandedFollowups(new Set());
+    try { localStorage.setItem(FOLLOWUPS_COLLAPSED_KEY, next ? "1" : "0"); } catch { /* storage unavailable */ }
+  };
   const [loading, setLoading] = useState(true);
   const [loadingCalls, setLoadingCalls] = useState(true);
   const [queueStatus, setQueueStatus] = useState<{ enabled: boolean; ready: boolean; stale: boolean; updated_at: string | null } | null>(null);
@@ -805,6 +818,7 @@ export default function UnansweredMessagesPage() {
 
   const headers = ["Client", "Platform", "Message", "Rep", "Company", "Sent To", "Message Time", "Action"];
   const cell = { padding: "13px 16px", borderBottom: "1px solid #e2e8f0", color: "#334155" } as const;
+  const overdueNote = { color: "#b91c1c", fontSize: 12, marginTop: 3 } as const;
   const filterOptions = useMemo(() => {
     const rows = queueTab === "messages" ? items : queueTab === "calls" ? missedCalls : queueTab === "leads" ? firstContactLeads : queueTab === "followups" ? followupLeads : [];
     return {
@@ -1188,7 +1202,7 @@ export default function UnansweredMessagesPage() {
 
       {queueTab === "followups" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "visible" }}>
         <div style={{ padding: "16px 18px 0" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button><button type="button" className="slds-button" disabled={loadingFollowups || exportingFollowups || validatingTab !== null} onClick={() => void validateCurrentTab(true)}>Refresh from CRM</button>{validationButton}</div></div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Follow-ups</h2><div style={{ display: "flex", gap: 8 }}><button type="button" className="slds-button" aria-pressed={followupsCollapsed} onClick={toggleFollowupsCollapsed} title={followupsCollapsed ? "Show task details under each lead" : "Show only one line per lead"}>{followupsCollapsed ? "Expand all" : "Collapse all"}</button><button type="button" className="slds-button" disabled={exportingFollowups || validatingTab !== null} onClick={() => void downloadFollowups()}>{exportingFollowups ? "Preparing Excel..." : "Download Excel"}</button><button type="button" className="slds-button" disabled={loadingFollowups || exportingFollowups || validatingTab !== null} onClick={() => void validateCurrentTab(true)}>Refresh from CRM</button>{validationButton}</div></div>
           <FollowupFilters counts={priorityCounts} loading={loadingFollowups} priority={followupPriority} from={followupFrom} to={followupTo} onPriority={setFollowupPriority} onDates={(from, to) => {setFollowupFrom(from); setFollowupTo(to);}} />
           <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #d8dde6", marginTop: 8 }}>
             {(["due", "overdue"] as const).map(category => <button key={category} type="button" className="slds-button" aria-pressed={followupTab === category} onClick={() => setFollowupTab(category)} style={{ color: "#032d60", padding: "10px 14px", minHeight: 44, fontWeight: followupTab === category ? 700 : 400, border: "none", borderBottom: followupTab === category ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0 }}>{category === "due" ? "Due" : "Overdue Items"} ({followupCounts[category] || 0})</button>)}
@@ -1197,7 +1211,7 @@ export default function UnansweredMessagesPage() {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
             <thead><tr style={{ background: "#f8fafc", borderBottom: "1px solid #d8dde6" }}>{smartMovingHeader}
-              {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Due', followupPriority === '0' ? 'Call Follow-ups' : 'Pending tasks / calls', followupPriority === '0' ? 'Message Follow-ups' : 'Overdue / messages'].map((header) => <th key={header} aria-sort={header === 'Due' ? (followupSort === 'asc' ? 'ascending' : 'descending') : undefined} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>
+              {['Client', 'Rep', 'Company', 'Status', 'Priority', 'Due', followupPriority === '0' ? 'Call Follow-ups' : 'Calls', followupPriority === '0' ? 'Message Follow-ups' : 'Messages'].map((header) => <th key={header} aria-sort={header === 'Due' ? (followupSort === 'asc' ? 'ascending' : 'descending') : undefined} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase", whiteSpace: "nowrap" }}>
                 {header === 'Due' ? <button type="button" onClick={() => setFollowupSort((current) => current === 'desc' ? 'asc' : 'desc')} title={followupSort === 'desc' ? 'Latest first - click for earliest first' : 'Earliest first - click for latest first'} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: 0, border: "none", background: "none", color: "inherit", font: "inherit", textTransform: "inherit", cursor: "pointer" }}>
                   Due<svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10" fill="currentColor" style={{ transform: followupSort === 'asc' ? "rotate(180deg)" : undefined }}><path d="M1 3h8L5 8z" /></svg>
                 </button> : header}
@@ -1207,9 +1221,10 @@ export default function UnansweredMessagesPage() {
               {loadingFollowups && followupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, textAlign: "center" }}>Loading follow-ups…</td></tr> : null}
               {!loadingFollowups && filteredFollowupLeads.length === 0 ? <tr><td colSpan={9} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{followupLeads.length ? "No leads match these filters." : followupTab === "due" ? "No follow-ups for the selected dates." : "No overdue follow-ups for the selected dates."}</td></tr> : null}
               {filteredFollowupLeads.map((row) => {
-                const expanded = expandedFollowups.has(row.lead_id);
+                // Priority 0 rows start closed; other rows start open unless "Collapse all" is on.
+                // expandedFollowups holds the rows the user flipped from that default.
+                const expanded = (row.priority !== 0 && !followupsCollapsed) !== expandedFollowups.has(row.lead_id);
                 const toggleExpanded = () => setExpandedFollowups((current) => {
-                  if (row.priority !== 0) return current;
                   const next = new Set(current);
                   if (next.has(row.lead_id)) next.delete(row.lead_id);
                   else next.add(row.lead_id);
@@ -1219,14 +1234,14 @@ export default function UnansweredMessagesPage() {
                   <tr
                     onClick={toggleExpanded}
                     onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleExpanded(); } }}
-                    tabIndex={row.priority === 0 ? 0 : undefined}
-                    aria-expanded={row.priority === 0 ? expanded : undefined}
-                    style={{ cursor: row.priority === 0 ? "pointer" : "default", background: expanded ? "#f4f8fc" : "#fff" }}
+                    tabIndex={0}
+                    aria-expanded={expanded}
+                    style={{ cursor: "pointer", background: expanded ? "#f4f8fc" : "#fff" }}
                   >
                     <SmartMovingCell row={row} />
                     <td style={cell}>
                       <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                        {row.priority === 0 && <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ color: "#0b5cab", transform: expanded ? "rotate(90deg)" : undefined }}><path d="M5 3l6 5-6 5z" /></svg>}
+                        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ color: "#0b5cab", transform: expanded ? "rotate(90deg)" : undefined }}><path d="M5 3l6 5-6 5z" /></svg>
                         <div><Link onClick={(event) => event.stopPropagation()} to={`/leads/${row.lead_id}#tasks`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "← Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client}</Link>{row.client_phone ? <div style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>{displayPhone(row.client_phone)}</div> : null}</div>
                       </div>
                     </td>
@@ -1235,10 +1250,11 @@ export default function UnansweredMessagesPage() {
                     <td style={{ ...cell, textTransform: "capitalize" }}>{row.status || "—"}</td>
                     <td style={cell}>{row.priority ?? "—"}</td>
                     <td style={cell}>{!row.next_due ? "—" : row.next_due.length === 10 ? new Date(`${row.next_due}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : new Date(row.next_due).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</td>
-                    <td style={cell}><strong>{row.priority === 0 ? `${row.completed_count}/6` : `${row.timeline.filter(task => task.status !== 'completed').length} pending`}</strong>{row.priority === 0 && row.overdue_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_count} overdue</span> : null}</td>
-                    <td style={cell}><strong>{row.priority === 0 ? `${row.completed_message_count || 0}/3` : `${(row.overdue_count || 0) + (row.overdue_message_count || 0)} overdue`}</strong>{row.priority === 0 && row.overdue_message_count ? <span style={{ color: "#b91c1c", fontSize: 12, marginLeft: 8 }}>{row.overdue_message_count} overdue</span> : null}</td>
+                    {/* Calls, then messages/other tasks: completed out of planned for priority 0, open count otherwise, each with the red overdue count. */}
+                    <td style={{ ...cell, whiteSpace: "nowrap" }}><strong>{row.priority === 0 ? `${row.completed_count}/6` : `${row.timeline.filter(task => task.kind === 'call' && task.status !== 'completed').length} pending`}</strong>{row.overdue_count ? <div style={overdueNote}>{row.overdue_count} overdue</div> : null}</td>
+                    <td style={{ ...cell, whiteSpace: "nowrap" }}><strong>{row.priority === 0 ? `${row.completed_message_count || 0}/3` : `${row.timeline.filter(task => task.kind !== 'call' && task.status !== 'completed').length} pending`}</strong>{row.overdue_message_count ? <div style={overdueNote}>{row.overdue_message_count} overdue</div> : null}</td>
                   </tr>
-                  {expanded || row.priority !== 0 ? <tr>
+                  {expanded ? <tr>
                     <td colSpan={9} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
                       {row.priority !== 0 ? <div style={{ padding: 16, background: '#fff', border: '1px solid #d8dde6', borderRadius: 8 }}><CollapsibleHeight><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
                         {[false, true].map(completed => {

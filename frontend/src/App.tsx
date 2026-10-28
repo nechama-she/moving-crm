@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import MainNavigation from "./MainNavigation";
 import { AuthProvider, useAuth } from "./AuthContext";
 import ErrorBoundary from "./ErrorBoundary";
+import GlobalLeadSearch from "./GlobalLeadSearch";
 
 const CustomerMovePage = lazy(() => import("./CustomerMovePage"));
 const LiveSwitchCallbackPage = lazy(() => import("./LiveSwitchCallbackPage"));
@@ -110,6 +111,7 @@ function ProtectedRoutes() {
         <div className="crm-nav-links" style={{ display: "flex", flex: 1 }}>
           <MainNavigation role={user?.role} />
         </div>
+        {user ? <GlobalLeadSearch /> : null}
         <div className="crm-user-actions" style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {user && <span style={{ color: "#9dc9e8", fontSize: 13 }}>{user.name}</span>}
           {!isDispatchUser && !isImpersonating ? (
