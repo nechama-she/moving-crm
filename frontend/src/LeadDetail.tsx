@@ -5,7 +5,7 @@ import LeadSidePanel, { type LeadSideAction } from './LeadSidePanel';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { Lead, formatLabel, formatValue } from "./leadUtils";
+import { Lead, PRIORITY_LABELS, formatLabel, formatValue } from "./leadUtils";
 import StopTypesEditor from "./StopTypesEditor";
 import LiveSwitchPanel from "./LiveSwitchPanel";
 import JobDatePicker from "./JobDatePicker";
@@ -2524,31 +2524,25 @@ export default function LeadDetail() {
               <div className="lead-header-row">
                 <div className="lead-header-label">Priority</div>
                 {canViewLeadCommunications ? (
-                  <form
+                  <select
                     className="lead-header-priority"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void savePriority(Number(new FormData(event.currentTarget).get("priority")));
-                    }}
+                    aria-label="Priority"
+                    value={priorityValue}
+                    disabled={savingPriority}
+                    title={PRIORITY_LABELS[priorityValue] || undefined}
+                    onChange={(event) => void savePriority(Number(event.target.value))}
                   >
-                    <input
-                      key={`${leadId}:${priorityValue}`}
-                      aria-label="Priority"
-                      name="priority"
-                      type="number"
-                      min="0"
-                      step="1"
-                      required
-                      defaultValue={priorityValue}
-                      disabled={savingPriority}
-                      onBlur={(event) => {
-                        if (event.currentTarget.value !== priorityValue) event.currentTarget.form?.requestSubmit();
-                      }}
-                    />
-                    {savingPriority ? <span className="lead-header-empty">Saving...</span> : null}
-                  </form>
+                    {priorityValue === "" ? <option value="" disabled>No priority</option> : null}
+                    {/* Keep an unlisted saved value selectable instead of silently showing another one. */}
+                    {priorityValue !== "" && !PRIORITY_LABELS[priorityValue] ? <option value={priorityValue}>{priorityValue}</option> : null}
+                    {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
+                      <option key={value} value={value}>{value} - {label}</option>
+                    ))}
+                  </select>
                 ) : (
-                  <span className="lead-header-text">{priorityValue || "—"}</span>
+                  <span className="lead-header-text">
+                    {priorityValue ? `${priorityValue}${PRIORITY_LABELS[priorityValue] ? ` - ${PRIORITY_LABELS[priorityValue]}` : ""}` : "—"}
+                  </span>
                 )}
               </div>
               {priorityError ? <div role="alert" className="lead-header-error">{priorityError}</div> : null}

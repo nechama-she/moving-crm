@@ -2,13 +2,11 @@ import './FollowupFilters.css';
 import ReportControls from './ReportControls';
 import './ReportsPage.css';
 import { useState } from 'react';
+import { PRIORITY_LABELS } from './leadUtils';
 
 export const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const priorities = [
-  ['all', 'All priorities'], ['0', 'New lead - not yet contacted'],
-  ['1', 'Estimate sent - likely to book'], ['2', 'Estimate sent - unlikely to book'],
-  ['3', 'Contacted - estimate not yet sent'], ['4', 'Online estimate - no calls'],
-  ['5', 'Home for sale - awaiting contract'], ['6', 'Unqualified lead'], ['none', 'No priority assigned'],
+  ['all', 'All priorities'], ...Object.entries(PRIORITY_LABELS), ['none', 'No priority assigned'],
 ];
 
 export default function FollowupFilters({ priority, from, to, onPriority, onDates, counts, loading, datesOnly = false }: {
