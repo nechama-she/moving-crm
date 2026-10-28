@@ -1,5 +1,6 @@
 import LeadMeasurements from "./LeadMeasurements";
 import "./LeadHeader.css";
+import { forgetRecentLead, rememberRecentLead } from "./recentLeads";
 import LeadSidePanel from './LeadSidePanel';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -459,10 +460,12 @@ export default function LeadDetail() {
 
   async function loadLead() {
     const res = await fetch(`${API_BASE}/api/leads/${leadId}`, { headers: authHeaders(token) });
+    if (res.status === 404 && leadId) forgetRecentLead(user?.id, leadId);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     setLead(data);
     setEditCompanyId(String(data?.company_id || ""));
+    rememberRecentLead(user?.id, data);
   }
 
   useEffect(() => {

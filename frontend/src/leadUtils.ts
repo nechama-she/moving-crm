@@ -55,3 +55,9 @@ export function formatValue(key: string, value: unknown): string {
   }
   return str;
 }
+
+export function displayPhone(value: string): string {
+  const digits = String(value || "").replace(/\D/g, "");
+  const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  return local.length === 10 ? `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}` : value;
+}

@@ -1527,6 +1527,11 @@ def get_leads(
         query = query.filter(Lead.assigned_to == user.id)
     elif user.role == "dispatch":
         query = query.filter(Lead.status.in_(DISPATCH_STATUSES))
+    elif user.role == "foreman":
+        # Same rule as the lead page: foremen only see leads with a job assigned to them.
+        query = query.filter(
+            db.query(LeadJob.id).filter(LeadJob.lead_id == Lead.id, LeadJob.foreman_id == user.id).exists()
+        )
     # admin sees all leads for their companies
 
     # Status filter
@@ -1550,6 +1555,7 @@ def get_leads(
             | Lead.phone.ilike(q)
             | phone_search_condition(Lead.phone, search)
             | Lead.email.ilike(q)
+            | Lead.quote_number.ilike(q)
         )
 
     from lead_overview import overview
