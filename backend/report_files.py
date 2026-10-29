@@ -1,8 +1,10 @@
 """Editable report file set; historical snapshots retain their original files."""
+import json
 from datetime import datetime
 from fastapi import HTTPException
 from sqlalchemy.orm import defer
-from models import LeadAttachment
+from models import LeadAttachment, LeadLiveSwitch
+from spark_history import archive_report_for_new_media
 
 
 def active_report_files(access, db):
@@ -30,9 +32,17 @@ def remove_report_file(access, attachment_id, db):
     ).with_for_update().first()
     if not row:
         raise HTTPException(404, 'File not found on this move.')
+    changed = row.report_deleted_at is None or row.liveswitch_panel_visible
     if row.report_deleted_at is None:
         row.report_deleted_at = datetime.utcnow()
     row.liveswitch_panel_visible = False
+    if changed:
+        # Like an upload, changing the media moves the current report and pricing to history.
+        saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
+        if saved:
+            details = json.loads(saved.details or '{}')
+            if archive_report_for_new_media(details):
+                saved.details = json.dumps(details)
     db.commit()
     return {'ok': True}
 
