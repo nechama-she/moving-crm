@@ -237,7 +237,8 @@ export default function CustomerMovePage() {
     setBusy(true);
     try {
       await call(`/files/${encodeURIComponent(id)}`, undefined, 'DELETE');
-      await refreshDetails();
+      // Only the gallery changes; nothing reloads until the next report.
+      setData(previous => previous ? {...previous, editable_files: (previous.editable_files || previous.files).filter(file => file.id !== id)} : previous);
       setReportState('idle');
     } finally { setBusy(false); }
   }
@@ -693,19 +694,20 @@ export default function CustomerMovePage() {
       try{
         const mime=item.file.type || 'application/octet-stream';
         const prepared=await call('/prepare-upload',{request_id:item.id,name:item.file.name,size:item.file.size,content_type:mime});
+        let uploadedId:string=prepared.id;
         if(!prepared.completed){
           await new Promise<void>((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('POST',prepared.upload.url);xhr.timeout=0;xhr.upload.onprogress=e=>{if(e.lengthComputable)update('Uploading',Math.round(e.loaded/e.total*90));};xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(new Error('Upload interrupted. Please try again.'));xhr.onerror=xhr.ontimeout=()=>reject(new Error('Upload interrupted. Please try again.'));const form=new FormData();Object.entries(prepared.upload.fields as Record<string,string>).forEach(([k,v])=>form.append(k,v));form.append('file',item.file);xhr.send(form);});
-          update('Finishing upload',95);await call('/finish-upload',{request_id:item.id});
+          update('Finishing upload',95);uploadedId=(await call('/finish-upload',{request_id:item.id})).id;
         }
         await removePhoto(accessId || '', item.id);
+        // Add the file to the gallery here; nothing reloads until the next report.
+        const added={id:uploadedId,name:item.file.name,size:item.file.size,content_type:mime};
+        setData(prev=>prev?{...prev,editable_files:[...(prev.editable_files||prev.files).filter(f=>f.id!==added.id),added]}:prev);
         update('Uploaded',100);
         uploadedAny = true;
       }catch(e){const message=(e as Error).message;setFiles(prev=>prev.map(f=>f.id===item.id?{...f,status:'Try again',progress:0,error:message}:f));}
     }
-    if(uploadedAny){
-      setReportState('idle');
-      void refreshDetails();
-    }
+    if(uploadedAny) setReportState('idle');
     }finally{uploadLock.current = false;setBusy(false);}
   }
   async function walkthrough(){setBusy(true);setError('');try{const timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;const result=await call(rescheduling?'/reschedule':'/walkthrough',{availability,timezone});setRequested(true);setRescheduling(false);meetingDialog.current?.close();setData(prev=>prev?{...prev,walkthrough:result,participant_url:''}:prev);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}

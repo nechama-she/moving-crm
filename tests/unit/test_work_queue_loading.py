@@ -286,6 +286,26 @@ def test_smartmoving_refresh_upserts_remote_tasks(monkeypatch):
     assert db.execute.call_args.args[1]['note_id'] == 'followup-1'
     assert db.execute.call_args.args[1]['completed'] is True
     assert db.commit.call_count == 2
+    # SQL-level guard for every SmartMoving write path, including the follow-up Lambda.
+    assert 'u.crm_managed_followups' in str(statement)
+
+
+def test_smartmoving_refresh_skips_reps_whose_followups_live_in_the_crm(monkeypatch):
+    from unittest.mock import MagicMock
+    import smartmoving_followup_sync as service
+    fetch = Mock(return_value={'data': []})
+    monkeypatch.setattr(service, 'get_followups', fetch)
+    db = MagicMock()
+    lead = SimpleNamespace(priority=1, smartmoving_id='sm-1', assignee=SimpleNamespace(crm_managed_followups=True))
+    assert service.sync(db, lead) == 0
+    fetch.assert_not_called()
+    db.execute.assert_not_called()
+
+
+def test_dev_to_prod_transfer_keeps_the_unguarded_upsert():
+    from libs.smartmoving.followup_tasks import SMARTMOVING_UPSERT_TASK, UPSERT_TASK
+    assert 'crm_managed_followups' not in UPSERT_TASK
+    assert 'crm_managed_followups' in SMARTMOVING_UPSERT_TASK
 
 
 @pytest.mark.parametrize('response', [{'error': 'HTTP 503'}, {'data': {}},

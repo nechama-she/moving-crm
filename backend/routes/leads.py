@@ -178,6 +178,11 @@ def _map_smartmoving_status(status_code) -> str:
         return ""
 
 
+def _crm_manages_followups(lead: Lead) -> bool:
+    """Reps flagged here keep their leads' priority and tasks in the CRM; SmartMoving updates skip them."""
+    return bool(lead.assignee is not None and lead.assignee.crm_managed_followups)
+
+
 def _parse_smartmoving_priority(lead_status) -> int | None:
     if lead_status in (None, ""):
         return None
@@ -2059,7 +2064,7 @@ def validate_smartmoving_leads(
             leads_by_id[lead_id].status = smartmoving_status
             updated_statuses.append(lead_id)
         smartmoving_priority = _parse_smartmoving_priority(result.get("lead_status"))
-        if smartmoving_priority is not None:
+        if smartmoving_priority is not None and not _crm_manages_followups(leads_by_id[lead_id]):
             leads_by_id[lead_id].priority = smartmoving_priority
             updated_priorities.append(lead_id)
         from followup_tasks import sync as sync_followup_tasks
@@ -4713,6 +4718,8 @@ def _refresh_lead_from_smartmoving(
         raise HTTPException(status_code=502, detail="SmartMoving refresh returned an invalid payload")
 
     payload = _build_smartmoving_refresh_payload(opportunity, user)
+    if _crm_manages_followups(lead):
+        payload.pop("priority", None)
 
     if isinstance(payload.get("payments"), list):
         existing_payments = _deserialize_payments(lead.payments)

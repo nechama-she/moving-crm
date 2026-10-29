@@ -3620,14 +3620,13 @@ def test_inventory_room_uses_report_snapshot_not_missing_model_field(portal):
 
 
 @pytest.mark.parametrize("direct", [False, True])
-def test_customer_upload_queues_existing_conversation(portal, monkeypatch, direct):
+def test_customer_upload_stays_in_crm_until_report(portal, monkeypatch, direct):
     from fastapi import BackgroundTasks, UploadFile
     from io import BytesIO
     mod, db, lead, access = portal
     db.add(models.LeadLiveSwitch(lead_id=lead.id, details=json.dumps({"id": "existing-session"})))
     db.commit()
     queue = MagicMock()
-    monkeypatch.setattr("report_conversation.prepare_upload_conversation", MagicMock(return_value={"id": "existing-session"}))
     monkeypatch.setattr(mod, "queue_files", queue)
     if direct:
         s3 = MagicMock()
@@ -3639,5 +3638,6 @@ def test_customer_upload_queues_existing_conversation(portal, monkeypatch, direc
         monkeypatch.setattr(mod, "_upload_attachment_bytes_to_s3", lambda *args: "s3://test/photo.jpg")
         result = mod.upload(BackgroundTasks(), UploadFile(filename="photo.jpg", file=BytesIO(b"\xff\xd8\xffphoto")), "photo-upload", access, db)
     assert db.get(models.LeadAttachment, result["id"]) is not None
-    queue.assert_called_once_with(access.id, db)
+    # Generate Report sends the gallery to a new conversation; uploads send nothing.
+    queue.assert_not_called()
     assert json.loads(db.get(models.LeadLiveSwitch, lead.id).details)["id"] == "existing-session"

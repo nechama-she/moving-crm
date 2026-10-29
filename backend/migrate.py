@@ -38,6 +38,19 @@ def migrate() -> None:
         if clear_first_contact:
             cleared = connection.execute(text("DELETE FROM first_contact_states")).rowcount
             logger.info("Cleared %s first-contact state rows", cleared)
+        # Reps whose follow-ups live in the CRM: SmartMoving no longer changes their leads'
+        # priority or tasks. Eli Jones is first; the marker keeps later edits to the flag.
+        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS crm_managed_followups BOOLEAN NOT NULL DEFAULT FALSE"))
+        enable_eli = connection.execute(text("""
+            INSERT INTO app_settings(key, value)
+            VALUES ('migration:crm-managed-followups:eli-jones', 'enabled')
+            ON CONFLICT (key) DO NOTHING RETURNING key
+        """)).scalar()
+        if enable_eli:
+            enabled = connection.execute(text(
+                "UPDATE users SET crm_managed_followups = TRUE WHERE lower(trim(name)) = 'eli jones'"
+            )).rowcount
+            logger.info("Enabled CRM-managed follow-ups for %s user(s) named Eli Jones", enabled)
     logger.info("Follow-up task and first-contact state setup complete")
 
 

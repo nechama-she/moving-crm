@@ -535,12 +535,13 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     for key in ('tasks', 'shareWith'):
         if body and key in body:
             payload[key] = body[key]
-    from report_conversation import prepare_upload_conversation
     saved = db.get(LeadLiveSwitch, lead_id)
     current = json.loads(saved.details or '{}') if saved else {}
     if current.get('pending_spark_payload') or current.get('last_spark_status') in ('queued', 'running'):
         return {'id': current['last_spark_id'], 'status': current.get('last_spark_status', 'queued')}
-    conversation = prepare_upload_conversation(access, db)
+    # Every run gets its own conversation holding only the files selected now,
+    # so deleted or earlier uploads can never reach the report.
+    conversation = ensure_lead_conversation(lead, db, fresh=True)
     if explicit_files:
         for file in files:
             file.report_deleted_at = None
@@ -577,10 +578,10 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
             row = PublicMoveUpload(attachment_id=attachment.id, access_id=access.id, request_id='report-' + attachment.id)
             db.add(row)
         row.access_id = access.id
-        # Preserve completed and in-flight transfers into this conversation.
-        if row.sync_status not in ('synced', 'queued', 'syncing'):
-            row.sync_status = 'pending'
-            row.sync_error = None
+        # Earlier transfers went to another conversation; send every file again.
+        row.synced_at = None
+        row.sync_status = 'pending'
+        row.sync_token = row.sync_upload_url = row.sync_error = None
     access.published_price = access.published_cuft = access.published_at = None
     db.commit()
     queue_files(access.id, db)

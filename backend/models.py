@@ -155,6 +155,8 @@ class User(Base):
     system_permissions = Column(Text, nullable=True)
     manager_dispatch_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     must_change_password = Column(Boolean, nullable=False, default=False)
+    # When set, this rep's leads keep CRM priority and follow-up tasks; SmartMoving updates skip both.
+    crm_managed_followups = Column(Boolean, nullable=False, default=False)
     # roles: admin, sales_rep, dispatch, foreman, system_user
     created_at = Column(DateTime(timezone=True), default=_now)
 

@@ -276,3 +276,15 @@
     display: none;
   }
 }
+
+/* Results are links (for open-in-new-tab); keep them looking like the list rows. */
+a.global-search-result,
+a.global-search-all {
+  box-sizing: border-box;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.global-search-all {
+  color: #0176d3;
+}
