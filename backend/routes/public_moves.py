@@ -1975,7 +1975,6 @@ def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...), x_up
         db.commit()
     except Exception:
         db.rollback(); _delete_s3_url(stored); raise
-    queue_customer_upload(access, db)
     return {'id': row.id}
 
 
@@ -2503,7 +2502,6 @@ def finish_upload(body: FinishUpload, background_tasks: BackgroundTasks, access:
         db.rollback();_delete_s3_url(stored);raise
     try: s3.delete_object(Bucket=bucket,Key=temporary_key)
     except Exception: pass  # Bucket lifecycle removes abandoned staging objects.
-    queue_customer_upload(access, db)
     return {'id':row.id}
 
 
@@ -2611,13 +2609,3 @@ def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(v
         expected_report_id=body.report_id, use_snapshot=True)
     if not result.get('ok'): raise HTTPException(502, result.get('detail', 'Could not update the estimate'))
     return {'saved': True} if compact else details(access, db)
-
-
-def queue_customer_upload(access, db):
-    from report_conversation import prepare_upload_conversation
-    try:
-        prepare_upload_conversation(access, db)
-        queue_files(access.id, db)
-    except Exception:
-        # CRM storage has succeeded; Generate Report can retry the transfer.
-        db.rollback()
