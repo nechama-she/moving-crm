@@ -81,8 +81,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       body: JSON.stringify({ email, password }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: "Login failed" }));
-      throw new Error(err.detail || "Login failed");
+      const fallback = res.status >= 500 ? `Server error (${res.status}). Please try again.` : "Login failed";
+      const err = await res.json().catch(() => ({ detail: fallback }));
+      throw new Error(err.detail || fallback);
     }
     const data = await res.json();
     localStorage.setItem("token", data.token);

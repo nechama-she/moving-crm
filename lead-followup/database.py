@@ -7,12 +7,14 @@ from datetime import datetime, timezone
 from urllib.parse import quote_plus
 
 import boto3
+import psycopg2
 from botocore.exceptions import ClientError
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 
 logger = logging.getLogger(__name__)
 
 _engine = None
+_db_password: str | None = None
 
 
 def _get_db_password() -> str:
@@ -28,6 +30,14 @@ def _get_db_password() -> str:
     return os.getenv("DB_PASSWORD", "")
 
 
+def _current_db_password(refresh: bool = False) -> str:
+    """Cached DB password; refresh=True re-reads it after a rotation."""
+    global _db_password
+    if _db_password is None or refresh:
+        _db_password = _get_db_password()
+    return _db_password
+
+
 def get_engine():
     global _engine
     if _engine is None:
@@ -35,11 +45,22 @@ def get_engine():
         port = os.getenv("DB_PORT", "5432")
         name = os.getenv("DB_NAME", "moving_crm")
         user = os.getenv("DB_USER", "crm_admin")
-        password = _get_db_password()
-        url = f"postgresql://{user}:{quote_plus(password)}@{host}:{port}/{name}"
+        url = f"postgresql://{quote_plus(user)}@{host}:{port}/{name}"
         if host != "localhost":
             url += "?sslmode=require"
         _engine = create_engine(url, pool_pre_ping=True, pool_size=2)
+
+        @event.listens_for(_engine, "do_connect")
+        def _connect_with_current_password(dialect, conn_rec, cargs, cparams):
+            # Secrets Manager rotates the password; a warm Lambda would otherwise keep the old one.
+            cparams["password"] = _current_db_password()
+            try:
+                return dialect.connect(*cargs, **cparams)
+            except psycopg2.OperationalError as exc:
+                if "password" not in str(exc):
+                    raise
+                cparams["password"] = _current_db_password(refresh=True)
+                return dialect.connect(*cargs, **cparams)
     return _engine
 
 
