@@ -1,5 +1,6 @@
 import uuid
 import json
+import re
 from datetime import datetime
 
 from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, ForeignKeyConstraint, Integer, BigInteger, Boolean, UniqueConstraint, LargeBinary, Numeric, Index, text
@@ -308,6 +309,8 @@ class Lead(Base):
 
     company = relationship("Company", back_populates="leads")
     assignee = relationship("User", foreign_keys=[assigned_to])
+    # Extra phones and emails; phone and email above stay the main ones (texts, calls, SmartMoving).
+    contacts = relationship("LeadContact", order_by="LeadContact.sort_order", cascade="all, delete-orphan", passive_deletes=True)
 
     def to_dict(self):
         estimated_total_data = None
@@ -616,6 +619,29 @@ class LeadJob(Base):
         }
 
 
+def contact_key(kind, value):
+    """How a phone or email is matched: a phone by its last 10 digits, an email trimmed and in lowercase."""
+    if kind == 'phone':
+        return re.sub(r'\D', '', value or '')[-10:]
+    return (value or '').strip().lower()
+
+
+class LeadContact(Base):
+    """An extra phone or email of a lead. Calls, texts, search and the duplicate check match it like the main one."""
+    __tablename__ = "lead_contacts"
+    __table_args__ = (UniqueConstraint("lead_id", "kind", "normalized", name="uq_lead_contacts_value"),)
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    lead_id = Column(String(36), ForeignKey("leads.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(10), nullable=False)  # 'phone' or 'email'
+    value = Column(String(255), nullable=False)
+    normalized = Column(String(255), nullable=False, index=True)  # contact_key(kind, value)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+    def to_dict(self):
+        return {"id": self.id, "kind": self.kind, "value": self.value}
+
+
 class LeadJobCharge(Base):
     __tablename__ = "lead_job_charges"
 
@@ -629,6 +655,9 @@ class LeadJobCharge(Base):
     total_cost = Column(Numeric(12, 2), nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
+    # 'smartmoving': synced from SmartMoving, shown only on the CRM lead. 'crm': our calculator and the customer's
+    # answers. Empty: saved before this was recorded.
+    source = Column(String(20), default='crm')
 
     job = relationship("LeadJob", back_populates="charges")
 
@@ -636,6 +665,7 @@ class LeadJobCharge(Base):
         return {
             "id": self.id,
             "job_id": self.job_id,
+            "source": self.source or "",
             "name": self.name or "",
             "description": self.description or "",
             "sort_order": int(self.sort_order or 0),

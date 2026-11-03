@@ -6,12 +6,12 @@ from datetime import datetime, timezone
 
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
-from sqlalchemy import case, delete, func, or_
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import joinedload
 
 from database import SessionLocal
-from models import AppSetting, Company, Lead, MessageState, MissedCallState, User
+from models import AppSetting, Company, Lead, LeadContact, MessageState, MissedCallState, User
 from communication_associations import find_association
 from meta_attachment_archiver import archive_meta_attachments
 from realtime import publish_realtime_event
@@ -128,7 +128,8 @@ def _resolve_sms_lead_id(db, item: dict) -> str | None:
         .join(Company, Company.id == Lead.company_id)
         .outerjoin(User, User.id == Lead.assigned_to)
         .filter(
-            normalized_lead_phone == client_phone,
+            or_(normalized_lead_phone == client_phone,
+                Lead.id.in_(select(LeadContact.lead_id).where(LeadContact.kind == "phone", LeadContact.normalized == client_phone))),
             or_(normalized_company_phone == destination_phone, normalized_rep_phone == destination_phone),
         )
         .limit(2)

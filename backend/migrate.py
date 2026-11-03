@@ -142,6 +142,9 @@ def migrate() -> None:
         connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS set_name VARCHAR(200)'))
         connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS mover_pack_count INTEGER'))
         connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS manual BOOLEAN'))
+        connection.execute(text('ALTER TABLE lead_job_charges ADD COLUMN IF NOT EXISTS source VARCHAR(20)'))
+        from models import LeadContact
+        LeadContact.__table__.create(connection, checkfirst=True)
         # The list lives in the inventory tables; the old JSON draft copy is no longer read or written.
         connection.execute(text("""UPDATE lead_liveswitch SET details = (details::jsonb - 'inventory_draft')::text
                                    WHERE details LIKE '%"inventory_draft"%'"""))

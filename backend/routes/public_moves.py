@@ -25,7 +25,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Header, HTTPExcep
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import case, func, or_, text
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from auth import get_current_user, require_admin
 from config import get_config
@@ -35,7 +35,7 @@ from libs.aircall.client import find_number_id, send_sms
 from models import Lead, LeadJob, Company, User, LeadAttachment, LeadLiveSwitch, PublicMoveAccess, PublicMoveSession, PublicMoveRepVerification, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload, WalkthroughRequest
 from public_move_security import digest, secret_digest, link_token, contact_fingerprint, normalize_phone, file_type
 from public_move_sync import queue_files, sync_status
-from routes.leads import _get_visible_lead_or_404, _get_user_company_ids, _persist_job_route, _read_job_route, _upload_attachment_bytes_to_s3, _delete_s3_url, _safe_attachment_name
+from routes.leads import LeadContactInput, save_lead_contacts, _get_visible_lead_or_404, _get_user_company_ids, _persist_job_route, _read_job_route, _upload_attachment_bytes_to_s3, _delete_s3_url, _safe_attachment_name
 
 router = APIRouter(tags=['Customer move portal'])
 
@@ -385,7 +385,7 @@ def intake(body: Intake, request: Request, x_api_secret: str = Header(default=''
 
 @router.get('/api/public-moves/{access_id}/verify-options')
 def verify_options(access: PublicMoveAccess = Depends(public_access), db: Session = Depends(get_db), request: Request = None):
-    lead = db.get(Lead, access.lead_id)
+    lead = db.query(Lead).options(joinedload(Lead.contacts)).filter(Lead.id == access.lead_id).one()
     shown = _company_details(_company_for(lead, db))
     company_color = shown['color']
     if is_rep_request(access, request):
@@ -393,11 +393,18 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
         return {'audience': 'rep', 'options': [{'channel': channel, 'label': value['label'], 'destination': '***' + value['phone'][-4:]} for channel, value in contacts.items()],
                 'company': {'name': company.name if company else 'Your moving team',
                             'color': company.color if company and company.color else company_color}}
+    def masked(kind, value):
+        if kind == 'phone':
+            return '***' + value[-4:]
+        local, domain = value.split('@', 1)
+        return local[:1] + '***@' + domain
     options = []
     if lead.email:
-        local, domain = lead.email.split('@', 1)
-        options.append({'channel': 'email', 'destination': local[:1]+'***@'+domain})
-    if lead.phone: options.append({'channel': 'sms', 'destination': '***'+lead.phone[-4:]})
+        options.append({'channel': 'email', 'destination': masked('email', lead.email)})
+    if lead.phone: options.append({'channel': 'sms', 'destination': masked('phone', lead.phone)})
+    # Extras after the main ones; the code request names the extra by its id.
+    options += [{'channel': 'sms' if row.kind == 'phone' else 'email', 'destination': masked(row.kind, row.value), 'contact_id': row.id}
+                for row in lead.contacts if row.kind == 'phone' or '@' in row.value]
     return {
         'options': options,
         'link_sms': customer_link_sms_notice(access),
@@ -407,6 +414,8 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
 
 class CodeRequest(BaseModel):
     channel: Literal['sms', 'email', 'rep_sms', 'company_sms']
+    # An extra phone or email of the lead; without it the code goes to the main one.
+    contact_id: str | None = Field(default=None, max_length=36)
 
 
 def deliver_code(lead, channel, code, db: Session):
@@ -457,6 +466,12 @@ def send_code(body: CodeRequest, access: PublicMoveAccess = Depends(public_acces
         channel = 'sms'
     elif channel not in ('sms', 'email'):
         raise HTTPException(400, 'This customer verification method is unavailable.')
+    elif body.contact_id:
+        extra = next((row for row in lead.contacts if row.id == body.contact_id and row.kind == ('email' if channel == 'email' else 'phone')), None)
+        if extra is None:
+            raise HTTPException(400, 'This contact method is unavailable')
+        lead = SimpleNamespace(phone=extra.value if extra.kind == 'phone' else None, email=extra.value if extra.kind == 'email' else None,
+                               company_id=lead.company_id)
     if not (lead.email if channel == 'email' else lead.phone):
         raise HTTPException(400, 'This contact method is unavailable')
     access = verification_state(access, db, request)
@@ -675,7 +690,7 @@ def _combined_inventory(state, db, job_id=None):
     return list_rows(job_id, db)[0]
 
 
-def _load_move(access, db, charges=False):
+def _load_move(access, db, charges=False, contacts=False):
     """Lead, job, company and conversation (and price lines) in one query; later reads come from the session,
     which keeps them while the caller holds them."""
     from sqlalchemy.orm import contains_eager, joinedload
@@ -683,20 +698,22 @@ def _load_move(access, db, charges=False):
              .join(LeadJob, (LeadJob.id == access.job_id) & (LeadJob.lead_id == Lead.id))
              .outerjoin(LeadLiveSwitch, LeadLiveSwitch.lead_id == Lead.id)
              .outerjoin(Company, Company.id == Lead.company_id)
-             .options(contains_eager(Lead.company), *([joinedload(LeadJob.charges)] if charges else []))
+             .options(contains_eager(Lead.company), *([joinedload(LeadJob.charges)] if charges else []),
+                      *([joinedload(Lead.contacts)] if contacts else []))
              .filter(Lead.id == access.lead_id))
     from request_cache import cached
-    return cached(db, ('move', access.id, charges), query.one)
+    return cached(db, ('move', access.id, charges, contacts), query.one)
 
 
 @router.get('/api/public-moves/{access_id}/sections/{section}')
 def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estimate', 'pricing'], access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
-    lead, job, conversation = _load_move(access, db, charges=section in ('estimate', 'pricing'))
+    lead, job, conversation = _load_move(access, db, charges=section in ('estimate', 'pricing'), contacts=section == 'move')
     if section == 'move':
         pickup, stops, delivery = _read_job_route(db, job)
         details = _company_details(_company_for(lead, db))
         details.pop('dot_number')  # The move section has never sent it.
         return dict(name=lead.full_name, phone=lead.phone or '', email=lead.email or '', move_date=job.move_date or '', pickup=pickup, delivery=delivery,
+                    contacts=[row.to_dict() for row in lead.contacts],
                     stops=_typed_stops(job, stops), company=details['name'], company_details=details,
                     link_sms=customer_link_sms_notice(access))
     state = _conversation_state(conversation, db)
@@ -733,6 +750,12 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
     return result
 
 
+def customer_price(job):
+    """The customer's price: the total of the lines the customer page shows. SmartMoving's lines are not part of it."""
+    shown = [c for c in job.charges or [] if c.source != 'smartmoving']
+    return sum((Decimal(str(c.total_cost or 0)) for c in shown), Decimal(0)) if shown else None
+
+
 def estimate_charges(job, individual_charges=False):
     """The estimate's price lines as the customer page shows them."""
     charges = [
@@ -747,7 +770,7 @@ def estimate_charges(job, individual_charges=False):
             'discount_percent': round(float(c.discount_amount or 0) / float(c.subtotal) * 100, 2) if c.subtotal and c.subtotal > 0 else 0,
         }
         for c in (job.charges or [])
-        if (
+        if c.source != 'smartmoving' and (
             ((c.description or '').startswith('Calculation pending: ')) or (c.total_cost and float(c.total_cost) > 0) or (c.discount_amount and float(c.discount_amount) > 0)
         )
     ]
@@ -756,20 +779,12 @@ def estimate_charges(job, individual_charges=False):
 
 
 def _estimate_from(access, lead, job, charges):
-    """The saved estimate: the published price, else the job price, else the lead total."""
+    """The saved estimate: our lines and their total. SmartMoving's price and lines are the CRM lead's only."""
     from math import ceil
-    if access.published_at and access.published_price is not None:
-        return {'price': str(access.published_price), 'cuft': str(ceil(access.published_cuft or lead.volume or 0)), 'charges': charges}
-    if job.price is not None and (float(job.price) > 0 or any(c.get('pending') for c in charges)):
-        return {'price': str(job.price), 'cuft': str(ceil(lead.volume or 0)), 'charges': charges}
-    if lead.estimated_total:
-        try:
-            final_total = float(json.loads(lead.estimated_total).get('finalTotal') or 0)
-        except Exception:
-            return None
-        if final_total > 0:
-            return {'price': str(final_total), 'cuft': str(ceil(lead.volume or 0)), 'charges': charges}
-    return None
+    price = customer_price(job)
+    if price is None or (price <= 0 and not any(c.get('pending') for c in charges)):
+        return None
+    return {'price': str(price), 'cuft': str(ceil(access.published_cuft or lead.volume or 0)), 'charges': charges}
 
 
 def saved_estimate(access, lead, job, state, individual_charges=False):
@@ -785,7 +800,7 @@ def saved_estimate(access, lead, job, state, individual_charges=False):
 
 
 def _move_details(access, db, *, refresh_report=True, include_pricing=True, pricing_only=False, individual_charges=False, estimate_only=False):
-    lead, job, conversation = _load_move(access, db, charges=True)
+    lead, job, conversation = _load_move(access, db, charges=True, contacts=not pricing_only)
     pickup, stops, delivery = _read_job_route(db, job)
     meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first() if not pricing_only else None
     files = active_report_files(access, db) if not pricing_only else []
@@ -869,7 +884,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     pricing_data['signature_requires_resign'] = pricing_data['signature_status'] == 'changed'
     if pricing_only:
         return pricing_data
-    return {'signature_status': pricing_data['signature_status'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'move_date': job.move_date or '',
+    return {'signature_status': pricing_data['signature_status'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': _typed_stops(job, stops),
             'unanswered_questions': required_questions,
             'pricing_required': pricing_required,
@@ -948,7 +963,7 @@ def _pricing_delta(access, lead, job, db, kind, individual_charges):
     db.refresh(job)
     db.refresh(access)
     options = {part: builders[part](lead, job, db) for part in parts}
-    price = access.published_price if access.published_at and access.published_price is not None else job.price
+    price = customer_price(job)
     delta = {'saved': True, 'price': str(price) if price is not None else None,
              'charges': estimate_charges(job, individual_charges), 'options': options,
              'unanswered': unanswered_questions(options, package_saved='mode' in json.loads(job.customer_packing_package or '{}')),
@@ -974,7 +989,7 @@ def _item_answer_delta(access, lead, company, db, inventory_changed, individual_
         job = db.get(LeadJob, access.job_id)
         db.refresh(job)
         db.refresh(access)
-        price = access.published_price if access.published_at and access.published_price is not None else job.price
+        price = customer_price(job)
         options = _customer_pricing_options(lead, job, db)
         delta.update(price=str(price) if price is not None else None, charges=estimate_charges(job, individual_charges),
                      options={key: value for key, value in options.items() if key != 'minimum_cuft'},
@@ -1299,7 +1314,7 @@ def save_rep_discount(body: RepDiscountInput, request: Request, access: PublicMo
     # Only the price lines and total changed; send them back instead of reloading the page.
     db.refresh(job)
     db.refresh(access)
-    price = access.published_price if access.published_at and access.published_price is not None else job.price
+    price = customer_price(job)
     return {'saved': True, 'price': str(price) if price is not None else None, 'charges': estimate_charges(job, individual_charges=True)}
 
 
@@ -1864,6 +1879,7 @@ class CustomerDetailsPatch(BaseModel):
     move_date: str | None = None
     pickup: str | None = Field(default=None, max_length=500)
     delivery: str | None = Field(default=None, max_length=500)
+    contacts: list[LeadContactInput] | None = Field(default=None, max_length=10)
 
     @field_validator('phone')
     @classmethod
@@ -1903,6 +1919,8 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
         lead.phone = body.phone
     if 'email' in body.model_fields_set:
         lead.email = body.email
+    if body.contacts is not None:
+        save_lead_contacts(lead, body.contacts)
 
     if body.move_date is not None:
         raw_date = body.move_date.strip()

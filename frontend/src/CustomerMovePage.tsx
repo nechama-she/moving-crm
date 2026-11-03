@@ -73,6 +73,8 @@ type Details = {
   name: string;
   phone: string;
   email: string;
+  // Extra phones and emails beside the main ones.
+  contacts?: { id: string; kind: 'phone' | 'email'; value: string }[];
   move_date: string;
   pickup: string;
   delivery: string;
@@ -142,7 +144,9 @@ export default function CustomerMovePage() {
       window.removeEventListener('focus', check); document.removeEventListener('visibilitychange', check);
     };
   }, [session, sessionKey]);
-  const [options,setOptions]=useState<{channel:string;destination:string;label?:string}[]>([]),[channel,setChannel]=useState('');
+  const [options,setOptions]=useState<{channel:string;destination:string;label?:string;contact_id?:string}[]>([]),[channel,setChannel]=useState('');
+  // The picked option: its channel and, for an extra phone or email, its id.
+  const optionKey=(option:{channel:string;contact_id?:string})=>option.channel+':'+(option.contact_id||'');
   const [code,setCode]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [data,setData]=useState<Details | undefined>(() => ({...emptyDetails(), ...bootstrap?.move})),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
   const uploadLock = useRef(false);
@@ -164,6 +168,8 @@ export default function CustomerMovePage() {
   const [editingMove,setEditingMove]=useState(false);
   const addressDraft = useRef<{ pickup: string; delivery: string; pickup_place: SelectedAddress | null; delivery_place: SelectedAddress | null }>({ pickup: '', delivery: '', pickup_place: null, delivery_place: null });
   const [moveDraft,setMoveDraft]=useState({name:'',phone:'',email:'',move_date:'',pickup:'',delivery:''});
+  const [contactsDraft,setContactsDraft]=useState<{kind:'phone'|'email';value:string}[]>([]);
+  const contactsBaseline=useRef('[]');
   const moveBaseline = useRef(moveDraft);
   const [reportState,setReportState]=useState<'idle'|'running'|'done'>('idle');
   const [startingReport, setStartingReport] = useState(false);
@@ -674,9 +680,9 @@ export default function CustomerMovePage() {
     const urls=previews.current;
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
-  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setOptions(value.options);setLinkSms(value.link_sms || null);setChannel(value.options[0]?.channel||'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
+  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setOptions(value.options);setLinkSms(value.link_sms || null);setChannel(value.options[0]?optionKey(value.options[0]):'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
   useEffect(()=>{if(!sent)return;const t=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(t);},[sent]);
-  async function send(){setBusy(true);setError('');try{await call('/send-code',{channel});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+  async function send(){setBusy(true);setError('');try{const [picked,contactId]=channel.split(':');await call('/send-code',{channel:picked,...(contactId?{contact_id:contactId}:{})});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   async function verify(){
     setBusy(true);setError('');
     try{
@@ -752,9 +758,29 @@ export default function CustomerMovePage() {
     };
     moveBaseline.current = baseline;
     setMoveDraft(baseline);
+    const contacts=(data.contacts||[]).map(({kind,value})=>({kind,value}));
+    contactsBaseline.current=JSON.stringify(contacts);
+    setContactsDraft(contacts);
     addressDraft.current = { pickup: data.pickup || '', delivery: data.delivery || '', pickup_place: null, delivery_place: null };
     setMoveErrors({});
     setEditingMove(true);
+  }
+
+  // The customer's extra phones or emails in the edit form, each removable, and one more to add.
+  function contactInputs(kind: 'phone' | 'email') {
+    const label = kind === 'phone' ? 'Another phone number' : 'Another email address';
+    return <>
+      {contactsDraft.map((row, index) => row.kind !== kind ? null : (
+        <div key={index} className="cm-extra-contact">
+          <label>{label}<input type={kind === 'phone' ? 'tel' : 'email'} value={row.value}
+            onChange={e => { const value = e.target.value; setContactsDraft(rows => rows.map((item, i) => i === index ? { ...item, value } : item)); }} /></label>
+          <button type="button" className="cm-secondary-btn" onClick={() => setContactsDraft(rows => rows.filter((_, i) => i !== index))}>Remove</button>
+        </div>
+      ))}
+      <button type="button" className="cm-secondary-btn cm-add-contact" onClick={() => setContactsDraft(rows => [...rows, { kind, value: '' }])}>
+        {kind === 'phone' ? '+ Add another phone' : '+ Add another email'}
+      </button>
+    </>;
   }
 
   const [moveErrors,setMoveErrors] = useState<Record<string,string>>({});
@@ -775,6 +801,8 @@ export default function CustomerMovePage() {
         const previous=moveBaseline.current[field];
         if(moveDraft[field]!==previous)changes[field]=moveDraft[field];
       }
+      const contacts=contactsDraft.filter(row=>row.value.trim());
+      if(JSON.stringify(contacts)!==contactsBaseline.current)changes.contacts=contacts;
       const locationInputs:string[]=[];
       for(const field of ['pickup','delivery'] as const){
         if(submittedAddresses[field] !== moveBaseline.current[field]){
@@ -947,8 +975,8 @@ export default function CustomerMovePage() {
             <fieldset>
               <legend>Where should we send your code?</legend>
               {options.map(option => (
-                <label key={option.channel}>
-                  <input type="radio" name="channel" value={option.channel} checked={channel===option.channel} disabled={busy} onChange={()=>{setChannel(option.channel);setSent(false);}}/>
+                <label key={optionKey(option)}>
+                  <input type="radio" name="channel" value={optionKey(option)} checked={channel===optionKey(option)} disabled={busy} onChange={()=>{setChannel(optionKey(option));setSent(false);}}/>
                   {option.label || (option.channel==='sms' ? 'Text message' : 'Email')} <span>{option.destination}</span>
                 </label>
               ))}
@@ -1022,7 +1050,7 @@ export default function CustomerMovePage() {
                   <>
                     <h2>{!sections.move.ready ? 'Your move' : data.move_date?new Date(data.move_date.slice(0,10)+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'Date to be confirmed'}</h2>
                     <ol>{[{address:data.pickup,type:'pickup'},...data.stops,{address:data.delivery,type:'delivery'}].map((stop,i)=><li key={i} className={i > 0 && i <= data.stops.length ? "cm-editable-stop" : undefined} onClick={i > 0 && i <= data.stops.length ? openExtraStops : undefined} title={i > 0 && i <= data.stops.length ? "Click to edit additional stops" : undefined}><small>{stop.type==='pickup'?'Pickup':stop.type==='delivery'?'Delivery':'Stop'}</small><strong>{stop.address||'—'}</strong></li>)}</ol>
-                    <div className="cm-contact"><strong>{data.name}</strong><span>{data.phone}</span><span>{data.email}</span></div>
+                    <div className="cm-contact"><strong>{data.name}</strong><span>{data.phone}</span>{(data.contacts||[]).filter(row=>row.kind==='phone').map(row=><span key={row.id}>{row.value}</span>)}<span>{data.email}</span>{(data.contacts||[]).filter(row=>row.kind==='email').map(row=><span key={row.id}>{row.value}</span>)}</div>
                   </>
                 ) : (
                   <form className="cm-route-edit" noValidate onSubmit={saveMoveDetails}>
@@ -1055,11 +1083,13 @@ export default function CustomerMovePage() {
                       <input type="tel" required value={moveDraft.phone} aria-invalid={!!moveErrors.phone} aria-describedby={moveErrors.phone ? 'move-phone-error' : undefined} onChange={e=>{clearMoveError('phone');setMoveDraft(prev=>({...prev,phone:e.target.value}));}} />
                       {moveErrors.phone && <small id="move-phone-error" className="cm-field-error" role="alert">{moveErrors.phone}</small>}
                     </label>
+                    {contactInputs('phone')}
                     <label>
                       Email Address (optional)
                       <input type="email" value={moveDraft.email} aria-invalid={!!moveErrors.email} aria-describedby={moveErrors.email ? 'move-email-error' : undefined} onChange={e=>{clearMoveError('email');setMoveDraft(prev=>({...prev,email:e.target.value}));}} />
                       {moveErrors.email && <small id="move-email-error" className="cm-field-error" role="alert">{moveErrors.email}</small>}
                     </label>
+                    {contactInputs('email')}
                     <div className="cm-route-actions">
                       {moveErrors.form && <p className="cm-field-error" role="alert">{moveErrors.form}</p>}
                       <button type="submit" className="slds-button cm-save-btn" disabled={busy}>Save changes</button>

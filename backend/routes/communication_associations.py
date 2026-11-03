@@ -82,7 +82,9 @@ def candidates(
     needle = search.strip()
     if needle:
         pattern = f"%{needle}%"
-        query = query.filter(or_(Lead.full_name.ilike(pattern), Lead.phone.ilike(pattern), phone_search_condition(Lead.phone, needle), Lead.email.ilike(pattern), Lead.smartmoving_id.ilike(pattern)))
+        from models import LeadContact
+        query = query.filter(or_(Lead.full_name.ilike(pattern), Lead.phone.ilike(pattern), phone_search_condition(Lead.phone, needle), Lead.email.ilike(pattern), Lead.smartmoving_id.ilike(pattern),
+                                 Lead.contacts.any(or_(LeadContact.value.ilike(pattern), phone_search_condition(LeadContact.value, needle)))))
     leads = query.order_by(Lead.created_at.desc()).limit(limit).all()
     return {
         "scope_label": scope_label,

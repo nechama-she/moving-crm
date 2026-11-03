@@ -9,7 +9,7 @@ from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from auth import get_current_user
@@ -17,7 +17,7 @@ from database import get_db
 from db import calls_table, conversations_table, sms_messages_table
 from libs.common.phone import normalize_digits
 from libs.common.phone import phone_variants
-from models import CommunicationAssociation, Company, Lead, User, UserCompany
+from models import CommunicationAssociation, Company, Lead, LeadContact, User, UserCompany
 
 logger = logging.getLogger("moving-crm")
 router = APIRouter(prefix="/api/chats", tags=["Chats"])
@@ -148,17 +148,21 @@ def get_latest_calls(
     association_by_key = {(row.client_identifier, row.company_identifier): row.lead_id for row in associations}
     association_lead_ids = {row.lead_id for row in associations}
     normalized_lead_phone = func.right(func.regexp_replace(Lead.phone, r"\D", "", "g"), 10)
+    extra_phone_leads = select(LeadContact.lead_id).where(LeadContact.kind == "phone", LeadContact.normalized.in_(client_phones))
     leads = (
         db.query(Lead)
-        .options(joinedload(Lead.company), joinedload(Lead.assignee))
-        .filter(Lead.company_id.in_(company_ids), or_(normalized_lead_phone.in_(client_phones), Lead.id.in_(association_lead_ids)))
+        .options(joinedload(Lead.company), joinedload(Lead.assignee), joinedload(Lead.contacts))
+        .filter(Lead.company_id.in_(company_ids), or_(normalized_lead_phone.in_(client_phones), Lead.id.in_(extra_phone_leads),
+                                                       Lead.id.in_(association_lead_ids)))
         .all()
         if client_phones or association_lead_ids else []
     )
+    leads = list(dict.fromkeys(leads))  # Joined extras repeat a lead once per extra.
     leads_by_id = {lead.id: lead for lead in leads}
     leads_by_phone: dict[str, list[Lead]] = {}
     for lead in leads:
-        leads_by_phone.setdefault(_phone(lead.phone), []).append(lead)
+        for phone in {_phone(lead.phone), *(_phone(row.value) for row in lead.contacts if row.kind == "phone")}:
+            leads_by_phone.setdefault(phone, []).append(lead)
 
     company_rows = db.query(Company).filter(Company.id.in_(company_ids)).all()
     company_names_by_phone = {
@@ -401,6 +405,7 @@ def get_all_chats(
             10,
         )
         match_conditions.append(normalized_lead_phone.in_(sms_phones))
+        match_conditions.append(Lead.id.in_(select(LeadContact.lead_id).where(LeadContact.kind == "phone", LeadContact.normalized.in_(sms_phones))))
     association_lead_ids = {row.lead_id for row in associations}
     if association_lead_ids:
         match_conditions.append(Lead.id.in_(association_lead_ids))
@@ -409,11 +414,12 @@ def get_all_chats(
     if match_conditions:
         leads = (
             db.query(Lead)
-            .options(joinedload(Lead.company), joinedload(Lead.assignee))
+            .options(joinedload(Lead.company), joinedload(Lead.assignee), joinedload(Lead.contacts))
             .filter(Lead.company_id.in_(company_ids))
             .filter(or_(*match_conditions))
             .all()
         )
+        leads = list(dict.fromkeys(leads))  # Joined extras repeat a lead once per extra.
 
     meta_leads: dict[str, Lead] = {}
     leads_by_id = {lead.id: lead for lead in leads}
@@ -423,11 +429,12 @@ def get_all_chats(
             current = meta_leads.get(lead.facebook_user_id)
             if current is None or _lead_time(lead) > _lead_time(current):
                 meta_leads[lead.facebook_user_id] = lead
-        phone = normalize_digits(lead.phone or "")
-        if len(phone) == 11 and phone.startswith("1"):
-            phone = phone[1:]
-        if phone:
-            sms_phone_leads.setdefault(phone, []).append(lead)
+        for number in [lead.phone, *(row.value for row in lead.contacts if row.kind == "phone")]:
+            phone = normalize_digits(number or "")
+            if len(phone) == 11 and phone.startswith("1"):
+                phone = phone[1:]
+            if phone and lead not in sms_phone_leads.get(phone, []):
+                sms_phone_leads.setdefault(phone, []).append(lead)
 
     latest: dict[tuple[str, str], dict] = {}
 

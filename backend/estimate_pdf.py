@@ -234,18 +234,26 @@ def _summary(data, styles, p, table, link=True):
     package = data.get('packing_package') or {}
     minimum = package.get('minimum_cubic_feet')
     if minimum and float(minimum) > float(estimate.get('cuft') or 0):
-        story.append(p(f"Minimum billable volume for applicable services: {float(minimum):g} cu ft. This is a billing minimum, not your inventory volume.", 'NoteEstimate'))
+        story.append(p(f"Minimum billable volume for applicable services: {float(minimum):g} cu ft.", 'NoteEstimate'))
     charges = [[p('ITEM'), p('RATE / BASIS'), p('COST', 'RightEstimate')]]
     for charge in estimate.get('charges') or []:
         # Zero lines, including ones discounted to zero, are explained in their detail section.
         if _is_service(charge) or (not charge.get('pending') and not charge.get('total')):
             continue
         basis = charge.get('description') or 'Not specified'
-        rate = re.fullmatch(r'\$([\d,]+\.\d{2}) per cu ft(.*)', basis) if charge.get('name') == 'Transportation charge' else None
-        if rate:
-            basis = f"{float(estimate.get('cuft') or 0):,.2f} cuft @ ${rate[1]} per cuft{rate[2]}"
+        rate = re.fullmatch(r'\$([\d,]+\.\d{2}) per cu ft(?: \(minimum charge \$([\d,]+\.\d{2})\))?', basis) if charge.get('name') == 'Transportation charge' else None
+        if rate and rate[2]:
+            # The plan's two minimums: its minimum volume and its minimum charge.
+            minimum_cuft = estimate.get('minimum_cuft') or minimum
+            basis = (f"Up to {float(minimum_cuft):g} cu ft: ${rate[2]} | Each additional cu ft: ${rate[1]}" if minimum_cuft
+                     else f"Minimum charge: ${rate[2]} | Each cu ft: ${rate[1]}")
+        elif rate:
+            basis = f"{float(estimate.get('cuft') or 0):,.2f} cuft @ ${rate[1]} per cuft"
         if charge.get('discount_amount', 0) > 0:
-            basis += f"\nBefore discount: {money(charge['subtotal'])}\nDiscount ({charge['discount_percent']:g}%): -{money(charge['discount_amount'])}"
+            # A rep discount adds "| <title>: -$X" to the saved description; these two lines say it once.
+            basis = re.sub(r' \| [^|]*: -\$[\d,]+\.\d{2}( \(new rate [^)]*\))?$', '', basis)
+            title = (data.get('discount_titles') or {}).get(charge.get('id')) or 'Discount'
+            basis += f"\nBefore discount: {money(charge['subtotal'])}\n{title} ({charge['discount_percent']:g}%): -{money(charge['discount_amount'])}"
         charges.append([p(charge['name']), p(basis, 'NoteEstimate'), p('Pending' if charge.get('pending') else money(charge['total']), 'RightEstimate')])
     service_lines, service_total, service_pending = _services_total(estimate)
     if service_lines:

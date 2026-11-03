@@ -327,3 +327,6 @@
 .cm-flow-number{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;flex-shrink:0;border-radius:50%;background:var(--cm-tint);color:var(--cm-primary);font-size:12px}
 .cm-flow-label{flex:1;min-width:0}
 @media(max-width:700px){.cm-estimate-flow{grid-template-columns:1fr;gap:12px}.cm-estimate-flow>li:not(:last-child)::after{top:100%;left:27px;right:auto;width:0;height:12px;border-top:0;border-left:1px solid var(--cm-border)}}
+
+/* Extra phones and emails in the move details form. */
+.cm-extra-contact{display:flex;gap:8px;align-items:end}.cm-extra-contact label{flex:1}.cm-add-contact{justify-self:start;align-self:start}

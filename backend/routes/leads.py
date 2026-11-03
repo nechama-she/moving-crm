@@ -10,7 +10,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -23,7 +23,7 @@ from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, cast, text, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from auth import get_current_user
 from assignment_conflicts import find_assignment_conflicts
@@ -47,7 +47,7 @@ from libs.smartmoving.client import (
     finish_request_capture,
     update_opportunity_salesperson,
 )
-from models import Lead, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation, PublicMoveAccess
+from models import Lead, LeadContact, contact_key, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation, PublicMoveAccess
 from realtime import publish_realtime_event
 from referral_assignment_rules import configured_rep_ids_for_referral
 from routes.templates import get_company_template, render_template
@@ -1561,6 +1561,7 @@ def get_leads(
             | phone_search_condition(Lead.phone, search)
             | Lead.email.ilike(q)
             | Lead.quote_number.ilike(q)
+            | Lead.contacts.any(LeadContact.value.ilike(q) | phone_search_condition(LeadContact.value, search))
         )
 
     from lead_overview import overview
@@ -1699,7 +1700,7 @@ def delete_lead_by_smartmoving(
 
 @router.get("/leads/{lead_id}")
 def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    lead = _get_visible_lead_or_404(lead_id, user, db)
+    lead = _get_visible_lead_or_404(lead_id, user, db, with_contacts=True)
 
     # If facebook_user_id is missing, try to find it from sender_info
     if user.role != "foreman" and not lead.facebook_user_id:
@@ -1710,6 +1711,7 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
             logger.info("Matched sender_id %s for lead %s", sender_id, lead.id)
 
     result = lead.to_dict()
+    result['contacts'] = [row.to_dict() for row in lead.contacts]
     result['has_customer_page'] = db.query(PublicMoveAccess.id).filter(PublicMoveAccess.lead_id == lead.id).first() is not None
     channels = {row[0] for row in db.query(CommunicationAssociation.channel).filter(
         CommunicationAssociation.lead_id == lead.id,
@@ -1752,11 +1754,13 @@ def copy_lead_conflicts(
         conditions.append(func.lower(func.trim(Lead.full_name)) == normalized_name)
     if normalized_email:
         conditions.append(func.lower(func.trim(Lead.email)) == normalized_email)
+        conditions.append(Lead.contacts.any((LeadContact.kind == "email") & (LeadContact.normalized == normalized_email)))
     if normalized_phone:
         conditions.append(func.right(func.regexp_replace(Lead.phone, r"\D", "", "g"), 10) == normalized_phone)
+        conditions.append(Lead.contacts.any((LeadContact.kind == "phone") & (LeadContact.normalized == normalized_phone)))
     matches = (
         db.query(Lead)
-        .options(joinedload(Lead.company))
+        .options(joinedload(Lead.company), selectinload(Lead.contacts))
         .filter(Lead.assigned_to == rep.id, or_(*conditions))
         .order_by(Lead.created_at.desc())
         .limit(50)
@@ -1768,9 +1772,10 @@ def copy_lead_conflicts(
         fields = []
         if normalized_name and (match.full_name or "").strip().lower() == normalized_name:
             fields.append("name")
-        if normalized_email and (match.email or "").strip().lower() == normalized_email:
+        extras = {(row.kind, row.normalized) for row in match.contacts}
+        if normalized_email and ((match.email or "").strip().lower() == normalized_email or ("email", normalized_email) in extras):
             fields.append("email")
-        if normalized_phone and normalize_digits(match.phone or "")[-10:] == normalized_phone:
+        if normalized_phone and (normalize_digits(match.phone or "")[-10:] == normalized_phone or ("phone", normalized_phone) in extras):
             fields.append("phone")
         items.append({
             "id": match.id,
@@ -2144,12 +2149,13 @@ JOB_DELIVERIES_SETTING_PREFIX = "lead_job_deliveries:"
 JOB_STOPS_SETTING_PREFIX = "lead_job_stops:"
 
 
-def _get_visible_lead_or_404(lead_id: str, user: User, db: Session) -> Lead:
+def _get_visible_lead_or_404(lead_id: str, user: User, db: Session, with_contacts: bool = False) -> Lead:
     company_ids = _get_user_company_ids(user, db)
     visible = or_(Lead.company_id.in_(company_ids), Lead.company_id.is_(None)) if user.role == "admin" else Lead.company_id.in_(company_ids)
-    lead = db.query(Lead).filter(Lead.id == lead_id, visible).first()
+    query = db.query(Lead).options(joinedload(Lead.contacts)) if with_contacts else db.query(Lead)
+    lead = query.filter(Lead.id == lead_id, visible).first()
     if not lead:
-        lead = db.query(Lead).filter(Lead.leadgen_id == lead_id, visible).first()
+        lead = query.filter(Lead.leadgen_id == lead_id, visible).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     if user.role == "foreman":
@@ -2371,10 +2377,12 @@ def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload | dict
     if not job.id:
         db.flush()
 
+    # Every charge list arriving here is SmartMoving's: it replaces SmartMoving's lines, never ours.
     from charge_updates import ChargeUpdates
     existing = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == job.id).all()
-    updates = ChargeUpdates(db, existing, match_legacy_base=True)
+    updates = ChargeUpdates(db, existing, match_legacy_base=True, smartmoving=True)
     existing_ids = {row.id for row in existing}
+    ours = {row.id for row in existing if row.source == 'crm'}
 
     for index, charge in enumerate(charges):
         if isinstance(charge, dict):
@@ -2389,6 +2397,8 @@ def _replace_job_charges(job: LeadJob, charges: list[LeadJobChargePayload | dict
         if not charge_id and charge.pricing_key:
             from uuid import uuid5, NAMESPACE_URL
             charge_id = charge.pricing_key if charge.pricing_key.startswith('extra-stop:') else str(uuid5(NAMESPACE_URL, f'customer-packing:{job.id}:{charge.pricing_key}'))
+        if charge_id in ours:
+            charge_id = None  # A SmartMoving line never takes over one of ours.
         updates.add(LeadJobCharge(
             id=charge_id or str(uuid4()),
             job_id=job.id,
@@ -4059,8 +4069,39 @@ class LeadUpdateJob(BaseModel):
     logs: list[ExternalLeadUpdateLog] | None = None
 
 
+class LeadContactInput(BaseModel):
+    kind: Literal["phone", "email"]
+    value: str = Field(min_length=1, max_length=255)
+
+
+def save_lead_contacts(lead: Lead, items: list[LeadContactInput]) -> None:
+    """Make the lead's extra phones and emails these, in this order; rows that stay are kept, the rest removed.
+    The main phone and email, empty values and repeats are not stored as extras."""
+    main = {("phone", contact_key("phone", lead.phone)), ("email", contact_key("email", lead.email))}
+    wanted, seen = [], set()
+    for item in items:
+        value = (_normalize_phone(item.value) or "") if item.kind == "phone" else item.value.strip()
+        if item.kind == "email" and value and "@" not in value:
+            raise HTTPException(status_code=400, detail=f"{value} is not an email address")
+        key = (item.kind, contact_key(item.kind, value))
+        if not key[1] or key in main or key in seen:
+            continue
+        seen.add(key)
+        wanted.append((key, value))
+    existing = {(row.kind, row.normalized): row for row in lead.contacts}
+    rows = []
+    for index, (key, value) in enumerate(wanted):
+        row = existing.get(key) or LeadContact(kind=key[0], normalized=key[1])
+        row.value, row.sort_order = value, index
+        rows.append(row)
+    lead.contacts[:] = rows
+
+
 class LeadUpdate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+
+    # Extra phones and emails, when given: the whole list, saved as changes.
+    contacts: list[LeadContactInput] | None = None
 
     status: str | None = None
     priority: int | None = Field(default=None, ge=0)
@@ -4256,6 +4297,8 @@ def _apply_lead_update(
         lead.phone = _normalize_phone(body.phone_number)
     if body.email is not None:
         lead.email = body.email.strip() or None
+    if body.contacts is not None:
+        save_lead_contacts(lead, body.contacts)
     if body.move_size is not None:
         lead.move_size = body.move_size.strip()
     if body.volume is not None:
@@ -4649,7 +4692,10 @@ def _apply_lead_update(
         except Exception as exc:
             logger.warning("Non-fatal rep_assignment SMS failure for lead %s: %s", lead.id, exc)
 
-    return lead.to_dict()
+    result = lead.to_dict()
+    if body.contacts is not None:
+        result['contacts'] = [row.to_dict() for row in lead.contacts]
+    return result
 
 
 @router.post("/leads/{lead_id}/refresh-smartmoving")

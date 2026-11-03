@@ -3,9 +3,12 @@ from models import LeadJobCharge
 
 
 class ChargeUpdates:
-    def __init__(self, db, existing, match_legacy_base=False, remove_missing=True):
+    def __init__(self, db, existing, match_legacy_base=False, remove_missing=True, smartmoving=False):
         self.db = db
-        self.existing = list(existing)
+        # The SmartMoving sync replaces its own lines (and ones saved before lines recorded their source);
+        # our calculator updates only ours. Neither changes or removes the other's.
+        self.smartmoving = smartmoving
+        self.existing = [row for row in existing if (row.source != 'crm' if smartmoving else row.source != 'smartmoving')]
         self.by_id = {row.id: row for row in self.existing}
         self.used = set()
         self.match_legacy_base = match_legacy_base
@@ -26,6 +29,7 @@ class ChargeUpdates:
             current = next((item for item in matches if item.sort_order == row.sort_order),
                            matches[0] if len(matches) == 1 else None)
         if current is None:
+            row.source = 'smartmoving' if self.smartmoving else 'crm'
             self.db.add(row)
             self.by_id[row.id] = row
             self.used.add(row.id)
@@ -35,6 +39,7 @@ class ChargeUpdates:
         self.recalculated.setdefault(row.job_id, set()).add(current.id)
         for field in ('name', 'description', 'sort_order', 'subtotal', 'discount_amount', 'total_cost'):
             setattr(current, field, getattr(row, field))
+        current.source = 'smartmoving' if self.smartmoving else 'crm'
         self.used.add(current.id)
 
     def finish(self):

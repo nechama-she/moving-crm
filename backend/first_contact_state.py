@@ -111,7 +111,12 @@ def record_contact(db, channel, item):
                 Lead.company.has(Company.aircall_number_id == number_id),
                 Lead.assignee.has(User.aircall_number_id == number_id),
             ])
-        query = db.query(Lead).filter(normalized(Lead.phone) == phone, or_(*destinations))
+        from models import LeadContact
+        from sqlalchemy import select
+        query = db.query(Lead).filter(
+            or_(normalized(Lead.phone) == phone,
+                Lead.id.in_(select(LeadContact.lead_id).where(LeadContact.kind == 'phone', LeadContact.normalized == phone))),
+            or_(*destinations))
     elif channel == 'messenger':
         role = str(item.get('role') or '').lower()
         sender = str(item.get('sales_name') or '').lower()

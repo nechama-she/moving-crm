@@ -70,7 +70,8 @@ def history(lead):
     calls, messages = [], []
     created, _ = followup_created_at(lead)
     sources = []
-    for phone in sorted(set(phone_variants(lead.phone or ''))):
+    numbers = [lead.phone or '', *(row.value for row in lead.contacts if row.kind == 'phone')]
+    for phone in sorted({variant for number in numbers for variant in phone_variants(number)}):
         sources.extend([(calls_table, 'calls', 'phone_number', phone),
                         (sms_messages_table, 'sms', 'phone_number', phone)])
     if lead.facebook_user_id:
