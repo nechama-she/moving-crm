@@ -21,7 +21,7 @@ def pricing():
         for arg in node.args.args:
             arg.annotation = None
     scope = {"Decimal": Decimal, "math": math, "re": re,
-             "_seasonal_charge": lambda *args: None, "_parsed_move_date": lambda *args: None,
+             "_parsed_move_date": lambda *args: None,
              "_packing_service_charges": lambda *args: [], "_bulky_item_charges": lambda *args: []}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), scope)
     return scope
@@ -47,7 +47,7 @@ def rate(low, high, price="4.25", minimum="1692.80"):
     (285, 1692.80), (286, 1692.80), (500, 2125), (800, 3400), (801, 3204)])
 def test_calculator_and_quote_share_minimum_rule(pricing, volume, expected):
     plan = SimpleNamespace(rates=[rate(801, None, "4"), rate(286, 800)],
-                           fuel_percent=Decimal(13), services=[], rules=[])
+                           fuel_percent=Decimal(13), admin_fee=None, services=[], rules=[])
     body = SimpleNamespace(destination=" ny ", cubic_feet=volume, move_date=None,
                            quantities={}, bulky_items=[], selected_charges={}, manual_amounts={})
     result = pricing["compute_plan_calculation"](plan, body)
@@ -74,7 +74,7 @@ def test_below_band_requires_configured_minimum(pricing):
 def test_extra_services_use_destination_band_minimum(pricing, floor, volume, expected):
     other = rate(900, None)
     other.destination = "FL"
-    plan = SimpleNamespace(rates=[other, rate(floor, 800)], fuel_percent=None, services=[], rules=[])
+    plan = SimpleNamespace(rates=[other, rate(floor, 800)], fuel_percent=None, admin_fee=None, services=[], rules=[])
     charges = [
         {"id": kind, "name": kind, "description": "", "calculation_type": kind,
          "rate": 2, "default_selected": True, "applies": True, "automatic": False}

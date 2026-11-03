@@ -15,6 +15,30 @@ def utc_naive(value):
     return value.astimezone(timezone.utc).replace(tzinfo=None) if value and value.tzinfo else value
 
 
+def _calculated_at(job, db):
+    calculated = job.price_calculated_at
+    if calculated is None:
+        calculated = db.query(func.max(LeadJobCharge.updated_at)).filter_by(job_id=job.id).scalar()
+        calculated = calculated or db.query(func.max(PublicMoveAccess.published_at)).filter_by(job_id=job.id).scalar()
+        calculated = calculated or job.created_at
+    return calculated
+
+
+def _may_have_expired(lead, job, db, now):
+    calculated = _calculated_at(job, db)
+    if not calculated or now < utc_naive(calculated) + timedelta(days=1):
+        return False
+    if job.price_refresh_attempted_at and now < utc_naive(job.price_refresh_attempted_at) + timedelta(minutes=5):
+        return False
+    from routes.pricing import infer_job_move_type
+    try:
+        _, plan = infer_job_move_type(lead, job, db)
+    except Exception:
+        return True  # The locked refresh records the failure and keeps the previous estimate.
+    # No matching book is recorded as a refresh error under the lock below.
+    return not plan or now >= utc_naive(calculated) + timedelta(days=plan.price_valid_days or 7)
+
+
 def refresh_expired_price(lead, job, db, now=None):
     now = now or datetime.utcnow()
     if job.price is None or (job.price <= 0 and not job.price_calculated_at) or price_is_locked(lead, job):
@@ -23,16 +47,15 @@ def refresh_expired_price(lead, job, db, now=None):
     # no write locks; retain the locked recheck for possible expired quotes.
     if job.price_calculated_at and now < utc_naive(job.price_calculated_at) + timedelta(days=1):
         return False
+    # The same checks without a lock first: a price that is still valid is read, never locked.
+    if not _may_have_expired(lead, job, db, now):
+        return False
     # Serialize concurrent page opens and recheck the saved calculation time.
     db.refresh(lead, with_for_update=True)
     db.refresh(job, with_for_update=True)
     if job.price is None or (job.price <= 0 and not job.price_calculated_at) or price_is_locked(lead, job):
         return False
-    calculated = job.price_calculated_at
-    if calculated is None:
-        calculated = db.query(func.max(LeadJobCharge.updated_at)).filter_by(job_id=job.id).scalar()
-        calculated = calculated or db.query(func.max(PublicMoveAccess.published_at)).filter_by(job_id=job.id).scalar()
-        calculated = calculated or job.created_at
+    calculated = _calculated_at(job, db)
     # All books have at least one day of validity; fresh quotes need no pricing lookup.
     if not calculated or now < utc_naive(calculated) + timedelta(days=1):
         return False

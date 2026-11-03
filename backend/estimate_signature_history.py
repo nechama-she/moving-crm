@@ -33,6 +33,7 @@ def estimate_state(data, rows):
 
 
 def estimate_signature_status(db, lead_id, job_id, current, inventory_rows, inventory_pending=False):
+    """current and inventory_rows, or current alone as a function returning both, built only when needed."""
     record = db.query(EstimateSignature.snapshot).filter(
         EstimateSignature.lead_id == lead_id, EstimateSignature.job_id == job_id,
         EstimateSignature.signed_at.isnot(None),
@@ -46,6 +47,8 @@ def estimate_signature_status(db, lead_id, job_id, current, inventory_rows, inve
         previous = estimate_state(snapshot['data'], snapshot.get('rows', []))
     except (ValueError, KeyError, TypeError, AttributeError):
         return 'changed'
+    if callable(current):
+        current, inventory_rows = current()
     return 'signed' if previous == estimate_state(current, inventory_rows) else 'changed'
 
 

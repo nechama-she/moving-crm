@@ -20,6 +20,7 @@ class Fields(BaseModel):
     cuft: Decimal | None = Field(default=None, gt=0, le=10000, allow_inf_nan=False)
     going: bool | None = None
     mover_pack: bool | None = None
+    mover_pack_count: int | None = Field(default=None, ge=0, le=999, strict=True)
     room_id: UUID | None = None
     selections: ServiceSelections = Field(default_factory=dict)
 
@@ -113,11 +114,20 @@ def joined_rows(job_id, db):
     ).where(InventoryEditItem.job_id == job_id).order_by(InventoryEditItem.sort_order, InventoryEditItem.id)).all()
 
 
+def pack_count(item):
+    """Units of this row the movers pack, reading the older whole-row CP/PBO marking when that is all there is."""
+    if item.mover_pack_count is not None:
+        return min(item.mover_pack_count, item.quantity)
+    if item.mover_pack is not None:
+        return item.quantity if item.mover_pack else 0
+    return None
+
+
 def display_name(item, catalog_name):
     name = item.name if item.name is not None else catalog_name
     name = name or 'Item'
     if item.mover_pack is not None:
-        name = base_name(name) + (' (CP)' if item.mover_pack else ' (PBO)')
+        name = base_name(name)
     return name
 
 
@@ -180,6 +190,7 @@ def load_inventory_editor(access, db):
                 quantity=qty, unit_cuft=Decimal(str(row.get('unit_cuft') or float(row.get('cuft') or 0)/qty or 0.01)),
                 unit_weight=Decimal(str(row.get('unit_weight') or float(row.get('weight') or 0)/qty)),
                 going=row.get('going') is not False, mover_pack=pack, sort_order=index,
+                mover_pack_count=row.get('mover_pack_count'), manual=row.get('manual'),
                 selections=json.dumps(row.get('selections') or {}),
                 set_id=row.get('set_id'), set_name=row.get('set_name'),
                 inventory_record_id=record.id if record else None)
@@ -218,7 +229,8 @@ def load_inventory_editor(access, db):
             catalog_item_id=item.catalog_item_id, name_override=item.name is not None,
             set_id=item.set_id, set_name=item.set_name,
             quantity=item.quantity, cuft=float(item.unit_cuft), unit_weight=float(item.unit_weight),
-            going=item.going, mover_pack=item.mover_pack, selections=json.loads(item.selections or '{}'),
+            going=item.going, mover_pack=item.mover_pack, mover_pack_count=pack_count(item),
+            selections=json.loads(item.selections or '{}'),
             selectors=selectors.get(item.catalog_item_id, [])))
     return dict(revision=state.revision, report_id=report_id, rooms=list(result.values()))
 
@@ -276,7 +288,7 @@ def save_inventory_edits(body, access, db):
         fields = edit.fields.model_dump(exclude_unset=True)
         if not fields: raise HTTPException(422, 'No fields supplied.')
         for key, value in fields.items():
-            if key not in ('name', 'mover_pack') and value is None: raise HTTPException(422, f'{key} cannot be null.')
+            if key not in ('name', 'mover_pack', 'mover_pack_count') and value is None: raise HTTPException(422, f'{key} cannot be null.')
             if key == 'room_id':
                 value = str(value)
                 if value not in room_ids: raise HTTPException(409, 'Target room does not belong to this inventory.')
@@ -287,6 +299,7 @@ def save_inventory_edits(body, access, db):
             if key == 'selections':
                 value = validated_selections(value, selectors.get(row.catalog_item_id, []), json.loads(row.selections or '{}'))
             setattr(row, 'unit_cuft' if key == 'cuft' else key, value)
+        row.manual = True  # Edited by hand: a new report keeps it.
         changed.append(row)
     next_order = (db.query(func.max(InventoryEditItem.sort_order)).filter_by(job_id=job.id).scalar() or 0) + 1 if body.add else 0
     for item in body.add:
@@ -301,9 +314,9 @@ def save_inventory_edits(body, access, db):
         row = InventoryEditItem(id=key, job_id=job.id, room_id=str(item.room_id), catalog_item_id=item.catalog_item_id,
             name=item.name.strip() if item.name else None, quantity=item.quantity, unit_cuft=cuft,
             unit_weight=catalog.weight if catalog else item.unit_weight, going=item.going is not False,
-            mover_pack=item.mover_pack, sort_order=next_order,
+            mover_pack=item.mover_pack, mover_pack_count=item.mover_pack_count, sort_order=next_order,
             set_id=str(item.set_id) if item.set_id else None, set_name=item.set_name,
-            selections=validated_selections(item.selections, selectors.get(item.catalog_item_id, [])))
+            selections=validated_selections(item.selections, selectors.get(item.catalog_item_id, [])), manual=True)
         next_order += 1
         db.add(row)
         changed.append(row)
@@ -354,30 +367,14 @@ def project(job, access, details, joined, db):
     rows = [dict(inventory_row_id=r.id, room_id=r.room_id, name=display_name(r,name), room=room_names[r.room_id],
         amount=r.quantity, unit_cuft=float(r.unit_cuft), unit_weight=float(r.unit_weight),
         cuft=float(r.unit_cuft*r.quantity) if r.going else 0, weight=float(r.unit_weight*r.quantity) if r.going else 0,
-        going=r.going, mover_pack=r.mover_pack, catalog_item_id=r.catalog_item_id, item_id=r.catalog_item_id or 'custom-'+r.id,
+        going=r.going, mover_pack=None if pack_count(r) is not None else r.mover_pack, mover_pack_count=pack_count(r),
+        catalog_item_id=r.catalog_item_id, item_id=r.catalog_item_id or 'custom-'+r.id,
         name_override=r.name is not None, _inventory_record_id=r.inventory_record_id,
-        set_id=r.set_id, set_name=r.set_name,
+        set_id=r.set_id, set_name=r.set_name, manual=r.manual,
         selections=json.loads(r.selections or '{}')) for r,name in joined]
     serialized_rooms = [dict(id=r.id, name=r.name, room_type_id=r.room_type_id or '', items=[x for x in rows if x['room_id']==r.id]) for r in rooms]
     volume, weight = sum(r['cuft'] for r in rows), sum(r['weight'] for r in rows)
     if report_id:
-        def counts(contents):
-            result = {}
-            for row in contents:
-                if not re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b',row['name'],re.I): continue
-                norm = lambda value: re.sub(r'\s+',' ',value.strip().lower())
-                key = f"{norm(row.get('room') or 'Other items')}:{norm(base_name(row['name']))}"
-                result.setdefault(key,0)
-                if row.get('going') is not False and (row.get('mover_pack') is True or re.search(r'\(CP\)\s*$',row['name'],re.I)):
-                    result[key] += int(row['amount'])
-            return result
-        before, after = counts(old_rows), counts(rows)
-        selection = json.loads(job.customer_packing_package or '{}')
-        if selection.get('mode') != 'full':
-            for key in before.keys() | after.keys():
-                if before.get(key,0) != after.get(key,0):
-                    selection.setdefault('box_quantities',{})[str(uuid5(NAMESPACE_URL,f'inventory-box:{job.id}:{key}'))] = after.get(key,0)
-            job.customer_packing_package = json.dumps(selection)
         lead = db.get(Lead,access.lead_id)
         lead.volume, lead.weight, access.published_cuft = Decimal(str(volume)), Decimal(str(weight)), Decimal(str(volume))
         details.update(spark_inventory_snapshot=rows, question_original_rows=[dict(r) for r in rows], manual_rooms=serialized_rooms,

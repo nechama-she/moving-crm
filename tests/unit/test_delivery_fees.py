@@ -14,8 +14,15 @@ sys.path.insert(0, str(BACKEND))
 import delivery_fees as fees
 
 
-def services(rules):
-    return [SimpleNamespace(comments=fees.DELIVERY_FEE_PREFIX + json.dumps({'enabled':True,'rules':rules}))]
+def services(rules, prefix=fees.DELIVERY_FEE_PREFIX):
+    # A plan whose fee card is saved in the mileage fee tables.
+    plan = SimpleNamespace(mileage_fees=[])
+    fees.save_fee_card(plan, prefix, fees.DeliveryFeeCard(enabled=True, rules=rules))
+    return plan
+
+
+def card_json(rules, prefix=fees.DELIVERY_FEE_PREFIX):
+    return prefix + json.dumps({'enabled':True,'rules':rules})
 
 
 def rule(**patches):
@@ -37,7 +44,7 @@ def test_specific_rules_and_combined_ranges():
     ('Local', True, '05401', 0),
 ])
 def test_browser_routes_only_for_matching_mileage_fees(move_type, configured, address, expected):
-    plan = SimpleNamespace(services=services([rule()]) if configured else [])
+    plan = services([rule()]) if configured else SimpleNamespace(mileage_fees=[])
     job = SimpleNamespace(pickup_zip='20815', delivery_zip=address, customer_packing_package='{}')
     pricing = SimpleNamespace(infer_job_move_type=lambda *args: (move_type, plan))
     with patch.dict(sys.modules, {'routes.pricing': pricing}):
@@ -114,11 +121,11 @@ def test_saved_estimate_and_address_changes(monkeypatch):
             db.add(models.Company(id='co',name='Test'))
             lead=models.Lead(id='lead',full_name='Test',company_id='co',volume='24')
             job=models.LeadJob(id='job',lead_id='lead',company_id='co',pickup_zip='20850',delivery_zip='05401')
-            plan=models.PricingPlan(id='plan',source_key='plan',company_id='co',company_name='Test',name='East',pickup_regions='MD',active=True)
-            plan.services=[models.PricingService(name='Destination fees',rate_text='',comments=services([rule()])[0].comments)]
+            plan=models.PricingPlan(id='plan',source_key='plan',company_id='co',company_name='Test',name='East',pickup_rows=[models.PricingPickupArea(state='MD')],active=True)
+            fees.save_fee_card(plan, fees.DELIVERY_FEE_PREFIX, fees.DeliveryFeeCard(enabled=True, rules=[rule()]))
             plan.rates=[models.PricingRate(destination='VT',band_label='286+',cubic_feet_min=286,rate=5,minimum_price=1500)]
             db.add_all([lead,job,plan]);db.commit()
-            api.ServiceInput(name='Destination fees',comments=plan.services[0].comments)
+            api.ServiceInput(name='Destination fees',comments=card_json([rule()]))
             assert api.calculate_and_save_lead_job_price(lead,job,db)==2000
             db.commit()
             assert api.calculate_and_save_lead_job_price(lead,job,db)==2000

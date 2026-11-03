@@ -2484,12 +2484,11 @@ def _route_move_type(pickup_address: str | None, delivery_address: str | None) -
     return "Local" if pickup_state == delivery_state else "Long Distance"
 
 
-def _read_addresses_from_setting(db: Session, key: str) -> list[str]:
-    row = db.query(AppSetting).filter(AppSetting.key == key).first()
-    if not row or not (row.value or "").strip():
+def _addresses_from_value(value: str | None) -> list[str]:
+    if not (value or "").strip():
         return []
     try:
-        parsed = json.loads(row.value)
+        parsed = json.loads(value)
     except Exception:
         return []
     if not isinstance(parsed, list):
@@ -2503,6 +2502,8 @@ def _read_addresses_from_setting(db: Session, key: str) -> list[str]:
 
 
 def _write_addresses_to_setting(db: Session, key: str, addresses: list[str]) -> None:
+    from request_cache import forget
+    forget(db)
     existing = db.query(AppSetting).filter(AppSetting.key == key).first()
     serialized = json.dumps(addresses)
     if existing:
@@ -2516,14 +2517,25 @@ def _persist_job_address_lists(db: Session, job_id: str, pickups: list[str], del
     _write_addresses_to_setting(db, _job_deliveries_setting_key(job_id), deliveries)
 
 
+def _job_route_settings(db: Session, job_id: str) -> dict[str, list[str]]:
+    """The job's stop, pickup and delivery lists in one query, read once per request."""
+    from request_cache import cached
+    keys = [_job_stops_setting_key(job_id), _job_pickups_setting_key(job_id), _job_deliveries_setting_key(job_id)]
+    def load():
+        values = {row.key: row.value for row in db.query(AppSetting.key, AppSetting.value).filter(AppSetting.key.in_(keys))}
+        return {key: _addresses_from_value(values.get(key)) for key in keys}
+    return cached(db, ('job-route', job_id), load)
+
+
 def _read_job_route(db: Session, job: LeadJob) -> tuple[str, list[str], str]:
     pickup = _clean_optional_text(job.pickup_zip)
     delivery = _clean_optional_text(job.delivery_zip)
-    stops = _read_addresses_from_setting(db, _job_stops_setting_key(job.id))
+    settings = _job_route_settings(db, job.id)
+    stops = list(settings[_job_stops_setting_key(job.id)])
 
     if not stops:
-        legacy_pickups = _read_addresses_from_setting(db, _job_pickups_setting_key(job.id))
-        legacy_deliveries = _read_addresses_from_setting(db, _job_deliveries_setting_key(job.id))
+        legacy_pickups = settings[_job_pickups_setting_key(job.id)]
+        legacy_deliveries = settings[_job_deliveries_setting_key(job.id)]
         route = [*legacy_pickups, *legacy_deliveries]
         if route:
             if not pickup:

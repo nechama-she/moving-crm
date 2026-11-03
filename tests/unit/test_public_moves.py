@@ -750,6 +750,7 @@ def packing_pricing(monkeypatch):
     from datetime import date
     scope = {'EXTRA_STOPS_PREFIX':EXTRA_STOPS_PREFIX,'stops_card':stops_card,'ELEVATOR_PREFIX': ELEVATOR_PREFIX, 'elevator_card': elevator_card, 'elevator_quote': elevator_quote, 'LONG_CARRY_PREFIX': LONG_CARRY_PREFIX, 'long_carry_card': long_carry_card, 'long_carry_quote': long_carry_quote, 'STAIRS_PREFIX': STAIRS_PREFIX, 'stairs_card': stairs_card, 'stairs_quote': stairs_quote, 'date': date, 'STORAGE_PREFIX': STORAGE_PREFIX, 'storage_card': storage_card, 'storage_quote': storage_quote, 'DELIVERY_FEE_PREFIX': '__delivery_mileage__:', 'infer_job_move_type': lambda *args: (None, None), 'PublicMoveAccess': models.PublicMoveAccess, 'SHUTTLE_PREFIX': SHUTTLE_PREFIX, 'shuttle_card': shuttle_card, 'shuttle_option': shuttle_option, 'PricingPlan': object, 'delivery_location': delivery_location, 'match_region_from_address': match_region_from_address, 'PACKING_CARD_PREFIX': '__ld_packing__:', 'packing_card': packing_card, '_rounded_cubic_feet': lambda value: math.ceil(float(value or 0)), 'json': json, 're': re, 'Decimal': Decimal, 'PricingService': object, 'LeadJobCharge': models.LeadJobCharge,
              'BULKY_ITEM_MARKER': '__bulky_item__', 'BULKY_ITEM_PREFIX': '__bulky_item__:',
+             'item_prices': __import__('bulky_items').item_prices, 'is_bulky_row': __import__('bulky_items').is_bulky_row,
              '_number': lambda value: Decimal(value) if value else None,
              '_job_spark_inventory_items': lambda *args: []}
     from charge_errors import isolated_charge, pending_line
@@ -761,11 +762,17 @@ def packing_pricing(monkeypatch):
     return module
 
 
+def bulky_item(**prices):
+    # A pricing_bulky_items row for a piano; a missing price is not offered.
+    from decimal import Decimal
+    return SimpleNamespace(id='piano', name='Piano', **{key: Decimal(prices[key]) if key in prices else None
+                                                        for key in ('handling', 'packing', 'crating')})
+
+
 def test_packing_options_per_item_and_local_rates(packing_pricing):
     pricing = packing_pricing
-    service = SimpleNamespace(id='piano', name='Piano', rate_text='500',
-                              comments='__bulky_item__:' + json.dumps({'packing': '120', 'handling': '500'}))
-    plan = SimpleNamespace(services=[service])
+    service = bulky_item(packing='120', handling='500')
+    plan = SimpleNamespace(bulky_items=[service])
     job = SimpleNamespace(id='job', customer_packing='["piano:2"]',
                           _estimated_materials_data=lambda: [{'name': 'Piano', 'quantity': 2}, {'name': 'Chair'}])
     items = pricing.customer_packing_options(None, job, None, plan, 'Local')
@@ -913,9 +920,8 @@ def test_saved_packing_can_be_rebuilt_during_repricing(portal, packing_pricing, 
     job = db.get(models.LeadJob, access.job_id)
     job.estimated_materials = json.dumps([{'name': 'Piano', 'quantity': 2}])
     job.customer_packing = json.dumps({'piano:2': kind})
-    service = SimpleNamespace(id='piano', name='Piano', rate_text='500',
-                              comments='__bulky_item__:' + json.dumps({'packing': '120', 'crating': '300', 'handling': '500'}))
-    plan = SimpleNamespace(services=[service])
+    service = bulky_item(packing='120', crating='300', handling='500')
+    plan = SimpleNamespace(bulky_items=[service])
     total = packing_pricing.add_customer_packing_charges(lead, job, db, plan, 'Local')
     db.flush()
     assert total == Decimal(price)
@@ -933,11 +939,10 @@ def test_saved_packing_can_be_rebuilt_during_repricing(portal, packing_pricing, 
     ({}, []),
 ])
 def test_packing_and_crating_availability(packing_pricing, prices, expected):
-    service = SimpleNamespace(id='piano', name='Piano', rate_text='500',
-                              comments='__bulky_item__:' + json.dumps(prices))
+    service = bulky_item(handling='500', **prices)
     job = SimpleNamespace(id='job', customer_packing='{"piano:1":"crating"}',
                           _estimated_materials_data=lambda: [{'name': 'Piano'}])
-    items = packing_pricing.customer_packing_options(None, job, None, SimpleNamespace(services=[service]), 'Local')
+    items = packing_pricing.customer_packing_options(None, job, None, SimpleNamespace(bulky_items=[service]), 'Local')
     assert ([s['kind'] for s in items[0]['services']] if items else []) == expected
     if 'crating' in expected:
         assert items[0]['selected_service'] == 'crating'

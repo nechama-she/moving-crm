@@ -1,12 +1,14 @@
 import { useState } from 'react';
 type Rule = {title: string; type: 'amount' | 'percent' | 'rate' | 'total'; value: number};
 type Charge = {id: string; name: string; total: number; transportation: boolean; discount?: Rule};
+// What a discount save returns: the estimate's price lines and total after the change.
+export type DiscountResult = {price: string | null; charges: {id?: string; pending?: boolean; name: string; description: string; total: number; subtotal?: number; discount_amount?: number; discount_percent?: number}[]};
 async function discountResponse(response: Response, fallback: string) {
   const data = await response.json().catch(() => null);
   if (!response.ok || !data) throw new Error(typeof data?.detail === 'string' ? data.detail : fallback);
   return data;
 }
-export default function RepDiscounts({base, headers, onSaved, chargeId, chargeName}: {base: string; headers: Record<string,string>; onSaved: () => Promise<unknown>; chargeId: string; chargeName: string}) {
+export default function RepDiscounts({base, headers, onSaved, chargeId, chargeName}: {base: string; headers: Record<string,string>; onSaved: (result: DiscountResult) => void; chargeId: string; chargeName: string}) {
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<{presets: Rule[]; charges: Charge[]}>({presets: [], charges: []});
   const [id, setId] = useState('');
@@ -25,11 +27,7 @@ export default function RepDiscounts({base, headers, onSaved, chargeId, chargeNa
     setBusy(true); setError('');
     try {
       const response = await fetch(base + '/rep-discounts', {method: 'POST', headers: {...headers, 'Content-Type': 'application/json'}, body: JSON.stringify({...rule, charge_id: id, remove})});
-      await discountResponse(response, 'Could not save the discount. Your entries are still here. Please try again.');
-      await onSaved();
-      const next = await load();
-      const selected = next.charges.find(c => c.id === id);
-      if (selected) choose(selected);
+      onSaved(await discountResponse(response, 'Could not save the discount. Your entries are still here. Please try again.'));
       setOpen(false);
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }

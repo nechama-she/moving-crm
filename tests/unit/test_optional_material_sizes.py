@@ -6,6 +6,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
 from item_materials import sized_optional_defaults
 from long_distance_packing import MaterialRate
+from packing_rows import PackingPlan
 
 
 @pytest.mark.parametrize('volume,expected', [(20, {'cm','ws'}),(25, {'cl','ws'}),(26, {'cl','wl'}),(100, {'cx','wl'}),(501,set()),(None,set())])
@@ -42,7 +43,7 @@ def test_required_tv_box_wins_over_optional_defaults(inventory_id):
     db.query.return_value.all.return_value = [
         SimpleNamespace(id='deleted-tv',name=name,cuft=10,deleted=True),
         SimpleNamespace(id='current-tv',name=name,cuft=15,deleted=False)]
-    plan = SimpleNamespace(id='book',item_materials=json.dumps({
+    plan = PackingPlan(id='book',item_materials=json.dumps({
         'rows':[dict(item_id='current-tv',material_id='tv-box',requirement='required',quantity='1')],
         'defaults':[dict(material_id='crate',requirement='optional',quantity='1')]}),
         services=[SimpleNamespace(comments='__ld_packing__:'+json.dumps({'materials':[
@@ -62,7 +63,7 @@ def test_wizard_questions_use_current_name_and_per_item_volume():
     materials = [dict(id=id,name=id,material_price=10,packing_price=5,unpacking_price=0,
                       rule={'measure':'cubic_feet',**limits}) for id,limits in [
                           ('small',{'maximum':25}),('big',{'minimum':25,'minimum_inclusive':False})]]
-    plan = SimpleNamespace(id='book', item_materials=json.dumps({'rows':[], 'defaults':[
+    plan = PackingPlan(id='book', item_materials=json.dumps({'rows':[], 'defaults':[
         {'material_id':id,'requirement':'optional','quantity':'1'} for id in ['small','big']]}),
         services=[SimpleNamespace(comments='__ld_packing__:'+json.dumps({'materials':materials}))])
     db = Mock()
@@ -92,7 +93,7 @@ def test_inventory_filters_saved_item_options_and_defaults(explicit):
     specs = [('small','Carton Crate Medium',24),('large','Carton Crate Large',90),('xl','Carton Crate Extra Large',500),('under','Shrink Wrap under 25',25),('over','Shrink Wrap over 25',500)]
     materials = [dict(id=id,name=name,capacity=capacity,material_price=10,packing_price=5,unpacking_price=0) for id,name,capacity in specs]
     choices = [dict(material_id=id,requirement='optional',quantity='1',**({'item_id':'chair'} if explicit else {})) for id,_,_ in specs]
-    plan = SimpleNamespace(id='book', item_materials=json.dumps({'rows':choices if explicit else [],'defaults':[] if explicit else choices}), services=[SimpleNamespace(comments='__ld_packing__:'+json.dumps({'materials':materials}))])
+    plan = PackingPlan(id='book', item_materials=json.dumps({'rows':choices if explicit else [],'defaults':[] if explicit else choices}), services=[SimpleNamespace(comments='__ld_packing__:'+json.dumps({'materials':materials}))])
     db = Mock()
     db.query.return_value.all.return_value = [SimpleNamespace(id='chair',name='Accent Chair',cuft=30,deleted=False)]
     rows,_ = customer_item_materials(plan,[dict(item_id='chair',name='Accent Chair',amount=2,cuft=60)],db)

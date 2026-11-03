@@ -45,6 +45,79 @@ def elevator_card(services):
     return None
 
 
+def plan_elevator_card(plan):
+    """The plan's elevator pricing, read from pricing_elevator and pricing_elevator_tiers."""
+    row = plan.elevator
+    if row is None:
+        return None
+    # Tiers by volume, with the open-ended tier last.
+    tiers = sorted(row.tiers, key=lambda tier: (tier.up_to_cuft is None, tier.up_to_cuft or 0))
+    return ElevatorCard(enabled=row.enabled, tiers=[ElevatorTier(up_to_cuft=tier.up_to_cuft, fee=tier.fee) for tier in tiers],
+                        pickup_discount_percent=row.pickup_discount_percent,
+                        delivery_discount_percent=row.delivery_discount_percent)
+
+
+def elevator_service_row(plan):
+    """The card as the pricing API presents it: a service row holding its settings."""
+    card = plan_elevator_card(plan)
+    if card is None:
+        return None
+    number = lambda value: format(value.normalize(), 'f')
+    config = {'enabled': card.enabled,
+              'tiers': [{'up_to_cuft': tier.up_to_cuft, 'fee': number(tier.fee)} for tier in card.tiers],
+              'pickup_discount_percent': number(card.pickup_discount_percent),
+              'delivery_discount_percent': number(card.delivery_discount_percent)}
+    return {'id': f'elevator:{plan.id}', 'name': 'Elevator pricing', 'rate_text': '',
+            'comments': ELEVATOR_PREFIX + json.dumps(config), 'sort_order': -1}
+
+
+def save_elevator_card(plan, card):
+    """Replace the plan's elevator pricing; None removes it."""
+    from models import PricingElevator, PricingElevatorTier
+    if card is None:
+        plan.elevator = None
+        return
+    row = plan.elevator or PricingElevator()
+    row.enabled = card.enabled
+    row.pickup_discount_percent = card.pickup_discount_percent
+    row.delivery_discount_percent = card.delivery_discount_percent
+    # Keep unchanged tiers so the unique (plan_id, up_to_cuft) key never collides mid-save.
+    existing = {tier.up_to_cuft: tier for tier in row.tiers}
+    row.tiers[:] = [existing.get(tier.up_to_cuft) or PricingElevatorTier(up_to_cuft=tier.up_to_cuft) for tier in card.tiers]
+    for saved, tier in zip(row.tiers, card.tiers):
+        saved.fee = tier.fee
+    plan.elevator = row
+
+
+def migrate_elevator_cards(connection):
+    """Move each plan's card from its pricing_services JSON row into the elevator tables, once."""
+    from uuid import uuid4
+    from sqlalchemy import inspect, text
+    from models import PricingElevator, PricingElevatorTier
+    if inspect(connection).has_table(PricingElevator.__tablename__):
+        return 0
+    PricingElevator.__table__.create(connection)
+    PricingElevatorTier.__table__.create(connection)
+    moved = set()
+    rows = connection.execute(text(
+        "SELECT id, plan_id, comments FROM pricing_services WHERE comments LIKE :prefix ORDER BY plan_id, sort_order"),
+        {'prefix': ELEVATOR_PREFIX + '%'}).all()
+    for service_id, plan_id, comments in rows:
+        # Pricing used the first card of a plan; any later copies were never read.
+        if plan_id not in moved:
+            card = ElevatorCard.model_validate_json(comments[len(ELEVATOR_PREFIX):])
+            connection.execute(PricingElevator.__table__.insert().values(
+                plan_id=plan_id, enabled=card.enabled,
+                pickup_discount_percent=card.pickup_discount_percent,
+                delivery_discount_percent=card.delivery_discount_percent))
+            for tier in card.tiers:
+                connection.execute(PricingElevatorTier.__table__.insert().values(
+                    id=str(uuid4()), plan_id=plan_id, up_to_cuft=tier.up_to_cuft, fee=tier.fee))
+            moved.add(plan_id)
+        connection.execute(text('DELETE FROM pricing_services WHERE id = :id'), {'id': service_id})
+    return len(moved)
+
+
 def elevator_quote(card, addresses, saved, volume):
     if not card or not card.enabled:
         return None

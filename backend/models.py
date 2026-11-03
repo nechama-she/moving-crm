@@ -2,7 +2,7 @@ import uuid
 import json
 from datetime import datetime
 
-from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, Integer, BigInteger, Boolean, UniqueConstraint, LargeBinary, Numeric, Index, text
+from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, ForeignKeyConstraint, Integer, BigInteger, Boolean, UniqueConstraint, LargeBinary, Numeric, Index, text
 from sqlalchemy.orm import declarative_base, relationship, validates
 
 from company_colors import resolve_company_color
@@ -537,6 +537,16 @@ class LeadJob(Base):
     __tablename__ = "lead_jobs"
 
     id = Column(String(36), primary_key=True, default=_uuid)
+    # The pricing plan and move type this job matched, and a fingerprint of what the match used
+    # (company, addresses, the company's plans and local routes); matched again only when that changes.
+    pricing_plan_id = Column(String(36))
+    pricing_move_type = Column(String(50))
+    pricing_match_key = Column(String(64))
+    # The plan's minimum billable cu ft for this job, stored once per plan match.
+    minimum_cuft = Column(Integer)
+    # The customer page's service cards as last built, and a fingerprint of everything they were built from.
+    pricing_options_cache = Column(Text)
+    pricing_options_key = Column(String(64))
     lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
     company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
     dispatch_company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
@@ -902,8 +912,9 @@ class PricingPlan(Base):
     source_key = Column(String(500), nullable=False, unique=True)
     source_file = Column(String(255), nullable=False, default="")
     source_sheet = Column(String(255), nullable=False, default="")
-    pickup_regions = Column(Text, nullable=False, default="")
     fuel_percent = Column(Numeric(7, 3))
+    # Origin destination & administration Fee, added to every job priced with this plan.
+    admin_fee = Column(Numeric(12, 2))
     price_valid_days = Column(Integer, nullable=False, default=7, server_default='7')
     item_materials = Column(Text, nullable=True)
     item_selectors = Column(Text, nullable=True)
@@ -922,6 +933,20 @@ class PricingPlan(Base):
     services = relationship(
         "PricingService", cascade="all, delete-orphan", order_by="PricingService.sort_order"
     )
+    pickup_rows = relationship(
+        "PricingPickupArea", cascade="all, delete-orphan", lazy="selectin",
+        order_by="[PricingPickupArea.state, PricingPickupArea.zip_code]",
+    )
+    extra_stops = relationship("PricingExtraStops", uselist=False, cascade="all, delete-orphan", lazy="selectin")
+    elevator = relationship("PricingElevator", uselist=False, cascade="all, delete-orphan", lazy="selectin")
+    long_carry = relationship("PricingLongCarry", uselist=False, cascade="all, delete-orphan", lazy="selectin")
+    stairs = relationship("PricingStairs", uselist=False, cascade="all, delete-orphan", lazy="selectin")
+    storage = relationship("PricingStorage", uselist=False, cascade="all, delete-orphan", lazy="selectin")
+    shuttle = relationship("PricingShuttle", uselist=False, cascade="all, delete-orphan", lazy="selectin")
+    mileage_fees = relationship("PricingMileageFee", cascade="all, delete-orphan", lazy="selectin")
+    bulky_items = relationship("PricingBulkyItem", cascade="all, delete-orphan", lazy="selectin",
+                               order_by="PricingBulkyItem.sort_order")
+    packing = relationship("PricingPacking", uselist=False, cascade="all, delete-orphan", lazy="selectin")
 
     def summary_dict(self):
         from pickup_areas import pickup_areas, pickup_summary
@@ -932,14 +957,15 @@ class PricingPlan(Base):
             "name": self.name,
             "source_file": self.source_file,
             "source_sheet": self.source_sheet,
-            "pickup_regions": pickup_summary(self.pickup_regions),
-            "pickup_areas": pickup_areas(self.pickup_regions),
+            "pickup_regions": pickup_summary(pickup_areas(self)),
+            "pickup_areas": pickup_areas(self),
             "fuel_percent": float(self.fuel_percent) if self.fuel_percent is not None else None,
+            "admin_fee": float(self.admin_fee) if self.admin_fee is not None else None,
             "price_valid_days": self.price_valid_days,
             "active": bool(self.active),
             "rate_count": len(self.rates),
             "rule_count": len(self.rules),
-            "service_count": len(self.services),
+            "service_count": len(self.services) + len(self.bulky_items) + len(self._card_rows()),
             "updated_at": self.updated_at.isoformat() if self.updated_at else "",
         }
 
@@ -948,15 +974,257 @@ class PricingPlan(Base):
             **self.summary_dict(),
             "rules": [row.to_dict() for row in self.rules],
             "rates": [row.to_dict() for row in self.rates],
-            "services": [row.to_dict() for row in self.services],
+            "services": self._service_rows() + self._card_rows(),
         }
+
+    def _service_rows(self):
+        # Bulky items live in their own table and are presented among the services, in their saved order.
+        from bulky_items import bulky_service_rows
+        return sorted([row.to_dict() for row in self.services] + bulky_service_rows(self), key=lambda row: row["sort_order"])
+
+    def _card_rows(self):
+        # Pricing cards kept in their own tables are presented as service rows, as the API always has.
+        from extra_stops import stops_service_row
+        from elevator_pricing import elevator_service_row
+        from long_carry_pricing import long_carry_service_row
+        from stairs_pricing import stairs_service_row
+        from storage_pricing import storage_service_row
+        from shuttle import shuttle_service_row
+        from delivery_fees import ORIGIN_FEE_PREFIX, DELIVERY_FEE_PREFIX, fee_service_row
+        from long_distance_packing import packing_service_row
+        return [row for row in [stops_service_row(self), elevator_service_row(self), long_carry_service_row(self),
+                                stairs_service_row(self), storage_service_row(self), shuttle_service_row(self),
+                                fee_service_row(self, ORIGIN_FEE_PREFIX), fee_service_row(self, DELIVERY_FEE_PREFIX),
+                                packing_service_row(self)] if row]
+
+
+class PricingExtraStops(Base):
+    """Additional stop pricing: one row per plan."""
+    __tablename__ = "pricing_extra_stops"
+
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    pickup_free_miles = Column(Numeric(10, 2), nullable=False)
+    pickup_stop_fee = Column(Numeric(10, 2), nullable=False)
+    pickup_per_mile = Column(Numeric(10, 2), nullable=False)
+    delivery_free_miles = Column(Numeric(10, 2), nullable=False)
+    delivery_stop_fee = Column(Numeric(10, 2), nullable=False)
+    delivery_per_mile = Column(Numeric(10, 2), nullable=False)
+
+
+class PricingElevator(Base):
+    """Elevator pricing: one row per plan; its fees are in pricing_elevator_tiers."""
+    __tablename__ = "pricing_elevator"
+
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    pickup_discount_percent = Column(Numeric(5, 2), nullable=False, default=0)
+    delivery_discount_percent = Column(Numeric(5, 2), nullable=False, default=0)
+    tiers = relationship("PricingElevatorTier", cascade="all, delete-orphan", lazy="selectin")
+
+
+class PricingElevatorTier(Base):
+    """One elevator fee by volume; a blank up_to_cuft covers all volume above the other tiers."""
+    __tablename__ = "pricing_elevator_tiers"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "up_to_cuft", name="uq_pricing_elevator_tiers_plan_volume"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    # The unique (plan_id, up_to_cuft) index also serves lookups by plan_id.
+    plan_id = Column(String(36), ForeignKey("pricing_elevator.plan_id", ondelete="CASCADE"), nullable=False)
+    up_to_cuft = Column(Integer)
+    fee = Column(Numeric(10, 2), nullable=False)
+
+
+class PricingLongCarry(Base):
+    """Long carry pricing: one row per plan."""
+    __tablename__ = "pricing_long_carry"
+
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    included_feet = Column(Integer, nullable=False)
+    increment_feet = Column(Integer, nullable=False)
+    rate_per_cuft = Column(Numeric(10, 2), nullable=False)
+    # Blank uses the move's minimum billable volume.
+    minimum_cubic_feet = Column(Integer)
+    pickup_discount_percent = Column(Numeric(5, 2), nullable=False, default=0)
+    delivery_discount_percent = Column(Numeric(5, 2), nullable=False, default=0)
+
+
+class PricingStairs(Base):
+    """Outdoor and building stairs pricing: one row per plan."""
+    __tablename__ = "pricing_stairs"
+
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    steps_per_flight = Column(Integer, nullable=False)
+    free_flights = Column(Integer, nullable=False)
+    rate_per_cuft = Column(Numeric(10, 2), nullable=False)
+    # Blank uses the move's minimum billable volume.
+    minimum_cubic_feet = Column(Integer)
+    pickup_discount_percent = Column(Numeric(5, 2), nullable=False, default=0)
+    delivery_discount_percent = Column(Numeric(5, 2), nullable=False, default=0)
+
+
+class PricingStorage(Base):
+    """Storage pricing: one row per plan."""
+    __tablename__ = "pricing_storage"
+
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    free_days = Column(Integer, nullable=False)
+    period_days = Column(Integer, nullable=False)
+    rate_per_cuft = Column(Numeric(10, 2), nullable=False)
+    # Blank uses the move's minimum billable volume.
+    minimum_cubic_feet = Column(Integer)
+
+
+class PricingShuttle(Base):
+    """Delivery shuttle pricing: one row per plan; its areas are in pricing_shuttle_areas."""
+    __tablename__ = "pricing_shuttle"
+
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    rate = Column(Numeric(10, 2), nullable=False)
+    access_distance_ft = Column(Integer, nullable=False)
+    # Blank uses the move's minimum billable volume.
+    minimum_cubic_feet = Column(Integer)
+    areas = relationship("PricingShuttleArea", cascade="all, delete-orphan", lazy="selectin")
+
+
+class PricingShuttleArea(Base):
+    """One state, or one ZIP code or range in it, that always needs a shuttle; a blank ZIP covers the whole state."""
+    __tablename__ = "pricing_shuttle_areas"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "state", "zip_code", name="uq_pricing_shuttle_areas"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    # The unique (plan_id, state, zip_code) index also serves lookups by plan_id.
+    plan_id = Column(String(36), ForeignKey("pricing_shuttle.plan_id", ondelete="CASCADE"), nullable=False)
+    state = Column(String(2), nullable=False)
+    zip_code = Column(String(20), nullable=False, default="", server_default="")
+
+
+class PricingMileageFee(Base):
+    """Origin or destination mileage fees for a plan; kind is 'origin' or 'delivery'."""
+    __tablename__ = "pricing_mileage_fees"
+
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True)
+    kind = Column(String(10), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    rules = relationship("PricingMileageFeeRule", cascade="all, delete-orphan", lazy="selectin",
+                         order_by="PricingMileageFeeRule.position")
+
+
+class PricingMileageFeeRule(Base):
+    """One fee area; position keeps the configured order, which breaks ties between equal areas."""
+    __tablename__ = "pricing_mileage_fee_rules"
+    __table_args__ = (
+        ForeignKeyConstraint(["plan_id", "kind"], ["pricing_mileage_fees.plan_id", "pricing_mileage_fees.kind"],
+                             ondelete="CASCADE"),
+    )
+
+    plan_id = Column(String(36), primary_key=True)
+    kind = Column(String(10), primary_key=True)
+    position = Column(Integer, primary_key=True)
+    state = Column(String(2), nullable=False)
+    origin_zip = Column(String(5), nullable=False)
+    rate_per_mile = Column(Numeric(10, 2), nullable=False)
+    zips = relationship("PricingMileageFeeZip", cascade="all, delete-orphan", lazy="selectin")
+
+
+class PricingMileageFeeZip(Base):
+    """A ZIP code or range, as entered, that a fee area covers; an area without any covers its whole state."""
+    __tablename__ = "pricing_mileage_fee_zips"
+    __table_args__ = (
+        ForeignKeyConstraint(["plan_id", "kind", "position"],
+                             ["pricing_mileage_fee_rules.plan_id", "pricing_mileage_fee_rules.kind",
+                              "pricing_mileage_fee_rules.position"], ondelete="CASCADE"),
+    )
+
+    plan_id = Column(String(36), primary_key=True)
+    kind = Column(String(10), primary_key=True)
+    position = Column(Integer, primary_key=True)
+    zip_code = Column(String(20), primary_key=True)
+
+
+class PricingBulkyItem(Base):
+    """Bulky item rates: one row per item; a blank price means that service is not offered."""
+    __tablename__ = "pricing_bulky_items"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(500), nullable=False)
+    handling = Column(Numeric(10, 2))
+    packing = Column(Numeric(10, 2))
+    crating = Column(Numeric(10, 2))
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class PricingPacking(Base):
+    """Packing rates per cubic foot: one row per plan; its materials are in pricing_materials."""
+    __tablename__ = "pricing_packing"
+
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True)
+    full = Column(Numeric(10, 2))
+    partial = Column(Numeric(10, 2))
+    unpacking = Column(Numeric(10, 2))
+    materials = relationship("PricingMaterial", cascade="all, delete-orphan", lazy="selectin",
+                             order_by="PricingMaterial.sort_order")
+
+
+class PricingMaterial(Base):
+    """One packing material; material_id is the id other settings and customer choices refer to.
+
+    The rule_* columns say which inventory items the material packs; a blank rule_protection means none.
+    """
+    __tablename__ = "pricing_materials"
+
+    plan_id = Column(String(36), ForeignKey("pricing_packing.plan_id", ondelete="CASCADE"), primary_key=True)
+    material_id = Column(String(100), primary_key=True)
+    name = Column(String(200), nullable=False)
+    material_price = Column(Numeric(10, 2), nullable=False)
+    packing_price = Column(Numeric(10, 2), nullable=False)
+    unpacking_price = Column(Numeric(10, 2), nullable=False)
+    capacity = Column(Numeric(14, 4))
+    capacity_unit = Column(String(20), nullable=False, default="cuft")
+    capacity_kind = Column(String(10), nullable=False, default="up_to")
+    mattress_size = Column(String(10))
+    box_capacity_cuft = Column(Numeric(14, 4))
+    rule_protection = Column(String(10))
+    rule_item_type = Column(String(100))
+    rule_variant = Column(String(100))
+    rule_measure = Column(String(20))
+    rule_minimum = Column(Numeric(14, 4))
+    rule_maximum = Column(Numeric(14, 4))
+    rule_minimum_inclusive = Column(Boolean)
+    rule_maximum_inclusive = Column(Boolean)
+    rule_unit = Column(String(10))
+    rule_units_per_item = Column(Numeric(10, 2))
+    sort_order = Column(Integer, nullable=False, default=0)
+
+
+class PricingPickupArea(Base):
+    """One pickup state per row; a blank ZIP code covers the whole state."""
+    __tablename__ = "pricing_plan_pickup_areas"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "state", "zip_code", name="uq_pricing_plan_pickup_areas"),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    # The unique (plan_id, state, zip_code) index also serves lookups by plan_id.
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), nullable=False)
+    state = Column(String(2), nullable=False)
+    zip_code = Column(String(5), nullable=False, default="", server_default="")
 
 
 class PricingRule(Base):
     __tablename__ = "pricing_rules"
 
     id = Column(String(36), primary_key=True, default=_uuid)
-    plan_id = Column(String(36), ForeignKey("pricing_plans.id"), nullable=False, index=True)
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), nullable=False, index=True)
     category = Column(String(50), nullable=False, default="general")
     title = Column(String(255), nullable=False, default="Pricing rule")
     description = Column(Text, nullable=False, default="")
@@ -974,9 +1242,13 @@ class PricingRule(Base):
 
 class PricingRate(Base):
     __tablename__ = "pricing_rates"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "destination", "band_label", name="uq_pricing_rates_plan_destination_band"),
+    )
 
     id = Column(String(36), primary_key=True, default=_uuid)
-    plan_id = Column(String(36), ForeignKey("pricing_plans.id"), nullable=False, index=True)
+    # The unique (plan_id, destination, band_label) index also serves lookups by plan_id.
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), nullable=False)
     destination = Column(String(255), nullable=False, index=True)
     destination_group = Column(String(100), nullable=False, default="")
     minimum_price = Column(Numeric(12, 2))
@@ -1008,7 +1280,7 @@ class PricingService(Base):
     __tablename__ = "pricing_services"
 
     id = Column(String(36), primary_key=True, default=_uuid)
-    plan_id = Column(String(36), ForeignKey("pricing_plans.id"), nullable=False, index=True)
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(500), nullable=False)
     rate_text = Column(String(255), nullable=False, default="")
     comments = Column(Text, nullable=False, default="")
@@ -1265,7 +1537,13 @@ class InventoryEditItem(Base):
     unit_cuft = Column(Numeric(18, 8), nullable=False)
     unit_weight = Column(Numeric(18, 8), nullable=False, default=0)
     going = Column(Boolean, nullable=False, default=True)
+    # Older rows marked a whole row CP (True) or PBO (False); mover_pack_count replaces that.
     mover_pack = Column(Boolean)
+    # How many of this row's units the movers pack.
+    mover_pack_count = Column(Integer)
+    # True for a row from the customer's list or edited by hand: a new report keeps it.
+    # False for a row from a LiveSwitch report: the next report replaces it. None: saved before this was recorded.
+    manual = Column(Boolean)
     selections = Column(Text, nullable=False, default='{}')
     sort_order = Column(Integer, nullable=False, default=0)
     inventory_record_id = Column(String(36))

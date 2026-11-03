@@ -15,6 +15,7 @@ import { savedPhotos, storePhoto, removePhoto } from './photoDrafts';
 import ManualInventoryModal from "./ManualInventoryModal";
 import EstimateSigning from './EstimateSigning';
 import EstimateViewer from './EstimateViewer';
+import InventoryViewer from './InventoryViewer';
 import type { EditableReportFile } from "./ReportFileList";
 import ReportFileGallery from "./ReportFileGallery";
 import ReportHistory, { type ReportRun } from "./ReportHistory";
@@ -26,11 +27,23 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readCustomerBootstrap } from './customerBootstrap';
 import { useParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
-import RepDiscounts from './RepDiscounts';
+import RepDiscounts, { type DiscountResult } from './RepDiscounts';
 import "./CustomerMovePage.css";
 
 type LinkSms = { sent_at: string; phone_last4: string };
 type Shuttle = { automatic: boolean; answer: boolean | null; revision: string; required: boolean; question: string; rate: number; total: number; cubic_feet: number; inventory_cubic_feet: number; minimum_cubic_feet: number };
+// What saving one answer returns: only the data that answer changed.
+type PricingDelta = {
+  price?: string | null;
+  charges?: NonNullable<NonNullable<Details['estimate']>['charges']>;
+  options: Partial<Details>;
+  unanswered: string[];
+  unanswered_scope: string[];
+  combined_inventory?: Details['combined_inventory'];
+  // Item answers also return the questions, and the volume when what ships changed.
+  item_questions?: Details['item_questions'];
+  cuft?: number | null;
+};
 type Details = {
   extra_stops?: ExtraStopsOption | null;
   elevator?: ElevatorOption | null;
@@ -87,7 +100,8 @@ function CompletionIcon({complete, label}: {complete: boolean; label: string}) {
   return <svg className={`cm-completion-icon ${complete ? 'is-complete' : 'needs-attention'}`} width="20" height="20" viewBox="0 0 24 24" role="img" aria-label={label}><title>{label}</title><circle cx="12" cy="12" r="11" fill="currentColor"/>{complete ? <path d="m7 12 3 3 7-7" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/> : <><path d="M12 6v7" stroke="white" strokeWidth="2" strokeLinecap="round"/><circle cx="12" cy="17" r="1.2" fill="white"/></>}</svg>;
 }
 const emptyDetails = (): Details => ({name:'', phone:'', email:'', move_date:'', pickup:'', delivery:'', company:'', stops:[], estimate:null, packing_package:null, packing_items:[], packing_saved:false, walkthrough:null, participant_url:'', files:[]});
-const pageSections = ['move', 'inventory', 'media', 'volume', 'pricing'] as const;
+// 'estimate' is the saved price alone, so it shows before the pricing section's work finishes.
+const pageSections = ['move', 'inventory', 'media', 'volume', 'estimate', 'pricing'] as const;
 type PageSection = typeof pageSections[number];
 type SectionState = { loading: boolean; error: string; ready: boolean };
 const initialSections = () => Object.fromEntries(pageSections.map(key => [key, {loading:true, error:'', ready:false}])) as Record<PageSection, SectionState>;
@@ -244,9 +258,9 @@ export default function CustomerMovePage() {
   }
   type PricingChange = { kind: 'additional_protection' | 'material' | 'inventory_boxes' | 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; material_item?:import('./CustomerPackingOptions').AdditionalMaterialItem|null; box_quantities?:Record<string,number>; stop_change?:import('./CustomerExtraStopsQuestion').ExtraStopChange; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; access_unknown?: boolean; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
   const failedPricing = useRef(new Map<string, PricingChange>());
-  const pricingFullRefresh = useRef(false);
   function savePricingChange(change: PricingChange) {
-    if (['extra_stops', 'inventory_boxes', 'mode'].includes(change.kind)) pricingFullRefresh.current = true;
+    // Box counts are saved on the inventory rows; reload the inventory window the next time it opens.
+    if (['inventory_boxes', 'mode'].includes(change.kind)) setInventoryOpened(false);
     const id = `pricing:${change.kind}:${change.location || change.item_id || ''}:${change.stop_change?.previous || change.stop_change?.address || ''}`;
     answerPending.current += 1;
     answerRevision.current += 1;
@@ -261,7 +275,7 @@ export default function CustomerMovePage() {
           const saved=data?.extra_stops?.locations.find(group=>group.location===change.location)?.stops.find(stop=>stop.address===address);
           payload={...change,route_origin:origin,stop_change:{...change.stop_change,meters:saved?.meters??await browserDrivingMeters(data?.google_maps_browser_key||'',origin,address)}};
         }
-        await call('/packing?compact=true', { change: payload });
+        applyPricingDelta(await call('/packing?compact=true', { change: payload }));
         failedPricing.current.delete(id);
         failedAnswers.current.delete(id);
         setPackingError(failedPricing.current.size ? 'Some choices could not be saved. Please retry.' : '');
@@ -271,15 +285,25 @@ export default function CustomerMovePage() {
         setPackingError((error as Error).message);
       } finally {
         answerPending.current -= 1;
-        if (!answerPending.current) {
-          setAnswersSaving(false);
-          const pricingOnly = !pricingFullRefresh.current;
-          pricingFullRefresh.current = false;
-          void refreshDetails(true, pricingOnly);
-        }
+        if (!answerPending.current) setAnswersSaving(false);
       }
     });
     answerQueue.current = task.catch(() => {});
+  }
+  // A saved answer returns only what it changed: its part of the price data, the price lines and total,
+  // and its unanswered questions. Merge those in; nothing reloads.
+  function applyPricingDelta(result: PricingDelta) {
+    setData(previous => {
+      if (!previous) return previous;
+      const kept = (previous.unanswered_questions || []).filter(id => !result.unanswered_scope.some(prefix => id.startsWith(prefix)));
+      return {...previous, ...result.options,
+        ...(result.combined_inventory ? {combined_inventory: result.combined_inventory} : {}),
+        unanswered_questions: [...new Set([...kept, ...result.unanswered])],
+        ...(result.item_questions && answerPending.current <= 1 ? {item_questions: result.item_questions} : {}),
+        ...(result.cuft != null && previous.spark ? {spark: {...previous.spark, cuft: result.cuft}} : {}),
+        estimate: previous.estimate && result.charges ? {...previous.estimate, price: result.price ?? previous.estimate.price, charges: result.charges} : previous.estimate,
+        ...(previous.signature_status === 'signed' ? {signature_status: 'changed' as const, signature_requires_resign: true} : {})};
+    });
   }
   async function saveStoragePickup(date: string) {
     answerPending.current += 1;
@@ -437,7 +461,7 @@ export default function CustomerMovePage() {
     type Group = Charge & {children?: (Charge & {heading?: string; displayName?: string})[]; target?: NonNullable<ReturnType<typeof chargeQuestion>>};
     const result: Group[] = [];
     const groups = new Map<string, Group>();
-    const titles: Record<PricingStep, string> = {stops: 'Additional stops', elevator: 'Elevator', access: 'Truck access', stairs: 'Stairs', storage: 'Delivery date', bulky: 'Packing & crating', package: 'Packing services', items: 'Moving terms'};
+    const titles: Record<PricingStep, string> = {stops: 'Additional stops', elevator: 'Elevator', access: 'Truck access', stairs: 'Stairs', storage: 'Storage', bulky: 'Packing & crating', package: 'Packing services', items: 'Moving terms'};
     for (const charge of data?.estimate?.charges || []) {
       const target = chargeQuestion(charge);
       if (!target) { result.push(charge); continue; }
@@ -554,6 +578,7 @@ export default function CustomerMovePage() {
   const [preparedEstimate, setPreparedEstimate] = useState('');
   const [preparedSigned, setPreparedSigned] = useState(false);
   const [estimateViewerOpen, setEstimateViewerOpen] = useState(false);
+  const [inventoryPdf, setInventoryPdf] = useState<{ url: string; filename: string } | null>(null);
   const [estimatePdfUrl, setEstimatePdfUrl] = useState('');
   async function openEstimate() {
     setPdfError('');
@@ -572,9 +597,11 @@ export default function CustomerMovePage() {
     setPreparedEstimate('');
     setPreparedSigned(false);
     try {
-      const mileage = await call('/mileage');
-      await saveBrowserMileage(mileage.routes, data?.google_maps_browser_key || '', true);
-      const prepared = await call('/estimate-signatures', {});
+      // Signed: open the signed copy as saved. Otherwise a new estimate from what the page shows.
+      const prepared = data?.signature_status === 'signed'
+        ? {id: (await call('/estimate-signatures')).items[0]?.id as string, signed: true}
+        : await call('/estimate-signatures', {});
+      if (!prepared.id) throw new Error('Could not find the signed estimate. Please try again.');
       const response = await fetch(base + '/estimate-signatures/' + encodeURIComponent(prepared.id) + '/pdf', { headers, cache: 'no-store' });
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
@@ -585,7 +612,6 @@ export default function CustomerMovePage() {
       setEstimatePdfUrl(url);
       setPreparedEstimate(prepared.id);
       setPreparedSigned(prepared.signed === true);
-      void refreshDetails(true);
     } catch (error) {
       const failure = error as Error & {detail?: {unanswered_questions?: string[]}};
       const message = failure.message || 'Could not prepare the estimate. Please try again.';
@@ -804,6 +830,12 @@ export default function CustomerMovePage() {
       if (current()) setSections(previous => ({...previous, [section]: {...previous[section], loading:false, error:(error as Error).message}}));
     }
   }
+  // A discount changes only the price lines and total; a signed estimate now needs signing again.
+  function applyDiscount(result: DiscountResult) {
+    setData(previous => previous?.estimate ? {...previous,
+      estimate: {...previous.estimate, price: result.price ?? previous.estimate.price, charges: result.charges},
+      ...(previous.signature_status === 'signed' ? {signature_status: 'changed' as const, signature_requires_resign: true} : {})} : previous);
+  }
   async function refreshDetails(background = false, retryPricing = false, initial = false) {
     if (!session || !customerSessionActive(session) || (background && answerPending.current)) return;
     if (retryPricing) { await loadSection('pricing', background); return; }
@@ -985,7 +1017,7 @@ export default function CustomerMovePage() {
                 ) : (
                   <form className="cm-route-edit" noValidate onSubmit={saveMoveDetails}>
                     <label>
-                      Move Date
+                      Pickup Date
                       <input type="date" value={moveDraft.move_date} aria-invalid={!!moveErrors.move_date} aria-describedby={moveErrors.move_date ? 'move-move_date-error' : undefined} onChange={e=>{clearMoveError('move_date');setMoveDraft(prev=>({...prev,move_date:e.target.value}));}} />
                       {moveErrors.move_date && <small id="move-move_date-error" className="cm-field-error" role="alert">{moveErrors.move_date}</small>}
                     </label>
@@ -1037,7 +1069,7 @@ export default function CustomerMovePage() {
                 <p>Upload photos, videos, or documents, create an item list, or schedule a live virtual walkthrough with our team.</p>
                 <p>Your saved item list and uploaded media stay together. Generate one report to combine both into your inventory and estimate.</p>
                 <div className="cm-inventory-actions">
-                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('inventory', 'pricing')} onClick={() => setShowInventoryList(true)}>{!sectionReady('inventory', 'pricing') ? 'Loading inventory...' : data.combined_inventory?.length||data.inventory_draft ? 'Update inventory' : 'Add a list'}</button>
+                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('inventory')} onClick={() => setShowInventoryList(true)}>{!sectionReady('inventory') ? 'Loading inventory...' : data.combined_inventory?.length||data.inventory_draft ? 'Update inventory' : 'Add a list'}</button>
                   <button type="button" className="slds-button cm-add-list-button" disabled={busy || !photosRestored} onClick={() => filePicker.current?.click()} aria-busy={files.some(f => f.status === 'Uploading')}>{files.some(f => f.status === 'Uploading') ? 'Uploading...' : 'Upload files'}</button>
                   <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('media')} onClick={() => meetingDialog.current?.showModal()}>Virtual estimate</button>
                   <input ref={filePicker} type="file" multiple hidden disabled={busy || !photosRestored} onChange={e=>{void choose(e.target.files);e.target.value='';}}/>
@@ -1058,7 +1090,7 @@ export default function CustomerMovePage() {
                   ))}
                 </div>
                 {sectionNotice('inventory', 'inventory')}
-                {sectionReady('inventory', 'pricing') && data.inventory_draft?.rows.length ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open saved item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
+                {sectionReady('inventory') && data.inventory_draft?.rows.length ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open saved item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
                   <div>
                     <strong>Saved item list</strong>
                     <span>{data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((roomTotal, item) => roomTotal + Number(item.amount || 0), 0), 0)} items &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + Number(item.amount || 0) * piecesPerItem(item.name), 0), 0)} pieces &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + boxQuantity(item.name, Number(item.amount || 0)), 0), 0)} boxes &middot; {data.inventory_draft.cuft.toLocaleString()} cu ft</span>
@@ -1224,7 +1256,7 @@ export default function CustomerMovePage() {
                 };
                 const sparkBusy = !!data.spark && data.spark.status !== 'completed' && data.spark.status !== 'failed';
                 return <ol className="cm-estimate-flow" aria-label="Complete your estimate">
-                <li><button type="button" className={`cm-flow-step${nextStep === 1 ? ' is-current' : ''}`} disabled={!sectionReady('inventory', 'pricing')} onClick={() => setShowInventoryList(true)}><span className="cm-flow-head"><span className="cm-flow-number">1</span><span className="cm-flow-label">Inventory{status(1, hasInventory)}</span>{sectionReady('inventory', 'pricing') && <CompletionIcon complete={hasInventory} label={hasInventory ? 'Inventory added' : 'Inventory missing'}/>}</span>{action(1, hasInventory ? 'Edit' : 'Add', 'Add', !sectionReady('inventory', 'pricing') ? 'Loading...' : '')}</button></li>
+                <li><button type="button" className={`cm-flow-step${nextStep === 1 ? ' is-current' : ''}`} disabled={!sectionReady('inventory')} onClick={() => setShowInventoryList(true)}><span className="cm-flow-head"><span className="cm-flow-number">1</span><span className="cm-flow-label">Inventory{status(1, hasInventory)}</span>{sectionReady('inventory') && <CompletionIcon complete={hasInventory} label={hasInventory ? 'Inventory added' : 'Inventory missing'}/>}</span>{action(1, hasInventory ? 'Edit' : 'Add', 'Add', !sectionReady('inventory') ? 'Loading...' : '')}</button></li>
                 <li>
                   <button
                     type="button"
@@ -1282,7 +1314,7 @@ export default function CustomerMovePage() {
                             <div className="cm-line-price">
                               {(child.discount_amount || 0) > 0 && <del>{money(child.subtotal || 0)}</del>}
                               <strong>{child.pending ? 'Pending' : money(child.total)}</strong>
-                              {repPage && child.id && !child.pending && <RepDiscounts base={base} headers={headers} onSaved={refreshDetails} chargeId={child.id} chargeName={child.displayName || child.name} />}
+                              {repPage && child.id && !child.pending && <RepDiscounts base={base} headers={headers} onSaved={applyDiscount} chargeId={child.id} chargeName={child.displayName || child.name} />}
                             </div>
                             </div>
                           </div>)}
@@ -1290,7 +1322,7 @@ export default function CustomerMovePage() {
                         <div className="cm-line-price">
                           {!charge.children && (charge.discount_amount || 0) > 0 && <del>{money(charge.subtotal || 0)}</del>}
                           {charge.pending && !charge.children ? 'Pending' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charge.total)}{charge.children && charge.pending && <small> + pending</small>}
-                          {repPage && charge.id && !charge.children && !charge.pending && <RepDiscounts base={base} headers={headers} onSaved={refreshDetails} chargeId={charge.id} chargeName={charge.name} />}
+                          {repPage && charge.id && !charge.children && !charge.pending && <RepDiscounts base={base} headers={headers} onSaved={applyDiscount} chargeId={charge.id} chargeName={charge.name} />}
                         </div>
                       </div>
                     );})}
@@ -1307,28 +1339,25 @@ export default function CustomerMovePage() {
               {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}
             </div>
 
-            {(showInventoryList || inventoryOpened) && <ManualInventoryModal visible={showInventoryList} key={`${accessId}:${data.spark?.id || 'draft'}:${JSON.stringify(data.packing_package?.selection || {})}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full', boxes: (data.packing_package.box_items || []).map(box => ({ label: box.label, room: box.room, quantity: data.packing_package!.selection.box_quantities?.[box.id] || 0 })) } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}_${JSON.stringify(data.packing_package?.selection || {})}`} loadCatalog={() => call('/inventory-catalog')} downloadPdf={async body => {
+            {(showInventoryList || inventoryOpened) && <ManualInventoryModal visible={showInventoryList} key={`${accessId}:${data.spark?.id || 'draft'}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full' } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}`} loadCatalog={() => call('/inventory-catalog')} searchCatalog={(text, ids = []) => call('/inventory-catalog/search?' + new URLSearchParams([['q', text], ...ids.map(id => ['ids', id])]).toString())} downloadPdf={async body => {
               const response = await fetch(base + '/inventory.pdf', {
                 method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
                 body: JSON.stringify(body), cache: 'no-store',
               });
               if (!response.ok) {
                 const result = await response.json().catch(() => ({}));
-                throw new Error(typeof result.detail === 'string' ? result.detail : 'Could not download inventory. Please try again.');
+                throw new Error(typeof result.detail === 'string' ? result.detail : 'Could not load inventory. Please try again.');
               }
               const url = URL.createObjectURL(await response.blob());
-              const anchor = document.createElement('a');
               const clientName = (data.name || '').replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '').trim().replace(/\.+$/, '');
               const companyName = (data.company_details?.name || data.company || '').replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '').trim().replace(/\.+$/, '');
               const serverFilename = response.headers.get('Content-Disposition')?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
-              anchor.href = url; anchor.download = serverFilename ? decodeURIComponent(serverFilename) : [companyName, 'Inventory', clientName].filter(Boolean).join(' - ') + '.pdf';
-              document.body.appendChild(anchor); anchor.click(); anchor.remove();
-              window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+              setInventoryPdf({ url, filename: serverFilename ? decodeURIComponent(serverFilename) : [companyName, 'Inventory', clientName].filter(Boolean).join(' - ') + '.pdf' });
             }} submitActions={async (requestId, edits, revision, reportId) => {
               const result = await call('/inventory/actions', {request_id:requestId, revision, report_id:reportId, ...edits}, 'PATCH');
               setCalculationError(''); setReportState('idle');
+              // Saving the list does not reprice; the estimate is only marked as needing an update.
               setData(previous => previous ? {...previous, estimate_needs_update: true, signature_status: undefined} : previous);
-              void refreshDetails(true, true);
               return result;
             }} onDone={async () => {
               await answerQueue.current;
@@ -1336,9 +1365,11 @@ export default function CustomerMovePage() {
                 throw new Error('Your list is saved. Please retry saving your service answers before calculating the price.');
               }
               await call(data.spark?.status === 'completed' ? '/recalculate-price' : '/generate-inventory-report', {});
-              await refreshDetails();
+              // Done changes the list, volume and price; the rest of the page is unchanged.
+              await Promise.allSettled([loadSection('inventory', true), loadSection('volume', true), loadSection('pricing', true)]);
               setCalculationError('');
-            }} onClose={changed => { setShowInventoryList(false); if (changed) void refreshDetails(); }} />}
+            }} onClose={changed => { setShowInventoryList(false); if (changed) void loadSection('inventory', true); }} />}
+            {inventoryPdf && <InventoryViewer url={inventoryPdf.url} filename={inventoryPdf.filename} onClose={() => { URL.revokeObjectURL(inventoryPdf.url); setInventoryPdf(null); }} />}
             {showQuestions && (
               <div className="cm-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="packing-title" onClick={event => { if (event.target === event.currentTarget) setShowQuestions(false); }}>
                 <div className="cm-modal-card">
@@ -1399,11 +1430,11 @@ export default function CustomerMovePage() {
                       setData(current=>current?{...current,item_questions:current.item_questions?.map(question=>question.id===answer.question_id?{...question,saved:{answer_id:answer.answer_id,acknowledged:answer.acknowledged,pending:answer.pending,selected_items:answer.selected_items}}:question)}:current);
                       const task = answerQueue.current.then(async () => {
                         try {
-                          await call('/item-answer?compact=true', { ...answer, report_id: reportId });
+                          applyPricingDelta(await call('/item-answer?compact=true', { ...answer, report_id: reportId }));
                           failedAnswers.current.delete(answer.question_id); setTermsError('');
                         }
                         catch (error) { failedAnswers.current.add(answer.question_id); setTermsError('Please retry the answer that could not be saved.'); throw error; }
-                        finally { answerPending.current -= 1; if (!answerPending.current) { setAnswersSaving(false); void refreshDetails(true); } }
+                        finally { answerPending.current -= 1; if (!answerPending.current) setAnswersSaving(false); }
                       });
                       answerQueue.current = task.catch(() => {});
                       return task;

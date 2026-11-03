@@ -9,7 +9,7 @@ from typing import Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, model_validator
 from models import InventoryCatalogItem
-from long_distance_packing import packing_card
+from long_distance_packing import plan_packing_card
 
 
 class ItemMaterial(BaseModel):
@@ -102,7 +102,7 @@ def sized_optional_defaults(defaults, rates, volume):
 
 
 def material_setup(plan, db):
-    card = packing_card(plan.services)
+    card = plan_packing_card(plan)
     items = [{'id': item.id, 'name': item.name, 'active': item.active, 'cuft': float(item.cuft)}
              for item in db.query(InventoryCatalogItem).filter_by(deleted=False).order_by(InventoryCatalogItem.name).all()]
     valid = {item['id'] for item in items}
@@ -139,7 +139,7 @@ def customer_item_materials(plan, inventory, db):
     defaults = default_materials(plan, db)
     if not assignments and not defaults:
         return [], set()
-    card = packing_card(plan.services)
+    card = plan_packing_card(plan)
     rates = {row.id: row for row in card.materials} if card else {}
     catalog = db.query(InventoryCatalogItem).all()
     catalog_by_id = {item.id: item for item in catalog}

@@ -67,6 +67,36 @@ def inventory_photos(rooms, details):
             for key, urls in matches.items()}
 
 
+def company_logo_image(logo):
+    """Company logo as a sized flowable, or None when missing or unreadable."""
+    logo = logo or ''
+    if not (logo.startswith('data:image/png;base64,') and len(logo) <= 400000):
+        return None
+    try:
+        from PIL import Image as PillowImage, ImageChops
+        with PillowImage.open(BytesIO(base64.b64decode(logo.split(',', 1)[1], validate=True))) as source:
+            rgba = source.convert('RGBA')
+            # The editor saves a square canvas. Size the visible logo,
+            # rather than its transparent or white outer padding.
+            background = PillowImage.new('RGBA', rgba.size, 'white')
+            flattened = PillowImage.alpha_composite(background, rgba).convert('RGB')
+            difference = ImageChops.difference(flattened, PillowImage.new('RGB', rgba.size, 'white'))
+            bounds = difference.point(lambda value: 255 if value > 12 else 0).getbbox()
+            if bounds:
+                rgba = rgba.crop(bounds)
+            prepared = BytesIO()
+            rgba.save(prepared, format='PNG')
+        prepared.seek(0)
+        picture = Image(prepared, mask='auto')
+        scale = min(150 / picture.imageWidth, 64 / picture.imageHeight)
+        picture.drawWidth = picture.imageWidth * scale
+        picture.drawHeight = picture.imageHeight * scale
+        picture.hAlign = 'LEFT'
+        return picture
+    except (ValueError, OSError, binascii.Error):
+        return None
+
+
 def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, client=None, box_total=None, liveswitch_used=False, item_services=None):
     output = BytesIO()
     from company_colors import resolve_company_color
@@ -92,32 +122,8 @@ def build_inventory_pdf(rooms, cuft, weight, photos=None, *, company=None, clien
         company = company or {}
         client = client or {}
         company_block = []
-        logo_block = []
-        logo = company.get('logo') or ''
-        if logo.startswith('data:image/png;base64,') and len(logo) <= 400000:
-            try:
-                from PIL import Image as PillowImage, ImageChops
-                with PillowImage.open(BytesIO(base64.b64decode(logo.split(',', 1)[1], validate=True))) as source:
-                    rgba = source.convert('RGBA')
-                    # The editor saves a square canvas. Size the visible logo,
-                    # rather than its transparent or white outer padding.
-                    background = PillowImage.new('RGBA', rgba.size, 'white')
-                    flattened = PillowImage.alpha_composite(background, rgba).convert('RGB')
-                    difference = ImageChops.difference(flattened, PillowImage.new('RGB', rgba.size, 'white'))
-                    bounds = difference.point(lambda value: 255 if value > 12 else 0).getbbox()
-                    if bounds:
-                        rgba = rgba.crop(bounds)
-                    prepared = BytesIO()
-                    rgba.save(prepared, format='PNG')
-                prepared.seek(0)
-                picture = Image(prepared, mask='auto')
-                scale = min(150 / picture.imageWidth, 64 / picture.imageHeight)
-                picture.drawWidth = picture.imageWidth * scale
-                picture.drawHeight = picture.imageHeight * scale
-                picture.hAlign = 'LEFT'
-                logo_block.append(picture)
-            except (ValueError, OSError, binascii.Error):
-                pass
+        picture = company_logo_image(company.get('logo'))
+        logo_block = [picture] if picture else []
         company_block.append(Paragraph(escape(company.get('name') or 'Your moving team'), company_name_style))
         company_block.extend(Paragraph(escape(str(value)).replace('\n', '<br/>'), company_details_style)
                              for value in [company.get('office_address'), company.get('phone')] if value)

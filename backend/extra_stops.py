@@ -25,6 +25,63 @@ def stops_card(services):
             return ExtraStopsCard.model_validate_json(service.comments[len(EXTRA_STOPS_PREFIX):])
     return None
 
+LOCATION_FIELDS = ('free_miles', 'stop_fee', 'per_mile')
+
+def plan_stops_card(plan):
+    """The plan's additional stop pricing, read from pricing_extra_stops."""
+    row = plan.extra_stops
+    if row is None:
+        return None
+    return ExtraStopsCard(enabled=row.enabled, **{location: StopRate(**{field: getattr(row, f'{location}_{field}') for field in LOCATION_FIELDS})
+                                                  for location in ('pickup', 'delivery')})
+
+def stops_service_row(plan):
+    """The card as the pricing API presents it: a service row holding its settings."""
+    card = plan_stops_card(plan)
+    if card is None:
+        return None
+    number = lambda value: format(value.normalize(), 'f')
+    config = {'enabled': card.enabled, **{location: {field: number(getattr(getattr(card, location), field)) for field in LOCATION_FIELDS}
+                                          for location in ('pickup', 'delivery')}}
+    return {'id': f'extra-stops:{plan.id}', 'name': 'Additional stops', 'rate_text': '',
+            'comments': EXTRA_STOPS_PREFIX + json.dumps(config), 'sort_order': -1}
+
+def save_stops_card(plan, card):
+    """Replace the plan's additional stop pricing; None removes it."""
+    from models import PricingExtraStops
+    if card is None:
+        plan.extra_stops = None
+        return
+    row = plan.extra_stops or PricingExtraStops()
+    row.enabled = card.enabled
+    for location in ('pickup', 'delivery'):
+        for field in LOCATION_FIELDS:
+            setattr(row, f'{location}_{field}', getattr(getattr(card, location), field))
+    plan.extra_stops = row
+
+def migrate_stops_cards(connection):
+    """Move each plan's card from its pricing_services JSON row into pricing_extra_stops, once."""
+    from sqlalchemy import inspect, text
+    from models import PricingExtraStops
+    if inspect(connection).has_table(PricingExtraStops.__tablename__):
+        return 0
+    PricingExtraStops.__table__.create(connection)
+    moved = set()
+    rows = connection.execute(text(
+        "SELECT id, plan_id, comments FROM pricing_services WHERE comments LIKE :prefix ORDER BY plan_id, sort_order"),
+        {'prefix': EXTRA_STOPS_PREFIX + '%'}).all()
+    for service_id, plan_id, comments in rows:
+        # Pricing used the first card of a plan; any later copies were never read.
+        if plan_id not in moved:
+            card = ExtraStopsCard.model_validate_json(comments[len(EXTRA_STOPS_PREFIX):])
+            connection.execute(PricingExtraStops.__table__.insert().values(
+                plan_id=plan_id, enabled=card.enabled,
+                **{f'{location}_{field}': getattr(getattr(card, location), field)
+                   for location in ('pickup', 'delivery') for field in LOCATION_FIELDS}))
+            moved.add(plan_id)
+        connection.execute(text('DELETE FROM pricing_services WHERE id = :id'), {'id': service_id})
+    return len(moved)
+
 def stop_price(rule, meters):
     exact = Decimal(meters) / Decimal('1609.344')
     miles = exact.to_integral_value(rounding=ROUND_CEILING)
@@ -60,7 +117,7 @@ def option(lead,job,db,plan=None,refresh=False):
     if plan is None:
         from routes.pricing import infer_job_move_type
         _,plan=infer_job_move_type(lead,job,db)
-    card=stops_card(plan.services) if plan else None
+    card=plan_stops_card(plan) if plan else None
     if not card or not card.enabled:return None
     state=stops_state(job,db)
     locations=[]

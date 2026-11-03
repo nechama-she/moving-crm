@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from auth import require_admin
 from database import get_db
 from models import InventoryCatalogItem, InventoryCatalogSet, User, PricingPlan
-from long_distance_packing import packing_card
+from long_distance_packing import plan_packing_card
 from catalog_material_cleanup import remove_item_assignments
 
 router = APIRouter(prefix='/api/inventory-catalog', tags=['Inventory catalog'])
@@ -142,7 +142,7 @@ def delete_set(set_id: str, user: User = Depends(require_admin), db: Session = D
 def material_options(user: User = Depends(require_admin), db: Session = Depends(get_db)):
     options = []
     for plan in db.query(PricingPlan).order_by(PricingPlan.name).all():
-        card = packing_card(plan.services)
+        card = plan_packing_card(plan)
         if card:
             options.extend({'plan_id': plan.id, 'plan_name': plan.name,
                             'material_id': row.id, 'name': row.name}

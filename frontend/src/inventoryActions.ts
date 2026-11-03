@@ -1,8 +1,8 @@
 import type {ServiceSelection} from './serviceQuantities';
-type Item = {id:string;catalog_item_id?:string|null;name_override?:boolean;name:string;cuft:number;quantity:number;going?:boolean;mover_pack?:boolean|null;unit_weight?:number;set_id?:string|null;set_name?:string|null};
+type Item = {id:string;catalog_item_id?:string|null;name_override?:boolean;name:string;cuft:number;quantity:number;going?:boolean;mover_pack?:boolean|null;mover_pack_count?:number|null;unit_weight?:number;set_id?:string|null;set_name?:string|null};
 type Room = {id:string;room_type_id:string;name:string;items:Record<string,number>;item_names?:Record<string,string>;custom_items?:Item[]};
 type CatalogItem = {id:string;name:string;cuft:number;weight?:number};
-type Values = {room_id:string;name:string|null;quantity:number;cuft:number;going:boolean;mover_pack:boolean|null;selections:Record<string,ServiceSelection>};
+type Values = {room_id:string;name:string|null;quantity:number;cuft:number;going:boolean;mover_pack:boolean|null;mover_pack_count:number|null;selections:Record<string,ServiceSelection>};
 type Add = Omit<Values,'name'> & {id:string;name?:string;catalog_item_id?:string;unit_weight?:number;set_id?:string;set_name?:string};
 export type InventoryEdits = {update:{id:string;fields:Partial<Values>}[];delete:string[];add:Add[];rooms:{update:{id:string;name:string}[];delete:string[];add:{id:string;name:string;room_type_id:string}[]}};
 const catalogIds = new Map<string,string>();
@@ -32,7 +32,8 @@ export function inventoryActions(before:Room[],after:Room[],catalog:CatalogItem[
   const values=(item:Item & {room_id:string;selections?:Record<string,ServiceSelection>}):Values=>({room_id:item.room_id,
     name:!item.catalog_item_id||item.name_override?baseName(item.name):null,
     quantity:item.quantity,cuft:item.cuft,going:item.going!==false,selections:item.selections||{},
-    mover_pack:item.mover_pack??(/\((?:CP|PBO)\)\s*$/i.test(item.name)?/\(CP\)\s*$/i.test(item.name):null)});
+    mover_pack:item.mover_pack??(/\((?:CP|PBO)\)\s*$/i.test(item.name)?/\(CP\)\s*$/i.test(item.name):null),
+    mover_pack_count:item.mover_pack_count??null});
   for(const [id,item] of previous) {
     if(edits.rooms.delete.includes(item.room_id)) continue;
     const next=current.get(id);

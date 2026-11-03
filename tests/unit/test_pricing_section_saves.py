@@ -23,14 +23,15 @@ class Row(SimpleNamespace):
 
 class SectionSaveTests(unittest.TestCase):
     def setUp(self):
-        self.plan = Row(services=[], rates=[], rules=[Row(id='rule', description='keep')], pickup_regions='original', name='Original', fuel_percent=13)
+        self.plan = Row(services=[], rates=[], rules=[Row(id='rule', description='keep')], pickup_rows=['original'], name='Original', fuel_percent=13)
         self.plan.to_dict = lambda: {}
         tree = ast.parse((BACKEND / 'routes/pricing.py').read_text(encoding='utf-8'))
         handler = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'update_pricing_section')
         handler.decorator_list = []
         handler.args.defaults = []
         future = ast.parse('from __future__ import annotations').body[0]
-        self.scope = {'_plan_or_404': lambda *args: self.plan, 'HTTPException': HttpError, 'json': json,
+        from datetime import datetime, timezone
+        self.scope = {'_plan_or_404': lambda *args: self.plan, 'HTTPException': HttpError, 'json': json, 'datetime': datetime, 'timezone': timezone,
                       'PricingService': Row, 'PricingRate': Row, 'PricingRule': Row}
         for key in ['EXTRA_STOPS', 'ELEVATOR', 'LONG_CARRY', 'STAIRS', 'STORAGE', 'ORIGIN_FEE', 'DELIVERY_FEE', 'SHUTTLE', 'PACKING_CARD']:
             self.scope[key + '_PREFIX'] = key + ':'
@@ -55,18 +56,18 @@ class SectionSaveTests(unittest.TestCase):
                 self.save(section, services=[Row(id='target', name='Target', comments=prefix+'new', rate_text='20')])
                 self.assertEqual(changed.rate_text, '20')
                 self.assertEqual(vars(untouched), dict(id='other', name='Other', comments='other', rate_text='99', sort_order=1))
-                self.assertEqual(self.plan.pickup_regions, 'original')
+                self.assertEqual(self.plan.pickup_rows, ['original'])
                 self.assertEqual(self.plan.fuel_percent, 13)
                 self.assertEqual(self.plan.rules[0].description, 'keep')
 
     def test_details_save_preserves_all_rows(self):
         services, rules, rates = self.plan.services, self.plan.rules, self.plan.rates
-        self.save('details', name='Updated', fuel_percent=10, price_valid_days=14)
-        self.assertEqual((self.plan.name, self.plan.fuel_percent, self.plan.price_valid_days), ('Updated', 10, 14))
+        self.save('details', name='Updated', fuel_percent=10, admin_fee=199, price_valid_days=14)
+        self.assertEqual((self.plan.name, self.plan.fuel_percent, self.plan.admin_fee, self.plan.price_valid_days), ('Updated', 10, 199, 14))
         self.assertIs(self.plan.services, services)
         self.assertIs(self.plan.rules, rules)
         self.assertIs(self.plan.rates, rates)
-        self.assertEqual(self.plan.pickup_regions, 'original')
+        self.assertEqual(self.plan.pickup_rows, ['original'])
 
     def test_adjustments_save_preserves_discounts_and_other_cards(self):
         fee = Row(id='fee', name='Stairs', comments='STAIRS:config', rate_text='99', sort_order=0)
@@ -99,7 +100,7 @@ class SectionSaveTests(unittest.TestCase):
         self.save('rates', rates=[Row(id='rate', destination='NY', band_label='Standard', rate=6)])
         self.assertEqual(self.plan.rates[0].rate, 6)
         self.assertIs(self.plan.services[0], service)
-        self.assertEqual(self.plan.pickup_regions, 'original')
+        self.assertEqual(self.plan.pickup_rows, ['original'])
 
     def test_rejects_other_section_fields(self):
         with self.assertRaises(HttpError):

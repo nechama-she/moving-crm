@@ -55,14 +55,16 @@ def load_calculator():
         _rounded_cubic_feet=lambda value: value,
         _transportation_price=lambda *args: (None, Decimal(100), None, Decimal(100)),
         _service_billable_volume=lambda *args: 100,
-        _seasonal_charge=lambda *args: None, _parsed_move_date=lambda value: value,
+        _parsed_move_date=lambda value: value,
         _packing_service_charges=lambda *args: [], _bulky_item_charges=lambda *args: [],
         _rule_charges=lambda rule: [rule.charge],
         _charge_amount=lambda charge, *args: Decimal(charge['rate']),
         elevator_card=lambda *args: None, elevator_quote=lambda *args: None,
         long_carry_card=lambda *args: None, long_carry_quote=lambda *args: None,
         stairs_card=lambda *args: None, stairs_quote=lambda *args: None,
-        storage_card=lambda *args: None, storage_quote=lambda *args: None)
+        storage_card=lambda *args: None, storage_quote=lambda *args: None,
+        plan_elevator_card=lambda *args: None, plan_long_carry_card=lambda *args: None,
+        plan_stairs_card=lambda *args: None, plan_storage_card=lambda *args: None)
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), scope)
     return scope
 
@@ -71,7 +73,7 @@ def test_bad_charge_does_not_block_transport_or_other_charges():
     scope = load_calculator()
     def charge(name, rate):
         return dict(id=name, name=name, description='', rate=rate, calculation_type='fixed', default_selected=True, automatic=False, applies=True)
-    plan = Row(fuel_percent=None, services=[], rules=[Row(id='bad', charge=charge('Storage', 'invalid')), Row(id='good', charge=charge('Handling', '25'))])
+    plan = Row(fuel_percent=None, admin_fee=None, services=[], bulky_items=[], rules=[Row(id='bad', charge=charge('Storage', 'invalid')), Row(id='good', charge=charge('Handling', '25'))])
     body = Row(cubic_feet=100, destination='MD', move_date='', quantities={}, bulky_items=[], selected_charges={}, manual_amounts={}, available_date='', delivery_address='')
     result = scope['compute_plan_calculation'](plan, body)
     assert result['total'] == 125
@@ -86,7 +88,7 @@ def test_access_service_failure_keeps_other_services():
         raise ValueError('Missing elevator rate')
     scope['elevator_quote'] = fail
     scope['storage_quote'] = lambda *args: dict(valid=True, total=40, description='Storage')
-    plan = Row(fuel_percent=None, services=[], rules=[])
+    plan = Row(fuel_percent=None, admin_fee=None, services=[], bulky_items=[], rules=[])
     body = Row(cubic_feet=100, destination='MD', move_date='', quantities={}, bulky_items=[], selected_charges={}, manual_amounts={}, available_date='', delivery_address='')
     result = scope['compute_plan_calculation'](plan, body)
     assert result['total'] == 140
@@ -129,7 +131,7 @@ def test_failed_transport_marks_dependent_fuel_pending_but_keeps_flat_charge():
         raise ValueError('Transportation rate missing')
     scope['_transportation_price'] = fail
     charge = dict(id='handling', name='Handling', description='', rate=25, calculation_type='fixed', default_selected=True, automatic=False, applies=True)
-    plan = Row(fuel_percent=10, services=[], rules=[Row(id='handling', charge=charge)])
+    plan = Row(fuel_percent=10, admin_fee=None, services=[], bulky_items=[], rules=[Row(id='handling', charge=charge)])
     body = Row(cubic_feet=100, destination='MD', move_date='', quantities={}, bulky_items=[], selected_charges={}, manual_amounts={}, available_date='', delivery_address='')
     result = scope['compute_plan_calculation'](plan, body)
     assert result['total'] == 25

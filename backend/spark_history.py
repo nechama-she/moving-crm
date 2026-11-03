@@ -29,10 +29,56 @@ def remember_report(details):
         reports[index] = snapshot
 
 
+def list_for_next_report(details):
+    """The item list a new report adds its media items to: an unsaved list, else the list part of the
+    current report. Media items are not carried; the new report analyzes the media again."""
+    draft = details.get('inventory_draft') or {}
+    if draft.get('rows'):
+        return dict(body=draft.get('body'), rows=draft['rows'], cuft=draft.get('cuft', 0),
+                    weight=draft.get('weight', 0), rooms=draft.get('rooms', []))
+    rows = details.get('question_original_rows', details.get('spark_inventory_snapshot', [])) if details.get('last_spark_status') == 'completed' else []
+    if any('manual' in row for row in rows if isinstance(row, dict)):
+        # Rows saved before this was recorded: manual when the report was a list, or when they are in its list part.
+        source = details.get('report_source')
+        listed = {(str(row.get('room') or ''), str(row.get('name') or '')) for row in details.get('report_list_rows', [])}
+        def manual(row):
+            if row.get('manual') is not None:
+                return row['manual']
+            return source == 'manual' or (source == 'combined' and (str(row.get('room') or ''), str(row.get('name') or '')) in listed)
+        kept = [row for row in rows if isinstance(row, dict) and manual(row)]
+        rooms = {row.get('room') for row in kept}
+        return dict(body=None, rows=kept, cuft=sum(float(row.get('cuft') or 0) for row in kept if row.get('going') is not False),
+                    weight=sum(float(row.get('weight') or 0) for row in kept if row.get('going') is not False),
+                    rooms=[room for room in details.get('manual_rooms', []) if room.get('name') in rooms])
+    # Rows saved before each row recorded where it came from: the list part as the report recorded it.
+    if details.get('report_source') == 'manual' and details.get('last_spark_status') == 'completed':
+        # Before any item answers removed units; the new report applies the answers again.
+        return dict(body=details.get('report_list_body'),
+                    rows=details.get('question_original_rows', details.get('spark_inventory_snapshot', [])),
+                    cuft=details.get('question_original_cuft', details.get('spark_extracted_cuft')) or 0,
+                    weight=details.get('question_original_weight', details.get('spark_extracted_weight')) or 0,
+                    rooms=details.get('manual_rooms', []))
+    if details.get('report_source') == 'combined' and details.get('report_list_rows'):
+        return dict(body=details.get('report_list_body'), rows=details['report_list_rows'],
+                    cuft=details.get('report_list_cuft', 0), weight=details.get('report_list_weight', 0),
+                    rooms=details.get('manual_rooms', []))
+    return None
+
+
+def start_report_list(details, listing):
+    """Record the list a new report combines with its media, or a media-only report without one."""
+    listing = listing or {}
+    details.update(report_list_body=listing.get('body'), report_list_rows=listing.get('rows', []),
+                   report_list_cuft=listing.get('cuft', 0), report_list_weight=listing.get('weight', 0),
+                   manual_rooms=listing.get('rooms', []), report_source='combined' if listing.get('rows') else 'liveswitch')
+
+
 def archive_report_for_new_media(details):
     """Move the active run to history before starting a new media selection."""
     if not details.get('last_spark_id'):
         return False
+    # The list part survives the archive, for the report this selection starts.
+    details['carried_list'] = list_for_next_report(details)
     if details.get('pending_spark_payload'):
         details['last_spark_status'] = 'cancelled'
         details.pop('pending_spark_payload', None)
@@ -114,6 +160,7 @@ def activate_report(details, report_id):
         raise ValueError('Only completed reports can be selected for pricing.')
     for key in REPORT_KEYS:
         details.pop(key, None)
+    details.pop('carried_list', None)  # Kept for a new report only; a chosen report brings its own list.
     details.update(deepcopy(row))
     details['report_files'] = deepcopy(row.get('report_files', []))
     for key in CONVERSATION_KEYS:

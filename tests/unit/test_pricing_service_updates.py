@@ -44,7 +44,27 @@ def test_real_pricing_save_keeps_service_and_client_data():
     node=next(n for n in ast.parse(path.read_text(encoding='utf-8')).body if getattr(n,'name','')=='update_pricing_plan')
     node.decorator_list=[]
     scope={name:getattr(models,name) for name in ('PricingPlan','PricingRule','PricingRate','PricingService','User')}
-    scope.update(PlanUpdate=Row,Session=Session,Depends=Depends,require_admin=lambda:None,get_db=lambda:None,HTTPException=HTTPException,json=json)
+    from pickup_areas import set_pickup_areas
+    from extra_stops import EXTRA_STOPS_PREFIX, ExtraStopsCard, save_stops_card
+    from elevator_pricing import ELEVATOR_PREFIX, ElevatorCard, save_elevator_card
+    from long_carry_pricing import LONG_CARRY_PREFIX, LongCarryCard, save_long_carry_card
+    from stairs_pricing import STAIRS_PREFIX, StairsCard, save_stairs_card
+    from storage_pricing import STORAGE_PREFIX, StorageCard, save_storage_card
+    from shuttle import SHUTTLE_PREFIX, ShuttleCard, save_shuttle_card
+    from delivery_fees import ORIGIN_FEE_PREFIX, DELIVERY_FEE_PREFIX, DeliveryFeeCard, save_fee_card
+    from bulky_items import is_bulky_row, save_bulky_items
+    from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, save_packing_card
+    from datetime import datetime, timezone
+    scope.update(datetime=datetime,timezone=timezone,PlanUpdate=Row,Session=Session,Depends=Depends,require_admin=lambda:None,get_db=lambda:None,HTTPException=HTTPException,json=json,
+                 set_pickup_areas=set_pickup_areas,EXTRA_STOPS_PREFIX=EXTRA_STOPS_PREFIX,ExtraStopsCard=ExtraStopsCard,save_stops_card=save_stops_card,
+                 ELEVATOR_PREFIX=ELEVATOR_PREFIX,ElevatorCard=ElevatorCard,save_elevator_card=save_elevator_card,
+                 LONG_CARRY_PREFIX=LONG_CARRY_PREFIX,LongCarryCard=LongCarryCard,save_long_carry_card=save_long_carry_card,
+                 STAIRS_PREFIX=STAIRS_PREFIX,StairsCard=StairsCard,save_stairs_card=save_stairs_card,
+                 STORAGE_PREFIX=STORAGE_PREFIX,StorageCard=StorageCard,save_storage_card=save_storage_card,
+                 SHUTTLE_PREFIX=SHUTTLE_PREFIX,ShuttleCard=ShuttleCard,save_shuttle_card=save_shuttle_card,
+                 ORIGIN_FEE_PREFIX=ORIGIN_FEE_PREFIX,DELIVERY_FEE_PREFIX=DELIVERY_FEE_PREFIX,DeliveryFeeCard=DeliveryFeeCard,save_fee_card=save_fee_card,
+                 is_bulky_row=is_bulky_row,save_bulky_items=save_bulky_items,
+                 PACKING_CARD_PREFIX=PACKING_CARD_PREFIX,PackingCard=PackingCard,save_packing_card=save_packing_card)
     exec(compile(ast.Module(body=[node],type_ignores=[]),str(path),'exec'),scope)
     engine=create_engine('sqlite://')
     models.Base.metadata.create_all(engine)

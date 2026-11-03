@@ -272,7 +272,7 @@ def test_manual_and_report_use_identical_complete_calculation(api, travel_fails)
     import ast
     import re
     from uuid import uuid4
-    plan = SimpleNamespace(id='book', company_id='company', company_name='Gorilla Haulers', name='East', pickup_regions='MD')
+    plan = SimpleNamespace(id='book', company_id='company', company_name='Gorilla Haulers', name='East', pickup_rows=[SimpleNamespace(state='MD', zip_code='')])
     lead = SimpleNamespace(id='lead', company_id='company', volume=100, move_type='Local')
     job = SimpleNamespace(id='job', company_id='company', pickup_zip='pickup', delivery_zip='delivery', price=549)
     company = SimpleNamespace(office_address='office')

@@ -20,8 +20,131 @@ def migrate() -> None:
         EstimateSignature.__table__.create(connection, checkfirst=True)
         connection.execute(text('ALTER TABLE estimate_signatures ADD COLUMN IF NOT EXISTS report_id TEXT'))
         InventoryCatalogSet.__table__.create(connection, checkfirst=True)
+        from pickup_areas import migrate_pickup_regions
+        logger.info("Copied %s pricing pickup area rows", migrate_pickup_regions(connection))
+        # Every table under a pricing plan is deleted with the plan by the database.
+        for child in ('pricing_rates', 'pricing_rules', 'pricing_services'):
+            for (name,) in connection.execute(text("""
+                SELECT conname FROM pg_constraint
+                WHERE conrelid = CAST(:child AS regclass) AND confrelid = 'pricing_plans'::regclass
+                  AND contype = 'f' AND confdeltype <> 'c'
+            """), {'child': child}).all():
+                connection.execute(text(f'ALTER TABLE {child} DROP CONSTRAINT "{name}", ADD CONSTRAINT "{name}" '
+                                        'FOREIGN KEY (plan_id) REFERENCES pricing_plans(id) ON DELETE CASCADE'))
+        # One rate per destination and size column; this index also serves lookups by plan.
+        if not connection.execute(text(
+                "SELECT 1 FROM pg_constraint WHERE conname = 'uq_pricing_rates_plan_destination_band'")).first():
+            # Pricing already uses the first row by sort order; the extra copies are never read.
+            removed = connection.execute(text("""
+                DELETE FROM pricing_rates WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, row_number() OVER (
+                            PARTITION BY plan_id, destination, band_label ORDER BY sort_order, id) AS position
+                        FROM pricing_rates) ranked
+                    WHERE position > 1)
+            """)).rowcount
+            logger.info("Removed %s duplicate pricing rate rows", removed)
+            connection.execute(text('ALTER TABLE pricing_rates ADD CONSTRAINT uq_pricing_rates_plan_destination_band '
+                                    'UNIQUE (plan_id, destination, band_label)'))
+        connection.execute(text('DROP INDEX IF EXISTS ix_pricing_rates_plan_id'))
+        # Origin destination & administration Fee moves from an "All Jobs" service row to the plan.
+        if not connection.execute(text("""
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'pricing_plans' AND column_name = 'admin_fee'""")).first():
+            connection.execute(text('ALTER TABLE pricing_plans ADD COLUMN admin_fee NUMERIC(12, 2)'))
+            moved = 0
+            for plan_id, in connection.execute(text('SELECT id FROM pricing_plans')).all():
+                rows = connection.execute(text("""
+                    SELECT id, rate_text FROM pricing_services
+                    WHERE plan_id = :plan_id AND lower(name) LIKE '%all jobs%'"""), {'plan_id': plan_id}).all()
+                amount = rows[0].rate_text.strip().lstrip('$').strip() if len(rows) == 1 else ''
+                # Only a single plain amount is moved; anything else stays a service and keeps working.
+                if amount.replace('.', '', 1).isdigit():
+                    connection.execute(text('UPDATE pricing_plans SET admin_fee = :amount WHERE id = :plan_id'),
+                                       {'amount': amount, 'plan_id': plan_id})
+                    connection.execute(text('DELETE FROM pricing_services WHERE id = :id'), {'id': rows[0].id})
+                    moved += 1
+            logger.info("Moved the administration fee to %s pricing plans", moved)
+        # Plans whose fee existed only as "DESTINATION & ORIGIN (All Jobs) $N" in a rule's text.
+        if connection.execute(text("""
+            INSERT INTO app_settings(key, value) VALUES ('migration:admin-fee-from-rules-v1', 'copied')
+            ON CONFLICT (key) DO NOTHING RETURNING key
+        """)).scalar():
+            import re
+            from_rules = 0
+            for plan_id, description in connection.execute(text("""
+                    SELECT p.id, r.description FROM pricing_plans p JOIN pricing_rules r ON r.plan_id = p.id
+                    WHERE p.admin_fee IS NULL ORDER BY p.id, r.sort_order""")).all():
+                match = re.search(r"destination\s*&\s*origin\s*\(all jobs\)\s*\$?\s*(\d+(?:\.\d+)?)", description, re.IGNORECASE)
+                if match and connection.execute(text(
+                        'UPDATE pricing_plans SET admin_fee = :amount WHERE id = :id AND admin_fee IS NULL'),
+                        {'amount': match.group(1), 'id': plan_id}).rowcount:
+                    from_rules += 1
+            logger.info("Copied the administration fee from rule text for %s pricing plans", from_rules)
+        from extra_stops import migrate_stops_cards
+        logger.info("Moved additional stop pricing for %s pricing plans", migrate_stops_cards(connection))
+        from elevator_pricing import migrate_elevator_cards
+        logger.info("Moved elevator pricing for %s pricing plans", migrate_elevator_cards(connection))
+        from long_carry_pricing import migrate_long_carry_cards
+        logger.info("Moved long carry pricing for %s pricing plans", migrate_long_carry_cards(connection))
+        from stairs_pricing import migrate_stairs_cards
+        logger.info("Moved stairs pricing for %s pricing plans", migrate_stairs_cards(connection))
+        from storage_pricing import migrate_storage_cards
+        logger.info("Moved storage pricing for %s pricing plans", migrate_storage_cards(connection))
+        from shuttle import migrate_shuttle_cards
+        logger.info("Moved delivery shuttle pricing for %s pricing plans", migrate_shuttle_cards(connection))
+        from delivery_fees import migrate_fee_cards
+        logger.info("Moved %s origin and destination fee cards", migrate_fee_cards(connection))
+        from bulky_items import migrate_bulky_items
+        logger.info("Moved %s bulky item rates", migrate_bulky_items(connection))
+        from long_distance_packing import migrate_packing_cards
+        logger.info("Moved packing rates and materials for %s pricing plans", migrate_packing_cards(connection))
+        # Jobs priced while the old "All Jobs" rule line was charged next to the new fee: zero that
+        # line, as a recalculation would, and take it out of the job, published and lead totals.
+        if connection.execute(text("""
+            INSERT INTO app_settings(key, value) VALUES ('migration:admin-fee-duplicate-charges-v1', 'cleared')
+            ON CONFLICT (key) DO NOTHING RETURNING key
+        """)).scalar():
+            import json
+            duplicates = connection.execute(text("""
+                SELECT c.id, c.job_id, j.lead_id, c.total_cost, c.discount_amount
+                FROM lead_job_charges c JOIN lead_jobs j ON j.id = c.job_id
+                WHERE c.name = 'DESTINATION & ORIGIN (All Jobs)' AND (c.total_cost <> 0 OR c.discount_amount <> 0)
+                  AND EXISTS (SELECT 1 FROM lead_job_charges fee
+                              WHERE fee.job_id = c.job_id AND fee.name = 'Origin destination & administration Fee')
+            """)).all()
+            for charge_id, job_id, lead_id, total, discount in duplicates:
+                connection.execute(text(
+                    'UPDATE lead_job_charges SET subtotal = 0, discount_amount = 0, total_cost = 0 WHERE id = :id'),
+                    {'id': charge_id})
+                connection.execute(text('UPDATE lead_jobs SET price = price - :total WHERE id = :id AND price IS NOT NULL'),
+                                   {'total': total, 'id': job_id})
+                connection.execute(text(
+                    'UPDATE public_move_access SET published_price = published_price - :total '
+                    'WHERE job_id = :id AND published_price IS NOT NULL'), {'total': total, 'id': job_id})
+                raw = connection.execute(text('SELECT estimated_total FROM leads WHERE id = :id'), {'id': lead_id}).scalar()
+                summary = json.loads(raw) if raw else None
+                if isinstance(summary, dict):
+                    summary['subtotal'] = float(summary.get('subtotal', 0)) - float(total + discount)
+                    summary['finalTotal'] = float(summary.get('finalTotal', 0)) - float(total)
+                    connection.execute(text('UPDATE leads SET estimated_total = :value WHERE id = :id'),
+                                       {'value': json.dumps(summary), 'id': lead_id})
+            logger.info("Removed %s duplicate administration fee charges", len(duplicates))
+            # Every other job keeps its amount; the line takes the new name.
+            renamed = connection.execute(text("""
+                UPDATE lead_job_charges SET name = 'Origin destination & administration Fee'
+                WHERE name = 'DESTINATION & ORIGIN (All Jobs)' AND NOT EXISTS (
+                    SELECT 1 FROM lead_job_charges fee
+                    WHERE fee.job_id = lead_job_charges.job_id AND fee.name = 'Origin destination & administration Fee')
+            """)).rowcount
+            logger.info("Renamed %s administration fee charges", renamed)
         connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS set_id VARCHAR(36)'))
         connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS set_name VARCHAR(200)'))
+        connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS mover_pack_count INTEGER'))
+        connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS manual BOOLEAN'))
+        for column, kind in (('pricing_plan_id', 'VARCHAR(36)'), ('pricing_move_type', 'VARCHAR(50)'), ('pricing_match_key', 'VARCHAR(64)'),
+                             ('minimum_cuft', 'INTEGER'), ('pricing_options_cache', 'TEXT'), ('pricing_options_key', 'VARCHAR(64)')):
+            connection.execute(text(f'ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS {column} {kind}'))
         from followup_tasks import install as install_followup_tasks
         install_followup_tasks(connection)
         from smartmoving_task_migration import install as install_smartmoving_tasks

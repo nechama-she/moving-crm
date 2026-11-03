@@ -71,19 +71,37 @@ def compact_inventory_entries(entries):
     return list(grouped.values())
 
 
-def build_estimate_pdf(data, rows):
-    output = BytesIO()
-    navy = colors.HexColor('#15354b')
-    muted = colors.HexColor('#526473')
+# Largest first: the type shrinks only as far as needed to keep the summary
+# (everything before the declared inventory) on the first page.
+FONT_SIZES = (10, 9.5, 9, 8.5, 8)
+NAVY = colors.HexColor('#15354b')
+MUTED = colors.HexColor('#526473')
+
+
+def money(value):
+    return f"${Decimal(str(value or 0)):,.2f}"
+
+
+def charge_text(row):
+    """Detail-section charge, showing the price before any discount."""
+    if row.get('discount_amount'):
+        return (f"charge {money(row.get('subtotal'))}; discount ({row.get('discount_percent') or 0:g}%): "
+                f"-{money(row['discount_amount'])}; total {money(row.get('total'))}")
+    return f"charge {money(row.get('total'))}"
+
+
+def _kit(size):
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name='BodyEstimate', fontName='Helvetica', fontSize=10, leading=12, textColor=navy, spaceAfter=2))
-    styles.add(ParagraphStyle(name='NoteEstimate', parent=styles['BodyEstimate'], fontSize=10, leading=12, textColor=muted))
-    styles.add(ParagraphStyle(name='SectionEstimate', parent=styles['BodyEstimate'], fontSize=12, leading=14, spaceBefore=10, spaceAfter=5, fontName='Helvetica-Bold', keepWithNext=True))
+    styles['Title'].fontSize = size * 1.8
+    styles['Title'].leading = size * 2.2
+    styles.add(ParagraphStyle(name='BodyEstimate', fontName='Helvetica', fontSize=size, leading=size * 1.2, textColor=NAVY, spaceAfter=2))
+    styles.add(ParagraphStyle(name='NoteEstimate', parent=styles['BodyEstimate'], textColor=MUTED))
+    styles.add(ParagraphStyle(name='SectionEstimate', parent=styles['BodyEstimate'], fontSize=size + 2, leading=size + 4, spaceBefore=10, spaceAfter=5, fontName='Helvetica-Bold', keepWithNext=True))
     styles.add(ParagraphStyle(name='RightEstimate', parent=styles['BodyEstimate'], alignment=TA_RIGHT))
+    styles.add(ParagraphStyle(name='CompanyEstimate', parent=styles['SectionEstimate'], alignment=TA_RIGHT, spaceBefore=0))
+    styles.add(ParagraphStyle(name='CompanyDetailsEstimate', parent=styles['NoteEstimate'], alignment=TA_RIGHT))
     def p(value, style='BodyEstimate'):
         return Paragraph(escape(str(value or '')).replace('\n', '<br/>'), styles[style])
-    def money(value):
-        return f"${Decimal(str(value or 0)):,.2f}"
     def table(body, widths, header=False):
         result = Table(body, colWidths=widths, repeatRows=1 if header else 0, hAlign='LEFT')
         commands = [('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 9),
@@ -93,13 +111,31 @@ def build_estimate_pdf(data, rows):
             commands.append(('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#edf2f5')))
         result.setStyle(TableStyle(commands))
         return result
+    return styles, p, table
+
+
+def _template(output, company):
+    return SimpleDocTemplate(output, pagesize=letter, rightMargin=45, leftMargin=45, topMargin=38,
+                             bottomMargin=53, title='Moving estimate', author=company.get('name') or '')
+
+
+def _summary(data, styles, p, table):
+    """Details, price breakdown and customer note: the part that belongs on page one."""
     company = data.get('company_details') or {}
     estimate = data['estimate']
-    story = [p(company.get('name') or data.get('company'), 'SectionEstimate'),
-             p(' | '.join(filter(None, [company.get('phone'), company.get('office_address')])), 'NoteEstimate'),
+    from inventory_pdf import company_logo_image
+    company_block = [p(company.get('name') or data.get('company'), 'CompanyEstimate')]
+    company_block += [p(value, 'CompanyDetailsEstimate') for value in [company.get('office_address'), company.get('phone')] if value]
+    if company.get('dot_number'):
+        company_block.append(p(f"USDOT: {company['dot_number']}", 'CompanyDetailsEstimate'))
+    logo = company_logo_image(company.get('logo'))
+    header = Table([[logo, company_block]] if logo else [[company_block]], colWidths=[166, 356] if logo else [522], hAlign='LEFT')
+    header.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                                ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
+    story = [header,
              Spacer(1, 12), Paragraph('MOVING ESTIMATE', styles['Title']),
              p('Prepared ' + (data.get('prepared_at') or datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)')), 'NoteEstimate')]
-    story.append(table([[p('CUSTOMER\n' + data.get('name', '')), p('MOVE DATE\n' + str(data.get('move_date') or 'Not scheduled'))],
+    story.append(table([[p('CUSTOMER\n' + data.get('name', '')), p('PICKUP DATE\n' + str(data.get('move_date') or 'Not scheduled'))],
                         [p('\n'.join(filter(None, [data.get('phone'), data.get('email')]))), p(('PARTIAL ESTIMATE\n' if any(c.get('pending') for c in estimate.get('charges', [])) else 'ESTIMATED TOTAL\n') + money(estimate['price']))],
                         [p('PICKUP\n' + data.get('pickup', '')), p('DELIVERY\n' + data.get('delivery', ''))]], [261, 261]))
     for stop in data.get('stops', []):
@@ -111,6 +147,9 @@ def build_estimate_pdf(data, rows):
         story.append(p(f"Minimum billable volume for applicable services: {float(minimum):g} cu ft. This is a billing minimum, not your inventory volume.", 'NoteEstimate'))
     charges = [[p('ITEM'), p('RATE / BASIS'), p('COST', 'RightEstimate')]]
     for charge in estimate.get('charges') or []:
+        # Zero lines, including ones discounted to zero, are explained in their detail section.
+        if not charge.get('pending') and not charge.get('total'):
+            continue
         basis = charge.get('description') or 'Not specified'
         if charge.get('discount_amount', 0) > 0:
             basis += f"\nBefore discount: {money(charge['subtotal'])}\nDiscount ({charge['discount_percent']:g}%): -{money(charge['discount_amount'])}"
@@ -120,9 +159,29 @@ def build_estimate_pdf(data, rows):
     charge_table = table(charges, [180, 247, 95], header=True)
     charge_table.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), .4, colors.HexColor('#bdc9d0'))]))
     story.append(charge_table)
-    story.append(table([[p('PARTIAL ESTIMATE ? PENDING CHARGES EXCLUDED' if any(c.get('pending') for c in estimate.get('charges', [])) else 'TOTAL ESTIMATED PRICE'), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
+    story.append(table([[p('PARTIAL ESTIMATE - PENDING CHARGES EXCLUDED' if any(c.get('pending') for c in estimate.get('charges', [])) else 'TOTAL ESTIMATED PRICE'), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
     if data.get('list_changed') or data.get('files_changed'):
         story.append(p('This estimate reflects the current generated report. New inventory edits or files are not included until a new report is generated.', 'NoteEstimate'))
+    note = (data.get('customer_notes') or '').strip()
+    if note:
+        story += [p('Notes', 'SectionEstimate'), p(note)]
+    return story
+
+
+def _summary_pages(data, size):
+    doc = _template(BytesIO(), {})
+    doc.build(_summary(data, *_kit(size)))
+    return doc.page
+
+
+def build_estimate_pdf(data, rows):
+    output = BytesIO()
+    navy, muted = NAVY, MUTED
+    size = next((size for size in FONT_SIZES if _summary_pages(data, size) == 1), FONT_SIZES[-1])
+    styles, p, table = _kit(size)
+    company = data.get('company_details') or {}
+    package = data.get('packing_package') or {}
+    story = _summary(data, styles, p, table)
     story.append(p('Declared inventory', 'SectionEstimate'))
     story.append(p('Volume and weight reflect items going. Item answers and instructions appear directly below the relevant item. A dash means the weight was not recorded.', 'NoteEstimate'))
     rooms = defaultdict(list)
@@ -189,7 +248,7 @@ def build_estimate_pdf(data, rows):
         story.append(p('Elevator use', 'SectionEstimate'))
         story.append(p(elevator['terms'] + '. Fee applies at each address where an elevator is used.', 'NoteEstimate'))
         for row in elevator['locations']:
-            answer = ('Yes' if row['uses_elevator'] else 'No') + f"; charge {money(row['total'])}" if row['uses_elevator'] is not None else 'Not answered - elevator charges may apply'
+            answer = ('Yes' if row['uses_elevator'] else 'No') + f"; {charge_text(row)}" if row['uses_elevator'] is not None else 'Not answered - elevator charges may apply'
             if row.get('unknown'):
                 answer = 'Customer does not know - elevator use and any applicable charge are pending confirmation.'
             story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
@@ -198,7 +257,7 @@ def build_estimate_pdf(data, rows):
         story.append(p('Long carry', 'SectionEstimate'))
         story.append(p(f"First {carry['included_feet']} feet included at each address. Each additional {carry['increment_feet']} feet or part thereof costs ${carry['rate_per_cuft']:.2f} per cu ft. Distance follows the walking route between the parked truck and the entrance.", 'NoteEstimate'))
         for row in carry['locations']:
-            answer = f"{row['distance_feet']} feet; charge {money(row['total'])}" if row['distance_feet'] is not None else 'Not answered - long carry charges may apply'
+            answer = f"{row['distance_feet']} feet; {charge_text(row)}" if row['distance_feet'] is not None else 'Not answered - long carry charges may apply'
             if row.get('unknown') and row.get('acknowledged'):
                 answer = 'Truck access unknown. Customer acknowledged long carry charges if the included distance is exceeded. Final charge pending distance confirmation.'
             story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
@@ -207,7 +266,7 @@ def build_estimate_pdf(data, rows):
         story.append(p('Outdoor and building stairs', 'SectionEstimate'))
         story.append(p(f"Up to {stairs['steps_per_flight']} steps counts as one flight. {stairs['free_flights']} free flight(s) at each address; ${stairs['rate_per_cuft']:.2f} per cu ft per additional flight. Stairs inside the house or apartment are excluded.", 'NoteEstimate'))
         for row in stairs['locations']:
-            answer = f"{row['flights']} flight(s); charge {money(row['total'])}" if row['flights'] is not None else 'Not answered - stair charges may apply'
+            answer = f"{row['flights']} flight(s); {charge_text(row)}" if row['flights'] is not None else 'Not answered - stair charges may apply'
             if row.get('unknown'):
                 answer = 'Customer does not know - stairs and any applicable charge are pending confirmation.'
             story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
@@ -293,6 +352,5 @@ def build_estimate_pdf(data, rows):
         canvas.drawString(45, 26, 'Moving estimate | ' + str(data.get('move_date') or 'Date pending'))
         canvas.drawRightString(567, 26, f'Page {doc.page}')
         canvas.restoreState()
-    SimpleDocTemplate(output, pagesize=letter, rightMargin=45, leftMargin=45, topMargin=38,
-                      bottomMargin=53, title='Moving estimate', author=company.get('name') or '').build(story, onFirstPage=footer, onLaterPages=footer)
+    _template(output, company).build(story, onFirstPage=footer, onLaterPages=footer)
     return output.getvalue()

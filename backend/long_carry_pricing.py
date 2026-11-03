@@ -24,6 +24,63 @@ def long_carry_card(services):
     return None
 
 
+FIELDS = ('enabled', 'included_feet', 'increment_feet', 'rate_per_cuft', 'minimum_cubic_feet',
+          'pickup_discount_percent', 'delivery_discount_percent')
+
+
+def plan_long_carry_card(plan):
+    """The plan's long carry pricing, read from pricing_long_carry."""
+    row = plan.long_carry
+    if row is None:
+        return None
+    return LongCarryCard(**{field: getattr(row, field) for field in FIELDS})
+
+
+def long_carry_service_row(plan):
+    """The card as the pricing API presents it: a service row holding its settings."""
+    card = plan_long_carry_card(plan)
+    if card is None:
+        return None
+    config = {field: format(value.normalize(), 'f') if isinstance(value, Decimal) else value
+              for field, value in card.model_dump().items()}
+    return {'id': f'long-carry:{plan.id}', 'name': 'Long carry pricing', 'rate_text': '',
+            'comments': LONG_CARRY_PREFIX + json.dumps(config), 'sort_order': -1}
+
+
+def save_long_carry_card(plan, card):
+    """Replace the plan's long carry pricing; None removes it."""
+    from models import PricingLongCarry
+    if card is None:
+        plan.long_carry = None
+        return
+    row = plan.long_carry or PricingLongCarry()
+    for field in FIELDS:
+        setattr(row, field, getattr(card, field))
+    plan.long_carry = row
+
+
+def migrate_long_carry_cards(connection):
+    """Move each plan's card from its pricing_services JSON row into pricing_long_carry, once."""
+    from sqlalchemy import inspect, text
+    from models import PricingLongCarry
+    if inspect(connection).has_table(PricingLongCarry.__tablename__):
+        return 0
+    PricingLongCarry.__table__.create(connection)
+    moved = set()
+    rows = connection.execute(text(
+        "SELECT id, plan_id, comments FROM pricing_services WHERE comments LIKE :prefix ORDER BY plan_id, sort_order"),
+        {'prefix': LONG_CARRY_PREFIX + '%'}).all()
+    for service_id, plan_id, comments in rows:
+        # Pricing used the first card of a plan; any later copies were never read.
+        if plan_id not in moved:
+            card = LongCarryCard.model_validate_json(comments[len(LONG_CARRY_PREFIX):])
+            connection.execute(PricingLongCarry.__table__.insert().values(
+                plan_id=plan_id, **{field: getattr(card, field) for field in FIELDS}))
+            moved.add(plan_id)
+        connection.execute(text('DELETE FROM pricing_services WHERE id = :id'), {'id': service_id})
+    return len(moved)
+
+
 def long_carry_quote(card, addresses, saved, volume, move_minimum):
     if not card or not card.enabled:
         return None

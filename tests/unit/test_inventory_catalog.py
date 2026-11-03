@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 BACKEND = Path(__file__).resolve().parents[2] / 'backend'
 sys.path.insert(0, str(BACKEND))
 import models
-from manual_inventory import catalog, build_inventory, ManualInventoryInput
+from manual_inventory import catalog, build_inventory, ManualInventoryInput, search_catalog
 
 
 @pytest.fixture
@@ -48,14 +48,16 @@ def test_catalog_sets_validate_pieces_and_publish_presets(catalog_api):
         api.create_set(api.CatalogSetInput(name='Invalid', components=[{'item_id': 'missing', 'quantity': 1}]), None, db)
     api.delete_set(preset['id'], None, db)
     assert catalog(db)['sets'] == []
-    assert len(catalog(db)['items']) == 1
+    # Without a set using it, the item is found by search instead of being sent with the catalog.
+    assert catalog(db)['items'] == []
+    assert [item['id'] for item in search_catalog(db, None, 'chair')] == [chair['id']]
 
 
 def test_created_item_is_available_for_customer_inventory(catalog_api):
     api, db = catalog_api
     row = api.create_item(api.CatalogItemInput(name='  Massage   Chair ', cuft='45.25', weight='80'), None, db)
     assert row['name'] == 'Massage Chair' and row['active']
-    assert row['id'] in [item['id'] for item in catalog(db)['items']]
+    assert row['id'] in [item['id'] for item in search_catalog(db, None, 'massage chair')]
     db.add(models.InventoryRoomType(id='room', name='Room', sort_order=0)); db.commit()
     body = ManualInventoryInput(request_id='00000000-0000-0000-0000-000000000001', rooms=[{'room_type_id':'room','name':'Living Room','items':[{'item_id':row['id'],'quantity':2}]}])
     rooms, rows, cuft, weight = build_inventory(body, db)
@@ -70,11 +72,11 @@ def test_edit_keeps_item_id_and_inactive_preserves_record(catalog_api):
     updated = api.update_item(row['id'], api.CatalogItemInput(name='Special Chair', cuft=30, weight=10, active=False), None, db)
     assert updated['id'] == row['id']
     assert updated['name'] == 'Special Chair'
-    assert catalog(db)['items'] == []
+    assert search_catalog(db, None, 'chair') == []
     assert api.list_items(None, db)['items'] == [updated]
     assert db.get(models.InventoryCatalogItem, row['id']) is not None
     api.update_item(row['id'], api.CatalogItemInput(name='Special Chair', cuft=30, weight=10, active=True), None, db)
-    assert len(catalog(db)['items']) == 1
+    assert len(search_catalog(db, None, 'chair')) == 1
 
 
 @pytest.mark.parametrize('changes', [{'name':' '}, {'cuft':0}, {'cuft':-1}, {'cuft':'NaN'}, {'cuft':'1.234'}, {'weight':-1}, {'weight':'Infinity'}])

@@ -15,7 +15,7 @@ function setup() {
   const calls = [], releases = [];
   const state = {
     Error, rooms:snapshot, latest:{current:snapshot}, pending:{current:snapshot}, inFlight:{current:null},
-    saving:{current:null}, dirty:{current:true}, savedChanges:{current:false}, catalog:{rooms:[]}, busy:false,
+    saving:{current:null}, dirty:{current:true}, savedChanges:{current:false}, catalog:{rooms:[]}, knownRef:{current:new Map()}, busy:false,
     savedRooms:{current:null},requestIds:{current:new WeakMap()},retrySnapshot:{current:null},inventoryActions:actionExports.inventoryActions,hasInventoryEdits:actionExports.hasInventoryEdits,revision:{current:randomUUID()},reportId:{current:null},
     crypto:{randomUUID:()=>String(calls.length)}, draftKey:'test', localStorage:{removeItem(){}},
     setSaveRunning(value){state.saveRunning=value;},setSaveStatus(){},setError(error){state.error=error;},setBusy(){},setFinishing(){},closed:false,calculations:0,

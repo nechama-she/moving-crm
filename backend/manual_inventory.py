@@ -27,6 +27,7 @@ class CustomInventoryItemInput(BaseModel):
     cuft: Decimal = Field(gt=0, le=10000, allow_inf_nan=False)
     quantity: int = Field(ge=1, le=999, strict=True)
     mover_pack: bool | None = None
+    mover_pack_count: int | None = Field(default=None, ge=0, le=999, strict=True)
     selections: ServiceSelections = Field(default_factory=dict)
     going: bool = True
     reference_name: str | None = Field(default=None, max_length=200)
@@ -128,20 +129,6 @@ def update_inventory_row(body, access, db):
             target.name, target.amount, target.cuft = updated['name'], changes.quantity, Decimal(str(updated['cuft']))
         elif target is not None:
             db.delete(target)
-        if any(re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b', row['name'], re.I) for row in (old, updated)):
-            selection = json.loads(job.customer_packing_package or '{}')
-            if selection.get('mode') != 'full':
-                def box_key(row):
-                    normalize = lambda value: re.sub(r'\s+', ' ', value.strip().lower())
-                    return f"{normalize(row.get('room') or 'Other items')}:{normalize(base_name(row['name']))}"
-                quantities = dict(selection.get('box_quantities', {}))
-                for key in {box_key(old), box_key(updated)}:
-                    box_id = str(uuid5(NAMESPACE_URL, f'inventory-box:{job.id}:{key}'))
-                    quantities[box_id] = sum(int(row['amount']) for row in rows
-                        if row.get('going') is not False and box_key(row) == key
-                        and (row.get('mover_pack') is True or re.search(r'\(CP\)\s*$', row['name'], re.I)))
-                selection['box_quantities'] = quantities
-                job.customer_packing_package = json.dumps(selection)
         replace_in_rooms(details.get('manual_rooms', []))
         details['question_original_rows'] = [dict(row) for row in rows]
         details.pop('report_question_answers', None)
@@ -196,16 +183,41 @@ def update_inventory_row(body, access, db):
     return {'ok': True}
 
 
-def catalog(db, access=None):
+def catalog_items(db, access, query):
+    """Catalog items as the inventory window shows them, with this move's item services."""
     from item_selectors import inventory_selectors
+    rows = query.all()
+    selectors = inventory_selectors(access, db, {r.id for r in rows}) if access and rows else {}
+    return [{'id': r.id, 'name': r.name, 'description': r.description,
+             'cuft': float(r.cuft), 'weight': float(r.weight), 'selectors': selectors.get(r.id, [])} for r in rows]
+
+
+def catalog(db, access=None):
+    """Room types and sets. Items are searched on demand; only the sets' component items are included."""
     from models import InventoryCatalogSet
-    selectors = inventory_selectors(access, db) if access else {}
+    sets = [{'id': row.id, 'name': row.name, 'components': json.loads(row.components)}
+            for row in db.query(InventoryCatalogSet).order_by(InventoryCatalogSet.name).all()]
+    component_ids = {part['item_id'] for row in sets for part in row['components']}
     return {'rooms': [{'id': r.id, 'name': r.name} for r in db.query(InventoryRoomType).order_by(InventoryRoomType.sort_order).all()],
-            'sets': [{'id': row.id, 'name': row.name, 'components': json.loads(row.components)}
-                     for row in db.query(InventoryCatalogSet).order_by(InventoryCatalogSet.name).all()],
-            'items': [{'id': r.id, 'name': r.name, 'description': r.description,
-                       'cuft': float(r.cuft), 'weight': float(r.weight), 'selectors': selectors.get(r.id, [])}
-                      for r in db.query(InventoryCatalogItem).filter_by(active=True, deleted=False).order_by(InventoryCatalogItem.name, InventoryCatalogItem.cuft).all()]}
+            'sets': sets,
+            'items': search_catalog(db, access, ids=component_ids) if component_ids else []}
+
+
+def search_catalog(db, access, text='', ids=(), limit=50):
+    """Up to `limit` items matching every word of `text` in their name or description, or the given ids."""
+    from sqlalchemy import or_
+    query = db.query(InventoryCatalogItem).filter(InventoryCatalogItem.active.is_(True), InventoryCatalogItem.deleted.is_(False))
+    if ids:
+        return catalog_items(db, access, query.filter(InventoryCatalogItem.id.in_(list(ids)[:200])))
+    words = text.split()
+    if not words:
+        return []
+    for word in words[:10]:
+        # Typed % and _ match literally.
+        pattern = '%' + word.replace('!', '!!').replace('%', '!%').replace('_', '!_') + '%'
+        query = query.filter(or_(InventoryCatalogItem.name.ilike(pattern, escape='!'),
+                                 InventoryCatalogItem.description.ilike(pattern, escape='!')))
+    return catalog_items(db, access, query.order_by(InventoryCatalogItem.name, InventoryCatalogItem.cuft).limit(limit))
 
 
 def build_inventory(body, db, allow_empty=False):
@@ -252,7 +264,7 @@ def build_inventory(body, db, allow_empty=False):
             row = {'item_id': catalog_item.id if catalog_item else 'custom-' + str(entry.id), 'room': room.name.strip(), 'name': display_name,
                    'catalog_item_id': catalog_item.id if catalog_item else None, 'name_override': entry.name_override,
                    'amount': entry.quantity, 'cuft': float(volume), 'weight': 0,
-                   'unit_cuft': float(entry.cuft), 'unit_weight': 0, 'custom': True, 'going': entry.going, 'mover_pack': entry.mover_pack,
+                   'unit_cuft': float(entry.cuft), 'unit_weight': 0, 'custom': True, 'going': entry.going, 'mover_pack': entry.mover_pack, 'mover_pack_count': entry.mover_pack_count,
                    'reference_name': entry.reference_name or entry.name.strip(), 'selections': entry.selections,
                    'set_id': str(entry.set_id) if entry.set_id else None, 'set_name': entry.set_name}
             rows.append(row)
@@ -297,7 +309,8 @@ def submit_inventory_snapshot(list_body, rooms, rows, cuft, weight, access, db):
     for key in CONVERSATION_KEYS:
         details[key] = ''
     details.update(last_spark_id=report_id, last_spark_status='completed', last_spark_at=int(time.time()),
-                   report_list_body=list_body, report_source='manual', manual_rooms=rooms, spark_inventory_snapshot=rows,
+                   report_list_body=list_body, report_source='manual', manual_rooms=rooms,
+                   spark_inventory_snapshot=[dict(row, manual=True) for row in rows],
                    spark_extracted_cuft=cuft, spark_extracted_weight=weight, report_files=[],
                    report_conversation={}, spark_pricing_ready=False)
     remember_report(details)
@@ -365,30 +378,6 @@ def replace_current_inventory(body, access, db):
     # Inventory edits must retain the customer's packing choices, not stale name suffixes.
     job = db.get(LeadJob, access.job_id)
     lead = db.get(Lead, access.lead_id)
-    package = None
-    if any(re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b', row['name'], re.I) for row in rows):
-        from routes.pricing import customer_packing_package, apply_box_packing_to_inventory
-        package = customer_packing_package(lead, job, db)
-    if package:
-        selection = package['selection']
-        def box_key(room, name):
-            return (room.strip().casefold(), re.sub(r'\s*\((?:CP|PBO)\)\s*$', '', name, flags=re.I).strip().casefold())
-        touched = {box_key(row['room'], row['name']) for row in rows if row.get('mover_pack') is not None}
-        if touched and selection.get('mode') != 'full':
-            quantities = dict(selection.get('box_quantities', {}))
-            for box in package.get('box_items', []):
-                key = box_key(box.get('room') or 'Other items', box['label'])
-                if key in touched:
-                    quantities[box['id']] = sum(int(row['amount']) for row in rows
-                        if row.get('going') is not False and box_key(row['room'], row['name']) == key
-                        and (row.get('mover_pack') is True or (row.get('mover_pack') is None and re.search(r'\(CP\)\s*$', row['name'], re.I))))
-            stored_selection = json.loads(job.customer_packing_package or '{}')
-            stored_selection['box_quantities'] = quantities
-            job.customer_packing_package = json.dumps(stored_selection)
-            selection = {**selection, 'box_quantities': quantities}
-        if selection.get('mode') == 'full':
-            selection = {**selection, 'box_quantities': {item['id']: item['quantity'] for item in package.get('box_items', [])}}
-        apply_box_packing_to_inventory(job, db, package, selection)
     # Save the compact inventory rows directly. Report processing includes
     # progress publications and extraction work that autosaves do not need.
     details = json.loads(saved.details or '{}')

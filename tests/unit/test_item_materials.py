@@ -9,6 +9,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
 from item_materials import ItemMaterialsInput, material_setup, save_material_assignments, customer_item_materials
 from long_distance_packing import PACKING_CARD_PREFIX
+from packing_rows import PackingPlan
 
 
 @pytest.mark.parametrize('name', ['27 Gallon Plastic Bin', '40 Gallon Plastic Bin', 'Storage Bins'])
@@ -32,7 +33,7 @@ def setup():
     db.query.return_value.filter_by.return_value = db.query.return_value
     db.query.return_value.order_by.return_value.all.return_value = [SimpleNamespace(id='bed', name='King bed', active=True, cuft=80)]
     card = {'materials':[{'id':'cover','name':'King cover','material_price':26,'packing_price':12,'unpacking_price':0}]}
-    plan = SimpleNamespace(id='east', item_materials=None, services=[SimpleNamespace(comments=PACKING_CARD_PREFIX+json.dumps(card))])
+    plan = PackingPlan(id='east', item_materials=None, services=[SimpleNamespace(comments=PACKING_CARD_PREFIX+json.dumps(card))])
     return plan, db
 
 

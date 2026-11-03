@@ -71,7 +71,7 @@ def test_saved_book_automatically_prices_matching_delivery_only():
             job = models.LeadJob(id='job',lead_id='lead',company_id='company',pickup_zip='20850',delivery_zip='13544')
             config = ShuttleCard(enabled=True,rate='1.50',access_distance_ft=450,
                                  areas=[ShuttleArea(state='NY',zip_codes=['111XX-12XXX','13544'])])
-            plan = models.PricingPlan(id='plan',source_key='plan',company_id='company',company_name='Test',name='East',source_file='',source_sheet='',pickup_regions='MD',active=True)
+            plan = models.PricingPlan(id='plan',source_key='plan',company_id='company',company_name='Test',name='East',source_file='',source_sheet='',pickup_rows=[models.PricingPickupArea(state='MD')],active=True)
             plan.services = [models.PricingService(name='Delivery shuttle',rate_text='',comments=SHUTTLE_PREFIX+config.model_dump_json())]
             plan.rates = [models.PricingRate(destination='NY',band_label='286+',cubic_feet_min=286,rate=5,minimum_price=1500)]
             db.add_all([lead,job,plan]);db.commit();db.expire_all()

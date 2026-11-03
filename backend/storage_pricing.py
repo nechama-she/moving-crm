@@ -1,4 +1,5 @@
 """Storage charged by configured day periods after a free allowance."""
+import json
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from pydantic import BaseModel, Field
@@ -19,6 +20,62 @@ def storage_card(services):
         if service.comments.startswith(STORAGE_PREFIX):
             return StorageCard.model_validate_json(service.comments[len(STORAGE_PREFIX):])
     return None
+
+
+FIELDS = ('enabled', 'free_days', 'period_days', 'rate_per_cuft', 'minimum_cubic_feet')
+
+
+def plan_storage_card(plan):
+    """The plan's storage pricing, read from pricing_storage."""
+    row = plan.storage
+    if row is None:
+        return None
+    return StorageCard(**{field: getattr(row, field) for field in FIELDS})
+
+
+def storage_service_row(plan):
+    """The card as the pricing API presents it: a service row holding its settings."""
+    card = plan_storage_card(plan)
+    if card is None:
+        return None
+    config = {field: format(value.normalize(), 'f') if isinstance(value, Decimal) else value
+              for field, value in card.model_dump().items()}
+    return {'id': f'storage:{plan.id}', 'name': 'Storage pricing', 'rate_text': '',
+            'comments': STORAGE_PREFIX + json.dumps(config), 'sort_order': -1}
+
+
+def save_storage_card(plan, card):
+    """Replace the plan's storage pricing; None removes it."""
+    from models import PricingStorage
+    if card is None:
+        plan.storage = None
+        return
+    row = plan.storage or PricingStorage()
+    for field in FIELDS:
+        setattr(row, field, getattr(card, field))
+    plan.storage = row
+
+
+def migrate_storage_cards(connection):
+    """Move each plan's card from its pricing_services JSON row into pricing_storage, once."""
+    from sqlalchemy import inspect, text
+    from models import PricingStorage
+    if inspect(connection).has_table(PricingStorage.__tablename__):
+        return 0
+    PricingStorage.__table__.create(connection)
+    moved = set()
+    rows = connection.execute(text(
+        "SELECT id, plan_id, comments FROM pricing_services WHERE comments LIKE :prefix ORDER BY plan_id, sort_order"),
+        {'prefix': STORAGE_PREFIX + '%'}).all()
+    for service_id, plan_id, comments in rows:
+        # Pricing used the first card of a plan; any later copies were never read.
+        if plan_id not in moved:
+            card = StorageCard.model_validate_json(comments[len(STORAGE_PREFIX):])
+            connection.execute(PricingStorage.__table__.insert().values(
+                plan_id=plan_id, **{field: getattr(card, field) for field in FIELDS}))
+            moved.add(plan_id)
+        connection.execute(text('DELETE FROM pricing_services WHERE id = :id'), {'id': service_id})
+    return len(moved)
 
 
 def storage_quote(card, pickup_date, available_date, volume, move_minimum):

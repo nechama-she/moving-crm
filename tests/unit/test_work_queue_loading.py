@@ -447,10 +447,16 @@ def test_confirmed_zero_creates_nine_timed_tasks_once_and_priority_change_closes
     service.sync(db, lead)
     db.commit()
     assert all(task.status == 'done' and task.completion_reason == 'Priority changed' for task in db.query(Task))
+    # A follow-up completed for another reason stays done when the priority returns to 0.
+    manual = db.query(Task).filter_by(automatic_key='priority0:call:1').one()
+    manual.completion_reason = 'Manually completed'
+    db.commit()
     lead.priority = 0
     service.sync(db, lead)
     db.commit()
-    assert all(task.status == 'done' for task in db.query(Task))
+    reopened = [task for task in db.query(Task) if task.automatic_key != 'priority0:call:1']
+    assert all(task.status == 'open' and task.completion_reason is None and task.completed_at is None for task in reopened)
+    assert db.query(Task).filter_by(automatic_key='priority0:call:1').one().status == 'done'
 
 
 def test_duplicate_calls_and_wrong_destination_do_not_complete_extra_tasks(task_queue):

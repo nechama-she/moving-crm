@@ -31,7 +31,7 @@ def test_recalculation_uses_updated_zero_allowance_and_keeps_saved_stop(monkeypa
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
     import models
-    from extra_stops import EXTRA_STOPS_PREFIX, add_charges, route_revision
+    from extra_stops import add_charges, route_revision, save_stops_card
     from charge_updates import ChargeUpdates
     origin, address = 'Delivery address', 'Extra delivery address'
     stop_id = str(uuid5(NAMESPACE_URL, f'extra-stop:job:delivery:{address}'))
@@ -47,15 +47,14 @@ def test_recalculation_uses_updated_zero_allowance_and_keeps_saved_stop(monkeypa
         job = models.LeadJob(id='job',lead_id='lead',pickup_zip='Pickup',delivery_zip=origin,
             stop_types=json.dumps([{'address':address,'type':'delivery'}]),customer_packing_package=json.dumps(saved))
         plan = models.PricingPlan(id='book',company_name='Company',name='Book',source_key='test')
-        service = models.PricingService(id='stops',name='Extra stops',comments=EXTRA_STOPS_PREFIX+card.model_dump_json())
-        plan.services.append(service)
+        save_stops_card(plan, card)
         db.add_all([lead,job,plan]);db.commit()
         assert add_charges(lead,job,db,plan) == 75
         db.commit()
         original = db.query(models.LeadJobCharge).one()
         original_id = original.id
         card.delivery.free_miles = Decimal(0)
-        service.comments = EXTRA_STOPS_PREFIX + card.model_dump_json()
+        save_stops_card(plan, card)
         db.commit();db.expire_all()
         updates = ChargeUpdates(db,[original],remove_missing=False)
         assert add_charges(lead,job,updates,plan) == 100

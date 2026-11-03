@@ -42,7 +42,8 @@ export default function LongDistancePackingCard({ services, editing, onChange }:
       </article>)}
       <article><div><strong>No packing</strong><small>Customer packs their own items, with optional packing for individual items below.</small></div><b>No package charge</b></article>
     </div>
-    <details>
+    {/* Legacy list: no longer used for pricing, so it is not shown. */}
+    <details hidden>
     <summary>Items requiring protection (legacy)</summary>
     <p>This saved list is no longer used by the question wizard. Configure Required materials and Optional materials under Item packing materials.</p>
     <div className="ld-box-table-wrap">

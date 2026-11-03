@@ -21,7 +21,7 @@ import { calculateDiscounts, type Discount as CustomDiscount } from './pricingDi
 
 type PlanSummary = {
   id: string; company_name: string; name: string; pickup_regions: string; pickup_areas?: PickupArea[];
-  fuel_percent: number | null; price_valid_days: number; rate_count: number; rule_count: number;
+  fuel_percent: number | null; admin_fee: number | null; price_valid_days: number; rate_count: number; rule_count: number;
   service_count: number; updated_at: string;
 };
 type Rule = { id?: string; category: string; title: string; description: string };
@@ -199,6 +199,7 @@ export default function PricingPage() {
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [openSections, setOpenSections] = useState({ materials: false, extraStops: false, elevator: false, longCarry: false, stairs: false, storage: false, originFees: false, deliveryFees: false, shuttle: false, pickup: false, rates: false, packing: false, bulkyItems: false, services: false });
   const [pendingRateGroups, setPendingRateGroups] = useState<string[][]>([]);
+  const [addedRateId, setAddedRateId] = useState('');
 
   useEffect(() => {
     if (leadId && jobId) {
@@ -402,6 +403,26 @@ export default function PricingPage() {
       return reference.destination.toLowerCase().includes(query) || reference.destination_group.toLowerCase().includes(query);
     });
   }, [active, plan, editing, hasPendingRateGroups, pendingRateGroups, search]);
+  // Each rate input is as wide as its column's longest value, within limits.
+  const rateInputWidths = useMemo(() => {
+    // Minimum widths; inputs grow to fill their column. The pixels cover padding and border.
+    const fit = (values: string[], min: number, max: number) => ({ minWidth: `calc(${Math.min(max, Math.max(min, ...values.map(value => value.length))) + 2}ch + 20px)` });
+    return {
+      destination: fit(rateRows.map(row => row.destination), 10, 28),
+      area: fit(rateRows.map(row => row.destinationGroup), 10, 22),
+      minimum: fit(rateRows.map(row => String(row.minimumText || (row.minimumPrice ?? ""))), 6, 10),
+      rate: fit(rateRows.flatMap(row => row.rates.map(rate => String(rate.rate_text || (rate.rate ?? "")))), 5, 8),
+    };
+  }, [rateRows]);
+  // Bring a newly added destination into view, ready to type.
+  useEffect(() => {
+    if (!addedRateId) return;
+    const row = document.querySelector<HTMLElement>(`[data-rate-id="${addedRateId}"]`);
+    if (!row) return;
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.querySelector('input')?.focus({ preventScroll: true });
+    setAddedRateId('');
+  }, [addedRateId, rateRows]);
   const pendingRateGroupKeys = useMemo(
     () => new Set(pendingRateGroups.map((ids) => ids.join("|"))),
     [pendingRateGroups],
@@ -493,6 +514,10 @@ export default function PricingPage() {
   }
   async function saveSection(section: string) {
     if (!draft) return;
+    if (section === 'rates') {
+      const keys = draft.rates.filter(row => row.destination.trim() && row.band_label.trim()).map(row => `${row.destination.trim()}|${row.band_label.trim()}`);
+      if (new Set(keys).size !== keys.length) { setError('Each destination can appear only once.'); return; }
+    }
     setSaving(true); setError(''); setNotice('');
     const body = section === 'rates' ? {rates: draft.rates.map(row => ({...row, id: pendingRateGroups.some(ids => row.id && ids.includes(row.id)) ? undefined : row.id}))}
       : section === 'pickup' ? {pickup_areas: draft.pickup_areas || []}
@@ -578,6 +603,8 @@ export default function PricingPage() {
     }));
     setDraft((current) => current ? { ...current, rates: [...(current.rates || []), ...rows] } : current);
     setPendingRateGroups((groups) => [...groups, rows.map((row) => row.id)]);
+    setSearch('');
+    setAddedRateId(rows[0].id);
   }
   function removeRateGroup(rowIds: string[]) {
     if (!rowIds.length) return;
@@ -645,11 +672,11 @@ export default function PricingPage() {
     try {
       const response = await fetch(`${API_BASE}/api/pricing/${draft.id}/sections/details`, {
         method: 'PUT', headers: {...authHeaders(token), 'Content-Type': 'application/json'},
-        body: JSON.stringify({name: draft.name, fuel_percent: draft.fuel_percent, price_valid_days: draft.price_valid_days ?? 7}),
+        body: JSON.stringify({name: draft.name, fuel_percent: draft.fuel_percent, admin_fee: draft.admin_fee, price_valid_days: draft.price_valid_days ?? 7}),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(formatApiError(result, 'Could not save price sheet details'));
-      const merge = (current: Plan | null) => current ? {...current, name: result.name, fuel_percent: result.fuel_percent, price_valid_days: result.price_valid_days} : current;
+      const merge = (current: Plan | null) => current ? {...current, name: result.name, fuel_percent: result.fuel_percent, admin_fee: result.admin_fee, price_valid_days: result.price_valid_days} : current;
       setPlan(merge); setDraft(merge); setEditing(false);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save details'); }
     finally { setSaving(false); }
@@ -793,7 +820,7 @@ export default function PricingPage() {
           <div className="pricing-actions">
             {editing ? (
               <>
-                <button className="slds-button secondary" onClick={() => { setDraft(current => current && plan ? {...current, name: plan.name, fuel_percent: plan.fuel_percent, price_valid_days: plan.price_valid_days} : current); setEditing(false); }}>Cancel changes</button>
+                <button className="slds-button secondary" onClick={() => { setDraft(current => current && plan ? {...current, name: plan.name, fuel_percent: plan.fuel_percent, admin_fee: plan.admin_fee, price_valid_days: plan.price_valid_days} : current); setEditing(false); }}>Cancel changes</button>
                 <button className="slds-button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save changes"}</button>
               </>
             ) : <button className="slds-button primary" onClick={() => setEditing(true)}>Edit details</button>}
@@ -802,6 +829,7 @@ export default function PricingPage() {
                 <div className="pricing-kpis">
 <div><span>Price valid for (days)</span>{editing ? <input aria-label="Price valid for (days)" type="number" min="1" max="3650" step="1" value={active.price_valid_days ?? 7} onChange={event => patchDraft({ price_valid_days: Number(event.target.value) })} /> : <strong>{active.price_valid_days ?? 7}</strong>}</div>
                   <div><span>Fuel</span>{editing ? <input type="number" step="0.1" value={active.fuel_percent ?? ""} onChange={(e) => patchDraft({ fuel_percent: e.target.value === "" ? null : Number(e.target.value) })} /> : <strong>{active.fuel_percent == null ? "See rules" : `${active.fuel_percent}%`}</strong>}</div>
+                  <div><span>Origin destination &amp; administration Fee</span>{editing ? <input type="number" min="0" step="0.01" value={active.admin_fee ?? ""} onChange={(e) => patchDraft({ admin_fee: e.target.value === "" ? null : Number(e.target.value) })} /> : <strong>{active.admin_fee == null ? "—" : money(active.admin_fee)}</strong>}</div>
                   <div><span>Destinations</span><strong>{destinations.length}</strong></div>
                   <div><span>Services</span><strong>{active.services.length}</strong></div>
                 </div>
@@ -811,7 +839,8 @@ export default function PricingPage() {
                 <PickupAreasCard areas={active.pickup_areas || []} editing={editingSection('pickup')} onChange={pickup_areas => patchDraft({ pickup_areas })} />
               </PricingSection>
 
-              <section className="pricing-card pricing-calculator">
+              {/* Shown only when pricing a job opened from a lead. */}
+              <section className="pricing-card pricing-calculator" hidden={!jobContext}>
                 <div><span className="eyebrow">Job pricing</span><h2>Calculate price</h2></div>
                 {jobContext && !destination ? (
                   <div className="pricing-inline-unavailable">
@@ -985,7 +1014,7 @@ export default function PricingPage() {
                 ) : null}
               </section>
 
-              <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))} onDoubleClick={() => startServiceEdit('rates')} actions={<>{serviceEditActions('rates')}{user?.role === 'admin' && <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => { startServiceEdit('rates'); addDestination(); }}>+ Add destination</button>}</>}>
+              <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))} onDoubleClick={() => startServiceEdit('rates')} actions={<>{serviceEditActions('rates')}</>}>
                 <div className="pricing-table-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search destination or ZIP area" /><span>{bands.length} cubic-foot bands</span></div>
                 <div className="pricing-rate-table-wrap">
                   <table className="pricing-rate-table">
@@ -995,13 +1024,13 @@ export default function PricingPage() {
                         const isPendingGroup = pendingRateGroupKeys.has(group.rowIds.join("|"));
                         const groupEditable = editingSection('rates') || isPendingGroup;
                         return (
-                        <tr key={group.key} className={isPendingGroup ? "pricing-rate-row-pending" : undefined}>
-                          <th>{groupEditable ? <input value={group.destination} placeholder="Destination or ZIP prefix" onChange={(e) => patchRateGroup(group.rowIds, { destination: e.target.value })} /> : <>{group.destination || "—"}</>}</th>
-                          <td>{groupEditable ? <input className="destination-group-input" value={group.destinationGroup} placeholder="Area, e.g. East Coast" onChange={(e) => patchRateGroup(group.rowIds, { destination_group: e.target.value })} /> : group.destinationGroup || "—"}</td>
-                          <td>{groupEditable ? <input type="text" inputMode="decimal" value={group.minimumText || (group.minimumPrice ?? "")} onChange={(e) => patchRateGroup(group.rowIds, { minimum_price: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), minimum_text: e.target.value })} /> : money(group.minimumPrice)}</td>
+                        <tr key={group.key} data-rate-id={group.rowIds[0]} className={isPendingGroup ? "pricing-rate-row-pending" : undefined}>
+                          <th>{groupEditable ? <input style={rateInputWidths.destination} value={group.destination} placeholder="Destination or ZIP prefix" onChange={(e) => patchRateGroup(group.rowIds, { destination: e.target.value })} /> : <>{group.destination || "—"}</>}</th>
+                          <td>{groupEditable ? <input className="destination-group-input" style={rateInputWidths.area} value={group.destinationGroup} placeholder="Area, e.g. East Coast" onChange={(e) => patchRateGroup(group.rowIds, { destination_group: e.target.value })} /> : group.destinationGroup || "—"}</td>
+                          <td>{groupEditable ? <input type="text" inputMode="decimal" style={rateInputWidths.minimum} value={group.minimumText || (group.minimumPrice ?? "")} onChange={(e) => patchRateGroup(group.rowIds, { minimum_price: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), minimum_text: e.target.value })} /> : money(group.minimumPrice)}</td>
                           {bands.map((band) => {
                             const rate = group.rates.find((row) => row.band_label === band);
-                            return <td key={band}>{!rate ? "—" : groupEditable ? <input type="text" inputMode="decimal" value={rate.rate_text || (rate.rate ?? "")} onChange={(e) => patchRate(rate.id, { rate: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), rate_text: e.target.value })} /> : rate.rate == null ? rate.rate_text : money(rate.rate)}</td>;
+                            return <td key={band}>{!rate ? "—" : groupEditable ? <input type="text" inputMode="decimal" style={rateInputWidths.rate} value={rate.rate_text || (rate.rate ?? "")} onChange={(e) => patchRate(rate.id, { rate: e.target.value === "" || Number.isNaN(Number(e.target.value)) ? null : Number(e.target.value), rate_text: e.target.value })} /> : rate.rate == null ? rate.rate_text : money(rate.rate)}</td>;
                           })}
                           {editingSection('rates') || isPendingGroup ? <td className="pricing-rate-actions"><button type="button" className="slds-button text-danger" onClick={() => removeRateGroup(group.rowIds)}>{isPendingGroup ? "Remove new row" : "Remove"}</button></td> : null}
                         </tr>
@@ -1010,6 +1039,7 @@ export default function PricingPage() {
                     </tbody>
                   </table>
                 </div>
+                {editingSection('rates') && <button type="button" className="slds-button" disabled={saving} onClick={addDestination}>+ Add destination</button>}
               </PricingSection>
 
               <PricingSection title="Additional stop pricing" count={active.services.filter(isExtraStopsCard).length} open={openSections.extraStops} toggle={() => setOpenSections(s => ({ ...s, extraStops: !s.extraStops }))} onDoubleClick={() => startServiceEdit('extraStops')} actions={serviceEditActions('extraStops')}>

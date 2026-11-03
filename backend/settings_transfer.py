@@ -15,6 +15,10 @@ from models import Base
 
 TABLES = ('companies', 'inventory_room_types', 'inventory_catalog_items',
           'pricing_plans', 'pricing_rules', 'pricing_rates', 'pricing_services',
+          'pricing_plan_pickup_areas', 'pricing_extra_stops', 'pricing_elevator', 'pricing_elevator_tiers',
+          'pricing_long_carry', 'pricing_stairs', 'pricing_storage', 'pricing_shuttle', 'pricing_shuttle_areas',
+          'pricing_mileage_fees', 'pricing_mileage_fee_rules', 'pricing_mileage_fee_zips',
+          'pricing_bulky_items', 'pricing_packing', 'pricing_materials',
           'local_pricing_routes')
 COMPANY_FIELDS = {'id', 'name', 'color', 'logo', 'customer_questions', 'phone',
                   'office_address', 'dot_number', 'sender_email', 'timezone',
@@ -86,7 +90,7 @@ def validate(bundle):
         for row in rows:
             if set(row) - allowed:
                 raise ValueError('Unexpected fields in ' + name)
-            identity = row.get('key') if name == 'app_settings' else row.get('id', row.get('company_id'))
+            identity = row.get('key') if name == 'app_settings' else row.get('id', row.get('company_id', row.get('plan_id')))
             if not identity or identity in seen:
                 raise ValueError('Missing or duplicate identity in ' + name)
             seen.add(identity)
@@ -179,11 +183,18 @@ def apply_settings(connection, bundle):
         # source_key is unique and belongs to the target book's identity.
         values['source_key'] = existing['source_key'] if existing else 'settings-transfer:' + values['id']
         upsert('pricing_plans', values, ['id'])
-    for name in ('pricing_rules', 'pricing_rates', 'pricing_services'):
+    for name in ('pricing_rules', 'pricing_rates', 'pricing_services', 'pricing_plan_pickup_areas', 'pricing_extra_stops',
+                 'pricing_elevator', 'pricing_elevator_tiers', 'pricing_long_carry', 'pricing_stairs', 'pricing_storage',
+                 'pricing_shuttle', 'pricing_shuttle_areas',
+                 'pricing_mileage_fees', 'pricing_mileage_fee_rules', 'pricing_mileage_fee_zips',
+                 'pricing_bulky_items', 'pricing_packing', 'pricing_materials'):
         target = table(name)
         connection.execute(target.delete().where(target.c.plan_id.in_(list(plans.values()))))
         for row in source[name]:
-            connection.execute(target.insert().values(**{**row, 'id': str(uuid4()), 'plan_id': plans[row['plan_id']]}))
+            values = {**row, 'plan_id': plans[row['plan_id']]}
+            if 'id' in target.c:
+                values['id'] = str(uuid4())
+            connection.execute(target.insert().values(**values))
     target = table('local_pricing_routes')
     connection.execute(target.delete().where(target.c.company_id.in_(list(companies.values()))))
     for row in source['local_pricing_routes']:

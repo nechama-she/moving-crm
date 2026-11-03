@@ -11,7 +11,7 @@ import './ManualInventoryModal.css';
 import type { CatalogSet } from './CatalogSets';
 type CatalogItem = { id: string; name: string; description: string; cuft: number; weight: number; selectors?: ItemSelector[] };
 type RoomType = { id: string; name: string };
-type CustomItem = { id: string; catalog_item_id?: string; name_override?: boolean; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean; mover_pack?: boolean | null; unit_weight?: number; selectors?: ItemSelector[]; selections?: Record<string,ServiceSelection>; set_id?: string | null; set_name?: string | null };
+type CustomItem = { id: string; catalog_item_id?: string; name_override?: boolean; name: string; cuft: number; quantity: number; reference_name?: string; going?: boolean; mover_pack_count?: number | null; mover_pack?: boolean | null; unit_weight?: number; selectors?: ItemSelector[]; selections?: Record<string,ServiceSelection>; set_id?: string | null; set_name?: string | null };
 type Room = { id: string; room_type_id: string; name: string; items: Record<string, number>; item_names?: Record<string,string>; custom_items?: CustomItem[] };
 type Catalog = { rooms: RoomType[]; items: CatalogItem[]; sets?: CatalogSet[] };
 function itemGroups(items: CustomItem[]) {
@@ -24,24 +24,45 @@ function itemGroups(items: CustomItem[]) {
   return [...groups.entries()];
 }
 function packingItemName(name: string) {
-  if (/\((?:cp|pbo)\)\s*$/i.test(name)) return name;
-  return /\bbox(?:es)?\b|\bdish\s*pack\b/i.test(name) ? `${name} (PBO)` : name;
+  // Who packs a box is a count on its row, not part of its name.
+  return name.replace(/\s*\((?:cp|pbo)\)\s*$/i, '');
 }
-function PackingChoice({ name, disabled, onChange }: { name: string; disabled: boolean; onChange: (checked: boolean) => void }) {
-  const [open, setOpen] = useState(false);
+// Units the movers pack: the row's count, or the older whole-row CP marking.
+function moverPackCount(item: { name: string; quantity: number; mover_pack?: boolean | null; mover_pack_count?: number | null }) {
+  if (item.mover_pack_count != null) return Math.min(item.mover_pack_count, item.quantity);
+  if (item.mover_pack != null) return item.mover_pack ? item.quantity : 0;
+  return /\(CP\)\s*$/i.test(item.name) ? item.quantity : 0;
+}
+function PackingChoice({ name, quantity, count, disabled, open, setOpen, onChange }: { name: string; quantity: number; count: number; disabled: boolean; open: boolean; setOpen: (open: boolean) => void; onChange: (count: number) => void }) {
+  // Open state lives with the window, like item services, so changing a count never closes the menu.
+  const container = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => { if (!container.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener('pointerdown', outside);
+    return () => document.removeEventListener('pointerdown', outside);
+  }, [open, setOpen]);
   const trigger = useRef<HTMLButtonElement>(null);
-  const movers = /\(CP\)\s*$/i.test(name);
-  return <span className="mi-packing-choice" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }} onKeyDown={event => {
+  const movers = Math.max(0, Math.min(quantity, count));
+  const summary = movers === quantity ? 'CP' : movers === 0 ? 'PBO' : `CP (${movers}), PBO (${quantity - movers})`;
+  const rows: [string, number, (value: number) => number][] = [
+    ['Movers pack', movers, value => value], ['You pack', quantity - movers, value => quantity - value]];
+  return <span ref={container} className="mi-packing-choice mi-service-choice" onBlur={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false); }} onKeyDown={event => {
     if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
   }}>
-    <button ref={trigger} type="button" className="mi-packing-trigger" disabled={disabled} aria-expanded={open} aria-label={`Packing for ${name}: ${movers ? 'Movers pack' : 'You pack'}`} onClick={() => setOpen(value => !value)}>
-      {movers ? 'CP' : 'PBO'}<svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>
+    <button ref={trigger} type="button" className="mi-packing-trigger" disabled={disabled} aria-expanded={open} aria-label={`Packing for ${name}: ${summary}`} onClick={() => setOpen(!open)}>
+      <span className="mi-service-summary"><span>{summary}</span></span><svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>
     </button>
-    {open && <span className="mi-packing-menu" role="group" aria-label="Who packs this item?">
-      {[false, true].map(value => <button type="button" key={String(value)} aria-pressed={movers === value} onClick={() => { onChange(value); setOpen(false); trigger.current?.focus(); }}>
-        <span>{value ? 'CP' : 'PBO'}</span><span>{value ? 'Movers pack' : 'You pack'}</span>
-        {movers === value && <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m2 6 2.5 2.5L10 3"/></svg>}
-      </button>)}
+    {open && <span className="mi-packing-menu" role="group" aria-label="Who packs these boxes?">
+      <span className="mi-service-count-heading">{quantity} {quantity === 1 ? 'box' : 'boxes'} total</span>
+      {rows.map(([label, value, toMovers]) => <span className="mi-service-count-row" key={label}>
+        <span>{label}</span>
+        <span className="mi-service-counter">
+          <button type="button" aria-label={`Decrease ${label}`} disabled={disabled || value === 0} onClick={() => onChange(toMovers(value - 1))}><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M2.5 6h7"/></svg></button>
+          <input type="number" min="0" max={quantity} step="1" aria-label={`Boxes for ${label}`} disabled={disabled} value={value} onChange={event => { const next = event.target.valueAsNumber; if (Number.isFinite(next)) onChange(toMovers(Math.max(0, Math.min(quantity, Math.floor(next))))); }} />
+          <button type="button" aria-label={`Increase ${label}`} disabled={disabled || value === quantity} onClick={() => onChange(toMovers(value + 1))}><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M6 2.5v7M2.5 6h7"/></svg></button>
+        </span>
+      </span>)}
     </span>}
   </span>;
 }
@@ -78,9 +99,9 @@ function ServiceChoice({selector, value, quantity, name, disabled, open, setOpen
     </span>}
   </span>;
 }
-function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onMoverPackChange, packingLocked = false, serviceBusy, serviceRowId, openService, setOpenService, selectors = [], selections = {}, onSelectionChange, onSave, onRemove }: {
+function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onMoverPackChange, moverPackCount = 0, packingLocked = false, serviceBusy, serviceRowId, openService, setOpenService, selectors = [], selections = {}, onSelectionChange, onSave, onRemove }: {
   name: string; cuft: number; quantity: number; busy: boolean; photo?: ReactNode; going?: boolean; onGoingChange: (going: boolean) => void;
-  onMoverPackChange?: (checked: boolean) => void; packingLocked?: boolean;
+  onMoverPackChange?: (count: number) => void; moverPackCount?: number; packingLocked?: boolean;
   serviceBusy:boolean; serviceRowId:string; openService:string; setOpenService:(id:string)=>void;
   selectors?: ItemSelector[]; selections?: Record<string,ServiceSelection>; onSelectionChange?: (id: string, value: ServiceSelection) => void;
   onSave: (value: { name: string; cuft: number; quantity: number }) => void; onRemove: () => void;
@@ -103,7 +124,7 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
       <span aria-label="Total volume in cubic feet"><span className="mi-mobile-label">Total volume</span>{totalVolumeLabel}<span className="mi-mobile-unit"> cu ft</span></span>
       <label><span className="mi-mobile-label">Quantity</span><input aria-label="Quantity" type="number" min="1" max="999" step="1" value={draft.quantity} disabled={busy} onChange={e => setDraft({ ...draft, quantity: e.target.value })} /></label>
     </> : <>
-      <div className={`mi-inventory-name${selectors.length ? ' mi-name-with-services' : ''}`}><span className="mi-item-name-label"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name} disabled={busy || packingLocked || !going} onChange={onMoverPackChange}/>}</span>
+      <div className={`mi-inventory-name${selectors.length ? ' mi-name-with-services' : ''}`}><span className="mi-item-name-label"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '')} quantity={quantity} count={moverPackCount} disabled={busy || packingLocked || !going} open={openService === `${serviceRowId}:packing`} setOpen={open => setOpenService(open ? `${serviceRowId}:packing` : '')} onChange={onMoverPackChange}/>}</span>
         {!!selectors.length && <span className="mi-item-services">{selectors.map(selector => <ServiceChoice key={selector.id} selector={selector} name={name} value={selections[selector.id]} quantity={quantity} disabled={serviceBusy || !going} open={openService === `${serviceRowId}:${selector.id}`} setOpen={open => setOpenService(open ? `${serviceRowId}:${selector.id}` : '')} onChange={value => onSelectionChange?.(selector.id, value)}/>)}</span>}
         {Object.entries(selections).filter(([id]) => !selectors.some(selector => selector.id === id)).map(([id, value]) => <span key={id} className="mi-item-services">{typeof value === 'string' ? value : Object.entries(value).filter(([, count]) => count > 0).map(([option, count]) => `${option} (${count})`).join(', ')}</span>)}
       </div>
@@ -150,34 +171,53 @@ function RoomCard({ room, selected, busy, summary, onSelect, onRename, onDelete 
     <button type="button" className="mi-remove" disabled={busy} aria-label={`Delete room ${room.name}`} onClick={onDelete}>&times;</button>
   </article>;
 }
-export default function ManualInventoryModal({ loadCatalog, submitActions, downloadPdf, onDone, onClose, draftKey, loadInventory, packing, imageEndpoint, linkKey='', session='', visible=true }: {
+export default function ManualInventoryModal({ loadCatalog, searchCatalog, submitActions, downloadPdf, onDone, onClose, draftKey, loadInventory, packing, imageEndpoint, linkKey='', session='', visible=true }: {
   visible?: boolean;
   submitActions: (requestId: string, edits: InventoryEdits, revision: string, reportId: string | null) => Promise<{revision:string}>;
   loadInventory: () => Promise<{revision:string; report_id:string|null; rooms:Room[]}>;
   draftKey: string;
-  packing?: { full: boolean; boxes: { label: string; room?: string; quantity: number }[] };
+  packing?: { full: boolean };
   imageEndpoint?: string;
   linkKey?: string;
   session?: string;
   loadCatalog: () => Promise<Catalog>;
+  // Catalog items matching the text, or the given ids; the window never loads the whole catalog.
+  searchCatalog: (text: string, ids?: string[]) => Promise<CatalogItem[]>;
   downloadPdf: (body: { request_id: string; box_total: number; rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number; name?:string }[]; custom_items?: CustomItem[] }[] }) => Promise<void>;
   onClose: (changed?: boolean) => void;
   onDone: () => Promise<void>;
 }) {
   const [catalog, setCatalog] = useState<Catalog>();
+  // Items seen so far: searched, in the list, or part of a set.
+  const [known, setKnown] = useState<Map<string, CatalogItem>>(() => new Map());
+  const knownRef = useRef(known);
+  knownRef.current = known;
+  const addKnown = (list: CatalogItem[]) => {
+    if (!list.length) return;
+    const next = new Map(knownRef.current);
+    for (const item of list) next.set(item.id, item);
+    knownRef.current = next;
+    setKnown(next);
+  };
+  const searcher = useRef(searchCatalog);
+  searcher.current = searchCatalog;
   const [rooms, setRoomsState] = useState<Room[]>([]);
   function setRooms(update: Room[] | ((current: Room[]) => Room[])) {
     setRoomsState(current => {
       const next = typeof update === 'function' ? update(current) : update;
       if (!catalog) return next;
-      const definitions = new Map((catalog?.items || []).map(item => [item.id, item]));
+      const definitions = knownRef.current;
       return next.map(room => {
         const items = {...room.items};
         const custom = [...(room.custom_items || [])];
         for (const [id, quantity] of Object.entries(items)) {
           const item = definitions.get(id);
           if (quantity <= 0 || !item?.selectors?.length) continue;
-          custom.push({id: catalogInventoryId(room, id), catalog_item_id: id,
+          const rowId = catalogInventoryId(room, id);
+          // Adding the same item again raises the quantity on its existing row.
+          const existing = custom.findIndex(entry => entry.id === rowId);
+          if (existing >= 0) custom[existing] = {...custom[existing], quantity: custom[existing].quantity + quantity};
+          else custom.push({id: rowId, catalog_item_id: id,
             name: room.item_names?.[id] || item.name, name_override: !!room.item_names?.[id],
             cuft: item.cuft, unit_weight: item.weight, quantity});
           delete items[id];
@@ -258,7 +298,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
         inFlight.current = snapshot;
         setSaveStatus('Saving...');
         try {
-          const actions = inventoryActions(savedRooms.current || [], snapshot, catalog?.items || []);
+          const actions = inventoryActions(savedRooms.current || [], snapshot, [...knownRef.current.values()]);
           if (hasInventoryEdits(actions)) {
             const requestId = requestIds.current.get(snapshot) || crypto.randomUUID();
             requestIds.current.set(snapshot, requestId);
@@ -293,11 +333,11 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     latest.current = rooms;
     if (loadedRooms.current === rooms) {
       loadedRooms.current = null;
-      if (!hasInventoryEdits(inventoryActions(savedRooms.current || [], rooms, catalog.items))) return;
+      if (!hasInventoryEdits(inventoryActions(savedRooms.current || [], rooms, [...knownRef.current.values()]))) return;
     }
     // Counter edits stay local until the service picker closes.
     if (openService) {
-      dirty.current = hasInventoryEdits(inventoryActions(savedRooms.current || [], rooms, catalog.items));
+      dirty.current = hasInventoryEdits(inventoryActions(savedRooms.current || [], rooms, [...knownRef.current.values()]));
       if (dirty.current) setSaveStatus('Unsaved changes');
       return;
     }
@@ -325,6 +365,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     let active = true;
     Promise.all([loader.current(), inventoryLoader.current()]).then(([value, editor]) => {
       if (!active) return;
+      addKnown(value.items);
       setCatalog(value);
       revision.current = editor.revision;
       reportId.current = editor.report_id;
@@ -338,23 +379,9 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
         }
       } catch { /* The server inventory remains authoritative. */ }
       const loaded: Room[] = structuredClone(saved || serverRooms);
-      if (packing) {
-        const baseName = (name: string) => name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '').trim();
-        const key = (room: string, name: string) => `${room.trim().toLowerCase()}:${baseName(name).toLowerCase()}`;
-        const remaining = new Map(packing.boxes.map(box => [key(box.room || 'Other items', box.label), box.quantity]));
-        for (const room of loaded) {
-          room.custom_items = (room.custom_items || []).flatMap(item => {
-            if (item.going === false || !/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(item.name)) return [item];
-            const id = key(room.name, item.name);
-            const cp = packing.full ? item.quantity : Math.min(item.quantity, remaining.get(id) || 0);
-            remaining.set(id, Math.max(0, (remaining.get(id) || 0) - cp));
-            return [
-              ...(cp ? [{ ...item, name: `${baseName(item.name)} (CP)`, mover_pack: true, quantity: cp }] : []),
-              ...(cp < item.quantity ? [{ ...item, id: cp ? crypto.randomUUID() : item.id, name: `${baseName(item.name)} (PBO)`, mover_pack: false, quantity: item.quantity - cp }] : []),
-            ];
-          });
-        }
-      }
+      // Catalog rows from an unsent draft need their item details.
+      const missing = [...new Set(loaded.flatMap(r => Object.keys(r.items)))].filter(id => !knownRef.current.has(id));
+      if (missing.length) searcher.current('', missing).then(list => { if (active) addKnown(list); }).catch(() => undefined);
       loadedRooms.current = loaded;
       savedRooms.current = serverRooms;
       setRooms(loaded);
@@ -368,7 +395,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     let active = true;
     setCatalogRefreshError('');
     loader.current().then(value => {
-      if (active) setCatalog(value);
+      if (active) { addKnown(value.items); setCatalog(value); }
     }).catch(() => {
       if (active) setCatalogRefreshError('Could not refresh item services. Close and reopen the inventory to try again.');
     });
@@ -382,7 +409,21 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
     modal.current?.focus();
     return () => { document.body.style.overflow = overflow; previous?.focus(); };
   }, [visible]);
-  const items = new Map((catalog?.items || []).map(item => [item.id, item]));
+  const items = known;
+  const [searchResults, setSearchResults] = useState<CatalogItem[]>([]);
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    const text = catalogSearch.trim();
+    if (!text) { setSearchResults([]); setSearching(false); return; }
+    let active = true;
+    setSearching(true);
+    const timer = window.setTimeout(() => {
+      searcher.current(text).then(list => { if (active) { addKnown(list); setSearchResults(list); } })
+        .catch(() => { if (active) setSearchResults([]); })
+        .finally(() => { if (active) setSearching(false); });
+    }, 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [catalogSearch]);
   const total = (room: Room, field: 'cuft' | 'weight') => Object.entries(room.items).reduce((sum, [id, qty]) => sum + (items.get(id)?.[field] || 0) * qty, 0) + (room.custom_items || []).reduce((sum, item) => sum + (item.going === false ? 0 : (field === 'cuft' ? item.cuft : item.unit_weight || 0) * item.quantity), 0);
   const count = (room: Room) => Object.values(room.items).reduce((sum, qty) => sum + qty, 0) + (room.custom_items || []).reduce((sum, item) => sum + item.quantity, 0);
   const pieces = (room: Room) => Object.entries(room.items).reduce((sum, [id, qty]) => sum + qty * piecesPerItem(room.item_names?.[id] || items.get(id)?.name || ''), 0)
@@ -395,7 +436,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
   const room = rooms.find(r => r.id === selected);
   const catalogWords = catalogSearch.toLowerCase().trim().split(/\s+/).filter(Boolean);
   const catalogEntries: (CatalogItem & { set?: CatalogSet })[] = [
-    ...(catalog?.items || []),
+    ...searchResults,
     ...(catalog?.sets || []).map(set => ({
       id: `set:${set.id}`, name: set.name, set, weight: 0,
       description: set.components.map(part => `${part.quantity} x ${items.get(part.item_id)?.name || 'Unavailable item'}`).join(', '),
@@ -450,7 +491,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
           item_id, quantity, ...(r.item_names?.[item_id] ? { name: r.item_names[item_id] } : {}),
         })),
       })) });
-    } catch (err) { setError(err instanceof Error ? err.message : 'Could not download inventory. Please try again.'); }
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not load inventory. Please try again.'); }
     finally { setPdfBusy(false); }
   }
   async function save(calculate = true) {
@@ -483,7 +524,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }
   }}>
-    <header><div><span className="cm-eyebrow">YOUR INVENTORY</span><h2 id="mi-title">Your home, room by room</h2></div><div className="mi-header-actions"><button type="button" className="slds-button" disabled={busy || pdfBusy || !catalog || !rooms.length || rooms.some(r => !r.name.trim())} title={pdfBusy ? "Preparing PDF..." : "Download inventory PDF"} aria-label={pdfBusy ? "Preparing inventory PDF" : "Download inventory PDF"} aria-busy={pdfBusy} onClick={() => void download()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg></button><button type="button" className="slds-button" disabled={busy || !catalog || !rooms.length} title="Clear inventory" aria-label="Clear inventory" onClick={() => { setRooms([]); setSelected(''); setCustomOpen(false); }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button><button type="button" className="slds-button" disabled={busy} onClick={() => void save(false)} aria-label="Save and close inventory">&times;</button></div></header>
+    <header><div><span className="cm-eyebrow">YOUR INVENTORY</span><h2 id="mi-title">Your home, room by room</h2></div><div className="mi-header-actions"><button type="button" className="slds-button" disabled={busy || pdfBusy || !catalog || !rooms.length || rooms.some(r => !r.name.trim())} title={pdfBusy ? "Preparing PDF..." : "View inventory PDF"} aria-label={pdfBusy ? "Preparing inventory PDF" : "View inventory PDF"} aria-busy={pdfBusy} onClick={() => void download()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></button><button type="button" className="slds-button" disabled={busy || !catalog || !rooms.length} title="Clear inventory" aria-label="Clear inventory" onClick={() => { setRooms([]); setSelected(''); setCustomOpen(false); }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button><button type="button" className="slds-button" disabled={busy} onClick={() => void save(false)} aria-label="Save and close inventory">&times;</button></div></header>
     <div className="mi-totals" aria-live="polite"><span>{rooms.length} rooms</span><span>{rooms.reduce((sum, r) => sum + count(r), 0)} items &middot; {rooms.reduce((sum, r) => sum + pieces(r), 0)} pieces &middot; {totalBoxes} boxes</span><strong>{number(cuft)} cu ft</strong><span>{number(weight)} lb</span></div>
     {draftError && <p className="mi-error" role="alert">{draftError}</p>}
     {error && <p className="mi-error" role="alert">{error}</p>}
@@ -562,7 +603,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
                 <button type="button" disabled={busy || entryQuantity(room, item) >= entryLimit(room, item)} aria-label={`Add one ${item.name} to ${room.name}`} title="Add one" onClick={() => setRooms(current => current.map(r => r.id === room.id ? setEntryQuantity(r, item, entryQuantity(r, item) + 1) : r))}>+</button>
               </div>
             </div>)}
-            {!catalogMatches.length && <p>No matching items. You can add a custom item above.</p>}
+            {searching ? <p role="status">Searching...</p> : !catalogSearch.trim() ? <p>Type to search items.</p> : !catalogMatches.length && <p>No matching items. You can add a custom item above.</p>}
             {catalogMatches.length > catalogLimit && <p className="mi-catalog-more">Scroll for more items</p>}
           </div>
         </section>}
@@ -583,7 +624,7 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
               } : valueRoom))}
               onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, items: { ...value.items, [id]: 0 }, custom_items: [...(value.custom_items || []), { id: catalogInventoryId(r, id), catalog_item_id: id, name: r.item_names?.[id] || items.get(id)?.name || 'Item', cuft: items.get(id)?.cuft || 0.01, quantity: qty, going, reference_name: items.get(id)?.name }] } : value))}
               packingLocked={packing?.full}
-              onMoverPackChange={/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(items.get(id)?.name || '') ? checked => setRooms(current => current.map(value => value.id === r.id ? { ...value, items: { ...value.items, [id]: 0 }, custom_items: [...(value.custom_items || []), { id: catalogInventoryId(r, id), catalog_item_id: id, name: (r.item_names?.[id] || items.get(id)?.name || 'Box').replace(/\s*\((?:CP|PBO)\)\s*$/i, '') + (checked ? ' (CP)' : ' (PBO)'), cuft: items.get(id)?.cuft || 0.01, quantity: qty, mover_pack: checked, reference_name: items.get(id)?.name }] } : value)) : undefined}
+              onMoverPackChange={/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(items.get(id)?.name || '') ? count => setRooms(current => current.map(value => value.id === r.id ? { ...value, items: { ...value.items, [id]: 0 }, custom_items: [...(value.custom_items || []), { id: catalogInventoryId(r, id), catalog_item_id: id, name: packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Box'), cuft: items.get(id)?.cuft || 0.01, quantity: qty, mover_pack: null, mover_pack_count: count, reference_name: items.get(id)?.name }] } : value)) : undefined}
               selectors={items.get(id)?.selectors}
               onSelectionChange={(selectorId, choice) => setRooms(current => current.map(value => value.id === r.id ? {...value, items: {...value.items, [id]: 0}, custom_items: [...(value.custom_items || []), {id: catalogInventoryId(r, id), catalog_item_id: id, name: packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item'), name_override: !!r.item_names?.[id], cuft: items.get(id)?.cuft || 0.01, quantity: qty, selections: choice ? {[selectorId]: choice} : {}}]} : value))}
               onRemove={() => quantity(id, 0, r.id)} />)}
@@ -600,7 +641,8 @@ export default function ManualInventoryModal({ loadCatalog, submitActions, downl
               })} : value))}
               going={item.going} onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, going } : entry) } : value))}
               packingLocked={packing?.full}
-              onMoverPackChange={/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(item.name) ? checked => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, reference_name: entry.reference_name || entry.name, mover_pack: checked, name: entry.name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') + (checked ? ' (CP)' : ' (PBO)') } : entry) } : value)) : undefined}
+              moverPackCount={moverPackCount(item)}
+              onMoverPackChange={/\bbox(?:es)?\b|\bdish\s*pack\b/i.test(item.name) ? count => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, reference_name: entry.reference_name || entry.name, mover_pack: null, mover_pack_count: count, name: packingItemName(entry.name) } : entry) } : value)) : undefined}
               photo={imageEndpoint ? <QuestionReferenceImages active={visible} compact name={item.reference_name || item.name} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
               onSave={changes => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, name_override: entry.name_override || changes.name !== entry.name, reference_name: entry.reference_name || entry.name, ...changes } : entry) } : value))}
               onRemove={() => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.filter(entry => entry.id !== item.id) } : value))} />)}

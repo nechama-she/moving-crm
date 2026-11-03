@@ -146,6 +146,10 @@ def sync(db, lead, *, reconcile=False):
                     task.completed_at = datetime.now(timezone.utc)
                     task.completion_reason = 'Priority changed' if lead.priority != 0 else 'Lead closed'
         return
+    # Back at priority 0: reopen the follow-ups that were closed only because the priority changed.
+    for task in tasks:
+        if task.status == 'done' and task.completion_reason == 'Priority changed':
+            task.status, task.completed_at, task.completion_reason = 'open', None, None
     calls, messages = history(lead) if not tasks or reconcile else ([], [])
     apply_progress(db, lead, tasks, calls, messages)
 

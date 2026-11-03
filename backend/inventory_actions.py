@@ -15,6 +15,7 @@ from spark_history import remember_report
 class ActionRow(InventoryRowChanges):
     catalog_item_id: str | None = None
     mover_pack: bool | None = None
+    mover_pack_count: int | None = Field(default=None, ge=0, le=999, strict=True)
     reference_name: str | None = Field(default=None, max_length=200)
     unit_weight: Decimal = Field(default=0, ge=0, le=100000, allow_inf_nan=False)
 
@@ -140,7 +141,7 @@ def save_inventory_actions(body, access, db):
         row.update(name=value.name.strip(), room=action.room, amount=value.quantity, unit_cuft=float(value.cuft),
                    unit_weight=float(unit_weight), cuft=float(value.cuft * value.quantity) if value.going else 0,
                    weight=float(unit_weight * value.quantity) if value.going else 0, going=value.going,
-                   name_override=value.name_override, mover_pack=value.mover_pack,
+                   name_override=value.name_override, mover_pack=value.mover_pack, mover_pack_count=value.mover_pack_count,
                    reference_name=row.get('reference_name') or value.reference_name or value.name)
         if old is None:
             row.update(item_id=value.catalog_item_id or 'custom-' + str(uuid4()), catalog_item_id=value.catalog_item_id, custom=True)
@@ -152,29 +153,6 @@ def save_inventory_actions(body, access, db):
     for room in rooms:
         room['items'] = [row for row in rows if row.get('room') == room['name']]
     if active:
-        def packed_boxes(contents):
-            counts = {}
-            for row in contents:
-                name = row.get('name', '')
-                if not re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b', name, re.I):
-                    continue
-                normalize = lambda text: re.sub(r'\s+', ' ', text.strip().lower())
-                base = re.sub(r'\s*\((?:CP|PBO)\)\s*$', '', name, flags=re.I)
-                key = f"{normalize(row.get('room') or 'Other items')}:{normalize(base)}"
-                counts.setdefault(key, 0)
-                if row.get('going') is not False and (row.get('mover_pack') is True or re.search(r'\(CP\)\s*$', name, re.I)):
-                    counts[key] += int(row.get('amount') or 1)
-            return counts
-        previous_boxes, updated_boxes = packed_boxes(source), packed_boxes(rows)
-        changed_boxes = {key for key in previous_boxes.keys() | updated_boxes.keys()
-                         if previous_boxes.get(key, 0) != updated_boxes.get(key, 0)}
-        if changed_boxes:
-            selection = json.loads(job.customer_packing_package or '{}')
-            if selection.get('mode') != 'full':
-                quantities = selection.setdefault('box_quantities', {})
-                for key in changed_boxes:
-                    quantities[str(uuid5(NAMESPACE_URL, f'inventory-box:{job.id}:{key}'))] = updated_boxes.get(key, 0)
-                job.customer_packing_package = json.dumps(selection)
         for row in removed:
             if bindings.get(id(row)) is not None:
                 db.delete(bindings[id(row)])
@@ -206,7 +184,8 @@ def save_inventory_actions(body, access, db):
             {'id': str(uuid4()), 'name': row['name'], 'cuft': row.get('unit_cuft') or float(row.get('cuft') or 0) / max(1, row['amount']),
              'quantity': row['amount'], 'going': row.get('going') is not False, 'name_override': row.get('name_override', False),
              'catalog_item_id': row.get('catalog_item_id') or (row.get('item_id') if not str(row.get('item_id', '')).startswith('custom-') else None),
-             'reference_name': row.get('reference_name'), 'mover_pack': row.get('mover_pack')}
+             'reference_name': row.get('reference_name'), 'mover_pack': row.get('mover_pack'),
+             'mover_pack_count': row.get('mover_pack_count')}
             for row in room['items']]} for room in rooms]
         details['inventory_draft'] = {'body': {'request_id': str(body.request_id), 'rooms': input_rooms},
                                       'rows': rows, 'rooms': rooms, 'cuft': volume, 'weight': weight}

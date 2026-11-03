@@ -4,9 +4,29 @@ from decimal import Decimal
 from models import InventoryCatalogItem
 
 
+def _catalog_for(rows, db):
+    """Only the catalog items these rows name by id, in one query, read once per request. The whole
+    catalog is read only when a row has to be matched by name: no id, an unknown id, or a deleted item."""
+    from request_cache import cached
+    ids = sorted({str(row.get('catalog_item_id') or row.get('item_id')) for row in rows
+                  if isinstance(row, dict) and (row.get('catalog_item_id') or row.get('item_id'))})
+    store = db.info.setdefault('request_cache', {}).setdefault('catalog-items', {})
+    missing = [item_id for item_id in ids if item_id not in store]
+    if missing:
+        found = {item.id: item for item in db.query(InventoryCatalogItem).filter(InventoryCatalogItem.id.in_(missing))}
+        store.update({item_id: found.get(item_id) for item_id in missing})
+    by_id = {item_id: store[item_id] for item_id in ids if store[item_id] is not None}
+    def needs_name_match(row):
+        item = by_id.get(str(row.get('catalog_item_id') or row.get('item_id')))
+        return getattr(item, 'deleted', False) or (item is None and not row.get('name_override'))
+    if any(isinstance(row, dict) and needs_name_match(row) for row in rows):
+        return cached(db, 'catalog', lambda: db.query(InventoryCatalogItem).all())
+    return list(by_id.values())
+
+
 def resolve_catalog_names(rows, db=None, catalog=None):
     if catalog is None:
-        catalog = db.query(InventoryCatalogItem).all()
+        catalog = _catalog_for(rows, db)
     by_id = {item.id: item for item in catalog}
     def normalize(name):
         return re.sub(r'[^a-z0-9]+', ' ', re.sub(r'\s*\((?:CP|PBO)\)\s*$', '', str(name), flags=re.I).casefold()).strip()

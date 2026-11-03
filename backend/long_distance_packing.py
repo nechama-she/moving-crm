@@ -143,6 +143,102 @@ class PackingCard(BaseModel):
         return self
 
 
+MATERIAL_FIELDS = ('name', 'material_price', 'packing_price', 'unpacking_price', 'capacity', 'capacity_unit',
+                   'capacity_kind', 'mattress_size', 'box_capacity_cuft')
+RULE_FIELDS = ('protection', 'item_type', 'variant', 'measure', 'minimum', 'maximum', 'minimum_inclusive',
+               'maximum_inclusive', 'unit', 'units_per_item')
+
+
+def plan_packing_card(plan):
+    """The plan's packing rates and materials, read from pricing_packing and pricing_materials."""
+    row = plan.packing
+    if row is None:
+        return None
+    materials = []
+    for material in sorted(row.materials, key=lambda material: material.sort_order):
+        # Saved values were validated when saved; rebuilding them must not re-derive anything.
+        rule = None if material.rule_protection is None else MaterialRule.model_construct(
+            **{field: getattr(material, 'rule_' + field) for field in RULE_FIELDS})
+        materials.append(MaterialRate.model_construct(id=material.material_id, rule=rule,
+                                                      **{field: getattr(material, field) for field in MATERIAL_FIELDS}))
+    return PackingCard.model_construct(full=row.full, partial=row.partial, unpacking=row.unpacking, items=[], materials=materials)
+
+
+def _plain(value):
+    if isinstance(value, Decimal):
+        return format(value.normalize(), 'f')
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    return value
+
+
+def packing_service_row(plan):
+    """The card as the pricing API presents it: a service row holding its settings."""
+    import json
+    card = plan_packing_card(plan)
+    if card is None:
+        return None
+    config = _plain(card.model_dump())
+    for material in config['materials']:
+        # Without its own capacity, a material's box capacity comes from the defaults when saved again.
+        if material['capacity'] is None:
+            del material['capacity']
+    return {'id': f'packing:{plan.id}', 'name': 'Long-distance packing', 'rate_text': '',
+            'comments': PACKING_CARD_PREFIX + json.dumps(config), 'sort_order': -1}
+
+
+def save_packing_card(plan, card):
+    """Replace the plan's packing rates and materials; None removes them. Legacy items are not kept."""
+    from models import PricingPacking, PricingMaterial
+    if card is None:
+        plan.packing = None
+        return
+    row = plan.packing or PricingPacking()
+    row.full, row.partial, row.unpacking = card.full, card.partial, card.unpacking
+    existing = {material.material_id: material for material in row.materials}
+    saved = []
+    for position, material in enumerate(card.materials):
+        target = existing.get(material.id) or PricingMaterial(material_id=material.id)
+        for field in MATERIAL_FIELDS:
+            setattr(target, field, getattr(material, field))
+        for field in RULE_FIELDS:
+            setattr(target, 'rule_' + field, getattr(material.rule, field) if material.rule else None)
+        target.sort_order = position
+        saved.append(target)
+    row.materials[:] = saved
+    plan.packing = row
+
+
+def migrate_packing_cards(connection):
+    """Move each plan's packing card from its pricing_services JSON row into tables, once."""
+    from sqlalchemy import inspect, text
+    from models import PricingPacking, PricingMaterial
+    if inspect(connection).has_table(PricingPacking.__tablename__):
+        return 0
+    PricingPacking.__table__.create(connection)
+    PricingMaterial.__table__.create(connection)
+    moved = set()
+    rows = connection.execute(text(
+        "SELECT id, plan_id, comments FROM pricing_services WHERE comments LIKE :prefix ORDER BY plan_id, sort_order"),
+        {'prefix': PACKING_CARD_PREFIX + '%'}).all()
+    for service_id, plan_id, comments in rows:
+        # Pricing used the first card of a plan; any later copies were never read.
+        if plan_id not in moved:
+            card = PackingCard.model_validate_json(comments[len(PACKING_CARD_PREFIX):])
+            connection.execute(PricingPacking.__table__.insert().values(
+                plan_id=plan_id, full=card.full, partial=card.partial, unpacking=card.unpacking))
+            for position, material in enumerate(card.materials):
+                connection.execute(PricingMaterial.__table__.insert().values(
+                    plan_id=plan_id, material_id=material.id, sort_order=position,
+                    **{field: getattr(material, field) for field in MATERIAL_FIELDS},
+                    **{'rule_' + field: getattr(material.rule, field) if material.rule else None for field in RULE_FIELDS}))
+            moved.add(plan_id)
+        connection.execute(text('DELETE FROM pricing_services WHERE id = :id'), {'id': service_id})
+    return len(moved)
+
+
 def packing_card(services):
     for service in services:
         if service.comments.startswith(PACKING_CARD_PREFIX):

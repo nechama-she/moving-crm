@@ -17,11 +17,13 @@ class RepDiscountTests(unittest.TestCase):
         handler = next(node for node in ast.parse(source.read_text(encoding='utf-8')).body if isinstance(node, ast.FunctionDef) and node.name == 'save_rep_discount')
         handler.decorator_list = []
         handler.args.defaults = []
-        scope = {'is_rep_request': lambda *args: True, 'Lead': object(), 'LeadJob': object(), 'json': json}
+        lines = [{'id': 'charge', 'name': 'Transportation charge', 'total': 1000.0}]
+        scope = {'is_rep_request': lambda *args: True, 'Lead': object(), 'LeadJob': object(), 'json': json,
+                 'estimate_charges': lambda job, individual_charges=False: lines}
         future = ast.parse('from __future__ import annotations').body[0]
         exec(compile(ast.Module(body=[future, handler], type_ignores=[]), str(source), 'exec'), scope)
         lead = SimpleNamespace(id='lead', volume=Decimal('543'))
-        job = SimpleNamespace(id='job', customer_packing_package='{}')
+        job = SimpleNamespace(id='job', customer_packing_package='{}', price=Decimal('1000'))
         charge = SimpleNamespace(id='charge', name='Transportation charge')
         db = Mock()
         db.get.return_value = lead
@@ -29,8 +31,9 @@ class RepDiscountTests(unittest.TestCase):
         db.query.return_value.filter_by.return_value.first.return_value = charge
         refresh = Mock()
         with patch.dict(sys.modules, {'models': SimpleNamespace(LeadJobCharge=object()), 'price_validity': SimpleNamespace(price_is_locked=lambda *args: False), 'routes.leads': SimpleNamespace(_refresh_lead_estimated_total=refresh)}):
-            result = scope['save_rep_discount'](SimpleNamespace(charge_id='charge', title='Discount', type='rate', value=Decimal('3.52'), remove=False), None, SimpleNamespace(lead_id='lead', job_id='job'), db)
-        self.assertEqual(result, {'saved': True})
+            result = scope['save_rep_discount'](SimpleNamespace(charge_id='charge', title='Discount', type='rate', value=Decimal('3.52'), remove=False), None, SimpleNamespace(lead_id='lead', job_id='job', published_at=None, published_price=None), db)
+        # The save returns the updated lines and total, so the page does not reload.
+        self.assertEqual(result, {'saved': True, 'price': '1000', 'charges': lines})
         saved = json.loads(job.customer_packing_package)['rep_discounts']['charge']
         self.assertEqual((saved['value'], saved['volume']), ('3.52', 543))
         refresh.assert_called_once_with('lead', db)
