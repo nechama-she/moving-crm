@@ -84,11 +84,11 @@ def validated_selections(values, definitions, previous=None):
 
 
 def source(details):
+    """The completed report the inventory tables import from; without one, the tables are the list."""
     active = details.get('last_spark_status') == 'completed' and bool(details.get('last_spark_id'))
-    draft = details.get('inventory_draft') or {}
     return (details.get('last_spark_id') if active else None,
-            details.get('spark_inventory_snapshot', []) if active else draft.get('rows', []),
-            details.get('manual_rooms', []) if active else draft.get('rooms', []))
+            details.get('spark_inventory_snapshot', []) if active else [],
+            details.get('manual_rooms', []) if active else [])
 
 
 def source_hash(details):
@@ -135,8 +135,12 @@ def load_inventory_editor(access, db):
     job, saved, details, state = lock(access, db)
     report_id, rows, rooms = source(details)
     fingerprint = source_hash(details)
+    if state is not None and state.source_hash != fingerprint and report_id is None:
+        # No report is active (new media archived it): the tables keep the list as it is.
+        state.source_hash, state.report_id, state.revision = fingerprint, None, str(uuid4())
+        db.commit()
     if state is None or state.source_hash != fingerprint:
-        # Import existing reports/drafts once, or after another report producer changes them.
+        # Import a report once, or after another report producer changes it.
         from catalog_names import resolve_catalog_names
         catalog = db.query(InventoryCatalogItem).all()
         resolved = resolve_catalog_names(rows, catalog=catalog)
@@ -360,9 +364,10 @@ def save_inventory_edits(body, access, db):
     return dict(ok=True, revision=state.revision)
 
 
-def project(job, access, details, joined, db):
-    report_id, old_rows, _ = source(details)
-    rooms = db.query(InventoryEditRoom).filter_by(job_id=job.id).order_by(InventoryEditRoom.sort_order).all()
+def list_rows(job_id, db, joined=None):
+    """The inventory as rows and rooms, read from the inventory tables with catalog names joined."""
+    joined = joined_rows(job_id, db) if joined is None else joined
+    rooms = db.query(InventoryEditRoom).filter_by(job_id=job_id).order_by(InventoryEditRoom.sort_order).all()
     room_names = {r.id:r.name for r in rooms}
     rows = [dict(inventory_row_id=r.id, room_id=r.room_id, name=display_name(r,name), room=room_names[r.room_id],
         amount=r.quantity, unit_cuft=float(r.unit_cuft), unit_weight=float(r.unit_weight),
@@ -373,6 +378,12 @@ def project(job, access, details, joined, db):
         set_id=r.set_id, set_name=r.set_name, manual=r.manual,
         selections=json.loads(r.selections or '{}')) for r,name in joined]
     serialized_rooms = [dict(id=r.id, name=r.name, room_type_id=r.room_type_id or '', items=[x for x in rows if x['room_id']==r.id]) for r in rooms]
+    return rows, serialized_rooms
+
+
+def project(job, access, details, joined, db):
+    report_id, old_rows, _ = source(details)
+    rows, serialized_rooms = list_rows(job.id, db, joined)
     volume, weight = sum(r['cuft'] for r in rows), sum(r['weight'] for r in rows)
     if report_id:
         lead = db.get(Lead,access.lead_id)
@@ -381,10 +392,4 @@ def project(job, access, details, joined, db):
                        spark_extracted_cuft=volume,spark_extracted_weight=weight,spark_extracted_id=report_id,spark_pricing_ready=False)
         details.pop('report_question_answers',None)
         details.pop('question_excluded_items',None)
-    if not report_id or details.get('inventory_draft'):
-        input_rooms = [dict(name=r['name'],room_type_id=r['room_type_id'],items=[],custom_items=[dict(
-            id=x['inventory_row_id'],name=x['name'],quantity=x['amount'],cuft=x['unit_cuft'],going=x['going'],
-            mover_pack=x['mover_pack'],selections=x['selections'],catalog_item_id=x['catalog_item_id'],name_override=x['name_override'],
-            set_id=x['set_id'],set_name=x['set_name']) for x in r['items']]) for r in serialized_rooms]
-        details['inventory_draft']=dict(body=dict(request_id=str(uuid4()),rooms=input_rooms),rows=rows,rooms=serialized_rooms,cuft=volume,weight=weight)
     if report_id: remember_report(details)

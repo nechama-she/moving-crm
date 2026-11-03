@@ -56,7 +56,6 @@ type Details = {
   item_questions?: ItemQuestion[];
   link_sms?: LinkSms | null;
   list_changed?: boolean;
-  inventory_draft?: { body: { rooms: { room_type_id: string; name: string; items: { item_id: string; quantity: number }[] }[] }; rooms: { name: string; items: { name: string; amount: number; cuft: number }[] }[]; rows: unknown[]; cuft: number };
   combined_inventory?: {name:string;room?:string;amount?:number;quantity?:number;cuft?:number;unit_cuft?:number;reference_name?:string}[];
   report_history?: ReportRun[];
   signature_status?: 'unsigned' | 'signed' | 'changed';
@@ -577,6 +576,7 @@ export default function CustomerMovePage() {
   }
   const [preparedEstimate, setPreparedEstimate] = useState('');
   const [preparedSigned, setPreparedSigned] = useState(false);
+  const [preparedApproved, setPreparedApproved] = useState(false);
   const [estimateViewerOpen, setEstimateViewerOpen] = useState(false);
   const [inventoryPdf, setInventoryPdf] = useState<{ url: string; filename: string } | null>(null);
   const [estimatePdfUrl, setEstimatePdfUrl] = useState('');
@@ -596,6 +596,7 @@ export default function CustomerMovePage() {
     setPdfBusy(true);
     setPreparedEstimate('');
     setPreparedSigned(false);
+    setPreparedApproved(false);
     try {
       // Signed: open the signed copy as saved. Otherwise a new estimate from what the page shows.
       const prepared = data?.signature_status === 'signed'
@@ -612,6 +613,7 @@ export default function CustomerMovePage() {
       setEstimatePdfUrl(url);
       setPreparedEstimate(prepared.id);
       setPreparedSigned(prepared.signed === true);
+      setPreparedApproved(prepared.signed === true || prepared.approved === true);
     } catch (error) {
       const failure = error as Error & {detail?: {unanswered_questions?: string[]}};
       const message = failure.message || 'Could not prepare the estimate. Please try again.';
@@ -805,6 +807,14 @@ export default function CustomerMovePage() {
   const sectionReady = (...names: PageSection[]) => names.every(name => sections[name].ready && !sections[name].error);
   const sectionRequests = useRef<Record<string, number>>({});
   const pricingLoading = sections.pricing.loading;
+  // The item list summary, from the current inventory.
+  const summaryRows = data?.combined_inventory || [];
+  const inventorySummary = summaryRows.length ? {
+    items: summaryRows.reduce((total, row) => total + Number(row.amount ?? row.quantity ?? 0), 0),
+    pieces: summaryRows.reduce((total, row) => total + Number(row.amount ?? row.quantity ?? 0) * piecesPerItem(row.name), 0),
+    boxes: summaryRows.reduce((total, row) => total + boxQuantity(row.name, Number(row.amount ?? row.quantity ?? 0)), 0),
+    cuft: Math.round(summaryRows.reduce((total, row) => total + Number(row.cuft || 0), 0)),
+  } : null;
   const pricingLoadError = sections.pricing.error;
   async function loadSection(section: PageSection, background = false) {
     if (!session || !customerSessionActive(session)) return;
@@ -1069,7 +1079,7 @@ export default function CustomerMovePage() {
                 <p>Upload photos, videos, or documents, create an item list, or schedule a live virtual walkthrough with our team.</p>
                 <p>Your saved item list and uploaded media stay together. Generate one report to combine both into your inventory and estimate.</p>
                 <div className="cm-inventory-actions">
-                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('inventory')} onClick={() => setShowInventoryList(true)}>{!sectionReady('inventory') ? 'Loading inventory...' : data.combined_inventory?.length||data.inventory_draft ? 'Update inventory' : 'Add a list'}</button>
+                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('inventory')} onClick={() => setShowInventoryList(true)}>{!sectionReady('inventory') ? 'Loading inventory...' : data.combined_inventory?.length ? 'Update inventory' : 'Add a list'}</button>
                   <button type="button" className="slds-button cm-add-list-button" disabled={busy || !photosRestored} onClick={() => filePicker.current?.click()} aria-busy={files.some(f => f.status === 'Uploading')}>{files.some(f => f.status === 'Uploading') ? 'Uploading...' : 'Upload files'}</button>
                   <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('media')} onClick={() => meetingDialog.current?.showModal()}>Virtual estimate</button>
                   <input ref={filePicker} type="file" multiple hidden disabled={busy || !photosRestored} onChange={e=>{void choose(e.target.files);e.target.value='';}}/>
@@ -1090,11 +1100,10 @@ export default function CustomerMovePage() {
                   ))}
                 </div>
                 {sectionNotice('inventory', 'inventory')}
-                {sectionReady('inventory') && data.inventory_draft?.rows.length ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open saved item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
+                {sectionReady('inventory') && inventorySummary ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open your item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
                   <div>
-                    <strong>Saved item list</strong>
-                    <span>{data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((roomTotal, item) => roomTotal + Number(item.amount || 0), 0), 0)} items &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + Number(item.amount || 0) * piecesPerItem(item.name), 0), 0)} pieces &middot; {data.inventory_draft.rooms.reduce((total, room) => total + room.items.reduce((sum, item) => sum + boxQuantity(item.name, Number(item.amount || 0)), 0), 0)} boxes &middot; {data.inventory_draft.cuft.toLocaleString()} cu ft</span>
-                    <small>Included with your photos and videos in the next report.</small>
+                    <strong>Your item list</strong>
+                    <span>{inventorySummary.items} items &middot; {inventorySummary.pieces} pieces &middot; {inventorySummary.boxes} boxes &middot; {inventorySummary.cuft.toLocaleString()} cu ft</span>
                   </div>
                 </section> : null}
                 {sectionNotice('media', 'media')}
@@ -1107,9 +1116,10 @@ export default function CustomerMovePage() {
                   </div>
                 </div>}
 
-                {((data.editable_files || data.files).length > 0 || !!data.inventory_draft?.rows.length || !!data.combined_inventory?.length) && (
+                {/* A report runs on media; a list alone is priced when the inventory's Done is clicked. */}
+                {(data.editable_files || data.files).length > 0 && (
                   <div className="cm-spark-box">
-                    <p className="cm-report-includes"><strong>Next report:</strong> {(data.editable_files || data.files).length} media file{(data.editable_files || data.files).length === 1 ? '' : 's'}{data.inventory_draft?.rows.length ? ` + saved item list (${data.inventory_draft.cuft.toLocaleString()} cu ft)` : data.combined_inventory?.length ? ' + current inventory list' : ''}</p>
+                    <p className="cm-report-includes"><strong>Next report:</strong> {(data.editable_files || data.files).length} media file{(data.editable_files || data.files).length === 1 ? '' : 's'}{data.combined_inventory?.length ? ' + current inventory list' : ''}</p>
                     <button
                       type="button"
                       className="slds-button cm-primary cm-spark-btn"
@@ -1240,7 +1250,7 @@ export default function CustomerMovePage() {
               {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Try again</button></p>}
               </div>
               {(() => {
-                const hasInventory = !!(data.combined_inventory?.length || data.inventory_draft?.rows.length);
+                const hasInventory = !!data.combined_inventory?.length;
                 const servicesDone = data.unanswered_questions?.length === 0;
                 const signed = data.signature_status === 'signed';
                 // Only the first unfinished step gets the big call-to-action; the others show a small text action.
@@ -1332,7 +1342,7 @@ export default function CustomerMovePage() {
 
               {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
-              {estimateViewerOpen && <EstimateViewer alreadySigned={preparedSigned} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => { setEstimateViewerOpen(false); void refreshReportHistory(); }} />}
+              {estimateViewerOpen && <EstimateViewer alreadySigned={preparedSigned} approved={preparedApproved} rep={repPage} onApproved={() => setPreparedApproved(true)} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => { setEstimateViewerOpen(false); void refreshReportHistory(); }} />}
               {(data.estimate_needs_update || data.list_changed) && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}
               <ReportHistory signatureStatus={data.signature_status} requiresResign={data.signature_status === 'changed'} reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} fetchSignedPdf={fetchSignedPdf} />
               {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}

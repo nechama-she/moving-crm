@@ -474,8 +474,8 @@ def generate_uploaded_report(lead_id, body, db):
     if not template_id:
         raise HTTPException(400, 'No Spark template is configured. Choose one in Settings.')
     payload = {'sparkTemplateId': template_id, 'shareWith': ['anyone']}
-    listing = list_for_next_report(details) or details.pop('carried_list', None)
-    details.pop('carried_list', None)
+    from inventory_edits import list_rows
+    listing = list_for_next_report(details, *list_rows(db.query(PublicMoveAccess.job_id).filter_by(lead_id=lead_id).scalar(), db))
     remember_report(details)
     details['carried_question_state'] = details.get('carried_question_state') or {key: details[key] for key in ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot') if key in details}
     for key in REPORT_KEYS:
@@ -549,8 +549,8 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     job = db.get(LeadJob, access.job_id)
     details['report_customer_packing'] = job.customer_packing
     details['report_customer_package'] = job.customer_packing_package
-    listing = list_for_next_report(details) or details.pop('carried_list', None)
-    details.pop('carried_list', None)
+    from inventory_edits import list_rows
+    listing = list_for_next_report(details, *list_rows(db.query(PublicMoveAccess.job_id).filter_by(lead_id=lead_id).scalar(), db))
     remember_report(details)
     details['carried_question_state'] = details.get('carried_question_state') or {key: details[key] for key in ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot') if key in details}
     for key in REPORT_KEYS:

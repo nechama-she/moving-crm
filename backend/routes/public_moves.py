@@ -1,8 +1,7 @@
 from catalog_names import resolve_catalog_names
-from inventory_actions import InventoryActionsInput, save_inventory_actions
 from inventory_edits import InventoryEdits, load_inventory_editor, save_inventory_edits
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
-from manual_inventory import ManualInventoryInput, InventoryRowPatch, update_inventory_row, catalog, submit_inventory, save_inventory_draft, replace_current_inventory
+from manual_inventory import ManualInventoryInput, catalog
 from spark_history import archive_report_for_new_media, report_history
 from estimate_signature_history import attach_signatures, signed_estimates
 from pricing_addresses import with_job_locations
@@ -39,7 +38,6 @@ from public_move_sync import queue_files, sync_status
 from routes.leads import _get_visible_lead_or_404, _get_user_company_ids, _persist_job_route, _read_job_route, _upload_attachment_bytes_to_s3, _delete_s3_url, _safe_attachment_name
 
 router = APIRouter(tags=['Customer move portal'])
-from inventory_changes import inventory_draft_changed
 
 NOW = datetime.utcnow
 
@@ -611,9 +609,7 @@ def _has_inventory_list(state):
     # not be hidden by an empty manual draft used as input to that report.
     if state.get('last_spark_status') == 'completed' and state.get('spark_inventory_snapshot'):
         return True
-    draft = state.get('inventory_draft')
-    rows = draft.get('rows', []) if isinstance(draft, dict) else state.get('spark_inventory_snapshot', [])
-    return bool(rows)
+    return bool(state.get('spark_inventory_snapshot'))
 
 
 @router.get('/api/public-moves/{access_id}/details')
@@ -669,8 +665,14 @@ def _report_status(state):
             'shareUrl': state.get('last_spark_share_url'), 'cuft': state.get('spark_extracted_cuft'), 'update_error': state.get('notification_error')}
 
 
-def _combined_inventory(state, db):
-    return resolve_catalog_names(state.get('spark_inventory_snapshot', []), db) if state.get('last_spark_status') == 'completed' else []
+def _combined_inventory(state, db, job_id=None):
+    """The current inventory: the completed report's, else the list in the inventory tables."""
+    if state.get('last_spark_status') == 'completed':
+        return resolve_catalog_names(state.get('spark_inventory_snapshot', []), db)
+    if job_id is None:
+        return []
+    from inventory_edits import list_rows
+    return list_rows(job_id, db)[0]
 
 
 def _load_move(access, db, charges=False):
@@ -699,8 +701,8 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
                     link_sms=customer_link_sms_notice(access))
     state = _conversation_state(conversation, db)
     if section == 'inventory':
-        return dict(inventory_draft=state.get('inventory_draft'), combined_inventory=_combined_inventory(state, db),
-                    list_changed=inventory_draft_changed(state), report_history=attach_signatures(report_history(state), signed_estimates(db, access.lead_id, access.job_id)), pricing_required=_has_inventory_list(state))
+        return dict(inventory_draft=None, combined_inventory=_combined_inventory(state, db, job.id),
+                    list_changed=False, report_history=attach_signatures(report_history(state), signed_estimates(db, access.lead_id, access.job_id)), pricing_required=_has_inventory_list(state))
     if section == 'media':
         meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first()
         files = active_report_files(access, db)
@@ -783,7 +785,6 @@ def saved_estimate(access, lead, job, state, individual_charges=False):
 
 
 def _move_details(access, db, *, refresh_report=True, include_pricing=True, pricing_only=False, individual_charges=False, estimate_only=False):
-    from math import ceil
     lead, job, conversation = _load_move(access, db, charges=True)
     pickup, stops, delivery = _read_job_route(db, job)
     meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first() if not pricing_only else None
@@ -818,7 +819,9 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
         pricing_error = ''
     if include_pricing and pricing_required and not is_spark_pending and not report_import_pending and (job.company_id or lead.company_id):
         try:
-            pricing_options = _customer_pricing_options(lead, job, db)
+            # The estimate shows the cards as the page last showed them; the page keeps them current.
+            pricing_options = (json.loads(job.pricing_options_cache) if estimate_only and job.pricing_options_cache
+                               else _customer_pricing_options(lead, job, db))
             if estimate is not None:
                 estimate['minimum_cuft'] = pricing_options.get('minimum_cuft')
             packing_package = pricing_options['packing_package']
@@ -852,12 +855,12 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             documents=estimate_documents(lead, job, db))
         rows = resolve_catalog_names(conv_details.get('question_original_rows', conv_details.get('spark_inventory_snapshot', [])), db)
         return details, rows
-    estimate_needs_update = inventory_draft_changed(conv_details) or conv_details.get('spark_pricing_ready') is False
+    estimate_needs_update = conv_details.get('spark_pricing_ready') is False
     if estimate_only:
         # The estimate PDF shows this same data: what the page shows, as the page builds it.
         details, rows = estimate_data()
         return dict(details, spark=spark_info, customer_notes=job.customer_notes or '',
-                    list_changed=inventory_draft_changed(conv_details), estimate_needs_update=estimate_needs_update), rows
+                    list_changed=False, estimate_needs_update=estimate_needs_update), rows
     # Built only when a signed copy exists to compare with.
     pricing_data['signature_status'] = estimate_signature_status(
         db, access.lead_id, access.job_id, estimate_data, None, inventory_pending=estimate_needs_update)
@@ -876,9 +879,9 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             'spark': spark_info,
             'report_history': attach_signatures(report_history(conv_details), signed_estimates(db, access.lead_id, access.job_id)),
             'editable_files': file_list(files),
-            'inventory_draft': conv_details.get('inventory_draft'),
-            'combined_inventory': _combined_inventory(conv_details, db),
-            'list_changed': inventory_draft_changed(conv_details),
+            'inventory_draft': None,
+            'combined_inventory': _combined_inventory(conv_details, db, job.id),
+            'list_changed': False,
             'files_changed': {f.id for f in files} != {row['id'] for row in conv_details.get('report_files', [])},
             'new_file_count': sum(f.id not in {row['id'] for row in conv_details.get('report_files', [])} for f in files) if 'report_files' in conv_details else 0,
             'walkthrough': meeting_dict(meeting) if meeting else None,
@@ -1052,11 +1055,13 @@ def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db:
     from fastapi.encoders import jsonable_encoder
     from models import EstimateSignature
     from estimate_pdf import build_estimate_pdf
+    job = db.get(LeadJob, access.job_id)
+    if job.estimate_approved_id:
+        # The copy the rep approved, exactly as saved: nothing is built.
+        return {'id': job.estimate_approved_id, 'signed': False, 'approved': True}
     # A new, unsigned estimate from what is saved, as the page shows it: nothing is recalculated or compared.
     # A signed estimate is opened from its saved copy instead (estimate-signatures/{id}/pdf).
     data, rows = _estimate_document(access, db)
-    if data.get('list_changed'):
-        raise HTTPException(409, 'The saved inventory draft differs from the inventory used for this estimate. Update the estimate from that inventory first.')
     pending = [c.get('name') or 'Unnamed charge' for c in data['estimate'].get('charges', []) if c.get('pending')]
     if pending:
         raise HTTPException(409, 'These charges still need calculation: ' + ', '.join(pending) + '.')
@@ -1066,7 +1071,27 @@ def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db:
         report_id=(data.get('spark') or {}).get('id'),
         snapshot=json.dumps(jsonable_encoder({'data': data, 'rows': rows})), pdf=build_estimate_pdf(data, rows)))
     db.commit()
-    return {'id': record_id, 'signed': False}
+    return {'id': record_id, 'signed': False, 'approved': False}
+
+
+@router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/approve')
+def approve_estimate(signature_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
+    """A rep approves this saved estimate copy for signing. The customer then opens and signs exactly this copy;
+    any saved change to the estimate clears the approval."""
+    if not is_rep_request(access, request):
+        raise HTTPException(403, 'Only your moving team can approve an estimate.')
+    from estimate_signature_history import estimate_state
+    record = _signature_record(signature_id, access, db)
+    if record.signed_at:
+        raise HTTPException(409, 'This estimate is already signed.')
+    snapshot = json.loads(record.snapshot)
+    current_data, current_rows = _estimate_document(access, db)
+    if estimate_state(current_data, current_rows) != estimate_state(snapshot['data'], snapshot['rows']):
+        raise HTTPException(409, 'The estimate changed while you were reviewing it. Close this viewer and open the current estimate to approve it.')
+    job = db.get(LeadJob, access.job_id)
+    job.estimate_approved_id, job.estimate_approved_at = record.id, datetime.utcnow()
+    db.commit()
+    return {'approved': True}
 
 
 @router.get('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/pdf')
@@ -1091,6 +1116,8 @@ def sign_estimate(signature_id: str, body: EstimateSigningInput, access: PublicM
     current_data, current_rows = _estimate_document(access, db)
     if current_data.get('estimate_needs_update') or estimate_state(current_data, current_rows) != estimate_state(snapshot['data'], snapshot['rows']):
         raise HTTPException(409, 'The estimate changed while you were reviewing it. Close this viewer and open the current estimate to review and sign.')
+    if db.get(LeadJob, access.job_id).estimate_approved_id != record.id:
+        raise HTTPException(409, 'Your moving team needs to approve this estimate before you can sign it.')
     signed_at = datetime.utcnow()
     signature = {'name': name, 'signed_at': signed_at.isoformat() + 'Z', 'strokes': body.strokes, 'estimate_id': record.id}
     snapshot['data']['signature'] = signature
@@ -1161,37 +1188,14 @@ def download_inventory(body: InventoryPdfInput, access: PublicMoveAccess = Depen
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
-@router.post('/api/public-moves/{access_id}/manual-inventory')
-def submit_customer_inventory(body: ManualInventoryInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    result = save_inventory_draft(body, access, db)
-    if not result.get('ok'):
-        raise HTTPException(422, result.get('detail'))
-    return result
-
-
-@router.put('/api/public-moves/{access_id}/inventory')
-def update_customer_inventory(body: ManualInventoryInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    result = replace_current_inventory(body, access, db)
-    if not result.get('ok'):
-        raise HTTPException(422, result.get('detail'))
-    return result
-
-
-@router.patch('/api/public-moves/{access_id}/inventory/row')
-def patch_customer_inventory_row(body: InventoryRowPatch, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    return update_inventory_row(body, access, db)
-
-
 @router.get('/api/public-moves/{access_id}/inventory/editor')
 def get_inventory_editor(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     return load_inventory_editor(access, db)
 
 
 @router.patch('/api/public-moves/{access_id}/inventory/actions')
-def patch_customer_inventory_actions(body: InventoryEdits | InventoryActionsInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    if isinstance(body, InventoryEdits):
-        return save_inventory_edits(body, access, db)
-    return save_inventory_actions(body, access, db)
+def patch_customer_inventory_actions(body: InventoryEdits, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    return save_inventory_edits(body, access, db)
 
 
 def stored_selection(selection):
@@ -1956,19 +1960,19 @@ def customer_generate_inventory_report(access: PublicMoveAccess = Depends(verifi
     if count == 0:
         saved = db.get(LeadLiveSwitch, access.lead_id)
         details = json.loads(saved.details or '{}') if saved else {}
-        draft = details.get('inventory_draft') or {}
-        rows = details.get('spark_inventory_snapshot') or []
-        if rows and details.get('last_spark_status') == 'completed':
-            from manual_inventory import submit_inventory_snapshot
-            result = submit_inventory_snapshot(
-                {'request_id': str(uuid4()), 'rooms': []}, details.get('manual_rooms') or [], rows,
-                sum(float(row.get('cuft') or 0) for row in rows if row.get('going') is not False),
-                sum(float(row.get('weight') or 0) for row in rows if row.get('going') is not False), access, db)
-        elif draft.get('rows'):
-            body = {**draft['body'], 'request_id': str(uuid4())}
-            result = submit_inventory(ManualInventoryInput.model_validate(body), access, db)
-        else:
+        rows, rooms = details.get('spark_inventory_snapshot') or [], details.get('manual_rooms') or []
+        if not (rows and details.get('last_spark_status') == 'completed'):
+            # Not priced yet: the list is in the inventory tables.
+            from inventory_edits import list_rows
+            rows, rooms = list_rows(access.job_id, db)
+            rows = [dict(row, manual=True) for row in rows]
+        if not rows:
             raise HTTPException(400, 'Add files or items to your list before generating a report.')
+        from manual_inventory import submit_inventory_snapshot
+        result = submit_inventory_snapshot(
+            {'request_id': str(uuid4()), 'rooms': []}, rooms, rows,
+            sum(float(row.get('cuft') or 0) for row in rows if row.get('going') is not False),
+            sum(float(row.get('weight') or 0) for row in rows if row.get('going') is not False), access, db)
         if not result.get('ok'):
             raise HTTPException(422, result.get('detail'))
         if result.get('price') is None:

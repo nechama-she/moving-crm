@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import EstimateSigning from './EstimateSigning';
 import './EstimateViewer.css';
 
-export default function EstimateViewer({ base, headers, customerName, version, url, error, onClose, alreadySigned = false }: {
+export default function EstimateViewer({ base, headers, customerName, version, url, error, onClose, alreadySigned = false, approved = true, rep = false, onApproved }: {
   base: string; headers: Record<string, string>; customerName: string; version: string;
   url: string; error: string; onClose: () => void;
   alreadySigned?: boolean;
+  // Signing needs a rep's approval of this exact estimate; the rep view can give it.
+  approved?: boolean; rep?: boolean; onApproved?: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [signing, setSigning] = useState(false);
@@ -28,6 +30,17 @@ export default function EstimateViewer({ base, headers, customerName, version, u
     } catch (e) { setLoadError((e as Error).message); }
     finally { setClearing(false); }
   }
+  const [approving, setApproving] = useState(false);
+  async function approve() {
+    setApproving(true); setLoadError('');
+    try {
+      const response = await fetch(`${base}/estimate-signatures/${encodeURIComponent(version)}/approve`, { method: 'POST', headers, cache: 'no-store' });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : 'Could not approve the estimate. Please try again.');
+      onApproved?.();
+    } catch (e) { setLoadError((e as Error).message); }
+    finally { setApproving(false); }
+  }
   async function showSigned(id: string) {
     setSigned(true); setSigning(false); setLoadError('');
     try {
@@ -38,10 +51,11 @@ export default function EstimateViewer({ base, headers, customerName, version, u
   }
   return <dialog ref={dialog} className="estimate-viewer" aria-labelledby="estimate-viewer-title" onCancel={e => { e.preventDefault(); if (!signing && !clearing) onClose(); }}>
     <header className="estimate-viewer-header">
-      <div><h2 id="estimate-viewer-title">Your estimate</h2><p>{signed ? 'Your signature has been saved.' : 'Review your estimate, then sign here.'}</p></div>
+      <div><h2 id="estimate-viewer-title">Your estimate</h2><p>{signed ? 'Your signature has been saved.' : !approved ? (rep ? 'Review this estimate, then approve it for signing.' : 'Your moving team is reviewing this estimate. You can sign it once they approve it.') : 'Review your estimate, then sign here.'}</p></div>
       <div className="estimate-viewer-actions">
         {url && version && signed && <button className="cm-secondary-btn" disabled={clearing} onClick={() => void resign()} title="Remove the saved signature and sign this estimate again">{clearing ? 'Removing signature...' : 'Re-sign'}</button>}
-        {url && version && !signed && <button className="cm-primary" onClick={() => setSigning(true)}>Sign estimate</button>}
+        {url && version && !signed && !approved && rep && <button className="cm-primary" disabled={approving} onClick={() => void approve()}>{approving ? 'Approving...' : 'Approve for signing'}</button>}
+        {url && version && !signed && approved && <button className="cm-primary" onClick={() => setSigning(true)}>Sign estimate</button>}
         {(signedUrl || ((!signed || alreadySigned) && url)) && <a className="cm-secondary-btn" href={signedUrl || url} download={signed ? 'signed-estimate.pdf' : 'estimate.pdf'}>Download PDF</a>}
         <button className="cm-secondary-btn" disabled={signing || clearing} onClick={onClose} aria-label="Close estimate">Close</button>
       </div>

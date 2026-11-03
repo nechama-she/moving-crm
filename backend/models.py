@@ -547,6 +547,9 @@ class LeadJob(Base):
     # The customer page's service cards as last built, and a fingerprint of everything they were built from.
     pricing_options_cache = Column(Text)
     pricing_options_key = Column(String(64))
+    # The estimate copy a rep approved for signing; any saved change to the estimate clears it (estimate_approval.py).
+    estimate_approved_id = Column(String(36))
+    estimate_approved_at = Column(DateTime)
     lead_id = Column(String(36), ForeignKey("leads.id"), nullable=False, index=True)
     company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
     dispatch_company_id = Column(String(36), ForeignKey("companies.id"), nullable=True, index=True)
