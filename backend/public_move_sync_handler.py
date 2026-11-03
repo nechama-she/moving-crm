@@ -11,6 +11,7 @@ from botocore.config import Config
 from fastapi import HTTPException
 
 from database import SessionLocal
+import estimate_approval  # noqa: F401  Report results that change an estimate clear a rep's approval.
 from models import LeadAttachment, LeadLiveSwitch, PublicMoveAccess, PublicMoveUpload, User
 from realtime import publish_report_update
 

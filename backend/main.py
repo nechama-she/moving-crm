@@ -15,6 +15,7 @@ from starlette.routing import Match
 from auth import decode_access_token, get_current_user, is_token_valid, require_admin
 from config import get_config
 from database import SessionLocal
+import estimate_approval  # noqa: F401  Saved changes to an estimate clear a rep's approval.
 from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
 from models import AccessAuditLog, Lead, User
 from access_errors import capture_response_error, exception_message, audit_body

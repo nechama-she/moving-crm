@@ -5,6 +5,7 @@ from decimal import Decimal
 from io import BytesIO
 from math import ceil
 import json
+import re
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -82,12 +83,101 @@ def money(value):
     return f"${Decimal(str(value or 0)):,.2f}"
 
 
-def charge_text(row):
-    """Detail-section charge, showing the price before any discount."""
-    if row.get('discount_amount'):
-        return (f"charge {money(row.get('subtotal'))}; discount ({row.get('discount_percent') or 0:g}%): "
-                f"-{money(row['discount_amount'])}; total {money(row.get('total'))}")
-    return f"charge {money(row.get('total'))}"
+def _is_service(charge):
+    """Service and fee lines have ids made from the job and the service; the plan's own lines are random."""
+    from uuid import UUID
+    try:
+        return UUID(str(charge.get('id'))).version != 4
+    except ValueError:
+        return bool(charge.get('id'))
+
+
+def _services_total(estimate):
+    lines = [charge for charge in estimate.get('charges') or [] if _is_service(charge)]
+    return lines, sum(float(charge.get('total') or 0) for charge in lines), any(charge.get('pending') for charge in lines)
+
+
+def _services_table(data, p, table, styles):
+    """Additional services and fees: each answer with its charge, then the other service lines, and their total."""
+    from routes.pricing import customer_packing_charge_id
+    lines, total, pending = _services_total(data['estimate'])
+    by_id = {charge.get('id'): charge for charge in lines}
+    job_id = data.get('job_id')
+    shown = set()
+    def charge_of(key):
+        charge = by_id.get(customer_packing_charge_id(job_id, key)) if job_id else None
+        if charge is None:
+            return 'No charge'
+        shown.add(charge.get('id'))
+        if charge.get('pending'):
+            return 'Pending'
+        if charge.get('discount_amount'):
+            # As on the customer page: the price before the discount crossed out, then the price, then the discount.
+            title = (data.get('discount_titles') or {}).get(charge.get('id')) or 'Discount'
+            return [Paragraph(f"<strike>{money(charge.get('subtotal'))}</strike>  <b>{money(charge.get('total'))}</b>", styles['RightEstimate']),
+                    p(f"{title}: -{money(charge['discount_amount'])} ({charge.get('discount_percent') or 0:g}%)", 'NoteEstimate')]
+        return amount(charge.get('total'))
+    def charge_cell(key):
+        value = charge_of(key)
+        return value if isinstance(value, list) else p(value, 'RightEstimate')
+    def amount(value):
+        return money(value) if float(value or 0) else 'No charge'
+    def service(name, terms):
+        return [p(name)] + ([p(terms, 'NoteEstimate')] if terms else [])
+    body = [[p('SERVICE'), p('DETAILS'), p('CHARGE', 'RightEstimate')]]
+    stops = data.get('extra_stops')
+    for group in (stops or {}).get('locations', []):
+        terms = f"{group['free_miles']:g} miles free; ${group['stop_fee']:.2f} per chargeable stop plus ${group['per_mile']:.2f} per mile beyond the allowance."
+        answer = '\n'.join(row['address'] + (f" - {row['miles']} miles" if row.get('miles') is not None else ' - distance pending')
+                           for row in group['stops']) or (f"No extra {group['location']} stops" if group['answer'] is False else 'Not answered')
+        amounts = [row['total'] for row in group['stops']]
+        for row in group['stops']:
+            shown.update(charge.get('id') for charge in lines if str(charge.get('id', '')).startswith('extra-stop:'))
+        cost = 'Pending' if any(value is None for value in amounts) else amount(sum(amounts))
+        body.append([service('Extra ' + group['location'] + ' stops', terms), p(answer, 'NoteEstimate'), p(cost, 'RightEstimate')])
+    elevator = data.get('elevator')
+    for row in (elevator or {}).get('locations', []):
+        answer = ('Not sure - pending confirmation' if row.get('unknown') else 'Elevator used' if row['uses_elevator']
+                  else 'No elevator' if row['uses_elevator'] is not None else 'Not answered')
+        body.append([service('Elevator - ' + row['location'], elevator['terms']), p(answer, 'NoteEstimate'),
+                     charge_cell('elevator:' + row['location'])])
+    carry = data.get('long_carry')
+    for row in (carry or {}).get('locations', []):
+        answer = ('Truck access unknown - pending confirmation' if row.get('unknown')
+                  else f"{row['distance_feet']} feet" if row['distance_feet'] is not None else 'Not answered')
+        terms = f"First {carry['included_feet']} feet included; ${carry['rate_per_cuft']:.2f} per cu ft per additional {carry['increment_feet']} feet."
+        body.append([service('Long carry - ' + row['location'], terms), p(answer, 'NoteEstimate'),
+                     charge_cell('long_carry:' + row['location'])])
+    stairs = data.get('stairs')
+    for row in (stairs or {}).get('locations', []):
+        answer = ('Not sure - pending confirmation' if row.get('unknown') else 'Not answered' if row['flights'] is None
+                  else 'No stairs' if not row['flights'] else f"{row['flights']} flight" + ('' if row['flights'] == 1 else 's'))
+        terms = f"Up to {stairs['steps_per_flight']} steps is one flight; {stairs['free_flights']} free per address; ${stairs['rate_per_cuft']:.2f} per cu ft per additional flight."
+        body.append([service('Stairs - ' + row['location'], terms), p(answer, 'NoteEstimate'),
+                     charge_cell('stairs:' + row['location'])])
+    storage = data.get('storage')
+    if storage:
+        answer = (f"Earliest delivery date: {storage.get('available_date') or 'Not answered'}"
+                  + (f"\n{storage['paid_periods']} paid period(s)" if storage.get('valid') else ''))
+        terms = f"First {storage['free_days']} days free; ${storage['rate_per_cuft']:.2f} per cu ft per additional {storage['period_days']} days."
+        body.append([service('Storage', terms), p(answer, 'NoteEstimate'), charge_cell('storage-periods')])
+    shuttle = data.get('shuttle')
+    if shuttle:
+        answer = ('Shuttle required for this delivery area' if shuttle['automatic']
+                  else {True: 'Semi-trailer can park at delivery: Yes', False: 'Semi-trailer can park at delivery: No - shuttle required'}.get(shuttle.get('answer'), 'Not answered'))
+        body.append([service('Delivery truck access', None), p(answer, 'NoteEstimate'), charge_cell('shuttle')])
+    # Lines with no answer of their own: packing, materials, item services, mileage fees.
+    for charge in lines:
+        if charge.get('id') in shown or (not charge.get('pending') and not charge.get('total')):
+            continue
+        cost = 'Pending' if charge.get('pending') else amount(charge['total'])
+        body.append([service(charge['name'], None), p(charge.get('description') or '', 'NoteEstimate'), p(cost, 'RightEstimate')])
+    body.append([p('TOTAL ADDITIONAL SERVICES AND FEES'), p('Includes charges pending calculation' if pending else '', 'NoteEstimate'),
+                 p(money(total), 'RightEstimate')])
+    services = table(body, [170, 257, 95], header=True)
+    services.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), .4, colors.HexColor('#bdc9d0')),
+                                  ('BACKGROUND', (0, len(body) - 1), (-1, len(body) - 1), colors.HexColor('#edf2f5'))]))
+    return services
 
 
 def _kit(size):
@@ -119,8 +209,8 @@ def _template(output, company):
                              bottomMargin=53, title='Moving estimate', author=company.get('name') or '')
 
 
-def _summary(data, styles, p, table):
-    """Details, price breakdown and customer note: the part that belongs on page one."""
+def _summary(data, styles, p, table, link=True):
+    """Details, price breakdown, customer note and signature: the part that belongs on page one."""
     company = data.get('company_details') or {}
     estimate = data['estimate']
     from inventory_pdf import company_logo_image
@@ -148,12 +238,24 @@ def _summary(data, styles, p, table):
     charges = [[p('ITEM'), p('RATE / BASIS'), p('COST', 'RightEstimate')]]
     for charge in estimate.get('charges') or []:
         # Zero lines, including ones discounted to zero, are explained in their detail section.
-        if not charge.get('pending') and not charge.get('total'):
+        if _is_service(charge) or (not charge.get('pending') and not charge.get('total')):
             continue
         basis = charge.get('description') or 'Not specified'
+        rate = re.fullmatch(r'\$([\d,]+\.\d{2}) per cu ft(.*)', basis) if charge.get('name') == 'Transportation charge' else None
+        if rate:
+            basis = f"{float(estimate.get('cuft') or 0):,.2f} cuft @ ${rate[1]} per cuft{rate[2]}"
         if charge.get('discount_amount', 0) > 0:
             basis += f"\nBefore discount: {money(charge['subtotal'])}\nDiscount ({charge['discount_percent']:g}%): -{money(charge['discount_amount'])}"
         charges.append([p(charge['name']), p(basis, 'NoteEstimate'), p('Pending' if charge.get('pending') else money(charge['total']), 'RightEstimate')])
+    service_lines, service_total, service_pending = _services_total(estimate)
+    if service_lines:
+        # A link to the services table further down.
+        # Measuring page one builds it alone, without the table to link to; the text takes the same room.
+        text = 'See Additional services and fees'
+        text = f'<a href="#additional-services" color="#1a5fb4"><u>{text}</u></a>' if link else f'<u>{text}</u>'
+        link = Paragraph(text + (' (includes pending charges)' if service_pending else ''), styles['NoteEstimate'])
+        charges.append([p('Additional services and fees'), link,
+                        p(money(service_total), 'RightEstimate')])
     if len(charges) == 1:
         charges.append([p('Moving estimate'), p('Not specified', 'NoteEstimate'), p(money(estimate['price']), 'RightEstimate')])
     charge_table = table(charges, [180, 247, 95], header=True)
@@ -165,25 +267,47 @@ def _summary(data, styles, p, table):
     note = (data.get('customer_notes') or '').strip()
     if note:
         story += [p('Notes', 'SectionEstimate'), p(note)]
+    story.append(_signature_block(data, p))
     return story
+
+
+def _signature_block(data, p):
+    """The client's signature under the price breakdown and note, on page one: an empty line to sign
+    on, or the signature once signed."""
+    from reportlab.graphics.shapes import Drawing, PolyLine
+    signature = data.get('signature')
+    width, height = 260, 64
+    if signature:
+        drawing = Drawing(width, height)
+        for stroke in signature['strokes']:
+            drawing.add(PolyLine([coordinate for x, y in stroke for coordinate in (x * width, (1 - y) * height)],
+                                 strokeColor=NAVY, strokeWidth=1.5))
+        line = Table([[drawing]], colWidths=[width], rowHeights=[height], hAlign='LEFT')
+        details = [p(signature['name']), p('Signed: ' + signature['signed_at'], 'NoteEstimate'),
+                   p('Estimate version: ' + signature['estimate_id'], 'NoteEstimate')]
+    else:
+        line = Table([['']], colWidths=[width], rowHeights=[height], hAlign='LEFT')
+        details = [p('Name and date are added when you sign.', 'NoteEstimate')]
+    line.setStyle(TableStyle([('LINEBELOW', (0, 0), (-1, -1), .8, MUTED), ('LEFTPADDING', (0, 0), (-1, -1), 0)]))
+    return KeepTogether([p('Client signature', 'SectionEstimate'),
+                         p('I have reviewed this estimate and agree to sign it electronically.'), line, *details])
 
 
 def _summary_pages(data, size):
     doc = _template(BytesIO(), {})
-    doc.build(_summary(data, *_kit(size)))
+    doc.build(_summary(data, *_kit(size), link=False))
     return doc.page
 
 
 def build_estimate_pdf(data, rows):
     output = BytesIO()
-    navy, muted = NAVY, MUTED
+    muted = MUTED
     size = next((size for size in FONT_SIZES if _summary_pages(data, size) == 1), FONT_SIZES[-1])
     styles, p, table = _kit(size)
     company = data.get('company_details') or {}
     package = data.get('packing_package') or {}
     story = _summary(data, styles, p, table)
     story.append(p('Declared inventory', 'SectionEstimate'))
-    story.append(p('Volume and weight reflect items going. Item answers and instructions appear directly below the relevant item. A dash means the weight was not recorded.', 'NoteEstimate'))
     rooms = defaultdict(list)
     entries_all = compact_inventory_entries(inventory_entries(rows, data.get('item_questions') or [], data.get('item_services')))
     for entry in entries_all:
@@ -192,19 +316,17 @@ def build_estimate_pdf(data, rows):
         going = sum(e['quantity'] for e in entries if not e['excluded'])
         not_going = sum(e['quantity'] for e in entries if e['excluded'])
         volume = sum(e['cuft'] for e in entries)
-        weight = f"{sum(e['weight'] or 0 for e in entries):,.2f} lbs" if all(e['weight'] is not None for e in entries) else 'Not fully recorded'
-        return f"Going: {going}   |   Not going: {not_going}   |   Volume: {volume:,.2f} cu ft   |   Weight: {weight}"
+        return f"Going: {going}   |   Not going: {not_going}   |   Volume: {volume:,.2f} cu ft"
     for room, entries in rooms.items():
-        body = [[p(room + '\n' + totals(entries)), '', '', '', ''],
-                [p(label, 'NoteEstimate') for label in ['ITEM', 'GOING', 'NOT GOING', 'CU FT', 'LB']]]
+        body = [[p(room + '\n' + totals(entries)), '', '', ''],
+                [p(label, 'NoteEstimate') for label in ['ITEM', 'GOING', 'NOT GOING', 'CU FT']]]
         commands = [('SPAN', (0, 0), (-1, 0)), ('BACKGROUND', (0, 0), (-1, 1), colors.HexColor('#edf2f5'))]
         for entry in entries:
             item_row = len(body)
             item_text = [p(entry['label'])] + [p(note, 'NoteEstimate') for note in entry.get('service_notes', [])]
             body.append([item_text, p(str(0 if entry['excluded'] else entry['quantity']), 'RightEstimate'),
                          p(str(entry['quantity'] if entry['excluded'] else 0), 'RightEstimate'),
-                         p(f"{entry['cuft']:,.2f}", 'RightEstimate'),
-                         p(f"{entry['weight']:,.2f}" if entry['weight'] is not None else '-', 'RightEstimate')])
+                         p(f"{entry['cuft']:,.2f}", 'RightEstimate')])
             for question in entry['questions']:
                 saved = question.get('saved') or {}
                 notes = [str(saved.get('question') or question['question']) + '\nAnswer: ' + (saved.get('answer') or 'Not answered')]
@@ -216,12 +338,12 @@ def build_estimate_pdf(data, rows):
                     notes.append('Customer acknowledged these instructions.')
                 for note in notes:
                     row_index = len(body)
-                    body.append([p(note, 'NoteEstimate'), '', '', '', ''])
+                    body.append([p(note, 'NoteEstimate'), '', '', ''])
                     commands += [('SPAN', (0, row_index), (-1, row_index)),
                                  ('BACKGROUND', (0, row_index), (-1, row_index), colors.HexColor('#f8fafb'))]
             if entry['questions']:
                 commands.append(('NOSPLIT', (0, item_row), (-1, item_row + 1)))
-        room_table = Table(body, colWidths=[272, 50, 58, 71, 71], repeatRows=2, splitInRow=1, hAlign='LEFT')
+        room_table = Table(body, colWidths=[343, 50, 58, 71], repeatRows=2, splitInRow=1, hAlign='LEFT')
         room_table.setStyle(TableStyle([
             ('GRID', (0, 0), (-1, -1), .4, colors.HexColor('#bdc9d0')),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
@@ -231,64 +353,9 @@ def build_estimate_pdf(data, rows):
         story += [room_table, Spacer(1, 7)]
     story.append(p('Inventory totals', 'SectionEstimate'))
     story.append(p(totals(entries_all)))
-    if data.get('extra_stops'):
-        story.append(p('Additional stops', 'SectionEstimate'))
-        for group in data['extra_stops']['locations']:
-            group_content = []
-            group_content.append(p('Extra ' + group['location'] + ' stops', 'SectionEstimate'))
-            group_content.append(p(f"Mileage from {group['origin']}. {group['free_miles']:g} miles free; ${group['stop_fee']:.2f} per chargeable stop plus ${group['per_mile']:.2f} per mile beyond the allowance.", 'NoteEstimate'))
-            if not group['stops']:
-                group_content.append(p('None' if group['answer'] is False else 'Not answered', 'NoteEstimate'))
-            for row in group['stops']:
-                detail = f"{row['miles']} driving miles; {money(row['total'])}" if row['total'] is not None else 'Mileage and fee pending'
-                group_content.append(p(row['address'] + ' - ' + detail, 'NoteEstimate'))
-            story.append(KeepTogether(group_content))
-    if data.get('elevator'):
-        elevator = data['elevator']
-        story.append(p('Elevator use', 'SectionEstimate'))
-        story.append(p(elevator['terms'] + '. Fee applies at each address where an elevator is used.', 'NoteEstimate'))
-        for row in elevator['locations']:
-            answer = ('Yes' if row['uses_elevator'] else 'No') + f"; {charge_text(row)}" if row['uses_elevator'] is not None else 'Not answered - elevator charges may apply'
-            if row.get('unknown'):
-                answer = 'Customer does not know - elevator use and any applicable charge are pending confirmation.'
-            story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
-    if data.get('long_carry'):
-        carry = data['long_carry']
-        story.append(p('Long carry', 'SectionEstimate'))
-        story.append(p(f"First {carry['included_feet']} feet included at each address. Each additional {carry['increment_feet']} feet or part thereof costs ${carry['rate_per_cuft']:.2f} per cu ft. Distance follows the walking route between the parked truck and the entrance.", 'NoteEstimate'))
-        for row in carry['locations']:
-            answer = f"{row['distance_feet']} feet; {charge_text(row)}" if row['distance_feet'] is not None else 'Not answered - long carry charges may apply'
-            if row.get('unknown') and row.get('acknowledged'):
-                answer = 'Truck access unknown. Customer acknowledged long carry charges if the included distance is exceeded. Final charge pending distance confirmation.'
-            story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
-    if data.get('stairs'):
-        stairs = data['stairs']
-        story.append(p('Outdoor and building stairs', 'SectionEstimate'))
-        story.append(p(f"Up to {stairs['steps_per_flight']} steps counts as one flight. {stairs['free_flights']} free flight(s) at each address; ${stairs['rate_per_cuft']:.2f} per cu ft per additional flight. Stairs inside the house or apartment are excluded.", 'NoteEstimate'))
-        for row in stairs['locations']:
-            answer = f"{row['flights']} flight(s); {charge_text(row)}" if row['flights'] is not None else 'Not answered - stair charges may apply'
-            if row.get('unknown'):
-                answer = 'Customer does not know - stairs and any applicable charge are pending confirmation.'
-            story.append(p(row['location'].title() + ': ' + answer, 'NoteEstimate'))
-    if data.get('storage'):
-        storage = data['storage']
-        story.append(p('Delivery availability and storage', 'SectionEstimate'))
-        story.append(p(storage['question']))
-        story.append(p('Earliest available date: ' + (storage.get('available_date') or 'Not answered'), 'NoteEstimate'))
-        story.append(p(f"First {storage['free_days']} days after pickup free; ${storage['rate_per_cuft']:.2f} per cu ft for each additional {storage['period_days']} days or part thereof.", 'NoteEstimate'))
-        if storage['valid']:
-            story.append(p(f"{storage['paid_periods']} paid period(s). Storage charge: {money(storage['total'])}.", 'NoteEstimate'))
-        else:
-            story.append(p('A valid earliest delivery date is needed to determine storage charges.', 'NoteEstimate'))
-    if data.get('shuttle'):
-        shuttle = data['shuttle']
-        story.append(p('Delivery truck access', 'SectionEstimate'))
-        if shuttle['automatic']:
-            story.append(p('Delivery shuttle required for this delivery area.', 'NoteEstimate'))
-        else:
-            story.append(p(shuttle['question']))
-            answer = shuttle.get('answer')
-            story.append(p('Answer: ' + ('Yes' if answer is True else 'No - shuttle required' if answer is False else 'Not answered - shuttle charges may apply'), 'NoteEstimate'))
+    if _services_total(data['estimate'])[0] or any(data.get(key) for key in ('extra_stops', 'elevator', 'long_carry', 'stairs', 'storage', 'shuttle')):
+        story += [Paragraph('<a name="additional-services"/>Additional services and fees', styles['SectionEstimate']),
+                  _services_table(data, p, table, styles)]
     general = [q for q in data.get('item_questions', []) if q.get('all_items')
                and not (q.get('saved') or {}).get('selected_items')]
     if general:
@@ -329,17 +396,6 @@ def build_estimate_pdf(data, rows):
     for document in data.get('documents', []):
         story.append(PageBreak())
         story.extend(pdf_document_flowables(document, styles))
-    signature = data.get('signature')
-    if signature:
-        from reportlab.graphics.shapes import Drawing, PolyLine
-        drawing = Drawing(480, 150)
-        for stroke in signature['strokes']:
-            drawing.add(PolyLine([coordinate for x, y in stroke for coordinate in (x * 480, (1 - y) * 150)],
-                                strokeColor=navy, strokeWidth=1.5))
-        story += [PageBreak(), p('Client Signature', 'SectionEstimate'),
-                  p('I have reviewed this estimate and agree to sign it electronically.'), drawing,
-                  p(signature['name']), p('Signed: ' + signature['signed_at'], 'NoteEstimate'),
-                  p('Estimate version: ' + signature['estimate_id'], 'NoteEstimate')]
     def footer(canvas, doc):
         canvas.saveState()
         canvas.setStrokeColor(colors.HexColor('#dce4e8'))

@@ -77,6 +77,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-import estimate_approval  # noqa: E402,F401  Saved changes clear a rep's estimate approval, in every session.
