@@ -330,3 +330,5 @@
 
 /* Extra phones and emails in the move details form. */
 .cm-extra-contact{display:flex;gap:8px;align-items:end}.cm-extra-contact label{flex:1}.cm-add-contact{justify-self:start;align-self:start}
+/* The transportation package subtotal, where one discount for its lines is set. */
+.cm-estimate-charges-grid .cm-package-subtotal{background:var(--cm-tint);padding-left:8px;padding-right:8px}

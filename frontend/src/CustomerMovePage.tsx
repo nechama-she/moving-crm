@@ -13,8 +13,8 @@ import { groupTerms, needsTermAnswer, requiredQuestionTarget } from './customerQ
 import QuestionReferenceImages from "./QuestionReferenceImages";
 import { savedPhotos, storePhoto, removePhoto } from './photoDrafts';
 import ManualInventoryModal from "./ManualInventoryModal";
-import EstimateSigning from './EstimateSigning';
-import EstimateViewer from './EstimateViewer';
+import EstimateSigning, { type SignResult } from './EstimateSigning';
+import EstimateViewer, { type SignatureRemoved } from './EstimateViewer';
 import InventoryViewer from './InventoryViewer';
 import type { EditableReportFile } from "./ReportFileList";
 import ReportFileGallery from "./ReportFileGallery";
@@ -23,7 +23,7 @@ import CustomerPackingOptions, { type PackingPackage, type PackingSelection } fr
 import MeetingTimePicker from "./MeetingTimePicker";
 import { useCustomerUpdates } from './useCustomerUpdates';
 import { browserDrivingMeters, browserPricingLocation } from './googlePlaces';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readCustomerBootstrap } from './customerBootstrap';
 import { useParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
@@ -59,7 +59,7 @@ type Details = {
   combined_inventory?: {name:string;room?:string;amount?:number;quantity?:number;cuft?:number;unit_cuft?:number;reference_name?:string}[];
   report_history?: ReportRun[];
   signature_status?: 'unsigned' | 'signed' | 'changed';
-  // Rep pages only: the estimate is signed and a payment is entered in the CRM.
+  // Rep pages only: the estimate is signed.
   work_order_available?: boolean;
   signature_requires_resign?: boolean;
   estimate_needs_update?: boolean;
@@ -612,7 +612,15 @@ export default function CustomerMovePage() {
     }
   }
   const [estimatePdfUrl, setEstimatePdfUrl] = useState('');
-  async function openEstimate() {
+  // After Re-sign clears the signature: the status it answered with, the signature off its report, then the current
+  // estimate (a new copy if anything changed).
+  function openCurrentEstimate(result: SignatureRemoved) {
+    setData(previous => previous ? {...previous, signature_status: result.signature_status,
+      signature_requires_resign: result.signature_status === 'changed', work_order_available: result.work_order_available,
+      report_history: previous.report_history?.map(report => ({...report, signatures: (report.signatures || []).filter(item => item.id !== result.removed_id)}))} : previous);
+    void openEstimate(true);
+  }
+  async function openEstimate(current = false) {
     setPdfError('');
     if(data?.unanswered_questions?.length) {
       openRequiredQuestions(data.unanswered_questions);
@@ -631,7 +639,7 @@ export default function CustomerMovePage() {
     setPreparedApproved(false);
     try {
       // Signed: open the signed copy as saved. Otherwise a new estimate from what the page shows.
-      const prepared = data?.signature_status === 'signed'
+      const prepared = data?.signature_status === 'signed' && !current
         ? {id: (await call('/estimate-signatures')).items[0]?.id as string, signed: true}
         : await call('/estimate-signatures', {});
       if (!prepared.id) throw new Error('Could not find the signed estimate. Please try again.');
@@ -664,19 +672,13 @@ export default function CustomerMovePage() {
     return response.blob();
   }
   // Show a signature on its report row as soon as the estimate viewer closes.
-  // The signature status and the report history load separately, so one failing never keeps the other stale.
-  async function refreshSignatureStatus() {
-    try {
-      const next = await call('/sections/pricing');
-      setData(previous => previous ? {...previous, signature_status: next.signature_status, signature_requires_resign: next.signature_requires_resign, work_order_available: next.work_order_available} : previous);
-    } catch { /* The status refreshes with the next page load. */ }
-  }
-  async function refreshReportHistory() {
-    void refreshSignatureStatus();
-    try {
-      const history = await call('/sections/inventory');
-      setData(previous => previous ? {...previous, report_history: history.report_history} : previous);
-    } catch { /* The history refreshes with the next page load. */ }
+  // A new signature: the estimate is signed, the signature joins its report in the history, and the work order may show.
+  function showSignature(signature: SignResult) {
+    const row = { id: signature.id, name: signature.name, signed_at: signature.signed_at };
+    setData(previous => previous ? {...previous, signature_status: 'signed', signature_requires_resign: false,
+      work_order_available: signature.work_order_available,
+      report_history: previous.report_history?.map(report => report.id === signature.report_id
+        ? {...report, signatures: [row, ...(report.signatures || []).filter(item => item.id !== signature.id)]} : report)} : previous);
   }
   async function call(path:string, body?:unknown, method?:string) {
     const httpMethod = method || (body===undefined ? 'GET' : 'POST');
@@ -1372,13 +1374,36 @@ export default function CustomerMovePage() {
                     <div className="cm-estimate-breakdown-title">Price breakdown</div>
                   </div>
                   <div className="cm-estimate-charges-grid">
-                    {groupedCharges().map((charge, idx) => {
+                    {(() => {
+                      // The transportation package: right after its lines, their subtotal, where the rep sets one discount
+                      // that is saved on each line. Customers see the subtotal when the lines have a discount.
+                      const packageNames = ['Transportation charge', 'Fuel surcharge', 'Origin destination & administration Fee'];
+                      const rows = groupedCharges();
+                      const lastPackage = rows.reduce((last, charge, index) => packageNames.includes(charge.name) ? index : last, -1);
+                      const packageRows = rows.filter(charge => packageNames.includes(charge.name));
+                      const packageAfter = packageRows.reduce((sum, charge) => sum + charge.total, 0);
+                      const packageBefore = packageRows.reduce((sum, charge) => sum + ((charge.discount_amount || 0) > 0 ? charge.subtotal || 0 : charge.total), 0);
+                      const packageDiscount = Math.round((packageBefore - packageAfter) * 100) / 100;
+                      return rows.map((charge, idx) => {
                       const target = charge.target;
-                      return (
-                      <div key={idx} className="cm-estimate-charge-row">
+                      // The package lines show their price before the discount, without its note; the discount is shown
+                      // and set once, on their subtotal.
+                      const inPackage = packageNames.includes(charge.name);
+                      const discounted = !charge.children && (charge.discount_amount || 0) > 0;
+                      const description = inPackage ? charge.description.replace(/ \| [^|]*: -\$[\d,]+\.\d{2}( \(new rate [^)]*\))?$/, '') : charge.description;
+                      const subtotal = idx === lastPackage && (repPage || packageDiscount > 0) ? <div className="cm-estimate-charge-row cm-package-subtotal">
+                        <div><strong>Subtotal</strong>{packageDiscount > 0 && <small>Discount: -{money(packageDiscount)} ({Math.round(packageDiscount / packageBefore * 1000) / 10}%)</small>}</div>
+                        <div className="cm-line-price">
+                          {packageDiscount > 0 && <del>{money(packageBefore)}</del>}
+                          <strong>{money(packageAfter)}</strong>
+                          {repPage && <RepDiscounts base={base} headers={headers} onSaved={applyDiscount} chargeId="package" chargeName="Subtotal" />}
+                        </div>
+                      </div> : null;
+                      return (<Fragment key={idx}>
+                      <div className="cm-estimate-charge-row">
                         <div>
                           <strong>{charge.name}{target && <button type="button" className="cm-charge-edit" aria-label={`Edit ${charge.name}`} title={`Edit ${charge.name}`} onClick={() => openChargeQuestion(target)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z M13 6l5 5"/></svg></button>}</strong>
-                          {charge.description && <small>{charge.description}</small>}
+                          {description && <small>{description}</small>}
                           {charge.children?.map((child, index) => <div key={index}>
                             {child.heading && <strong className="cm-charge-subheading">{child.heading}</strong>}
                             <div className="cm-stop-charge-detail" style={{paddingLeft: 12}}>
@@ -1395,19 +1420,21 @@ export default function CustomerMovePage() {
                           </div>)}
                         </div>
                         <div className="cm-line-price">
-                          {!charge.children && (charge.discount_amount || 0) > 0 && <del>{money(charge.subtotal || 0)}</del>}
-                          {charge.pending && !charge.children ? 'Pending' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(charge.total)}{charge.children && charge.pending && <small> + pending</small>}
-                          {repPage && charge.id && !charge.children && !charge.pending && <RepDiscounts base={base} headers={headers} onSaved={applyDiscount} chargeId={charge.id} chargeName={charge.name} />}
+                          {discounted && !inPackage && <del>{money(charge.subtotal || 0)}</del>}
+                          {charge.pending && !charge.children ? 'Pending' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(discounted && inPackage ? charge.subtotal || 0 : charge.total)}{charge.children && charge.pending && <small> + pending</small>}
+                          {repPage && charge.id && !charge.children && !charge.pending && !inPackage && <RepDiscounts base={base} headers={headers} onSaved={applyDiscount} chargeId={charge.id} chargeName={charge.name} />}
                         </div>
                       </div>
-                    );})}
+                      {subtotal}
+                    </Fragment>);});
+                    })()}
                   </div>
                 </div>
               )}
 
               {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
-              {estimateViewerOpen && <EstimateViewer filename={pdfName('Estimate')} onSignatureRemoved={() => void refreshSignatureStatus()} alreadySigned={preparedSigned} approved={preparedApproved} rep={repPage} onApproved={() => setPreparedApproved(true)} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => { setEstimateViewerOpen(false); void refreshReportHistory(); }} />}
+              {estimateViewerOpen && <EstimateViewer key={preparedEstimate} filename={pdfName('Estimate')} onSignatureRemoved={openCurrentEstimate} onSigned={showSignature} alreadySigned={preparedSigned} approved={preparedApproved} rep={repPage} onApproved={() => setPreparedApproved(true)} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => setEstimateViewerOpen(false)} />}
               {(data.estimate_needs_update || data.list_changed) && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}
               <ReportHistory signatureStatus={data.signature_status} requiresResign={data.signature_status === 'changed'} reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} fetchSignedPdf={fetchSignedPdf} />
               {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}

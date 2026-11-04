@@ -884,9 +884,8 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
         db, access.lead_id, access.job_id, estimate_data, None, inventory_pending=estimate_needs_update)
     pricing_data['estimate_needs_update'] = estimate_needs_update
     pricing_data['signature_requires_resign'] = pricing_data['signature_status'] == 'changed'
-    # Rep pages show every price line (individual_charges), and only they get the work order.
-    pricing_data['work_order_available'] = bool(individual_charges and pricing_data['signature_status'] == 'signed' and db.query(
-        LeadPayment.id).filter(LeadPayment.lead_id == lead.id, LeadPayment.source == 'crm').first())
+    # Rep pages show every price line (individual_charges), and only they get the work order, once the estimate is signed.
+    pricing_data['work_order_available'] = bool(individual_charges and pricing_data['signature_status'] == 'signed')
     if pricing_only:
         return pricing_data
     return {'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
@@ -1108,7 +1107,7 @@ def signature_pdf(signature_id: str, access: PublicMoveAccess = Depends(verified
 
 
 @router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/sign')
-def sign_estimate(signature_id: str, body: EstimateSigningInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def sign_estimate(signature_id: str, body: EstimateSigningInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
     from estimate_pdf import build_estimate_pdf
     record = _signature_record(signature_id, access, db, lock=True)
     if record.signed_at:
@@ -1130,7 +1129,10 @@ def sign_estimate(signature_id: str, body: EstimateSigningInput, access: PublicM
     record.signer_name, record.signed_at = name, signed_at
     record.signature = json.dumps(signature)
     db.commit()
-    return {'id': record.id, 'signed_at': signed_at.isoformat() + 'Z'}
+    # The page shows the estimate signed from this answer, without loading its pricing again.
+    work_order = is_rep_request(access, request)
+    return {'id': record.id, 'name': name, 'signed_at': signed_at.isoformat() + 'Z', 'report_id': record.report_id,
+            'work_order_available': work_order}
 
 
 @router.get('/api/public-moves/{access_id}/work-order.pdf')
@@ -1143,8 +1145,8 @@ def work_order_pdf(access: PublicMoveAccess = Depends(verified), db: Session = D
         EstimateSignature.lead_id == access.lead_id, EstimateSignature.job_id == access.job_id,
         EstimateSignature.signed_at.isnot(None)).order_by(EstimateSignature.signed_at.desc()).first()
     payments = db.query(LeadPayment).filter(LeadPayment.lead_id == access.lead_id, LeadPayment.source == 'crm').order_by(LeadPayment.sort_order).all()
-    if not record or not payments:
-        raise HTTPException(409, 'The work order is ready once the estimate is signed and a payment is entered in the CRM.')
+    if not record:
+        raise HTTPException(409, 'The work order is ready once the estimate is signed.')
     job = db.get(LeadJob, access.job_id)
     snapshot = json.loads(record.snapshot)
     data = dict(snapshot['data'], signature=json.loads(record.signature))
@@ -1157,8 +1159,9 @@ def work_order_pdf(access: PublicMoveAccess = Depends(verified), db: Session = D
 
 
 @router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/resign')
-def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
     from estimate_pdf import build_estimate_pdf
+    from estimate_signature_history import estimate_signature_status
     record = _signature_record(signature_id, access, db, lock=True)
     snapshot = json.loads(record.snapshot)
     snapshot['data'].pop('signature', None)
@@ -1167,7 +1170,12 @@ def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depen
     record.pdf = pdf
     record.signer_name = record.signed_at = record.signature = None
     db.commit()
-    return Response(pdf, media_type='application/pdf', headers={'Cache-Control': 'private, no-store'})
+    # The page updates from this answer: the signature it removed and the estimate's status now. The current
+    # estimate is built only when another signed copy is left to compare with.
+    status = estimate_signature_status(db, access.lead_id, access.job_id,
+                                       lambda: _move_details(access, db, pricing_only=True, estimate_only=True), None)
+    work_order = status == 'signed' and is_rep_request(access, request)
+    return {'removed_id': record.id, 'signature_status': status, 'work_order_available': work_order}
 
 
 @router.get('/api/public-moves/{access_id}/inventory-catalog')
@@ -1288,9 +1296,27 @@ def rep_discount_options(request: Request, access: PublicMoveAccess = Depends(ve
     if not lead or not job or job.lead_id != lead.id:
         raise HTTPException(404, 'Move not found.')
     _, plan = infer_job_move_type(lead, job, db)
-    settings = json.loads(job.customer_packing_package or '{}').get('rep_discounts', {})
+    from rep_discounts import package_lines
+    selection = json.loads(job.customer_packing_package or '{}')
+    settings = selection.get('rep_discounts', {})
+    bases = selection.get('rep_discount_bases', {})
+    lines = package_lines(job.charges)
+    rules = [settings.get(row.id) for row in lines]
+    before = sum((Decimal(bases[row.id]['base']) if row.id in bases else Decimal(str(row.total_cost or 0)) for row in lines), Decimal(0))
+    # transportation: the editor offers the price sheet's named discounts and the reduced cu-ft rate here.
+    package = {'id': 'package', 'name': 'Subtotal', 'total': float(before), 'transportation': True, 'discount': None}
+    transport = next((settings.get(row.id) for row in lines if row.name == 'Transportation charge'), None)
+    if transport and transport['type'] == 'rate':
+        # A reduced rate is on the transportation line only.
+        package['discount'] = transport
+    elif lines and all(rules):
+        # The same percent on each line reads back as that percent; otherwise as the amount they take off together.
+        same = all(rule['type'] == 'percent' and rule['value'] == rules[0]['value'] for rule in rules)
+        after = sum((Decimal(str(row.total_cost or 0)) for row in lines), Decimal(0))
+        package['discount'] = {'title': rules[0]['title'], 'type': 'percent' if same else 'amount',
+                               'value': float(rules[0]['value']) if same else float(before - after)}
     return {'presets': [{'title': r.title, 'type': r.category[9:], 'value': float(r.description)} for r in (plan.rules if plan else []) if r.category in ('discount_amount', 'discount_percent', 'discount_rate')],
-            'charges': [{'id': c.id, 'name': c.name, 'total': float(c.total_cost or 0), 'transportation': c.name == 'Transportation charge', 'discount': settings.get(c.id)} for c in job.charges]}
+            'charges': ([package] if lines else []) + [{'id': c.id, 'name': c.name, 'total': float(c.total_cost or 0), 'transportation': c.name == 'Transportation charge', 'discount': settings.get(c.id)} for c in job.charges]}
 
 
 @router.post('/api/public-moves/{access_id}/rep-discounts')
@@ -1307,11 +1333,52 @@ def save_rep_discount(body: RepDiscountInput, request: Request, access: PublicMo
         raise HTTPException(404, 'Move not found.')
     if price_is_locked(lead, job):
         raise HTTPException(409, 'The price is locked for this booked or closed move.')
+    if body.type == 'percent' and body.value > 100:
+        raise HTTPException(422, 'Percentage cannot exceed 100.')
+    if body.charge_id == 'package':
+        # A discount on the subtotal is saved on each of its lines: the same percent on each, or the amount split
+        # by their prices before rep discounts, the last line taking the rounding.
+        from rep_discounts import package_lines
+        lines = package_lines(job.charges)
+        if not lines:
+            raise HTTPException(404, 'This estimate has no transportation lines to discount.')
+        selection = json.loads(job.customer_packing_package or '{}')
+        settings = selection.setdefault('rep_discounts', {})
+        bases = selection.get('rep_discount_bases', {})
+        prices = [Decimal(bases[row.id]['base']) if row.id in bases else Decimal(str(row.total_cost or 0)) for row in lines]
+        subtotal = sum(prices, Decimal(0))
+        title = body.title.strip() or 'Discount'
+        if body.remove:
+            for row in lines:
+                settings.pop(row.id, None)
+        elif body.type == 'rate':
+            # A reduced cu-ft rate changes the transportation line only; the other lines keep their price.
+            transport = next((row for row in lines if row.name == 'Transportation charge'), None)
+            if transport is None:
+                raise HTTPException(422, 'Cu-ft rate discounts apply to transportation only.')
+            for row in lines:
+                settings.pop(row.id, None)
+            settings[transport.id] = {'title': title, 'type': 'rate', 'value': str(body.value), 'volume': ceil(lead.volume or 0)}
+        elif body.type == 'percent':
+            for row in lines:
+                settings[row.id] = {'title': title, 'type': 'percent', 'value': str(body.value), 'volume': ceil(lead.volume or 0)}
+        else:
+            amount = min(subtotal, max(Decimal(0), subtotal - body.value if body.type == 'total' else body.value))
+            left = amount
+            for index, (row, price) in enumerate(zip(lines, prices)):
+                share = left if index == len(lines) - 1 else (amount * price / subtotal).quantize(Decimal('.01')) if subtotal else Decimal(0)
+                left -= share
+                settings[row.id] = {'title': title, 'type': 'amount', 'value': str(share), 'volume': ceil(lead.volume or 0)}
+        job.customer_packing_package = json.dumps(selection)
+        _refresh_lead_estimated_total(lead.id, db)
+        db.commit()
+        db.refresh(job)
+        db.refresh(access)
+        price = customer_price(job)
+        return {'saved': True, 'price': str(price) if price is not None else None, 'charges': estimate_charges(job, individual_charges=True)}
     charge = db.query(LeadJobCharge).filter_by(id=body.charge_id, job_id=job.id).first()
     if not charge:
         raise HTTPException(404, 'Charge not found.')
-    if body.type == 'percent' and body.value > 100:
-        raise HTTPException(422, 'Percentage cannot exceed 100.')
     if body.type == 'rate' and charge.name != 'Transportation charge':
         raise HTTPException(422, 'Cu-ft rate discounts apply to transportation only.')
     selection = json.loads(job.customer_packing_package or '{}')

@@ -11,6 +11,14 @@ from database import engine
 logger = logging.getLogger("migrate")
 
 
+def add_column(connection, table, column, kind):
+    """Adds the column only when it is missing: the ALTER locks the whole table even when the column exists,
+    which on a live database waits on (or deadlocks with) the requests using it."""
+    if not connection.execute(text("SELECT 1 FROM information_schema.columns WHERE table_name = :table AND column_name = :column"),
+                              {'table': table, 'column': column}).first():
+        connection.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {kind}'))
+
+
 def migrate() -> None:
     with engine.begin() as connection:
         from models import InventoryCatalogSet, EstimateSignature, CompanyDocument
@@ -18,7 +26,7 @@ def migrate() -> None:
         from company_documents import seed_documents
         seed_documents(connection)
         EstimateSignature.__table__.create(connection, checkfirst=True)
-        connection.execute(text('ALTER TABLE estimate_signatures ADD COLUMN IF NOT EXISTS report_id TEXT'))
+        add_column(connection, 'estimate_signatures', 'report_id', 'TEXT')
         InventoryCatalogSet.__table__.create(connection, checkfirst=True)
         from pickup_areas import migrate_pickup_regions
         logger.info("Copied %s pricing pickup area rows", migrate_pickup_regions(connection))
@@ -138,26 +146,27 @@ def migrate() -> None:
                     WHERE fee.job_id = lead_job_charges.job_id AND fee.name = 'Origin destination & administration Fee')
             """)).rowcount
             logger.info("Renamed %s administration fee charges", renamed)
-        connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS set_id VARCHAR(36)'))
-        connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS set_name VARCHAR(200)'))
-        connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS mover_pack_count INTEGER'))
-        connection.execute(text('ALTER TABLE inventory_edit_items ADD COLUMN IF NOT EXISTS manual BOOLEAN'))
-        connection.execute(text('ALTER TABLE lead_job_charges ADD COLUMN IF NOT EXISTS source VARCHAR(20)'))
+        add_column(connection, 'inventory_edit_items', 'set_id', 'VARCHAR(36)')
+        add_column(connection, 'inventory_edit_items', 'set_name', 'VARCHAR(200)')
+        add_column(connection, 'inventory_edit_items', 'mover_pack_count', 'INTEGER')
+        add_column(connection, 'inventory_edit_items', 'manual', 'BOOLEAN')
+        add_column(connection, 'lead_job_charges', 'source', 'VARCHAR(20)')
         from models import LeadContact
         LeadContact.__table__.create(connection, checkfirst=True)
+        # leads before lead_payments, the order requests read them, so a deploy waits for them instead of deadlocking.
+        for column, kind in (('third_party_payout_to', 'VARCHAR(255)'), ('third_party_payout_amount', 'NUMERIC(12, 2)'),
+                             ('third_party_payout_paid', 'BOOLEAN'), ('third_party_payout_paid_at', 'VARCHAR(40)')):
+            add_column(connection, 'leads', column, kind)
         from models import LeadPayment
         from sqlalchemy import inspect as inspect_schema
         payments_table_existed = inspect_schema(connection).has_table('lead_payments')
         LeadPayment.__table__.create(connection, checkfirst=True)
-        connection.execute(text('ALTER TABLE lead_payments ADD COLUMN IF NOT EXISTS paid_at DATE'))
-        connection.execute(text('ALTER TABLE lead_payments ADD COLUMN IF NOT EXISTS method VARCHAR(30)'))
+        add_column(connection, 'lead_payments', 'paid_at', 'DATE')
+        add_column(connection, 'lead_payments', 'method', 'VARCHAR(30)')
         for column, kind in (('crew_size', 'INTEGER'), ('trucks', 'INTEGER'), ('start_time', 'VARCHAR(20)'),
                              ('estimated_hours', 'NUMERIC(5, 2)'), ('travel_hours', 'NUMERIC(5, 2)')):
-            connection.execute(text(f'ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS {column} {kind}'))
-        connection.execute(text('ALTER TABLE companies ADD COLUMN IF NOT EXISTS valuation_per_lb NUMERIC(6, 2)'))
-        for column, kind in (('third_party_payout_to', 'VARCHAR(255)'), ('third_party_payout_amount', 'NUMERIC(12, 2)'),
-                             ('third_party_payout_paid', 'BOOLEAN'), ('third_party_payout_paid_at', 'VARCHAR(40)')):
-            connection.execute(text(f'ALTER TABLE leads ADD COLUMN IF NOT EXISTS {column} {kind}'))
+            add_column(connection, 'lead_jobs', column, kind)
+        add_column(connection, 'companies', 'valuation_per_lb', 'NUMERIC(6, 2)')
         # Where payments were first made with a payout each, those payouts become the lead's one payout,
         # and the old columns stop being required; they are left in place until they are dropped.
         if connection.execute(text("""SELECT 1 FROM information_schema.columns
@@ -172,7 +181,9 @@ def migrate() -> None:
                 WHERE leads.id = payout.lead_id AND leads.third_party_payout_amount IS NULL"""))
             for column in ('third_party_commission_to', 'third_party_commission_amount',
                            'third_party_commission_paid', 'third_party_commission_paid_at'):
-                connection.execute(text(f'ALTER TABLE lead_payments ALTER COLUMN {column} DROP NOT NULL'))
+                if connection.execute(text("""SELECT 1 FROM information_schema.columns WHERE table_name = 'lead_payments'
+                                              AND column_name = :column AND is_nullable = 'NO'"""), {'column': column}).first():
+                    connection.execute(text(f'ALTER TABLE lead_payments ALTER COLUMN {column} DROP NOT NULL'))
         # Payments were a JSON list on the lead, all synced from SmartMoving. They move to their own rows once,
         # when the table is created; the old list is left as it was until it is dropped.
         if not payments_table_existed and connection.execute(text(
@@ -214,7 +225,7 @@ def migrate() -> None:
         for column, kind in (('pricing_plan_id', 'VARCHAR(36)'), ('pricing_move_type', 'VARCHAR(50)'), ('pricing_match_key', 'VARCHAR(64)'),
                              ('minimum_cuft', 'INTEGER'),
                              ('estimate_approved_id', 'VARCHAR(36)'), ('estimate_approved_at', 'TIMESTAMP')):
-            connection.execute(text(f'ALTER TABLE lead_jobs ADD COLUMN IF NOT EXISTS {column} {kind}'))
+            add_column(connection, 'lead_jobs', column, kind)
         from followup_tasks import install as install_followup_tasks
         install_followup_tasks(connection)
         from smartmoving_task_migration import install as install_smartmoving_tasks
@@ -233,7 +244,7 @@ def migrate() -> None:
             logger.info("Cleared %s first-contact state rows", cleared)
         # Reps whose follow-ups live in the CRM: SmartMoving no longer changes their leads'
         # priority or tasks. Eli Jones is first; the marker keeps later edits to the flag.
-        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS crm_managed_followups BOOLEAN NOT NULL DEFAULT FALSE"))
+        add_column(connection, 'users', 'crm_managed_followups', 'BOOLEAN NOT NULL DEFAULT FALSE')
         enable_eli = connection.execute(text("""
             INSERT INTO app_settings(key, value)
             VALUES ('migration:crm-managed-followups:eli-jones', 'enabled')

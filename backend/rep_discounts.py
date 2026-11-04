@@ -2,6 +2,14 @@
 import json
 from decimal import Decimal
 
+# The lines priced together as the transportation package. The customer sees their subtotal; a discount set
+# on it is saved on each of these lines, as their own discounts.
+PACKAGE_LINES = ('Transportation charge', 'Fuel surcharge', 'Origin destination & administration Fee')
+
+
+def package_lines(rows):
+    return [row for row in rows if row.name in PACKAGE_LINES and row.source != 'smartmoving']
+
 
 def apply(job, rows, volume=0):
     selection = json.loads(job.customer_packing_package or '{}')

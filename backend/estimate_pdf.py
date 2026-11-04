@@ -256,6 +256,13 @@ def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE'):
     if minimum and float(minimum) > float(estimate.get('cuft') or 0):
         story.append(p(f"Minimum billable volume for applicable services: {float(minimum):g} cu ft.", 'NoteEstimate'))
     charges = [[p('ITEM'), p('RATE / BASIS'), p('COST', 'RightEstimate')]]
+    # The transportation package's subtotal, added up from its lines, with the discount on them.
+    from rep_discounts import PACKAGE_LINES
+    package = [charge for charge in estimate.get('charges') or [] if charge.get('name') in PACKAGE_LINES]
+    package_after = sum(Decimal(str(charge.get('total') or 0)) for charge in package)
+    package_before = sum(Decimal(str(charge.get('subtotal') or charge.get('total') or 0)) for charge in package)
+    package_title = next(((data.get('discount_titles') or {}).get(charge.get('id')) for charge in package
+                          if (data.get('discount_titles') or {}).get(charge.get('id'))), None) or 'Discount'
     for charge in estimate.get('charges') or []:
         # Zero lines, including ones discounted to zero, are explained in their detail section.
         if _is_service(charge) or (not charge.get('pending') and not charge.get('total')):
@@ -269,12 +276,20 @@ def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE'):
                      else f"Minimum charge: ${rate[2]} | Each cu ft: ${rate[1]}")
         elif rate:
             basis = f"{float(estimate.get('cuft') or 0):,.2f} cuft @ ${rate[1]} per cuft"
+        shown = charge['total']
         if charge.get('discount_amount', 0) > 0:
             # A rep discount adds "| <title>: -$X" to the saved description; these two lines say it once.
             basis = re.sub(r' \| [^|]*: -\$[\d,]+\.\d{2}( \(new rate [^)]*\))?$', '', basis)
-            title = (data.get('discount_titles') or {}).get(charge.get('id')) or 'Discount'
-            basis += f"\nBefore discount: {money(charge['subtotal'])}\n{title} ({charge['discount_percent']:g}%): -{money(charge['discount_amount'])}"
-        charges.append([p(charge['name']), p(basis, 'NoteEstimate'), p('Pending' if charge.get('pending') else money(charge['total']), 'RightEstimate')])
+            if charge in package:
+                # The package lines show their price before the discount; the discount shows once, on their subtotal.
+                shown = charge['subtotal']
+            else:
+                title = (data.get('discount_titles') or {}).get(charge.get('id')) or 'Discount'
+                basis += f"\nBefore discount: {money(charge['subtotal'])}\n{title} ({charge['discount_percent']:g}%): -{money(charge['discount_amount'])}"
+        charges.append([p(charge['name']), p(basis, 'NoteEstimate'), p('Pending' if charge.get('pending') else money(shown), 'RightEstimate')])
+        if package and charge is package[-1] and package_before > package_after:
+            charges.append([p('Subtotal'), p(f"Before discount: {money(package_before)}\n{package_title}: -{money(package_before - package_after)}", 'NoteEstimate'),
+                            p(money(package_after), 'RightEstimate')])
     service_lines, service_total, service_pending = _services_total(estimate)
     if service_lines:
         # A link to the services table further down.

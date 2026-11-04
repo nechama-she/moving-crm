@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import EstimateSigning from './EstimateSigning';
+import EstimateSigning, { type SignResult } from './EstimateSigning';
+
+// The Re-sign answer: the signature removed, and the estimate's status without it.
+export type SignatureRemoved = { removed_id: string; signature_status: 'unsigned' | 'signed' | 'changed'; work_order_available: boolean };
 import './EstimateViewer.css';
 
-export default function EstimateViewer({ base, headers, customerName, version, url, error, onClose, alreadySigned = false, approved = true, rep = false, onApproved, filename, onSignatureRemoved }: {
+export default function EstimateViewer({ base, headers, customerName, version, url, error, onClose, alreadySigned = false, approved = true, rep = false, onApproved, filename, onSignatureRemoved, onSigned }: {
   base: string; headers: Record<string, string>; customerName: string; version: string; filename: string;
   url: string; error: string; onClose: () => void;
   alreadySigned?: boolean;
   // Signing needs a rep's approval of this exact estimate; the rep view can give it.
   approved?: boolean; rep?: boolean; onApproved?: () => void;
-  // Called once Re-sign removes the saved signature, so the page shows it unsigned right away.
-  onSignatureRemoved?: () => void;
+  // Called once Re-sign removes the saved signature: the page opens the current estimate in its place,
+  // so what is signed next is what the estimate is now, even if it changed elsewhere.
+  onSignatureRemoved: (result: SignatureRemoved) => void;
+  // Called once the signature is saved: the page shows the estimate signed right away.
+  onSigned: (signature: SignResult) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [signing, setSigning] = useState(false);
@@ -26,10 +32,8 @@ export default function EstimateViewer({ base, headers, customerName, version, u
     try {
       const response = await fetch(`${base}/estimate-signatures/${encodeURIComponent(version)}/resign`, { method: 'POST', headers, cache: 'no-store' });
       if (!response.ok) throw new Error('Could not remove the signature. Please try Re-sign again.');
-      const pdf = await response.blob();
-      setSignedUrl(URL.createObjectURL(pdf));
-      setCleared(true); setSigned(false); setSigning(true);
-      onSignatureRemoved?.();
+      setCleared(true); setSigned(false);
+      onSignatureRemoved(await response.json());
     } catch (e) { setLoadError((e as Error).message); }
     finally { setClearing(false); }
   }
@@ -67,7 +71,7 @@ export default function EstimateViewer({ base, headers, customerName, version, u
     {loadError && <p role="alert">{loadError} <button className="cm-secondary-btn" onClick={() => void showSigned(version)}>Retry signed PDF</button></p>}
     <div className="estimate-viewer-content">
       {url ? <iframe title={signed ? 'Signed estimate PDF' : 'Estimate PDF'} src={signedUrl || url} /> : !error && <p role="status">Preparing your latest estimate...</p>}
-      {signing && <aside><EstimateSigning base={base} headers={headers} customerName={customerName} disabled={false} version={version} hideHistory onClose={() => setSigning(false)} onSigned={id => void showSigned(id)} /></aside>}
+      {signing && <aside><EstimateSigning base={base} headers={headers} customerName={customerName} disabled={false} version={version} hideHistory onClose={() => setSigning(false)} onSigned={signature => { onSigned(signature); void showSigned(signature.id); }} /></aside>}
     </div>
   </dialog>;
 }

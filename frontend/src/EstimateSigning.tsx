@@ -4,9 +4,12 @@ import './EstimateSigning.css';
 type Point = [number, number];
 type SignedEstimate = { id: string; name: string; signed_at: string; report_id?: string | null };
 
+// The sign answer: the new signature, its report, and whether the rep's work order is now available.
+export type SignResult = { id: string; name: string; signed_at: string; report_id: string | null; work_order_available: boolean };
+
 export default function EstimateSigning({ base, headers, customerName, disabled, version, onClose, onSigned, hideHistory = false, reportIds }: {
   base: string; headers: Record<string, string>; customerName: string; disabled: boolean; version: string; onClose: () => void;
-  onSigned?: (id: string) => void; hideHistory?: boolean;
+  onSigned?: (signature: SignResult) => void; hideHistory?: boolean;
   /** Reports shown in report history; signatures for these appear on their report row instead of here. */
   reportIds?: string[];
 }) {
@@ -57,7 +60,7 @@ export default function EstimateSigning({ base, headers, customerName, disabled,
     try {
       const result = await (await request('/' + version + '/sign', { name: name.trim(), consent, strokes })).json();
       setSigned(current => [{ id: result.id, name: name.trim(), signed_at: result.signed_at }, ...current.filter(row => row.id !== result.id)]);
-      if (onSigned) onSigned(result.id); else onClose();
+      if (onSigned) onSigned(result); else onClose();
       setStrokes([]);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
