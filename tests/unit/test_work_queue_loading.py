@@ -215,7 +215,7 @@ def new_lead_payload_model():
              'ExternalLeadUpdateLogRequest', 'ExternalLeadUpdateLogResponse'}
     models = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name in names]
     scope = dict(BaseModel=BaseModel, ConfigDict=ConfigDict, Field=Field,
-                 field_validator=field_validator, Any=Any)
+                 field_validator=field_validator, Any=Any, date=__import__('datetime').date)
     exec(compile(ast.Module(body=models, type_ignores=[]), str(source), 'exec'), scope)
     return scope['NewLead']
 

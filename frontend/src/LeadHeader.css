@@ -417,3 +417,137 @@
     flex-wrap: wrap;
   }
 }
+
+/* Payments box: where each payment came from, and the add/edit form. */
+.lead-payment-source {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.lead-payment-source.is-smartmoving {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.lead-payment-source.is-crm {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.lead-payment-action {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #0176d3;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.lead-payment-action:disabled {
+  color: #94a3b8;
+  cursor: default;
+}
+
+.lead-payment-date {
+  margin-left: 6px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.lead-payment-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px 130px 110px;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #d8dde6;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.lead-payment-form label {
+  display: grid;
+  gap: 3px;
+  color: #52667e;
+  font-size: 11px;
+}
+
+.lead-payment-form input,
+.lead-payment-form select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #b8c9db;
+  border-radius: 6px;
+  color: #16325c;
+  font-size: 13px;
+}
+
+.lead-payment-form-rep {
+  display: grid;
+  gap: 3px;
+  align-content: start;
+  color: #52667e;
+  font-size: 11px;
+}
+
+.lead-payment-form-rep strong {
+  padding: 6px 0;
+  color: #16325c;
+  font-size: 13px;
+}
+
+.lead-payment-form-buttons {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.lead-payment-form-buttons button {
+  padding: 5px 12px;
+  border: 1px solid #c7d5e3;
+  border-radius: 6px;
+  background: #fff;
+  color: #0176d3;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lead-payment-form-buttons .is-primary {
+  border-color: #0176d3;
+  background: #0176d3;
+  color: #fff;
+}
+
+.lead-payment-form-buttons button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Job crew and schedule (shown on the work order). */
+.lead-crew-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.lead-crew-fields label {
+  display: grid;
+  gap: 3px;
+  color: #52667e;
+  font-size: 11px;
+}
+
+.lead-crew-fields input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #b8c9db;
+  border-radius: 6px;
+  color: #16325c;
+  font-size: 13px;
+}

@@ -47,7 +47,7 @@ from libs.smartmoving.client import (
     finish_request_capture,
     update_opportunity_salesperson,
 )
-from models import Lead, LeadContact, contact_key, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation, PublicMoveAccess
+from models import Lead, LeadContact, LeadPayment, contact_key, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation, PublicMoveAccess
 from realtime import publish_realtime_event
 from referral_assignment_rules import configured_rep_ids_for_referral
 from routes.templates import get_company_template, render_template
@@ -239,25 +239,20 @@ def _map_smartmoving_payments(payments: list | None) -> list[dict]:
     return output
 
 
-def _merge_smartmoving_payments_with_existing(smartmoving_rows: list[dict], existing_rows: list[dict]) -> list[dict]:
-    """Keep CRM-managed payout fields when refreshing from SmartMoving."""
-    merged: list[dict] = []
-    for index, row in enumerate(smartmoving_rows):
-        existing = existing_rows[index] if index < len(existing_rows) else {}
-        rep_paid = bool(existing.get("repPaid") or False)
-        rep_paid_at = str(existing.get("repPaidAt") or "").strip()
-
-        next_row = dict(row)
-        next_row["repPaid"] = rep_paid
-        next_row["repPaidAt"] = rep_paid_at
-        next_row["repCommissionPercent"] = existing.get("repCommissionPercent")
-        next_row["repCommissionAmount"] = existing.get("repCommissionAmount")
-        next_row["thirdPartyCommissionTo"] = str(existing.get("thirdPartyCommissionTo") or "").strip()
-        next_row["thirdPartyCommissionAmount"] = float(existing.get("thirdPartyCommissionAmount") or 0)
-        next_row["thirdPartyCommissionPaid"] = bool(existing.get("thirdPartyCommissionPaid") or False)
-        next_row["thirdPartyCommissionPaidAt"] = str(existing.get("thirdPartyCommissionPaidAt") or "").strip()
-        merged.append(next_row)
-    return merged
+def _sync_smartmoving_payments(lead: Lead, rows: list[dict]) -> None:
+    """SmartMoving's payments update only its own rows, matched in order so each keeps its payouts. CRM payments stay."""
+    synced = [payment for payment in lead.payments if payment.source == "smartmoving"]
+    for index, item in enumerate(rows):
+        payment = synced[index] if index < len(synced) else None
+        if payment is None:
+            payment = LeadPayment(source="smartmoving")
+            lead.payments.append(payment)
+        payment.amount = Decimal(str(item.get("amount") or 0))
+        payment.taken_by_user = item.get("takenByUser") or ""
+    for payment in synced[len(rows):]:
+        lead.payments.remove(payment)
+    for order, payment in enumerate(lead.payments):
+        payment.sort_order = order
 
 
 def _map_smartmoving_estimated_charges(charges: list | None) -> list[dict]:
@@ -1057,6 +1052,7 @@ def get_dispatch_calendar(
             filtered.append((job, lead, company_name or "", company_color, effective_date))
 
     filtered.sort(key=lambda item: (item[4], item[0].created_at or datetime.min))
+    payments = _payments_by_lead(db, {item[1].id for item in filtered})
 
     return {
         "items": [
@@ -1080,7 +1076,8 @@ def get_dispatch_calendar(
                 "volume": float(lead.volume) if lead.volume is not None else None,
                 "weight": float(lead.weight) if lead.weight is not None else None,
                 "estimatedTotal": _deserialize_estimated_total(lead.estimated_total),
-                "payments": _deserialize_payments(lead.payments),
+                "payments": payments.get(lead.id, []),
+                "thirdPartyPayout": lead.third_party_payout(),
                 "status": lead.status or "",
             }
             for job, lead, company_name, company_color, effective_date in filtered
@@ -1165,6 +1162,7 @@ def get_sales_calendar(
             ))
 
     filtered.sort(key=lambda item: (item[7], item[0].created_at or datetime.min))
+    payments = _payments_by_lead(db, {item[1].id for item in filtered})
 
     return {
         "items": [
@@ -1187,7 +1185,8 @@ def get_sales_calendar(
                 "delivery_zip": job.delivery_zip or "",
                 "price": float(job.price) if job.price is not None else None,
                 "estimatedTotal": _deserialize_estimated_total(lead.estimated_total),
-                "payments": _deserialize_payments(lead.payments),
+                "payments": payments.get(lead.id, []),
+                "thirdPartyPayout": lead.third_party_payout(),
                 "status": lead.status or "",
             }
             for job, lead, company_name, company_color, assigned_to_id, assigned_to_name, assigned_to_role, effective_date in filtered
@@ -1590,7 +1589,7 @@ def get_leads(
     order = sort_col.asc() if sort_dir == "asc" else sort_col.desc()
     query = query.order_by(order)
     total = query.count()
-    items = query.add_columns(pickup, delivery).offset(offset).limit(limit).all()
+    items = query.add_columns(pickup, delivery).options(selectinload(Lead.payments)).offset(offset).limit(limit).all()
     has_more = offset + limit < total
 
     return {
@@ -2265,14 +2264,21 @@ class LeadPaymentPayload(BaseModel):
 
     amount: float = 0
     taken_by_user: str = Field(default="", alias="takenByUser")
+    paid_at: date | None = Field(default=None, alias="paidAt")
+    method: str = Field(default="", max_length=30)
     rep_paid: bool = Field(default=False, alias="repPaid")
     rep_paid_at: str = Field(default="", alias="repPaidAt")
     rep_commission_percent: float | None = Field(default=None, alias="repCommissionPercent")
     rep_commission_amount: float | None = Field(default=None, alias="repCommissionAmount")
-    third_party_commission_to: str = Field(default="", alias="thirdPartyCommissionTo")
+
+
+class ThirdPartyPayoutPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    third_party_commission_to: str = Field(default="", alias="thirdPartyCommissionTo", max_length=255)
     third_party_commission_amount: float = Field(default=0, alias="thirdPartyCommissionAmount")
     third_party_commission_paid: bool = Field(default=False, alias="thirdPartyCommissionPaid")
-    third_party_commission_paid_at: str = Field(default="", alias="thirdPartyCommissionPaidAt")
+    third_party_commission_paid_at: str = Field(default="", alias="thirdPartyCommissionPaidAt", max_length=40)
 
 
 def _serialize_estimated_total(payload: EstimatedTotalPayload | None) -> str | None:
@@ -2284,26 +2290,6 @@ def _serialize_estimated_total(payload: EstimatedTotalPayload | None) -> str | N
         "tax": float(payload.tax),
         "finalTotal": float(payload.final_total),
     })
-
-
-def _serialize_payments(payments: list[LeadPaymentPayload] | None) -> str | None:
-    if payments is None:
-        return None
-    return json.dumps([
-        {
-            "amount": float(payment.amount),
-            "takenByUser": (payment.taken_by_user or "").strip(),
-            "repPaid": bool(payment.rep_paid),
-            "repPaidAt": (payment.rep_paid_at or "").strip(),
-            "repCommissionPercent": payment.rep_commission_percent,
-            "repCommissionAmount": payment.rep_commission_amount,
-            "thirdPartyCommissionTo": (payment.third_party_commission_to or "").strip(),
-            "thirdPartyCommissionAmount": float(payment.third_party_commission_amount),
-            "thirdPartyCommissionPaid": bool(payment.third_party_commission_paid),
-            "thirdPartyCommissionPaidAt": (payment.third_party_commission_paid_at or "").strip(),
-        }
-        for payment in payments
-    ])
 
 
 def _deserialize_estimated_total(raw: str | None) -> dict | None:
@@ -2323,31 +2309,12 @@ def _deserialize_estimated_total(raw: str | None) -> dict | None:
     }
 
 
-def _deserialize_payments(raw: str | None) -> list[dict[str, object]]:
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    payments: list[dict[str, object]] = []
-    for row in parsed:
-        if not isinstance(row, dict):
-            continue
-        payments.append({
-            "amount": float(row.get("amount") or 0),
-            "takenByUser": str(row.get("takenByUser") or "").strip(),
-            "repPaid": bool(row.get("repPaid") or False),
-            "repPaidAt": str(row.get("repPaidAt") or "").strip(),
-            "repCommissionPercent": float(row["repCommissionPercent"]) if row.get("repCommissionPercent") is not None else None,
-            "repCommissionAmount": float(row["repCommissionAmount"]) if row.get("repCommissionAmount") is not None else None,
-            "thirdPartyCommissionTo": str(row.get("thirdPartyCommissionTo") or "").strip(),
-            "thirdPartyCommissionAmount": float(row.get("thirdPartyCommissionAmount") or 0),
-            "thirdPartyCommissionPaid": bool(row.get("thirdPartyCommissionPaid") or False),
-            "thirdPartyCommissionPaidAt": str(row.get("thirdPartyCommissionPaidAt") or "").strip(),
-        })
+def _payments_by_lead(db: Session, lead_ids: set[str]) -> dict[str, list[dict]]:
+    """The payments of many leads in one query."""
+    payments: dict[str, list[dict]] = {}
+    if lead_ids:
+        for payment in db.query(LeadPayment).filter(LeadPayment.lead_id.in_(lead_ids)).order_by(LeadPayment.sort_order):
+            payments.setdefault(payment.lead_id, []).append(payment.to_dict())
     return payments
 
 
@@ -2450,7 +2417,15 @@ class LeadJobUpdate(BaseModel):
     notes: str | None = None
     customer_notes: str | None = None
     foreman_notes: str | None = None
+    crew_size: int | None = Field(default=None, ge=0, le=100)
+    trucks: int | None = Field(default=None, ge=0, le=50)
+    start_time: str | None = Field(default=None, max_length=20)
+    estimated_hours: float | None = Field(default=None, ge=0, le=999)
+    travel_hours: float | None = Field(default=None, ge=0, le=999)
     logs: list[ExternalLeadUpdateLog] | None = None
+
+
+WORK_ORDER_JOB_FIELDS = ("crew_size", "trucks", "start_time", "estimated_hours", "travel_hours")
 
 
 def _job_pickups_setting_key(job_id: str) -> str:
@@ -2806,8 +2781,8 @@ def update_lead_job(
     payload = body.model_dump(exclude_unset=True, by_alias=False)
     if user.role == "foreman" and set(payload) != {"foreman_notes"}:
         raise HTTPException(status_code=403, detail="Foreman users can only update foreman notes")
-    if user.role == "dispatch" and (not payload or not set(payload).issubset({"dispatch_company_id", "foreman_id", "notes", "customer_notes", "foreman_notes"})):
-        raise HTTPException(status_code=403, detail="Dispatch users can only assign a subcontractor or foreman, or update job notes")
+    if user.role == "dispatch" and (not payload or not set(payload).issubset({"dispatch_company_id", "foreman_id", "notes", "customer_notes", "foreman_notes", *WORK_ORDER_JOB_FIELDS})):
+        raise HTTPException(status_code=403, detail="Dispatch users can only assign a subcontractor or foreman, or update job notes and crew")
     lead = _get_visible_lead_or_404(lead_id, user, db)
     row = (
         db.query(LeadJob)
@@ -2864,6 +2839,11 @@ def update_lead_job(
         row.customer_notes = (payload.get("customer_notes") or "").strip() or None
     if "foreman_notes" in payload:
         row.foreman_notes = (payload.get("foreman_notes") or "").strip() or None
+    for name in WORK_ORDER_JOB_FIELDS:
+        if name in payload:
+            value = payload[name]
+            setattr(row, name, (value or "").strip() or None if name == "start_time"
+                    else Decimal(str(value)) if value is not None and name.endswith("_hours") else value)
 
     current_pickup, current_stops, current_delivery = _read_job_route(db, row)
     next_pickup = current_pickup
@@ -4126,7 +4106,6 @@ class LeadUpdate(BaseModel):
     referral_source: str | None = None
     jobs: list[LeadUpdateJob] | None = None
     estimated_total: EstimatedTotalPayload | None = Field(default=None, alias="estimatedTotal")
-    payments: list[LeadPaymentPayload] | None = None
     logs: list[ExternalLeadUpdateLog] | None = None
 
 
@@ -4138,6 +4117,107 @@ def update_lead(
     db: Session = Depends(get_db),
 ):
     return _apply_lead_update(lead_id, body, user, db)
+
+
+def _payment_or_404(lead_id: str, payment_id: str, user: User, db: Session) -> LeadPayment:
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    payment = db.query(LeadPayment).filter(LeadPayment.id == payment_id, LeadPayment.lead_id == lead.id).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    return payment
+
+
+def _check_payment(payment: LeadPayment) -> None:
+    amount = float(payment.amount or 0)
+    if amount < 0:
+        raise HTTPException(status_code=400, detail="amount must be >= 0")
+    if payment.rep_commission_percent is not None and not 0 <= float(payment.rep_commission_percent) <= 100:
+        raise HTTPException(status_code=400, detail="repCommissionPercent must be between 0 and 100")
+    if payment.rep_commission_amount is not None and not 0 <= float(payment.rep_commission_amount) <= amount:
+        raise HTTPException(status_code=400, detail="repCommissionAmount cannot exceed the payment amount")
+
+
+@router.post("/leads/{lead_id}/payments")
+def add_lead_payment(lead_id: str, body: LeadPaymentPayload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """A payment entered in the CRM. SmartMoving's sync never changes or removes it."""
+    if user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="Only admin and sales reps can add payments")
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    payment = LeadPayment(lead_id=lead.id, source="crm", sort_order=len(lead.payments),
+                          amount=Decimal(str(body.amount)), taken_by_user=body.taken_by_user.strip(), paid_at=body.paid_at,
+                          method=body.method.strip() or None)
+    _check_payment(payment)
+    db.add(payment)
+    db.commit()
+    return payment.to_dict()
+
+
+@router.patch("/leads/{lead_id}/payments/{payment_id}")
+def update_lead_payment(lead_id: str, payment_id: str, body: LeadPaymentPayload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Changes only the fields sent. SmartMoving's payments change their amount in SmartMoving; their payouts change here."""
+    _ensure_not_dispatch_write(user)
+    payment = _payment_or_404(lead_id, payment_id, user, db)
+    sent = body.model_fields_set
+    changed = lambda name, value: name in sent and getattr(body, name) != value
+    if (changed("amount", float(payment.amount or 0)) or changed("taken_by_user", payment.taken_by_user)
+            or changed("paid_at", payment.paid_at) or changed("method", payment.method or "")):
+        if payment.source == "smartmoving":
+            raise HTTPException(status_code=400, detail="This payment comes from SmartMoving. Change it in SmartMoving.")
+        if user.role not in ("admin", "sales_rep"):
+            raise HTTPException(status_code=403, detail="Only admin and sales reps can change payments")
+    if (changed("rep_paid", payment.rep_paid) or changed("rep_paid_at", payment.rep_paid_at)) and user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="Only admin and sales reps can mark rep payments")
+    current_commission = {
+        "rep_commission_percent": float(payment.rep_commission_percent) if payment.rep_commission_percent is not None else None,
+        "rep_commission_amount": float(payment.rep_commission_amount) if payment.rep_commission_amount is not None else None,
+    }
+    if any(changed(name, value) for name, value in current_commission.items()) and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can manage lead rep commission overrides")
+    for name in sent:
+        value = getattr(body, name)
+        if name in ("amount", "rep_commission_percent", "rep_commission_amount"):
+            value = Decimal(str(value)) if value is not None else None
+        elif isinstance(value, str):
+            value = value.strip()
+        setattr(payment, name, value)
+    _check_payment(payment)
+    db.commit()
+    return payment.to_dict()
+
+
+@router.patch("/leads/{lead_id}/third-party-payout")
+def update_third_party_payout(lead_id: str, body: ThirdPartyPayoutPayload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The lead's one third-party payout; only the fields sent change."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can manage third-party payouts")
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    sent = body.model_fields_set
+    if "third_party_commission_to" in sent:
+        lead.third_party_payout_to = body.third_party_commission_to.strip()
+    if "third_party_commission_amount" in sent:
+        if body.third_party_commission_amount < 0:
+            raise HTTPException(status_code=400, detail="thirdPartyCommissionAmount must be >= 0")
+        if body.third_party_commission_amount > sum(float(payment.amount or 0) for payment in lead.payments):
+            raise HTTPException(status_code=400, detail="The third-party payout cannot exceed the total payments")
+        lead.third_party_payout_amount = Decimal(str(body.third_party_commission_amount))
+    if "third_party_commission_paid" in sent:
+        lead.third_party_payout_paid = body.third_party_commission_paid
+    if "third_party_commission_paid_at" in sent:
+        lead.third_party_payout_paid_at = body.third_party_commission_paid_at.strip()
+    db.commit()
+    return lead.third_party_payout()
+
+
+@router.delete("/leads/{lead_id}/payments/{payment_id}")
+def delete_lead_payment(lead_id: str, payment_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role not in ("admin", "sales_rep"):
+        raise HTTPException(status_code=403, detail="Only admin and sales reps can delete payments")
+    payment = _payment_or_404(lead_id, payment_id, user, db)
+    if payment.source == "smartmoving":
+        raise HTTPException(status_code=400, detail="This payment comes from SmartMoving. Remove it in SmartMoving.")
+    db.delete(payment)
+    db.commit()
+    return {"ok": True}
 
 
 def _sync_smartmoving_job_details(lead: Lead, db: Session) -> None:
@@ -4328,70 +4408,6 @@ def _apply_lead_update(
         current_total = _deserialize_estimated_total(lead.estimated_total) or {}
         merged_total = _merge_partial_models([body.estimated_total], [current_total])[0]
         lead.estimated_total = _serialize_estimated_total(merged_total)
-    if body.payments is not None:
-        existing_payments = _deserialize_payments(lead.payments)
-        if user.role not in ("admin", "sales_rep"):
-            for index, payment in enumerate(body.payments):
-                existing = existing_payments[index] if index < len(existing_payments) else {}
-                submitted = (bool(payment.rep_paid), (payment.rep_paid_at or "").strip())
-                current = (
-                    bool(existing.get("repPaid") or False),
-                    str(existing.get("repPaidAt") or "").strip(),
-                )
-                if (
-                    {"rep_paid", "rep_paid_at"}.intersection(payment.model_fields_set)
-                    and submitted != current
-                ):
-                    raise HTTPException(status_code=403, detail="Only admin and sales reps can mark rep payments")
-        if user.role != "admin":
-            rep_commission_fields = {"rep_commission_percent", "rep_commission_amount"}
-            for index, payment in enumerate(body.payments):
-                existing = existing_payments[index] if index < len(existing_payments) else {}
-                submitted_commission = (payment.rep_commission_percent, payment.rep_commission_amount)
-                existing_commission = (existing.get("repCommissionPercent"), existing.get("repCommissionAmount"))
-                if rep_commission_fields.intersection(payment.model_fields_set) and submitted_commission != existing_commission:
-                    raise HTTPException(status_code=403, detail="Only admins can manage lead rep commission overrides")
-            third_party_fields = {
-                "third_party_commission_to",
-                "third_party_commission_amount",
-                "third_party_commission_paid",
-                "third_party_commission_paid_at",
-            }
-            for index, payment in enumerate(body.payments):
-                existing = existing_payments[index] if index < len(existing_payments) else {}
-                submitted_third_party = (
-                    (payment.third_party_commission_to or "").strip(),
-                    float(payment.third_party_commission_amount or 0),
-                    bool(payment.third_party_commission_paid),
-                    (payment.third_party_commission_paid_at or "").strip(),
-                )
-                existing_third_party = (
-                    str(existing.get("thirdPartyCommissionTo") or "").strip(),
-                    float(existing.get("thirdPartyCommissionAmount") or 0),
-                    bool(existing.get("thirdPartyCommissionPaid") or False),
-                    str(existing.get("thirdPartyCommissionPaidAt") or "").strip(),
-                )
-                if (
-                    third_party_fields.intersection(payment.model_fields_set)
-                    and submitted_third_party != existing_third_party
-                ):
-                    raise HTTPException(status_code=403, detail="Only admins can manage third-party payouts")
-        merged_payments = _merge_partial_models(body.payments, existing_payments)
-        for payment in merged_payments:
-            if payment.third_party_commission_amount < 0:
-                raise HTTPException(status_code=400, detail="thirdPartyCommissionAmount must be >= 0")
-            if payment.third_party_commission_amount > payment.amount:
-                raise HTTPException(
-                    status_code=400,
-                    detail="thirdPartyCommissionAmount cannot exceed the payment amount",
-                )
-            if payment.rep_commission_percent is not None and not 0 <= payment.rep_commission_percent <= 100:
-                raise HTTPException(status_code=400, detail="repCommissionPercent must be between 0 and 100")
-            commissionable_amount = max(0, payment.amount - payment.third_party_commission_amount)
-            if payment.rep_commission_amount is not None and not 0 <= payment.rep_commission_amount <= commissionable_amount:
-                raise HTTPException(status_code=400, detail="repCommissionAmount cannot exceed the commissionable payment amount")
-        lead.payments = _serialize_payments(merged_payments)
-
     primary_job = _get_or_create_primary_lead_job(lead, db)
     if next_company_id is not None:
         primary_job.company_id = lead.company_id
@@ -4779,9 +4795,9 @@ def _refresh_lead_from_smartmoving(
     if _crm_manages_followups(lead):
         payload.pop("priority", None)
 
-    if isinstance(payload.get("payments"), list):
-        existing_payments = _deserialize_payments(lead.payments)
-        payload["payments"] = _merge_smartmoving_payments_with_existing(payload.get("payments") or [], existing_payments)
+    smartmoving_payments = payload.pop("payments", None)
+    if isinstance(smartmoving_payments, list):
+        _sync_smartmoving_payments(lead, smartmoving_payments)
 
     audit_result = get_opportunity_audit_activity(smartmoving_id)
     if audit_result.get("error"):
@@ -5260,7 +5276,9 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
         status=raw_status or "new",
         priority=body.priority,
         estimated_total=_serialize_estimated_total(body.estimated_total),
-        payments=_serialize_payments(body.payments),
+        payments=[LeadPayment(source="smartmoving", sort_order=index, amount=Decimal(str(payment.amount or 0)),
+                              taken_by_user=(payment.taken_by_user or "").strip())
+                  for index, payment in enumerate(body.payments)],
     )
     try:
         db.add(lead)

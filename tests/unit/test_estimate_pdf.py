@@ -140,3 +140,21 @@ def test_material_table_repeats_headers_across_pages():
     assert len(material_pages) > 1
     assert all('Material / unit' in text for text in material_pages)
     assert 'Material 79' in material_pages[-1]
+
+
+def test_work_order_adds_notes_and_payments_after_the_signature():
+    import pymupdf
+    data = sample()
+    data['signature'] = {'name': 'Sample Customer', 'signed_at': '2026-11-04T15:00:00Z',
+                         'strokes': [[[0.1, 0.5], [0.9, 0.6]]], 'estimate_id': 'copy'}
+    work_order = {'payments': [{'amount': 900, 'takenByUser': 'Rep', 'paidAt': '2026-11-02'}],
+                  'internal_notes': 'Gate code', 'foreman_notes': 'Two trucks'}
+    text = ''.join(page.get_text() for page in pymupdf.open(stream=build_estimate_pdf(data, [], work_order=work_order), filetype='pdf'))
+    assert 'WORK ORDER' in text
+    assert text.index('Client signature') < text.index('Team notes') < text.index('Gate code') < text.index('Payments')
+    assert 'Total estimate' in text and 'Balance due' in text and '$1,010.00' in text
+    assert 'FOREMAN NOTES' in text
+    # No notes: no Team notes section.
+    empty = dict(work_order, internal_notes='', foreman_notes=None)
+    text = ''.join(page.get_text() for page in pymupdf.open(stream=build_estimate_pdf(data, [], work_order=empty), filetype='pdf'))
+    assert 'Team notes' not in text and 'Payments' in text

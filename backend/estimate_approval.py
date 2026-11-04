@@ -6,9 +6,10 @@ from sqlalchemy import event, inspect, or_, select, update
 from sqlalchemy.orm import Session
 
 # Job columns that record how the page was worked out, not what the estimate shows.
-_JOB_BOOKKEEPING = {'pricing_options_key', 'pricing_match_key', 'pricing_plan_id', 'pricing_move_type',
+_JOB_BOOKKEEPING = {'pricing_match_key', 'pricing_plan_id', 'pricing_move_type',
                     'price_refresh_attempted_at', 'price_refresh_error', 'price_calculated_at', 'updated_at',
-                    'estimate_approved_id', 'estimate_approved_at'}
+                    'estimate_approved_id', 'estimate_approved_at',
+                    'crew_size', 'trucks', 'start_time', 'estimated_hours', 'travel_hours'}
 _LEAD_SHOWN = {'full_name', 'phone', 'email', 'volume', 'weight', 'move_type', 'estimated_total', 'company_id'}
 _ACCESS_SHOWN = {'published_price', 'published_cuft'}
 _COMPANY_SHOWN = {'name', 'phone', 'office_address', 'logo', 'color', 'dot_number'}
@@ -47,7 +48,7 @@ def _conversation_changed(session, row):
 
 @event.listens_for(Session, 'before_flush')
 def _clear_changed_approvals(session, context, instances):
-    from models import (Company, CompanyDocument, InventoryEditItem, InventoryEditRoom, Lead, LeadJob, LeadJobCharge,
+    from models import (Company, CompanyDocument, InventoryEditItem, InventoryEditRoom, Lead, LeadContact, LeadJob, LeadJobCharge,
                         LeadLiveSwitch, PublicMoveAccess, AppSetting)
     from routes.leads import JOB_DELIVERIES_SETTING_PREFIX, JOB_PICKUPS_SETTING_PREFIX, JOB_STOPS_SETTING_PREFIX
     jobs, leads, companies = set(), set(), set()
@@ -63,6 +64,8 @@ def _clear_changed_approvals(session, context, instances):
         elif isinstance(row, Lead):
             if _changed(session, row, only=_LEAD_SHOWN):
                 leads.add(row.id)
+        elif isinstance(row, LeadContact):
+            leads.add(row.lead_id)
         elif isinstance(row, LeadLiveSwitch):
             if _conversation_changed(session, row):
                 leads.add(row.lead_id)

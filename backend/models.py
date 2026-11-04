@@ -66,6 +66,8 @@ class Company(Base):
     phone = Column(String(30))
     office_address = Column(Text, nullable=False, default="", server_default="")
     dot_number = Column(String(30), nullable=False, default="", server_default="")
+    # The shipment's valuation, per lb, printed on work orders.
+    valuation_per_lb = Column(Numeric(6, 2))
     # Customer emails (e.g. portal codes) are sent from this address via SES; its domain must be verified in SES.
     sender_email = Column(String(255))
     facebook_page_id = Column(String(100), unique=True, index=True)
@@ -91,6 +93,7 @@ class Company(Base):
             "phone": self.phone or "",
             "office_address": self.office_address or "",
             "dot_number": self.dot_number or "",
+            "valuation_per_lb": float(self.valuation_per_lb) if self.valuation_per_lb is not None else None,
             "sender_email": self.sender_email or "",
             "facebook_page_id": self.facebook_page_id or "",
             "aircall_number_id": self.aircall_number_id or "",
@@ -296,7 +299,11 @@ class Lead(Base):
     service_type = Column(String(50))
     referral_source = Column(String(100))
     estimated_total = Column(Text)
-    payments = Column(Text)
+    # One third-party payout for the lead, deducted from its payments before the rep's commission.
+    third_party_payout_to = Column(String(255))
+    third_party_payout_amount = Column(Numeric(12, 2))
+    third_party_payout_paid = Column(Boolean)
+    third_party_payout_paid_at = Column(String(40))
 
     status = Column(String(30), nullable=False, default="new", index=True)
     # new → contacted → quoted → booked → scheduled → completed | lost | cancelled
@@ -311,6 +318,15 @@ class Lead(Base):
     assignee = relationship("User", foreign_keys=[assigned_to])
     # Extra phones and emails; phone and email above stay the main ones (texts, calls, SmartMoving).
     contacts = relationship("LeadContact", order_by="LeadContact.sort_order", cascade="all, delete-orphan", passive_deletes=True)
+    payments = relationship("LeadPayment", order_by="LeadPayment.sort_order", cascade="all, delete-orphan", passive_deletes=True)
+
+    def third_party_payout(self):
+        return {
+            "thirdPartyCommissionTo": self.third_party_payout_to or "",
+            "thirdPartyCommissionAmount": float(self.third_party_payout_amount or 0),
+            "thirdPartyCommissionPaid": bool(self.third_party_payout_paid),
+            "thirdPartyCommissionPaidAt": self.third_party_payout_paid_at or "",
+        }
 
     def to_dict(self):
         estimated_total_data = None
@@ -327,26 +343,7 @@ class Lead(Base):
             except Exception:
                 estimated_total_data = None
 
-        payments_data: list[dict[str, object]] = []
-        if self.payments:
-            try:
-                parsed_payments = json.loads(self.payments)
-                if isinstance(parsed_payments, list):
-                    for row in parsed_payments:
-                        if not isinstance(row, dict):
-                            continue
-                        payments_data.append({
-                            "amount": float(row.get("amount") or 0),
-                            "takenByUser": str(row.get("takenByUser") or "").strip(),
-                            "repPaid": bool(row.get("repPaid") or False),
-                            "repPaidAt": str(row.get("repPaidAt") or "").strip(),
-                            "thirdPartyCommissionTo": str(row.get("thirdPartyCommissionTo") or "").strip(),
-                            "thirdPartyCommissionAmount": float(row.get("thirdPartyCommissionAmount") or 0),
-                            "thirdPartyCommissionPaid": bool(row.get("thirdPartyCommissionPaid") or False),
-                            "thirdPartyCommissionPaidAt": str(row.get("thirdPartyCommissionPaidAt") or "").strip(),
-                        })
-            except Exception:
-                payments_data = []
+        payments_data = [row.to_dict() for row in self.payments]
 
         return {
             "id": self.id,
@@ -386,6 +383,7 @@ class Lead(Base):
             "notes": self.notes or "",
             "estimatedTotal": estimated_total_data,
             "payments": payments_data,
+            "thirdPartyPayout": self.third_party_payout(),
         }
 
 
@@ -547,9 +545,6 @@ class LeadJob(Base):
     pricing_match_key = Column(String(64))
     # The plan's minimum billable cu ft for this job, stored once per plan match.
     minimum_cuft = Column(Integer)
-    # The customer page's service cards as last built, and a fingerprint of everything they were built from.
-    pricing_options_cache = Column(Text)
-    pricing_options_key = Column(String(64))
     # The estimate copy a rep approved for signing; any saved change to the estimate clears it (estimate_approval.py).
     estimate_approved_id = Column(String(36))
     estimate_approved_at = Column(DateTime)
@@ -566,6 +561,12 @@ class LeadJob(Base):
     notes = Column(Text)
     customer_notes = Column(Text)
     foreman_notes = Column(Text)
+    # Crew and schedule for the work order.
+    crew_size = Column(Integer)
+    trucks = Column(Integer)
+    start_time = Column(String(20))
+    estimated_hours = Column(Numeric(5, 2))
+    travel_hours = Column(Numeric(5, 2))
     estimated_materials = Column(Text)
     customer_packing = Column(Text)
     customer_packing_package = Column(Text)
@@ -604,6 +605,11 @@ class LeadJob(Base):
             "notes": self.notes or "",
             "customer_notes": self.customer_notes or "",
             "foreman_notes": self.foreman_notes or "",
+            "crew_size": self.crew_size,
+            "trucks": self.trucks,
+            "start_time": self.start_time or "",
+            "estimated_hours": float(self.estimated_hours) if self.estimated_hours is not None else None,
+            "travel_hours": float(self.travel_hours) if self.travel_hours is not None else None,
             "estimated_materials": self._estimated_materials_data(),
             "company_id": self.company_id,
             "company_name": self.company.name if self.company else "",
@@ -640,6 +646,38 @@ class LeadContact(Base):
 
     def to_dict(self):
         return {"id": self.id, "kind": self.kind, "value": self.value}
+
+
+class LeadPayment(Base):
+    """A payment on a lead, with its rep payout. SmartMoving's are synced; the CRM's are entered here."""
+    __tablename__ = "lead_payments"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    lead_id = Column(String(36), ForeignKey("leads.id", ondelete="CASCADE"), nullable=False, index=True)
+    source = Column(String(20), nullable=False, default="crm")  # 'smartmoving' or 'crm'
+    sort_order = Column(Integer, nullable=False, default=0)
+    amount = Column(Numeric(12, 2), nullable=False, default=0)
+    taken_by_user = Column(String(255), nullable=False, default="")
+    paid_at = Column(Date)  # the day the payment was made
+    method = Column(String(30))  # how it was paid, e.g. Credit card
+    rep_paid = Column(Boolean, nullable=False, default=False)
+    rep_paid_at = Column(String(40), nullable=False, default="")
+    rep_commission_percent = Column(Numeric(6, 2))
+    rep_commission_amount = Column(Numeric(12, 2))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "source": self.source,
+            "amount": float(self.amount or 0),
+            "takenByUser": self.taken_by_user or "",
+            "paidAt": self.paid_at.isoformat() if self.paid_at else "",
+            "method": self.method or "",
+            "repPaid": bool(self.rep_paid),
+            "repPaidAt": self.rep_paid_at or "",
+            "repCommissionPercent": float(self.rep_commission_percent) if self.rep_commission_percent is not None else None,
+            "repCommissionAmount": float(self.rep_commission_amount) if self.rep_commission_amount is not None else None,
+        }
 
 
 class LeadJobCharge(Base):

@@ -1,4 +1,5 @@
 """Exercise portal access boundaries and OTP lifecycle with an isolated database."""
+from pydantic import BaseModel
 import importlib.util
 import json
 import os
@@ -54,6 +55,11 @@ def portal(monkeypatch):
     mocks['database'].get_db = lambda: None
     mocks['config'].get_config = lambda: {}
     mocks['routes.leads']._safe_attachment_name = lambda name: name
+    # A real model: the details patch body is built from it.
+    class LeadContactInput(BaseModel):
+        kind: str
+        value: str
+    mocks['routes.leads'].LeadContactInput = LeadContactInput
     spec = importlib.util.spec_from_file_location('test_public_moves_module', BACKEND / 'routes/public_moves.py')
     module = importlib.util.module_from_spec(spec)
     with patch.dict(sys.modules, mocks): spec.loader.exec_module(module)

@@ -11,14 +11,14 @@ from sqlalchemy import create_engine, func
 from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
-from models import Base, Company, Lead, LeadJob, User
+from models import Base, Company, Lead, LeadJob, LeadPayment, User
 from company_colors import resolve_company_color
 
 
 @pytest.fixture
 def dispatch_routes():
     source = Path(__file__).resolve().parents[2] / 'backend/routes/leads.py'
-    names = {'get_dispatch_calendar', 'search_dispatch_jobs', '_parse_move_month'}
+    names = {'get_dispatch_calendar', 'search_dispatch_jobs', '_parse_move_month', '_payments_by_lead'}
     nodes = [node for node in ast.parse(source.read_text(encoding='utf-8')).body
              if isinstance(node, ast.FunctionDef) and node.name in names]
     for node in nodes:
@@ -27,7 +27,6 @@ def dispatch_routes():
                  _get_user_company_ids=lambda user, db: user.company_ids,
                  _effective_job_date=lambda job: date.fromisoformat(job.move_date),
                  _deserialize_estimated_total=lambda value: None,
-                 _deserialize_payments=lambda value: [],
                  DISPATCH_STATUSES={'booked', 'scheduled', 'completed'})
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), scope)
     engine = create_engine('sqlite://')

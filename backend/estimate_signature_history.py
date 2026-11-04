@@ -9,7 +9,7 @@ from models import EstimateSignature
 ESTIMATE_FIELDS = (
     'estimate', 'storage', 'stairs', 'elevator', 'long_carry', 'shuttle',
     'extra_stops', 'packing_package', 'packing_items', 'item_questions',
-    'name', 'phone', 'email', 'move_date', 'pickup', 'delivery', 'stops',
+    'name', 'phone', 'email', 'contacts', 'move_date', 'pickup', 'delivery', 'stops',
     'company_details', 'item_services', 'documents',
 )
 

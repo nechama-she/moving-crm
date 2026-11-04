@@ -19,6 +19,7 @@ type SalesCalendarJob = {
   price: number | null;
   estimatedTotal?: EstimatedTotal | null;
   payments?: LeadPayment[];
+  thirdPartyPayout?: ThirdPartyPayout;
   status: string;
   assigned_to: string;
   assigned_to_name: string;
@@ -38,12 +39,14 @@ type LeadPayment = {
   takenByUser: string;
   repPaid?: boolean;
   repPaidAt?: string;
-  thirdPartyCommissionTo?: string;
-  thirdPartyCommissionAmount?: number;
   repCommissionPercent?: number | null;
   repCommissionAmount?: number | null;
-  thirdPartyCommissionPaid?: boolean;
-  thirdPartyCommissionPaidAt?: string;
+};
+
+// The lead's one third-party payout.
+type ThirdPartyPayout = {
+  thirdPartyCommissionAmount: number;
+  thirdPartyCommissionPaid: boolean;
 };
 
 type SalesSearchResult = {
@@ -300,14 +303,18 @@ function parsePayments(raw: unknown): LeadPayment[] {
       takenByUser: String(value.takenByUser || ""),
       repPaid: Boolean(value.repPaid || false),
       repPaidAt: String(value.repPaidAt || ""),
-      thirdPartyCommissionTo: String(value.thirdPartyCommissionTo || ""),
-      thirdPartyCommissionAmount: Number(value.thirdPartyCommissionAmount || 0),
       repCommissionPercent: value.repCommissionPercent == null ? null : Number(value.repCommissionPercent),
       repCommissionAmount: value.repCommissionAmount == null ? null : Number(value.repCommissionAmount),
-      thirdPartyCommissionPaid: Boolean(value.thirdPartyCommissionPaid || false),
-      thirdPartyCommissionPaidAt: String(value.thirdPartyCommissionPaidAt || ""),
     };
   });
+}
+
+function parseThirdPartyPayout(raw: unknown): ThirdPartyPayout {
+  const value = (raw && typeof raw === "object") ? raw as Record<string, unknown> : {};
+  return {
+    thirdPartyCommissionAmount: Number(value.thirdPartyCommissionAmount || 0),
+    thirdPartyCommissionPaid: Boolean(value.thirdPartyCommissionPaid || false),
+  };
 }
 
 export default function SalesCalendarPage() {
@@ -460,6 +467,7 @@ export default function SalesCalendarPage() {
           price: item.price == null ? null : Number(item.price),
           estimatedTotal: parseEstimatedTotal(item.estimatedTotal),
           payments: parsePayments(item.payments),
+          thirdPartyPayout: parseThirdPartyPayout(item.thirdPartyPayout),
           status: String(item.status || ""),
           assigned_to: String(item.assigned_to || ""),
           assigned_to_name: String(item.assigned_to_name || ""),
@@ -623,18 +631,17 @@ export default function SalesCalendarPage() {
       for (const job of items) {
         leadCount += 1;
         estimatedTotal += Number(job.estimatedTotal?.finalTotal || 0);
-        for (const payment of job.payments || []) {
-          const paymentAmount = Number(payment.amount || 0);
-          paymentsTotal += paymentAmount;
-          const thirdPartyAmount = Number(payment.thirdPartyCommissionAmount || 0);
-          thirdPartyPayoutTotal += thirdPartyAmount;
-          if (payment.thirdPartyCommissionPaid) thirdPartyPayoutPaid += thirdPartyAmount;
-        }
+        // One payout per lead; each payment's rep commission is figured after its share of it.
+        const jobPayments = (job.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+        const payout = Number(job.thirdPartyPayout?.thirdPartyCommissionAmount || 0);
+        paymentsTotal += jobPayments;
+        thirdPartyPayoutTotal += payout;
+        if (job.thirdPartyPayout?.thirdPartyCommissionPaid) thirdPartyPayoutPaid += payout;
         if ((job.assigned_to_role || "") === "sales_rep") {
           const commissionPercent = commissionPercentForJob(job);
           for (const payment of job.payments || []) {
             const paymentAmount = Number(payment.amount || 0);
-            const thirdPartyAmount = Number(payment.thirdPartyCommissionAmount || 0);
+            const thirdPartyAmount = jobPayments > 0 ? payout * paymentAmount / jobPayments : 0;
             const effectivePercent = payment.repCommissionPercent ?? commissionPercent;
             repCommissionTotal += repPaidCommissionAmount(paymentAmount, effectivePercent, thirdPartyAmount, payment.repCommissionAmount);
             if (payment.repPaid) {
@@ -719,18 +726,17 @@ export default function SalesCalendarPage() {
       for (const job of items) {
         leadCount += 1;
         estimatedTotal += Number(job.estimatedTotal?.finalTotal || 0);
-        for (const payment of job.payments || []) {
-          const paymentAmount = Number(payment.amount || 0);
-          paymentsTotal += paymentAmount;
-          const thirdPartyAmount = Number(payment.thirdPartyCommissionAmount || 0);
-          thirdPartyPayoutTotal += thirdPartyAmount;
-          if (payment.thirdPartyCommissionPaid) thirdPartyPayoutPaid += thirdPartyAmount;
-        }
+        // One payout per lead; each payment's rep commission is figured after its share of it.
+        const jobPayments = (job.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+        const payout = Number(job.thirdPartyPayout?.thirdPartyCommissionAmount || 0);
+        paymentsTotal += jobPayments;
+        thirdPartyPayoutTotal += payout;
+        if (job.thirdPartyPayout?.thirdPartyCommissionPaid) thirdPartyPayoutPaid += payout;
         if ((job.assigned_to_role || "") === "sales_rep") {
           const commissionPercent = commissionPercentForJob(job);
           for (const payment of job.payments || []) {
             const paymentAmount = Number(payment.amount || 0);
-            const thirdPartyAmount = Number(payment.thirdPartyCommissionAmount || 0);
+            const thirdPartyAmount = jobPayments > 0 ? payout * paymentAmount / jobPayments : 0;
             const effectivePercent = payment.repCommissionPercent ?? commissionPercent;
             repCommissionTotal += repPaidCommissionAmount(paymentAmount, effectivePercent, thirdPartyAmount, payment.repCommissionAmount);
             if (payment.repPaid) {

@@ -159,7 +159,7 @@ def _services_table(data, p, table, styles):
     if storage:
         answer = (f"Earliest delivery date: {storage.get('available_date') or 'Not answered'}"
                   + (f"\n{storage['paid_periods']} paid period(s)" if storage.get('valid') else ''))
-        terms = f"First {storage['free_days']} days free; ${storage['rate_per_cuft']:.2f} per cu ft per additional {storage['period_days']} days."
+        terms = f"First {storage['free_days']} days free; ${storage['rate_per_cuft']:.2f} per cu ft per additional {storage['period_days']} days or part thereof."
         body.append([service('Storage', terms), p(answer, 'NoteEstimate'), charge_cell('storage-periods')])
     shuttle = data.get('shuttle')
     if shuttle:
@@ -190,6 +190,7 @@ def _kit(size):
     styles.add(ParagraphStyle(name='RightEstimate', parent=styles['BodyEstimate'], alignment=TA_RIGHT))
     styles.add(ParagraphStyle(name='CompanyEstimate', parent=styles['SectionEstimate'], alignment=TA_RIGHT, spaceBefore=0))
     styles.add(ParagraphStyle(name='CompanyDetailsEstimate', parent=styles['NoteEstimate'], alignment=TA_RIGHT))
+    styles.add(ParagraphStyle(name='LabelEstimate', parent=styles['NoteEstimate'], fontName='Helvetica-Bold', fontSize=size - 1.5, leading=size * 1.1))
     def p(value, style='BodyEstimate'):
         return Paragraph(escape(str(value or '')).replace('\n', '<br/>'), styles[style])
     def table(body, widths, header=False):
@@ -209,7 +210,7 @@ def _template(output, company):
                              bottomMargin=53, title='Moving estimate', author=company.get('name') or '')
 
 
-def _summary(data, styles, p, table, link=True):
+def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE'):
     """Details, price breakdown, customer note and signature: the part that belongs on page one."""
     company = data.get('company_details') or {}
     estimate = data['estimate']
@@ -223,13 +224,32 @@ def _summary(data, styles, p, table, link=True):
     header.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0),
                                 ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
     story = [header,
-             Spacer(1, 12), Paragraph('MOVING ESTIMATE', styles['Title']),
+             Spacer(1, 12), Paragraph(title, styles['Title']),
              p('Prepared ' + (data.get('prepared_at') or datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)')), 'NoteEstimate')]
-    story.append(table([[p('CUSTOMER\n' + data.get('name', '')), p('PICKUP DATE\n' + str(data.get('move_date') or 'Not scheduled'))],
-                        [p('\n'.join(filter(None, [data.get('phone'), data.get('email')]))), p(('PARTIAL ESTIMATE\n' if any(c.get('pending') for c in estimate.get('charges', [])) else 'ESTIMATED TOTAL\n') + money(estimate['price']))],
-                        [p('PICKUP\n' + data.get('pickup', '')), p('DELIVERY\n' + data.get('delivery', ''))]], [261, 261]))
+    # Every phone and every email: the main one first, then the extras.
+    def contacts(kind):
+        return '\n'.join(filter(None, [data.get(kind), *[row['value'] for row in data.get('contacts') or [] if row['kind'] == kind]]))
+    # A small grey label over each value; empty ones are left out, and rows of three line up with each other.
+    def row(*fields):
+        fields = [(label, value) for label, value in fields if value]
+        if not fields:
+            return Spacer(0, 0)
+        return table([[[p(label, 'LabelEstimate'), p(value)] for label, value in fields]], [522 / max(len(fields), 3)] * len(fields))
+    def stops(kind):
+        return '\n'.join(stop.get('address', '') for stop in data.get('stops', []) if stop.get('type') == kind)
+    # The earliest delivery date is the customer's storage answer, so it shows only where storage is offered.
+    storage = data.get('storage')
+    story += [p('Customer', 'SectionEstimate'),
+              row(('NAME', data.get('name', '')), ('PHONE', contacts('phone')), ('EMAIL', contacts('email'))),
+              p('Move details', 'SectionEstimate'),
+              row(('PICKUP', data.get('pickup', '')), ('PICKUP STOPS', stops('pickup')),
+                  ('DELIVERY', data.get('delivery', '')), ('DELIVERY STOPS', stops('delivery'))),
+              row(('PICKUP DATE', str(data.get('move_date') or 'Not scheduled')),
+                  ('FIRST AVAILABLE DELIVERY DATE', storage and (storage.get('available_date') or 'Not answered')),
+                  ('PARTIAL ESTIMATE' if any(c.get('pending') for c in estimate.get('charges', [])) else 'ESTIMATED TOTAL', money(estimate['price'])))]
     for stop in data.get('stops', []):
-        story.append(p(f"Additional stop ({stop.get('type') or 'unspecified'}): {stop.get('address', '')}"))
+        if stop.get('type') not in ('pickup', 'delivery'):
+            story.append(p(f"Additional stop (unspecified): {stop.get('address', '')}"))
     story += [p('Price breakdown', 'SectionEstimate'), p(f"Estimated shipment volume: {ceil(float(estimate.get('cuft') or 0))} cu ft")]
     package = data.get('packing_package') or {}
     minimum = package.get('minimum_cubic_feet')
@@ -307,14 +327,40 @@ def _summary_pages(data, size):
     return doc.page
 
 
-def build_estimate_pdf(data, rows):
+def _work_order_section(work_order, estimate, p, table):
+    """The work order's two sections after the signature: the team's notes (customer notes are already above), then the CRM payments."""
+    # Each note on its own row, a small grey label over it; a note left empty is left out, and so is the section.
+    notes = [[[p(label, 'LabelEstimate'), p(text)]] for label, text in
+             (('INTERNAL NOTES', (work_order.get('internal_notes') or '').strip()), ('FOREMAN NOTES', (work_order.get('foreman_notes') or '').strip())) if text]
+    story = [p('Team notes', 'SectionEstimate'), table(notes, [522])] if notes else []
+    story.append(p('Payments', 'SectionEstimate'))
+    payments = work_order['payments']
+    body = [[p('DATE'), p('TAKEN BY'), p('AMOUNT', 'RightEstimate')]]
+    body += [[p(payment.get('paidAt') or 'Not set'), p(payment.get('takenByUser') or 'Not set'), p(money(payment['amount']), 'RightEstimate')]
+             for payment in payments]
+    total = Decimal(str(estimate['price'] or 0))
+    paid = sum(Decimal(str(payment['amount'])) for payment in payments)
+    totals = [('Total estimate', total), ('Total paid', paid), ('Balance due', total - paid)]
+    body += [[p(label), '', p(money(value), 'RightEstimate')] for label, value in totals]
+    payment_table = table(body, [150, 277, 95], header=True)
+    payment_table.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), .4, colors.HexColor('#bdc9d0'))]
+                                      + [('SPAN', (0, len(body) - n), (1, len(body) - n)) for n in range(1, len(totals) + 1)]))
+    story.append(payment_table)
+    return story
+
+
+def build_estimate_pdf(data, rows, work_order=None):
+    """The estimate. With work_order (its notes and payments), the work order: the same document with those after the signature."""
     output = BytesIO()
     muted = MUTED
     size = next((size for size in FONT_SIZES if _summary_pages(data, size) == 1), FONT_SIZES[-1])
     styles, p, table = _kit(size)
     company = data.get('company_details') or {}
     package = data.get('packing_package') or {}
-    story = _summary(data, styles, p, table)
+    title = 'WORK ORDER' if work_order else 'MOVING ESTIMATE'
+    story = _summary(data, styles, p, table, title=title)
+    if work_order:
+        story += _work_order_section(work_order, data['estimate'], p, table)
     story.append(p('Declared inventory', 'SectionEstimate'))
     rooms = defaultdict(list)
     entries_all = compact_inventory_entries(inventory_entries(rows, data.get('item_questions') or [], data.get('item_services')))
@@ -411,9 +457,9 @@ def build_estimate_pdf(data, rows):
         canvas.setFont('Helvetica', 8)
         canvas.setFillColor(muted)
         if doc.page > 1:
-            canvas.drawString(45, 770, 'MOVING ESTIMATE - CONTINUED')
+            canvas.drawString(45, 770, title + ' - CONTINUED')
             canvas.drawRightString(567, 770, str(data.get('name') or '')[:70])
-        canvas.drawString(45, 26, 'Moving estimate | ' + str(data.get('move_date') or 'Date pending'))
+        canvas.drawString(45, 26, title.capitalize() + ' | ' + str(data.get('move_date') or 'Date pending'))
         canvas.drawRightString(567, 26, f'Page {doc.page}')
         canvas.restoreState()
     _template(output, company).build(story, onFirstPage=footer, onLaterPages=footer)

@@ -11,6 +11,7 @@ type Company = {
   phone?: string;
   office_address?: string;
   dot_number?: string;
+  valuation_per_lb?: number | null;
   sender_email?: string;
   facebook_page_id?: string;
   aircall_number_id?: string;
@@ -30,6 +31,7 @@ type CompanyForm = {
   phone: string;
   office_address: string;
   dot_number: string;
+  valuation_per_lb: string;
   sender_email: string;
   facebook_page_id: string;
   aircall_number_id: string;
@@ -48,6 +50,7 @@ const emptyForm: CompanyForm = {
   phone: "",
   office_address: "",
   dot_number: "",
+  valuation_per_lb: "",
   sender_email: "",
   facebook_page_id: "",
   aircall_number_id: "",
@@ -118,6 +121,7 @@ export default function CompaniesPage() {
       phone: company.phone || "",
       office_address: company.office_address || "",
       dot_number: company.dot_number || "",
+      valuation_per_lb: company.valuation_per_lb == null ? "" : String(company.valuation_per_lb),
       sender_email: company.sender_email || "",
       facebook_page_id: company.facebook_page_id || "",
       aircall_number_id: company.aircall_number_id || "",
@@ -150,6 +154,7 @@ export default function CompaniesPage() {
         phone: form.phone.trim(),
         office_address: form.office_address.trim(),
         dot_number: form.dot_number.trim(),
+        valuation_per_lb: form.valuation_per_lb.trim() === "" ? null : Number(form.valuation_per_lb),
         sender_email: form.sender_email.trim(),
         facebook_page_id: form.facebook_page_id.trim(),
         aircall_number_id: form.aircall_number_id.trim(),
@@ -291,6 +296,11 @@ export default function CompaniesPage() {
           <label style={{ ...fieldLabel, gridColumn: "1 / -1" }}>
             USDOT number
             <input value={form.dot_number} onChange={(e) => updateField("dot_number", e.target.value)} style={inputStyle} inputMode="numeric" placeholder="Enter USDOT number" maxLength={30} />
+          </label>
+          <label style={fieldLabel}>
+            Valuation ($ per lb)
+            <input type="number" min={0} step="0.01" value={form.valuation_per_lb} onChange={(e) => updateField("valuation_per_lb", e.target.value)} style={inputStyle} placeholder="e.g. 0.60" />
+            <small>Printed on work orders.</small>
           </label>
           <label style={{ ...fieldLabel, gridColumn: "1 / -1" }}>
             Office address

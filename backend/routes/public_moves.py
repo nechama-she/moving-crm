@@ -32,7 +32,7 @@ from config import get_config
 from company_colors import resolve_company_color
 from database import get_db
 from libs.aircall.client import find_number_id, send_sms
-from models import Lead, LeadJob, Company, User, LeadAttachment, LeadLiveSwitch, PublicMoveAccess, PublicMoveSession, PublicMoveRepVerification, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload, WalkthroughRequest
+from models import Lead, LeadJob, Company, User, LeadAttachment, LeadLiveSwitch, PublicMoveAccess, PublicMoveSession, PublicMoveRepVerification, PublicMoveUpload, PublicMoveRate, PublicMovePendingUpload, WalkthroughRequest, LeadPayment, EstimateSignature
 from public_move_security import digest, secret_digest, link_token, contact_fingerprint, normalize_phone, file_type
 from public_move_sync import queue_files, sync_status
 from routes.leads import LeadContactInput, save_lead_contacts, _get_visible_lead_or_404, _get_user_company_ids, _persist_job_route, _read_job_route, _upload_attachment_bytes_to_s3, _delete_s3_url, _safe_attachment_name
@@ -737,13 +737,13 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
     if _has_inventory_list(state):
         from price_validity import refresh_expired_price
         refresh_expired_price(lead, job, db)
-    saved = lambda: (job.pricing_match_key, job.minimum_cuft, job.pricing_options_key)
+    saved = lambda: (job.pricing_match_key, job.minimum_cuft)
     before = saved()
     result = _move_details(access, db, pricing_only=True, individual_charges=is_rep_request(access, request))
     from delivery_fees import browser_fee_routes
     from price_validity import price_is_locked
     result['mileage_routes'] = [] if price_is_locked(lead, job) else browser_fee_routes(lead, job, db)
-    # Keep a newly worked-out plan match and cards, so the next load reads them instead of working them out again.
+    # Keep a newly worked-out plan match, so the next load reads it instead of working it out again.
     # Compared by value: an automatic flush before a later query clears SQLAlchemy's change history.
     if saved() != before:
         db.commit()
@@ -800,7 +800,8 @@ def saved_estimate(access, lead, job, state, individual_charges=False):
 
 
 def _move_details(access, db, *, refresh_report=True, include_pricing=True, pricing_only=False, individual_charges=False, estimate_only=False):
-    lead, job, conversation = _load_move(access, db, charges=True, contacts=not pricing_only)
+    # Contacts always: the estimate shows them, and the signed status compares them.
+    lead, job, conversation = _load_move(access, db, charges=True, contacts=True)
     pickup, stops, delivery = _read_job_route(db, job)
     meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first() if not pricing_only else None
     files = active_report_files(access, db) if not pricing_only else []
@@ -834,9 +835,8 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
         pricing_error = ''
     if include_pricing and pricing_required and not is_spark_pending and not report_import_pending and (job.company_id or lead.company_id):
         try:
-            # The estimate shows the cards as the page last showed them; the page keeps them current.
-            pricing_options = (json.loads(job.pricing_options_cache) if estimate_only and job.pricing_options_cache
-                               else _customer_pricing_options(lead, job, db))
+            # Saved answers update the page without rebuilding the saved cards, so the estimate checks them too.
+            pricing_options = _customer_pricing_options(lead, job, db)
             if estimate is not None:
                 estimate['minimum_cuft'] = pricing_options.get('minimum_cuft')
             packing_package = pricing_options['packing_package']
@@ -864,7 +864,9 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     from company_documents import estimate_documents
     def estimate_data():
         """What the estimate shows: the page's data with the people, route, item services and documents."""
+        # None without extras, so copies signed before extras existed still match.
         details = dict(pricing_data, name=lead.full_name, phone=lead.phone or '', email=lead.email or '',
+            contacts=[{'kind': row.kind, 'value': row.value} for row in lead.contacts] or None,
             move_date=job.move_date or '', pickup=pickup, delivery=delivery, stops=_typed_stops(job, stops),
             company_details=company_data, item_services=inventory_selectors(access, db),
             documents=estimate_documents(lead, job, db))
@@ -882,9 +884,12 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
         db, access.lead_id, access.job_id, estimate_data, None, inventory_pending=estimate_needs_update)
     pricing_data['estimate_needs_update'] = estimate_needs_update
     pricing_data['signature_requires_resign'] = pricing_data['signature_status'] == 'changed'
+    # Rep pages show every price line (individual_charges), and only they get the work order.
+    pricing_data['work_order_available'] = bool(individual_charges and pricing_data['signature_status'] == 'signed' and db.query(
+        LeadPayment.id).filter(LeadPayment.lead_id == lead.id, LeadPayment.source == 'crm').first())
     if pricing_only:
         return pricing_data
-    return {'signature_status': pricing_data['signature_status'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
+    return {'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': _typed_stops(job, stops),
             'unanswered_questions': required_questions,
             'pricing_required': pricing_required,
@@ -907,28 +912,12 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
 
 @with_job_locations
 def _customer_pricing_options(lead, job, db):
-    """The service cards: read as last built, and built again only when something they use has changed."""
-    import hashlib
-    from fastapi.encoders import jsonable_encoder
-    from routes.pricing import infer_job_move_type
-    infer_job_move_type(lead, job, db)  # Brings the saved plan match up to date.
-    conversation = db.get(LeadLiveSwitch, lead.id)
-    source = [job.pricing_match_key, job.customer_packing_package, job.customer_packing, job.estimated_materials,
-              job.move_date, job.stop_types, _read_job_route(db, job), str(lead.volume),
-              conversation.details if conversation else '']
-    key = hashlib.sha256(json.dumps(source, default=str).encode()).hexdigest()
-    if job.pricing_options_key == key and job.pricing_options_cache:
-        return json.loads(job.pricing_options_cache)
-    options = jsonable_encoder(_build_customer_pricing_options(lead, job, db))
-    job.pricing_options_cache, job.pricing_options_key = json.dumps(options), key
-    return options
-
-
-def _build_customer_pricing_options(lead, job, db):
+    """The service cards, built from the plan and the customer's saved answers."""
     from routes.pricing import (customer_packing_options, customer_packing_package,
                                 customer_shuttle, customer_storage, customer_elevator,
-                                customer_long_carry, customer_stairs, customer_minimum_volume)
+                                customer_long_carry, customer_stairs, customer_minimum_volume, infer_job_move_type)
     from extra_stops import option as extra_stops_option
+    infer_job_move_type(lead, job, db)  # Brings the saved plan match up to date.
     return {
         'minimum_cuft': customer_minimum_volume(lead, job, db),
         'packing_package': customer_packing_package(lead, job, db),
@@ -1142,6 +1131,29 @@ def sign_estimate(signature_id: str, body: EstimateSigningInput, access: PublicM
     record.signature = json.dumps(signature)
     db.commit()
     return {'id': record.id, 'signed_at': signed_at.isoformat() + 'Z'}
+
+
+@router.get('/api/public-moves/{access_id}/work-order.pdf')
+def work_order_pdf(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
+    """For reps: the signed estimate as signed, with the job's notes and the CRM payments, as they are now, after the signature."""
+    from estimate_pdf import build_estimate_pdf
+    if not is_rep_request(access, request):
+        raise HTTPException(403, 'The work order is available to your moving team only.')
+    record = db.query(EstimateSignature).filter(
+        EstimateSignature.lead_id == access.lead_id, EstimateSignature.job_id == access.job_id,
+        EstimateSignature.signed_at.isnot(None)).order_by(EstimateSignature.signed_at.desc()).first()
+    payments = db.query(LeadPayment).filter(LeadPayment.lead_id == access.lead_id, LeadPayment.source == 'crm').order_by(LeadPayment.sort_order).all()
+    if not record or not payments:
+        raise HTTPException(409, 'The work order is ready once the estimate is signed and a payment is entered in the CRM.')
+    job = db.get(LeadJob, access.job_id)
+    snapshot = json.loads(record.snapshot)
+    data = dict(snapshot['data'], signature=json.loads(record.signature))
+    pdf = build_estimate_pdf(data, snapshot['rows'], work_order={
+        'payments': [payment.to_dict() for payment in payments],
+        'internal_notes': job.notes, 'foreman_notes': job.foreman_notes})
+    return Response(pdf, media_type='application/pdf', headers={
+        'Content-Disposition': 'inline; filename="work-order-' + record.id + '.pdf"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
 @router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/resign')

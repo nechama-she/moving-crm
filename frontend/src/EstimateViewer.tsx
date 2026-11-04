@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import EstimateSigning from './EstimateSigning';
 import './EstimateViewer.css';
 
-export default function EstimateViewer({ base, headers, customerName, version, url, error, onClose, alreadySigned = false, approved = true, rep = false, onApproved }: {
-  base: string; headers: Record<string, string>; customerName: string; version: string;
+export default function EstimateViewer({ base, headers, customerName, version, url, error, onClose, alreadySigned = false, approved = true, rep = false, onApproved, filename, onSignatureRemoved }: {
+  base: string; headers: Record<string, string>; customerName: string; version: string; filename: string;
   url: string; error: string; onClose: () => void;
   alreadySigned?: boolean;
   // Signing needs a rep's approval of this exact estimate; the rep view can give it.
   approved?: boolean; rep?: boolean; onApproved?: () => void;
+  // Called once Re-sign removes the saved signature, so the page shows it unsigned right away.
+  onSignatureRemoved?: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [signing, setSigning] = useState(false);
@@ -27,6 +29,7 @@ export default function EstimateViewer({ base, headers, customerName, version, u
       const pdf = await response.blob();
       setSignedUrl(URL.createObjectURL(pdf));
       setCleared(true); setSigned(false); setSigning(true);
+      onSignatureRemoved?.();
     } catch (e) { setLoadError((e as Error).message); }
     finally { setClearing(false); }
   }
@@ -56,7 +59,7 @@ export default function EstimateViewer({ base, headers, customerName, version, u
         {url && version && signed && <button className="cm-secondary-btn" disabled={clearing} onClick={() => void resign()} title="Remove the saved signature and sign this estimate again">{clearing ? 'Removing signature...' : 'Re-sign'}</button>}
         {url && version && !signed && !approved && rep && <button className="cm-primary" disabled={approving} onClick={() => void approve()}>{approving ? 'Approving...' : 'Approve for signing'}</button>}
         {url && version && !signed && approved && <button className="cm-primary" onClick={() => setSigning(true)}>Sign estimate</button>}
-        {(signedUrl || ((!signed || alreadySigned) && url)) && <a className="cm-secondary-btn" href={signedUrl || url} download={signed ? 'signed-estimate.pdf' : 'estimate.pdf'}>Download PDF</a>}
+        {(signedUrl || ((!signed || alreadySigned) && url)) && <a className="cm-secondary-btn" href={signedUrl || url} download={filename}>Download PDF</a>}
         <button className="cm-secondary-btn" disabled={signing || clearing} onClick={onClose} aria-label="Close estimate">Close</button>
       </div>
     </header>
