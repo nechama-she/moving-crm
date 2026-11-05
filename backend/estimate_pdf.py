@@ -4,8 +4,10 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from io import BytesIO
 from math import ceil
+import base64
 import json
 import re
+from uuid import UUID
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -92,6 +94,11 @@ def _is_service(charge):
         return bool(charge.get('id'))
 
 
+def _before_discount(charge):
+    """A line's price before its discount, for the fees total in the price breakdown."""
+    return float(charge.get('subtotal') or 0) if charge.get('discount_amount') else float(charge.get('total') or 0)
+
+
 def _services_total(estimate):
     lines = [charge for charge in estimate.get('charges') or [] if _is_service(charge)]
     return lines, sum(float(charge.get('total') or 0) for charge in lines), any(charge.get('pending') for charge in lines)
@@ -112,11 +119,20 @@ def _services_table(data, p, table, styles):
         if charge.get('pending'):
             return 'Pending'
         if charge.get('discount_amount'):
-            # As on the customer page: the price before the discount crossed out, then the price, then the discount.
-            title = (data.get('discount_titles') or {}).get(charge.get('id')) or 'Discount'
-            return [Paragraph(f"<strike>{money(charge.get('subtotal'))}</strike>  <b>{money(charge.get('total'))}</b>", styles['RightEstimate']),
-                    p(f"{title}: -{money(charge['discount_amount'])} ({charge.get('discount_percent') or 0:g}%)", 'NoteEstimate')]
+            return cell_of([charge])
         return amount(charge.get('total'))
+    def cell_of(charges):
+        # As on the customer page: the price before the discount crossed out, then the price, then the discount.
+        subtotal = sum(float(charge.get('subtotal') or 0) for charge in charges)
+        total = sum(float(charge.get('total') or 0) for charge in charges)
+        discount = sum(float(charge.get('discount_amount') or 0) for charge in charges)
+        if not discount:
+            return p(amount(total), 'RightEstimate')
+        title = next(((data.get('discount_titles') or {}).get(charge.get('id')) for charge in charges
+                      if (data.get('discount_titles') or {}).get(charge.get('id'))), None) or 'Discount'
+        percent = round(discount / subtotal * 100, 2) if subtotal else 0
+        return [Paragraph(f"<strike>{money(subtotal)}</strike>  <b>{money(total)}</b>", styles['RightEstimate']),
+                p(f"{title}: -{money(discount)} ({percent:g}%)", 'NoteEstimate')]
     def charge_cell(key):
         value = charge_of(key)
         return value if isinstance(value, list) else p(value, 'RightEstimate')
@@ -130,11 +146,18 @@ def _services_table(data, p, table, styles):
         terms = f"{group['free_miles']:g} miles free; ${group['stop_fee']:.2f} per chargeable stop plus ${group['per_mile']:.2f} per mile beyond the allowance."
         answer = '\n'.join(row['address'] + (f" - {row['miles']} miles" if row.get('miles') is not None else ' - distance pending')
                            for row in group['stops']) or (f"No extra {group['location']} stops" if group['answer'] is False else 'Not answered')
+        # This group's price lines (one per stop), so their discounts show like every other fee's.
+        ids = {'extra-stop:' + base64.urlsafe_b64encode(UUID(row['id']).bytes).decode().rstrip('=') for row in group['stops'] if row.get('id')}
+        found = [by_id[charge_id] for charge_id in ids if charge_id in by_id]
+        shown.update(ids)
         amounts = [row['total'] for row in group['stops']]
-        for row in group['stops']:
-            shown.update(charge.get('id') for charge in lines if str(charge.get('id', '')).startswith('extra-stop:'))
-        cost = 'Pending' if any(value is None for value in amounts) else amount(sum(amounts))
-        body.append([service('Extra ' + group['location'] + ' stops', terms), p(answer, 'NoteEstimate'), p(cost, 'RightEstimate')])
+        if any(value is None for value in amounts) or any(charge.get('pending') for charge in found):
+            cost = p('Pending', 'RightEstimate')
+        elif found:
+            cost = cell_of(found)
+        else:
+            cost = p(amount(sum(amounts)), 'RightEstimate')
+        body.append([service('Extra ' + group['location'] + ' stops', terms), p(answer, 'NoteEstimate'), cost])
     elevator = data.get('elevator')
     for row in (elevator or {}).get('locations', []):
         answer = ('Not sure - pending confirmation' if row.get('unknown') else 'Elevator used' if row['uses_elevator']
@@ -164,14 +187,18 @@ def _services_table(data, p, table, styles):
     shuttle = data.get('shuttle')
     if shuttle:
         answer = ('Shuttle required for this delivery area' if shuttle['automatic']
+                  else 'Semi-trailer can park at delivery: Not sure - shuttle charge applies if needed' if shuttle.get('unknown')
                   else {True: 'Semi-trailer can park at delivery: Yes', False: 'Semi-trailer can park at delivery: No - shuttle required'}.get(shuttle.get('answer'), 'Not answered'))
         body.append([service('Delivery truck access', None), p(answer, 'NoteEstimate'), charge_cell('shuttle')])
     # Lines with no answer of their own: packing, materials, item services, mileage fees.
     for charge in lines:
-        if charge.get('id') in shown or (not charge.get('pending') and not charge.get('total')):
+        # A fee waived to zero still shows, with its discount.
+        if charge.get('id') in shown or (not charge.get('pending') and not charge.get('total') and not charge.get('discount_amount')):
             continue
-        cost = 'Pending' if charge.get('pending') else amount(charge['total'])
-        body.append([service(charge['name'], None), p(charge.get('description') or '', 'NoteEstimate'), p(cost, 'RightEstimate')])
+        cost = p('Pending', 'RightEstimate') if charge.get('pending') else cell_of([charge])
+        # The discount shows in the charge cell, not also as the "| <title>: -$X" a rep discount adds to the description.
+        description = re.sub(r' \| [^|]*: -\$[\d,]+\.\d{2}( \(new rate [^)]*\))?$', '', charge.get('description') or '')
+        body.append([service(charge['name'], None), p(description, 'NoteEstimate'), cost])
     body.append([p('TOTAL ADDITIONAL SERVICES AND FEES'), p('Includes charges pending calculation' if pending else '', 'NoteEstimate'),
                  p(money(total), 'RightEstimate')])
     services = table(body, [170, 257, 95], header=True)
@@ -210,7 +237,7 @@ def _template(output, company):
                              bottomMargin=53, title='Moving estimate', author=company.get('name') or '')
 
 
-def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE'):
+def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE', signature=True):
     """Details, price breakdown, customer note and signature: the part that belongs on page one."""
     company = data.get('company_details') or {}
     estimate = data['estimate']
@@ -288,8 +315,11 @@ def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE'):
                 basis += f"\nBefore discount: {money(charge['subtotal'])}\n{title} ({charge['discount_percent']:g}%): -{money(charge['discount_amount'])}"
         charges.append([p(charge['name']), p(basis, 'NoteEstimate'), p('Pending' if charge.get('pending') else money(shown), 'RightEstimate')])
         if package and charge is package[-1] and package_before > package_after:
-            charges.append([p('Subtotal'), p(f"Before discount: {money(package_before)}\n{package_title}: -{money(package_before - package_after)}", 'NoteEstimate'),
-                            p(money(package_after), 'RightEstimate')])
+            # The discount on its own row (name, percent, amount), then the subtotal: the original crossed out, then the new price.
+            discount = package_before - package_after
+            charges.append([p(package_title), p(f"{discount / package_before * 100:.2f}".rstrip('0').rstrip('.') + '% off', 'NoteEstimate'),
+                            p('-' + money(discount), 'RightEstimate')])
+            charges.append([p('Subtotal'), '', Paragraph(f"<strike>{money(package_before)}</strike>  <b>{money(package_after)}</b>", styles['RightEstimate'])])
     service_lines, service_total, service_pending = _services_total(estimate)
     if service_lines:
         # A link to the services table further down.
@@ -297,8 +327,16 @@ def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE'):
         text = 'See Additional services and fees'
         text = f'<a href="#additional-services" color="#1a5fb4"><u>{text}</u></a>' if link else f'<u>{text}</u>'
         link = Paragraph(text + (' (includes pending charges)' if service_pending else ''), styles['NoteEstimate'])
-        charges.append([p('Additional services and fees'), link,
-                        p(money(service_total), 'RightEstimate')])
+        service_before = sum(_before_discount(charge) for charge in service_lines)
+        if service_before > service_total + 0.004:
+            # The fees total, the original crossed out, then their own discounts added up (each fee keeps its own, in the
+            # table), so the row has no name or percent of its own.
+            charges.append([p('Additional services and fees'), link,
+                            Paragraph(f"<strike>{money(service_before)}</strike>  <b>{money(service_total)}</b>", styles['RightEstimate'])])
+            charges.append([p('Discount'), '', p('-' + money(service_before - service_total), 'RightEstimate')])
+        else:
+            charges.append([p('Additional services and fees'), link,
+                            p(money(service_total), 'RightEstimate')])
     if len(charges) == 1:
         charges.append([p('Moving estimate'), p('Not specified', 'NoteEstimate'), p(money(estimate['price']), 'RightEstimate')])
     charge_table = table(charges, [180, 247, 95], header=True)
@@ -310,7 +348,8 @@ def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE'):
     note = (data.get('customer_notes') or '').strip()
     if note:
         story += [p('Notes', 'SectionEstimate'), p(note)]
-    story.append(_signature_block(data, p))
+    if signature:
+        story.append(_signature_block(data, p))
     return story
 
 
@@ -373,7 +412,7 @@ def build_estimate_pdf(data, rows, work_order=None):
     company = data.get('company_details') or {}
     package = data.get('packing_package') or {}
     title = 'WORK ORDER' if work_order else 'MOVING ESTIMATE'
-    story = _summary(data, styles, p, table, title=title)
+    story = _summary(data, styles, p, table, title=title, signature=not work_order)
     if work_order:
         story += _work_order_section(work_order, data['estimate'], p, table)
     story.append(p('Declared inventory', 'SectionEstimate'))
@@ -382,10 +421,15 @@ def build_estimate_pdf(data, rows, work_order=None):
     for entry in entries_all:
         rooms[entry['room']].append(entry)
     def totals(entries):
-        going = sum(e['quantity'] for e in entries if not e['excluded'])
+        from inventory_counts import is_box, pieces_per_item
+        going = [e for e in entries if not e['excluded']]
         not_going = sum(e['quantity'] for e in entries if e['excluded'])
         volume = sum(e['cuft'] for e in entries)
-        return f"Going: {going}   |   Not going: {not_going}   |   Volume: {volume:,.2f} cu ft"
+        # Pieces and boxes count only what is going, as on the customer page.
+        pieces = sum(e['quantity'] * pieces_per_item(e['name']) for e in going)
+        boxes = sum(e['quantity'] for e in going if is_box(e['name']))
+        return (f"Going: {sum(e['quantity'] for e in going)}   |   Pieces: {pieces}   |   Boxes: {boxes}   |   "
+                f"Not going: {not_going}   |   Volume: {volume:,.2f} cu ft")
     for room, entries in rooms.items():
         body = [[p(room + '\n' + totals(entries)), '', '', ''],
                 [p(label, 'NoteEstimate') for label in ['ITEM', 'GOING', 'NOT GOING', 'CU FT']]]
@@ -462,7 +506,7 @@ def build_estimate_pdf(data, rows, work_order=None):
                          p(money(material.get('packing_price')), 'RightEstimate')])
         story.append(table(body, [228, 104, 95, 95], header=True))
     from company_documents import pdf_document_flowables
-    for document in data.get('documents', []):
+    for document in [] if work_order else data.get('documents', []):
         story.append(PageBreak())
         story.extend(pdf_document_flowables(document, styles))
     def footer(canvas, doc):

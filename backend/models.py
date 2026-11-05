@@ -574,6 +574,8 @@ class LeadJob(Base):
     price_refresh_attempted_at = Column(DateTime)
     price_refresh_error = Column(Text)
     price = Column(Numeric(12, 2))
+    # SmartMoving's total for this job, as its sync last sent it. Shown on the lead page only; our price is `price`.
+    smartmoving_price = Column(Numeric(12, 2))
     stop_types = Column(Text)
     created_at = Column(DateTime(timezone=True), default=_now, index=True)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, index=True)
@@ -619,6 +621,7 @@ class LeadJob(Base):
             "move_date": self.move_date or "",
             "booked_move_date": self.booked_move_date.isoformat() if self.booked_move_date else "",
             "price": float(self.price) if self.price is not None else None,
+            "smartmoving_price": float(self.smartmoving_price) if self.smartmoving_price is not None else None,
             "charges": [row.to_dict() for row in self.charges],
             "created_at": self.created_at.isoformat() if self.created_at else "",
             "updated_at": self.updated_at.isoformat() if self.updated_at else "",

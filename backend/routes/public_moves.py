@@ -570,7 +570,8 @@ def _group_box_packing_charges(charges):
     result = []
     groups = {}
     for charge in charges:
-        match = re.fullmatch(r'Movers pack (\d+) of (\d+) boxes; labor and materials included', charge['description'])
+        # A discounted box line has the rep discount's "| <title>: -$X" after it; it combines all the same.
+        match = re.fullmatch(r'Movers pack (\d+) of (\d+) boxes; labor and materials included( \| [^|]*: -\$[\d,]+\.\d{2})?', charge['description'])
         if not match:
             result.append(charge)
             continue
@@ -999,6 +1000,9 @@ def _estimate_document(access, db):
         raise HTTPException(409, 'Your inventory and estimate must be ready before downloading.')
     if not rows:
         raise HTTPException(409, 'There is no inventory to include in this estimate.')
+    # The date it was prepared, in the moving company's time zone (the lead is already loaded; no query).
+    company = _company_for(db.get(Lead, access.lead_id), db)
+    data['prepared_at'] = datetime.now(ZoneInfo(company.timezone if company else 'America/New_York')).strftime('%B %d, %Y')
     return data, rows
 
 
@@ -1069,7 +1073,6 @@ def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db:
     pending = [c.get('name') or 'Unnamed charge' for c in data['estimate'].get('charges', []) if c.get('pending')]
     if pending:
         raise HTTPException(409, 'These charges still need calculation: ' + ', '.join(pending) + '.')
-    data['prepared_at'] = datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)')
     record_id = str(uuid4())  # Returned as is: reading it from the row after the commit would load the row again.
     db.add(EstimateSignature(id=record_id, lead_id=access.lead_id, job_id=access.job_id,
         report_id=(data.get('spark') or {}).get('id'),
@@ -1646,14 +1649,15 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         return saved_response()
     if body.change and body.change.kind == 'shuttle':
         from routes.pricing import customer_shuttle, sync_customer_shuttle_charge
-        if 'enabled' not in body.change.model_fields_set:
+        if 'enabled' not in body.change.model_fields_set and not body.change.access_unknown:
             raise HTTPException(400, 'Choose an answer for delivery truck access.')
         option = customer_shuttle(lead, job, db)
         if not option or option['automatic'] or body.change.revision != option['revision']:
             raise HTTPException(409, 'Delivery access requirements changed. Refresh your estimate.')
         selection = json.loads(job.customer_packing_package or '{}')
         previous_shuttle = selection.get('shuttle', {})
-        selection['shuttle'] = {'answer': body.change.enabled, 'revision': option['revision']}
+        selection['shuttle'] = ({'answer': None, 'unknown': True, 'revision': option['revision']} if body.change.access_unknown
+                                else {'answer': body.change.enabled, 'revision': option['revision']})
         if previous_shuttle != selection['shuttle']:
             selection.get('long_carry', {}).pop('delivery', None)
         job.customer_packing_package = json.dumps(selection)

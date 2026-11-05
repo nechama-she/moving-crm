@@ -19,7 +19,7 @@ class RepDiscountTests(unittest.TestCase):
         handler.args.defaults = []
         lines = [{'id': 'charge', 'name': 'Transportation charge', 'total': 1000.0}]
         scope = {'is_rep_request': lambda *args: True, 'Lead': object(), 'LeadJob': object(), 'json': json,
-                 'estimate_charges': lambda job, individual_charges=False: lines}
+                 'estimate_charges': lambda job, individual_charges=False: lines, 'customer_price': lambda job: job.price}
         future = ast.parse('from __future__ import annotations').body[0]
         exec(compile(ast.Module(body=[future, handler], type_ignores=[]), str(source), 'exec'), scope)
         lead = SimpleNamespace(id='lead', volume=Decimal('543'))

@@ -93,3 +93,15 @@ def test_saved_book_automatically_prices_matching_delivery_only():
             assert db.query(models.LeadJobCharge).filter_by(job_id=job.id,name='Delivery shuttle').count() == 0
             assert api.customer_shuttle(lead,job,db)['answer'] is None
         engine.dispose()
+
+
+def test_unknown_answer_counts_as_answered_without_a_shuttle_charge():
+    from estimate_questions import unanswered_questions
+    card = ShuttleCard(enabled=True, rate=Decimal('1.50'), access_distance_ft=500)
+    revision = shuttle_option(card, 'NY 13544', 'NY', '13544', 24, 286, {})['revision']
+    unknown = shuttle_option(card, 'NY 13544', 'NY', '13544', 24, 286, {'answer': None, 'unknown': True, 'revision': revision})
+    assert unknown['unknown'] and unknown['answer'] is None and not unknown['required']
+    assert 'shuttle' not in unanswered_questions({'shuttle': unknown})
+    assert 'shuttle' in unanswered_questions({'shuttle': shuttle_option(card, 'NY 13544', 'NY', '13544', 24, 286, {})})
+    # A new address asks again.
+    assert not shuttle_option(card, 'Other NY 13544', 'NY', '13544', 24, 286, {'unknown': True, 'revision': revision})['unknown']

@@ -31,7 +31,7 @@ import RepDiscounts, { type DiscountResult } from './RepDiscounts';
 import "./CustomerMovePage.css";
 
 type LinkSms = { sent_at: string; phone_last4: string };
-type Shuttle = { automatic: boolean; answer: boolean | null; revision: string; required: boolean; question: string; rate: number; total: number; cubic_feet: number; inventory_cubic_feet: number; minimum_cubic_feet: number };
+type Shuttle = { automatic: boolean; answer: boolean | null; unknown?: boolean; revision: string; required: boolean; question: string; rate: number; total: number; cubic_feet: number; inventory_cubic_feet: number; minimum_cubic_feet: number };
 // What saving one answer returns: only the data that answer changed.
 type PricingDelta = {
   price?: string | null;
@@ -56,7 +56,7 @@ type Details = {
   item_questions?: ItemQuestion[];
   link_sms?: LinkSms | null;
   list_changed?: boolean;
-  combined_inventory?: {name:string;room?:string;amount?:number;quantity?:number;cuft?:number;unit_cuft?:number;reference_name?:string}[];
+  combined_inventory?: {name:string;room?:string;amount?:number;quantity?:number;cuft?:number;unit_cuft?:number;reference_name?:string;going?:boolean}[];
   report_history?: ReportRun[];
   signature_status?: 'unsigned' | 'signed' | 'changed';
   // Rep pages only: the estimate is signed.
@@ -236,10 +236,10 @@ export default function CustomerMovePage() {
   const [stairsMissing, setStairsMissing] = useState(false);
   const [storageDate, setStorageDate] = useState('');
   const [storageMissing, setStorageMissing] = useState(false);
-  const [shuttleAnswer, setShuttleAnswer] = useState<boolean | null>(null);
+  const [shuttleAnswer, setShuttleAnswer] = useState<boolean | 'unknown' | null>(null);
   const [shuttleMissing, setShuttleMissing] = useState(false);
   useEffect(() => {
-    setShuttleAnswer(data?.shuttle?.answer ?? null);
+    setShuttleAnswer(data?.shuttle?.unknown ? 'unknown' : data?.shuttle?.answer ?? null);
     setShuttleMissing(false);
   }, [data?.shuttle?.revision]);
   const [packingError, setPackingError] = useState('');
@@ -449,7 +449,7 @@ export default function CustomerMovePage() {
     setPackingSelection(Object.fromEntries(data.packing_items.filter(item=>item.selected).map(item=>[item.id,item.selected_service || ''])));
     setPackageSelection(data.packing_package?.selection || {mode:'none',unpacking:false,item_ids:[]});
     setStorageDate(data.storage?.available_date || '');
-    setShuttleAnswer(data.shuttle?.answer ?? null);
+    setShuttleAnswer(data.shuttle?.unknown ? 'unknown' : data.shuttle?.answer ?? null);
     const target = requiredQuestionTarget(missing, groupTerms(data.item_questions));
     setPackingError('');setTermsError('');setTermsStep(target.termsIndex);setTermsValidationAttempt(1);
     setPackingStep(combinedPricingStep(target.step));
@@ -871,9 +871,9 @@ export default function CustomerMovePage() {
   const sectionReady = (...names: PageSection[]) => names.every(name => sections[name].ready && !sections[name].error);
   const sectionRequests = useRef<Record<string, number>>({});
   const pricingLoading = sections.pricing.loading;
-  // The item list summary, from the current inventory.
-  const summaryRows = data?.combined_inventory || [];
-  const inventorySummary = summaryRows.length ? {
+  // The item list summary, from the current inventory; items not going count toward nothing.
+  const summaryRows = (data?.combined_inventory || []).filter(row => row.going !== false);
+  const inventorySummary = data?.combined_inventory?.length ? {
     items: summaryRows.reduce((total, row) => total + Number(row.amount ?? row.quantity ?? 0), 0),
     pieces: summaryRows.reduce((total, row) => total + Number(row.amount ?? row.quantity ?? 0) * piecesPerItem(row.name), 0),
     boxes: summaryRows.reduce((total, row) => total + boxQuantity(row.name, Number(row.amount ?? row.quantity ?? 0)), 0),
@@ -1307,7 +1307,7 @@ export default function CustomerMovePage() {
                     aria-busy={calculatingPrice}
                     disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running'}
                     onClick={() => void recalculatePrice()}
-                  >{calculatingPrice ? 'Re-rating...' : 'Re-rate'}</button>}
+                  >{calculatingPrice ? 'Getting your price...' : 'Get price'}</button>}
                 </div>
               </div>
               <div ref={estimateFeedback}>
@@ -1340,7 +1340,7 @@ export default function CustomerMovePage() {
                     disabled={pricingLoading || !!pricingLoadError || !sectionReady('pricing') || !(data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length || data.packing_package || data.item_questions?.length)}
                     onClick={() => {
                       setPackingSelection(Object.fromEntries(data.packing_items.filter(item => item.selected).map(item => [item.id, item.selected_service || ''])));
-                      setShuttleAnswer(data.shuttle?.answer ?? null); setShuttleMissing(false);
+                      setShuttleAnswer(data.shuttle?.unknown ? 'unknown' : data.shuttle?.answer ?? null); setShuttleMissing(false);
                       setStorageDate(data.storage?.available_date || ''); setStorageMissing(false);
                       setStopsIncomplete({});setStopsMissing(false);
                       setElevatorAnswers(Object.fromEntries((data.elevator?.locations || []).map(row => [row.location,row.unknown ? 'unknown' : row.uses_elevator]))); setElevatorMissing(false);
@@ -1506,9 +1506,9 @@ export default function CustomerMovePage() {
                       {data.shuttle.automatic ? <p>A smaller shuttle vehicle is required for your delivery area and is included in your estimate.</p> : <>
                         <p><strong>{data.shuttle.question}</strong></p>
                         <p>If not, a smaller truck will bring your belongings to your address. Tell us below how close it can park to your entrance.</p>
-                        <div className="cm-checklist">{[true, false].map(answer => <label className="cm-check-item" key={String(answer)}>
-                          <input type="radio" name="shuttle-access" checked={shuttleAnswer === answer} onChange={() => { setShuttleAnswer(answer); setCarryAnswers(prev => ({...prev, delivery:null})); setShuttleMissing(false); savePricingChange({ kind: 'shuttle', enabled: answer, revision: data.shuttle!.revision }); }} />
-                          <span>{answer ? 'Yes, a semi-trailer can access the delivery address' : 'No, a shuttle is needed'}</span>
+                        <div className="cm-checklist">{([true, false, 'unknown'] as const).map(answer => <label className="cm-check-item" key={String(answer)}>
+                          <input type="radio" name="shuttle-access" checked={shuttleAnswer === answer} onChange={() => { setShuttleAnswer(answer); setCarryAnswers(prev => ({...prev, delivery:null})); setShuttleMissing(false); savePricingChange(answer === 'unknown' ? { kind: 'shuttle', access_unknown: true, revision: data.shuttle!.revision } : { kind: 'shuttle', enabled: answer, revision: data.shuttle!.revision }); }} />
+                          <span>{answer === 'unknown' ? "I don't know" : answer ? 'Yes, a semi-trailer can access the delivery address' : 'No, a shuttle is needed'}</span>
                         </label>)}</div>
                         {shuttleMissing && <p className="cm-field-error" role="alert">Please choose an answer.</p>}
                       </>}

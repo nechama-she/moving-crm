@@ -106,8 +106,10 @@ def test_fully_discounted_stairs_moves_from_breakdown_to_details():
     doc=pymupdf.open(stream=build_estimate_pdf(data,[]),filetype='pdf')
     text=' '.join(' '.join(page.get_text().split()) for page in doc)
     # Not in the page-one breakdown; its row in the services table shows the answer and the discounted charge.
+    # The breakdown adds the fees' discounts up under their total.
     assert 'Pickup stairs' not in text and 'Before discount' not in text
     assert 'Stairs - pickup' in text and '2 flights $57.20 $0.00 Discount: -$57.20 (100%)' in text
+    assert 'Discount -$57.20' in text and '% off' not in text
 
 
 def test_material_price_list_is_appended_with_no_packing_and_does_not_change_total():
@@ -151,10 +153,75 @@ def test_work_order_adds_notes_and_payments_after_the_signature():
                   'internal_notes': 'Gate code', 'foreman_notes': 'Two trucks'}
     text = ''.join(page.get_text() for page in pymupdf.open(stream=build_estimate_pdf(data, [], work_order=work_order), filetype='pdf'))
     assert 'WORK ORDER' in text
-    assert text.index('Client signature') < text.index('Team notes') < text.index('Gate code') < text.index('Payments')
+    assert 'Client signature' not in text
+    assert text.index('TOTAL ESTIMATED PRICE') < text.index('Team notes') < text.index('Gate code') < text.index('Payments')
     assert 'Total estimate' in text and 'Balance due' in text and '$1,010.00' in text
     assert 'FOREMAN NOTES' in text
     # No notes: no Team notes section.
     empty = dict(work_order, internal_notes='', foreman_notes=None)
     text = ''.join(page.get_text() for page in pymupdf.open(stream=build_estimate_pdf(data, [], work_order=empty), filetype='pdf'))
     assert 'Team notes' not in text and 'Payments' in text
+
+
+def test_discounted_extra_stop_shows_its_discount_in_the_fees_table():
+    import base64
+    import uuid
+    import pymupdf
+    data = sample()
+    data['job_id'] = 'job'
+    row_id = str(uuid.uuid5(uuid.NAMESPACE_URL, 'extra-stop:job:delivery:Stop address'))
+    charge_id = 'extra-stop:' + base64.urlsafe_b64encode(uuid.UUID(row_id).bytes).decode().rstrip('=')
+    data['extra_stops'] = {'locations': [{'location': 'delivery', 'answer': True, 'free_miles': 0, 'stop_fee': 50, 'per_mile': 5,
+                                          'stops': [{'id': row_id, 'address': 'Stop address', 'miles': 100.0, 'total': 550}]}]}
+    data['estimate']['charges'].append({'id': charge_id, 'name': 'Extra delivery stop 1', 'description': 'Stop address',
+                                        'subtotal': 550, 'discount_amount': 275, 'total': 275})
+    text = ' '.join(' '.join(page.get_text().split()) for page in pymupdf.open(stream=build_estimate_pdf(data, []), filetype='pdf'))
+    assert 'Stop address - 100.0 miles $550.00 $275.00 Discount: -$275.00 (50%)' in text
+    assert 'Extra delivery stop 1' not in text  # shown once, in its stops row
+
+
+def test_every_kind_of_fee_shows_once_with_its_discount():
+    """Each fee the pricing code creates, by its real id, appears once in the fees table, discounted where it is."""
+    import base64
+    import json
+    import uuid
+    import pymupdf
+    from routes.pricing import customer_packing_charge_id as fee_id
+    data = sample()
+    data['job_id'] = 'job'
+    stop_row = str(uuid.uuid5(uuid.NAMESPACE_URL, 'extra-stop:job:delivery:Stop A'))
+    ids = {
+        'stop': 'extra-stop:' + base64.urlsafe_b64encode(uuid.UUID(stop_row).bytes).decode().rstrip('='),
+        'elevator': fee_id('job', 'elevator:pickup'), 'carry': fee_id('job', 'long_carry:delivery'), 'stairs': fee_id('job', 'stairs:pickup'),
+        'storage': fee_id('job', 'storage-periods'), 'shuttle': fee_id('job', 'shuttle'), 'package': fee_id('job', 'full-packing'),
+        'item': fee_id('job', 'piano'), 'origin': fee_id('job', 'origin-mileage'), 'delivery': fee_id('job', 'delivery-mileage'),
+        'service': str(uuid.uuid5(uuid.NAMESPACE_URL, 'item-service:job:' + json.dumps(['tv', 'unmount', 'Movers']))),
+        'pending': str(uuid.uuid5(uuid.NAMESPACE_URL, 'pending-charge:job:add_charges')),
+    }
+    names = {'stop': 'Extra delivery stop 1', 'elevator': 'Pickup elevator', 'carry': 'Delivery long carry', 'stairs': 'Pickup stairs',
+             'storage': 'Storage', 'shuttle': 'Delivery shuttle', 'package': 'Full packing', 'item': 'Piano Crating',
+             'origin': 'Origin mileage fee', 'delivery': 'Delivery mileage fee', 'service': 'TV Unmount — Movers', 'pending': 'Item services'}
+    # Each fee is $100, discounted $10 under its own name; the pending one has no price yet.
+    data['estimate']['charges'] = [{'id': ids[key], 'name': names[key], 'subtotal': 100, 'discount_amount': 10, 'total': 90,
+                                    'description': f'{key} detail | {key} deal: -$10.00'} for key in ids if key != 'pending']
+    data['estimate']['charges'].append({'id': ids['pending'], 'name': names['pending'], 'subtotal': 0, 'discount_amount': 0, 'total': 0,
+                                        'pending': True, 'description': 'Calculation pending: no rate'})
+    data['discount_titles'] = {ids[key]: f'{key} deal' for key in ids}
+    data['extra_stops'] = {'locations': [{'location': 'delivery', 'answer': True, 'free_miles': 0, 'stop_fee': 50, 'per_mile': 5,
+                                          'stops': [{'id': stop_row, 'address': 'Stop A', 'miles': 10.0, 'total': 100}]}]}
+    data['elevator'] = {'terms': 'terms', 'locations': [{'location': 'pickup', 'uses_elevator': True}]}
+    data['long_carry'] = {'included_feet': 75, 'rate_per_cuft': 0.2, 'increment_feet': 75, 'locations': [{'location': 'delivery', 'distance_feet': 150}]}
+    data['stairs'] = {'steps_per_flight': 13, 'free_flights': 1, 'rate_per_cuft': 0.2, 'locations': [{'location': 'pickup', 'flights': 2}]}
+    data['storage'] = {'available_date': '2026-12-31', 'free_days': 30, 'rate_per_cuft': 0.5, 'period_days': 30, 'valid': True, 'paid_periods': 1}
+    data['shuttle'] = {'automatic': False, 'answer': False}
+    text = ' '.join(' '.join(page.get_text().split()) for page in pymupdf.open(stream=build_estimate_pdf(data, []), filetype='pdf'))
+    fees = text[text.index('SERVICE DETAILS CHARGE'):text.index('TOTAL ADDITIONAL SERVICES AND FEES')]
+    for key in ids:
+        if key == 'pending':
+            assert 'Item services Calculation pending: no rate Pending' in fees
+        else:
+            assert fees.count(f'{key} deal: -$10.00 (10%)') == 1, key
+            assert f'| {key} deal' not in fees, key  # the discount shows in the charge cell, not also in the description
+    # The breakdown adds the fees' own discounts up once: 11 fees at $100, $10 off each.
+    assert ('Additional services and fees See Additional services and fees (includes pending charges) $1,100.00 $990.00 Discount -$110.00'
+            in text)

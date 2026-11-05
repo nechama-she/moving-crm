@@ -163,6 +163,7 @@ def migrate() -> None:
         LeadPayment.__table__.create(connection, checkfirst=True)
         add_column(connection, 'lead_payments', 'paid_at', 'DATE')
         add_column(connection, 'lead_payments', 'method', 'VARCHAR(30)')
+        add_column(connection, 'lead_jobs', 'smartmoving_price', 'NUMERIC(12, 2)')
         for column, kind in (('crew_size', 'INTEGER'), ('trucks', 'INTEGER'), ('start_time', 'VARCHAR(20)'),
                              ('estimated_hours', 'NUMERIC(5, 2)'), ('travel_hours', 'NUMERIC(5, 2)')):
             add_column(connection, 'lead_jobs', column, kind)

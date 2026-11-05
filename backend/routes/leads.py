@@ -317,7 +317,7 @@ def _build_smartmoving_jobs_payload(opportunity: dict) -> list[dict]:
         row = {
             "smartmoving_job_id": job.get("id"),
             "estimatedCharges": _map_smartmoving_estimated_charges(job.get("estimatedCharges") or []),
-            "price": _smartmoving_job_price(job),
+            "smartmoving_price": _smartmoving_job_price(job),
         }
         sort_order = _smartmoving_job_sort_order(job)
         if sort_order is not None:
@@ -4045,6 +4045,7 @@ class LeadUpdateJob(BaseModel):
     move_date: str | None = None
     booked_move_date: str | None = None
     price: float | None = None
+    smartmoving_price: float | None = None
     estimated_charges: list[LeadJobChargePayload] | None = Field(default=None, alias="estimatedCharges")
     logs: list[ExternalLeadUpdateLog] | None = None
 
@@ -4586,6 +4587,10 @@ def _apply_lead_update(
                     if price_value < 0:
                         raise HTTPException(status_code=400, detail="price must be >= 0")
                     target_job.price = price_value
+
+            if "smartmoving_price" in job_payload:
+                value = job_payload.get("smartmoving_price")
+                target_job.smartmoving_price = Decimal(str(value)).quantize(Decimal("0.01")) if value is not None else None
 
             if "estimated_charges" in job_payload:
                 _replace_job_charges(target_job, job_payload.get("estimated_charges") or [], db)

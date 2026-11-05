@@ -82,6 +82,8 @@ type LeadJobItem = {
   move_date: string;
   booked_move_date: string;
   price: number | null;
+  // SmartMoving's total, as its sync last sent it; shown here only.
+  smartmoving_price: number | null;
   charges: LeadJobChargeItem[];
 };
 
@@ -716,6 +718,7 @@ export default function LeadDetail() {
         move_date: String(item.move_date || ""),
         booked_move_date: String(item.booked_move_date || ""),
         price: item.price == null ? null : Number(item.price),
+        smartmoving_price: item.smartmoving_price == null ? null : Number(item.smartmoving_price),
         charges: Array.isArray(item.charges)
           ? item.charges.map((charge) => {
               const row = charge as Record<string, unknown>;
@@ -3277,6 +3280,12 @@ export default function LeadDetail() {
                               <span style={{ fontWeight: 700 }}>Total</span>
                               <strong>${chargesTotal.toFixed(2)}</strong>
                             </div>
+                          </div>
+                        ) : null}
+                        {job.smartmoving_price != null ? (
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: "#3730a3", padding: "0 8px" }}>
+                            <span>SmartMoving price</span>
+                            <strong>${job.smartmoving_price.toFixed(2)}</strong>
                           </div>
                         ) : null}
                         {job.charges.length === 0 ? <div style={{ color: "#706e6b", fontSize: 12 }}>No charges for this job yet.</div> : null}

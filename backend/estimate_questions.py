@@ -12,12 +12,12 @@ def unanswered_questions(data, package_saved=True):
                 if row.get('unknown') and row.get('acknowledged'):
                     continue
                 shuttle = data.get('shuttle') or {}
-                if row['location'] == 'delivery' and shuttle and not shuttle.get('automatic') and shuttle.get('answer') is True:
+                if row['location'] == 'delivery' and shuttle and not shuttle.get('automatic') and (shuttle.get('answer') is True or shuttle.get('unknown')):
                     continue
             if row.get(field) is None:
                 missing.append('shuttle' if step == 'carry' and row['location'] == 'delivery' and data.get('shuttle') else step + '_' + row['location'])
     shuttle = data.get('shuttle')
-    if shuttle and not shuttle.get('automatic') and shuttle.get('answer') is None:
+    if shuttle and not shuttle.get('automatic') and shuttle.get('answer') is None and not shuttle.get('unknown'):
         missing.append('shuttle')
     if data.get('storage') and not data['storage'].get('valid'):
         missing.append('storage')
