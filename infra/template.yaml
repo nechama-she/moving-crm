@@ -2191,7 +2191,7 @@ Resources:
                 Action: lambda:InvokeFunction
                 Resource: !GetAtt LeadFollowupFunction.Arn
 
-  LeadFollowupSchedule:
+  LeadFollowupSmsScheduler:
     Condition: ShouldDeployLambda
     Type: AWS::Scheduler::Schedule
     Properties:
@@ -2211,7 +2211,7 @@ Resources:
         RetryPolicy:
           MaximumRetryAttempts: 0
 
-  LeadFollowupDueSchedule:
+  LeadFollowupDueScheduler:
     Condition: ShouldDeployLambda
     Type: AWS::Scheduler::Schedule
     Properties:
