@@ -64,6 +64,8 @@ type Details = {
   work_order_available?: boolean;
   // Once the estimate is signed and the company has a Bill of Lading: whether it is signed.
   bill_of_lading?: { signed: boolean } | null;
+  // Customers only: the price sheet's named discounts they can pick for the transportation subtotal, and their pick.
+  discount_choices?: { options: { title: string; type: 'amount' | 'percent' | 'rate'; value: number }[]; selected: string | null } | null;
   signature_requires_resign?: boolean;
   estimate_needs_update?: boolean;
   new_file_count?: number;
@@ -910,6 +912,18 @@ export default function CustomerMovePage() {
     }
   }
   // A discount changes only the price lines and total; a signed estimate now needs signing again.
+  const [discountSaving, setDiscountSaving] = useState(false);
+  const [discountError, setDiscountError] = useState('');
+  // The customer's pick of a named discount for the subtotal: only the price and lines change.
+  async function chooseDiscount(title: string | null) {
+    setDiscountSaving(true); setDiscountError('');
+    try {
+      const result = await call('/customer-discount', {title});
+      applyDiscount(result);
+      setData(previous => previous ? {...previous, discount_choices: result.discount_choices} : previous);
+    } catch (error) { setDiscountError((error as Error).message); }
+    finally { setDiscountSaving(false); }
+  }
   function applyDiscount(result: DiscountResult) {
     setData(previous => previous?.estimate ? {...previous,
       estimate: {...previous.estimate, price: result.price ?? previous.estimate.price, charges: result.charges},
@@ -1401,8 +1415,19 @@ export default function CustomerMovePage() {
                       const inPackage = packageNames.includes(charge.name);
                       const discounted = !charge.children && (charge.discount_amount || 0) > 0;
                       const description = inPackage ? charge.description.replace(/ \| [^|]*: -\$[\d,]+\.\d{2}( \(new rate [^)]*\))?$/, '') : charge.description;
-                      const subtotal = idx === lastPackage && (repPage || packageDiscount > 0) ? <div className="cm-estimate-charge-row cm-package-subtotal">
-                        <div><strong>Subtotal</strong>{packageDiscount > 0 && <small>Discount: -{money(packageDiscount)} ({Math.round(packageDiscount / packageBefore * 1000) / 10}%)</small>}</div>
+                      const choices = !repPage ? data.discount_choices : null;
+                      const subtotal = idx === lastPackage && (repPage || packageDiscount > 0 || choices) ? <div className="cm-estimate-charge-row cm-package-subtotal">
+                        <div><strong>Subtotal</strong>{packageDiscount > 0 && <small>Discount: -{money(packageDiscount)} ({Math.round(packageDiscount / packageBefore * 1000) / 10}%)</small>}
+                          {choices && <label className="cm-discount-choice">Discount
+                            <select value={choices.selected || ''} disabled={discountSaving} onChange={event => void chooseDiscount(event.target.value || null)}>
+                              <option value="">None</option>
+                              {choices.options.map(option => <option key={option.title} value={option.title}>
+                                {`${option.title} (${option.type === 'percent' ? `${option.value}% off` : option.type === 'amount' ? `${money(option.value)} off` : `${money(option.value)} per cu ft`})`}
+                              </option>)}
+                            </select>
+                          </label>}
+                          {discountError && <small className="cm-field-error" role="alert">{discountError}</small>}
+                        </div>
                         <div className="cm-line-price">
                           {packageDiscount > 0 && <del>{money(packageBefore)}</del>}
                           <strong>{money(packageAfter)}</strong>

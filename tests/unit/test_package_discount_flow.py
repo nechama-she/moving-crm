@@ -70,3 +70,59 @@ def test_subtotal_discount_applies_to_all_three_and_removes_from_all_three(monke
         assert [row.description for row in db.get(LeadJob, 'job').charges] == [description for _, _, description in BASE]
         assert read_back() is None
     engine.dispose()
+
+
+def test_customer_picks_only_the_price_sheets_discounts_and_never_over_a_reps(monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from fastapi import HTTPException
+    import pytest
+    from models import Base, Lead, LeadJob, LeadJobCharge, PublicMoveAccess
+    from routes import public_moves, pricing
+    import price_validity
+    monkeypatch.setattr(price_validity, 'price_is_locked', lambda lead, job: False)
+    # The price sheet's named discounts.
+    sheet = SimpleNamespace(rules=[SimpleNamespace(category='discount_percent', title='Military', description='10'),
+                                   SimpleNamespace(category='discount_amount', title='Senior', description='100'),
+                                   SimpleNamespace(category='flat_fee', title='Not a discount', description='5')])
+    monkeypatch.setattr(pricing, 'infer_job_move_type', lambda lead, job, db: ('Long Distance', sheet))
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(Lead(id='lead', full_name='Customer', volume=235))
+        job = LeadJob(id='job', lead_id='lead', job_order=1, customer_packing_package='{}')
+        job.charges = [LeadJobCharge(id=str(uuid.uuid4()), name=name, sort_order=index, subtotal=Decimal(total), total_cost=Decimal(total),
+                                     discount_amount=0, description=description, source='crm')
+                       for index, (name, total, description) in enumerate(BASE)]
+        db.add(job)
+        db.add(PublicMoveAccess(id='access', lead_id='lead', job_id='job', key_hash='k' * 64, request_hash='r' * 64,
+                                token_hash='t' * 64, expires_at=datetime(2030, 1, 1)))
+        db.commit()
+        access = db.get(PublicMoveAccess, 'access')
+
+        def pick(title):
+            return public_moves.save_customer_discount(SimpleNamespace(title=title), access, db)
+
+        def choices():
+            return public_moves._discount_choices(db.get(Lead, 'lead'), db.get(LeadJob, 'job'), db)
+
+        assert choices() == {'options': [{'title': 'Military', 'type': 'percent', 'value': 10.0},
+                                     {'title': 'Senior', 'type': 'amount', 'value': 100.0}], 'selected': None}
+        # The sheet's value is used, on all three lines.
+        result = pick('Military')
+        assert result['price'] == '2085.97' and result['discount_choices']['selected'] == 'Military'
+        assert pick('Senior')['price'] == '2217.75'
+        # Only the listed discounts.
+        with pytest.raises(HTTPException) as error:
+            pick('Not a discount')
+        assert error.value.status_code == 422
+        assert pick(None)['price'] == '2317.75' and choices()['selected'] is None
+        # A rep's discount on the subtotal stays: nothing to pick, and a pick is refused.
+        monkeypatch.setattr(public_moves, 'is_rep_request', lambda access, request: True)
+        public_moves.save_rep_discount(SimpleNamespace(charge_id='package', title='Rep deal', type='percent', value=Decimal('20'), remove=False),
+                                       None, access, db)
+        assert choices() is None
+        with pytest.raises(HTTPException) as error:
+            pick('Military')
+        assert error.value.status_code == 409
+    engine.dispose()

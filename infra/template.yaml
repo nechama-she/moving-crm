@@ -2170,56 +2170,63 @@ Resources:
       MaximumRetryAttempts: 0
       Qualifier: $LATEST
 
+  # The morning followups run on New York time all year: a UTC cron moved them an hour when the clocks changed.
+  LeadFollowupSchedulerRole:
+    Condition: ShouldDeployLambda
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLeadFollowup
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt LeadFollowupFunction.Arn
+
   LeadFollowupSchedule:
     Condition: ShouldDeployLambda
-    Type: AWS::Events::Rule
+    Type: AWS::Scheduler::Schedule
     Properties:
       Name: !Sub moving-crm-lead-followup-sms-${Environment}
-      Description: Day 2 & Day 3 SMS followups every morning at 8am ET (12:00 UTC)
-      ScheduleExpression: "cron(0 12 * * ? *)"
-      State: ENABLED
-      Targets:
-        - Id: LeadFollowupLambdaSms
-          Arn: !GetAtt LeadFollowupFunction.Arn
-          Input: !If
-            - IsProd
-            - '{"mode": "day_followup"}'
-            - '{"mode": "day_followup", "dry_run": true}'
-          RetryPolicy:
-            MaximumRetryAttempts: 0
-
-  LeadFollowupSchedulePermission:
-    Condition: ShouldDeployLambda
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !GetAtt LeadFollowupFunction.Arn
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt LeadFollowupSchedule.Arn
+      Description: Day 2 & Day 3 SMS followups every morning at 8am New York time
+      ScheduleExpression: "cron(0 8 * * ? *)"
+      ScheduleExpressionTimezone: America/New_York
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: !GetAtt LeadFollowupFunction.Arn
+        RoleArn: !GetAtt LeadFollowupSchedulerRole.Arn
+        Input: !If
+          - IsProd
+          - '{"mode": "day_followup"}'
+          - '{"mode": "day_followup", "dry_run": true}'
+        RetryPolicy:
+          MaximumRetryAttempts: 0
 
   LeadFollowupDueSchedule:
     Condition: ShouldDeployLambda
-    Type: AWS::Events::Rule
+    Type: AWS::Scheduler::Schedule
     Properties:
       Name: !Sub moving-crm-lead-followup-due-${Environment}
-      Description: Due followup messages every morning at 8:15am ET (12:15 UTC)
-      ScheduleExpression: "cron(15 12 * * ? *)"
-      State: ENABLED
-      Targets:
-        - Id: LeadFollowupLambdaDue
-          Arn: !GetAtt LeadFollowupFunction.Arn
-          Input: '{"mode": "followup_messages"}'
-          RetryPolicy:
-            MaximumRetryAttempts: 0
-
-  LeadFollowupDueSchedulePermission:
-    Condition: ShouldDeployLambda
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !GetAtt LeadFollowupFunction.Arn
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt LeadFollowupDueSchedule.Arn
+      Description: Due followup messages every morning at 8:15am New York time
+      ScheduleExpression: "cron(15 8 * * ? *)"
+      ScheduleExpressionTimezone: America/New_York
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: !GetAtt LeadFollowupFunction.Arn
+        RoleArn: !GetAtt LeadFollowupSchedulerRole.Arn
+        Input: '{"mode": "followup_messages"}'
+        RetryPolicy:
+          MaximumRetryAttempts: 0
 
   LeadFollowupDay3ExportSchedule:
     Condition: ShouldDeployLambda

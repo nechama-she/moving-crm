@@ -889,9 +889,10 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     # Rep pages show every price line (individual_charges), and only they get the work order, once the estimate is signed.
     pricing_data['work_order_available'] = bool(individual_charges and pricing_data['signature_status'] == 'signed')
     pricing_data['bill_of_lading'] = _bill_of_lading_status(access, db, pricing_data['signature_status'] == 'signed')
+    pricing_data['discount_choices'] = None if individual_charges else _discount_choices(lead, job, db)
     if pricing_only:
         return pricing_data
-    return {'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
+    return {'discount_choices': pricing_data['discount_choices'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': _typed_stops(job, stops),
             'unanswered_questions': required_questions,
             'pricing_required': pricing_required,
@@ -1410,6 +1411,105 @@ def save_mileage(body: BrowserFeeDistances, access: PublicMoveAccess = Depends(v
     return {'saved': True}
 
 
+def _save_package_discount(lead, job, db, title, kind, value, remove, source=None):
+    """A discount on the transportation subtotal, saved on each of its lines: the same percent on each, a reduced cu-ft
+    rate on the transportation line, or the amount split by their prices before discounts, the last line taking the
+    rounding. source 'customer' marks one the customer picked; a rep's has none. Commits, and refreshes job."""
+    from math import ceil
+    from rep_discounts import package_lines
+    from routes.leads import _refresh_lead_estimated_total
+    lines = package_lines(job.charges)
+    if not lines:
+        raise HTTPException(404, 'This estimate has no transportation lines to discount.')
+    selection = json.loads(job.customer_packing_package or '{}')
+    settings = selection.setdefault('rep_discounts', {})
+    bases = selection.get('rep_discount_bases', {})
+    prices = [Decimal(bases[row.id]['base']) if row.id in bases else Decimal(str(row.total_cost or 0)) for row in lines]
+    subtotal = sum(prices, Decimal(0))
+    title = title.strip() or 'Discount'
+    marked = {'source': source} if source else {}
+    if remove:
+        for row in lines:
+            settings.pop(row.id, None)
+    elif kind == 'rate':
+        # A reduced cu-ft rate changes the transportation line only; the other lines keep their price.
+        transport = next((row for row in lines if row.name == 'Transportation charge'), None)
+        if transport is None:
+            raise HTTPException(422, 'Cu-ft rate discounts apply to transportation only.')
+        for row in lines:
+            settings.pop(row.id, None)
+        settings[transport.id] = {'title': title, 'type': 'rate', 'value': str(value), 'volume': ceil(lead.volume or 0), **marked}
+    elif kind == 'percent':
+        for row in lines:
+            settings[row.id] = {'title': title, 'type': 'percent', 'value': str(value), 'volume': ceil(lead.volume or 0), **marked}
+    else:
+        amount = min(subtotal, max(Decimal(0), subtotal - value if kind == 'total' else value))
+        left = amount
+        for index, (row, price) in enumerate(zip(lines, prices)):
+            share = left if index == len(lines) - 1 else (amount * price / subtotal).quantize(Decimal('.01')) if subtotal else Decimal(0)
+            left -= share
+            settings[row.id] = {'title': title, 'type': 'amount', 'value': str(share), 'volume': ceil(lead.volume or 0), **marked}
+    job.customer_packing_package = json.dumps(selection)
+    _refresh_lead_estimated_total(lead.id, db)
+    db.commit()
+    db.refresh(job)
+
+
+DISCOUNT_CATEGORIES = ('discount_amount', 'discount_percent', 'discount_rate')
+
+
+def _discount_choices(lead, job, db):
+    """What the customer can pick for the transportation subtotal: the price sheet's named discounts (each with its kind,
+    amount, percent or cu-ft rate, and value), and the one they picked. None when there is nothing to pick, or when a rep
+    set the subtotal's discount (the rep's stays)."""
+    from rep_discounts import package_lines
+    from routes.pricing import infer_job_move_type
+    _, plan = infer_job_move_type(lead, job, db)
+    options = [{'title': rule.title, 'type': rule.category[9:], 'value': float(rule.description or 0)}
+               for rule in (plan.rules if plan else []) if rule.category in DISCOUNT_CATEGORIES and rule.title]
+    lines = package_lines(job.charges)
+    if not options or not lines:
+        return None
+    settings = json.loads(job.customer_packing_package or '{}').get('rep_discounts', {})
+    picked = [settings[row.id] for row in lines if row.id in settings]
+    if any(rule.get('source') != 'customer' for rule in picked):
+        return None
+    return {'options': options, 'selected': picked[0]['title'] if picked else None}
+
+
+class CustomerDiscountInput(BaseModel):
+    # One of the price sheet's discount names, or None for no discount.
+    title: str | None = Field(default=None, max_length=120)
+
+
+@router.post('/api/public-moves/{access_id}/customer-discount')
+def save_customer_discount(body: CustomerDiscountInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    """The customer's pick among the price sheet's named discounts, for the transportation subtotal. Only the sheet's
+    discounts, at the sheet's value; never over a discount a rep set."""
+    from price_validity import price_is_locked
+    from routes.pricing import infer_job_move_type
+    lead = db.get(Lead, access.lead_id)
+    job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().first()
+    if not lead or not job:
+        raise HTTPException(404, 'Move not found.')
+    if price_is_locked(lead, job):
+        raise HTTPException(409, 'The price is locked for this booked or closed move.')
+    if _discount_choices(lead, job, db) is None:
+        raise HTTPException(409, 'A discount cannot be chosen for this estimate.')
+    if body.title is None:
+        _save_package_discount(lead, job, db, 'Discount', 'amount', Decimal(0), True, 'customer')
+    else:
+        _, plan = infer_job_move_type(lead, job, db)
+        rule = next((rule for rule in plan.rules if rule.category in DISCOUNT_CATEGORIES and rule.title == body.title), None)
+        if rule is None:
+            raise HTTPException(422, 'Choose one of the listed discounts.')
+        _save_package_discount(lead, job, db, rule.title, rule.category[9:], Decimal(str(rule.description or 0)), False, 'customer')
+    db.refresh(access)
+    price = customer_price(job)
+    return {'saved': True, 'price': str(price) if price is not None else None, 'charges': estimate_charges(job),
+            'discount_choices': _discount_choices(lead, job, db)}
+
+
 class RepDiscountInput(BaseModel):
     charge_id: str
     title: str = Field(default='Discount', min_length=1, max_length=120)
@@ -1467,43 +1567,7 @@ def save_rep_discount(body: RepDiscountInput, request: Request, access: PublicMo
     if body.type == 'percent' and body.value > 100:
         raise HTTPException(422, 'Percentage cannot exceed 100.')
     if body.charge_id == 'package':
-        # A discount on the subtotal is saved on each of its lines: the same percent on each, or the amount split
-        # by their prices before rep discounts, the last line taking the rounding.
-        from rep_discounts import package_lines
-        lines = package_lines(job.charges)
-        if not lines:
-            raise HTTPException(404, 'This estimate has no transportation lines to discount.')
-        selection = json.loads(job.customer_packing_package or '{}')
-        settings = selection.setdefault('rep_discounts', {})
-        bases = selection.get('rep_discount_bases', {})
-        prices = [Decimal(bases[row.id]['base']) if row.id in bases else Decimal(str(row.total_cost or 0)) for row in lines]
-        subtotal = sum(prices, Decimal(0))
-        title = body.title.strip() or 'Discount'
-        if body.remove:
-            for row in lines:
-                settings.pop(row.id, None)
-        elif body.type == 'rate':
-            # A reduced cu-ft rate changes the transportation line only; the other lines keep their price.
-            transport = next((row for row in lines if row.name == 'Transportation charge'), None)
-            if transport is None:
-                raise HTTPException(422, 'Cu-ft rate discounts apply to transportation only.')
-            for row in lines:
-                settings.pop(row.id, None)
-            settings[transport.id] = {'title': title, 'type': 'rate', 'value': str(body.value), 'volume': ceil(lead.volume or 0)}
-        elif body.type == 'percent':
-            for row in lines:
-                settings[row.id] = {'title': title, 'type': 'percent', 'value': str(body.value), 'volume': ceil(lead.volume or 0)}
-        else:
-            amount = min(subtotal, max(Decimal(0), subtotal - body.value if body.type == 'total' else body.value))
-            left = amount
-            for index, (row, price) in enumerate(zip(lines, prices)):
-                share = left if index == len(lines) - 1 else (amount * price / subtotal).quantize(Decimal('.01')) if subtotal else Decimal(0)
-                left -= share
-                settings[row.id] = {'title': title, 'type': 'amount', 'value': str(share), 'volume': ceil(lead.volume or 0)}
-        job.customer_packing_package = json.dumps(selection)
-        _refresh_lead_estimated_total(lead.id, db)
-        db.commit()
-        db.refresh(job)
+        _save_package_discount(lead, job, db, body.title, body.type, body.value, body.remove)
         db.refresh(access)
         price = customer_price(job)
         return {'saved': True, 'price': str(price) if price is not None else None, 'charges': estimate_charges(job, individual_charges=True)}

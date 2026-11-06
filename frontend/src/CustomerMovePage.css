@@ -336,3 +336,6 @@
 .cm-estimate-flow.has-four{grid-template-columns:repeat(4,minmax(0,1fr))}
 @media(max-width:1000px){.cm-estimate-flow.has-four{grid-template-columns:repeat(2,minmax(0,1fr))}.cm-estimate-flow.has-four>li:nth-child(2)::after{display:none}}
 @media(max-width:700px){.cm-estimate-flow.has-four{grid-template-columns:1fr}.cm-estimate-flow.has-four>li:nth-child(2)::after{display:block}}
+/* The customer's discount pick on the transportation subtotal. */
+.cm-discount-choice{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;color:var(--cm-text-muted)}
+.cm-discount-choice select{min-height:36px;padding:4px 8px;border:1px solid var(--cm-border);border-radius:6px;font:inherit;color:var(--cm-text);background:#fff}
